@@ -59,18 +59,16 @@ fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
 
 // ── ResolverLike bridge ───────────────────────────────────────────────────
 // `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
-// `bun_resolver::Resolver` is the concrete impl. Neither crate depends on the
-// other (siblings), so the orphan-rule-compliant impl lives here in
-// `bun_runtime` — the lowest crate that sees both. The `DirInfoRef` vtable
-// erases `*const bun_resolver::DirInfo` to keep `bun_router` resolver-agnostic.
+// `bun_resolver::Resolver` is the concrete impl. The orphan-rule-compliant
+// impl lives here in `bun_runtime` (the runtime sees both). `DirInfoRef`
+// erases `*const bun_resolver::DirInfo` so the router stays generic.
 
 static RESOLVER_DIR_INFO_VTABLE: Router::DirInfoVTable = Router::DirInfoVTable {
     get_entries_const: |owner| {
         // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo` produced by
         // `dir_info_ref` below; the resolver's BSSMap singleton outlives the walk.
         let di = unsafe { &*(owner as *const bun_resolver::DirInfo) };
-        di.get_entries_const()
-            .map(|e| Fs::DirEntry::as_sys_seam(e) as *const bun_sys::fs::DirEntry)
+        di.get_entries_const().map(|e| e as *const Fs::DirEntry)
     },
 };
 
@@ -85,17 +83,13 @@ struct RouterResolver<'a, 'r>(&'r mut Resolver<'a>);
 
 impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
-    fn fs(&self) -> &'static bun_sys::fs::FileSystem {
-        // PORT NOTE: `bun_sys::fs::FileSystem` is the opaque handle whose
-        // documented backing type is the resolver singleton; both `instance()`
-        // calls resolve to the same process-global.
-        bun_sys::fs::FileSystem::instance()
+    fn fs(&self) -> &'static Fs::FileSystem {
+        Fs::FileSystem::instance()
     }
     #[inline]
-    fn fs_impl(&self) -> *mut core::ffi::c_void {
-        // SAFETY: `&fs.fs` — the `Implementation` field, type-erased per the
-        // `entry_kind` vtable contract in `bun_resolver::fs` (fs.rs:3109).
-        unsafe { (&mut (*self.0.fs()).fs) as *mut Fs::Implementation as *mut core::ffi::c_void }
+    fn fs_impl(&self) -> *mut Fs::Implementation {
+        // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
+        unsafe { (&mut (*self.0.fs()).fs) as *mut Fs::Implementation }
     }
     #[inline]
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<Router::DirInfoRef> {

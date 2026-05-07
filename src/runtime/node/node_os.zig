@@ -139,6 +139,11 @@ fn formatArmModel(buf: *[64]u8, impl_name: []const u8, part_name: []const u8) []
     };
 }
 
+/// Returns true if the ARM part name is a concrete known model (not "unknown" or "(unknown)").
+fn isKnownArmPart(part_name: []const u8) bool {
+    return !strings.contains(part_name, "unknown");
+}
+
 pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     const cpusImpl = switch (Environment.os) {
         .linux => cpusImplLinux,
@@ -240,9 +245,9 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         var model_name_buf: [64]u8 = undefined;
 
         while (line_iter.next()) |line| {
-            const colon_pos = strings.indexOf(line, ": ") orelse continue;
+            const colon_pos = strings.indexOf(line, ":") orelse continue;
             const key = strings.trim(line[0..colon_pos], " \t\r");
-            const value = strings.trim(line[colon_pos + 2 ..], " \t\r\n");
+            const value = strings.trim(line[colon_pos + 1 ..], " \t\r\n:");
 
             if (strings.eqlComptime(key, "processor")) {
                 // Finalize previous CPU: if it has no model name, try ARM decoder
@@ -253,8 +258,12 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
                         if (arm_impl != null and arm_part != null) {
                             const impl_name = cpuImplementerName(arm_impl.?);
                             const part_name = cpuPartName(arm_impl.?, arm_part.?);
-                            const model_str = formatArmModel(&model_name_buf, impl_name, part_name);
-                            try setCpuModel(globalThis, &values, cpu_index, model_str);
+                            if (isKnownArmPart(part_name)) {
+                                const model_str = formatArmModel(&model_name_buf, impl_name, part_name);
+                                try setCpuModel(globalThis, &values, cpu_index, model_str);
+                            } else if (hardware_value) |hv| {
+                                try setCpuModel(globalThis, &values, cpu_index, hv);
+                            }
                         } else if (hardware_value) |hv| {
                             try setCpuModel(globalThis, &values, cpu_index, hv);
                         }
@@ -284,8 +293,12 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
                 if (arm_impl != null and arm_part != null) {
                     const impl_name = cpuImplementerName(arm_impl.?);
                     const part_name = cpuPartName(arm_impl.?, arm_part.?);
-                    const model_str = formatArmModel(&model_name_buf, impl_name, part_name);
-                    try setCpuModel(globalThis, &values, cpu_index, model_str);
+                    if (isKnownArmPart(part_name)) {
+                        const model_str = formatArmModel(&model_name_buf, impl_name, part_name);
+                        try setCpuModel(globalThis, &values, cpu_index, model_str);
+                    } else if (hardware_value) |hv| {
+                        try setCpuModel(globalThis, &values, cpu_index, hv);
+                    }
                 } else if (hardware_value) |hv| {
                     try setCpuModel(globalThis, &values, cpu_index, hv);
                 }

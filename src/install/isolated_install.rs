@@ -2350,10 +2350,9 @@ pub fn install_isolated_packages(
                                     Output::err(
                                         err,
                                         "failed to enqueue github package for download: {}@{}",
-                                        format_args!(
-                                            "{}@{}",
+                                        (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto)
+                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
                                         ),
                                     );
                                     Output::flush();
@@ -2392,10 +2391,9 @@ pub fn install_isolated_packages(
                                     Output::err(
                                         err,
                                         "failed to enqueue tarball for download: {}@{}",
-                                        format_args!(
-                                            "{}@{}",
+                                        (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto)
+                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
                                         ),
                                     );
                                     Output::flush();

@@ -776,14 +776,12 @@ impl TranspilerJob {
 
         // `defer { if should_close && input_file_fd.isValid() { close } }`
         let _close_fd_guard = scopeguard::guard(
-            (
-                ptr::addr_of_mut!(should_close_input_file_fd),
-                ptr::addr_of_mut!(input_file_fd),
-            ),
+            (&should_close_input_file_fd, ptr::addr_of_mut!(input_file_fd)),
             |(should, fd_ptr)| {
-                // SAFETY: both locals outlive this guard (declared earlier in fn scope)
+                // SAFETY: `input_file_fd` outlives this guard (declared earlier
+                // in fn scope); no `&mut` alias is live at drop time.
                 unsafe {
-                    if *should && (*fd_ptr).is_valid() {
+                    if should.get() && (*fd_ptr).is_valid() {
                         (*fd_ptr).close();
                         *fd_ptr = Fd::INVALID;
                     }
@@ -794,12 +792,15 @@ impl TranspilerJob {
         if is_node_override {
             if let Some(code) = node_fallbacks::contents_from_path(specifier) {
                 let fallback_path = logger::fs::Path::init_with_namespace(specifier, b"node");
-                fallback_source = logger::Source {
+                let src = fallback_source.write(logger::Source {
                     path: fallback_path,
                     contents: std::borrow::Cow::Borrowed(code),
                     ..Default::default()
-                };
-                parse_options.virtual_source = Some(unsafe { &*ptr::addr_of!(fallback_source) });
+                });
+                // SAFETY: `fallback_source` outlives `parse_options` (declared
+                // earlier in fn scope); raw-ptr borrow avoids tying
+                // `parse_options`'s `'static` source lifetime to this stack slot.
+                parse_options.virtual_source = Some(unsafe { &*(src as *const logger::Source) });
             }
         }
 
@@ -815,7 +816,7 @@ impl TranspilerJob {
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
-                    should_close_input_file_fd = false;
+                    should_close_input_file_fd.set(false);
                     if !import_watcher.is_null() {
                         // SAFETY: import_watcher is live; add_file is thread-safe via watcher mutex.
                         let _ = unsafe { &mut *import_watcher }.add_file::<true>(

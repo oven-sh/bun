@@ -334,7 +334,7 @@ pub fn generate_code_for_lazy_export(
                                     // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
                                     let name_v = unsafe { &*name.v };
                                     let Some(name_entry) = ast.local_scope.get_adapted(name_v, SliceBoxAdapter) else {
-                                        let _ = self.log.add_error_fmt(
+                                        bun_core::handle_oom(self.log.add_error_fmt(
                                             &self.all_sources[idx as usize],
                                             compose.loc,
                                             format_args!(
@@ -342,7 +342,7 @@ pub fn generate_code_for_lazy_export(
                                                 bun_fmt::quote(name_v),
                                                 bun_fmt::quote(&self.all_sources[idx as usize].path.pretty),
                                             ),
-                                        );
+                                        ));
                                         continue;
                                     };
                                     let name_ref = name_entry.ref_;

@@ -681,12 +681,11 @@ impl<'a> TablePrinter<'a> {
                     }
                 }
             } else {
-                // SAFETY: `obj` is a live JSC heap cell returned by
-                // `get_object()`; the borrow is bounded by this stack frame.
-                let obj_ref = unsafe { &*obj };
-                let mut cols_iter = jsc::JSPropertyIterator::<
-                    { jsc::js_property_iterator::JSPropertyIteratorOptions::new(false, true) },
-                >::init(self.global_object, obj_ref)?;
+                let mut cols_iter = jsc::JSPropertyIterator::init(
+                    self.global_object,
+                    obj,
+                    jsc::PropertyIteratorOptions { skip_empty_name: false, include_value: true },
+                )?;
 
                 while let Some(col_key) = cols_iter.next()? {
                     let value = cols_iter.value;

@@ -1,9 +1,11 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
-//! `bun_str` — B-1 minimal compiling surface.
-//! Full Phase-A draft preserved in `lib_draft_b1.rs` (gated).
-//! B-2: un-gate module-by-module, replace stubs with real impls.
+//! `bun_string` — port of `src/string/string.zig` (`bun.String` and friends).
+//!
+//! `String` is the FFI-compatible 5-variant tagged union shared with C++
+//! (`BunString` in `src/jsc/bindings/BunString.cpp`). `ZigString` is the
+//! pointer-tagged borrowed view; `ZigStringSlice` is the owned-or-borrowed
+//! UTF-8 byte slice that replaces Zig's allocator-vtable trick.
 
-// Small data-structure modules — un-gated in B-2.
 #[path = "HashedString.rs"]  pub mod hashed_string;
 #[path = "PathString.rs"]    pub mod path_string;
 #[path = "SmolStr.rs"]       pub mod smol_str;

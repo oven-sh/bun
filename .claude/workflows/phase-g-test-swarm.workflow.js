@@ -65,7 +65,7 @@ const REVIEW_S = {
   required: ["accept", "bugs"],
 };
 
-const HARD = `**HARD RULES:** Work in /root/bun-5 on branch claude/phase-a-port. REAL fixes (port from .zig spec), NOT stubs/suppressions/early-returns. Never git reset/checkout/stash/rebase/pull. Commit only. NO push.`;
+const HARD = `**HARD RULES:** Work in /root/bun-5 on branch claude/phase-a-port. REAL fixes (port from .zig spec), NOT stubs/suppressions/early-returns. Never git reset/checkout/stash/rebase/pull. **Commit with EXPLICIT paths only:** \`git -c core.hooksPath=/dev/null add 'src/' Cargo.toml Cargo.lock && git commit -q -m "..."\` — NEVER \`git add -A\` or \`git add .\` (sweeps in heapsnapshots/coredumps with env secrets). NO push.`;
 
 let history = [];
 

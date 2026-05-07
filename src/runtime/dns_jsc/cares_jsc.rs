@@ -777,10 +777,7 @@ pub fn error_to_js_with_syscall(
             BStr::new(syscall),
             BStr::new(&code[4..])
         )),
-        hostname: bstr::String::empty(),
-        path: bstr::String::empty(),
-        fd: -1,
-        dest: bstr::String::empty(),
+        ..Default::default()
     }
     .to_error_instance(global_this);
     instance.put(global_this, b"name", bstr::String::static_(b"DNSException").to_js(global_this)?);
@@ -805,9 +802,7 @@ pub fn error_to_js_with_syscall_and_hostname(
         )),
         syscall: bstr::String::static_(syscall),
         hostname: bstr::String::clone_utf8(hostname),
-        path: bstr::String::empty(),
-        fd: -1,
-        dest: bstr::String::empty(),
+        ..Default::default()
     }
     .to_error_instance(global_this);
     instance.put(global_this, b"name", bstr::String::static_(b"DNSException").to_js(global_this)?);
@@ -815,10 +810,9 @@ pub fn error_to_js_with_syscall_and_hostname(
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
-// TODO(port): verify #[bun_jsc::host_fn] supports export_name; Zig used
-// `@export(&jsc.toJSHostFn(Bun__canonicalizeIP_), .{ .name = "Bun__canonicalizeIP" })`.
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "Bun__canonicalizeIP")]
+// Zig: `@export(&jsc.toJSHostFn(Bun__canonicalizeIP_), .{ .name = "Bun__canonicalizeIP" })`
+// — `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
+#[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
 pub fn bun_canonicalize_ip(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,

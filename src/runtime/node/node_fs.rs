@@ -395,23 +395,10 @@ pub const DEFAULT_PERMISSION: Mode = sys::S::IRUSR
 pub const DEFAULT_PERMISSION: Mode = 0;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local extension shims for upstream methods not yet on `bun_jsc::JSValue` /
-// `NonNull<AbortSignal>`. Bodies mirror `src/jsc/JSValue.zig` exactly so the
-// `.zig` spec stays the source of truth; swap to direct upstream calls once
-// `bun_jsc` grows them.
+// Local extension shims for upstream methods not yet on `NonNull<AbortSignal>`.
+// Bodies mirror the `.zig` spec exactly so it stays the source of truth; swap
+// to direct upstream calls once `bun_jsc` grows them.
 // ──────────────────────────────────────────────────────────────────────────
-
-trait JSValueNodeFsExt {
-    fn is_string_literal(self) -> bool;
-}
-impl JSValueNodeFsExt for JSValue {
-    /// `JSValue.isStringLiteral` (JSValue.zig:1048) — exact `JSType::String`
-    /// (not `StringObject`/`DerivedStringObject`).
-    #[inline]
-    fn is_string_literal(self) -> bool {
-        self.is_cell() && self.js_type() == bun_jsc::JSType::String
-    }
-}
 
 /// Forward `&self` AbortSignal methods through the `NonNull` wrapper used as
 /// [`AbortSignalRef`] so call sites keep the `signal.unref()` Zig spelling.

@@ -1051,6 +1051,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     snprintf(port_string, 16, "%d", port);
 
     if (getaddrinfo(host, port_string, &hints, &result)) {
+        // getaddrinfo returns an EAI_* code, not a regular errno. Leave
+        // *error at its caller-initialized 0 so the caller falls back to the
+        // generic "port in use?" message.
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1237,6 +1240,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
     listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1261,6 +1265,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        // bsd_create_unix_socket_address sets errno (or WSASetLastError on
+        // Windows) on its early-return paths but doesn't populate *error;
+        // propagate here so callers can distinguish ENAMETOOLONG/ENOENT/etc.
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1269,6 +1277,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
             close(dirfd_workaround_for_unix_path_len);
             errno = ENAMETOOLONG;
+            *error = ENAMETOOLONG;
             return LIBUS_SOCKET_ERROR;
         }
     }

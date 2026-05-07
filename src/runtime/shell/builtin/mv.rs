@@ -493,7 +493,7 @@ impl ShellMvBatchedTask {
             }
             let _ = (src, &this.target, this.target_fd, this.cwd);
         }
-        this.task.on_finish();
+        // Bounce-back is posted by `shell_task_trampoline`.
     }
 
     pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &mut Interpreter) {

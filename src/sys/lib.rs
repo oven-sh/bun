@@ -245,9 +245,8 @@ pub mod dir_iterator {
                     // (matches Zig's `linux.getdents64` raw-syscall path).
                     // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
                     let rc = unsafe {
-                        libc::syscall(
-                            libc::SYS_getdents64,
-                            dir.native() as libc::c_long,
+                        super::linux_syscall::getdents64(
+                            dir.native(),
                             self.buf.0.as_mut_ptr(),
                             BUF_SIZE,
                         )
@@ -686,7 +685,14 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
 }
 
 pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
-    #[cfg(not(windows))] {
+    #[cfg(target_os = "linux")] {
+        // sys.zig:874 — `bun.invalid_fd` means cwd-relative.
+        let dirfd = if fd.is_valid() { fd.native() } else { libc::AT_FDCWD };
+        // sys.zig:877 — `lstatat` tags as `.fstatat`.
+        linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
+            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
+    }
+    #[cfg(all(unix, not(target_os = "linux")))] {
         let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
         // sys.zig:874 — `bun.invalid_fd` means cwd-relative.
         let dirfd = if fd.is_valid() { fd.native() } else { libc::AT_FDCWD };
@@ -750,6 +756,11 @@ use core::ffi::{c_char, c_int, c_void};
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_core::{Fd, FdNative, FdKind, FdOptional, Stdio, Mode, FileKind, kind_from_mode};
+
+// Raw Linux syscalls via rustix (linux_raw backend). Hot-path I/O on Linux
+// routes through here instead of glibc — see module doc.
+#[cfg(target_os = "linux")]
+pub(crate) mod linux_syscall;
 
 /// Zig: `bun.isRegularFile(mode)` (bun.zig) — `S.ISREG(@intCast(mode))`.
 #[inline]
@@ -1199,28 +1210,39 @@ mod nocancel {
 #[cfg(unix)]
 mod posix_impl {
     use super::*;
-    // Per-platform raw syscall dispatch — macOS uses `$NOCANCEL`, everything
-    // else goes straight to libc.
+    // Per-platform raw syscall dispatch — macOS uses `$NOCANCEL`; Linux goes
+    // through rustix's linux_raw backend (no libc trampoline, matching Zig's
+    // `std.os.linux`); other POSIX falls back to libc. The Linux hot paths
+    // (open/openat/read/write/close/pread/pwrite/fstat) bypass these `sys_*`
+    // dispatchers entirely — see the `#[cfg(target_os = "linux")]` arms on
+    // each public fn below — because rustix returns the errno in-band and we
+    // don't want to round-trip through thread-local `errno`.
+    #[cfg(not(target_os = "linux"))]
     #[inline] unsafe fn sys_open(p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
         #[cfg(target_os = "macos")] { unsafe { super::nocancel::open(p, f, m) } }
         #[cfg(not(target_os = "macos"))] { unsafe { libc::open(p, f, m) } }
     }
+    #[cfg(not(target_os = "linux"))]
     #[inline] unsafe fn sys_openat(d: i32, p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
         #[cfg(target_os = "macos")] { unsafe { super::nocancel::openat(d, p, f, m) } }
         #[cfg(not(target_os = "macos"))] { unsafe { libc::openat(d, p, f, m) } }
     }
+    #[cfg(not(target_os = "linux"))]
     #[inline] unsafe fn sys_read(fd: i32, buf: *mut libc::c_void, n: usize) -> isize {
         #[cfg(target_os = "macos")] { unsafe { super::nocancel::read(fd, buf, n) } }
         #[cfg(not(target_os = "macos"))] { unsafe { libc::read(fd, buf, n) } }
     }
+    #[cfg(not(target_os = "linux"))]
     #[inline] unsafe fn sys_write(fd: i32, buf: *const libc::c_void, n: usize) -> isize {
         #[cfg(target_os = "macos")] { unsafe { super::nocancel::write(fd, buf, n) } }
         #[cfg(not(target_os = "macos"))] { unsafe { libc::write(fd, buf, n) } }
     }
+    #[cfg(not(target_os = "linux"))]
     #[inline] unsafe fn sys_pread(fd: i32, buf: *mut libc::c_void, n: usize, off: i64) -> isize {
         #[cfg(target_os = "macos")] { unsafe { super::nocancel::pread(fd, buf, n, off) } }
         #[cfg(not(target_os = "macos"))] { unsafe { libc::pread(fd, buf, n, off) } }
     }
+    #[cfg(not(target_os = "linux"))]
     #[inline] unsafe fn sys_pwrite(fd: i32, buf: *const libc::c_void, n: usize, off: i64) -> isize {
         #[cfg(target_os = "macos")] { unsafe { super::nocancel::pwrite(fd, buf, n, off) } }
         #[cfg(not(target_os = "macos"))] { unsafe { libc::pwrite(fd, buf, n, off) } }
@@ -1288,75 +1310,150 @@ mod posix_impl {
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         // sys.zig:1706 — .mac arm: single `open$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
-        let rc = check_once_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
-        #[cfg(not(target_os = "macos"))]
-        let rc = check_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
-        Ok(Fd::from_native(rc))
+        {
+            let rc = check_once_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
+            Ok(Fd::from_native(rc))
+        }
+        // sys.zig:1708 — Linux arm: raw `openat(AT_FDCWD, ..)` via `std.os.linux`.
+        #[cfg(target_os = "linux")]
+        {
+            super::linux_syscall::open(path, flags, mode)
+                .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let rc = check_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
+            Ok(Fd::from_native(rc))
+        }
     }
     pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         // sys.zig:1706-1712 — .mac arm: single `openat$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
-        let rc = check_once_p!(unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
-        #[cfg(not(target_os = "macos"))]
-        let rc = check_p!(unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
-        Ok(Fd::from_native(rc))
+        {
+            let rc = check_once_p!(unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
+            Ok(Fd::from_native(rc))
+        }
+        #[cfg(target_os = "linux")]
+        {
+            super::linux_syscall::openat(dir, path, flags, mode)
+                .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let rc = check_p!(unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
+            Ok(Fd::from_native(rc))
+        }
     }
     pub fn close(fd: Fd) -> Maybe<()> {
         // fd.zig:266 — call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.
         // fd.zig:273 — Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
-        // SAFETY: fd is a valid open descriptor owned by caller.
-        #[cfg(target_os = "macos")]
-        let rc = unsafe { super::nocancel::close(fd.native()) };
-        #[cfg(not(target_os = "macos"))]
-        let rc = unsafe { libc::close(fd.native()) };
-        if rc < 0 && last_errno() == libc::EBADF {
-            return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
+        #[cfg(target_os = "linux")]
+        {
+            return match super::linux_syscall::close(fd.native()) {
+                Err(e) if e == libc::EBADF => {
+                    Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd))
+                }
+                _ => Ok(()),
+            };
         }
-        Ok(())
+        #[cfg(not(target_os = "linux"))]
+        {
+            // SAFETY: fd is a valid open descriptor owned by caller.
+            #[cfg(target_os = "macos")]
+            let rc = unsafe { super::nocancel::close(fd.native()) };
+            #[cfg(not(target_os = "macos"))]
+            let rc = unsafe { libc::close(fd.native()) };
+            if rc < 0 && last_errno() == libc::EBADF {
+                return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
+            }
+            Ok(())
+        }
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         // sys.zig:2138-2147 — .mac arm: single `read$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
-        let n = check_once!(unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) }, Tag::read);
-        #[cfg(not(target_os = "macos"))]
-        let n = check!(unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) }, Tag::read);
-        Ok(n as usize)
+        { let n = check_once!(unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) }, Tag::read); Ok(n as usize) }
+        #[cfg(target_os = "linux")]
+        {
+            super::linux_syscall::read(fd, &mut buf[..len])
+                .map_err(|e| Error::from_code_int(e, Tag::read))
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        { let n = check!(unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) }, Tag::read); Ok(n as usize) }
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         // sys.zig:1851-1860 — .mac arm: single `write$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
-        let n = check_once!(unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) }, Tag::write);
-        #[cfg(not(target_os = "macos"))]
-        let n = check!(unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) }, Tag::write);
-        Ok(n as usize)
+        { let n = check_once!(unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) }, Tag::write); Ok(n as usize) }
+        #[cfg(target_os = "linux")]
+        {
+            super::linux_syscall::write(fd, &buf[..len])
+                .map_err(|e| Error::from_code_int(e, Tag::write))
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        { let n = check!(unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) }, Tag::write); Ok(n as usize) }
     }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        let n = check!(unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) }, Tag::pread);
-        Ok(n as usize)
+        #[cfg(target_os = "linux")]
+        {
+            return super::linux_syscall::pread(fd, &mut buf[..len], off)
+                .map_err(|e| Error::from_code_int(e, Tag::pread));
+        }
+        #[cfg(not(target_os = "linux"))]
+        { let n = check!(unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) }, Tag::pread); Ok(n as usize) }
     }
     pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        let n = check!(unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) }, Tag::pwrite);
-        Ok(n as usize)
+        #[cfg(target_os = "linux")]
+        {
+            return super::linux_syscall::pwrite(fd, &buf[..len], off)
+                .map_err(|e| Error::from_code_int(e, Tag::pwrite));
+        }
+        #[cfg(not(target_os = "linux"))]
+        { let n = check!(unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) }, Tag::pwrite); Ok(n as usize) }
     }
     pub fn stat(path: &ZStr) -> Maybe<Stat> {
-        let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-        check_p!(unsafe { libc::stat(path.as_ptr(), st.as_mut_ptr()) }, Tag::stat, path);
-        Ok(unsafe { st.assume_init() })
+        #[cfg(target_os = "linux")]
+        {
+            return super::linux_syscall::stat(path)
+                .map_err(|e| Error::from_code_int(e, Tag::stat).with_path(path.as_bytes()));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut st = core::mem::MaybeUninit::<Stat>::uninit();
+            check_p!(unsafe { libc::stat(path.as_ptr(), st.as_mut_ptr()) }, Tag::stat, path);
+            Ok(unsafe { st.assume_init() })
+        }
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-        check!(unsafe { libc::fstat(fd.native(), st.as_mut_ptr()) }, Tag::fstat);
-        Ok(unsafe { st.assume_init() })
+        #[cfg(target_os = "linux")]
+        {
+            return super::linux_syscall::fstat(fd)
+                .map_err(|e| Error::from_code_int(e, Tag::fstat));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut st = core::mem::MaybeUninit::<Stat>::uninit();
+            check!(unsafe { libc::fstat(fd.native(), st.as_mut_ptr()) }, Tag::fstat);
+            Ok(unsafe { st.assume_init() })
+        }
     }
     pub fn lstat(path: &ZStr) -> Maybe<Stat> {
-        let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-        check_p!(unsafe { libc::lstat(path.as_ptr(), st.as_mut_ptr()) }, Tag::lstat, path);
-        Ok(unsafe { st.assume_init() })
+        #[cfg(target_os = "linux")]
+        {
+            return super::linux_syscall::lstat(path)
+                .map_err(|e| Error::from_code_int(e, Tag::lstat).with_path(path.as_bytes()));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut st = core::mem::MaybeUninit::<Stat>::uninit();
+            check_p!(unsafe { libc::lstat(path.as_ptr(), st.as_mut_ptr()) }, Tag::lstat, path);
+            Ok(unsafe { st.assume_init() })
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1775,11 +1872,19 @@ mod posix_impl {
         check_p!(unsafe { libc::fchownat(dir.native(), path.as_ptr(), uid, gid, flags) }, Tag::fchownat, path); Ok(())
     }
     pub fn fstatat(fd: Fd, path: &ZStr) -> Maybe<Stat> {
-        let mut st = core::mem::MaybeUninit::<Stat>::uninit();
         // sys.zig:848 — `bun.invalid_fd` means cwd-relative.
         let dirfd = if fd.is_valid() { fd.native() } else { libc::AT_FDCWD };
-        check_p!(unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) }, Tag::fstatat, path);
-        Ok(unsafe { st.assume_init() })
+        #[cfg(target_os = "linux")]
+        {
+            return super::linux_syscall::fstatat(dirfd, path, 0)
+                .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let mut st = core::mem::MaybeUninit::<Stat>::uninit();
+            check_p!(unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) }, Tag::fstatat, path);
+            Ok(unsafe { st.assume_init() })
+        }
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
         check_p!(unsafe { libc::access(path.as_ptr(), mode) }, Tag::access, path); Ok(())
@@ -2031,12 +2136,8 @@ mod posix_impl {
     /// Callers fall back to the waiter-thread on `ENOSYS`/`EPERM`/`EACCES`.
     #[cfg(target_os = "linux")]
     pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Maybe<Fd> {
-        // SAFETY: raw Linux syscall; SYS_pidfd_open available since 5.3.
-        let rc = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::c_int, flags as libc::c_int) };
-        if rc < 0 {
-            return Err(Error::from_code_int(last_errno(), Tag::pidfd_open));
-        }
-        Ok(Fd::from_native(rc as i32))
+        super::linux_syscall::pidfd_open(pid, flags)
+            .map_err(|e| Error::from_code_int(e, Tag::pidfd_open))
     }
 
     // ── B-2 round 9: macOS clonefile / copyfile ──
@@ -2982,7 +3083,14 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             }
             return Ok(rc as usize);
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: `PlatformIoVecConst` is layout-identical to `libc::iovec`.
+            return unsafe {
+                linux_syscall::pwritev(fd, vecs.as_ptr().cast::<libc::iovec>(), vecs.len(), offset)
+            }.map_err(|e| Error::from_code_int(e, Tag::pwritev));
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         loop {
             let rc = unsafe {
                 libc::pwritev(
@@ -3048,7 +3156,13 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
             }
             return Ok(rc as usize);
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: `PlatformIoVec` is `libc::iovec`.
+            return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
+                .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         loop {
             // SAFETY: see above.
             let rc = unsafe {
@@ -3091,7 +3205,13 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
             }
             return Ok(rc as usize);
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: `PlatformIoVec` is `libc::iovec`.
+            return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
+                .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         loop {
             // SAFETY: see above.
             let rc = unsafe {
@@ -3132,7 +3252,13 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
             }
             return Ok(rc as usize);
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: `PlatformIoVec` is `libc::iovec`.
+            return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
+                .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         loop {
             // SAFETY: see `readv`.
             let rc = unsafe {
@@ -3556,12 +3682,14 @@ pub mod linux {
     /// Raw `read(2)` returning kernel `usize` (Zig: `std.os.linux.read`).
     #[inline]
     pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-        unsafe { libc::read(fd, buf.cast(), count) }
+        // Raw syscall via rustix; libc-convention return preserved for callers
+        // that decode via `GetErrno for isize`.
+        unsafe { super::linux_syscall::read_raw(fd, buf, count) }
     }
     /// Raw `sendfile(out, in, *offset, count)` (Zig: `std.os.linux.sendfile`).
     #[inline]
     pub unsafe fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut i64, count: usize) -> isize {
-        unsafe { libc::sendfile(out_fd, in_fd, offset, count) }
+        unsafe { super::linux_syscall::sendfile(out_fd, in_fd, offset, count) }
     }
     /// Raw `ppoll(fds, nfds, *timeout, *sigmask)`.
     #[inline]
@@ -3573,7 +3701,7 @@ pub mod linux {
     }
     #[inline]
     pub unsafe fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: *mut epoll_event) -> c_int {
-        unsafe { libc::epoll_ctl(epfd, op, fd, event) }
+        unsafe { super::linux_syscall::epoll_ctl(epfd, op, fd, event) }
     }
 
     // ── `std.os.linux.*` syscall thunks ──
@@ -3603,12 +3731,7 @@ pub mod linux {
         in_: c_int, off_in: *mut i64, out: c_int, off_out: *mut i64, len: usize, flags: u32,
     ) -> isize {
         // SAFETY: raw `copy_file_range(2)`; caller owns fds, offset ptrs may be null.
-        unsafe {
-            libc::syscall(
-                libc::SYS_copy_file_range,
-                in_ as libc::c_long, off_in, out as libc::c_long, off_out, len, flags as libc::c_long,
-            ) as isize
-        }
+        unsafe { super::linux_syscall::copy_file_range(in_, off_in, out, off_out, len, flags) }
     }
 
     // `std.os.linux.sendfile` — use the existing `linux::sendfile` (libc
@@ -4929,12 +5052,18 @@ pub mod posix {
     #[cfg(unix)]
     #[inline]
     pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
-        unsafe { libc::read(fd, buf.cast(), count) }
+        #[cfg(target_os = "linux")]
+        { unsafe { super::linux_syscall::read_raw(fd, buf, count) } }
+        #[cfg(not(target_os = "linux"))]
+        { unsafe { libc::read(fd, buf.cast(), count) } }
     }
     #[cfg(unix)]
     #[inline]
     pub unsafe fn write(fd: c_int, buf: *const u8, count: usize) -> isize {
-        unsafe { libc::write(fd, buf.cast(), count) }
+        #[cfg(target_os = "linux")]
+        { unsafe { super::linux_syscall::write_raw(fd, buf, count) } }
+        #[cfg(not(target_os = "linux"))]
+        { unsafe { libc::write(fd, buf.cast(), count) } }
     }
 
     // ── poll ──

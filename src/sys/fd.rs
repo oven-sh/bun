@@ -107,7 +107,22 @@ impl FdExt for Fd {
         };
 
         let result: Option<sys::Error> = {
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                debug_assert!(self.native() >= 0);
+                // Raw `SYS_close` via rustix — no glibc wrapper (which is a
+                // pthread cancellation point). fd.zig:266: never retry on EINTR.
+                match sys::linux_syscall::close(self.native()) {
+                    Err(e) if e == libc::EBADF => Some(sys::Error {
+                        errno: sys::E::EBADF as _,
+                        syscall: sys::Tag::close,
+                        fd: self,
+                        ..Default::default()
+                    }),
+                    _ => None,
+                }
+            }
+            #[cfg(target_os = "freebsd")]
             {
                 debug_assert!(self.native() >= 0);
                 // SAFETY: native() returns a valid posix fd; close(2) is safe to call.

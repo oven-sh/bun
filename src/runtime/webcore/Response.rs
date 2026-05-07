@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
-    JsResult,
+    JsResult, StringJsc as _,
 };
 use bun_str::{OwnedString, String as BunString, ZigString, ZigStringSlice};
 use bun_core::Output;

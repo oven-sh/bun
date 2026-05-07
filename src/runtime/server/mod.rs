@@ -9,9 +9,11 @@
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
-/// Codegen `${ServerType}__create(ptr, global)` shim — one extern per
+/// Codegen `${ServerType}__create(global, ptr)` shim — one extern per
 /// `(SSL, DEBUG)` monomorphization. Hand-dispatched until `.classes.ts`
-/// Rust output lands.
+/// Rust output lands. Argument order matches the C++ definition emitted by
+/// `generate-classes.ts` (`Zig::GlobalObject*, void*`) and the canonical Zig
+/// extern in `ZigGeneratedClasses.zig`.
 pub(crate) fn server_js_create(
     ptr: *mut c_void,
     global: &jsc::JSGlobalObject,
@@ -19,19 +21,19 @@ pub(crate) fn server_js_create(
     debug: bool,
 ) -> jsc::JSValue {
     unsafe extern "C" {
-        fn HTTPServer__create(ptr: *mut c_void, global: *const jsc::JSGlobalObject) -> jsc::JSValue;
-        fn HTTPSServer__create(ptr: *mut c_void, global: *const jsc::JSGlobalObject) -> jsc::JSValue;
-        fn DebugHTTPServer__create(ptr: *mut c_void, global: *const jsc::JSGlobalObject) -> jsc::JSValue;
-        fn DebugHTTPSServer__create(ptr: *mut c_void, global: *const jsc::JSGlobalObject) -> jsc::JSValue;
+        fn HTTPServer__create(global: *const jsc::JSGlobalObject, ptr: *mut c_void) -> jsc::JSValue;
+        fn HTTPSServer__create(global: *const jsc::JSGlobalObject, ptr: *mut c_void) -> jsc::JSValue;
+        fn DebugHTTPServer__create(global: *const jsc::JSGlobalObject, ptr: *mut c_void) -> jsc::JSValue;
+        fn DebugHTTPSServer__create(global: *const jsc::JSGlobalObject, ptr: *mut c_void) -> jsc::JSValue;
     }
     // SAFETY: `ptr` is a fresh `NewServer<SSL,DEBUG>` heap allocation; the C++
     // wrapper takes ownership.
     unsafe {
         match (ssl, debug) {
-            (false, false) => HTTPServer__create(ptr, global),
-            (true, false) => HTTPSServer__create(ptr, global),
-            (false, true) => DebugHTTPServer__create(ptr, global),
-            (true, true) => DebugHTTPSServer__create(ptr, global),
+            (false, false) => HTTPServer__create(global, ptr),
+            (true, false) => HTTPSServer__create(global, ptr),
+            (false, true) => DebugHTTPServer__create(global, ptr),
+            (true, true) => DebugHTTPSServer__create(global, ptr),
         }
     }
 }

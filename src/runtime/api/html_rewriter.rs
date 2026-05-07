@@ -721,7 +721,14 @@ impl BufferOutputSink {
 
         // SAFETY: sink was just allocated via Box::into_raw above; refcount==1.
         unsafe { (*sink).response = result };
+        // PORT NOTE (Stacked Borrows): `sink_error` is written via raw pointer
+        // by the unhandled-rejection handler during `bufferer.run()` and via
+        // `tmp_sync_error` from `on_finished_buffering`. Derive ONE raw `*mut`
+        // via `addr_of_mut!` and route every read/write through it so all
+        // accesses share the same provenance — taking a fresh `&`/`&mut`
+        // borrow after storing the raw pointer would invalidate it.
         let mut sink_error: JSValue = JSValue::ZERO;
+        let sink_error_ptr: *mut JSValue = core::ptr::addr_of_mut!(sink_error);
         // SAFETY: original is a live *Response passed from begin_transform; its
         // JS wrapper is on the caller's stack.
         let input_size = unsafe { (*original).get_body_len() };
@@ -733,16 +740,13 @@ impl BufferOutputSink {
         // caller.
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(&mut sink_error as *mut JSValue);
-        // SAFETY: sink is a live heap allocation (refcount >= 1).
-        unsafe { (*sink).tmp_sync_error = Some(NonNull::from(&mut sink_error)) };
+        vm.unhandled_pending_rejection_to_capture = Some(sink_error_ptr);
+        // SAFETY: sink is a live heap allocation (refcount >= 1); sink_error_ptr
+        // is non-null (addr of stack local).
+        unsafe { (*sink).tmp_sync_error = Some(NonNull::new_unchecked(sink_error_ptr)) };
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
-        // PORT NOTE: Zig `defer sink_error.ensureStillAlive()` reads the *live*
-        // stack local at scope exit. Read it through a raw pointer so the
-        // closure observes the up-to-date value (it is written via raw pointer
-        // by the unhandled-rejection handler during `bufferer.run()`); the
-        // stack slot outlives the guard (guard drops before this fn returns).
-        let sink_error_ptr: *const JSValue = &sink_error;
+        // Zig `defer sink_error.ensureStillAlive()` — read the *live* slot at
+        // scope exit through `sink_error_ptr` (same provenance as the writers).
         scopeguard::defer! {
             // SAFETY: `sink_error_ptr` points at a stack local that outlives
             // this guard (sync stack frame; guard runs at scope exit before

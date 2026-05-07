@@ -523,7 +523,7 @@ impl Request {
     pub fn init2(
         url: BunString,
         headers: Option<HeadersRef>,
-        body: Box<BodyValue>,
+        body: NonNull<BodyHiveRef>,
         method: Method,
     ) -> Request {
         Request {
@@ -922,9 +922,10 @@ impl Request {
         let this_ref = unsafe { &mut *this };
         this_ref.js_ref.finalize();
         this_ref.finalize_without_deinit();
-        // TODO(port): `_ = this.#body.unref()` — with Arc<BodyValue> this is implicit drop,
-        // but we cannot drop a struct field in place; Phase B: make body Option<Arc<..>> or
-        // rely on Box::from_raw below to drop everything.
+        // SAFETY: `body` is a +1 ref handed out by `body::hive_alloc` /
+        // `HiveRef::ref_()`; release it. Slot returns to the pool when the
+        // count hits zero (drops the payload in place).
+        unsafe { (*this_ref.body.as_ptr()).unref() };
         if this_ref.weak_ptr_data.on_finalize() {
             // SAFETY: m_ctx was allocated via Box::into_raw in Request::new
             drop(unsafe { Box::from_raw(this) });
@@ -1133,8 +1134,7 @@ enum Fields {
 impl Request {
     fn check_body_stream_ref(&mut self, global_object: &JSGlobalObject) {
         if let Some(js_value) = self.js_ref.try_get() {
-            if let BodyValue::Locked(locked) = &mut *self.body {
-                // TODO(port): Arc<BodyValue> mutation — see field note
+            if let BodyValue::Locked(locked) = self.body_value_mut() {
                 if let Some(stream) = locked.readable.get(global_object) {
                     // Store the stream in js.gc.stream instead of holding a strong reference
                     // to avoid circular references. The Request object owns the stream,
@@ -1828,7 +1828,7 @@ impl Request {
         request_context: AnyRequestContext,
         https: bool,
         signal: Option<AbortSignalRef>,
-        body: Box<BodyValue>,
+        body: NonNull<BodyHiveRef>,
     ) -> Request {
         Request {
             url: BunString::empty(),

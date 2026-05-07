@@ -2920,10 +2920,19 @@ impl PackageManager {
     #[inline]
     pub fn enqueue_extract_npm_package(
         &mut self,
-        tarball: ExtractTarball,
+        tarball: &ExtractTarball,
         network_task: *mut NetworkTask,
     ) -> *mut ThreadPool::Task {
         enqueue_extract_npm_package(self, tarball, network_task)
+    }
+
+    #[inline]
+    pub fn create_extract_task_for_streaming(
+        &mut self,
+        tarball: &ExtractTarball,
+        network_task: *mut NetworkTask,
+    ) -> *mut Task::Task<'static> {
+        create_extract_task_for_streaming(self, tarball, network_task)
     }
 
     #[inline]

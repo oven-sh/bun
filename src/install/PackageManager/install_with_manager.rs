@@ -11,24 +11,37 @@ use bun_glob as glob;
 
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask,
-    Resolution, invalid_package_id, RunTasksCallbacks,
+    Resolution, invalid_package_id,
 };
 use crate::dependency::{Tag as DependencyVersionTag, DependencyExt as _};
 use crate::resolution::Tag as ResolutionTag;
 use crate::Subcommand;
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::lockfile::{self, Lockfile, Package};
+// Bring the typed `items_<field>()` column accessors into scope for
+// `MultiArrayList<Package>` / `Slice<Package>` (Zig: `packages.items(.field)`).
+use crate::lockfile_real::package::{PackageListExt as _, PackageSliceExt as _};
 use crate::lockfile_real::bun_lock as TextLockfile;
 use crate::lockfile_real::package::Diff;
 use crate::lockfile_real::{Printer, printer as LockfilePrinter};
 use crate::package_install::Summary as PackageInstallSummary;
 use crate::PackageManager;
 use crate::package_manager::{Options, WorkspaceFilter};
+use crate::package_manager::Options::Enable;
 use super::Command;
 use bun_install_types::NodeLinker::NodeLinker;
 use crate::config_version::ConfigVersion;
 use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
+
+// Free-function "methods" on `*PackageManager` that the Zig source calls via
+// UFCS (`manager.foo(...)`) but which the Rust port hosts in sibling modules
+// to avoid one giant `impl PackageManager` block. Import them under their Zig
+// names so the body reads the same as the spec.
+use crate::package_manager_real::{
+    enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
+    run_tasks, save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+};
 
 use super::security_scanner;
 
@@ -56,30 +69,43 @@ pub fn install_with_manager(
         }
     }
 
-    let mut load_result: lockfile::LoadResult = if manager.options.do_.load_lockfile {
-        { let log = manager.log.unwrap().as_ptr(); let mgr: *mut PackageManager = manager; manager.lockfile.load_from_cwd(mgr, log, true) }
+    // PORT NOTE: reshaped for borrowck — Zig passes `manager`, `manager.lockfile`,
+    // and `manager.log` to `loadFromCwd` simultaneously. Route through a single
+    // raw provenance root so the three reborrows share a tag.
+    let load_result: lockfile::LoadResult = if manager.options.do_.load_lockfile() {
+        let mgr: *mut PackageManager = manager;
+        // SAFETY: `mgr` is the sole provenance root; `lockfile`, `*mgr`, and
+        // `*log` are disjoint storage. `load_from_cwd` only reads `manager`
+        // for option flags and writes through `lockfile`/`log`.
+        unsafe {
+            let log = (*mgr).log;
+            (*mgr).lockfile.load_from_cwd::<true>(Some(&mut *mgr), &mut *log)
+        }
     } else {
         lockfile::LoadResult::NotFound
     };
 
-    manager.update_lockfile_if_needed(&load_result)?;
+    update_lockfile_if_needed(manager, &load_result)?;
 
     let (config_version, changed_config_version) = load_result.choose_config_version();
-    manager.options.config_version = config_version;
+    manager.options.config_version = Some(config_version);
 
     let mut root = lockfile::Package::default();
     let mut needs_new_lockfile = !matches!(load_result, lockfile::LoadResult::Ok { .. })
         || (load_result.ok().lockfile.buffers.dependencies.is_empty()
             && !manager.update_requests.is_empty());
 
-    manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile
-        || changed_config_version
-        || (matches!(load_result, lockfile::LoadResult::Ok { .. })
-            // if migrated always save a new lockfile
-            && (load_result.ok().migrated != lockfile::Migrated::None
-                // if loaded from binary and save-text-lockfile is passed
-                || (load_result.ok().format == lockfile::Format::Binary
-                    && manager.options.save_text_lockfile.unwrap_or(false))));
+    manager.options.enable.set(
+        Enable::FORCE_SAVE_LOCKFILE,
+        manager.options.enable.force_save_lockfile()
+            || changed_config_version
+            || (matches!(load_result, lockfile::LoadResult::Ok { .. })
+                // if migrated always save a new lockfile
+                && (load_result.ok().migrated != lockfile::Migrated::None
+                    // if loaded from binary and save-text-lockfile is passed
+                    || (load_result.ok().format == lockfile::Format::Binary
+                        && manager.options.save_text_lockfile.unwrap_or(false)))),
+    );
 
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add

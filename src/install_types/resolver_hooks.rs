@@ -1332,7 +1332,10 @@ pub trait AutoInstaller {
         &self,
         package_id: PackageID,
     ) -> core::result::Result<DependencyID, bun_core::Error>;
-    fn lockfile_str(&self, s: &SemverString) -> &[u8];
+    /// Project a `SemverString` into the lockfile's `string_bytes` buffer.
+    /// The returned slice borrows from either `self` (heap buffer) or `s`
+    /// (inline small-string), so both inputs share the bound `'a`.
+    fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8];
 
     // ── Lockfile writes ───────────────────────────────────────────────────
     /// Port of `lockfile.appendPackage(Package.fromPackageJSON(...))` —

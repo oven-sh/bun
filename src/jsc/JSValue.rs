@@ -411,6 +411,17 @@ impl JSValue {
         let v = unsafe { JSC__JSValue__createEmptyArray(global, len) };
         if v.is_empty() { Err(JsError::Thrown) } else { Ok(v) }
     }
+    /// `JSValue.createBufferFromLength` (JSValue.zig:557) — allocates a Node.js
+    /// `Buffer` (the `JSBufferSubclassStructure` Uint8Array subclass) of `len`
+    /// zeroed bytes via `JSBuffer__bufferFromLength`. May throw OOM.
+    pub fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
+        crate::mark_binding!();
+        // SAFETY: `global` is live for the call; `len` is widened to the C++
+        // `int64_t` parameter.
+        host_fn::from_js_host_call(global, || unsafe {
+            JSBuffer__bufferFromLength(global, len as i64)
+        })
+    }
     pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JSValue {
         // JSValue.zig:createBuffer — wraps `JSBuffer__bufferFromPointerAndLengthAndDeinit`
         // with `MarkedArrayBuffer_deallocator` (or null for empty slices).
@@ -1457,6 +1468,7 @@ unsafe extern "C" {
         ctx: *mut c_void,
         deallocator: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
     ) -> JSValue;
+    fn JSBuffer__bufferFromLength(global: *const JSGlobalObject, len: i64) -> JSValue;
     fn JSC__JSValue__dateInstanceFromNullTerminatedString(global: *const JSGlobalObject, s: *const c_char) -> JSValue;
     fn JSC__JSValue__dateInstanceFromNumber(global: *const JSGlobalObject, n: f64) -> JSValue;
     fn JSC__JSValue__fromInt64NoTruncate(global: *const JSGlobalObject, i: i64) -> JSValue;

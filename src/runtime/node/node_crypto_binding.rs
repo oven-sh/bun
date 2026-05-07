@@ -1251,7 +1251,7 @@ extern "C" fn for_each_hash(
     // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
     // from BoringSSL's static tables.
     let from_bytes = unsafe { core::ffi::CStr::from_ptr(maybe_from) }.to_bytes();
-    hashes.put(from_bytes, ());
+    bun_core::handle_oom(hashes.put(from_bytes, ()));
 }
 
 #[bun_jsc::host_fn]

@@ -14,7 +14,7 @@ use bun_wyhash::Wyhash11;
 use crate::npm;
 use crate::{
     DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageID, PackageManager, PatchTask,
-    Repository, Resolution,
+    Repository, RepositoryExt as _, Resolution,
 };
 
 use bun_dotenv as dot_env;

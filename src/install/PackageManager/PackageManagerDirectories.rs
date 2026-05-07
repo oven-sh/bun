@@ -986,10 +986,13 @@ pub fn save_lockfile(
 
 pub fn update_lockfile_if_needed(
     manager: &mut PackageManager,
-    load_result: LoadResult,
+    // PORT NOTE: Zig passed `Lockfile.LoadResult` by value (large structs are
+    // passed by const-ref under Zig's ABI). The Rust caller continues using
+    // `load_result` after this call, so take it by shared reference.
+    load_result: &LoadResult,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
-    if let LoadResult::Ok(ok) = &load_result {
+    if let LoadResult::Ok(ok) = load_result {
         if ok.serializer_result.packages_need_update {
             let mut slice = manager.lockfile.packages.slice();
             for meta in slice.items_meta_mut() {

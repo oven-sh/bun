@@ -5,12 +5,15 @@ use std::time::Instant;
 
 use bun_aio::KeepAlive;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
-use bun_jsc::node::PathLike;
-use bun_jsc::{
-    self as jsc, AnyTask, CallFrame, ConcurrentTask, EventLoop, JSGlobalObject, JSValue, JsRef,
-    JsResult, Task, VirtualMachine, WorkPool, WorkPoolTask,
-};
+use bun_event_loop::AnyTask::AnyTask;
+use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::call_frame::ArgumentsSlice;
+use bun_jsc::event_loop::EventLoop;
+use bun_jsc::node::PathLike;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, WorkPool, WorkPoolTask,
+};
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{RefPtr, ThreadSafeRefCount, ThreadSafeRefCounted};
 use bun_resolver::fs;

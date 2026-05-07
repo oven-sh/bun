@@ -600,22 +600,6 @@ impl Encoding {
     }
 }
 
-/// Local FFI shim for `VM::deprecated_report_extra_memory` — the inherent
-/// method lives in the cfg-gated `VM.rs`, not on the opaque `crate::jsc::VM`
-/// returned by `JSGlobalObject::vm()`.
-#[inline]
-fn vm_report_extra_memory(global: &JSGlobalObject, size: usize) {
-    unsafe extern "C" {
-        fn JSC__VM__reportExtraMemory(vm: *mut jsc::VM, size: usize);
-    }
-    // SAFETY: `global.vm()` yields a live opaque JSC VM handle (interior-mutable).
-    unsafe { JSC__VM__reportExtraMemory(global.vm().as_mut_ptr(), size) };
-}
-
-// Gated: every body calls JSC methods (`.is_falsey()`, `.is_string()`,
-// `bun_str::String::from_js`, `ZigString::to_js`, `ArrayBuffer::create_buffer`).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
-
 impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
         // TODO(port): ComptimeStringMap::fromJSCaseInsensitive — emulated via

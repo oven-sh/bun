@@ -169,18 +169,14 @@ impl SpawnSyncEventLoop {
         });
 
         // Set up the loop's internal data to point to this isolated event loop
-        // SAFETY: uws_loop was just created above and is exclusively owned here; `this` was fully
-        // written immediately above so `assume_init_mut` is sound.
-        unsafe {
-            let this = this.assume_init_mut();
-            // PORT NOTE: sys-level API is `set_parent_raw(tag, ptr)`; the typed
-            // `set_parent_event_loop` lives in a higher tier. Tag 1 = JS, tag 2 = mini.
-            let (tag, ptr) = EventLoopHandle::init(this.event_loop).into_tag_ptr();
-            (*this.uws_loop.as_ptr())
-                .internal_loop_data
-                .set_parent_raw(tag, ptr);
-            (*this.uws_loop.as_ptr()).internal_loop_data.jsc_vm = core::ptr::null();
-        }
+        // SAFETY: `this` was fully written immediately above so `assume_init_mut` is sound.
+        let this = unsafe { this.assume_init_mut() };
+        // PORT NOTE: sys-level API is `set_parent_raw(tag, ptr)`; the typed
+        // `set_parent_event_loop` lives in a higher tier. Tag 1 = JS, tag 2 = mini.
+        let (tag, ptr) = EventLoopHandle::init(this.event_loop).into_tag_ptr();
+        let loop_data = &mut this.uws_loop_mut().internal_loop_data;
+        loop_data.set_parent_raw(tag, ptr);
+        loop_data.jsc_vm = core::ptr::null();
     }
 
     /// Erased `*mut bun_jsc::event_loop::EventLoop` (heap-owned via
@@ -188,9 +184,55 @@ impl SpawnSyncEventLoop {
     /// `bun_jsc` so the concrete type is opaque here; callers in higher tiers
     /// cast back. See `js_bun_spawn_bindings::spawn_maybe_sync` (Zig:
     /// `&jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop`).
+    ///
+    /// Intentionally raw-ptr (no `&`-returning variant): the pointee type is
+    /// erased at this layer, and the `jsc::EventLoop` is mutated across the
+    /// `extern "Rust"` shims while this struct is live.
     #[inline]
     pub fn event_loop_ptr(&self) -> *mut () {
         self.event_loop
+    }
+
+    /// Erased `*mut jsc::VirtualMachine` backref (set in `init`/`prepare`).
+    ///
+    /// Intentionally raw-ptr (no `&`-returning variant): the pointee type is
+    /// erased at this layer, and the VM is mutated re-entrantly during
+    /// `tick_with_timeout` (subprocess callbacks → JS) — a `&VirtualMachine`
+    /// here would alias under Stacked Borrows.
+    #[inline]
+    pub fn vm_ptr(&self) -> *mut () {
+        self.vm
+    }
+
+    /// Shared borrow of the isolated `uws::Loop`.
+    ///
+    /// # Safety (invariant)
+    /// `uws_loop` is created in `init` via `uws::Loop::create` (asserts
+    /// non-null) and freed only in `Drop`, so it is valid for all of `self`'s
+    /// lifetime. The loop is only mutated through `&mut self` paths
+    /// (`uws_loop_mut`), so a shared borrow tied to `&self` cannot overlap a
+    /// unique borrow.
+    #[inline]
+    pub fn uws_loop(&self) -> &uws::Loop {
+        // SAFETY: see doc invariant above — non-null, owned for `self`'s lifetime,
+        // no `&mut` alias while `&self` is held.
+        unsafe { self.uws_loop.as_ref() }
+    }
+
+    /// Unique borrow of the isolated `uws::Loop`.
+    ///
+    /// Re-entrancy note: on Windows, `uws::Loop::tick_with_timeout` (called via
+    /// this accessor) drives `uv_run`, which fires `on_uv_timer` re-entrantly.
+    /// That callback is carefully written to touch only `self.did_timeout`
+    /// (a `Cell`) and to obtain the uv loop from the timer handle itself — it
+    /// never reads `self.uws_loop` — so the `&mut uws::Loop` produced here is
+    /// not aliased. See the ALIASING comment on `on_uv_timer`.
+    #[inline]
+    pub fn uws_loop_mut(&mut self) -> &mut uws::Loop {
+        // SAFETY: `uws_loop` is non-null and exclusively owned by `self` for its
+        // entire lifetime (created in `init`, freed in `Drop`). `&mut self`
+        // guarantees no other safe borrow of the loop is live.
+        unsafe { self.uws_loop.as_mut() }
     }
 }
 
@@ -243,9 +285,9 @@ impl SpawnSyncEventLoop {
         #[cfg(unix)]
         let new_handle: VmEventLoopHandle = Some(self.uws_loop);
         #[cfg(windows)]
-        // SAFETY: uws_loop is valid; uv_loop is a stable interior pointer.
+        // SAFETY: `uv_loop` is set by C `us_create_loop` and non-null for the loop's lifetime.
         let new_handle: VmEventLoopHandle =
-            Some(unsafe { NonNull::new_unchecked((*self.uws_loop.as_ptr()).uv_loop) });
+            Some(unsafe { NonNull::new_unchecked(self.uws_loop().uv_loop) });
         // SAFETY: `vm` is the live per-thread VM.
         unsafe { __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle) };
     }
@@ -317,8 +359,8 @@ impl SpawnSyncEventLoop {
                 // SAFETY: all-zero is a valid `libuv::Timer` (C POD, matches `std.mem.zeroes`).
                 let uv_timer: Box<libuv::Timer> = Box::new(unsafe { core::mem::zeroed() });
                 let uv_timer = Box::into_raw(uv_timer);
-                // SAFETY: uv_timer just allocated; uws_loop.uv_loop is valid.
-                unsafe { (*uv_timer).init((*self.uws_loop.as_ptr()).uv_loop) };
+                // SAFETY: uv_timer just allocated; `uv_loop` is set by C `us_create_loop`.
+                unsafe { (*uv_timer).init(self.uws_loop().uv_loop) };
                 // SAFETY: Box::into_raw never returns null.
                 break 'brk unsafe { NonNull::new_unchecked(uv_timer) };
             }
@@ -385,8 +427,7 @@ impl SpawnSyncEventLoop {
             // SAFETY: `t` is a valid initialized libuv timer handle owned by `self`.
             unsafe { (*t.as_ptr()).data = (self as *mut Self).cast() };
         }
-        // SAFETY: uws_loop is valid and exclusively owned.
-        unsafe { (*self.uws_loop.as_ptr()).tick_with_timeout(uws_ts.as_ref()) };
+        self.uws_loop_mut().tick_with_timeout(uws_ts.as_ref());
 
         if let Some(ts) = timeout {
             #[cfg(windows)]
@@ -421,8 +462,7 @@ impl SpawnSyncEventLoop {
 
     /// Check if the loop has any active handles
     pub fn is_active(&self) -> bool {
-        // SAFETY: uws_loop is valid for the lifetime of self.
-        unsafe { (*self.uws_loop.as_ptr()).is_active() }
+        self.uws_loop().is_active()
     }
 }
 

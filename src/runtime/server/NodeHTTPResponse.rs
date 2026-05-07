@@ -23,6 +23,12 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 /// Intrusive ref-counted; `ref_count` is managed by `ref_` / `deref` below
 /// (FFI rule — `*mut NodeHTTPResponse` is the m_ctx payload of a
 /// `.classes.ts` wrapper). `deinit` runs when count hits zero.
+///
+/// `#[JsClass(no_constructor)]` wires the import-side `${T}__fromJS` /
+/// `__fromJSDirect` / `__create` externs into a `JsClass` impl plus an
+/// inherent `to_js_ptr(*mut Self, &JSGlobalObject)`; `noConstructor: true`
+/// in `server.classes.ts` means no `${T}__getConstructor` is exported.
+#[bun_jsc::JsClass(no_constructor)]
 pub struct NodeHTTPResponse {
     pub ref_count: Cell<u32>,
 
@@ -235,28 +241,6 @@ impl HasAutoFlusher for NodeHTTPResponse {
         // SAFETY: registered as `&mut Self` cast to `*mut c_void`; drained on JS thread.
         unsafe { (*this).on_auto_flush() }
     }
-}
-
-// `JsClass` glue: route through the codegen-emitted inherent helpers
-// (`crate::generated_classes` re-exports this very struct and adds
-// `from_js` / `from_js_direct` / `to_js(*mut Self, &JSGlobalObject)` /
-// `on{Data,Aborted,Writable}_{get,set}_cached` as inherent associated fns —
-// see `generate-classes.ts::generateRust()`). No local `extern "C"`
-// re-declarations: the codegen owns the FFI surface.
-impl jsc::JsClass for NodeHTTPResponse {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        Self::from_js(value).map(|p| p.as_ptr())
-    }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        Self::from_js_direct(value).map(|p| p.as_ptr())
-    }
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        // Hot path goes through `Self::to_js(ptr, global)` directly (already
-        // heap-allocated in `create()`); this by-value path boxes once then
-        // hands ownership to the C++ wrapper (freed via `finalize`).
-        Self::to_js(Box::into_raw(Box::new(self)), global)
-    }
-    // `noConstructor: true` — no `NodeHTTPResponse__getConstructor` export; trait default applies.
 }
 
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.

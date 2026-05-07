@@ -397,15 +397,80 @@ macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream,
 
 /// Per-monomorphization C-ABI shim table for the four promise-reaction host
 /// fns. Zig's `toJSHostFn(onResolve)` mints a fresh `extern fn` per comptime
-/// instantiation; Rust generics can't own `extern "C"` items, so the concrete
-/// shims live in `request_ctx_exports!` (bottom of file) and each
-/// instantiation routes to its own via this trait. `then_with_value` then
+/// instantiation; Rust monomorphizes a generic `unsafe extern "C" fn` the
+/// same way, so the four shims below are written once and the blanket impl
+/// instantiates them per `(ThisServer, SSL, DBG, H3)`. `then_with_value` then
 /// passes `Self::ON_RESOLVE` etc. — the actual C-ABI pointers JSC will call.
+///
+/// PORT NOTE (layering): expressed as a trait (not inherent consts) so
+/// downstream `where`-clauses that already name it keep type-checking; the
+/// blanket impl makes the bound trivially satisfied for every instantiation,
+/// so callers no longer need to restate it.
 pub trait RequestContextHostFns {
     const ON_RESOLVE: bun_jsc::JSHostFn;
     const ON_REJECT: bun_jsc::JSHostFn;
     const ON_RESOLVE_STREAM: bun_jsc::JSHostFn;
     const ON_REJECT_STREAM: bun_jsc::JSHostFn;
+}
+
+#[bun_jsc::host_call]
+fn host_on_resolve<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
+    g: *mut JSGlobalObject,
+    f: *mut CallFrame,
+) -> JSValue
+where
+    ThisServer: ServerLike + 'static,
+{
+    // SAFETY: JSC passes live global/callframe to promise reaction host fns.
+    let (g, f) = unsafe { (&*g, &*f) };
+    bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_resolve(g, f))
+}
+#[bun_jsc::host_call]
+fn host_on_reject<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
+    g: *mut JSGlobalObject,
+    f: *mut CallFrame,
+) -> JSValue
+where
+    ThisServer: ServerLike + 'static,
+{
+    // SAFETY: JSC passes live global/callframe to promise reaction host fns.
+    let (g, f) = unsafe { (&*g, &*f) };
+    bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_reject(g, f))
+}
+#[bun_jsc::host_call]
+fn host_on_resolve_stream<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
+    g: *mut JSGlobalObject,
+    f: *mut CallFrame,
+) -> JSValue
+where
+    ThisServer: ServerLike + 'static,
+{
+    // SAFETY: JSC passes live global/callframe to promise reaction host fns.
+    let (g, f) = unsafe { (&*g, &*f) };
+    bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_resolve_stream(g, f))
+}
+#[bun_jsc::host_call]
+fn host_on_reject_stream<ThisServer, const SSL: bool, const DBG: bool, const H3: bool>(
+    g: *mut JSGlobalObject,
+    f: *mut CallFrame,
+) -> JSValue
+where
+    ThisServer: ServerLike + 'static,
+{
+    // SAFETY: JSC passes live global/callframe to promise reaction host fns.
+    let (g, f) = unsafe { (&*g, &*f) };
+    bun_jsc::to_js_host_fn_result(g, RequestContext::<ThisServer, SSL, DBG, H3>::on_reject_stream(g, f))
+}
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestContextHostFns
+    for RequestContext<ThisServer, SSL, DBG, H3>
+where
+    ThisServer: ServerLike + 'static,
+{
+    const ON_RESOLVE: bun_jsc::JSHostFn = host_on_resolve::<ThisServer, SSL, DBG, H3>;
+    const ON_REJECT: bun_jsc::JSHostFn = host_on_reject::<ThisServer, SSL, DBG, H3>;
+    const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = host_on_resolve_stream::<ThisServer, SSL, DBG, H3>;
+    const ON_REJECT_STREAM: bun_jsc::JSHostFn = host_on_reject_stream::<ThisServer, SSL, DBG, H3>;
 }
 
 impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool>
@@ -3627,46 +3692,32 @@ macro_rules! request_ctx_exports {
         ($srv:ty, $ssl:literal, $dbg:literal, $h3:literal) =>
         $on_resolve:ident, $on_reject:ident, $on_resolve_stream:ident, $on_reject_stream:ident
     );* $(;)?) => {$(
+        // Named C-ABI symbols for the C++ side. The bodies forward to the
+        // generic `host_on_*` shims monomorphized at this tuple — `#[no_mangle]`
+        // pins the link name (Zig: `@export(&jsc.toJSHostFn(onResolve), …)`).
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            let (g, f) = unsafe { (&*g, &*f) };
-            bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve(g, f))
+            unsafe { host_on_resolve::<$srv, $ssl, $dbg, $h3>(g, f) }
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_reject(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            let (g, f) = unsafe { (&*g, &*f) };
-            bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject(g, f))
+            unsafe { host_on_reject::<$srv, $ssl, $dbg, $h3>(g, f) }
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_resolve_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            let (g, f) = unsafe { (&*g, &*f) };
-            bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve_stream(g, f))
+            unsafe { host_on_resolve_stream::<$srv, $ssl, $dbg, $h3>(g, f) }
         }
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_reject_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
             // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-            let (g, f) = unsafe { (&*g, &*f) };
-            bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject_stream(g, f))
-        }
-        // PORT NOTE (layering): blanket-impl over `ThisServer` so that ANY
-        // server type with matching (SSL, DBG, H3) routes to the same C-ABI
-        // host-fn exports. The export name depends only on the transport
-        // tuple (Zig: `export_prefix` is built from ssl/debug/h3), and the
-        // shim body re-derives `ctx` from the callframe arg, so `$srv` only
-        // affected which monomorphization the body called into — the bodies
-        // are field-layout-identical across `ThisServer`.
-        impl<ThisServer> RequestContextHostFns for RequestContext<ThisServer, $ssl, $dbg, $h3> {
-            const ON_RESOLVE: bun_jsc::JSHostFn = $on_resolve;
-            const ON_REJECT: bun_jsc::JSHostFn = $on_reject;
-            const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = $on_resolve_stream;
-            const ON_REJECT_STREAM: bun_jsc::JSHostFn = $on_reject_stream;
+            unsafe { host_on_reject_stream::<$srv, $ssl, $dbg, $h3>(g, f) }
         }
     )*};
 }
@@ -3701,36 +3752,6 @@ request_ctx_exports! {
         Bun__HTTPRequestContextDebugH3__onReject,
         Bun__HTTPRequestContextDebugH3__onResolveStream,
         Bun__HTTPRequestContextDebugH3__onRejectStream;
-}
-
-// PORT NOTE (const-generic completeness): H3 over plain TCP is never
-// instantiated (`NewServer::HAS_H3 == SSL_ENABLED` per server.zig:1428), but
-// the generic `impl<const SSL, const DEBUG> NewServer` block must spell
-// `RequestContext<Self, SSL, DEBUG, true>: RequestContextHostFns` as a where
-// bound so the H3 dispatch arms type-check. Rust cannot see that
-// `(false,_,true)` is dead, so provide impls whose consts are never read —
-// matching the `if (!HAS_H3) unreachable;` guards already at every H3 entry.
-unsafe extern "C" fn h3_tcp_dead_host(
-    _: *mut bun_jsc::JSGlobalObject,
-    _: *mut bun_jsc::CallFrame,
-) -> bun_jsc::JSValue {
-    // Mirrors server.zig `if (comptime !@This().has_h3) unreachable;`.
-    if cfg!(debug_assertions) {
-        panic!("H3 over plain TCP is unreachable (NewServer::HAS_H3 == SSL_ENABLED)");
-    }
-    bun_jsc::JSValue::UNDEFINED
-}
-impl<ThisServer> RequestContextHostFns for RequestContext<ThisServer, false, false, true> {
-    const ON_RESOLVE: bun_jsc::JSHostFn = h3_tcp_dead_host;
-    const ON_REJECT: bun_jsc::JSHostFn = h3_tcp_dead_host;
-    const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = h3_tcp_dead_host;
-    const ON_REJECT_STREAM: bun_jsc::JSHostFn = h3_tcp_dead_host;
-}
-impl<ThisServer> RequestContextHostFns for RequestContext<ThisServer, false, true, true> {
-    const ON_RESOLVE: bun_jsc::JSHostFn = h3_tcp_dead_host;
-    const ON_REJECT: bun_jsc::JSHostFn = h3_tcp_dead_host;
-    const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = h3_tcp_dead_host;
-    const ON_REJECT_STREAM: bun_jsc::JSHostFn = h3_tcp_dead_host;
 }
 
 pub struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {

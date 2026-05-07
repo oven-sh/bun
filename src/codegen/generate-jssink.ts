@@ -1075,7 +1075,7 @@ pub use ${rustPath} as ${name};
 pub unsafe extern "C" fn ${sym}(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
     let global = unsafe { &*global };
     let callframe = unsafe { &*callframe };
-    bun_jsc::host_fn::host_fn_result(global, || ${name}::${fn}(global, callframe))
+    bun_jsc::host_fn::host_fn_result(global, || crate::webcore::sink::JSSink::<${name}>::js_${fn}(global, callframe))
 }
 
 `;
@@ -1086,7 +1086,7 @@ pub unsafe extern "C" fn ${sym}(global: *mut JSGlobalObject, callframe: *mut Cal
     templ += `#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${name}__getInternalFd(this: *mut c_void) -> JSValue {
     if this.is_null() { return JSValue::NULL; }
-    unsafe { ${name}::get_internal_fd(&mut *this.cast::<${name}>()) }
+    unsafe { crate::webcore::sink::JSSink::<${name}>::js_get_internal_fd(&mut *this.cast::<${name}>()) }
 }
 
 `;
@@ -1096,7 +1096,7 @@ pub unsafe extern "C" fn ${name}__getInternalFd(this: *mut c_void) -> JSValue {
     templ += `#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${name}__memoryCost(this: *mut c_void) -> usize {
     if this.is_null() { return 0; }
-    unsafe { ${name}::memory_cost(&*this.cast::<${name}>()) }
+    unsafe { crate::webcore::sink::JSSink::<${name}>::js_memory_cost(&*this.cast::<${name}>()) }
 }
 
 `;

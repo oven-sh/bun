@@ -1112,6 +1112,73 @@ unsafe extern "C" {
     fn FileSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
 }
 
+// `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
+// `JSSink::<Self>::js_*`) into the inherent streaming methods. Mirrors
+// `Sink.JSSink(@This(), "FileSink")`.
+impl crate::webcore::sink::JsSinkType for FileSink {
+    const NAME: &'static str = "FileSink";
+    const HAS_CONSTRUCT: bool = true;
+    const HAS_SIGNAL: bool = true;
+    const HAS_DONE: bool = true;
+    const HAS_FLUSH_FROM_JS: bool = true;
+    const HAS_PROTECT_JS_WRAPPER: bool = true;
+    const HAS_UPDATE_REF: bool = true;
+    const HAS_GET_FD: bool = true;
+    const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::FileSink);
+
+    fn memory_cost(&self) -> usize {
+        Self::memory_cost(self)
+    }
+    fn finalize(&mut self) {
+        Self::finalize(self)
+    }
+    fn construct(this: &mut core::mem::MaybeUninit<Self>) {
+        this.write(Self::construct());
+    }
+    fn write_bytes(&mut self, data: streams::Result) -> streams::result::Writable {
+        Self::write(self, data)
+    }
+    fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
+        Self::write_utf16(self, data)
+    }
+    fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
+        Self::write_latin1(self, data)
+    }
+    fn end(&mut self, err: Option<sys::Error>) -> sys::Result<()> {
+        Self::end(self, err)
+    }
+    fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue> {
+        Self::end_from_js(self, global)
+    }
+    fn flush(&mut self) -> sys::Result<()> {
+        Self::flush(self)
+    }
+    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> sys::Result<JSValue> {
+        Self::flush_from_js(self, global, wait)
+    }
+    fn start(&mut self, config: streams::Start) -> sys::Result<()> {
+        Self::start(self, config)
+    }
+    fn signal(&mut self) -> Option<&mut streams::Signal> {
+        Some(&mut self.signal)
+    }
+    fn done(&self) -> bool {
+        self.done
+    }
+    fn pending_state_is_pending(&self) -> bool {
+        self.pending.state == streams::PendingState::Pending
+    }
+    fn protect_js_wrapper(&mut self, global: &JSGlobalObject, this_value: JSValue) {
+        Self::protect_js_wrapper(self, global, this_value)
+    }
+    fn update_ref(&mut self, value: bool) {
+        Self::update_ref(self, value)
+    }
+    fn get_fd(&self) -> i32 {
+        Self::get_fd(self)
+    }
+}
+
 impl crate::webcore::sink::JsSinkAbi for FileSink {
     unsafe fn from_js_extern(value: JSValue) -> usize {
         unsafe { FileSink__fromJS(value) }

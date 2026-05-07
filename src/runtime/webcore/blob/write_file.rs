@@ -8,6 +8,7 @@ use bun_jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError, SysErrorJsc,
 };
 use bun_jsc::node_path::PathOrFileDescriptor;
+use bun_jsc::ZigStringJsc as _;
 use bun_str::ZigString;
 use bun_sys::{self as sys, Fd};
 use bun_threading::{WorkPool, WorkPoolTask};
@@ -134,10 +135,14 @@ impl FileCloser for WriteFile {
             let this = unsafe { &mut *(ctx as *mut WriteFile) };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
+        // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
+        // before mutably borrowing `io_poll` so the two borrows do not overlap.
+        let ctx = this as *mut WriteFile as *mut ();
+        let fd = this.opened_fd;
         io::Action::Close(io::CloseAction {
-            fd: this.opened_fd,
+            fd,
             poll: &mut this.io_poll,
-            ctx: this as *mut WriteFile as *mut (),
+            ctx,
             tag: <Self as FileCloser>::IO_TAG,
             on_done,
         })
@@ -180,7 +185,7 @@ impl WriteFile {
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { &mut *(this as *mut WriteFile) };
         this.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-        this.system_error = Some(err.to_system_error());
+        this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
         WorkPool::schedule(&mut this.task);
     }
@@ -301,7 +306,7 @@ impl WriteFile {
                         return false;
                     } else {
                         self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-                        self.system_error = Some(err.to_system_error());
+                        self.system_error = Some(err.to_system_error().into());
                         return false;
                     }
                 }

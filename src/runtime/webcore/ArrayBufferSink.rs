@@ -261,6 +261,67 @@ impl ArrayBufferSink {
     }
 }
 
+// `JsSinkType` impl: routes the codegen `ArrayBufferSink__*` thunks (via
+// `JSSink::<Self>::js_*`) into the inherent streaming methods above. Mirrors
+// `Sink.JSSink(@This(), "ArrayBufferSink")`.
+impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
+    const NAME: &'static str = "ArrayBufferSink";
+    const HAS_CONSTRUCT: bool = true;
+    const HAS_SIGNAL: bool = true;
+    const HAS_DONE: bool = true;
+    const HAS_FLUSH_FROM_JS: bool = true;
+    const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::ArrayBufferSink);
+
+    fn memory_cost(&self) -> usize {
+        Self::memory_cost(self)
+    }
+    fn finalize(&mut self) {
+        // Zig: ArrayBufferSink.finalize destroys the heap allocation; the
+        // `JSSink::finalize` C export owns that path. The trait impl here is
+        // the *inner* finalize.
+        Self::finalize(self as *mut Self);
+    }
+    fn construct(this: &mut core::mem::MaybeUninit<Self>) {
+        Self::construct(this);
+    }
+    fn write_bytes(&mut self, data: streams::Result) -> streams::result::Writable {
+        Self::write(self, data)
+    }
+    fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
+        Self::write_utf16(self, data)
+    }
+    fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
+        Self::write_latin1(self, data)
+    }
+    fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
+        Self::end(self, err)
+    }
+    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+        match Self::end_from_js(self, global) {
+            bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js(global) {
+                Ok(v) => v,
+                Err(_) => JSValue::ZERO,
+            }),
+            bun_sys::Result::Err(e) => bun_sys::Result::Err(e),
+        }
+    }
+    fn flush(&mut self) -> bun_sys::Result<()> {
+        Self::flush(self)
+    }
+    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
+        Self::flush_from_js(self, global, wait)
+    }
+    fn start(&mut self, config: streams::Start) -> bun_sys::Result<()> {
+        Self::start(self, config)
+    }
+    fn signal(&mut self) -> Option<&mut Signal> {
+        Some(&mut self.signal)
+    }
+    fn done(&self) -> bool {
+        self.done
+    }
+}
+
 // `SinkHandler` impl: bridges `Sink::init(self)` (vtable-erased writer). The
 // inherent `connect` returns `()`; trait wants `sys::Result<()>` to unify with
 // other sink types' fallible connect.

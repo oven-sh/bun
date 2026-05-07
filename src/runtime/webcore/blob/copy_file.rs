@@ -13,6 +13,7 @@ use crate::node::fs as node_fs;
 #[allow(unused_imports)]
 use crate::webcore::blob::{self, SizeType, Store, StoreRef, store, MkdirpTarget, Retry, MAX_SIZE};
 use crate::webcore::node_types::PathOrFileDescriptor;
+use crate::node::types::PathLikeExt as _;
 use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 #[cfg(windows)]
 use bun_sys::windows::libuv;

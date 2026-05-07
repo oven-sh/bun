@@ -8,7 +8,6 @@ use bun_str::ZigString;
 use crate::crypto::{create_crypto_error, evp, HMAC};
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
-use crate::webcore::BlobExt as _;
 use crate::webcore::blob::BlobExt as _;
 // TODO(port): `Hashers` = src/sha_hmac/sha.zig — confirm crate path in Phase B
 use bun_sha_hmac::sha as hashers;
@@ -245,9 +244,9 @@ impl CryptoHasher {
         // `defer input.deinit()` — handled by Drop on `input`.
 
         if is_bun_file_blob(&input) {
-            return Err(global.throw(
-                "Bun.file() is not supported here yet (it needs an async version)",
-            ));
+            return Err(global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )));
         }
 
         let Some(len) = evp.hash(
@@ -280,9 +279,9 @@ impl CryptoHasher {
         // `defer input.deinit()` — handled by Drop on `input`.
 
         if is_bun_file_blob(&input) {
-            return Err(global.throw(
-                "Bun.file() is not supported here yet (it needs an async version)",
-            ));
+            return Err(global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )));
         }
 
         if let Some(output_buf) = &output {
@@ -376,24 +375,20 @@ impl CryptoHasher {
     ) -> JsResult<Box<CryptoHasher>> {
         let arguments = callframe.arguments_old::<2>();
         if arguments.len == 0 {
-            return Err(global.throw_invalid_arguments(
-                "Expected an algorithm name as an argument",
-            ));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Expected an algorithm name as an argument"
+            )));
         }
 
         let algorithm_name = arguments.ptr[0];
         if algorithm_name.is_empty_or_undefined_or_null() || !algorithm_name.is_string() {
-            return Err(
-                global.throw_invalid_arguments("algorithm must be a string")
-            );
+            return Err(global.throw_invalid_arguments(format_args!("algorithm must be a string")));
         }
 
         let algorithm = algorithm_name.get_zig_string(global)?;
 
         if algorithm.len == 0 {
-            return Err(
-                global.throw_invalid_arguments("Invalid algorithm name")
-            );
+            return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }
 
         let hmac_value = arguments.ptr[1];
@@ -404,9 +399,9 @@ impl CryptoHasher {
             hmac_key = match StringOrBuffer::from_js(global, hmac_value)? {
                 Some(k) => Some(k),
                 None => {
-                    return Err(global.throw_invalid_arguments(
-                        "key must be a string or buffer",
-                    ));
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "key must be a string or buffer"
+                    )));
                 }
             };
         }
@@ -451,7 +446,7 @@ impl CryptoHasher {
                                 return Err(global.throw_value(instance));
                             } else {
                                 return Err(global
-                                    .throw_todo("HMAC is not supported for this algorithm yet"));
+                                    .throw_todo(b"HMAC is not supported for this algorithm yet"));
                             }
                         }
                         return Err(JsError::Thrown);
@@ -488,8 +483,9 @@ impl CryptoHasher {
         let arguments = callframe.arguments_old::<2>();
         let input = arguments.ptr[0];
         if input.is_empty_or_undefined_or_null() {
-            return Err(global
-                .throw_invalid_arguments("expected blob, string or buffer"));
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+            );
         }
         let encoding = arguments.ptr[1];
         let buffer = match BlobOrStringOrBuffer::from_js_with_encoding_value(
@@ -498,18 +494,18 @@ impl CryptoHasher {
             Some(b) => b,
             None => {
                 if !global.has_exception() {
-                    return Err(global.throw_invalid_arguments(
-                        "expected blob, string or buffer",
-                    ));
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "expected blob, string or buffer"
+                    )));
                 }
                 return Err(JsError::Thrown);
             }
         };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
-            return Err(global.throw(
-                "Bun.file() is not supported here yet (it needs an async version)",
-            ));
+            return Err(global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )));
         }
 
         match this {
@@ -622,12 +618,10 @@ impl CryptoHasher {
         if let Some(output_buf) = &output {
             let bytes = output_buf.byte_slice();
             if bytes.len() < buf_len {
-                return Err(global.throw_invalid_arguments(
-                    const_format::formatcp!(
-                        "TypedArray must be at least {} bytes",
-                        boring_ssl::EVP_MAX_MD_SIZE
-                    ),
-                ));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "TypedArray must be at least {} bytes",
+                    boring_ssl::EVP_MAX_MD_SIZE
+                )));
             }
             // PORT NOTE: reshaped for borrowck
             // SAFETY: bytes.len() >= EVP_MAX_MD_SIZE checked above; output_buf backing storage outlives this frame.
@@ -879,9 +873,9 @@ impl CryptoHasherZig {
         // `defer input.deinit()` — handled by Drop.
 
         if is_bun_file_blob(&input) {
-            return Err(global.throw(
-                "Bun.file() is not supported here yet (it needs an async version)",
-            ));
+            return Err(global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )));
         }
 
         let mut h = A::init();
@@ -905,9 +899,9 @@ impl CryptoHasherZig {
         // `defer input.deinit()` — handled by Drop.
 
         if is_bun_file_blob(&input) {
-            return Err(global.throw(
-                "Bun.file() is not supported here yet (it needs an async version)",
-            ));
+            return Err(global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )));
         }
 
         let mut h = A::init();

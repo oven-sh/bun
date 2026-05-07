@@ -1640,10 +1640,12 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // `cp_task` pointers stored in subtasks retain mutable provenance for
         // `on_subtask_done`'s eventual `&mut` promotion.
         let this_ref = unsafe { &*this };
-        // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling
-        let src = unsafe { ZStr::from_raw(src_buf.as_ptr().cast(), src_dir_len as usize) };
+        // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
+        // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
+        // so reconstruct as `&OSPathSliceZ` (Zig: `src_buf[0..src_dir_len :0]`).
+        let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
         // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
-        let dest = unsafe { ZStr::from_raw(dest_buf.as_ptr().cast(), dest_dir_len as usize) };
+        let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
 
         #[cfg(target_os = "macos")]
         {
@@ -7582,7 +7584,8 @@ pub fn zig_delete_tree(self_: sys::Dir, sub_path: &[u8], kind_hint: sys::FileKin
                         Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
                         Err(E::ENOTDIR) => {
                             #[cfg(debug_assertions)] unreachable!();
-                            #[cfg(not(debug_assertions))] return Err(dt_err(E::EIO));
+                            // Zig: `else => return error.Unexpected` → caller's `else =>` arm = EFAULT.
+                            #[cfg(not(debug_assertions))] return Err(err_from_static("Unexpected"));
                         }
                         Err(e) => return Err(dt_err(e)),
                     }
@@ -7685,7 +7688,8 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(self_: sys::Dir, sub_path: &[u8
                             Err(E::EISDIR) => { treat_as_dir = true; continue 'handle_entry; }
                             Err(E::ENOTDIR) => {
                                 #[cfg(debug_assertions)] unreachable!();
-                                #[cfg(not(debug_assertions))] break 'scan_dir Err(dt_err(E::EIO));
+                                // Zig: `else => return error.Unexpected` → caller's `else =>` arm = EFAULT.
+                                #[cfg(not(debug_assertions))] break 'scan_dir Err(err_from_static("Unexpected"));
                             }
                             Err(e) => break 'scan_dir Err(dt_err(e)),
                         }

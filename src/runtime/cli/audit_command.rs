@@ -382,7 +382,10 @@ fn collect_packages_for_audit(
         }
 
         let mut ver_str: Vec<u8> = Vec::new();
-        write!(&mut ver_str, "{}", res.value.npm.version.fmt(buf)).expect("unreachable");
+        // SAFETY: `res.tag == ResolutionTag::Npm` checked above, so the `.npm`
+        // arm of the value union is active.
+        let npm = unsafe { res.value.npm };
+        write!(&mut ver_str, "{}", npm.version.fmt(buf)).expect("unreachable");
         let ver_str: Box<[u8]> = ver_str.into_boxed_slice();
 
         let found_package = packages_list

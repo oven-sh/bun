@@ -267,6 +267,76 @@ impl Blob {
     }
 
     /// `Blob.deinit()` (Blob.zig:3720). Tear down owned resources; if
+    // ────────────────────────────────────────────────────────────────────
+    // Data-only predicates (Blob.zig:3601-3659). LAYERING: hoisted from
+    // `bun_runtime::webcore::blob::BlobExt` — these read only the `Store`
+    // discriminant / `content_type` / `pathlike`, so lower-tier crates
+    // (`bun_http_jsc`, `bun_runtime::server`, …) can call them without
+    // pulling the whole `BlobExt` trait into scope.
+    // ────────────────────────────────────────────────────────────────────
+
+    /// `Blob.hasContentTypeFromUser()` — `true` when the user set a type
+    /// explicitly *or* the store is file/S3-backed (whose mime is sniffed).
+    #[inline]
+    pub fn has_content_type_from_user(&self) -> bool {
+        self.content_type_was_set
+            || self
+                .store
+                .as_ref()
+                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
+                .unwrap_or(false)
+    }
+
+    /// `Blob.contentTypeOrMimeType()` — explicit `content_type` if set, else
+    /// the store-derived mime (file extension / S3 metadata), else `None`.
+    pub fn content_type_or_mime_type(&self) -> Option<&[u8]> {
+        let ct = self.content_type_slice();
+        if !ct.is_empty() {
+            return Some(ct);
+        }
+        match &self.store.as_ref()?.data {
+            store::Data::File(file) => Some(&file.mime_type.value),
+            store::Data::S3(s3) => Some(&s3.mime_type.value),
+            store::Data::Bytes(_) => None,
+        }
+    }
+
+    /// `Blob.isBunFile()` — backed by a filesystem `Store::File`.
+    #[inline]
+    pub fn is_bun_file(&self) -> bool {
+        matches!(self.store.as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+    }
+
+    /// `Blob.isS3()` — backed by an S3 `Store::S3`.
+    #[inline]
+    pub fn is_s3(&self) -> bool {
+        matches!(self.store.as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
+    }
+
+    /// `Blob.needsToReadFile()` — true when bytes must be fetched off-disk
+    /// before any in-memory consumer can see them (i.e. `Store::File`).
+    #[inline]
+    pub fn needs_to_read_file(&self) -> bool {
+        matches!(self.store.as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+    }
+
+    /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
+    /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
+    pub fn get_file_name(&self) -> Option<&[u8]> {
+        match &self.store.as_deref()?.data {
+            store::Data::Bytes(bytes) => {
+                let n = bytes.stored_name.slice();
+                if n.is_empty() { None } else { Some(n) }
+            }
+            store::Data::File(file) => match &file.pathlike {
+                PathOrFileDescriptor::Path(path) => Some(path.slice()),
+                PathOrFileDescriptor::Fd(_) => None,
+            },
+            // Zig: `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
+            store::Data::S3(s3) => Some(s3.path()),
+        }
+    }
+
     /// heap-allocated, also frees the heap box.
     ///
     /// PORT NOTE: kept as an explicit method (not `Drop`) because `Blob` is the

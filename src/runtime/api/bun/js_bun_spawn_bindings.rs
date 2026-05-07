@@ -880,9 +880,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         |(should_close_memfd, stdio): (&mut bool, &mut [Stdio; 3])| {
             if *should_close_memfd {
                 for fd_index in 0..stdio.len() {
-                    if let Stdio::Memfd(fd) = stdio[fd_index] {
-                        fd.close();
-                        stdio[fd_index] = Stdio::Ignore;
+                    if matches!(stdio[fd_index], Stdio::Memfd(_)) {
+                        // PORT NOTE: Zig closes the fd then writes
+                        // `stdio[i] = .ignore`. In Rust that assignment would
+                        // Drop the old `Stdio::Memfd` and re-close the same fd
+                        // (EBADF → fd.rs debug_assert). `Stdio`'s Drop already
+                        // closes a Memfd, so just replace with `.ignore` and
+                        // let Drop perform the single close.
+                        drop(core::mem::replace(&mut stdio[fd_index], Stdio::Ignore));
                     }
                 }
             }

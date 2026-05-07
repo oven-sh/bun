@@ -732,6 +732,15 @@ impl WebWorker {
             ));
         }
 
+        // PORT NOTE: `start_vm()` may have observed `requested_terminate` and
+        // run `shutdown()` itself (which now returns instead of `noreturn`).
+        // In that case `vm` is null and there is nothing left to do — fall
+        // out of `thread_main` so the thread exits cleanly.
+        // SAFETY: worker-thread-only field; same thread that publishes it.
+        if unsafe { *self.vm.get() }.is_null() {
+            return;
+        }
+
         // SAFETY: start_vm published vm under vm_lock; non-null here.
         let global = unsafe { (*(*self.vm.get())).global };
         // SAFETY: `ctx` is an opaque token — `hold_api_lock` (C++ JSLockHolder)
@@ -829,6 +838,7 @@ impl WebWorker {
         if self.has_requested_terminate() {
             drop(temp_proxy_slots);
             self.shutdown();
+            return Ok(());
         }
 
         let vm = VirtualMachine::init_worker(

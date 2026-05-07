@@ -362,7 +362,15 @@ impl Cmd {
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
                     *idx += 1;
-                    interp.as_cmd_mut(this).redirection_file = out.buf;
+                    // Spec (Expansion.zig pushCurrentOut): NUL-terminate a
+                    // non-empty result; leave an empty expansion empty so the
+                    // ambiguous-redirect check in `Builtin::init_redirections`
+                    // still fires.
+                    let mut buf = out.buf;
+                    if !buf.is_empty() && buf.last() != Some(&0) {
+                        buf.push(0);
+                    }
+                    interp.as_cmd_mut(this).redirection_file = buf;
                 }
                 _ => {}
             }

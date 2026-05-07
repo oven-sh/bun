@@ -89,6 +89,23 @@ impl PackageManifestMap {
         )
     }
 
+    /// Memory-only lookup — equivalent to Zig
+    /// `byNameHash(this, pm, scope, hash, .load_from_memory, _)` with
+    /// `is_expired = null`, but without the `pm`/`scope` parameters: the
+    /// `.load_from_memory` arm never reads them. Exposed separately so callers
+    /// holding `&mut PackageManager` can borrow only the disjoint
+    /// `pm.manifests` field instead of constructing an aliased
+    /// `(&mut pm.manifests, &mut pm)` pair.
+    pub fn by_name_hash_in_memory(
+        &mut self,
+        name_hash: PackageNameHash,
+    ) -> Option<&mut npm::PackageManifest> {
+        match self.hash_map.get_mut(&name_hash)? {
+            Value::Manifest(m) => Some(m),
+            Value::Expired(_) | Value::NotFound => None,
+        }
+    }
+
     pub fn by_name_allow_expired(
         &mut self,
         pm: &mut PackageManager,

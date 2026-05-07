@@ -2916,34 +2916,27 @@ unsafe fn transpile_file(
         // SAFETY: per fn contract.
         && unsafe { (*jsc_vm).has_mutated_built_in_extensions } > 0
     {
-        
-        // TODO(b2-cycle): `node_module_module::find_longest_registered_extension`
-        // — `vm.commonjs_custom_extensions` is still typed `StringArrayHashMap<()>`
-        // on the low-tier VM (VirtualMachine.rs:262); widen to
-        // `StringArrayHashMap<CustomLoader>` and un-gate. The module itself is
+        use bun_jsc::node_module_module::{find_longest_registered_extension, CustomLoader};
+        if let Some(entry) =
+            // SAFETY: per fn contract.
+            find_longest_registered_extension(unsafe { &*jsc_vm }, _specifier.slice())
         {
-            use bun_jsc::node_module_module::{
-                find_longest_registered_extension, CustomLoader,
-            };
-            if let Some(entry) =
-                find_longest_registered_extension(unsafe { &*jsc_vm }, _specifier.slice())
-            {
-                match entry {
-                    CustomLoader::Loader(loader) => lr.loader = Some(loader),
-                    CustomLoader::Custom(strong) => {
-                        unsafe {
-                            *ret = ErrorableResolvedSource::ok(ResolvedSource {
-                                allocator: ptr::null_mut(),
-                                source_code: bun_string::String::empty(),
-                                specifier: bun_string::String::empty(),
-                                source_url: bun_string::String::empty(),
-                                cjs_custom_extension_index: strong.get(),
-                                tag: ResolvedSourceTag::CommonJsCustomExtension,
-                                ..Default::default()
-                            });
-                        }
-                        return ptr::null_mut();
+            match entry {
+                CustomLoader::Loader(loader) => lr.loader = Some(loader),
+                CustomLoader::Custom(strong) => {
+                    // SAFETY: `ret` is a valid out-param per fn contract.
+                    unsafe {
+                        *ret = ErrorableResolvedSource::ok(ResolvedSource {
+                            allocator: ptr::null_mut(),
+                            source_code: bun_string::String::empty(),
+                            specifier: bun_string::String::empty(),
+                            source_url: bun_string::String::empty(),
+                            cjs_custom_extension_index: strong.get(),
+                            tag: ResolvedSourceTag::CommonJsCustomExtension,
+                            ..Default::default()
+                        });
                     }
+                    return ptr::null_mut();
                 }
             }
         }

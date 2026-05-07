@@ -2148,17 +2148,17 @@ impl AttributeIterator {
 
     #[bun_jsc::host_fn(method)]
     pub fn next(&mut self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let done_label = ZigString::init(b"done");
-        let value_label = ZigString::init(b"value");
+        let done_label = bun_string::ZigString::init(b"done");
+        let value_label = bun_string::ZigString::init(b"value");
 
         if self.iterator.is_null() {
-            return Ok(create_object2(
+            return JSValue::create_object2(
                 global_object,
                 &done_label,
                 &value_label,
                 JSValue::TRUE,
                 JSValue::UNDEFINED,
-            ));
+            );
         }
 
         // SAFETY: self.iterator is non-null (checked above) and valid until
@@ -2167,28 +2167,28 @@ impl AttributeIterator {
             // SAFETY: iterator non-null (checked above); freed once here.
             unsafe { lolhtml::AttributeIterator::destroy(self.iterator) };
             self.iterator = core::ptr::null_mut();
-            return Ok(create_object2(
+            return JSValue::create_object2(
                 global_object,
                 &done_label,
                 &value_label,
                 JSValue::TRUE,
                 JSValue::UNDEFINED,
-            ));
+            );
         };
 
         let value = attribute.value();
         let name = attribute.name();
 
-        Ok(create_object2(
+        JSValue::create_object2(
             global_object,
             &done_label,
             &value_label,
             JSValue::FALSE,
-            bun_string_to_js_array(
+            bun_string_jsc::to_js_array(
                 global_object,
                 &[html_string_to_bun_string(name), html_string_to_bun_string(value)],
             )?,
-        ))
+        )
     }
 
     #[bun_jsc::host_fn(method)]

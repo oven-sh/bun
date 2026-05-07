@@ -1687,27 +1687,31 @@ impl<'a> Printer<'a> {
     }
 
     pub fn print_with_lockfile<W: bun_io::Write>(
-        lockfile: &crate::Lockfile,
+        lockfile: &Lockfile,
         format: PrinterFormat,
         writer: W,
     ) -> Result<(), BunError> {
         // TODO(port): narrow error set
-        let fs = FileSystem::instance_mut();
-        // Zig loads `PackageManager.Options` from env/bunfig here. The Yarn
-        // printer reads no `options.*` field, so the load only matters for
-        // its side effects (`.env`/bunfig parsing into the process env). Load
-        // the real `package_manager_real::Options` for that side effect, then
-        // hand `Printer` the stub options shape (which is what `Printer` is
-        // typed against so `manager.options` slots in directly elsewhere).
-        let mut real_options = PackageManagerOptions {
+        // SAFETY: `FileSystem::init` ran in the caller (`Printer::print`); this
+        // is the process-static singleton (Zig `&FileSystem.instance`). Form a
+        // short-lived `&mut` for the `read_directory` call only — single-threaded
+        // CLI path, no concurrent access.
+        let fs = unsafe { &mut *FileSystem::instance() };
+        let mut options = PackageManagerOptions {
             max_concurrent_lifecycle_scripts: 1,
             ..Default::default()
         };
 
-        let entries_option = fs.fs.read_directory(&fs.top_level_dir, None, 0, true)?;
-        if let bun_sys::fs::EntriesOption::Err(e) = &*entries_option {
-            return Err(e.canonical_error);
-        }
+        // PORT NOTE: reshaped for borrowck — capture the `'static` cwd slice
+        // before borrowing `fs.fs` mutably.
+        let top_level_dir = fs.top_level_dir;
+        let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
+        // SAFETY: `read_directory` returns a `*mut EntriesOption` into the
+        // resolver's process-lifetime BSSMap; sole `&mut` on this CLI path.
+        let entries: &mut Fs::DirEntry = match unsafe { &mut *entries_option } {
+            Fs::EntriesOption::Entries(e) => &mut **e,
+            Fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+        };
 
         // PORTING.md §Forbidden patterns: never `Box::leak` — own `map`/`loader` as locals;
         // they live for the function scope (one-shot CLI path, matches lockfile.zig:1179-1183).
@@ -1716,19 +1720,22 @@ impl<'a> Printer<'a> {
         env_loader.quiet = true;
 
         env_loader.load_process()?;
+        // `DotEnv::Loader::load` is typed against the `bun_sys::fs::DirEntry`
+        // seam (bun_dotenv has no `bun_resolver` dep); the resolver `DirEntry`
+        // *is* the concrete type behind that opaque handle, so erase across the
+        // seam at the call boundary.
+        // SAFETY: `bun_sys::fs::DirEntry` is `#[repr(C)]` opaque; the resolver's
+        // vtable casts pointers between the two identically (resolver/fs.rs
+        // `SYS_FS_VTABLE`). `entries` lives in the BSSMap singleton.
         env_loader.load(
-            entries_option.entries(),
+            unsafe { &mut *(entries as *mut Fs::DirEntry as *mut bun_sys::fs::DirEntry) },
             &[] as &[&[u8]],
-            DotEnv::Mode::Production,
+            DotEnv::DotEnvFileSuffix::Production,
             false,
         )?;
         let mut log = logger::Log::init();
-        real_options.load(&mut log, &mut env_loader, None, None, PackageManager::Subcommand::Install)?;
+        options.load(&mut log, &mut env_loader, None, None, PackageManager::Subcommand::Install)?;
 
-        let options = crate::PackageManagerOptionsStub {
-            max_concurrent_lifecycle_scripts: 1,
-            ..Default::default()
-        };
         let mut printer = Printer {
             lockfile,
             options: &options,
@@ -3011,7 +3018,7 @@ pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [
 /// build.rs-generated list. The hash is `String.Builder.stringHash(s) as u32`
 /// so entries match `Lockfile.trusted_dependencies` keys.
 pub mod default_trusted_dependencies {
-    use super::{SemverString, DEFAULT_TRUSTED_DEPENDENCIES_LIST, MAX_DEFAULT_TRUSTED_DEPENDENCIES};
+    use super::{SemverStringBuilder, DEFAULT_TRUSTED_DEPENDENCIES_LIST, MAX_DEFAULT_TRUSTED_DEPENDENCIES};
     use bun_collections::static_hash_map::{
         static_slots, Entry, HashContext, HashMapMixin, StaticHashMap,
     };

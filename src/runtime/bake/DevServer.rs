@@ -5678,6 +5678,33 @@ impl DevServer {
     }
 }
 
+impl framework_router::InsertionHandler for DevServer {
+    fn get_file_id_for_router(
+        &mut self,
+        abs_path: &[u8],
+        associated_route: framework_router::RouteIndex,
+        kind: framework_router::FileKind,
+    ) -> Result<OpaqueFileId, AllocError> {
+        DevServer::get_file_id_for_router(self, abs_path, associated_route, kind)
+            .map_err(|_| AllocError)
+    }
+    fn on_router_syntax_error(
+        &mut self,
+        rel_path: &[u8],
+        fail: framework_router::TinyLog,
+    ) -> Result<(), AllocError> {
+        DevServer::on_router_syntax_error(self, rel_path, fail)
+    }
+    fn on_router_collision_error(
+        &mut self,
+        rel_path: &[u8],
+        other_id: OpaqueFileId,
+        file_kind: framework_router::FileKind,
+    ) -> Result<(), AllocError> {
+        DevServer::on_router_collision_error(self, rel_path, other_id, file_kind)
+    }
+}
+
 fn to_opaque_file_id<const SIDE: bake::Side>(
     index: incremental_graph::FileIndex<SIDE>,
 ) -> OpaqueFileId {

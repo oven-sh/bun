@@ -93,6 +93,7 @@ const HARD = `**HARD RULES:** Work in /root/bun-5 on branch claude/phase-a-port.
 
 **FIX LAYERING.** Low-tier needs high-tier type → MOVE down or \`extern "Rust"\`. NEVER hooks/c_void round-trips/dup types.
 **NO NEW \`unsafe {}\` outside FFI.** Reaching for \`unsafe { &mut *ptr }\` → change signature to \`&mut T\`.
+**NO JUSTIFICATION COMMENTS.** Do NOT add \`// PORT NOTE: reshaped for borrowck\` / \`// TODO(port):\` / long \`// SAFETY:\` essays explaining why a workaround is OK. If you need a paragraph to justify it, the code is wrong — fix the code instead. A good fix needs at most a one-line "why" that a Rust dev would write, not a port history.
 
 Never git reset/checkout/stash/rebase/pull. **Commit explicit paths ONLY:** \`git -c core.hooksPath=/dev/null add <exact files you edited> && git commit -q -m "..."\` (not \`add 'src/'\` — only YOUR files). NO push.`;
 
@@ -125,9 +126,9 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
 
 **Probe (parallel 16):** \`cat ${DIAG}/all.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); timeout 15 ./build/debug/bun-debug test {} > ${DIAG}/\$slug.log 2>&1; echo "{}|\$?" >> ${DIAG}/results-r${round}.txt'\`
 
-**Triage:** for each file, passing = exit 0 AND \`grep -oP '\\d+ pass' .log\` matches .baseline. For each failing: write \`${DIAG}/<slug>.diag\` with {kind: crash|hang|diverge, exit, failing-test-names + assertions (grep ✗/expect lines), diff vs baseline, backtrace tail if crash}.
+**Triage (ONE shell pipeline, no per-file writes):** \`while IFS='|' read f rc; do slug=...; passing if rc==0 && pass-count matches baseline; else echo "{file,kind,summary}" to failing.json; done < results-r${round}.txt\`. kind: rc>=128→crash, rc==124→hang, else→diverge. summary = first 2 ✗ lines from .log (or backtrace tail for crash).
 
-Return {passing:N, failing:[{file,diag,kind,summary}], total:N}. DO NOT edit src/.`,
+Return {passing:N, failing:[{file,diag:"${DIAG}/<slug>.log",kind,summary}], total:N}. **Do NOT write per-file .diag** — fix-agents read .log + .baseline directly. DO NOT edit src/.`,
     { label: `survey-r${round}`, phase: "Survey", schema: SURVEY_S },
   );
   if (!survey) {
@@ -146,7 +147,7 @@ Return {passing:N, failing:[{file,diag,kind,summary}], total:N}. DO NOT edit src
       agent(
         `Fix **${f.file}** (kind: ${f.kind}). /root/bun-5.
 
-**Diagnostic:** \`cat ${f.diag}\` and \`cat ${f.diag.replace(".diag", ".log")}\` — your ONLY runtime evidence.
+**Diagnostic:** \`cat ${f.diag}\` (test output) and \`cat ${f.diag.replace(".log", ".baseline")}\` (system-bun baseline) — your ONLY runtime evidence.
 ${f.summary}
 
 1. Read diagnostic → which test(s) fail, what assertion says.
@@ -170,6 +171,7 @@ Return {file:"${f.file}", root_cause, src_edited:[...], commit, confidence}.`,
 
 1. NEW non-FFI unsafe? \`git show ${fix.commit} | grep '^+.*unsafe {'\` count.
 2. Layering workaround? hook/c_void/dup-type → REJECT.
+2b. **Justification-comment reward-hacking?** \`git show ${fix.commit} | grep -cE '^\\+.*(PORT NOTE|TODO\\(port\\)|reshaped for borrowck|SAFETY:.{100,})'\` — if added, the fix is explaining why a hack is OK instead of fixing properly. REJECT with severity:"reward-hack".
 3. Matches .zig spec? Read .zig at each src_edited path.
 4. Would fix address the assertion in .diag? Reason from source.
 

@@ -4222,7 +4222,7 @@ pub fn write_file_with_source_destination(
             unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
             let promise_value = unsafe { (*write_file_promise).promise.value() };
             promise_value.ensure_still_alive();
-            task.schedule();
+            write_file_mod::WriteFileTask::schedule(task);
             return Ok(promise_value);
         }
     }

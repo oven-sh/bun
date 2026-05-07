@@ -767,7 +767,7 @@ impl VirtualMachine {
 
     /// RAII form of `auto_garbage_collect`: returns a guard that calls
     /// `auto_garbage_collect()` when it goes out of scope. Ports Zig's
-    /// `defer vm.autoGarbageCollect()` without `scopeguard::guard((), ...)`.
+    /// `defer vm.autoGarbageCollect()` without an ad-hoc scopeguard closure.
     #[inline]
     pub fn auto_gc_on_drop(&self) -> AutoGcOnDrop<'_> {
         AutoGcOnDrop { vm: self }

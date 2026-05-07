@@ -125,10 +125,10 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
     // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
-    let _vm_guard = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         // SAFETY: vm_ptr is the unique live VM on this thread.
         unsafe { (*vm_ptr).destroy() };
-    });
+    }
 
     // A special global object is used to allow registering virtual modules
     // that bypass Bun's normal module resolver and plugin system.

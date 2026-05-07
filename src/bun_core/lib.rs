@@ -11,6 +11,43 @@ pub mod env;
 pub mod wtf;
 #[cfg(windows)]
 pub mod windows_sys;
+
+/// Port of Zig's `std.os.environ` global (`[][*:0]u8`). On Windows the
+/// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
+/// with a WTF-8-encoded envp slice; `getenvZ` and `bun_main` then read it via
+/// `os_environ_ptr()`. POSIX builds leave it empty and use libc's `environ`.
+#[cfg(windows)]
+pub mod os {
+    use core::ffi::c_char;
+
+    static mut ENVIRON: &'static mut [*mut c_char] = &mut [];
+
+    /// Swap in a new envp slice; returns the previous one (Zig:
+    /// `orig_environ = std.os.environ; std.os.environ = new`).
+    /// SAFETY: single-threaded startup only.
+    pub unsafe fn take_environ() -> &'static mut [*mut c_char] {
+        unsafe { core::mem::take(&mut *core::ptr::addr_of_mut!(ENVIRON)) }
+    }
+    /// SAFETY: single-threaded startup only.
+    pub unsafe fn set_environ(envp: &'static mut [*mut c_char]) {
+        unsafe { *core::ptr::addr_of_mut!(ENVIRON) = envp; }
+    }
+    /// Borrowed view of the current envp slice (read side of `std.os.environ`).
+    /// SAFETY: caller must not race with `set_environ`.
+    pub unsafe fn environ() -> &'static [*mut c_char] {
+        unsafe { *core::ptr::addr_of!(ENVIRON) }
+    }
+}
+
+/// `bun.os_environ_ptr()` — pointer to the first element of `std.os.environ`
+/// (or null if empty). Windows-only; POSIX uses libc's `environ` symbol.
+#[cfg(windows)]
+#[inline]
+pub fn os_environ_ptr() -> *const *mut core::ffi::c_char {
+    // SAFETY: read of a process-global written once at startup.
+    let e = unsafe { os::environ() };
+    if e.is_empty() { core::ptr::null() } else { e.as_ptr() }
+}
 pub mod feature_flags;
 pub mod env_var;
 pub mod deprecated;

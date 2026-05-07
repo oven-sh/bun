@@ -15,7 +15,7 @@ pub use self::windows::{Win32Error, NTSTATUS};
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u16)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, strum::FromRepr, enum_map::Enum)]
 pub enum E {
     SUCCESS = 0,
     PERM = 1,
@@ -251,6 +251,16 @@ impl E {
     pub const fn from_raw(n: u16) -> Self {
         // SAFETY: caller-guaranteed valid discriminant (matches Zig @enumFromInt UB semantics).
         unsafe { core::mem::transmute::<u16, E>(n) }
+    }
+
+    /// Checked discriminant lookup. Port of Zig `std.meta.intToEnum(E, n)` —
+    /// returns `None` for any `n` that is not a declared variant. The `E` enum
+    /// is sparse (dense 0..=137, then isolated UV_* values in the 3000–4095
+    /// range), so a `< UV_ERRNO_MAX` range check is NOT sufficient.
+    #[inline]
+    pub fn try_from_raw(n: u16) -> Option<Self> {
+        // `strum::FromRepr` generates a checked `match` on every discriminant.
+        E::from_repr(n)
     }
 
     // Cross-platform aliases: on POSIX `E` is a `type` alias for `SystemErrno`
@@ -868,8 +878,11 @@ impl SystemErrnoInit for i32 {
 }
 impl SystemErrnoInit for u32 {
     #[inline] fn into_system_errno(self) -> Option<SystemErrno> {
-        // GetLastError()/WSAGetLastError() — Win32 error codes fit in u16; values
-        // above are unmapped (Zig peer-widening would have failed every range check).
+        // GetLastError()/WSAGetLastError() return DWORD; HRESULT-shaped facility
+        // codes and some installer/WinHTTP errors exceed 0xFFFF. Those are
+        // intentionally unmapped → None (matches Zig peer-widening, which would
+        // also fall through every range check). Codes that DO fit u16 route via
+        // the Win32Error→errno table.
         u16::try_from(self).ok().and_then(SystemErrno::init_u16)
     }
 }

@@ -223,14 +223,21 @@ impl Error {
         }
     }
 
+    /// Rust-only (no Zig `withDest`). Unlike `with_path`/`with_path_dest` (which
+    /// match Zig and reset `fd`/`from_libuv`), this only overlays `dest` and
+    /// preserves every other field — chained on a libuv-sourced error
+    /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
+    /// so `name()`/`msg()` still route through the uv→errno mapper.
     #[inline]
     pub fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
+            fd: self.fd,
+            #[cfg(windows)]
+            from_libuv: self.from_libuv,
             path: self.path.clone(),
             dest: Box::from(dest),
-            ..Default::default()
         }
     }
 

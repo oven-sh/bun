@@ -33,6 +33,13 @@ use bun_cares_sys::c_ares_draft as c_ares;
 use super::cares_jsc::error_to_deferred;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 
+// `sockaddr_storage` is absent from `libc` on Windows; route through the
+// libuv-sys ws2 mirror there. Layout is identical (128-byte, 8-aligned POD).
+#[cfg(not(windows))]
+type SockaddrStorage = libc::sockaddr_storage;
+#[cfg(windows)]
+type SockaddrStorage = bun_libuv_sys::sockaddr_storage;
+
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
 /// as a type-erased `Option<NonNull<c_void>>` to break the
@@ -2246,7 +2253,7 @@ pub mod internal {
     #[repr(C)]
     pub struct ResultEntry {
         pub info: libc::addrinfo,
-        pub addr: libc::sockaddr_storage,
+        pub addr: SockaddrStorage,
     }
 
     // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
@@ -4868,7 +4875,7 @@ impl Resolver {
         let port: u16 = port_value.to_port_number(global_this)?;
 
         // SAFETY: all-zero is a valid sockaddr_storage
-        let mut sa: libc::sockaddr_storage = unsafe { core::mem::zeroed() };
+        let mut sa: SockaddrStorage = unsafe { core::mem::zeroed() };
         // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
         // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
         // `&mut sockaddr` view into that storage.

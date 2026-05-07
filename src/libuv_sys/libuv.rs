@@ -423,6 +423,16 @@ pub struct Loop {
 pub type uv_loop_t = Loop;
 pub type uv_loop_s = Loop;
 
+// `Loop::get()` escapes a raw pointer into this TLS slot out of the
+// `LocalKey::with` closure and hands it to libuv for the thread lifetime.
+// That is sound only because the slot has NO destructor (so std registers no
+// TLS dtor that could invalidate the address) and the `const { }` initializer
+// guarantees static-TLS placement. Guard the no-Drop invariant at compile time
+// so adding `impl Drop for Loop` (or wrapping the cell) fails loudly here
+// rather than becoming silent UB.
+const _: () = assert!(!core::mem::needs_drop::<Loop>());
+const _: () = assert!(!core::mem::needs_drop::<UnsafeCell<MaybeUninit<Loop>>>());
+
 thread_local! {
     /// `threadlocal var threadlocal_loop_data: Loop = undefined` — static TLS
     /// storage (zero-alloc; mirrors Zig). `MaybeUninit` because the slot is
@@ -447,6 +457,9 @@ impl Loop {
             }
             // SAFETY: TLS slot is per-thread; no aliasing. `uv_loop_init`
             // accepts uninitialized storage (it zero-fills internally).
+            // Escaping the pointer past `.with()` is intentional: the slot is
+            // const-initialized POD with no TLS destructor (static-asserted
+            // above), so its address is stable for the thread lifetime.
             let ptr_ = THREADLOCAL_LOOP_DATA
                 .with(|data| unsafe { (*data.get()).as_mut_ptr() });
             // SAFETY: `ptr_` is `sizeof(Loop)` TLS storage owned by this thread.
@@ -1694,8 +1707,11 @@ impl fs_t {
 
     /// Debug sentinel: `loop_` is poisoned so `deinit()` can assert that libuv
     /// actually wrote the request before we try to clean it up.
-    /// Zig: `pub const uninitialized: fs_t`.
-    #[inline]
+    /// Zig: `pub const uninitialized: fs_t` — kept as a fn (raw-pointer fields
+    /// in nested unions block a true `const`); `#[inline(always)]` so the
+    /// ~440-byte zero-fill on every sync `uv_fs_*` call optimises identically
+    /// to the Zig `.rodata` value.
+    #[inline(always)]
     pub fn uninitialized() -> fs_t {
         // SAFETY: all-zero is a valid `fs_t` (POD `#[repr(C)]`).
         let mut v: fs_t = unsafe { mem::zeroed() };
@@ -1984,8 +2000,9 @@ pub mod O {
         // SYNC and DSYNC must be mutually exclusive for libuv on Windows.
         // `bun.O.SYNC` (0o4010000) is a superset of `DSYNC` (0o10000), so check
         // SYNC first to emit only `UV_FS_O_SYNC` when both bits are present.
-        // NOTE: matches Zig's `& != 0` (any-overlap), not all-bits-match — so
-        // a DSYNC-only input (sharing bit 0o10000) takes the SYNC branch too.
+        // NOTE: `& != 0` (any-overlap) matches the Zig spec verbatim
+        // (libuv.zig:213); a DSYNC-only input also takes this branch — if that
+        // is wrong it is wrong upstream too.
         if c_flags & bun_o::SYNC != 0 {
             flags |= SYNC;
         } else if c_flags & bun_o::DSYNC != 0 {

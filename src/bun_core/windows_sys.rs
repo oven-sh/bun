@@ -68,6 +68,15 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // reads `ProcessParameters.hStd{Input,Output,Error}` to snapshot the console
 // handles before libuv touches them.
 // ──────────────────────────────────────────────────────────────────────────
+/// `UNICODE_STRING` (`ntdef.h`). Mirrors `bun_windows_sys::UNICODE_STRING`;
+/// duplicated here so `bun_core` stays leaf.
+#[repr(C)]
+pub struct UnicodeString {
+    pub Length: u16,
+    pub MaximumLength: u16,
+    pub Buffer: *mut u16,
+}
+
 #[repr(C)]
 pub struct ProcessParameters {
     // {MaximumLength, Length, Flags, DebugFlags} — 4 × ULONG.
@@ -77,10 +86,17 @@ pub struct ProcessParameters {
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
-    // (fields beyond stdio are not read here)
+    // CURDIR CurrentDirectory — UNICODE_STRING (16) + HANDLE (8).
+    _current_directory: [u8; 24],
+    pub DllPath: UnicodeString,
+    pub ImagePathName: UnicodeString,
+    pub CommandLine: UnicodeString,
+    // (fields beyond CommandLine are not read here)
 }
-// `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at offset 0x20 on x64.
-const _: () = assert!(core::mem::offset_of!(ProcessParameters, hStdInput) == 32);
+// `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at 0x20 and
+// `ImagePathName` at 0x60 on x64.
+const _: () = assert!(core::mem::offset_of!(ProcessParameters, hStdInput) == 0x20);
+const _: () = assert!(core::mem::offset_of!(ProcessParameters, ImagePathName) == 0x60);
 #[repr(C)]
 pub struct PebView {
     _reserved1: [u8; 2],

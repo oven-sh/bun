@@ -2371,6 +2371,7 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_http_types",
+ "bun_windows_sys",
  "const_format",
  "enum-map",
  "enumset",

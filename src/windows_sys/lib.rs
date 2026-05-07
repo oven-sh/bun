@@ -6,6 +6,11 @@ pub mod externs;
 // `bun_sys::windows`'s `pub use bun_windows_sys::Foo;` re-exports resolve.
 pub use externs::*;
 
+/// `bun.windows.libuv` — re-export the leaf libuv binding so call sites that
+/// spell `bun_windows_sys::libuv` (Zig: `bun.windows.libuv`) resolve without
+/// importing `bun_libuv_sys` directly.
+pub use bun_libuv_sys as libuv;
+
 /// `std.os.windows.NTSTATUS` value namespace. The `NTSTATUS` newtype carries
 /// these as associated consts, but `bun_sys::windows` glob-imports them as
 /// bare match patterns (`use bun_windows_sys::ntstatus::*`); associated consts

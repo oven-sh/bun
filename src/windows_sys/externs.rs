@@ -283,6 +283,12 @@ pub enum VolumeName {
     Nt,
 }
 
+/// Zig `std.os.windows.GetFinalPathNameByHandleOptions`.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct GetFinalPathNameByHandleFormat {
+    pub volume_name: VolumeName,
+}
+
 impl FILE_INFORMATION_CLASS {
     pub const FileRenameInformationEx: Self = Self(65);
 }
@@ -882,11 +888,14 @@ unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
 }
 
-// PORT NOTE: the Zig declared these without an explicit library/callconv (defaults to .c).
-unsafe extern "C" {
+// PORT NOTE: the Zig declared these without an explicit library/callconv (defaults to .c on x64).
+// `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
+// callconv is correct on all targets. `GetProcAddress` takes `LPCSTR` (narrow), not wide.
+#[link(name = "kernel32")]
+unsafe extern "system" {
     pub fn GetProcAddress(
         ptr: *mut c_void,
-        name: *const u16,
+        name: *const c_char,
     ) -> *mut c_void;
 
     pub fn LoadLibraryA(

@@ -3287,27 +3287,28 @@ pub fn translate_uv_error_to_e(code_in: c_int) -> E {
         UV_UNKNOWN => E::UNKNOWN,
         // Wrapping negation so minInt(c_int) maps to UNKNOWN instead of overflowing.
         // libuv codes not explicitly mapped above (e.g. Windows-specific -4000s)
-        // are tried as raw `E` discriminants, falling back to UNKNOWN.
-        other => {
-            let neg = other.wrapping_neg();
-            if let Ok(u) = u16::try_from(neg) {
-                if (u as usize) < (E::UV_ERRNO_MAX as usize) {
-                    return E::from_raw(u);
-                }
-            }
-            E::UNKNOWN
-        }
+        // are tried as `E` discriminants, falling back to UNKNOWN.
+        // Zig spec: `std.meta.intToEnum(bun.sys.E, -%code) catch .UNKNOWN` —
+        // a CHECKED tag lookup. `E` is sparse (dense 0..=137, then isolated
+        // UV_* in 3000–4095), so `from_raw` (transmute) on an unmapped value
+        // would be UB; use the checked `try_from_raw`.
+        other => u16::try_from(other.wrapping_neg())
+            .ok()
+            .and_then(E::try_from_raw)
+            .unwrap_or(E::UNKNOWN),
     }
 }
 
 pub use bun_windows_sys::externs::GetProcAddress;
 
 pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_str::ZStr) -> Option<*mut c_void> {
-    let mut wbuf: [u16; 2048] = [0; 2048];
-    // SAFETY: wbuf is large enough; toWPath NUL-terminates
-    let wpath = bun_str::strings::paths::to_w_path(&mut wbuf, utf8.as_bytes());
     let module = ptr.unwrap_or(core::ptr::null_mut());
-    let sym = unsafe { GetProcAddress(module, wpath.as_ptr()) };
+    // Win32 `GetProcAddress` takes `LPCSTR` (narrow ANSI, NUL-terminated). The
+    // symbol name is already a NUL-terminated byte string — pass it through
+    // directly. (Widening to UTF-16 would terminate after the first WCHAR's
+    // 0x00 high byte and resolve nothing.)
+    // SAFETY: `utf8` is NUL-terminated; `module` may be null (yields null sym).
+    let sym = unsafe { GetProcAddress(module, utf8.as_ptr().cast::<c_char>()) };
     if sym.is_null() { None } else { Some(sym) }
 }
 
@@ -3483,9 +3484,11 @@ pub use bun_windows_sys::externs::OpenProcess;
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 
 pub fn exe_path_w() -> &'static bun_str::WStr {
-    // SAFETY: PEB ImagePathName is valid for the lifetime of the process
+    // SAFETY: PEB ImagePathName is valid for the lifetime of the process.
+    // `peb()` lives in `bun_core::windows_sys` (tier-0; needs inline asm),
+    // not `bun_windows_sys`.
     unsafe {
-        let image_path = &(*win32::peb()).ProcessParameters.ImagePathName;
+        let image_path = &bun_core::windows_sys::peb().ProcessParameters.ImagePathName;
         let len = (image_path.Length as usize) / 2;
         bun_str::WStr::from_raw(image_path.Buffer, len)
     }

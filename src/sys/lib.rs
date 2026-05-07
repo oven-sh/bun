@@ -4868,6 +4868,29 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
+/// sys.zig:2992 — fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
+/// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
+/// (`bun.getFdPathW`) re-export this. Accepts a bare `&mut [u16]` so the
+/// `__bun_fd_path_w` link-time hook (raw ptr+cap) can call through without a
+/// `WPathBuffer` newtype.
+#[cfg(windows)]
+pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
+    crate::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), out).map_err(|e| {
+        use crate::windows::GetFinalPathNameByHandleError as GE;
+        Error::from_code(
+            match e {
+                GE::FileNotFound => E::ENOENT,
+                GE::NameTooLong => E::ENAMETOOLONG,
+            },
+            Tag::GetFinalPathNameByHandle,
+        )
+    })
+}
+#[cfg(not(windows))]
+pub fn get_fd_path_w(_fd: Fd, _out: &mut [u16]) -> Maybe<&mut [u16]> {
+    unreachable!("get_fd_path_w on non-Windows")
+}
+
 // ── environ ──
 
 /// `std.os.environ` — borrowed slice of `KEY=VALUE\0` C strings.

@@ -21,6 +21,7 @@ use bun_jsc::{
 };
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_string::ZigString;
+use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
@@ -338,6 +339,7 @@ impl Image {
     pub fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,
+        this_value: JSValue,
     ) -> JsResult<Box<Image>> {
         let args = callframe.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
@@ -349,7 +351,7 @@ impl Image {
             global,
             args[0],
             if args.len() > 1 { args[1] } else { JSValue::UNDEFINED },
-            callframe.this(),
+            this_value,
         )
     }
 

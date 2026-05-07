@@ -23,55 +23,6 @@ use super::{
     TimerObjectInternals, ID,
 };
 
-// ─── local FFI shims (blocked_on: bun_jsc crate-root JSGlobalObject lacks
-//      `emit_warning` / `clear_exception_except_termination`; JSValue lacks
-//      `with_async_context_if_needed`). The underlying extern "C" symbols are
-//      stable, so re-declare them here per the upstream-shim rule. ───────────
-unsafe extern "C" {
-    fn Bun__Process__emitWarning(
-        global: *const JSGlobalObject,
-        warning: JSValue,
-        type_: JSValue,
-        code: JSValue,
-        ctor: JSValue,
-    );
-    fn JSGlobalObject__clearExceptionExceptTermination(global: *const JSGlobalObject) -> bool;
-    fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: *const JSGlobalObject,
-        callback: JSValue,
-    ) -> JSValue;
-}
-
-#[inline]
-fn with_async_context_if_needed(v: JSValue, global: &JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is a live JSGlobalObject; FFI has no extra preconditions.
-    unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), v) }
-}
-
-#[inline]
-fn clear_exception_except_termination(global: &JSGlobalObject) -> bool {
-    // SAFETY: `global` is a live JSGlobalObject; FFI has no extra preconditions.
-    unsafe { JSGlobalObject__clearExceptionExceptTermination(global) }
-}
-
-#[inline]
-fn emit_warning(
-    global: &JSGlobalObject,
-    warning: JSValue,
-    type_: JSValue,
-    code: JSValue,
-    ctor: JSValue,
-) -> JsResult<()> {
-    // SAFETY: `global` is a live JSGlobalObject; JSValue args are passed by
-    // value and rooted on the caller's stack for the duration of the call.
-    unsafe { Bun__Process__emitWarning(global, warning, type_, code, ctor) };
-    if global.has_exception() {
-        Err(bun_jsc::JsError::Thrown)
-    } else {
-        Ok(())
-    }
-}
-
 /// Recover this thread's `timer::All` via the high-tier `RuntimeState`.
 ///
 /// PORT NOTE: `bun_jsc::VirtualMachine.timer` is a `()` placeholder

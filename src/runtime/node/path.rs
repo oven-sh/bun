@@ -44,21 +44,6 @@ impl ZigStringTruncExt for ZigString {
     }
 }
 
-/// `bun.String.charAt(i)` — code unit at `i` widened to u32 (string.zig).
-trait BunStringCharAtExt {
-    fn char_at(&self, i: usize) -> u32;
-}
-impl BunStringCharAtExt for bun_str::String {
-    #[inline]
-    fn char_at(&self, i: usize) -> u32 {
-        if self.is_utf16() {
-            self.utf16()[i] as u32
-        } else {
-            self.latin1()[i] as u32
-        }
-    }
-}
-
 // Allow on the stack:
 // - 8 string slices
 // - 3 path buffers

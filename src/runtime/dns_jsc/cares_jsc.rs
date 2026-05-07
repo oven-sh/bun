@@ -348,15 +348,15 @@ pub fn mx_reply_to_js_response(
 pub fn mx_reply_to_js(
     this: &mut c_ares::struct_ares_mx_reply,
     global_this: &JSGlobalObject,
-) -> JSValue {
+) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
     obj.put(global_this, b"priority", JSValue::js_number(this.priority as f64));
 
     // SAFETY: host is a non-null NUL-terminated C string from c-ares.
     let host = unsafe { CStr::from_ptr(this.host as *const c_char) }.to_bytes();
-    obj.put(global_this, b"exchange", utf8_to_js(global_this, host));
+    obj.put(global_this, b"exchange", utf8_to_js(global_this, host)?);
 
-    obj
+    Ok(obj)
 }
 
 // ── struct_ares_txt_reply ──────────────────────────────────────────────────
@@ -396,7 +396,7 @@ pub fn txt_reply_to_js(
     let array = JSValue::create_empty_array(global_this, 1)?;
     // SAFETY: txt is a c-ares-owned buffer of `length` bytes.
     let value = unsafe { core::slice::from_raw_parts(this.txt, this.length as usize) };
-    array.put_index(global_this, 0, utf8_to_js(global_this, value))?;
+    array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
     Ok(array)
 }
 
@@ -422,7 +422,7 @@ pub fn txt_reply_to_js_for_any(
         let node = unsafe { &mut *txt };
         // SAFETY: txt is a c-ares-owned buffer of `length` bytes.
         let value = unsafe { core::slice::from_raw_parts(node.txt, node.length as usize) };
-        array.put_index(global_this, i, utf8_to_js(global_this, value))?;
+        array.put_index(global_this, i, utf8_to_js(global_this, value)?)?;
         txt = node.next;
         i += 1;
     }
@@ -456,7 +456,7 @@ pub fn naptr_reply_to_js_response(
     while !naptr.is_null() {
         // SAFETY: naptr walks the c-ares-owned linked list.
         let node = unsafe { &mut *naptr };
-        array.put_index(global_this, i, naptr_reply_to_js(node, global_this))?;
+        array.put_index(global_this, i, naptr_reply_to_js(node, global_this)?)?;
         naptr = node.next;
         i += 1;
     }
@@ -467,7 +467,7 @@ pub fn naptr_reply_to_js_response(
 pub fn naptr_reply_to_js(
     this: &mut c_ares::struct_ares_naptr_reply,
     global_this: &JSGlobalObject,
-) -> JSValue {
+) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 6);
 
     obj.put(global_this, b"preference", JSValue::js_number(this.preference as f64));
@@ -475,21 +475,21 @@ pub fn naptr_reply_to_js(
 
     // SAFETY: flags is a non-null NUL-terminated C string from c-ares.
     let flags = unsafe { CStr::from_ptr(this.flags as *const c_char) }.to_bytes();
-    obj.put(global_this, b"flags", utf8_to_js(global_this, flags));
+    obj.put(global_this, b"flags", utf8_to_js(global_this, flags)?);
 
     // SAFETY: service is a non-null NUL-terminated C string from c-ares.
     let service = unsafe { CStr::from_ptr(this.service as *const c_char) }.to_bytes();
-    obj.put(global_this, b"service", utf8_to_js(global_this, service));
+    obj.put(global_this, b"service", utf8_to_js(global_this, service)?);
 
     // SAFETY: regexp is a non-null NUL-terminated C string from c-ares.
     let regexp = unsafe { CStr::from_ptr(this.regexp as *const c_char) }.to_bytes();
-    obj.put(global_this, b"regexp", utf8_to_js(global_this, regexp));
+    obj.put(global_this, b"regexp", utf8_to_js(global_this, regexp)?);
 
     // SAFETY: replacement is a non-null NUL-terminated C string from c-ares.
     let replacement = unsafe { CStr::from_ptr(this.replacement as *const c_char) }.to_bytes();
-    obj.put(global_this, b"replacement", utf8_to_js(global_this, replacement));
+    obj.put(global_this, b"replacement", utf8_to_js(global_this, replacement)?);
 
-    obj
+    Ok(obj)
 }
 
 // ── struct_ares_soa_reply ──────────────────────────────────────────────────
@@ -499,13 +499,13 @@ pub fn soa_reply_to_js_response(
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback + arena bulk-free — profile in Phase B
-    Ok(soa_reply_to_js(this, global_this))
+    soa_reply_to_js(this, global_this)
 }
 
 pub fn soa_reply_to_js(
     this: &mut c_ares::struct_ares_soa_reply,
     global_this: &JSGlobalObject,
-) -> JSValue {
+) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 7);
 
     obj.put(global_this, b"serial", JSValue::js_number(this.serial as f64));
@@ -516,13 +516,13 @@ pub fn soa_reply_to_js(
 
     // SAFETY: nsname is a non-null NUL-terminated C string from c-ares.
     let nsname = unsafe { CStr::from_ptr(this.nsname as *const c_char) }.to_bytes();
-    obj.put(global_this, b"nsname", utf8_to_js(global_this, nsname));
+    obj.put(global_this, b"nsname", utf8_to_js(global_this, nsname)?);
 
     // SAFETY: hostmaster is a non-null NUL-terminated C string from c-ares.
     let hostmaster = unsafe { CStr::from_ptr(this.hostmaster as *const c_char) }.to_bytes();
-    obj.put(global_this, b"hostmaster", utf8_to_js(global_this, hostmaster));
+    obj.put(global_this, b"hostmaster", utf8_to_js(global_this, hostmaster)?);
 
-    obj
+    Ok(obj)
 }
 
 // ── struct_any_reply ───────────────────────────────────────────────────────

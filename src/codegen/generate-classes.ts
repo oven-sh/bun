@@ -520,12 +520,9 @@ ${renderFieldsImpl(protoSymbolName, typeName, obj, protoFields, obj.values || []
 void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    ${
-      Object.keys(protoFields).length > 0
-        ? `reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
-        : ""
-    }${specialSymbols}${staticPrototypeValues}
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    finishGeneratedPrototype(vm, this, ${className(typeName)}::info(), ${
+      Object.keys(protoFields).length > 0 ? `${proto}TableValues, std::size(${proto}TableValues)` : `nullptr, 0`
+    });${specialSymbols}${staticPrototypeValues}
 }
 
 
@@ -636,8 +633,9 @@ ${hashTable}
 void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype)
 {
     Base::finishCreation(vm, 0, "${typeName}"_s, PropertyAdditionMode::WithoutStructureTransition);
-    ${hashTableIdentifier.length ? `reifyStaticProperties(vm, &${name}::s_info, ${hashTableIdentifier}, *this);` : ""}
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    finishGeneratedConstructor(vm, this, prototype, &${name}::s_info, ${
+      hashTableIdentifier.length ? `${hashTableIdentifier}, std::size(${hashTableIdentifier})` : `nullptr, 0`
+    });
     ASSERT(inherits(info()));
 }
 
@@ -657,14 +655,15 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+${
+  !obj.call
+    ? `    return callGeneratedConstructorIllegal(lexicalGlobalObject, "${typeName}"_s);`
+    : `    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
 ${
-  obj.call
-    ? !obj.constructNeedsThis
-      ? `
+  !obj.constructNeedsThis
+    ? `
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
     if (!ptr || scope.exception()) [[unlikely]] {
@@ -674,7 +673,7 @@ ${
     Structure* structure = globalObject->${className(typeName)}Structure();
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
 `
-      : `
+    : `
     Structure* structure = globalObject->${className(typeName)}Structure();
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
 
@@ -686,82 +685,31 @@ ${
 
     instance->m_ctx = ptr;
 `
-    : `
-    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "${typeName} constructor cannot be invoked without 'new'"_s);
-    return JSValue::encode(JSC::jsUndefined());
-`
 }
-
+    RETURN_IF_EXCEPTION(scope, {});
 ${
-  obj.call
-    ? `    RETURN_IF_EXCEPTION(scope, {});
-  ${
-    obj.estimatedSize
-      ? `
+  obj.estimatedSize
+    ? `
       auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
       vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
+    : ""
+}
 
     RELEASE_AND_RETURN(scope, JSValue::encode(instance));`
-    : ""
 }
 }
 
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    Zig::GlobalObject *globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSC::VM &vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->${className(typeName)}Constructor();
-    Structure* structure = globalObject->${className(typeName)}Structure();
-    if (constructor != newTarget) [[unlikely]] {
-      auto* functionGlobalObject = defaultGlobalObject(
-        // ShadowRealm functions belong to a different global object.
-        getFunctionRealm(globalObject, newTarget)
-      );
-      RETURN_IF_EXCEPTION(scope, {});
-      structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->${className(typeName)}Structure());
-      RETURN_IF_EXCEPTION(scope, {});
-    }
-
+    GeneratedCreateWrapperFn createWrapper = [](JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ptr) -> JSC::JSObject* {
+        return ${className(typeName)}::create(vm, globalObject, structure, ptr);
+    };
 ` +
     (!obj.constructNeedsThis
-      ? `
-    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
-
-    if (scope.exception()) [[unlikely]] {
-      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
-      return JSValue::encode(JSC::jsUndefined());
-    }
-
-    ASSERT_WITH_MESSAGE(ptr, "Incorrect exception handling: new ${typeName} returned a null pointer, indicating an exception - but did not throw an exception.");
-    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
-`
-      : `
-    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
-
-    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
-    if (scope.exception()) [[unlikely]] {
-      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
-      return JSValue::encode(JSC::jsUndefined());
-    }
-
-    instance->m_ctx = ptr;
-    `) +
+      ? `    return constructGeneratedWrapper(lexicalGlobalObject, callFrame, &Zig::GlobalObject::m_${className(typeName)}, &${classSymbolName(typeName, "construct")}, createWrapper, ${obj.estimatedSize ? `&${symbolName(typeName, "estimatedSize")}` : "nullptr"});`
+      : `    return constructGeneratedWrapperNeedsThis(lexicalGlobalObject, callFrame, &Zig::GlobalObject::m_${className(typeName)}, &${classSymbolName(typeName, "construct")}, createWrapper, ${className(typeName)}::offsetOfWrapped(), ${obj.estimatedSize ? `&${symbolName(typeName, "estimatedSize")}` : "nullptr"});`) +
     `
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
-
-    auto value = JSValue::encode(instance);
-    RELEASE_AND_RETURN(scope, value);
 }
 
 const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
@@ -2662,6 +2610,111 @@ using namespace JSC;
 using namespace Zig;
 
 #include "ZigGeneratedClasses.lut.h"
+
+// Shared helpers used by the per-class stubs below.
+// These exist so that each generated Constructor::construct / ::call /
+// Prototype::finishCreation body can be a thin call-through instead of
+// repeating ~30 lines of boilerplate per class. Not a hot path: runs at
+// most once per class per global object.
+
+using GeneratedLazyClassStructureMember = JSC::LazyClassStructure Zig::GlobalObject::*;
+using GeneratedZigConstructFn = SYSV_ABI void* (*)(JSC::JSGlobalObject*, JSC::CallFrame*);
+using GeneratedZigConstructWithThisFn = SYSV_ABI void* (*)(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::EncodedJSValue);
+using GeneratedCreateWrapperFn = JSC::JSObject* (*)(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, void*);
+using GeneratedEstimatedSizeFn = SYSV_ABI size_t (*)(void*);
+
+NEVER_INLINE static JSC::Structure* resolveConstructionStructure(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame, GeneratedLazyClassStructureMember lazyStructure, JSC::ThrowScope& scope)
+{
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto& lazy = globalObject->*lazyStructure;
+    JSObject* constructor = lazy.constructorInitializedOnMainThread(globalObject);
+    Structure* structure = lazy.getInitializedOnMainThread(globalObject);
+    if (constructor != newTarget) [[unlikely]] {
+        auto* functionGlobalObject = defaultGlobalObject(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget, (functionGlobalObject->*lazyStructure).getInitializedOnMainThread(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return structure;
+}
+
+NEVER_INLINE static JSC::EncodedJSValue constructGeneratedWrapper(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, GeneratedLazyClassStructureMember lazyStructure, GeneratedZigConstructFn zigConstruct, GeneratedCreateWrapperFn createWrapper, GeneratedEstimatedSizeFn estimatedSize)
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Structure* structure = resolveConstructionStructure(globalObject, callFrame, lazyStructure, scope);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    void* ptr = zigConstruct(globalObject, callFrame);
+    if (scope.exception()) [[unlikely]] {
+        ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: generated class constructor allocated memory without checking for exceptions.");
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    ASSERT_WITH_MESSAGE(ptr, "Incorrect exception handling: generated class constructor returned null without throwing an exception.");
+
+    JSObject* instance = createWrapper(vm, globalObject, structure, ptr);
+    if (estimatedSize)
+        vm.heap.reportExtraMemoryAllocated(instance, estimatedSize(ptr));
+    RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+}
+
+NEVER_INLINE static JSC::EncodedJSValue constructGeneratedWrapperNeedsThis(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, GeneratedLazyClassStructureMember lazyStructure, GeneratedZigConstructWithThisFn zigConstruct, GeneratedCreateWrapperFn createWrapper, ptrdiff_t ctxOffset, GeneratedEstimatedSizeFn estimatedSize)
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Structure* structure = resolveConstructionStructure(globalObject, callFrame, lazyStructure, scope);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSObject* instance = createWrapper(vm, globalObject, structure, nullptr);
+    // The Zig constructor may trigger GC before m_ctx is set; keep the
+    // partially-initialized cell rooted across that call.
+    JSC::EnsureStillAliveScope ensureInstanceAlive(instance);
+    void* ptr = zigConstruct(globalObject, callFrame, JSValue::encode(instance));
+    if (scope.exception()) [[unlikely]] {
+        ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: generated class constructor allocated memory without checking for exceptions.");
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    *reinterpret_cast<void**>(reinterpret_cast<char*>(instance) + ctxOffset) = ptr;
+    if (estimatedSize)
+        vm.heap.reportExtraMemoryAllocated(instance, estimatedSize(ptr));
+    RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+}
+
+NEVER_INLINE static JSC::EncodedJSValue callGeneratedConstructorIllegal(JSC::JSGlobalObject* lexicalGlobalObject, WTF::ASCIILiteral typeName)
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, WTF::makeString(typeName, " constructor cannot be invoked without 'new'"_s));
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+// reifyStaticProperties is an inline template; calling it directly from ~140
+// generated finishCreation() bodies stamps out ~140 copies. Route through a
+// single non-template function instead.
+NEVER_INLINE static void reifyGeneratedProperties(JSC::VM& vm, const JSC::ClassInfo* info, const JSC::HashTableValue* tableValues, size_t count, JSC::JSObject& thisObj)
+{
+    reifyStaticProperties(vm, info, std::span(tableValues, count), thisObj);
+}
+
+NEVER_INLINE static void finishGeneratedPrototype(JSC::VM& vm, JSC::JSObject* prototype, const JSC::ClassInfo* info, const JSC::HashTableValue* tableValues, size_t count)
+{
+    if (tableValues)
+        reifyGeneratedProperties(vm, info, tableValues, count, *prototype);
+    prototype->putDirectWithoutTransition(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+}
+
+NEVER_INLINE static void finishGeneratedConstructor(JSC::VM& vm, JSC::InternalFunction* constructor, JSC::JSObject* prototype, const JSC::ClassInfo* info, const JSC::HashTableValue* tableValues, size_t count)
+{
+    if (tableValues)
+        reifyGeneratedProperties(vm, info, tableValues, count, *constructor);
+    constructor->putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+}
 
 `;
 

@@ -237,38 +237,26 @@ impl HasAutoFlusher for NodeHTTPResponse {
     }
 }
 
-// JsClass impl: hand-roll the codegen externs (`.classes.ts` emits
-// `NodeHTTPResponse__{fromJS,fromJSDirect,create,getConstructor}`).
-// `*mut NodeHTTPResponse` is opaque to C++ (linked by symbol name only); the
-// pointee's Rust layout is irrelevant to the FFI boundary, but the struct
-// lacks `#[repr(C)]` so rustc lints anyway.
-#[allow(improper_ctypes)]
-unsafe extern "C" {
-    fn NodeHTTPResponse__fromJS(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
-    fn NodeHTTPResponse__fromJSDirect(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
-    fn NodeHTTPResponse__create(ptr: *mut NodeHTTPResponse, global: *mut JSGlobalObject) -> JSValue;
-}
+// `JsClass` glue: route through the codegen-emitted inherent helpers
+// (`crate::generated_classes` re-exports this very struct and adds
+// `from_js` / `from_js_direct` / `to_js(*mut Self, &JSGlobalObject)` /
+// `on{Data,Aborted,Writable}_{get,set}_cached` as inherent associated fns —
+// see `generate-classes.ts::generateRust()`). No local `extern "C"`
+// re-declarations: the codegen owns the FFI surface.
 impl jsc::JsClass for NodeHTTPResponse {
     fn from_js(value: JSValue) -> Option<*mut Self> {
-        // SAFETY: codegen extern; `value` is a valid JSValue.
-        unsafe { NodeHTTPResponse__fromJS(value) }.map(|p| p.as_ptr())
+        Self::from_js(value).map(|p| p.as_ptr())
     }
     fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        // SAFETY: codegen extern.
-        unsafe { NodeHTTPResponse__fromJSDirect(value) }.map(|p| p.as_ptr())
+        Self::from_js_direct(value).map(|p| p.as_ptr())
     }
-    fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-        // Never called by-value; callers go through `to_js_ptr` below.
-        unreachable!("NodeHTTPResponse::to_js by-value")
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        // Hot path goes through `Self::to_js(ptr, global)` directly (already
+        // heap-allocated in `create()`); this by-value path boxes once then
+        // hands ownership to the C++ wrapper (freed via `finalize`).
+        Self::to_js(Box::into_raw(Box::new(self)), global)
     }
     // `noConstructor: true` — no `NodeHTTPResponse__getConstructor` export; trait default applies.
-}
-impl NodeHTTPResponse {
-    #[inline]
-    fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `this` is a heap-allocated `Box::into_raw` from `create`.
-        unsafe { NodeHTTPResponse__create(this, global as *const _ as *mut _) }
-    }
 }
 
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.

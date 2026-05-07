@@ -2648,15 +2648,18 @@ const rustModuleResolver = (() => {
       // Fallback: derive from the .classes.ts location → sibling .rs module.
       // src/runtime/webcore/response.classes.ts → crate::webcore::response::Name
       if (classesFile) {
-        const rel = path
-          .relative(runtimeRoot, classesFile)
-          .replace(/\.classes\.ts$/, "")
-          .split(path.sep)
-          .map(seg => rustSnakeIdent(seg))
-          .join("::");
-        return `crate::${rel}::${name}`;
+        const rel = path.relative(runtimeRoot, classesFile).replace(/\.classes\.ts$/, "");
+        if (!rel.startsWith("..")) {
+          const mod = rel
+            .split(path.sep)
+            .map(seg => rustSnakeIdent(seg))
+            .join("::");
+          return `crate::${mod}::${name}`;
+        }
       }
-      return `crate::${rustSnakeIdent(name)}::${name}`;
+      // Out-of-crate (e.g. src/jsc/*.classes.ts → bun_jsc) — `api.rs` already
+      // `pub use bun_jsc::{BuildMessage, ResolveMessage};` so route there.
+      return `crate::api::${name}`;
     },
     /** Resolve an absolute `.rs` (or `.zig`) file path to its `crate::…` module path. */
     resolveFile(absRs: string): string | null {

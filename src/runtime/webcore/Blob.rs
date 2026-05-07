@@ -398,16 +398,7 @@ impl Blob {
 // ──────────────────────────────────────────────────────────────────────────
 // JSC-integration methods (host fns, to_js/from_js, S3/file I/O state machines)
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_jsc::* — the entire block below depends on the real
-// `bun_jsc` method surface (JSValue methods, host_fn proc-macro, ArgumentsSlice,
-// codegen gc slots) and on gated runtime modules (`crate::node::fs`, `S3File`,
-// `read_file`/`write_file`). Struct/enum payloads referenced by Body/Request/
-// Response are defined outside this gate; un-gate progressively as bun_jsc
-// becomes a dep of bun_runtime.
 
-mod _jsc_gated {
-use super::*;
-use super::read_file;
 use crate::node as node;
 use crate::image::Image;
 use bun_str::string_joiner::StringJoiner;
@@ -419,10 +410,10 @@ use crate::webcore::s3_file as S3File;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;
 use crate::api::archive::Archive;
-// `write_file` (module) is shadowed inside this scope by `pub fn write_file`;
-// alias the module so `write_file_mod::WriteFile{,Task,Windows,Promise}` resolve.
-use super::write_file as write_file_mod;
-use super::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
+// The `write_file` module name coexists with `pub fn write_file` below (module
+// vs value namespace); alias the module so the call sites read unambiguously.
+use self::write_file as write_file_mod;
+use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 #[allow(unused_imports)]
 use bun_jsc::{StringJsc as _, JsClass as _};
 #[allow(unused_imports)]

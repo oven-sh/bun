@@ -2347,12 +2347,7 @@ impl ThreadSafeFunction {
                 let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
 
                 let env_ref = unsafe { &*env };
-                let handle_scope = NapiHandleScope::open(env_ref, false);
-                let _hs_guard = scopeguard::guard((), |_| {
-                    if !handle_scope.is_null() {
-                        NapiHandleScope::close(handle_scope, env_ref);
-                    }
-                });
+                let _hs = NapiHandleScope::open_scoped(env_ref);
                 napi_threadsafe_function_call_js(
                     env,
                     napi_value::create(env_ref, js),
@@ -2365,10 +2360,7 @@ impl ThreadSafeFunction {
     }
 
     pub fn enqueue(&mut self, ctx: *mut c_void, block: bool) -> napi_status {
-        // PORT NOTE: borrowck — see `dispatch_one`.
-        let lock_ptr: *const Mutex = &self.lock;
-        self.lock.lock();
-        let _g = scopeguard::guard((), |_| unsafe { (*lock_ptr).unlock() });
+        let _g = self.lock.lock_guard();
         if block {
             while self.queue.is_blocked() {
                 self.blocking_condvar.wait(&self.lock);
@@ -2454,8 +2446,7 @@ impl ThreadSafeFunction {
     }
 
     pub fn acquire(&mut self) -> napi_status {
-        self.lock.lock();
-        let _g = scopeguard::guard((), |_| self.lock.unlock());
+        let _g = self.lock.lock_guard();
         if self.is_closing() {
             return NapiStatus::closing as napi_status;
         }

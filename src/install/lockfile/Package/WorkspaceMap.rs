@@ -5,7 +5,7 @@ use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP_STR};
 use bun_str::{strings, ZStr};
 use bun_glob as glob;
-use bun_js_parser as js_ast;
+use bun_logger::js_ast;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bstr::BStr;
 

@@ -779,6 +779,27 @@ impl Expr {
     pub fn is_array(&self) -> bool {
         matches!(self.data, expr::Data::EArray(_))
     }
+
+    /// Zig: `Expr.asArray()` (src/js_parser/ast/Expr.zig). Returns an iterator
+    /// over an `e_array` payload's items, or `None` for non-array data *and*
+    /// for an empty array (matching the Zig `if (array.items.len == 0) return
+    /// null` short-circuit).
+    pub fn as_array(&self) -> Option<ArrayIterator<'_>> {
+        match &self.data {
+            expr::Data::EArray(array) => {
+                if array.items.len == 0 {
+                    return None;
+                }
+                // SAFETY: `StoreRef` points into a live Store/bump arena; widen
+                // to a raw deref so the iterator borrow is decoupled from the
+                // local `StoreRef` temporary (same pattern as the T4 parser
+                // `Expr::as_array`).
+                Some(ArrayIterator { array: unsafe { &*array.as_ptr() }, index: 0 })
+            }
+            _ => None,
+        }
+    }
+
     #[inline]
     pub fn is_string(&self) -> bool {
         matches!(self.data, expr::Data::EString(_))
@@ -873,6 +894,24 @@ impl Expr {
         // full `NewStore` slab lives in `bun_js_parser`; once `Data` is
         // unified, this calls through to it.
         DATA_STORE.with(|s| s.borrow_mut().reset());
+    }
+}
+
+/// Zig: `js_ast.ArrayIterator` (src/js_parser/ast/Expr.zig). Produced by
+/// `Expr::as_array`; `next()` walks `array.items` by index.
+pub struct ArrayIterator<'a> {
+    pub array: &'a E::Array,
+    pub index: u32,
+}
+
+impl ArrayIterator<'_> {
+    pub fn next(&mut self) -> Option<Expr> {
+        if self.index >= self.array.items.len {
+            return None;
+        }
+        let result = self.array.items.slice()[self.index as usize];
+        self.index += 1;
+        Some(result)
     }
 }
 

@@ -335,11 +335,8 @@ impl FileSink {
         // keep-alive ref, and `stream.cancel`/`runPending` drain microtasks
         // which may drop the JS wrapper's ref. Hold a local ref so `this`
         // stays valid for the rest of this function (same pattern as `onWrite`).
-        // PORT NOTE: reshaped for borrowck — `defer self.deref()` via raw-ptr
-        // scopeguard so the closure does not borrow `self`.
-        self.ref_();
-        let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
+        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
+        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
 
         self.done = true;
         let mut readable_stream = core::mem::take(&mut self.readable_stream);
@@ -347,11 +344,13 @@ impl FileSink {
             if let Some(global) = self.js_global() {
                 if let Some(stream) = readable_stream.get(global).as_mut() {
                     if !status.is_ok() {
-                        // SAFETY: `bun_vm()` is non-null when `global_object()` was.
-                        let event_loop = unsafe { (*global.bun_vm()).event_loop() };
-                        // SAFETY: `event_loop()` returns a live `*mut EventLoop`.
-                        unsafe { (*event_loop).enter() };
-                        let _exit = scopeguard::guard((), move |_| unsafe { (*event_loop).exit() });
+                        // SAFETY: `bun_vm()` is non-null when `global_object()` was;
+                        // `event_loop()` returns the live VM-owned `*mut EventLoop`.
+                        let _entered = unsafe {
+                            bun_jsc::event_loop::EventLoop::enter_scope(
+                                (*global.bun_vm()).event_loop(),
+                            )
+                        };
                         stream.cancel(global);
                     } else {
                         stream.done(global);
@@ -376,15 +375,12 @@ impl FileSink {
     }
 
     fn run_pending(&mut self) {
-        self.ref_();
-        let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
+        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
+        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
 
         self.run_pending_later.has = false;
-        let l = self.event_loop();
 
-        l.enter();
-        let _exit = scopeguard::guard((), move |_| l.exit());
+        let _entered = self.event_loop().entered();
         self.pending.run();
 
         // Release the JS wrapper reference now that the pending operation is complete.

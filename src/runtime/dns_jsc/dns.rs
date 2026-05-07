@@ -4029,8 +4029,7 @@ impl Resolver {
         // back-ptr directly so the borrow isn't tied to `&self`'s lifetime.
         let vm = unsafe { &*(*this).vm };
         // SAFETY: vm.event_loop() returns the live *mut EventLoop owned by vm.
-        unsafe { (*vm.event_loop()).enter() };
-        let _exit = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
+        let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
         // SAFETY: `this` is live for the duration of this callback (caller holds it).
         let Some(channel) = (unsafe { (*this).channel }) else {
             unsafe { let _ = (*this).polls.remove(&poll.fd.native()); }
@@ -4038,10 +4037,8 @@ impl Resolver {
             return;
         };
 
-        // SAFETY: `this` is live (see above).
-        unsafe { (*this).ref_() };
-        // SAFETY: `this` is the heap allocation from `init`; paired with `ref_()` above so count stays > 0.
-        let _deref = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
+        // SAFETY: `this` is the heap allocation from `init`; ref_scope keeps count > 0 across re-entrant callbacks.
+        let _deref = unsafe { Self::ref_scope(this) };
 
         // SAFETY: `channel` is the live c-ares channel owned by `*this`; no `&mut`
         // to `*this` is held across this re-entrant call.
@@ -4534,7 +4531,7 @@ impl Resolver {
                 format_args!("ares_get_servers_ports error: {}", err.label()),
             )));
         }
-        let _free = scopeguard::guard((), |_| unsafe { c_ares::ares_free_data(servers.cast()) });
+        scopeguard::defer! { unsafe { c_ares::ares_free_data(servers.cast()) } };
 
         let values = JSValue::create_empty_array(global_this, 0)?;
 

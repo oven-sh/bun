@@ -833,14 +833,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `@fieldParentPtr` consumers below.
     let _ = (&dev.server_graph, &dev.client_graph, &dev.directory_watchers);
 
-    dev.graph_safety_lock.lock();
-    // PORT NOTE: capture the raw `dev_ptr` so the guard closure doesn't hold a
-    // unique borrow of `dev` for the rest of the function (Zig `defer` had no
-    // aliasing check).
-    // SAFETY: `dev_ptr` points into the `Box`ed heap allocation, which is never
-    // freed in this fn (only the `Box` handle moves on `Ok(dev)`); the guard
-    // runs at scope exit while that allocation is still live.
-    let _unlock = scopeguard::guard((), move |_| unsafe { (*dev_ptr).graph_safety_lock.unlock() });
+    let _unlock = dev.graph_safety_lock.guard();
 
     if let Err(err) = dev.bun_watcher.start() {
         return Err(global.throw_error(
@@ -1499,7 +1492,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
             },
         );
         // SAFETY: `init_from_any_blob` returns a fresh ref_count=1 box.
-        let _deref = scopeguard::guard((), move |_| unsafe { (*response).deref() });
+        scopeguard::defer! { unsafe { (*response).deref() } };
         // SAFETY: `response` is live until `_deref` runs after this returns.
         unsafe { (*response).on_request(crate::server::static_route::OnRequestArg::H1(req), resp) };
         return;

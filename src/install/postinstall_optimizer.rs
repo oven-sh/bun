@@ -1,7 +1,11 @@
 use std::sync::LazyLock;
 
 use bun_collections::ArrayHashMap;
-use bun_js_parser::ast;
+// PORT NOTE: `Expr` here is the T2 `bun_logger::js_ast::Expr` (re-exported via
+// `crate::bun_json`), not the T4 `bun_js_parser::Expr`. The sole caller
+// (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_json::Expr`,
+// so binding to the lower-tier type avoids a cross-tier mismatch.
+use bun_logger::js_ast;
 use bun_semver as semver;
 
 use crate::lockfile::package::Meta;
@@ -41,7 +45,7 @@ static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
 impl PostinstallOptimizer {
     fn from_string_array_group(
         list: &mut List,
-        expr: &ast::Expr,
+        expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
         // PORT NOTE: Zig `expr.asArray()` returns null for both non-array AND empty
@@ -74,7 +78,7 @@ impl PostinstallOptimizer {
         Ok(true)
     }
 
-    pub fn from_package_json(list: &mut List, expr: &ast::Expr) -> Result<(), bun_alloc::AllocError> {
+    pub fn from_package_json(list: &mut List, expr: &js_ast::Expr) -> Result<(), bun_alloc::AllocError> {
         if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
             list.disable_default_native_binlinks = Self::from_string_array_group(
                 list,

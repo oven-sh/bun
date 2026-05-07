@@ -500,7 +500,6 @@ fn message_with_type_and_level_(
                 let _ = table_printer.print_table::<false>(writer);
             }
             let _ = writer.flush();
-            drop(indent_guard);
             return Ok(());
         }
     }
@@ -540,7 +539,6 @@ fn message_with_type_and_level_(
         let _ = writer.flush();
     }
 
-    drop(indent_guard);
     Ok(())
 }
 
@@ -1367,16 +1365,8 @@ pub fn format2(
 
             let _ = writer.flush();
         } else {
-            // PORT NOTE: Zig `defer if (options.flush) writer.flush()`. Capture
-            // a raw pointer so the body can keep a unique `&mut *writer`.
-            let writer_ptr: *mut dyn bun_io::Write = writer;
-            let _flush = scopeguard::guard((), move |_| {
-                if options.flush {
-                    // SAFETY: `writer` outlives `_flush`; no other borrow is
-                    // live at the guard's drop point (end of this `else`).
-                    let _ = unsafe { (*writer_ptr).flush() };
-                }
-            });
+            // PORT NOTE: Zig `defer if (options.flush) writer.flush()`.
+            let _flush = FlushOnDrop { writer, enabled: options.flush };
             if options.enable_colors {
                 fmt.format::<true>(tag, writer, vals[0], global)?;
             } else {
@@ -1390,15 +1380,8 @@ pub fn format2(
         return Ok(());
     }
 
-    // PORT NOTE: Zig `defer if (options.flush) writer.flush()` — raw-ptr in the
-    // closure to avoid holding a unique borrow across the body (E0501).
-    let writer_ptr: *mut dyn bun_io::Write = writer;
-    let _flush = scopeguard::guard((), move |_| {
-        if options.flush {
-            // SAFETY: `writer` outlives `_flush`; only re-borrowed at drop.
-            let _ = unsafe { (*writer_ptr).flush() };
-        }
-    });
+    // PORT NOTE: Zig `defer if (options.flush) writer.flush()`.
+    let _flush = FlushOnDrop { writer, enabled: options.flush };
 
     let mut this_value: JSValue = vals[0];
     // PORT NOTE: see E0509 note above.
@@ -1487,26 +1470,66 @@ pub use formatter::{Formatter, Tag, TagPayload};
 pub mod formatter {
     use super::*;
 
+    /// RAII: write `prev` back through `place` on drop (Zig
+    /// `defer this.field = prev;`). Holds a raw `*mut` so the body of the
+    /// scope can freely take `&mut self` without aliasing the borrow.
+    pub(super) struct Restore<T: Copy> {
+        place: *mut T,
+        prev: T,
+    }
+    impl<T: Copy> Drop for Restore<T> {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: `place` was taken via `addr_of_mut!` on a field of a
+            // value that outlives this guard; no other borrow is live at drop.
+            unsafe { *self.place = self.prev };
+        }
+    }
+
+    /// `saturating_sub(1)` for the integer field types `Decrement` is used on.
+    pub(super) trait SaturatingDec: Copy {
+        fn saturating_dec(self) -> Self;
+    }
+    impl SaturatingDec for u16 {
+        #[inline]
+        fn saturating_dec(self) -> Self { self.saturating_sub(1) }
+    }
+    impl SaturatingDec for u32 {
+        #[inline]
+        fn saturating_dec(self) -> Self { self.saturating_sub(1) }
+    }
+
+    /// RAII: `*place -|= 1` on drop (Zig `defer this.field -|= 1;`). Holds a
+    /// raw `*mut` so the body can freely take `&mut self`.
+    pub(super) struct Decrement<T: SaturatingDec> {
+        place: *mut T,
+    }
+    impl<T: SaturatingDec> Drop for Decrement<T> {
+        #[inline]
+        fn drop(&mut self) {
+            // SAFETY: `place` was taken via `addr_of_mut!` on a field of a
+            // value that outlives this guard; no other borrow is live at drop.
+            unsafe { *self.place = (*self.place).saturating_dec() };
+        }
+    }
+
     /// Mirror Zig's `defer this.field = prev;` without holding a live borrow
     /// on `self` for the body of the scope. Zig `defer` reads at scope-exit
     /// time and never aliases, so we capture a raw `*mut` to the field and
     /// write through it on drop. This lets the body freely take `&mut self`.
     #[allow(unused_macros)] // only used by gated `print_as` body
     macro_rules! defer_restore {
-        ($place:expr, $prev:expr) => {{
-            let __p: *mut _ = core::ptr::addr_of_mut!($place);
-            let __prev = $prev;
-            scopeguard::guard((), move |_| unsafe { *__p = __prev; })
-        }};
+        ($place:expr, $prev:expr) => {
+            Restore { place: core::ptr::addr_of_mut!($place), prev: $prev }
+        };
     }
 
     /// Mirror Zig's `defer this.field -|= 1;` without holding a live borrow.
     #[allow(unused_macros)] // only used by gated `print_as` body
     macro_rules! defer_decrement {
-        ($place:expr) => {{
-            let __p: *mut _ = core::ptr::addr_of_mut!($place);
-            scopeguard::guard((), move |_| unsafe { *__p = (*__p).saturating_sub(1); })
-        }};
+        ($place:expr) => {
+            Decrement { place: core::ptr::addr_of_mut!($place) }
+        };
     }
 
     pub struct Formatter<'a> {

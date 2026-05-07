@@ -1623,7 +1623,7 @@ pub fn init(
                         let _ = match workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
-                            &mut *json_array,
+                            &*json_array,
                             &json_source,
                             prop.loc,
                             None,
@@ -2371,18 +2371,17 @@ pub fn init_with_runtime_once(
     // `manager.lockfile = load.lockfile` self-assignment is a no-op in the Rust
     // shape (`load_from_cwd` mutates `*manager.lockfile` in place and returns a
     // borrow of it), so `Ok` keeps the loaded value as-is.
-    // PORT NOTE: `load_from_cwd` is typed against the lib.rs `crate::PackageManager`
-    // stub; cast `manager_ptr` (same erased-ctx pattern as
-    // `active_lifecycle_scripts.context` above) until reconciler-6 unifies the
-    // two structs.
+    // PORT NOTE: Zig calls `manager.lockfile.loadFromCwd(manager, …)` — a
+    // self-aliasing receiver+argument pair Rust forbids. Split-borrow by
+    // temporarily moving the boxed lockfile out so the `&mut PackageManager`
+    // passed in does not alias the `&mut Lockfile` receiver.
     if root_dir.has_comptime_query(b"bun.lockb") {
-        match manager
-            .lockfile
-            .load_from_cwd(manager_ptr as *mut crate::PackageManager, log, true)
-        {
+        let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
+        match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
             lockfile::LoadResult::Ok(_) => {}
-            _ => manager.lockfile.init_empty(),
+            _ => lockfile.init_empty(),
         }
+        manager.lockfile = lockfile;
     } else {
         manager.lockfile.init_empty();
     }

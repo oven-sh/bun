@@ -829,6 +829,51 @@ impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// ScopedRef
+// ──────────────────────────────────────────────────────────────────────────
+
+/// RAII scope guard for an intrusive refcount: bumps on construction, derefs
+/// on `Drop`. Use to bracket a `ref_()`/`deref()` pair that protects `*T`
+/// across a re-entrant call (Zig: `this.ref(); defer this.deref();`).
+///
+/// Unlike [`RefPtr`] this is not a smart-pointer handle (no `Deref`, not
+/// stored in fields) — it exists solely so the paired deref runs on every
+/// exit path. Requires `DestructorCtx: Default` (the common unit case).
+#[must_use = "dropping immediately releases the ref"]
+pub struct ScopedRef<T: AnyRefCounted>(NonNull<T>)
+where
+    T::DestructorCtx: Default;
+
+impl<T: AnyRefCounted> ScopedRef<T>
+where
+    T::DestructorCtx: Default,
+{
+    /// Bump the intrusive refcount and return a guard that derefs on `Drop`.
+    ///
+    /// # Safety
+    /// `ptr` must point to a live `T` and remain a valid allocation until the
+    /// guard is dropped (the guard's own ref keeps it alive past that point).
+    #[inline]
+    pub unsafe fn new(ptr: *mut T) -> Self {
+        // SAFETY: caller contract — `ptr` is live.
+        unsafe { T::rc_ref(ptr) };
+        // SAFETY: caller contract — `ptr` is non-null.
+        Self(unsafe { NonNull::new_unchecked(ptr) })
+    }
+}
+
+impl<T: AnyRefCounted> Drop for ScopedRef<T>
+where
+    T::DestructorCtx: Default,
+{
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `new` took a ref, so the pointee is live until this deref.
+        unsafe { T::rc_deref(self.0.as_ptr()) };
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // TrackedRef / TrackedDeref
 // ──────────────────────────────────────────────────────────────────────────
 

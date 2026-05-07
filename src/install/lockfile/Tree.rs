@@ -512,6 +512,10 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
+// PORT NOTE: reshaped — Zig reads `lockfile.buffers.resolutions[dep_id]` directly,
+// but `Builder` holds a live `&mut [PackageID]` over that buffer (see `Builder.lockfile`
+// safety contract), so callers must thread `resolutions` explicitly to avoid an
+// aliasing read through the shared `&Lockfile`.
 pub fn is_filtered_dependency_or_workspace(
     dep_id: DependencyID,
     parent_pkg_id: PackageID,
@@ -519,8 +523,9 @@ pub fn is_filtered_dependency_or_workspace(
     install_root_dependencies: bool,
     manager: &PackageManager,
     lockfile: &Lockfile,
+    resolutions: &[PackageID],
 ) -> bool {
-    let pkg_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+    let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
         let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
         if dep.behavior.is_optional_peer() {
@@ -731,6 +736,7 @@ impl Tree {
                     builder.install_root_dependencies,
                     builder.manager.expect("manager set when METHOD == Filter"),
                     lockfile,
+                    &*builder.resolutions,
                 ) {
                     continue;
                 }
@@ -759,11 +765,6 @@ impl Tree {
             }
 
             let dependency = &dependencies[dep_id as usize];
-            // PORT NOTE: reshaped for borrowck — copy `behavior`/`name_hash` to
-            // locals so the `&mut builder` borrows in the match arms below do
-            // not conflict with the `&dependency` borrow.
-            let dep_behavior = dependency.behavior;
-            let dep_name_hash = dependency.name_hash;
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.

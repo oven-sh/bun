@@ -8719,12 +8719,11 @@ impl<'a> Resolver<'a> {
                         let Ok(file) = bun_sys::open_dir_z(fd, bun_paths::path_literal(b"node_modules/.bin"), Default::default()) else {
                             break 'append_bin_dir;
                         };
-                        let _close = scopeguard::guard((), |_| file.close());
+                        let _close = bun_sys::CloseOnDrop::new(file);
                         let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                             break 'append_bin_dir;
                         };
-                        BIN_FOLDERS_LOCK.lock();
-                        let _unlock = scopeguard::guard((), |_| BIN_FOLDERS_LOCK.unlock());
+                        let _unlock = BIN_FOLDERS_LOCK.lock_guard();
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {

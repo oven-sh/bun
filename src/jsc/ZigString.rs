@@ -41,21 +41,18 @@ unsafe extern "C" {
     fn ZigString__toDOMExceptionInstance(this: *const ZigString, global: *const JSGlobalObject, code: u8) -> JSValue;
     fn ZigString__toSyntaxErrorInstance(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toRangeErrorInstance(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn BunString__toURL(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
 }
 
-// TODO(port): hoist into `c_api` (javascript_core_c_api.rs) once that module is
-// fleshed out. Declared locally so `to_js_string_ref` compiles standalone.
+// `OpaqueJSString` / `JSStringRef` retained for type-level compatibility with
+// the JSC C API surface; the `to_js_string_ref` constructor wrappers were dead
+// code (no C++ body for `JSStringCreateStatic` in Bun's link image — Zig's
+// `toJSStringRef` is unreachable behind `@hasDecl(bun, "bindgen")`).
 #[repr(C)]
 pub struct OpaqueJSString {
     _p: [u8; 0],
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 pub type JSStringRef = *mut OpaqueJSString;
-unsafe extern "C" {
-    fn JSStringCreateWithCharactersNoCopy(string: *const u16, num_chars: usize) -> JSStringRef;
-    fn JSStringCreateStatic(string: *const u8, num_chars: usize) -> JSStringRef;
-}
 
 /// Prefer using `bun_string::String` instead of `ZigString` in new code.
 #[repr(C)]
@@ -313,11 +310,11 @@ impl ZigString {
         unsafe { ZigString__toJSONObject(self, global_this) }
     }
 
-    pub fn to_url(&self, global_this: &JSGlobalObject) -> JSValue {
-        crate::mark_binding!();
-        // SAFETY: self points to valid #[repr(C)] data; global_this is a live borrow.
-        unsafe { BunString__toURL(self, global_this) }
-    }
+    // PORT NOTE: `BunString__toURL` (Zig `ZigString.toURL`) has no C++ body in
+    // bindings.cpp — the only DOMURL constructor exported is
+    // `BunString__toJSDOMURL(*BunString)`, which takes a `bun.String`, not a
+    // `ZigString`. The Zig wrapper is dead code; route URL construction through
+    // `bun_str::String::to_js_dom_url` instead.
 
     pub fn has_prefix_char(&self, char: u8) -> bool {
         if self.len == 0 {
@@ -857,27 +854,10 @@ impl ZigString {
         out
     }
 
-    // TODO(port): `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
-    // JSStringCreateStatic}` not yet declared in javascript_core_c_api.rs —
-    // declared locally here until they're hoisted into the shared c_api module.
-
-    pub fn to_js_string_ref(&self) -> JSStringRef {
-        // TODO(port): Zig had `if @hasDecl(bun, "bindgen") return undefined` — bindgen-mode stub dropped
-        if self.is_16bit() {
-            // SAFETY: untagged ptr is 2-byte aligned UTF-16 data valid for self.len u16s.
-            unsafe {
-                JSStringCreateWithCharactersNoCopy(
-                    Self::untagged(self._unsafe_ptr_do_not_use).cast::<u16>(),
-                    self.len,
-                )
-            }
-        } else {
-            // SAFETY: untagged ptr is valid for self.len latin1 bytes; JSC
-            // borrows the buffer (caller must keep it alive — same contract as
-            // the Zig `JSStringCreateStatic` path).
-            unsafe { JSStringCreateStatic(Self::untagged(self._unsafe_ptr_do_not_use), self.len) }
-        }
-    }
+    // PORT NOTE: `to_js_string_ref` (Zig `toJSStringRef`) is dead code — the
+    // Zig body is gated behind `@hasDecl(bun, "bindgen")` (always-false at
+    // runtime) and `JSStringCreateStatic` has no exported body in Bun's link
+    // image. No callers in either tree; dropped.
 
     pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI call with valid pointers.

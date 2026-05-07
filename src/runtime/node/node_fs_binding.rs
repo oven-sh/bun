@@ -125,7 +125,7 @@ const fn call_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>() ->
     run_sync::<R, A, F>
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
 pub struct Binding {
     pub node_fs: NodeFS,

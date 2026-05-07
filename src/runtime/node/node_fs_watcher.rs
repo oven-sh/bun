@@ -31,7 +31,7 @@ use super::win_watcher as path_watcher;
 use super::path_watcher;
 
 // TODO: make this a top-level struct
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_constructor)]
 pub struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
     ctx: *mut VirtualMachine,

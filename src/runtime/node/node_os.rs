@@ -137,7 +137,7 @@ const HOST_NAME_MAX: usize = 256;
 // the Zig public surface — `js*` extern pointers + `create*Callback` wrappers
 // + the `UserInfoOptions` dictionary — verbatim from
 // `src/jsc/bindings/GeneratedBindings.zig`.
-mod gen_ {
+pub mod gen_ {
     use super::{BunString, CallFrame, JSGlobalObject, JSValue, ZigString};
     use bun_jsc::host_fn;
 

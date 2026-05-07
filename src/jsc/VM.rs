@@ -1,13 +1,11 @@
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
-use core::ptr::NonNull;
 
 use crate::{Exception, ExceptionValidationScope, JSGlobalObject, JSValue, JsError};
 
 // TODO(port): move to <jsc>_sys
 unsafe extern "C" {
-    fn JSC__VM__create(heap_type: u8) -> *mut VM;
     fn JSC__VM__deinit(vm: *mut VM, global_object: *mut JSGlobalObject);
     fn JSC__VM__setControlFlowProfiler(vm: *mut VM, enabled: bool);
     fn JSC__VM__isJITEnabled() -> bool;
@@ -19,11 +17,6 @@ unsafe extern "C" {
     );
     fn JSC__VM__getAPILock(vm: *mut VM);
     fn JSC__VM__releaseAPILock(vm: *mut VM);
-    fn JSC__VM__deferGC(
-        this: *mut VM,
-        ctx: *mut c_void,
-        callback: extern "C" fn(ctx: *mut c_void),
-    );
     fn JSC__VM__reportExtraMemory(vm: *mut VM, size: usize);
     fn JSC__VM__deleteAllCode(vm: *mut VM, global_object: *mut JSGlobalObject);
     fn JSC__VM__shrinkFootprint(vm: *mut VM);
@@ -65,10 +58,9 @@ pub enum HeapType {
 }
 
 impl VM {
-    pub fn create(heap_type: HeapType) -> NonNull<VM> {
-        // SAFETY: JSC__VM__create never returns null.
-        unsafe { NonNull::new_unchecked(JSC__VM__create(heap_type as u8)) }
-    }
+    // PORT NOTE: `JSC__VM__create` was removed from bindings.cpp (Bun creates
+    // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
+    // The Zig `VM.create` wrapper is dead code; do not port it.
 
     // PORT NOTE: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
     pub fn deinit(&self, global_object: &JSGlobalObject) {
@@ -105,10 +97,10 @@ impl VM {
         Lock { vm: self }
     }
 
-    pub fn defer_gc(&self, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void)) {
-        // SAFETY: self is a valid VM; callback is a valid C fn pointer.
-        unsafe { JSC__VM__deferGC(self.as_mut_ptr(), ctx, callback) }
-    }
+    // PORT NOTE: `JSC__VM__deferGC` was removed from bindings.cpp in the
+    // WebKit-bump that introduced `JSC::DeferGC` RAII; the Zig `deferGC`
+    // wrapper is dead code. Callers should use `holdAPILock`/`DeferGC` on the
+    // C++ side instead.
 
     pub fn report_extra_memory(&self, size: usize) {
         crate::mark_binding!();

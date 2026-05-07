@@ -391,7 +391,7 @@ impl StatWatcherScheduler {
 }
 
 // TODO: make this a top-level struct
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_constructor)]
 pub struct StatWatcher {
     pub next: *mut StatWatcher, // INTRUSIVE link for UnboundedQueue
 

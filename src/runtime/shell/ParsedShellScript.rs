@@ -15,7 +15,7 @@ use super::{EnvMap, EnvStr, Interpreter};
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
 // `#[bun_jsc::JsClass]` derive in Rust — do not hand-port them.
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_constructor)]
 pub struct ParsedShellScript {
     pub args: Option<Box<ShellArgs>>,
     /// allocated with arena in jsobjs

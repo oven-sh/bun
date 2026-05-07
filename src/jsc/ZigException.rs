@@ -18,8 +18,6 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         exception: *mut ZigException,
     );
-
-    fn ZigException__fromException(exception: *mut Exception) -> ZigException;
 }
 
 /// Represents a JavaScript exception with additional information
@@ -95,10 +93,10 @@ impl ZigException {
         }
     }
 
-    pub fn from_exception(exception: &mut Exception) -> ZigException {
-        // SAFETY: exception is a valid &mut.
-        unsafe { ZigException__fromException(exception) }
-    }
+    // PORT NOTE: `ZigException__fromException` is declared in headers.h but
+    // has no C++ body (bindings.cpp dropped it; the only producer is
+    // `JSC__JSValue__toZigException` which writes through an out-param). The
+    // Zig `fromException` re-export is dead code; do not port it.
 
     pub fn add_to_error_list(
         &mut self,

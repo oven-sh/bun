@@ -943,7 +943,9 @@ impl JSGlobalObject {
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
         if !exception.is_termination_exception() {
-            let _ = self.bun_vm().uncaught_exception(self, exception, false);
+            // SAFETY: `bun_vm_ptr()` returns the live per-thread VM (Zig:
+            // `*VirtualMachine`); `uncaught_exception` mutates VM fields.
+            let _ = unsafe { &mut *self.bun_vm_ptr() }.uncaught_exception(self, exception, false);
         }
     }
 

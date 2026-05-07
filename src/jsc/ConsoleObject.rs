@@ -842,7 +842,7 @@ impl<'a> TablePrinter<'a> {
 
         // PERF(port): was stack-fallback alloc (16 columns) — profile in Phase B.
         let mut columns: Vec<Column> = Vec::with_capacity(16);
-        let _deref_names = scopeguard::guard(&mut columns, |cols| {
+        let mut _deref_names = scopeguard::guard(&mut columns, |cols| {
             for col in cols.iter_mut() {
                 col.name.deref();
             }

@@ -1488,7 +1488,7 @@ impl BufferedOutput {
     pub fn append(&mut self, bytes: &[u8]) {
         match self {
             BufferedOutput::Bytelist(b) => {
-                b.append_slice(bytes);
+                let _ = b.append_slice(bytes); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             }
             BufferedOutput::ArrayBuffer { buf, i } => {
                 let array_buf_slice = buf.slice_mut();

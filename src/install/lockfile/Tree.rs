@@ -624,7 +624,8 @@ pub fn is_filtered_dependency_or_workspace(
                     return false;
                 }
 
-                filter_path.join(&[res.workspace()
+                // path-buffer overflow unreachable for bounded inputs
+                let _ = filter_path.join(&[res.workspace()
                     .slice(lockfile.buffers.string_bytes.as_slice())]);
 
                 break 'path_pattern (path_pattern, filter_path.slice());

@@ -257,7 +257,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 Global::crash();
             }
         };
-        file.close();
+        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
         match sys::renameat_z(tempdir.fd(), tmpname, cache_directory.fd(), tmpname) {
             Ok(()) => {}
@@ -962,7 +962,7 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
 pub fn attempt_to_create_package_json() -> Result<(), Error> {
     // TODO(port): narrow error set
     let file = attempt_to_create_package_json_and_open()?;
-    file.close();
+    let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
     Ok(())
 }
 

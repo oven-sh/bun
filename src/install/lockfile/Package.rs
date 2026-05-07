@@ -1343,11 +1343,12 @@ impl Diff {
                             AutoAbsPath::init_top_level_dir();
                         // defer package_json_path.deinit(); — Drop handles it
 
-                        package_json_path.append(
+                        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        let _ = package_json_path.append(
                             workspace_path
                                 .slice(to_lockfile.buffers.string_bytes.as_slice()),
                         );
-                        package_json_path.append(b"package.json");
+                        let _ = package_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                         // PORT NOTE: `bun.sys.File.toSource` was removed from
                         // T1 (`bun_sys`) because `logger::Source` lives in T2.

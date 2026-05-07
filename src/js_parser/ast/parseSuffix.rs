@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+#![warn(unused_must_use)]
 use bun_core::{err, Error};
 use bun_logger as logger;
 

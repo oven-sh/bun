@@ -1942,7 +1942,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                         }
 
                         if !remaining_in_input_data.is_empty() {
-                            self.buffered_data_for_node_net
+                            // Zig parity: result intentionally discarded
+                            let _ = self.buffered_data_for_node_net
                                 .append_slice(remaining_in_input_data);
                             // PERF(port): was assume_capacity — profile in Phase B.
                         }
@@ -1953,7 +1954,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             // slower-path: clone the data, do one write.
-            self.buffered_data_for_node_net
+            // Zig parity: result intentionally discarded
+            let _ = self.buffered_data_for_node_net
                 .append_slice(buffer.slice());
             // PORT NOTE: reshaped for borrowck — capture slice ptr/len before
             // the `&mut self` write call (raw slice, no aliasing through
@@ -2195,7 +2197,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if buffer_unwritten_data {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
-                self.buffered_data_for_node_net.append_slice(remaining);
+                let _ = self.buffered_data_for_node_net.append_slice(remaining); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             }
         }
 

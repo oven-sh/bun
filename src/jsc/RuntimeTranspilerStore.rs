@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::needless_return)]
+#![warn(unused_must_use)]
 
 use bun_collections::{VecExt, ByteVecExt};
 use core::cell::Cell;

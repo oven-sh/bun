@@ -21,5 +21,6 @@
 //! remains on disk only as the `.rs` sibling of `Assets.zig` per PORTING.md.
 
 #![allow(unused_imports)]
+#![warn(unused_must_use)]
 
 pub use crate::bake::dev_server::assets::{Assets, EntryIndex};

@@ -316,7 +316,7 @@ impl Scripts {
                 // `defer save.restore()` — `save()` returns an RAII guard that
                 // restores the path length on Drop and derefs to the path.
                 let mut save = folder_path.save();
-                save.append(b"binding.gyp");
+                let _ = save.append(b"binding.gyp"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                 bun_sys::exists(save.slice())
             } else {
@@ -361,7 +361,7 @@ impl Scripts {
             // `defer save.restore()` — `save()` returns an RAII guard that
             // restores the path length on Drop and derefs to the path.
             let mut save = folder_path.save();
-            save.append(b"package.json");
+            let _ = save.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
             let json_src = logger::Source::init_path_string(save.slice(), json_buf.as_slice());
@@ -396,7 +396,7 @@ impl Scripts {
             // `defer save.restore()` — `save()` returns an RAII guard that
             // restores the path length on Drop and derefs to the path.
             let mut save = folder_path.save();
-            save.append(b"binding.gyp");
+            let _ = save.append(b"binding.gyp"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
             bun_sys::exists(save.slice())
         } else {

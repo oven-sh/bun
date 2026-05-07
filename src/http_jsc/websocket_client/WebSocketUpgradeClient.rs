@@ -334,7 +334,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             let mut subprotocols = StringSet::new();
             let mut it = HeaderValueIterator::init(protocol_for_subprotocols);
             while let Some(protocol) = it.next() {
-                subprotocols.insert(protocol);
+                let _ = subprotocols.insert(protocol); // OOM-only Result (Zig: catch unreachable)
             }
             subprotocols
         };

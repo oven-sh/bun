@@ -126,7 +126,7 @@ impl Store {
             if parent_id == maybe_parent_id {
                 return true;
             }
-            parent_dedupe.put(parent_id, ());
+            let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
         }
 
         len = parent_dedupe.len();
@@ -140,7 +140,7 @@ impl Store {
                 if parent_id == maybe_parent_id {
                     return true;
                 }
-                parent_dedupe.put(parent_id, ());
+                let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
                 len = parent_dedupe.len();
             }
             i += 1;
@@ -506,7 +506,7 @@ pub mod entry {
             if parent_id == Id::INVALID {
                 continue;
             }
-            parents.put(parent_id, ());
+            let _ = parents.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
         }
 
         len = parents.len();
@@ -517,7 +517,7 @@ pub mod entry {
                 if parent_id == Id::INVALID {
                     continue;
                 }
-                parents.put(parent_id, ());
+                let _ = parents.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
                 len = parents.len();
             }
             i += 1;

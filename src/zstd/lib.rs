@@ -1,4 +1,5 @@
 #![allow(unused)]
+#![warn(unused_must_use)]
 
 use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
 

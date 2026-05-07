@@ -11,6 +11,7 @@
 //! `$crate::pretty_fmt!`) continue to work unchanged.
 
 #![allow(unused_imports)]
+#![warn(unused_must_use)]
 
 // ── scoped logging (the requested symbol) ────────────────────────────────
 //

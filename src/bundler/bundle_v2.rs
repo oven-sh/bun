@@ -2516,7 +2516,7 @@ impl<'a> BundleV2<'a> {
         path = self.path_with_pretty_initialized(path, target)?;
         path.assert_pretty_is_valid();
         self.path_to_source_index_map(target).put(path_slice, source_index.get()).expect("oom");
-        self.graph.ast.append(JSAst::empty());
+        let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
@@ -2594,7 +2594,7 @@ impl<'a> BundleV2<'a> {
         };
         path.assert_pretty_is_valid();
         self.path_to_source_index_map(target).put(&path.text, source_index.get()).expect("oom");
-        self.graph.ast.append(JSAst::empty());
+        let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         let side_effects = result.primary_side_effects_data;
         self.graph.input_files.append(crate::Graph::InputFile {
@@ -3003,7 +3003,7 @@ impl<'a> BundleV2<'a> {
         })?;
 
         // try this.graph.entry_points.append(allocator, Index.runtime);
-        self.graph.ast.append(JSAst::empty());
+        let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         self.path_to_source_index_map(self.transpiler.options.target).put(&b"bun:wrap"[..], Index::RUNTIME.get()).expect("oom");
         // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
         // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
@@ -3215,7 +3215,7 @@ impl<'a> BundleV2<'a> {
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
         let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-        self.graph.ast.append(JSAst::empty());
+        let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: core::mem::take(source),
@@ -3260,7 +3260,7 @@ impl<'a> BundleV2<'a> {
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
         let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-        self.graph.ast.append(JSAst::empty());
+        let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         self.graph.input_files.append(crate::Graph::InputFile {
             source: core::mem::take(source),
@@ -3358,7 +3358,7 @@ impl<'a> BundleV2<'a> {
             side_effects: _resolver::SideEffects::HasSideEffects,
             ..Default::default()
         })?;
-        self.graph.ast.append(JSAst::empty());
+        let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         // PORT NOTE: `bun.new(ServerComponentParseTask, …)` — heap-owned by the
         // worker pool; freed via `bun.destroy` in `on_complete` after the
@@ -4102,7 +4102,7 @@ impl<'a> BundleV2<'a> {
                         let source_index = Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
                         unsafe { *value_ptr = source_index.get() };
                         out_source_index = Some(source_index);
-                        this.graph.ast.append(JSAst::empty());
+                        let _ = this.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                         let loader = path.loader(&this.transpiler.options.loaders).unwrap_or(Loader::File);
 
                         this.graph.input_files.append(crate::Graph::InputFile {
@@ -4897,13 +4897,15 @@ impl<'a> BundleV2<'a> {
             ..Default::default()
         };
 
-        self.graph.input_files.append(crate::Graph::InputFile {
+        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = self.graph.input_files.append(crate::Graph::InputFile {
             source: server_source,
             loader: Loader::Js,
             side_effects: _resolver::SideEffects::NoSideEffectsPureData,
             ..Default::default()
         }); // PERF(port): was assume_capacity
-        self.graph.input_files.append(crate::Graph::InputFile {
+        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = self.graph.input_files.append(crate::Graph::InputFile {
             source: client_source,
             loader: Loader::Js,
             side_effects: _resolver::SideEffects::NoSideEffectsPureData,
@@ -4913,8 +4915,8 @@ impl<'a> BundleV2<'a> {
         debug_assert!(self.graph.input_files.items_source()[Index::BAKE_SERVER_DATA.get() as usize].index.0 == Index::BAKE_SERVER_DATA.get());
         debug_assert!(self.graph.input_files.items_source()[Index::BAKE_CLIENT_DATA.get() as usize].index.0 == Index::BAKE_CLIENT_DATA.get());
 
-        self.graph.ast.append(JSAst::empty()); // PERF(port): was assume_capacity
-        self.graph.ast.append(JSAst::empty()); // PERF(port): was assume_capacity
+        let _ = self.graph.ast.append(JSAst::empty()); // PERF(port): was assume_capacity
+        let _ = self.graph.ast.append(JSAst::empty()); // PERF(port): was assume_capacity
         Ok(())
     }
 
@@ -5657,7 +5659,7 @@ impl<'a> BundleV2<'a> {
                 diff += 1;
 
                 self.graph.input_files.append(new_input_file).expect("unreachable");
-                self.graph.ast.append(JSAst::empty());
+                let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                 if is_html_entrypoint {
                     self.ensure_client_transpiler();
@@ -5758,7 +5760,7 @@ impl<'a> BundleV2<'a> {
 
                 if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                     if compare == i as u32 {
-                        path_to_source_index_map.put(ctx.source_path.into(), source_index);
+                        let _ = path_to_source_index_map.put(ctx.source_path.into(), source_index); // OOM-only Result (Zig: catch unreachable)
                     }
                 }
             }
@@ -5823,10 +5825,10 @@ impl<'a> BundleV2<'a> {
 
         let fake_source_index = fake_input_file.source.index;
         self.graph.input_files.append(fake_input_file)?;
-        self.graph.ast.append(ast_for_html_entrypoint);
+        let _ = self.graph.ast.append(ast_for_html_entrypoint); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         import_record.source_index = Index::init(fake_source_index.0);
-        self.path_to_source_index_map(target).put(path_text.into(), fake_source_index.0);
+        let _ = self.path_to_source_index_map(target).put(path_text.into(), fake_source_index.0); // OOM-only Result (Zig: catch unreachable)
         self.graph.html_imports.server_source_indices.push(fake_source_index.0);
         self.ensure_client_transpiler();
         Ok(())

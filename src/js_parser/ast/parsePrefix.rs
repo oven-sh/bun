@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+#![warn(unused_must_use)]
 use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
 use bun_logger as logger;

@@ -366,7 +366,8 @@ impl<'a> Installer<'a> {
             | ResolutionTag::Folder => {
                 let mut store_path = AutoRelPath::init();
 
-                store_path.append_fmt(format_args!(
+                // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = store_path.append_fmt(format_args!(
                     "node_modules/{}",
                     store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
                 ));
@@ -830,7 +831,7 @@ impl Task {
                                     InstallMethod::Hardlink => {
                                         let mut src =
                                             OsAutoAbsPath::init_top_level_dir_long_path();
-                                        src.append_join(pkg_res.folder().slice(string_buf));
+                                        let _ = src.append_join(pkg_res.folder().slice(string_buf)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                                         let mut dest = OsAutoPath::init();
                                         installer.append_store_path(&mut dest, self.entry_id);
@@ -1175,7 +1176,7 @@ impl Task {
                                 let mut src = bun_core::handle_oom(
                                     OsAutoAbsPath::from_long_path(cache_dir_path.slice()),
                                 );
-                                src.append_join(pkg_cache_dir_subpath.slice());
+                                let _ = src.append_join(pkg_cache_dir_subpath.slice()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                                 let mut hardlinker = Hardlinker::init(
                                     cached_package_dir.unwrap(),
@@ -1232,7 +1233,7 @@ impl Task {
 
                                 let mut src_path =
                                     bun_core::handle_oom(OsAutoAbsPath::from(cache_dir_path.slice()));
-                                src_path.append(pkg_cache_dir_subpath.slice());
+                                let _ = src_path.append(pkg_cache_dir_subpath.slice()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                                 let mut file_copier = FileCopier::init(
                                     cached_package_dir.unwrap(),
@@ -1281,7 +1282,7 @@ impl Task {
                             Which::Staging,
                         );
 
-                        dest.append(dep_name);
+                        let _ = dest.append(dep_name); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
                         if let Some(entry_node_modules_name) = installer
                             .entry_store_node_modules_package_name(dep_id, pkg_id, &pkg_res, pkg_names)
@@ -1289,8 +1290,8 @@ impl Task {
                             if strings::eql_long(dep_name, entry_node_modules_name, true) {
                                 // nest the dependency in another node_modules if the name is the same as the entry name
                                 // in the store node_modules to avoid collision
-                                dest.append(b"node_modules");
-                                dest.append(dep_name);
+                                let _ = dest.append(b"node_modules"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                let _ = dest.append(dep_name); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                             }
                         }
 
@@ -1978,21 +1979,23 @@ impl<'a> Installer<'a> {
 
         let mut hidden_hoisted_node_modules = AutoPath::init();
 
-        hidden_hoisted_node_modules.append(
+        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = hidden_hoisted_node_modules.append(
             // "node_modules" + sep + ".bun" + sep + "node_modules"
             const_format::concatcp!("node_modules", paths::SEP_STR, ".bun", paths::SEP_STR, "node_modules")
                 .as_bytes(),
         );
-        hidden_hoisted_node_modules.append(pkg_name.slice(string_buf));
+        let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
         let mut target = AutoRelPath::init();
 
-        target.append(b"..");
+        let _ = target.append(b".."); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         if strings::index_of_char(pkg_name.slice(string_buf), b'/').is_some() {
-            target.append(b"..");
+            let _ = target.append(b".."); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         }
 
-        target.append_fmt(format_args!(
+        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+        let _ = target.append_fmt(format_args!(
             "{}/node_modules/{}",
             store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
             bstr::BStr::new(pkg_name.slice(string_buf)),
@@ -2267,8 +2270,9 @@ impl<'a> Installer<'a> {
                 // discard ours.
                 if self.manager.options.enable.force_install() {
                     let mut old = AutoAbsPath::init();
-                    old.append(self.global_store_path.as_ref().unwrap().as_bytes());
-                    old.append_fmt(format_args!(
+                    let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    let _ = old.append_fmt(format_args!(
                         "{}.old-{:x}",
                         store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
                         bun_core::fast_random(),

@@ -549,7 +549,7 @@ pub fn post_process_js_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    compile_results_for_source_map.set_capacity(compile_results.len());
+    let _ = compile_results_for_source_map.set_capacity(compile_results.len()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     // bun.handleOom dropped — Rust aborts on OOM
 
     let show_comments =
@@ -712,7 +712,7 @@ pub fn post_process_js_chunk(
                     &unsafe { &(*c.parse_graph).input_files }.items_source()[chunk.entry_point.source_index() as usize].path;
                 let mut buf = MutableString::init_empty();
                 // PERF(port): worker.allocator is an arena in Zig
-                js_printer::quote_for_json(input.pretty, &mut buf, true);
+                let _ = js_printer::quote_for_json(input.pretty, &mut buf, true); // fmt::Result into Vec<u8> is infallible
                 // bun.handleOom dropped — Rust aborts on OOM
                 let str = buf.slice(); // worker.allocator is an arena
                 j.push_static(str);

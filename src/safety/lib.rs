@@ -1,4 +1,5 @@
 #![allow(unused, non_snake_case, clippy::all)]
+#![warn(unused_must_use)]
 
 pub mod alloc;
 

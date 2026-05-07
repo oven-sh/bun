@@ -6,6 +6,7 @@
 // - Windows can be configured to return []const u16
 
 #![allow(unused_imports, dead_code)]
+#![warn(unused_must_use)]
 
 use core::mem::{offset_of, size_of};
 

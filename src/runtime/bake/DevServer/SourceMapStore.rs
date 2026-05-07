@@ -24,6 +24,7 @@
 //! that reappears resolves to the single real type.
 
 #![allow(unused_imports)]
+#![warn(unused_must_use)]
 
 pub use crate::bake::dev_server::source_map_store::{
     EncodeSourceMapPathError, Entry, EntryIndex, GetResult, Key, LocateWeakRefResult,

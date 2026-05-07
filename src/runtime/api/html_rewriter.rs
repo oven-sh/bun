@@ -420,7 +420,7 @@ impl HTMLRewriterLoader {
 
     pub fn fail(&mut self, err: bun_sys::Error) {
         self.signal.close(Some(err.clone()));
-        self.output.end(Some(err));
+        let _ = self.output.end(Some(err)); // error already surfaced via signal/fail path
         self.failed = true;
         self.finalize();
     }
@@ -483,7 +483,7 @@ impl HTMLRewriterLoader {
     }
 
     pub fn done(&mut self) {
-        self.output.end(None);
+        let _ = self.output.end(None); // error already surfaced via signal/fail path
         self.signal.close(None);
         self.finalize();
     }
@@ -511,7 +511,7 @@ impl HTMLRewriterLoader {
         self.rewriter = match built {
             Ok(r) => r,
             Err(_) => {
-                output.end(None);
+                let _ = output.end(None); // error already surfaced via signal/fail path
                 // PORT NOTE: Zig returned a borrowed `[]const u8` into
                 // lol-html's threadlocal last-error buffer. Rust can't return a
                 // slice tied to a temporary, so return the owning `HTMLString`
@@ -965,7 +965,7 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the FFI calls so no
         // borrow of `*sink` is live across the re-entrant callback.
-        unsafe { (*sink).bytes.grow_by(bytes.len()) };
+        let _ = unsafe { (*sink).bytes.grow_by(bytes.len()) }; // OOM/capacity: Zig aborts; port keeps fire-and-forget
         let global = unsafe { (*sink).global };
         let response = unsafe { (*sink).response };
         let rewriter = unsafe { (*sink).rewriter };
@@ -1016,7 +1016,7 @@ impl BufferOutputSink {
     }
 
     pub fn write(&mut self, bytes: &[u8]) {
-        self.bytes.append(bytes);
+        let _ = self.bytes.append(bytes); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 }
 

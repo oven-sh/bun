@@ -465,7 +465,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let mut resolved: Vec<u8> = Vec::new();
                 resolved.extend_from_slice(normalizer[0]);
                 resolved.extend_from_slice(normalizer[1]);
-                unique_key_to_path.put(&ch.unique_key, resolved.into_boxed_slice());
+                let _ = unique_key_to_path.put(&ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result (Zig: catch unreachable)
             }
         }
 
@@ -905,7 +905,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             let _ = cached_bytecode;
                         } else {
                             // an error
-                            c.log.add_error_fmt(
+                            // logger OOM-only (Zig: catch unreachable)
+                            let _ = c.log.add_error_fmt(
                                 None,
                                 Logger::Loc::EMPTY,
                                 format_args!(

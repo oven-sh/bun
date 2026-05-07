@@ -1612,7 +1612,7 @@ pub fn init(
                     // defuses with `ScopeGuard::into_inner` — avoids the
                     // `&mut found` capture that borrowck rejects.
                     let json_file_guard = scopeguard::guard(json_file, |f| {
-                        f.close();
+                        let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
                     });
                     let json_stat_size = json_file_guard.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];

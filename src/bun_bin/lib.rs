@@ -14,6 +14,7 @@
 //!   6. `cli::Cli::start()` → `Global::exit(0)`
 
 #![allow(unused_imports)]
+#![warn(unused_must_use)]
 
 use core::ffi::{c_char, c_int};
 

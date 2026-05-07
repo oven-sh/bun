@@ -9,6 +9,7 @@
 
 #![allow(dead_code)]
 #![allow(unused_imports)]
+#![warn(unused_must_use)]
 #![allow(unused_variables)]
 #![allow(unused_assignments)]
 #![allow(unexpected_cfgs)]

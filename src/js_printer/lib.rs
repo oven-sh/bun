@@ -13,6 +13,7 @@
 //! self-borrow in `init`, and the `print_ast` minify-renamer driver / `print_json`.
 
 #![allow(unused, nonstandard_style, clippy::all)]
+#![warn(unused_must_use)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![feature(adt_const_params)]
 

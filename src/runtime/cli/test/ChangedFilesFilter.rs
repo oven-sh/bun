@@ -444,7 +444,7 @@ fn consume_watch_trigger() -> Option<StringSet> {
             if !sys::exists(path) {
                 continue;
             }
-            set.insert(path);
+            let _ = set.insert(path); // OOM-only Result (Zig: catch unreachable)
         }
         // If every triggering path was a deletion, fall back to git so the
         // user at least gets the same behaviour as the initial run rather
@@ -710,7 +710,7 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
         // `StringSet.insert` dupes the key internally; abort on OOM rather
         // than propagating so the set can never be left holding a pointer
         // into our stack `buf` on the errdefer cleanup path.
-        set.insert(abs);
+        let _ = set.insert(abs); // OOM-only Result (Zig: catch unreachable)
     }
 }
 

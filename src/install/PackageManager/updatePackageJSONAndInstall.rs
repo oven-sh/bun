@@ -659,7 +659,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             .pwrite_all(source, 0)
             .map_err(Error::from)?;
         let _ = bun_sys::ftruncate(workspace_package_json_file.handle, source.len() as i64);
-        workspace_package_json_file.close();
+        let _ = workspace_package_json_file.close(); // close error is non-actionable (Zig parity: discarded)
 
         if subcommand == Subcommand::Remove {
             if !any_changes {

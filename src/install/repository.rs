@@ -838,7 +838,7 @@ impl RepositoryExt for Repository {
                         if git_tag.write_all(resolved).is_err() {
                             let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
                         }
-                        git_tag.close();
+                        let _ = git_tag.close(); // close error is non-actionable (Zig parity: discarded)
                     }
                 }
 
@@ -891,7 +891,7 @@ impl RepositoryExt for Repository {
                     ),
                 )
                 .expect("unreachable");
-                json_file.close();
+                let _ = json_file.close(); // close error is non-actionable (Zig parity: discarded)
                 package_dir.close();
                 return Err(err!("InstallFailed"));
             }
@@ -902,7 +902,7 @@ impl RepositoryExt for Repository {
         // `json_path_buf` (not in `json_file`), and `json_buf` is an owned alloc,
         // so both fds are dead here — close before the fallible append so the
         // `?`-propagation path doesn't leak them.
-        json_file.close();
+        let _ = json_file.close(); // close error is non-actionable (Zig parity: discarded)
         package_dir.close();
 
         let ret_json_path = bun_resolver::fs::FileSystem::instance()

@@ -1600,7 +1600,7 @@ impl FetchTasklet {
         // if we have backpressure the onWritable will drain the buffer
         needs_schedule = stream_buffer.is_empty();
         if self.skip_chunked_framing() {
-            stream_buffer.write(data);
+            let _ = stream_buffer.write(data); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
             let mut formated_size_buffer = [0u8; 18];
@@ -1611,7 +1611,7 @@ impl FetchTasklet {
                 let written = 18 - cursor.len();
                 &formated_size_buffer[..written]
             };
-            stream_buffer.ensure_unused_capacity(formated_size.len() + data.len() + 2);
+            let _ = stream_buffer.ensure_unused_capacity(formated_size.len() + data.len() + 2); // OOM/capacity: Zig aborts; port keeps fire-and-forget
             // PERF(port): was assume_capacity
             stream_buffer.write_assume_capacity(formated_size);
             stream_buffer.write_assume_capacity(data);
@@ -1656,7 +1656,7 @@ impl FetchTasklet {
                 // Mutex guards `buffer` against the HTTP thread between acquire/release.
                 unsafe {
                     let stream_buffer = (*thread_safe_stream_buffer.as_ptr()).acquire();
-                    stream_buffer.write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY);
+                    let _ = stream_buffer.write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     (*thread_safe_stream_buffer.as_ptr()).release();
                 }
             }

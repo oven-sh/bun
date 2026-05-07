@@ -1,4 +1,5 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
+#![warn(unused_must_use)]
 //! JSC bridge for `bun.bundler`. Keeps `src/bundler/` free of JSC types.
 //
 // B-2 un-gate: `bun_jsc` is now a dependency (compiles with an opaque stub

@@ -2,6 +2,7 @@
 //! therefore cannot live in `bun_alloc` (tier-0). MOVED here per CYCLEBREAK;
 //! callers import these paths directly (no forwarding stubs in `bun_alloc`).
 #![allow(unused, non_snake_case, dead_code)]
+#![warn(unused_must_use)]
 
 #[path = "LinuxMemFdAllocator.rs"] pub mod linux_mem_fd_allocator;
 #[path = "MimallocArena.rs"]       pub mod mimalloc_arena;

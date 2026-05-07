@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::needless_range_loop)]
+#![warn(unused_must_use)]
 use bun_collections::VecExt;
 use crate::ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
 use crate::ast::p::P;

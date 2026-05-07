@@ -2404,7 +2404,7 @@ impl ThreadSafeFunction {
 
         let _ = self.queue.count.fetch_add(1, Ordering::SeqCst);
         // Zig: bun.handleOom — Rust Vec push aborts on OOM by default.
-        self.queue.data.write_item(ctx);
+        let _ = self.queue.data.write_item(ctx); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         self.schedule_dispatch();
         NapiStatus::ok as napi_status
     }

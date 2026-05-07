@@ -484,6 +484,13 @@ pub enum JsError {
     /// The VM is terminating (worker shutdown / `process.exit`).
     Terminated,
 }
+/// `bun.JSError!T`. Dropping a `JsResult` swallows a pending JS exception —
+/// always `?`-propagate, [`JsResultExt::report_unhandled`], or `let _ =` with a
+/// comment justifying the swallow.
+///
+/// Note: `#[must_use]` cannot be applied to type aliases; `Result` already
+/// carries it. We instead `#![warn(unused_must_use)]` in every crate that
+/// blanket-`allow(unused)`s so the underlying lint is never silenced.
 pub type JsResult<T> = core::result::Result<T, JsError>;
 
 impl From<bun_core::AllocError> for JsError {
@@ -523,6 +530,34 @@ impl From<JsError> for bun_event_loop::ErasedJsError {
 
 impl From<JsTerminated> for JsError {
     fn from(_: JsTerminated) -> Self { JsError::Terminated }
+}
+
+/// Extension surface for [`JsResult`]. Gives every `JsResult` a terminal sink
+/// so the `unused_must_use` lint can be satisfied without `let _ =` at call
+/// sites that legitimately cannot `?`-propagate (FFI thunks, drop glue,
+/// fire-and-forget callbacks).
+pub trait JsResultExt {
+    /// Consume the result; if `Err`, take the pending exception off `global`
+    /// and route it through the VM's uncaught-exception handler. Returns the
+    /// `Ok` payload (or its `Default`) so callers can chain.
+    ///
+    /// Use this when an error has nowhere left to bubble — never to paper over
+    /// a missing `?`.
+    fn report_unhandled(self, global: &JSGlobalObject);
+}
+
+impl<T> JsResultExt for JsResult<T> {
+    #[inline]
+    fn report_unhandled(self, global: &JSGlobalObject) {
+        if let Err(e) = self {
+            // `Terminated` carries no exception value to report — the VM is
+            // already unwinding. `OutOfMemory`/`Thrown` both leave a pending
+            // exception that `report_uncaught_exception_from_error` will take.
+            if e != JsError::Terminated {
+                global.report_uncaught_exception_from_error(e);
+            }
+        }
+    }
 }
 
 impl From<bun_core::Error> for JsError {

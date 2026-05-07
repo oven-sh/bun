@@ -1346,7 +1346,7 @@ impl CommandLineReporter {
             }
             bun_sys::Result::Ok(f) => f,
         };
-        let file = scopeguard::guard(file, |f| { f.close(); });
+        let file = scopeguard::guard(file, |f| { let _ = f.close(); }); // close error is non-actionable (Zig parity: discarded)
         // TODO(port): file.writer().adaptToNewApi(buf) — Zig's buffered writer adapter
         // not present on `bun_sys::File`; buffer in a Vec (impl `bun_io::Write`) and
         // write through in one shot below.
@@ -1534,7 +1534,7 @@ impl CommandLineReporter {
         let mut lcov_guard = scopeguard::guard(&mut lcov_state, |s: &mut Option<(File, &bun_str::ZStr, Vec<u8>)>| {
             if REPORTERS_LCOV {
                 if let Some((file, name, _)) = s.take() {
-                    file.close();
+                    let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
                     let _ = bun_sys::unlink(name);
                 }
             }

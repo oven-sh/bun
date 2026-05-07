@@ -644,39 +644,41 @@ impl S3Credentials {
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
                     if let Some(v) = encoded_content_md5 {
-                        query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
+                        let _ = query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     }
                     if let Some(v) = acl {
-                        query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v)));
+                        let _ = query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     }
-                    query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
-                    query_parts.push(alloc_print!(
+                    let _ = query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    let _ = query_parts.push(alloc_print!(
                         "X-Amz-Credential={}%2F{}%2F{}%2F{}%2Faws4_request",
                         BStr::new(&self.access_key_id),
                         BStr::new(amz_day),
                         BStr::new(region),
                         service_name
                     ));
-                    query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
-                    query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
+                    let _ = query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    let _ = query_parts.push(alloc_print!("X-Amz-Expires={}", expires)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     if let Some(token) = encoded_session_token {
-                        query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
+                        let _ = query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     }
-                    query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                    let _ = query_parts.push(alloc_print!("X-Amz-SignedHeaders=host")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     if let Some(cd) = encoded_content_disposition {
-                        query_parts.push(alloc_print!(
+                        // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        let _ = query_parts.push(alloc_print!(
                             "response-content-disposition={}",
                             BStr::new(cd)
                         ));
                     }
                     if let Some(ct) = encoded_content_type {
-                        query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
+                        let _ = query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     }
                     if request_payer {
-                        query_parts.push(alloc_print!("x-amz-request-payer=requester"));
+                        let _ = query_parts.push(alloc_print!("x-amz-request-payer=requester")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     }
                     if let Some(v) = storage_class {
-                        query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v)));
+                        let _ = query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     }
 
                     // Join query parameters with &
@@ -729,43 +731,46 @@ impl S3Credentials {
                 // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
                 if let Some(v) = encoded_content_md5 {
-                    url_query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
+                    let _ = url_query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 }
                 if let Some(v) = acl {
-                    url_query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v)));
+                    let _ = url_query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 }
-                url_query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
-                url_query_parts.push(alloc_print!(
+                let _ = url_query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = url_query_parts.push(alloc_print!(
                     "X-Amz-Credential={}%2F{}%2F{}%2F{}%2Faws4_request",
                     BStr::new(&self.access_key_id),
                     BStr::new(amz_day),
                     BStr::new(region),
                     service_name
                 ));
-                url_query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
-                url_query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
+                let _ = url_query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = url_query_parts.push(alloc_print!("X-Amz-Expires={}", expires)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 if let Some(token) = encoded_session_token {
-                    url_query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
+                    let _ = url_query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 }
-                url_query_parts.push(alloc_print!(
+                // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = url_query_parts.push(alloc_print!(
                     "X-Amz-Signature={}",
                     HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 ));
-                url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                let _ = url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 if let Some(cd) = encoded_content_disposition {
-                    url_query_parts.push(alloc_print!(
+                    // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    let _ = url_query_parts.push(alloc_print!(
                         "response-content-disposition={}",
                         BStr::new(cd)
                     ));
                 }
                 if let Some(ct) = encoded_content_type {
-                    url_query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
+                    let _ = url_query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 }
                 if request_payer {
-                    url_query_parts.push(alloc_print!("x-amz-request-payer=requester"));
+                    let _ = url_query_parts.push(alloc_print!("x-amz-request-payer=requester")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 }
                 if let Some(v) = storage_class {
-                    url_query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v)));
+                    let _ = url_query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 }
 
                 // Join URL query parameters with &

@@ -7,6 +7,7 @@
 //! belongs elsewhere.
 
 #![allow(unused)]
+#![warn(unused_must_use)]
 
 use bun_collections::VecExt;
 use bun_string::strings;

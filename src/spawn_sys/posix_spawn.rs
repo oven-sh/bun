@@ -1,4 +1,5 @@
 #![allow(unused_imports, dead_code, unused_variables)]
+#![warn(unused_must_use)]
 
 use core::ffi::{c_char, c_int, c_short};
 use core::ptr;

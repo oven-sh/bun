@@ -11,5 +11,6 @@
 //! disk only as the `.rs` sibling of `PackedMap.zig` per PORTING.md.
 
 #![allow(unused_imports)]
+#![warn(unused_must_use)]
 
 pub use crate::bake::dev_server::packed_map::{EndState, LineCount, PackedMap, Shared};

@@ -431,7 +431,7 @@ impl ExtractTarball {
                             // `defer gh_tag.close()` — bun_sys::File is Copy with NO Drop;
                             // close explicitly on both success and failure paths.
                             let write_result = gh_tag.write_all(resolved);
-                            gh_tag.close();
+                            let _ = gh_tag.close(); // close error is non-actionable (Zig parity: discarded)
                             if write_result.is_err() {
                                 // SAFETY: literal is NUL-terminated.
                                 let bun_tag_z =

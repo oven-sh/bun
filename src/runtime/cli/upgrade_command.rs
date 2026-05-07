@@ -1188,7 +1188,7 @@ impl UpgradeCommand {
                     )
                     .and_then(|f| {
                         let n = f.read_all(&mut input_buf);
-                        f.close();
+                        let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
                         n
                     }) {
                         Ok(n) => &input_buf[..n],
@@ -1210,7 +1210,7 @@ impl UpgradeCommand {
                     )
                     .and_then(|f| {
                         let n = f.read_all(&mut input_buf);
-                        f.close();
+                        let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
                         n
                     }) {
                         Ok(n) => &input_buf[..n],

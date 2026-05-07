@@ -434,9 +434,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `&mut`) because the VM is mutated across re-entrant JS callbacks
     /// (`drain_microtasks`, event-loop ticks) while other `&VirtualMachine`
     /// borrows may be live; handing out `&mut` here would alias.
+    ///
+    /// Routes through [`jsc::VirtualMachine::get_mut_ptr`] (the thread-local
+    /// raw `*mut`) rather than casting `self.vm` — the field is `*const`
+    /// derived from a `&'static VirtualMachine`, so casting it to `*mut` would
+    /// carry read-only Stacked-Borrows provenance and make any write through
+    /// the result UB.
     #[inline]
     pub fn vm_mut(&self) -> *mut jsc::VirtualMachine {
-        self.vm as *mut jsc::VirtualMachine
+        debug_assert!(core::ptr::eq(self.vm, jsc::VirtualMachine::get_mut_ptr()));
+        jsc::VirtualMachine::get_mut_ptr()
     }
 
     /// Raw pointer to the process-static H1 request pool. Returned as `*mut`

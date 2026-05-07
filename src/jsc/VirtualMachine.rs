@@ -694,22 +694,22 @@ impl VirtualMachine {
         unsafe { &mut *self.jsc_vm }
     }
 
-    /// Safe accessor for the hot-reload import watcher. `bun_watcher` is the
+    /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
     /// type-erased `*mut ImportWatcher` installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
-    /// `Box` heap allocation, not a sibling field), or null when hot reload is
-    /// disabled. Same single-JS-thread soundness contract as
-    /// [`Self::event_loop_mut`]; keep the borrow short.
+    /// `Box` heap allocation), or null when hot reload is disabled.
+    ///
+    /// NOTE: unlike `event_loop_mut`, the pointee is **not** JS-thread-only —
+    /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
+    /// the spawned file-watcher thread (`Watcher::thread_main`), and
+    /// `RuntimeTranspilerStore` reads it from transpiler workers. The Zig spec
+    /// models this as an alias-allowed `*Watcher` with an internal mutex, so we
+    /// return the raw pointer and leave the `unsafe` deref at the call site to
+    /// keep the cross-thread hazard visible. Callers must scope any reborrow to
+    /// a single mutex-guarded `Watcher` operation.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn bun_watcher_mut(&self) -> Option<&mut crate::hot_reloader::ImportWatcher> {
-        // SAFETY: `bun_watcher` is either null or a live `Box<ImportWatcher>`
-        // leaked via `Box::into_raw` in `enable_hot_module_reloading`; the
-        // cast recovers the concrete type. Single-JS-thread invariant per
-        // `unsafe impl Sync`.
-        unsafe {
-            (self.bun_watcher as *mut crate::hot_reloader::ImportWatcher).as_mut()
-        }
+    pub fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
+        self.bun_watcher as *mut crate::hot_reloader::ImportWatcher
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
@@ -3102,8 +3102,16 @@ impl VirtualMachine {
         }
         let ext = bun_paths::extension(main);
         let loader = self.transpiler.options.loader(ext);
-        if let Some(watcher) = self.bun_watcher_mut() {
-            let _ = watcher.add_file_by_path_slow(main, loader);
+        let watcher = self.bun_watcher_ptr();
+        if !watcher.is_null() {
+            // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
+            // `enable_hot_module_reloading`. The pointee is shared with the
+            // file-watcher thread (see `bun_watcher_ptr` doc) — the enum
+            // discriminant is write-once at install and read-only thereafter,
+            // and `add_file_by_path_slow` serializes the inner watchlist write
+            // via `Watcher.mutex`. Borrow is scoped to this single
+            // mutex-guarded call (Zig spec uses alias-allowed `*Watcher`).
+            let _ = unsafe { (*watcher).add_file_by_path_slow(main, loader) };
         }
     }
 

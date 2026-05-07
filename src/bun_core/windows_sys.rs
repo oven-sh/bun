@@ -70,13 +70,17 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(C)]
 pub struct ProcessParameters {
+    // {MaximumLength, Length, Flags, DebugFlags} — 4 × ULONG.
     _reserved1: [u8; 16],
-    _reserved2: [*mut c_void; 5],
+    // {ConsoleHandle, ConsoleFlags+pad} — 2 × pointer-size.
+    _reserved2: [*mut c_void; 2],
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
     // (fields beyond stdio are not read here)
 }
+// `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at offset 0x20 on x64.
+const _: () = assert!(core::mem::offset_of!(ProcessParameters, hStdInput) == 32);
 #[repr(C)]
 pub struct PebView {
     _reserved1: [u8; 2],

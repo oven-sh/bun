@@ -1455,7 +1455,7 @@ pub mod windows {
         pub const INVALID_HANDLE: Win32Error = Win32Error(6);
         pub const INVALID_NAME: Win32Error = Win32Error(123);
         pub const INVALID_PARAMETER: Win32Error = Win32Error(87);
-        pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(3492);
+        pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
         pub const IO_DEVICE: Win32Error = Win32Error(1117);
         pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
         pub const LOCK_VIOLATION: Win32Error = Win32Error(33);

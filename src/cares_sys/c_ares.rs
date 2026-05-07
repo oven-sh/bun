@@ -13,7 +13,7 @@ pub type ares_socklen_t = socklen_t;
 pub type ares_ssize_t = isize;
 
 #[cfg(windows)]
-pub type ares_socket_t = *mut c_void; // Windows `SOCKET` (`UINT_PTR`).
+pub type ares_socket_t = usize; // Windows `SOCKET` is `UINT_PTR` (integer, not a pointer).
 #[cfg(not(windows))]
 pub type ares_socket_t = c_int;
 
@@ -32,10 +32,17 @@ pub struct struct_apattern {
 /// (no dependency on `bun_sys`).
 pub mod AF {
     use core::ffi::c_int;
-    // `libc` does not expose AF_* on Windows MSVC; the values are
-    // platform-invariant (ws2def.h matches POSIX here).
+    // `libc` does not expose AF_* on Windows MSVC; ws2def.h values are inlined
+    // there. Non-Windows targets keep the platform `libc` constants — `AF_INET6`
+    // is NOT portable (10 on Linux, 30 on macOS/BSD).
+    #[cfg(windows)]
     pub const INET: c_int = 2;
-    pub const INET6: c_int = if cfg!(windows) { 23 } else { 10 };
+    #[cfg(windows)]
+    pub const INET6: c_int = 23;
+    #[cfg(not(windows))]
+    pub const INET: c_int = libc::AF_INET;
+    #[cfg(not(windows))]
+    pub const INET6: c_int = libc::AF_INET6;
 }
 
 /// Mirror of `std.posix.system.EAI` in Zig. The `libc` crate is missing
@@ -1931,7 +1938,7 @@ pub const ARES_LIB_INIT_WIN32: c_int = 1 << 0;
 pub const ARES_LIB_INIT_ALL: c_int = ARES_LIB_INIT_WIN32;
 
 #[cfg(windows)]
-pub const ARES_SOCKET_BAD: ares_socket_t = usize::MAX as ares_socket_t; // INVALID_SOCKET
+pub const ARES_SOCKET_BAD: ares_socket_t = usize::MAX; // INVALID_SOCKET
 #[cfg(not(windows))]
 pub const ARES_SOCKET_BAD: ares_socket_t = -1;
 

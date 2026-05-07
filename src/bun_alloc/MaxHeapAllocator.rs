@@ -6,17 +6,22 @@ use core::ptr::NonNull;
 
 use crate::{Alignment, Allocator};
 
-// libc::max_align_t alignment (16 on x86_64/aarch64). The `libc` crate does
-// not expose `max_align_t` on Windows MSVC, so use a portable equivalent: a
-// `#[repr(C)]` struct containing the widest scalar types the platform ABI
-// guarantees natural alignment for (matches `std.c.max_align_t`).
+// `std.c.max_align_t` alignment. The `libc` crate does not expose
+// `max_align_t` on Windows MSVC, so a local mirror is used there only —
+// non-Windows targets keep `libc::max_align_t` (which carries `long double`,
+// align 16 on x86_64/aarch64; the {f64,i64,*const ()} fallback would silently
+// downgrade to 8).
+#[cfg(windows)]
 #[repr(C)]
 struct MaxAlignT {
     _f: f64,
     _i: i64,
     _p: *const (),
 }
+#[cfg(windows)]
 const MAX_ALIGN: usize = align_of::<MaxAlignT>();
+#[cfg(not(windows))]
+const MAX_ALIGN: usize = align_of::<libc::max_align_t>();
 
 /// Zig backed `array_list` with `std.array_list.AlignedManaged(u8, .of(std.c.max_align_t))`
 /// so the returned pointer is guaranteed aligned to `max_align_t`. Rust `Vec<u8>`

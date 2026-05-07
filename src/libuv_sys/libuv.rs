@@ -11,8 +11,9 @@
 #![cfg(windows)]
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
 
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
+use core::mem::MaybeUninit;
 use core::{fmt, mem, ptr};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -21,11 +22,21 @@ use core::{fmt, mem, ptr};
 // an `eprintln!` gated by `BUN_DEBUG_uv` in debug.
 // ──────────────────────────────────────────────────────────────────────────
 #[doc(hidden)]
+#[cfg(debug_assertions)]
+#[inline]
+pub fn __uv_log_enabled() -> bool {
+    // `Output.scoped` reads the env var once at startup; `inc/dec` are on the
+    // per-handle ref/unref hot path, so cache the lookup instead of paying a
+    // GetEnvironmentVariableW syscall + alloc per tick.
+    static ENABLED: ::std::sync::OnceLock<bool> = ::std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| ::std::env::var_os("BUN_DEBUG_uv").is_some())
+}
+#[doc(hidden)]
 #[macro_export]
 macro_rules! __uv_log {
     ($($arg:tt)*) => {{
         #[cfg(debug_assertions)]
-        if ::std::env::var_os("BUN_DEBUG_uv").is_some() {
+        if $crate::__uv_log_enabled() {
             ::std::eprintln!("[uv] {}", ::std::format_args!($($arg)*));
         }
     }};
@@ -48,7 +59,11 @@ pub type ULONG_PTR = usize;
 pub type LARGE_INTEGER = i64;
 pub type HANDLE = *mut c_void;
 pub type HMODULE = HANDLE;
-pub type SOCKET = *mut c_void;
+/// Win32 `SOCKET` is `UINT_PTR` (an integer), not a pointer; matches Zig's
+/// `std.os.windows.ws2_32.SOCKET = usize`. A raw-pointer type would give
+/// `Option<SOCKET>` an unwanted niche (None ↔ 0 collides with socket 0) and
+/// force int-to-ptr provenance for `INVALID_SOCKET`.
+pub type SOCKET = usize;
 pub type WCHAR = u16;
 pub type NTSTATUS = i32;
 type LPFN_ACCEPTEX = *const c_void;
@@ -409,6 +424,13 @@ pub type uv_loop_t = Loop;
 pub type uv_loop_s = Loop;
 
 thread_local! {
+    /// `threadlocal var threadlocal_loop_data: Loop = undefined` — static TLS
+    /// storage (zero-alloc; mirrors Zig). `MaybeUninit` because the slot is
+    /// only valid after `uv_loop_init`.
+    static THREADLOCAL_LOOP_DATA: UnsafeCell<MaybeUninit<Loop>> =
+        const { UnsafeCell::new(MaybeUninit::uninit()) };
+    /// `threadlocal var threadlocal_loop: ?*Loop = null` — null until `get()`
+    /// initializes `THREADLOCAL_LOOP_DATA`.
     static THREADLOCAL_LOOP: Cell<*mut Loop> = const { Cell::new(ptr::null_mut()) };
 }
 
@@ -423,10 +445,11 @@ impl Loop {
             if !existing.is_null() {
                 return existing;
             }
-            // SAFETY: all-zero is a valid pre-init `uv_loop_t` (POD).
-            let boxed: Box<Loop> = Box::new(unsafe { mem::zeroed() });
-            let ptr_ = Box::into_raw(boxed);
-            // SAFETY: `ptr_` is a fresh `sizeof(Loop)` allocation.
+            // SAFETY: TLS slot is per-thread; no aliasing. `uv_loop_init`
+            // accepts uninitialized storage (it zero-fills internally).
+            let ptr_ = THREADLOCAL_LOOP_DATA
+                .with(|data| unsafe { (*data.get()).as_mut_ptr() });
+            // SAFETY: `ptr_` is `sizeof(Loop)` TLS storage owned by this thread.
             if let Some(err) = unsafe { uv_loop_init(ptr_) }.errno() {
                 panic!("Failed to initialize libuv loop: errno {err}");
             }
@@ -435,27 +458,29 @@ impl Loop {
         })
     }
 
-    /// `bun.windows.libuv.Loop.shutdown()` (libuv.zig:714). Closes and frees
-    /// this thread's libuv loop. Called from `WebWorker::shutdown`.
+    /// `bun.windows.libuv.Loop.shutdown()` (libuv.zig:714). Closes this
+    /// thread's libuv loop. Called from `WebWorker::shutdown`.
     pub fn shutdown() {
         THREADLOCAL_LOOP.with(|slot| {
             let loop_ = slot.get();
             if loop_.is_null() {
                 return;
             }
-            // SAFETY: `loop_` is the live per-thread loop allocated in `get()`.
-            if unsafe { uv_loop_close(loop_) }.errno().is_some() {
-                // EBUSY ⇒ handles still open: walk + close them, run once to
-                // flush close callbacks, then close again (must succeed).
-                unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                let _ = unsafe { uv_run(loop_, RunMode::Default) };
-                // NOTE the call is unconditional (Zig `bun.debugAssert`
-                // evaluates its argument in release too).
-                let rc = unsafe { uv_loop_close(loop_) };
-                debug_assert_eq!(rc, ReturnCode::ZERO);
+            // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
+            if let Some(err) = unsafe { uv_loop_close(loop_) }.errno() {
+                // Zig: `if (err == .BUSY)` — only EBUSY means handles are
+                // still open; walk + close them, run once to flush close
+                // callbacks, then close again (must succeed). `uv_loop_close`
+                // documents no other failure code.
+                if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
+                    unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
+                    let _ = unsafe { uv_run(loop_, RunMode::Default) };
+                    // NOTE the call is unconditional (Zig `bun.debugAssert`
+                    // evaluates its argument in release too).
+                    let rc = unsafe { uv_loop_close(loop_) };
+                    debug_assert_eq!(rc, ReturnCode::ZERO);
+                }
             }
-            // SAFETY: matches the `Box::into_raw` in `get()`.
-            drop(unsafe { Box::from_raw(loop_) });
             slot.set(ptr::null_mut());
         });
     }
@@ -1945,7 +1970,9 @@ pub mod O {
         // SYNC and DSYNC must be mutually exclusive for libuv on Windows.
         // `bun.O.SYNC` (0o4010000) is a superset of `DSYNC` (0o10000), so check
         // SYNC first to emit only `UV_FS_O_SYNC` when both bits are present.
-        if c_flags & bun_o::SYNC == bun_o::SYNC {
+        // NOTE: matches Zig's `& != 0` (any-overlap), not all-bits-match — so
+        // a DSYNC-only input (sharing bit 0o10000) takes the SYNC branch too.
+        if c_flags & bun_o::SYNC != 0 {
             flags |= SYNC;
         } else if c_flags & bun_o::DSYNC != 0 {
             flags |= DSYNC;

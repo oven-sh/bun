@@ -12,15 +12,16 @@ pub struct CAllocator;
 
 pub static C_ALLOCATOR: CAllocator = CAllocator;
 
+// `max_align_t` alignment — the `libc` crate doesn't expose this on Windows
+// MSVC; both x86_64 and aarch64 ABIs guarantee 16 here.
+const MALLOC_ALIGN: usize = 2 * core::mem::size_of::<usize>();
+
 impl CAllocator {
     #[inline]
     pub fn raw_alloc(&self, len: usize, alignment: Alignment, _ret_addr: usize) -> Option<*mut u8> {
         // libc malloc guarantees alignment to `max_align_t`; for larger
         // alignments use the aligned variant (Zig's `CAllocator` does the same).
         let align = alignment.to_byte_units();
-        // `max_align_t` alignment — the `libc` crate doesn't expose this on
-        // Windows MSVC; both x86_64 and aarch64 ABIs guarantee 16 here.
-        const MALLOC_ALIGN: usize = 2 * core::mem::size_of::<usize>();
         // SAFETY: libc malloc/aligned_alloc are sound for any nonzero size.
         let ptr = unsafe {
             if align <= MALLOC_ALIGN {
@@ -65,9 +66,19 @@ impl CAllocator {
     }
 
     #[inline]
-    pub fn raw_free(&self, buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {
-        // SAFETY: `buf` was allocated by `raw_alloc` (libc malloc/aligned_alloc),
-        // both of which are freed via `free`.
+    pub fn raw_free(&self, buf: &mut [u8], alignment: Alignment, _ret_addr: usize) {
+        // On Windows MSVC, over-aligned allocations come from `_aligned_malloc`
+        // and MUST be released with `_aligned_free`; passing them to `free()`
+        // is heap corruption. POSIX `aligned_alloc` is freed with plain `free`.
+        #[cfg(windows)]
+        if alignment.to_byte_units() > MALLOC_ALIGN {
+            // SAFETY: `buf` was allocated by `_aligned_malloc` in `raw_alloc`.
+            unsafe { libc::aligned_free(buf.as_mut_ptr().cast()) };
+            return;
+        }
+        #[cfg(not(windows))]
+        let _ = alignment;
+        // SAFETY: `buf` was allocated by libc malloc/aligned_alloc in `raw_alloc`.
         unsafe { libc::free(buf.as_mut_ptr().cast()) }
     }
 }

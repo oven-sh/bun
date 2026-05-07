@@ -244,26 +244,53 @@ pub mod strings {
         if h.len() < n.len() { return false; }
         (0..=h.len() - n.len()).any(|i| eql_case_insensitive_ascii(&h[i..i + n.len()], n, false))
     }
-    /// `bun.strings.isWindowsAbsolutePathMissingDriveLetter` (immutable.zig)
+    /// `bun.strings.isWindowsAbsolutePathMissingDriveLetter` (immutable/paths.zig)
     /// — true for `\foo`-style absolute paths that lack a `C:` / `\\?\` /
     /// `\\server\` prefix and therefore need the cwd's drive prepended.
     /// Generic over `u8`/`u16` to mirror the Zig comptime `T: type` param.
     pub fn is_windows_absolute_path_missing_drive_letter<T>(chars: &[T]) -> bool
     where T: Copy + PartialEq + From<u8> {
-        // Intentionally lenient: accepts a path missing a drive letter even if
-        // it starts with a forward slash (matches Zig).
+        // Zig asserts non-empty + windows-absolute; release-mode callers may
+        // still pass `""`, so bail instead of indexing OOB.
+        debug_assert!(!chars.is_empty());
         if chars.is_empty() { return false; }
         let sep = |c: T| c == T::from(b'/') || c == T::from(b'\\');
-        if !sep(chars[0]) { return false; }
-        // `\` alone — yes, missing.
-        if chars.len() == 1 { return true; }
-        // `\\` (UNC, `\\?\`, `\\.\`) — already rooted.
-        if sep(chars[1]) { return false; }
-        // `\C:` style? Second-char alpha + third-char colon → already rooted.
-        if chars.len() >= 3 && chars[2] == T::from(b':') {
+
+        // 'C:\hello' -> false — most common case, check first.
+        if !sep(chars[0]) {
+            debug_assert!(chars.len() > 2);
+            debug_assert!(chars[1] == T::from(b':'));
             return false;
         }
-        true
+
+        if chars.len() > 4 {
+            // '\??\hello' -> false (NT object prefix)
+            if chars[1] == T::from(b'?')
+                && chars[2] == T::from(b'?')
+                && sep(chars[3])
+            {
+                return false;
+            }
+            // '\\?\hello' -> false (other NT object prefix)
+            // '\\.\hello' -> false (NT device prefix)
+            if sep(chars[1])
+                && (chars[2] == T::from(b'?') || chars[2] == T::from(b'.'))
+                && sep(chars[3])
+            {
+                return false;
+            }
+        }
+
+        // Zig: `bun.path.windowsFilesystemRootT(T, chars).len == 1`. With
+        // `chars[0]` already known to be a separator, that fn returns len > 1
+        // only via its UNC/device branch (`len >= 5 && sep[0] && sep[1] &&
+        // !sep[2]`); every other separator-led path resolves to a single-char
+        // root. Inlined here because `bun_paths` would be a tier-0 cycle.
+        //
+        // '\\Server\Share'  -> false (UNC)
+        // '\\Server\\Share' -> true  (extra separator — not UNC)
+        // '\Server\Share'   -> true  (posix-style)
+        !(chars.len() >= 5 && sep(chars[1]) && !sep(chars[2]))
     }
     /// `strings.eqlComptimeIgnoreLen` — caller has already checked `a.len() ==
     /// b.len()` (the "ignore len" means "don't re-check"). PERF(port): the Zig

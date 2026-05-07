@@ -1909,9 +1909,7 @@ impl TestCommand {
 
         if ctx.test_options.isolate {
             vm.test_isolation_enabled = true;
-            // TODO(b2-cycle): vm.auto_killer is gated to `()` until ProcessAutoKiller
-            // un-gates upstream. Zig: `vm.auto_killer.enabled = true;`
-            let _ = &vm.auto_killer;
+            vm.auto_killer.enabled = true;
         }
 
         if ctx.test_options.coverage.enabled {

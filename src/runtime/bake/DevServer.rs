@@ -2514,8 +2514,7 @@ impl DevServer {
         self.client_graph.reset();
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindCss)?;
 
-        // TODO(port): IncrementalGraph::current_css_files (gated per-bundle scratch)
-        let css_ids: &[u64] = &[];
+        let css_ids: &[u64] = &self.client_graph.current_css_files;
 
         let payload_size = bundled_html.len()
             + ("<link rel=\"stylesheet\" href=\"".len() + ASSET_PREFIX.len() + "/0000000000000000.css\">".len())

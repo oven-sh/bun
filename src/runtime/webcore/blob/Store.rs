@@ -112,10 +112,6 @@ impl StoreExt for Store {
         None
     }
 
-    // TODO(b2-blocked): S3/file constructors call PathLike::to_thread_safe/clone,
-    // bun_paths::extension, bun_http_types::MimeType::by_extension_no_default — un-gate once
-    // node_types::PathLike is the real `crate::node::PathLike`.
-    
     fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
@@ -288,8 +284,6 @@ impl StoreExt for Store {
 }
 
 impl FileExt for File {
-    // TODO(b2-blocked): bun_jsc::* + crate::node::fs (gated).
-    
     fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {

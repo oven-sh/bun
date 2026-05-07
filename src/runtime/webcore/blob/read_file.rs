@@ -1258,6 +1258,6 @@ pub trait ReadFileUvHandler {
 // PORT STATUS
 //   source:     src/runtime/webcore/blob/read_file.zig (829 lines)
 //   confidence: medium
-//   todos:      6
+//   todos:      7
 //   notes:      ReadFile::create comptime-callback erasure boxed as (ctx, fn) pair pending trait rework. ReadFileRead.buf models Zig's owned `[]u8` as &'static mut + is_temporary flag — Phase B should swap to a typed handoff (Box<[u8]> / ByteStore).
 // ──────────────────────────────────────────────────────────────────────────

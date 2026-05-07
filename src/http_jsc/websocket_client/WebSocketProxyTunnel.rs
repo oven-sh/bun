@@ -273,13 +273,53 @@ impl WebSocketProxyTunnel {
         )
         .map_err(|_| bun_core::err!("InvalidOptions"))?;
 
-        // SAFETY: caller contract — `this` is live. Short-lived raw deref to assign
-        // the field; no `&mut Self` is bound across the re-entrant `start*()` below.
-        unsafe { (*this).wrapper = Some(wrapper) };
+        // Snapshot the `*mut SSL` *before* moving `wrapper` into `*this` and before
+        // forming any `&mut SslWrapper`, so callbacks can read it from a tunnel
+        // field disjoint from `wrapper` (see `self.ssl` doc).
+        let ssl = wrapper.ssl;
+
+        // SAFETY: caller contract — `this` is live. Short-lived raw derefs to assign
+        // fields; no `&mut Self` is bound across the re-entrant `start*()` below.
+        unsafe {
+            (*this).ssl = ssl;
+            (*this).wrapper = Some(wrapper);
+        }
+
+        // Configure SNI with hostname.
+        //
+        // PORT NOTE: the Zig spec does this inside `onOpen`, which `SslWrapper::start()`
+        // invokes immediately before `handle_traffic()`. We hoist it here because
+        // `start()` holds `&mut SslWrapper` across the `on_open` dispatch, and any
+        // read of `(*ctx).wrapper` from inside the callback would invalidate that
+        // borrow under Stacked Borrows. The observable order vs BoringSSL is
+        // identical: SNI is set on the `SSL*` before the handshake is driven.
+        if let Some(ssl_ptr) = ssl {
+            // SAFETY: `this` is live; field projection covers only `sni_hostname`.
+            if let Some(hostname) = unsafe { (*this).sni_hostname.as_deref() } {
+                if !strings::is_ip_address(hostname) {
+                    // Set SNI hostname
+                    let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
+                    // CYCLEBREAK: Zig `ssl_ptr.configureHTTPClient(host)` =
+                    // SNI + verify-hostname. The boringssl-crate ext-method
+                    // hasn't landed yet; route through bun_http's
+                    // tier-neutral helper which does SNI + ALPN(h1) (no
+                    // verify-hostname — that is checked manually in
+                    // `on_handshake`, matching the Zig path).
+                    bun_http::configure_http_client_with_alpn(
+                        ssl_ptr.as_ptr(),
+                        hostname_z.as_ptr(),
+                        bun_http::AlpnOffer::H1,
+                    );
+                    // hostname_z dropped here (owned NUL-terminated copy)
+                }
+            }
+        }
 
         // SAFETY: raw field projection; `start*()` synchronously fires `on_open(ctx)`
-        // which only forms a shared `&*this`, so the `&mut Option<SslWrapper>` here
-        // (covering only the `wrapper` field, not the whole struct) does not alias it.
+        // / `write_encrypted(ctx)` / etc. Those callbacks touch only fields disjoint
+        // from `wrapper` (`ref_count`, `ssl`, `sni_hostname`, `write_buffer`,
+        // `socket`, …), so the `&mut SslWrapper` formed here — which covers only
+        // the `wrapper` field bytes — is never aliased.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         if !initial_data.is_empty() {
             // SAFETY: deref of field projection; `this` is live.
@@ -295,35 +335,12 @@ impl WebSocketProxyTunnel {
     fn on_open(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
         let _guard = unsafe { Self::ref_scope(this) };
-        // SAFETY: ref_scope holds a ref. This callback never mutates tunnel fields,
-        // so a shared borrow suffices and avoids aliasing the `&mut wrapper` held by
-        // the `SslWrapper::start()` frame that invoked us.
-        let this = unsafe { &*this };
-
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
-        // Configure SNI with hostname
-        if let Some(wrapper) = this.wrapper.as_ref() {
-            if let Some(ssl_ptr) = wrapper.ssl {
-                if let Some(hostname) = this.sni_hostname.as_deref() {
-                    if !strings::is_ip_address(hostname) {
-                        // Set SNI hostname
-                        let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
-                        // CYCLEBREAK: Zig `ssl_ptr.configureHTTPClient(host)` =
-                        // SNI + verify-hostname. The boringssl-crate ext-method
-                        // hasn't landed yet; route through bun_http's
-                        // tier-neutral helper which does SNI + ALPN(h1) (no
-                        // verify-hostname — that is checked manually in
-                        // `on_handshake`, matching the Zig path).
-                        bun_http::configure_http_client_with_alpn(
-                            ssl_ptr.as_ptr(),
-                            hostname_z.as_ptr(),
-                            bun_http::AlpnOffer::H1,
-                        );
-                        // hostname_z dropped here (owned NUL-terminated copy)
-                    }
-                }
-            }
-        }
+        // SNI configuration is done in `start()` before the wrapper is driven;
+        // see PORT NOTE there. This callback intentionally does not touch
+        // `(*this).wrapper` — the caller (`SslWrapper::start`) holds `&mut self`
+        // over those bytes.
+        let _ = this;
     }
 
     /// SSLWrapper callback: Called with decrypted data from the network

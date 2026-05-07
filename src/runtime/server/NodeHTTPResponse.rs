@@ -1,16 +1,24 @@
 use core::cell::Cell;
-use core::ffi::{c_int, c_uint, c_void};
+use core::ffi::{c_uint, c_void};
 use core::ptr;
 
 use bitflags::bitflags;
+use bstr::BStr;
 
 use bun_collections::BabyList;
+use bun_core::scoped_log;
+use bun_http::Method as HttpMethod;
+use bun_str::ZigString;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
-use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine};
+use crate::server::jsc::{
+    self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
+};
 use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
-use crate::webcore::AutoFlusher;
+use crate::webcore::{AutoFlusher, HasAutoFlusher};
+
+bun_core::declare_scope!(NodeHTTPResponse, visible);
 
 /// Intrusive ref-counted; `ref_count` is managed by `bun_ptr::RefPtr<Self>`
 /// (FFI rule — `*mut NodeHTTPResponse` is the m_ctx payload of a

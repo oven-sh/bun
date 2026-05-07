@@ -37,10 +37,6 @@ use super::{directories, enqueue};
 use super::package_manager_options as Options;
 use super::package_manager_options::{Do, Enable};
 use crate::isolated_install::store as Store;
-use crate::isolated_install::store::{EntryListExt as _, NodeListExt as _};
-use crate::isolated_install::installer as store_installer;
-use crate::lifecycle_script_runner::InstallCtx;
-use crate::Behavior;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Callbacks trait

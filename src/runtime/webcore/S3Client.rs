@@ -253,11 +253,13 @@ impl S3Client {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = unsafe { &*global.bun_vm() };
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
-        // `Loader::get_s3_credentials` takes `&mut self`; reaching it through
-        // `&VirtualMachine` would require interior mutability that isn't wired
-        // up yet on the Rust side.
-        let env_creds: S3Credentials =
-            todo!("blocked_on: bun_jsc::VirtualMachine::transpiler.env.get_s3_credentials() (mutable env access)");
+        // SAFETY: `bun_vm()` returns the live per-global VM raw pointer (JS thread);
+        // `transpiler.env` is the process-singleton dotenv loader, set during init
+        // and live for the VM lifetime. `get_s3_credentials` takes `&mut self` only
+        // to lazily memoize — single-threaded JS event-loop discipline applies.
+        let env_creds = crate::webcore::fetch::s3_credentials_from_env(unsafe {
+            (*(*global.bun_vm()).transpiler.env).get_s3_credentials()
+        });
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
             MultiPartUploadOptions::default(),
@@ -376,21 +378,19 @@ impl S3Client {
         };
 
         let options = args.next_eat();
-        let mut blob = scopeguard::guard(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                path,
-                options,
-                &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
-            )?,
-            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
-            |_b| {},
-        );
-        S3File::get_presign_url_from(&mut *blob, global, options)
+        // `defer blob.detach()` — `Blob`'s `store: Option<StoreRef>` field
+        // drops at scope exit, which calls `Store::deref()` (same as detach).
+        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            path,
+            options,
+            &ptr.credentials,
+            ptr.options,
+            ptr.acl,
+            ptr.storage_class,
+            ptr.request_payer,
+        )?;
+        S3File::get_presign_url_from(&mut blob, global, options)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -415,21 +415,18 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        let mut blob = scopeguard::guard(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                path,
-                options,
-                &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
-            )?,
-            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
-            |_b| {},
-        );
-        S3File::S3BlobStatTask::exists(global, &mut *blob)
+        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
+        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            path,
+            options,
+            &ptr.credentials,
+            ptr.options,
+            ptr.acl,
+            ptr.storage_class,
+            ptr.request_payer,
+        )?;
+        S3File::S3BlobStatTask::exists(global, &mut blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -454,21 +451,18 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        let mut blob = scopeguard::guard(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                path,
-                options,
-                &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
-            )?,
-            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
-            |_b| {},
-        );
-        S3File::S3BlobStatTask::size(global, &mut *blob)
+        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
+        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            path,
+            options,
+            &ptr.credentials,
+            ptr.options,
+            ptr.acl,
+            ptr.storage_class,
+            ptr.request_payer,
+        )?;
+        S3File::S3BlobStatTask::size(global, &mut blob)
     }
 
     #[bun_jsc::host_fn(method)]

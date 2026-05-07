@@ -1090,6 +1090,22 @@ impl JSValue {
         core::hint::black_box(self);
     }
 
+    /// If this value is callable and an `AsyncContextFrame` is currently active,
+    /// returns a wrapper that restores that frame when invoked; otherwise
+    /// returns `self` unchanged. Mirrors Zig `JSValue.withAsyncContextIfNeeded`.
+    #[inline]
+    pub fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: *const JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        debug_assert!(self.is_callable());
+        // SAFETY: `global` is a live JSGlobalObject; FFI shim is total over any JSValue.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
+    }
+
     /// Protects a JSValue from garbage collection (refcounted). The is_cell
     /// check happens on the C++ side (bindings.cpp).
     #[inline]

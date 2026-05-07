@@ -682,20 +682,23 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
         }
 
-        let event_loop = &(*manager).event_loop;
-        let process = spawned.to_process(event_loop, false);
+        let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
+        // `to_process` returns an intrusively-refcounted `*mut Process` (Box::into_raw,
+        // refcount = 1); the strong ref transfers to `(*this).process` and is released
+        // in `reset_polls` via `process.deref()`.
+        let process: *mut Process = spawned.to_process(event_loop, false);
 
-        debug_assert!((*this).process.is_none(), "forgot to call `resetPolls`");
-        (*this).process = Some(process.clone());
+        debug_assert!((*this).process.is_null(), "forgot to call `resetPolls`");
+        (*this).process = process;
         // Store the allocation-rooted `this` as the exit-handler owner. We hold no
         // live `&mut Self` here, so the synchronous `on_exit` dispatch below may
         // reenter `on_process_exit` through `this` without aliasing.
-        process.set_exit_handler(this);
+        (*process).set_exit_handler(this as *mut (), &LIFECYCLE_SCRIPT_EXIT_VTABLE);
 
-        if let Err(err) = process.watch_or_reap() {
-            if !process.has_exited() {
+        if let Err(err) = (*process).watch_or_reap() {
+            if !(*process).has_exited() {
                 // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                process.on_exit(Status::Err(err), &core::mem::zeroed::<Rusage>());
+                (*process).on_exit(Status::Err(err), &core::mem::zeroed::<Rusage>());
             }
         }
 
@@ -770,10 +773,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.ensure_not_in_heap();
 
         match status {
-            Status::Exited { code, .. } => {
+            Status::Exited(exit) => {
                 let maybe_duration = self.timer.as_mut().map(|t| t.read());
 
-                if code > 0 {
+                if exit.code > 0 {
                     if self.optional {
                         if let Some(ctx) = &self.ctx {
                             // SAFETY: `installer` outlives every subprocess and is
@@ -795,12 +798,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
                         bstr::BStr::new(self.script_name()),
                         bstr::BStr::new(&self.package_name),
-                        code,
+                        exit.code,
                     ));
                     // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
                     unsafe { Self::destroy(self as *mut Self) };
                     Output::flush();
-                    Global::exit(code as u32);
+                    Global::exit(exit.code as u32);
                 }
 
                 if !self.foreground && self.manager().scripts_node.is_some() {
@@ -918,19 +921,26 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
                 unsafe { Self::destroy(self as *mut Self) };
             }
-            Status::Signaled(signal_code) => {
+            Status::Signaled(signal) => {
                 self.print_output();
+                let signal_code = bun_sys::SignalCode::from(signal);
 
                 Output::pretty_errorln(format_args!(
-                    "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {:?}<r>",
+                    "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
-                    // TODO(port): Zig used `signal_code.fmt(enable_ansi_colors_stderr())`;
-                    // `SignalCode` has no colored formatter at this tier yet.
-                    signal_code,
+                    signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 ));
 
-                Global::raise_ignoring_panic_handler(signal_code);
+                // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
+                // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
+                // `raise_ignoring_panic_handler` path is preserved. Zig's `SignalCode` is a
+                // non-exhaustive `enum(u8)` so it had no such constraint.
+                Global::raise_ignoring_panic_handler(
+                    Status::Signaled(signal)
+                        .signal_code()
+                        .unwrap_or(bun_core::SignalCode::SIGTERM),
+                );
             }
             Status::Err(err) => {
                 if self.optional {
@@ -972,13 +982,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// This function may free the *LifecycleScriptSubprocess
-    pub fn on_process_exit(&mut self, proc: &Process, _: Status, _: &Rusage) {
-        if self
-            .process
-            .as_deref()
-            .map(|p| !core::ptr::eq(p, proc))
-            .unwrap_or(true)
-        {
+    pub fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
+        if self.process != proc {
             Output::debug_warn(format_args!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
             ));
@@ -993,10 +998,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             debug_assert!(self.remaining_fds == 0);
         }
 
-        if let Some(process) = self.process.take() {
-            process.close();
-            // `process.deref()` in Zig drops one refcount; Arc::drop here.
-            drop(process);
+        let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
+        if !process.is_null() {
+            // SAFETY: `process` is the live intrusive-refcounted pointer set in
+            // `spawn_next_script`; we held the only strong ref. `deref()` may free.
+            unsafe {
+                (*process).close();
+                (*process).deref();
+            }
         }
 
         // PORT NOTE: Zig called `OutputReader.deinit()` here; the Rust

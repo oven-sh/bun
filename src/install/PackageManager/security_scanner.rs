@@ -926,8 +926,11 @@ pub struct SecurityScanSubprocess<'a> {
     manager: &'a mut PackageManager,
     code: Box<[u8]>,
     json_data: Box<[u8]>,
-    process: Option<Arc<Process>>,
-    // TODO(port): BufferedReader.init(@This()) ties reader vtable to this type; verify Rust API.
+    /// Intrusive `*mut Process` (Zig `?*Process`). `Process` is
+    /// `ThreadSafeRefCounted` and Box-allocated by `to_process`; wrapping in
+    /// `Arc` would be UB (no `ArcInner` header). We hold one ref and `deref()`
+    /// it in `Drop`.
+    process: Option<*mut Process>,
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
     stderr_data: Vec<u8>,
@@ -935,7 +938,9 @@ pub struct SecurityScanSubprocess<'a> {
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
-    json_writer: Option<Rc<StaticPipeWriter>>,
+    /// Intrusive `RefPtr` (Zig `?*StaticPipeWriter`). `StaticPipeWriter<P>` is
+    /// `RefCounted`; `Rc` would double-count against the embedded refcount.
+    json_writer: Option<RefPtr<StaticPipeWriter>>,
 }
 
 // Zig: `pub const StaticPipeWriter = jsc.Subprocess.NewStaticPipeWriter(@This());`
@@ -958,11 +963,43 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     }
 }
 
+/// Static exit-handler vtable registered with `Process::set_exit_handler`.
+/// Mirrors the Zig `setExitHandler(this)` duck-typed dispatch.
+static SECURITY_SCAN_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
+    on_process_exit: {
+        unsafe fn call(
+            owner: *mut (),
+            process: *mut Process,
+            status: Status,
+            rusage: *const Rusage,
+        ) {
+            // SAFETY: `owner` is the `*mut SecurityScanSubprocess` registered in
+            // `finish_spawn`; the subprocess outlives its `Process` (it `deref`s
+            // it in `Drop`).
+            unsafe { (*owner.cast::<SecurityScanSubprocess>()).on_process_exit(&mut *process, status, &*rusage) };
+        }
+        call
+    },
+};
+
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
-        if let Some(p) = &self.process {
-            p.detach();
-            // Arc::drop handles deref()
+        if let Some(p) = self.process.take() {
+            // SAFETY: `p` is the live intrusive `*mut Process` returned from
+            // `to_process`; we hold one ref. `detach()` clears the exit handler
+            // so a late callback won't touch a dangling `self`, then `deref()`
+            // drops our ref (may free if last).
+            unsafe {
+                (*p).detach();
+                ThreadSafeRefCount::<Process>::deref(p);
+            }
+        }
+        if let Some(w) = self.json_writer.take() {
+            // Zig `deinit` only ran via `attemptSecurityScanWithRetry`'s
+            // `defer scanner.deinit()`, which set `json_writer = null` first via
+            // `onCloseIO`. Guard for parity: `RefPtr` has no auto-`Drop`, so
+            // explicit `deref()` matches Zig `deref()`.
+            w.deref();
         }
         // code, json_data drop automatically (Box<[u8]>)
     }
@@ -1058,16 +1095,16 @@ impl<'a> SecurityScanSubprocess<'a> {
         argv: &mut [Option<*const core::ffi::c_char>; 5],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
-        let extra_fds = vec![
+        let extra_fds: Box<[Stdio]> = Box::new([
             Stdio::Pipe(ipc_output_fds[1]), // fd 3: child inherits write end
             Stdio::Buffer,                  // fd 4: socketpair, parent's end in extra_pipes
-        ];
+        ]);
 
         let spawn_options = SpawnOptions {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: FileSystem::instance().top_level_dir(),
+            cwd: Box::from(FileSystem::instance().top_level_dir()),
             extra_fds,
             ..Default::default()
         };
@@ -1087,11 +1124,11 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
         self.ipc_reader.flags.remove(PosixFlags::SOCKET);
 
-        let json_fd = spawned.extra_pipes[1];
+        let json_fd = spawned.extra_pipes[1].fd();
         self.finish_spawn(
             &mut spawned,
             ipc_output_fds[0],
-            StdioResult::from_fd(json_fd),
+            subprocess::stdio_result_from_fd(json_fd),
         )
     }
 

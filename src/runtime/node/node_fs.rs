@@ -2640,10 +2640,11 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.target_path.to_thread_safe(); self.new_path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Symlink> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("target must be a string or TypedArray"))?;
-            let new_path = match PathLike::from_js(ctx, arguments)? {
-                Some(p) => p,
-                None => { old_path.deinit(); return Err(ctx.throw_invalid_arguments("path must be a string or TypedArray")); }
-            };
+            // Zig: `errdefer old_path.deinit()` (node_fs.zig:1883).
+            let old_path = scopeguard::guard(old_path, |p| p.deinit());
+            let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            // Zig: `errdefer new_path.deinit()` (node_fs.zig:1888).
+            let new_path = scopeguard::guard(new_path, |p| p.deinit());
             // The type argument is only available on Windows and
             // ignored on other platforms. It can be set to 'dir',
             // 'file', or 'junction'. If the type argument is not set,
@@ -2658,29 +2659,20 @@ pub mod args {
                     if next_val.is_string() {
                         arguments.eat();
                         let str = next_val.to_bun_string(ctx)?;
-                        let lt = if str.eql_comptime("dir") { SymlinkLinkType::Dir }
-                            else if str.eql_comptime("file") { SymlinkLinkType::File }
-                            else if str.eql_comptime("junction") { SymlinkLinkType::Junction }
-                            else {
-                                // Build the error before deref() so the format observes a live string
-                                // (Zig used `defer str.deref()` — node_fs.zig:1905-1910).
-                                let err = ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw();
-                                str.deref();
-                                old_path.deinit(); new_path.deinit();
-                                return Err(err);
-                            };
-                        str.deref();
-                        break 'link_type lt;
+                        let str = scopeguard::guard(str, |s| s.deref());
+                        if str.eql_comptime("dir") { break 'link_type SymlinkLinkType::Dir; }
+                        if str.eql_comptime("file") { break 'link_type SymlinkLinkType::File; }
+                        if str.eql_comptime("junction") { break 'link_type SymlinkLinkType::Junction; }
+                        return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", &*str)).throw());
                     }
                     // not a string. fallthrough to auto detect.
-                    old_path.deinit(); new_path.deinit();
                     return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\".")).throw());
                 }
                 SymlinkLinkType::Unspecified
             };
             Ok(Symlink {
-                target_path: old_path,
-                new_path,
+                target_path: scopeguard::ScopeGuard::into_inner(old_path),
+                new_path: scopeguard::ScopeGuard::into_inner(new_path),
                 #[cfg(windows)] link_type,
                 #[cfg(not(windows))] link_type: { let _ = link_type; () },
             })

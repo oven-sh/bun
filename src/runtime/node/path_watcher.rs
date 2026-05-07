@@ -1229,8 +1229,7 @@ impl Kqueue {
     }
 
     fn thread_main(manager: &'static PathWatcherManager) {
-        use bun_sys::c::{Kevent, NOTE};
-        Output::Source::configure_named_thread("fs.watch");
+        Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Kqueue = manager.platform.get();
         // SAFETY: `kq` and `running` are set in `init()` before this thread spawns and
         // never reassigned. Borrow only these disjoint fields so the `&mut entries`
@@ -1238,17 +1237,20 @@ impl Kqueue {
         // never alias them — we never form `&Kqueue` / `&mut Kqueue` over the whole struct.
         let kq = unsafe { (*plat).kq };
         let running: &AtomicBool = unsafe { &(*plat).running };
-        // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
-        let mut events: [Kevent; 128] = unsafe { core::mem::zeroed() };
+        // SAFETY: libc::kevent is POD; zeroed array filled by kernel before read.
+        let mut events: [libc::kevent; 128] = unsafe { core::mem::zeroed() };
         while running.load(Ordering::Acquire) {
-            let count = sys::syscall::kevent(
-                kq.native(),
-                events.as_mut_ptr(),
-                0,
-                events.as_mut_ptr(),
-                events.len() as _,
-                core::ptr::null(),
-            );
+            // SAFETY: FFI; kq is a valid kqueue fd; events is a valid output buffer.
+            let count = unsafe {
+                sys::c::kevent(
+                    kq.native(),
+                    events.as_ptr(),
+                    0,
+                    events.as_mut_ptr(),
+                    events.len() as _,
+                    core::ptr::null(),
+                )
+            };
             if count <= 0 {
                 continue;
             }
@@ -1270,7 +1272,7 @@ impl Kqueue {
                 let Some(entry) = entries.get(&(i32::try_from(kev.ident).unwrap())) else {
                     continue;
                 };
-                if entry.generation != kev.udata {
+                if entry.generation != kev.udata as usize {
                     continue;
                 }
                 // SAFETY: entry.watcher live under manager.mutex; PathWatcher is a
@@ -1278,7 +1280,7 @@ impl Kqueue {
                 let watcher = unsafe { &mut *entry.watcher };
 
                 let event_type: EventType = if kev.fflags
-                    & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE | NOTE::LINK)
+                    & (libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE | libc::NOTE_LINK)
                     != 0
                 {
                     EventType::Rename

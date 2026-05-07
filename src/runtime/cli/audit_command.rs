@@ -11,7 +11,6 @@ use bun_interchange::json as bun_json;
 use bun_libdeflate_sys::libdeflate;
 use bun_logger as logger;
 use bun_logger::js_ast::{Expr, ExprData};
-use bun_paths::PathBuffer;
 use bun_str::{strings, MutableString};
 use bun_url::URL;
 

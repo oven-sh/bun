@@ -134,15 +134,7 @@ impl PackageManager {
     }
 
     pub fn scope_for_package_name(&self, name: &[u8]) -> &npm::registry::Scope {
-        if name.is_empty() || name[0] != b'@' {
-            return &self.options.scope;
-        }
-        self.options
-            .registries
-            .get(&npm::registry::Scope::hash(npm::registry::Scope::get_name(
-                name,
-            )))
-            .unwrap_or(&self.options.scope)
+        self.options.scope_for_package_name(name)
     }
 
     pub fn get_installed_versions_from_disk_cache(

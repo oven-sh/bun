@@ -126,6 +126,8 @@ impl FileCloser for WriteFile {
     fn io_poll(&mut self) -> &mut io::Poll { &mut self.io_poll }
     fn task(&mut self) -> &mut WorkPoolTask { &mut self.task }
     fn update(&mut self) { self.do_write_loop(); }
+    #[cfg(windows)]
+    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!("WriteFile is POSIX-only; see WriteFileWindows") }
 
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
         // SAFETY: `request` points to `WriteFile.io_request` (Zig `@fieldParentPtr`).

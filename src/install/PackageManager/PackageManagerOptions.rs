@@ -226,6 +226,22 @@ impl Options {
     pub fn should_print_command_name(&self) -> bool {
         self.log_level != LogLevel::Silent && self.do_.contains(Do::SUMMARY)
     }
+
+    /// Resolve the registry scope for a (possibly @-scoped) package name.
+    ///
+    /// Hoisted onto `Options` so callers that already hold a borrow of
+    /// `pm.lockfile` can disjointly borrow `pm.options` instead of needing the
+    /// whole `&PackageManager`.
+    pub fn scope_for_package_name(&self, name: &[u8]) -> &Npm::registry::Scope {
+        if name.is_empty() || name[0] != b'@' {
+            return &self.scope;
+        }
+        self.registries
+            .get(&Npm::registry::Scope::hash(Npm::registry::Scope::get_name(
+                name,
+            )))
+            .unwrap_or(&self.scope)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]

@@ -22,7 +22,8 @@ use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
 use bun_core::{self, env_var, getenv_z, which, zstr, ZBox, ZStr};
-use bun_jsc::{JSGlobalObject, VirtualMachine};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
 use bun_spawn::{self, EventLoopHandle, Process, ProcessExitVTable, Rusage, SpawnOptions, Status, Stdio};

@@ -1017,7 +1017,7 @@ impl<'a> ReadFileUV<'a> {
         let this: &mut ReadFileUV = unsafe { &mut *((*req).data as *mut ReadFileUV) };
 
         if let Some(errno) = unsafe { (*req).result.err_enum() } {
-            this.errno = Some(bun_core::errno_to_err(errno));
+            this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error =
                 Some(bun_sys::Error::from_code(errno, bun_sys::Tag::Fstat).to_system_error());
             this.on_finish();
@@ -1080,7 +1080,7 @@ impl<'a> ReadFileUV<'a> {
         }
         // Out of memory we can't read more than 4GB at a time (ULONG) on Windows
         if this.size as usize > bun_sys::windows::ULONG::MAX as usize {
-            this.errno = Some(bun_core::errno_to_err(bun_sys::E::NOMEM));
+            this.errno = Some(bun_core::errno_to_zig_err(bun_sys::E::NOMEM as i32));
             this.system_error =
                 Some(bun_sys::Error::from_code(bun_sys::E::NOMEM, bun_sys::Tag::Read)
                     .to_system_error());
@@ -1159,7 +1159,7 @@ impl<'a> ReadFileUV<'a> {
             );
             self.req.data = self as *mut Self as *mut c_void;
             if let Some(errno) = res.err_enum() {
-                self.errno = Some(bun_core::errno_to_err(errno));
+                self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
                 self.system_error =
                     Some(bun_sys::Error::from_code(errno, bun_sys::Tag::Read).to_system_error());
                 self.on_finish();
@@ -1182,7 +1182,7 @@ impl<'a> ReadFileUV<'a> {
         let result = unsafe { (*req).result };
 
         if let Some(errno) = result.err_enum() {
-            this.errno = Some(bun_core::errno_to_err(errno));
+            this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error =
                 Some(bun_sys::Error::from_code(errno, bun_sys::Tag::Read).to_system_error());
             this.on_finish();

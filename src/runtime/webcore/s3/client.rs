@@ -821,6 +821,10 @@ pub fn upload_stream(
         );
     }
 
+    // PORT NOTE: Zig calls `this.ref()` *before* the is_disturbed/Invalid/pending-err early
+    // returns above (client.zig:465), leaking a credential ref on every early-return path.
+    // We intentionally defer the ref until after those checks — strictly an improvement.
+    //
     // ref the credentials — `IntrusiveRc::init_ref` bumps the intrusive count and wraps.
     // SAFETY: `this` points to a live heap-allocated `S3Credentials` (intrusive-refcounted).
     let credentials = unsafe { bun_ptr::IntrusiveRc::init_ref(this as *mut S3Credentials) };

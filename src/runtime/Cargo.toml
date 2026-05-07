@@ -108,9 +108,8 @@ bun_patch_jsc.workspace = true
 bun_css_jsc = { workspace = true, optional = true }
 
 [features]
-default = []
-# Enables Bun.color() and CSS-typed Maybe helpers. Off by default so that
-# `cargo build -p bun_bin` does not pull bun_css into the dep graph.
+default = ["css"]
+# Enables Bun.color() and CSS-typed Maybe helpers.
 css = ["dep:bun_css", "dep:bun_css_jsc", "bun_bundler/css"]
 # Mirrors Zig `Environment.show_crash_trace` — extra debug breakpoints / params.
 show_crash_trace = ["bun_bundler/show_crash_trace"]

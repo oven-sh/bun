@@ -298,10 +298,9 @@ pub mod bun_object {
     export_callbacks! {
         BunObject_callback_allocUnsafe => super::alloc_unsafe,
         BunObject_callback_build => super::static_adapters::js_bundler_build,
-        // `bun_css` is feature-gated off the default `bun_bin` dep graph;
-        // Bun.color() falls back to a throw stub when the feature is absent.
+        // Bun.color() — falls back to a throw stub when `css` is disabled.
         #[cfg(feature = "css")]
-        BunObject_callback_color => bun_css::CssColor::js_function_color,
+        BunObject_callback_color => bun_css_jsc::js_function_color,
         #[cfg(not(feature = "css"))]
         BunObject_callback_color => super::color_unsupported,
         BunObject_callback_connect => super::static_adapters::listener_connect,

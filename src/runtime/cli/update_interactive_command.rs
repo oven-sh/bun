@@ -414,12 +414,57 @@ impl UpdateInteractiveCommand {
             });
         }
 
-        let _ = (manager, workspace_catalog_updates);
-        // Second loop needs `manager.workspace_package_json_cache` /
-        // `manager.log` (absent on stub `PackageManager`). Body preserved in
-        // update_interactive_command.zig; re-port once `package_manager_real`
-        // un-gates.
-        todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache (package_manager_real un-gate)")
+        // Update catalog definitions for each workspace
+        let mut workspace_it = workspace_catalog_updates.iter_mut();
+        while let Some((workspace_path, updates_for_workspace)) = workspace_it.next() {
+            // Build the package.json path for this workspace
+            // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
+            let root_dir = unsafe { (*FileSystem::instance()).top_level_dir };
+            let mut path_buf = PathBuffer::uninit();
+            let package_json_path =
+                Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
+
+            // Load and parse the package.json properly
+            // SAFETY: see `update_package_json_files_from_updates`.
+            let log = unsafe { &mut *manager.log };
+            let package_json: &mut WorkspacePackageJsonCacheEntry =
+                match manager.workspace_package_json_cache.get_with_path(
+                    log,
+                    package_json_path,
+                    GetJsonOptions { guess_indentation: true, ..Default::default() },
+                ) {
+                    GetJsonResult::ParseErr(err) => {
+                        Output::err_generic(
+                            "Failed to parse package.json at {s}: {s}",
+                            (BStr::new(package_json_path), err.name()),
+                        );
+                        continue;
+                    }
+                    GetJsonResult::ReadErr(err) => {
+                        Output::err_generic(
+                            "Failed to read package.json at {s}: {s}",
+                            (BStr::new(package_json_path), err.name()),
+                        );
+                        continue;
+                    }
+                    GetJsonResult::Entry(entry) => entry,
+                };
+
+            // Use the PackageJSONEditor to update catalogs
+            edit_catalog_definitions(
+                manager,
+                &mut updates_for_workspace[..],
+                &mut package_json.root,
+            )?;
+
+            // Save the updated package.json
+            // PORT NOTE: reshaped for borrowck — see same note above.
+            let entry_ptr: *mut WorkspacePackageJsonCacheEntry = package_json;
+            // SAFETY: `entry_ptr` points into the process-lifetime cache map;
+            // `save_package_json` never resizes that map.
+            Self::save_package_json(manager, unsafe { &mut *entry_ptr }, package_json_path)?;
+        }
+        Ok(())
     }
 
     #[allow(dead_code)]

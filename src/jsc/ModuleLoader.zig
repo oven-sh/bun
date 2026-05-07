@@ -1423,11 +1423,11 @@ const string = []const u8;
 
 const Fs = @import("../resolver/fs.zig");
 const Runtime = @import("../js_parser/runtime.zig");
-const CacheEntry = @import("../bundler/cache.zig").Fs.Entry;
 const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.zig");
 const ast = @import("../options_types/import_record.zig");
 const node_module_module = @import("./NodeModuleModule.zig");
 const std = @import("std");
+const CacheEntry = @import("../bundler/cache.zig").Fs.Entry;
 const panic = std.debug.panic;
 
 const options = @import("../bundler/options.zig");

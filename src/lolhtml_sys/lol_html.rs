@@ -291,12 +291,20 @@ impl HTMLRewriterBuilder {
     }
 
     // TODO(port): Zig took comptime Writer/Done fn-values; modeled via OutputSink trait
+    //
+    // PORT NOTE: takes `*mut S` (not `&mut S`) so the userdata pointer stored
+    // in the C rewriter retains the caller's raw-pointer provenance (typically
+    // a `Box::into_raw` root). If we took `&mut S`, the userdata would carry a
+    // tag derived from that short-lived Unique borrow, and any subsequent
+    // access through the caller's original raw pointer would invalidate it
+    // under Stacked Borrows — making the re-entrant `&mut *user_data` deref in
+    // `output_sink_function` UB.
     pub fn build<S: OutputSink>(
         &mut self,
         encoding: Encoding,
         memory_settings: MemorySettings,
         strict: bool,
-        output_sink: &mut S,
+        output_sink: *mut S,
     ) -> Result<*mut HTMLRewriter, Error> {
         auto_disable();
 
@@ -310,7 +318,7 @@ impl HTMLRewriterBuilder {
                 encoding_.len(),
                 memory_settings,
                 Some(output_sink_function::<S>),
-                output_sink as *mut S as *mut c_void,
+                output_sink as *mut c_void,
                 strict,
             )
         };

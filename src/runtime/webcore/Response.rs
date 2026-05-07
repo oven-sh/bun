@@ -142,49 +142,33 @@ pub use js::from_js;
 pub use js::from_js_direct;
 
 // PORT NOTE: hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
-// not yet wired for Response). Mirrors the Blob.rs pattern — bind the
-// generated C++ shims by link-name and wrap.
-const _: () = {
-    // PORT NOTE: extern signatures use opaque `*mut c_void` and cast at the
-    // wrapper boundary — `Response` transitively contains `body::Value` (a
-    // Rust-layout enum), which is correctly flagged as not-FFI-safe when
-    // named directly. The C++ side treats this pointer as opaque (it never
-    // touches the Rust struct layout), so the cast is sound.
-    unsafe extern "C" {
-        #[link_name = "Response__fromJS"]
-        fn __from_js(value: bun_jsc::JSValue) -> *mut core::ffi::c_void;
-        #[link_name = "Response__fromJSDirect"]
-        fn __from_js_direct(value: bun_jsc::JSValue) -> *mut core::ffi::c_void;
-        #[link_name = "Response__create"]
-        fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut core::ffi::c_void) -> bun_jsc::JSValue;
-        #[link_name = "Response__getConstructor"]
-        fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
+// not yet wired for Response). Delegates to `bun_jsc::generated::JSResponse`
+// — the `js_class_module!` expansion already declares the
+// `Response__{fromJS,fromJSDirect,create,getConstructor}` externs with the
+// correct `JSC_CALLCONV` (sysv64 on win-x64, C otherwise). Re-declaring them
+// locally would risk an ABI mismatch on Windows and trips
+// `clashing_extern_declarations`. Payload is type-erased to `*mut ()` at the
+// `bun_jsc` tier (Response lives in a higher crate); cast at the boundary.
+impl bun_jsc::JsClass for Response {
+    #[inline]
+    fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
+        bun_jsc::generated::JSResponse::from_js(value).map(<*mut ()>::cast::<Self>)
     }
-
-    impl bun_jsc::JsClass for Response {
-        fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast; returns null on type mismatch.
-            let p = unsafe { __from_js(value) }.cast::<Response>();
-            if p.is_null() { None } else { Some(p) }
-        }
-        fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
-            let p = unsafe { __from_js_direct(value) }.cast::<Response>();
-            if p.is_null() { None } else { Some(p) }
-        }
-        fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
-            let ptr = Box::into_raw(Box::new(self));
-            // SAFETY: `global` is live; ownership of `ptr` transfers to the
-            // C++ wrapper (freed via `ResponseClass__finalize`).
-            unsafe { __create(global, ptr.cast()) }
-        }
-        fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
-            // SAFETY: `global` is a live JSC global; C++ reads its cached
-            // structure/constructor table.
-            unsafe { __get_constructor(global) }
-        }
+    #[inline]
+    fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
+        bun_jsc::generated::JSResponse::from_js_direct(value).map(<*mut ()>::cast::<Self>)
     }
-};
+    fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+        // Ownership of the boxed payload transfers to the C++ wrapper
+        // (freed via `ResponseClass__finalize`).
+        let ptr = Box::into_raw(Box::new(self));
+        bun_jsc::generated::JSResponse::to_js(ptr.cast::<()>(), global)
+    }
+    #[inline]
+    fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+        bun_jsc::generated::JSResponse::get_constructor(global)
+    }
+}
 
 #[repr(C)]
 pub struct Response {
@@ -1312,14 +1296,13 @@ impl Init {
             return Ok(None);
         }
 
-        // TODO(b2-blocked): bun_jsc::JsClass — Request/Response don't yet impl
-        // `JsClass`, so the DOMWrapper fast-path (`as_direct::<Request>`) is
-        // gated. Slow path below covers correctness; un-gate once codegen lands.
-        
         if js_type == JSType::DOMWrapper {
             // fast path: it's a Request object or a Response object
             // we can skip calling JS getters
             if let Some(req) = response_init.as_direct::<Request>() {
+                // SAFETY: `as_direct` returned a live `*mut Request` owned by the
+                // JS wrapper cell; the wrapper is rooted by `response_init` for
+                // the duration of this call, so no GC can finalize it here.
                 let req = unsafe { &mut *req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
                     result.headers = headers.clone_this(global_this)?;
@@ -1330,6 +1313,8 @@ impl Init {
             }
 
             if let Some(resp) = response_init.as_direct::<Response>() {
+                // SAFETY: `as_direct` returned a live `*mut Response` owned by the
+                // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
                 return Ok(Some(resp.init.clone(global_this)?));
             }

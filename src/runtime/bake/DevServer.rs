@@ -3646,10 +3646,13 @@ pub fn finalize_bundle(
         input_file_sources.len() * 2
     ];
 
-    // TODO(port): ctx fields server_seen_bit_set/gts were `undefined` then assigned later.
-    let mut gts_storage = dev.init_graph_trace_state(
-        if !css_chunks_mut.is_empty() { bv2.graph.input_files.len() } else { 0 },
-    )?;
+    // PORT NOTE: ctx fields `server_seen_bit_set`/`gts` were `undefined` in Zig then
+    // assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
+    // must be sized post-Pass-1). Seed with empty placeholders; real init below.
+    let mut gts_storage = GraphTraceState {
+        server_bits: DynamicBitSet::default(),
+        client_bits: DynamicBitSet::default(),
+    };
     let mut ctx = HotUpdateContext {
         import_records,
         sources: input_file_sources,
@@ -3840,7 +3843,11 @@ pub fn finalize_bundle(
         chunk.entry_point.set_entry_point_id(u32::try_from(route_bundle_index.get()).unwrap());
     }
 
-    // gts already initialized above; PORT NOTE: reshaped — Zig assigned ctx.gts here
+    // Zig: `var gts = try dev.initGraphTraceState(...); ctx.gts = &gts;` — sized AFTER
+    // Pass 1 so server/client bitsets cover files just inserted by `receive_chunk`.
+    *ctx.gts = dev.init_graph_trace_state(
+        if n_css > 0 { input_file_sources.len() } else { 0 },
+    )?;
     ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
 
     dev.incremental_result.had_adjusted_edges = false;

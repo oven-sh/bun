@@ -2111,7 +2111,7 @@ impl AnyServer {
     /// `1024 - typeBaseName-index` assignment (declaration order in
     /// `AnyServer.Ptr = TaggedPointerUnion(.{HTTP, HTTPS, DebugHTTP, DebugHTTPS})`).
     pub fn to_packed(self) -> u64 {
-        let tag: bun_ptr::TagType = match self.tag {
+        let tag: u16 = match self.tag {
             AnyServerTag::HTTPServer => 1024,
             AnyServerTag::HTTPSServer => 1023,
             AnyServerTag::DebugHTTPServer => 1022,

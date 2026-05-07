@@ -1,5 +1,4 @@
 use core::fmt::Write as _;
-use core::ptr::NonNull;
 
 use bun_core::output;
 use bun_http::Method;

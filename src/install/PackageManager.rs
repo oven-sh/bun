@@ -355,7 +355,7 @@ pub struct PackageManager {
     pub cache_directory_: Option<bun_sys::Dir>, // TODO(port): std.fs.Dir → bun_sys::Dir
     pub cache_directory_path: ZBox,             // TODO(port): lifetime — singleton-leaked
     pub root_dir: &'static mut fs::DirEntry,
-    // allocator: dropped per §Allocators (was `bun.default_allocator`). For the
+    // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
     // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
     // iterations — use `ast_arena` instead. The manager is a leaked singleton, so

@@ -242,7 +242,7 @@ impl Transform {
                     let y = NumberOrPercentage::parse(i)?;
                     Ok(Transform::Scale { x, y })
                 } else {
-                    // PORT NOTE: Zig `x.deepClone(allocator)` — `NumberOrPercentage`
+                    // PORT NOTE: Zig `x.deepClone(arena)` — `NumberOrPercentage`
                     // is POD; `clone()` is exact.
                     let y = x.clone();
                     Ok(Transform::Scale { x, y })
@@ -986,7 +986,7 @@ pub struct TransformHandler {
 }
 
 // PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature are
-// real; `context.allocator` was dropped from PropertyHandlerContext, so the
+// real; `context.arena` was dropped from PropertyHandlerContext, so the
 // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
     pub fn handle_property(
@@ -1058,7 +1058,7 @@ impl TransformHandler {
                             prefixes::Feature::Transform,
                         ))
                     } else {
-                        // PORT NOTE: Zig pushed `property.deepClone(allocator)`; the
+                        // PORT NOTE: Zig pushed `property.deepClone(arena)`; the
                         // matched payload is `Unparsed`, so reconstruct directly.
                         Property::Unparsed(unparsed.deep_clone(bump))
                     };

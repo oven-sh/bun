@@ -72,7 +72,7 @@ fn resolve_barrel_export(
 ///
 /// Export * records are never deferred (always resolved) to avoid circular races.
 pub fn apply_barrel_optimization(this: &mut BundleV2, parse_result: &mut parse_task::Result) {
-    // bun.handleOom: Rust aborts on OOM via the global allocator; unwrap is for
+    // bun.handleOom: Rust aborts on OOM via the global arena; unwrap is for
     // bun_collections ops that still surface AllocError.
     apply_barrel_optimization_impl(this, parse_result).expect("OOM");
 }

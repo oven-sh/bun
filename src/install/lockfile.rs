@@ -192,7 +192,7 @@ pub struct Lockfile {
     /// Not for iterating.
     pub package_index: PackageIndexMap,
     pub string_pool: StringPool,
-    // allocator: Allocator — dropped per PORTING.md (global mimalloc)
+    // std.mem.Allocator param — dropped per PORTING.md (global mimalloc)
     pub scratch: Scratch,
 
     pub scripts: Scripts,

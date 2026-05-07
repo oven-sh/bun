@@ -138,7 +138,7 @@ pub struct HeapRequestBodyBuffer {
     pub buffer: [u8; 512 * 1024],
     // TODO(port): was `std.heap.FixedBufferAllocator` borrowing `buffer` —
     // self-referential. Phase B: bun_alloc::FixedBufferAllocator or just a cursor.
-    pub fixed_buffer_allocator: usize,
+    pub cursor: usize,
 }
 
 impl HeapRequestBodyBuffer {
@@ -146,7 +146,7 @@ impl HeapRequestBodyBuffer {
         // TODO(port): self-referential init; FixedBufferAllocator borrows this.buffer.
         Box::new(HeapRequestBodyBuffer {
             buffer: [0u8; 512 * 1024],
-            fixed_buffer_allocator: 0,
+            cursor: 0,
         })
     }
 
@@ -154,7 +154,7 @@ impl HeapRequestBodyBuffer {
         // SAFETY: HTTP-thread-only access to the global.
         let thread = crate::http_thread_mut();
         if thread.lazy_request_body_buffer.is_none() {
-            self.fixed_buffer_allocator = 0; // .reset()
+            self.cursor = 0; // .reset()
             thread.lazy_request_body_buffer = Some(self);
         } else {
             // This case hypothetically should never happen
@@ -190,7 +190,7 @@ impl RequestBodyBuffer {
     }
 
     pub fn to_array_list(&mut self) -> Vec<u8> {
-        // TODO(port): Zig built an ArrayList over self.allocator()/self.allocated_slice() with len=0.
+        // TODO(port): Zig built an ArrayList over self.arena()/self.allocated_slice() with len=0.
         // Rust Vec cannot adopt a foreign allocator+buffer; Phase B should expose a cursor type instead.
         // PERF(port): was FixedBufferAllocator/StackFallback — redesign in Phase B (allocator() accessor
         // dropped per PORTING.md non-AST rule; callers should write into allocated_slice() directly).

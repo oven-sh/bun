@@ -20,7 +20,7 @@ use crate::flags;
 use bun_string::strings;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
-// `ListManaged(Stmt)` in the parser is arena-backed (`p.allocator`).
+// `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
 
 // ─── file-local arena helpers ────────────────────────────────────────────────
@@ -50,7 +50,7 @@ fn visit_stmt_slice<'a, const TS: bool, J: JsxT, const SO: bool>(
 ) -> *mut [Stmt] {
     // SAFETY: arena-owned slice valid for 'a.
     let src: &[Stmt] = unsafe { &*slice };
-    let mut list: StmtList<'a> = BumpVec::with_capacity_in(src.len(), p.allocator);
+    let mut list: StmtList<'a> = BumpVec::with_capacity_in(src.len(), p.arena);
     list.extend_from_slice(src);
     p.visit_stmts(&mut list, kind).expect("unreachable");
     std::ptr::from_mut::<[Stmt]>(list.into_bump_slice_mut())
@@ -62,10 +62,10 @@ fn visit_stmt_slice<'a, const TS: bool, J: JsxT, const SO: bool>(
 // reclaims both at end-of-parse.
 // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B.
 #[inline]
-fn stmts_to_list<'a>(allocator: &'a bun_alloc::Arena, ptr: *mut [Stmt]) -> StmtList<'a> {
+fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: *mut [Stmt]) -> StmtList<'a> {
     // SAFETY: arena-owned slice valid for 'a; Stmt is Copy.
     let slice: &[Stmt] = unsafe { &*ptr };
-    bun_alloc::vec_from_iter_in(slice.iter().copied(), allocator)
+    bun_alloc::vec_from_iter_in(slice.iter().copied(), arena)
 }
 #[inline]
 fn list_to_stmts<'a>(list: StmtList<'a>) -> *mut [Stmt] {
@@ -506,7 +506,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         S::Local {
                             kind: S::Kind::KConst,
                             decls: G::DeclList::from_slice(&[G::Decl {
-                                binding: Binding::alloc(p.allocator, B::Identifier { r#ref: temp_id }, stmt.loc),
+                                binding: Binding::alloc(p.arena, B::Identifier { r#ref: temp_id }, stmt.loc),
                                 value: Some(value_expr),
                             }])
                             .expect("oom"),
@@ -544,7 +544,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         S::Local { decls, ..Default::default() },
                         stmt.loc,
                     ));
-                    let items = core::slice::from_mut(p.allocator.alloc(js_ast::ClauseItem {
+                    let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
                         alias: std::ptr::from_ref::<[u8]>(b"default"),
                         alias_loc: data.default_name.loc,
                         name: data.default_name,
@@ -687,7 +687,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                             kind: S::Kind::KConst,
                                             decls: G::DeclList::from_slice(&[G::Decl {
                                                 binding: Binding::alloc(
-                                                    p.allocator,
+                                                    p.arena,
                                                     B::Identifier { r#ref: ref_to_use },
                                                     stmt.loc,
                                                 ),
@@ -1342,7 +1342,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.esm_export_keyword.loc = stmt.loc;
                                 p.esm_export_keyword.len = 5;
                                 p.had_commonjs_named_exports_this_visit = true;
-                                let clause_items = core::slice::from_mut(p.allocator.alloc(js_ast::ClauseItem {
+                                let clause_items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
                                     // We want the generated name to not conflict
                                     alias: std::ptr::from_ref::<[u8]>(key),
                                     alias_loc: bin.left.loc,
@@ -1378,7 +1378,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // SAFETY: arena-owned slice valid for 'a.
                         let repl: &[Stmt] = unsafe { &*p.commonjs_replacement_stmts };
                         if stmts.is_empty() {
-                            *stmts = bun_alloc::vec_from_iter_in(repl.iter().copied(), p.allocator);
+                            *stmts = bun_alloc::vec_from_iter_in(repl.iter().copied(), p.arena);
                         } else {
                             stmts.extend_from_slice(repl);
                         }
@@ -1457,7 +1457,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else {
                 StmtsKind::None
             };
-            let mut _stmts = stmts_to_list(p.allocator, data.stmts);
+            let mut _stmts = stmts_to_list(p.arena, data.stmts);
             p.visit_stmts(&mut _stmts, kind).expect("unreachable");
             data.stmts = list_to_stmts(_stmts);
             p.pop_scope();
@@ -1569,7 +1569,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if effects.ok {
                 if effects.value {
                     if data.no.is_none()
-                        || !SideEffects::should_keep_stmt_in_dead_control_flow(data.no.unwrap(), p.allocator)
+                        || !SideEffects::should_keep_stmt_in_dead_control_flow(data.no.unwrap(), p.arena)
                     {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
@@ -1584,7 +1584,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 } else {
                     // The test is falsy
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.allocator) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.arena) {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
@@ -1771,7 +1771,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     } else {
                         1
                     };
-                    let mut statements: BumpVec<'a, Stmt> = BumpVec::with_capacity_in(1 + length, p.allocator);
+                    let mut statements: BumpVec<'a, Stmt> = BumpVec::with_capacity_in(1 + length, p.arena);
                     statements.push(first);
                     if let StmtData::SBlock(b) = data.body.data {
                         statements.extend_from_slice(unsafe { &*b.stmts });
@@ -1810,7 +1810,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn s_try(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Try) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
         {
-            let mut _stmts = stmts_to_list(p.allocator, data.body);
+            let mut _stmts = stmts_to_list(p.arena, data.body);
             p.fn_or_arrow_data_visit.try_body_count += 1;
             p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
             p.fn_or_arrow_data_visit.try_body_count -= 1;
@@ -1825,7 +1825,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let Some(catch_binding) = catch_.binding {
                     p.visit_binding(catch_binding, None);
                 }
-                let mut _stmts = stmts_to_list(p.allocator, catch_.body);
+                let mut _stmts = stmts_to_list(p.arena, catch_.body);
                 p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, catch_.body_loc)
                     .expect("unreachable");
                 p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
@@ -1838,7 +1838,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(finally) = &mut data.finally {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, finally.loc).expect("unreachable");
             {
-                let mut _stmts = stmts_to_list(p.allocator, finally.stmts);
+                let mut _stmts = stmts_to_list(p.arena, finally.stmts);
                 p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
                 finally.stmts = list_to_stmts(_stmts);
             }
@@ -1864,7 +1864,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // Check("case", *c.Value, c.Value.Loc)
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
-                let mut _stmts = stmts_to_list(p.allocator, cases[i].body);
+                let mut _stmts = stmts_to_list(p.arena, cases[i].body);
                 p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }
@@ -1921,7 +1921,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // without initializers are initialized to undefined.
         let mut next_numeric_value: Option<f64> = Some(0.0);
 
-        let mut value_exprs: BumpVec<'a, Expr> = BumpVec::with_capacity_in(values.len(), p.allocator);
+        let mut value_exprs: BumpVec<'a, Expr> = BumpVec::with_capacity_in(values.len(), p.arena);
 
         let mut all_values_are_pure = true;
 
@@ -2010,7 +2010,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.options.features.minify_syntax && js_lexer::is_identifier(name);
 
             let name_as_e_string = if !is_assign_target || !has_string_value {
-                Some(p.new_expr(value.name_as_e_string(p.allocator), value.loc))
+                Some(p.new_expr(value.name_as_e_string(p.arena), value.loc))
             } else {
                 None
             };
@@ -2068,7 +2068,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
 
-        let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.allocator);
+        let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.arena);
         // Generate statements from expressions
         for expr in value_exprs.iter() {
             // PERF(port): was assume_capacity
@@ -2108,7 +2108,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let mut prepend_temp_refs =
             PrependTempRefsOpts { kind: StmtsKind::FnBody, ..Default::default() };
-        let mut prepend_list = stmts_to_list(p.allocator, data.stmts);
+        let mut prepend_list = stmts_to_list(p.arena, data.stmts);
 
         let old_enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref;
         p.enclosing_namespace_arg_ref = Some(data.arg);

@@ -126,7 +126,7 @@ impl Binding {
 
 // ──────────────────────────────────────────────────────────────────────────
 // ToExpr — Zig: `fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type`
-// returns a struct holding `context: *ExprType` + `allocator` whose
+// returns a struct holding `context: *ExprType` + `arena` whose
 // `wrapIdentifier` calls the comptime `func_type`.
 //
 // Rust cannot store `*mut P<'a, const ..>` in a non-generic field nor take a
@@ -142,21 +142,21 @@ impl Binding {
 
 #[derive(Copy, Clone)]
 pub struct ToExprWrapper {
-    allocator: *const Arena,
+    arena: *const Arena,
     wrap: fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr,
 }
 
 impl ToExprWrapper {
     /// Placeholder used in `P::init` before `prepare_for_visit_pass` wires the
-    /// allocator + trampoline.
+    /// arena + trampoline.
     pub const fn dangling() -> Self {
         Self {
-            allocator: core::ptr::null(),
+            arena: core::ptr::null(),
             wrap: |_, _, _| unreachable!("ToExprWrapper used before prepare_for_visit_pass"),
         }
     }
 
-    /// Zig: `Context.init(context)` — captures `*ExprType` and its allocator.
+    /// Zig: `Context.init(context)` — captures `*ExprType` and its arena.
     /// `ExprType` is erased to `c_void`; callers (P.rs) supply a trampoline
     /// closure that casts back to `*mut P<..>` and dispatches to
     /// `P::wrap_identifier_{namespace,hoisting}`. Non-capturing closures
@@ -164,10 +164,10 @@ impl ToExprWrapper {
     /// The `*mut P` itself is passed per-call via `Binding::to_expr`.
     #[inline]
     pub fn new(
-        allocator: &Arena,
+        arena: &Arena,
         wrap: fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr,
     ) -> Self {
-        Self { allocator: std::ptr::from_ref::<Arena>(allocator), wrap }
+        Self { arena: std::ptr::from_ref::<Arena>(arena), wrap }
     }
 
     #[inline]
@@ -176,11 +176,11 @@ impl ToExprWrapper {
     }
 
     #[inline]
-    pub fn allocator(&self) -> &Arena {
-        debug_assert!(!self.allocator.is_null(), "ToExprWrapper not wired (prepare_for_visit_pass)");
-        // SAFETY: `allocator` was `&'a Arena` (P.allocator) at `new()` time and
+    pub fn arena(&self) -> &Arena {
+        debug_assert!(!self.arena.is_null(), "ToExprWrapper not wired (prepare_for_visit_pass)");
+        // SAFETY: `arena` was `&'a Arena` (P.arena) at `new()` time and
         // outlives every Binding produced during the visit pass.
-        unsafe { &*self.allocator }
+        unsafe { &*self.arena }
     }
 }
 
@@ -221,7 +221,7 @@ impl Binding {
             B::BArray(b) => {
                 // SAFETY: arena-owned `b::Array` valid for `'a`; single-threaded parser.
                 let b = unsafe { &*b };
-                let bump = wrapper.allocator();
+                let bump = wrapper.arena();
                 let items = b.items();
                 let len = items.len();
                 let mut exprs = bun_alloc::ArenaVec::with_capacity_in(len, bump);
@@ -253,7 +253,7 @@ impl Binding {
             B::BObject(b) => {
                 // SAFETY: arena-owned `b::Object` valid for `'a`; single-threaded parser.
                 let b = unsafe { &*b };
-                let bump = wrapper.allocator();
+                let bump = wrapper.arena();
                 let props_in = b.properties();
                 let mut properties =
                     bun_alloc::ArenaVec::with_capacity_in(props_in.len(), bump);

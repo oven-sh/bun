@@ -159,8 +159,8 @@ pub struct Printer<'a> {
     pub public_path: &'a [u8],
     pub symbols: &'a SymbolMap,
     pub local_names: Option<&'a css::LocalsResultsMap>,
-    /// NOTE This should be the same mimalloc heap arena allocator
-    pub allocator: &'a Bump,
+    /// NOTE This should be the same mimalloc heap arena arena
+    pub arena: &'a Bump,
     // TODO: finish the fields
 }
 
@@ -271,11 +271,11 @@ impl<'a> Printer<'a> {
     }
 
     // PORT NOTE: deinit() dropped — scratchbuf/indentation_buf/dependencies are arena-backed
-    // BumpVec<'a, _>; freed in bulk by `allocator.reset()`. No explicit Drop impl needed.
+    // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
     pub fn new(
-        allocator: &'a Bump,
+        arena: &'a Bump,
         scratchbuf: BumpVec<'a, u8>,
         dest: &'a mut dyn Write,
         options: PrinterOptions<'a>,
@@ -288,17 +288,17 @@ impl<'a> Printer<'a> {
             dest,
             minify: options.minify,
             targets: options.targets,
-            dependencies: if options.analyze_dependencies.is_some() { Some(BumpVec::new_in(allocator)) } else { None },
+            dependencies: if options.analyze_dependencies.is_some() { Some(BumpVec::new_in(arena)) } else { None },
             remove_imports: options
                 .analyze_dependencies
                 .as_ref()
                 .map(|d| d.remove_imports)
                 .unwrap_or(false),
             pseudo_classes: options.pseudo_classes,
-            indentation_buf: BumpVec::new_in(allocator),
+            indentation_buf: BumpVec::new_in(arena),
             import_info,
             scratchbuf,
-            allocator,
+            arena,
             public_path: options.public_path,
             local_names,
             loc: Location {
@@ -324,15 +324,15 @@ impl<'a> Printer<'a> {
     /// `std.Io.Writer.Allocating` with `Printer.new(..., PrinterOptions.default(), ...)`
     /// for sub-serialization (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
     pub fn new_buffered(
-        allocator: &'a Bump,
+        arena: &'a Bump,
         dest: &'a mut Vec<u8>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a css::LocalsResultsMap>,
         symbols: &'a SymbolMap,
     ) -> Self {
         Printer::new(
-            allocator,
-            BumpVec::new_in(allocator),
+            arena,
+            BumpVec::new_in(arena),
             dest,
             PrinterOptions::default(),
             import_info,
@@ -485,8 +485,8 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
-    fn replace_dots<'b>(allocator: &'b Bump, s: &[u8]) -> &'b mut [u8] {
-        let str_ = allocator.alloc_slice_copy(s);
+    fn replace_dots<'b>(arena: &'b Bump, s: &[u8]) -> &'b mut [u8] {
+        let str_ = arena.alloc_slice_copy(s);
         for b in str_.iter_mut() {
             if *b == b'.' {
                 *b = b'-';
@@ -534,7 +534,7 @@ impl<'a> Printer<'a> {
                 // copy the `'a`-lifetime references out of `css_module` up front so the
                 // closure can hold the sole `&mut self`.
                 let source_index = self.loc.source_index as usize;
-                let allocator = self.allocator;
+                let arena = self.arena;
                 let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
                     let m = self.css_module.as_ref().unwrap();
                     let sources: &'a Vec<Box<[u8]>> = m.sources;
@@ -551,7 +551,7 @@ impl<'a> Printer<'a> {
                     let s: &[u8] = if !replace_dots {
                         s1
                     } else {
-                        Printer::replace_dots(allocator, s1)
+                        Printer::replace_dots(arena, s1)
                     };
                     self.col += u32::try_from(s.len()).expect("int cast");
                     let r = if first {
@@ -572,7 +572,7 @@ impl<'a> Printer<'a> {
                 self.css_module
                     .as_mut()
                     .unwrap()
-                    .add_local(allocator, ident, ident, src_idx);
+                    .add_local(arena, ident, ident, src_idx);
                 return Ok(());
             }
         }
@@ -599,7 +599,7 @@ impl<'a> Printer<'a> {
         if dashed_idents {
             // PORT NOTE: same borrowck reshape as `write_ident`.
             let source_index = self.loc.source_index as usize;
-            let allocator = self.allocator;
+            let arena = self.arena;
             let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
                 let m = self.css_module.as_ref().unwrap();
                 let sources: &'a Vec<Box<[u8]>> = m.sources;
@@ -614,7 +614,7 @@ impl<'a> Printer<'a> {
                 let s: &[u8] = if !replace_dots {
                     s1
                 } else {
-                    Printer::replace_dots(allocator, s1)
+                    Printer::replace_dots(arena, s1)
                 };
                 self.col += u32::try_from(s.len()).expect("int cast");
                 if let Err(e) = css::serializer::serialize_name(s, self) {
@@ -630,7 +630,7 @@ impl<'a> Printer<'a> {
                 self.css_module
                     .as_mut()
                     .unwrap()
-                    .add_dashed(allocator, ident_v, src_idx);
+                    .add_dashed(arena, ident_v, src_idx);
             }
         }
 

@@ -379,7 +379,7 @@ impl HmrSocket {
         let removed = dev.active_websocket_connections.remove(&s);
         debug_assert!(removed.is_some());
         // SAFETY: `s` was Box::into_raw'd in `new()`'s caller; this is the sole
-        // owner reclaiming it. Matches `s.dev.allocator().destroy(s)`.
+        // owner reclaiming it. Matches `s.dev.arena().destroy(s)`.
         drop(unsafe { Box::from_raw(s) });
     }
 

@@ -196,7 +196,7 @@ where
             if let Calc::Value(v) = calc_value {
                 return Ok(*v);
             }
-            // PERF(port): was arena alloc (bun.create with input.allocator()) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create with input.arena()) — profile in Phase B.
             return Ok(Self::Calc(Box::new(calc_value)));
         }
 

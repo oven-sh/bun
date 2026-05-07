@@ -174,30 +174,30 @@ impl BorderImage {
         Ok(())
     }
 
-    pub fn get_fallbacks(&mut self, allocator: &Arena, targets: css::targets::Targets) -> SmallList<BorderImage, 6> {
-        let fallbacks = self.source.get_fallbacks(allocator, targets);
-        // PORT NOTE: `defer fallbacks.deinit(allocator)` dropped — SmallList drops at scope exit.
+    pub fn get_fallbacks(&mut self, arena: &Arena, targets: css::targets::Targets) -> SmallList<BorderImage, 6> {
+        let fallbacks = self.source.get_fallbacks(arena, targets);
+        // PORT NOTE: `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
         for fallback in fallbacks.slice() {
             // TODO(port): Zig moved `fallback` by value; SmallList lacks
             // by-value drain in Rust port — deep_clone the source image
             // until SmallList grows IntoIterator.
-            let mut clone = self.deep_clone(allocator);
-            clone.source = fallback.deep_clone(allocator);
+            let mut clone = self.deep_clone(arena);
+            clone.source = fallback.deep_clone(arena);
             res.append(clone);
         }
         res
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
         // PORT NOTE: Zig css.implementDeepClone iterated @typeInfo fields. Expanded
         // explicitly here — keep in sync with the BorderImage field list.
         BorderImage {
-            source: self.source.deep_clone(allocator),
-            slice: self.slice.deep_clone(allocator),
-            width: self.width.deep_clone(allocator),
-            outset: self.outset.deep_clone(allocator),
-            repeat: self.repeat.deep_clone(allocator),
+            source: self.source.deep_clone(arena),
+            slice: self.slice.deep_clone(arena),
+            width: self.width.deep_clone(arena),
+            outset: self.outset.deep_clone(arena),
+            repeat: self.repeat.deep_clone(arena),
         }
     }
 
@@ -265,7 +265,7 @@ impl BorderImageRepeat {
         self.horizontal == other.horizontal && self.vertical == other.vertical
     }
 
-    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         BorderImageRepeat { horizontal: self.horizontal, vertical: self.vertical }
     }
 }
@@ -308,7 +308,7 @@ impl BorderImageSideWidth {
         BorderImageSideWidth::Number(1.0)
     }
 
-    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         self.clone()
     }
 
@@ -405,9 +405,9 @@ impl BorderImageSlice {
         }
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
         BorderImageSlice {
-            offsets: self.offsets.deep_clone(allocator),
+            offsets: self.offsets.deep_clone(arena),
             fill: self.fill,
         }
     }
@@ -469,7 +469,7 @@ impl BorderImageHandler {
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        let allocator = dest.bump();
+        let arena = dest.bump();
 
         // PORT NOTE: Zig defined `flushHelper`/`propertyHelper` as local struct fns
         // using @field for comptime field access. Ported as macro_rules! to keep the
@@ -495,7 +495,7 @@ impl BorderImageHandler {
                 flush_helper!($self, $d, $ctx, $field, $val);
 
                 $self.vendor_prefix = VendorPrefix::NONE;
-                $self.$field = Some($val.deep_clone(allocator));
+                $self.$field = Some($val.deep_clone(arena));
                 $self.has_any = true;
             }};
         }
@@ -516,11 +516,11 @@ impl BorderImageHandler {
                 flush_helper!(self, dest, context, outset, &val.outset);
                 flush_helper!(self, dest, context, repeat, &val.repeat);
 
-                self.source = Some(val.source.deep_clone(allocator));
-                self.slice = Some(val.slice.deep_clone(allocator));
-                self.width = Some(val.width.deep_clone(allocator));
-                self.outset = Some(val.outset.deep_clone(allocator));
-                self.repeat = Some(val.repeat.deep_clone(allocator));
+                self.source = Some(val.source.deep_clone(arena));
+                self.slice = Some(val.slice.deep_clone(arena));
+                self.width = Some(val.width.deep_clone(arena));
+                self.outset = Some(val.outset.deep_clone(arena));
+                self.repeat = Some(val.repeat.deep_clone(arena));
                 self.vendor_prefix = self.vendor_prefix | vp;
                 self.has_any = true;
             }
@@ -531,22 +531,22 @@ impl BorderImageHandler {
                     // Even if we weren't able to parse the value (e.g. due to var() references),
                     // we can still add vendor prefixes to the property itself.
                     let mut unparsed_clone = if unparsed.property_id.tag() == PropertyIdTag::BorderImage {
-                        unparsed.get_prefixed(allocator, context.targets, css::prefixes::Feature::BorderImage)
+                        unparsed.get_prefixed(arena, context.targets, css::prefixes::Feature::BorderImage)
                     } else {
-                        unparsed.deep_clone(allocator)
+                        unparsed.deep_clone(arena)
                     };
 
                     // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
                     // un-gates (blocked on `SupportsCondition::eql` in context.rs).
                     
                      // blocked_on: PropertyHandlerContext::add_unparsed_fallbacks (gated in context.rs)
-                    context.add_unparsed_fallbacks(allocator, &mut unparsed_clone);
+                    context.add_unparsed_fallbacks(arena, &mut unparsed_clone);
                     let _ = &mut unparsed_clone;
                     self.flushed_properties.insert(
                         BorderImageProperty::try_from_property_id(unparsed_clone.property_id.tag()).unwrap(),
                     );
                     dest.push(Property::Unparsed(unparsed_clone));
-                    // PERF(port): was bun.handleOom(dest.append(allocator, ...))
+                    // PERF(port): was bun.handleOom(dest.append(arena, ...))
                 } else {
                     return false;
                 }
@@ -586,7 +586,7 @@ impl BorderImageHandler {
         if !self.has_any {
             return;
         }
-        let allocator = dest.bump();
+        let arena = dest.bump();
 
         self.has_any = false;
 
@@ -609,7 +609,7 @@ impl BorderImageHandler {
             if prefix.contains(VendorPrefix::NONE) && !border_image.slice.fill {
                 prefix = context.targets.prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
                 if self.flushed_properties.is_empty() {
-                    let fallbacks = border_image.get_fallbacks(allocator, context.targets);
+                    let fallbacks = border_image.get_fallbacks(arena, context.targets);
                     for fallback in fallbacks.slice() {
                         // Match prefix of fallback. e.g. -webkit-linear-gradient
                         // can only be used in -webkit-border-image, not -moz-border-image.
@@ -620,7 +620,7 @@ impl BorderImageHandler {
                         }
                         // TODO(port): Zig moved `fallback` by value; SmallList has no
                         // by-value drain yet — deep_clone until IntoIterator lands.
-                        dest.push(Property::BorderImage((fallback.deep_clone(allocator), p)));
+                        dest.push(Property::BorderImage((fallback.deep_clone(arena), p)));
                     }
                 }
             }
@@ -635,14 +635,14 @@ impl BorderImageHandler {
         } else {
             if let Some(mut_source) = &mut source {
                 if !self.flushed_properties.contains(BorderImageProperty::BORDER_IMAGE_SOURCE) {
-                    let img_fallbacks = mut_source.get_fallbacks(allocator, context.targets);
+                    let img_fallbacks = mut_source.get_fallbacks(arena, context.targets);
                     for fallback in img_fallbacks.slice() {
                         // TODO(port): same by-value move note as above.
-                        dest.push(Property::BorderImageSource(fallback.deep_clone(allocator)));
+                        dest.push(Property::BorderImageSource(fallback.deep_clone(arena)));
                     }
                 }
 
-                dest.push(Property::BorderImageSource(mut_source.deep_clone(allocator)));
+                dest.push(Property::BorderImageSource(mut_source.deep_clone(arena)));
                 // TODO(port): Zig pushed `mut_source.*` by value (move). Cloning here to
                 // avoid partial-move out of `source: Option<Image>`. Revisit in Phase B.
                 self.flushed_properties.insert(BorderImageProperty::BORDER_IMAGE_SOURCE);

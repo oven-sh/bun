@@ -52,7 +52,7 @@ impl FallbackEntryPoint {
     ) -> Result<(), bun_core::Error>
     // TODO(port): narrow error set
     where
-        // TODO(port): TranspilerType trait bound — body reads `.options.framework` and `.allocator`.
+        // TODO(port): TranspilerType trait bound — body reads `.options.framework` and `.arena`.
         TranspilerType: TranspilerLike,
     {
         // This is *extremely* naive.
@@ -100,7 +100,7 @@ impl FallbackEntryPoint {
             } else {
                 let mut v: Vec<u8> = Vec::new();
                 write_fmt!(&mut v).map_err(|_| bun_core::err!("FormatError"))?;
-                // TODO(port): heap-allocated branch leaks (matches Zig: transpiler.allocator owns it).
+                // TODO(port): heap-allocated branch leaks (matches Zig: transpiler.arena owns it).
                 code = Box::leak(v.into_boxed_slice());
             }
         } else {
@@ -301,7 +301,7 @@ impl ServerEntryPoint {
         path_to_use: &[u8],
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        // Use the global allocator so this buffer's lifetime is decoupled
+        // Use the global arena so this buffer's lifetime is decoupled
         // from whichever arena the caller's VM happens to be using; the
         // slice is read later from `getHardcodedModule` which outlives any
         // per-transpile arena.

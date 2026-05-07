@@ -61,7 +61,7 @@ impl<R> StyleRule<R> {
             && context.targets.should_compile_selectors()
         {
             self.vendor_prefix = selector::downlevel_selectors(
-                context.allocator,
+                context.arena,
                 self.selectors.v.slice_mut(),
                 *context.targets,
             );

@@ -188,7 +188,7 @@ impl<V> Calc<V> {
     {
         match self {
             Calc::Value(v) => {
-                // Zig: if (needs_deepclone) v.deepClone(allocator) else v.*
+                // Zig: if (needs_deepclone) v.deepClone(arena) else v.*
                 // Rust: V: Clone covers both — V's Clone impl is the deep clone.
                 Calc::Value(Box::new((**v).clone()))
             }
@@ -311,7 +311,7 @@ impl<V: CalcValue> Calc<V> {
     }
 
     // TODO: users of this and `parseWith` don't need the pointer and often throwaway heap allocated values immediately
-    // use temp allocator or something?
+    // use temp arena or something?
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
         fn parse_with_fn<V>(_: (), _: &[u8]) -> Option<Calc<V>> {
             None
@@ -865,7 +865,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    // PERF(port): `args` was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
+    // PERF(port): `args` was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     pub fn parse_hypot(args: &mut Vec<Self>) -> CssResult<Option<Self>> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
@@ -1036,7 +1036,7 @@ impl<V: CalcValue> Calc<V> {
     /// I don't like how this function requires allocating a second ArrayList
     /// I am pretty sure we could do this reduction in place, or do it as the
     /// arguments are being parsed.
-    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
+    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     fn reduce_args(args: &mut Vec<Self>, order: Ordering) {
         // Reduces the arguments of a min() or max() expression, combining compatible values.
         // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
@@ -1076,7 +1076,7 @@ impl<V: CalcValue> Calc<V> {
             *arg = Calc::Number(420.0);
         }
 
-        // Zig: css.deepDeinit(This, allocator, args) — Rust: Drop on replace handles it.
+        // Zig: css.deepDeinit(This, arena, args) — Rust: Drop on replace handles it.
         *args = reduced;
     }
 
@@ -1126,10 +1126,10 @@ pub enum MathFunction<V> {
     /// The `calc()` function.
     Calc(Calc<V>),
     /// The `min()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     Min(Vec<Calc<V>>),
     /// The `max()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     Max(Vec<Calc<V>>),
     /// The `clamp()` function.
     Clamp {
@@ -1152,7 +1152,7 @@ pub enum MathFunction<V> {
     /// The `sign()` function.
     Sign(Calc<V>),
     /// The `hypot()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     Hypot(Vec<Calc<V>>),
 }
 
@@ -1470,7 +1470,7 @@ impl Default for RoundingStrategy {
 }
 
 fn arr2<T>(a: T, b: T) -> Vec<T> {
-    // PERF(port): was arena bulk-free (ArrayList fed input.allocator()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     vec![a, b]
 }
 
@@ -1780,5 +1780,5 @@ impl CalcValue for DimensionPercentage<Angle> {
 //   source:     src/css/values/calc.zig (1892 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      `CssResult<T>` is now `core::result::Result` — `.as_value()`/`.result()` callsites rewritten to `.ok()`/`?`. `switch (V)` comptime dispatch reified as `CalcValue` trait with per-type impls (CSSNumber/Angle/Percentage/Time/Length/DimensionPercentage<LengthValue|Angle>). closure-struct → Rust-closure reshape changes parse_ident plumbing. LIFETIMES.tsv chose Box over arena so allocator params dropped — Vec sites that were arena-fed now carry PERF(port) markers. Preserved likely Zig bug at clamp switch_val packing.
+//   notes:      `CssResult<T>` is now `core::result::Result` — `.as_value()`/`.result()` callsites rewritten to `.ok()`/`?`. `switch (V)` comptime dispatch reified as `CalcValue` trait with per-type impls (CSSNumber/Angle/Percentage/Time/Length/DimensionPercentage<LengthValue|Angle>). closure-struct → Rust-closure reshape changes parse_ident plumbing. LIFETIMES.tsv chose Box over arena so arena params dropped — Vec sites that were arena-fed now carry PERF(port) markers. Preserved likely Zig bug at clamp switch_val packing.
 // ──────────────────────────────────────────────────────────────────────────

@@ -93,7 +93,7 @@ impl ColorScheme {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         // PORT NOTE: bitflags is Copy.
         *self
     }
@@ -195,7 +195,7 @@ pub struct ColorSchemeHandler;
 
 // PORT NOTE: un-gated B-2 round 15 — Property::ColorScheme variant +
 // PropertyHandlerContext::{add_dark_rule,targets} + TokenList/DashedIdent/
-// CustomProperty shapes are all real now. `context.allocator` was dropped from
+// CustomProperty shapes are all real now. `context.arena` was dropped from
 // PropertyHandlerContext; `define_var` no longer needs an arena because
 // `TokenList.v` is a std `Vec<TokenOrValue>` (LIFETIMES.tsv classification).
 impl ColorSchemeHandler {
@@ -228,7 +228,7 @@ impl ColorSchemeHandler {
                         dest.push(define_var(b"--buncss-dark", css::Token::Ident(b"initial")));
                     }
                 }
-                // PORT NOTE: Zig pushed `property.deepClone(allocator)`; ColorScheme is
+                // PORT NOTE: Zig pushed `property.deepClone(arena)`; ColorScheme is
                 // `Copy` (bitflags u8), so reconstruct the variant directly.
                 dest.push(Property::ColorScheme(color_scheme));
                 true
@@ -257,5 +257,5 @@ fn define_var(name: &'static [u8], value: css::Token) -> Property {
 //   source:     src/css/properties/ui.zig (212 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      Several Zig decls are `@compileError(todo_stuff.depth)` stubs — ported as unit structs with TODO; ColorScheme packed-struct → bitflags; arena allocator threaded as &Arena.
+//   notes:      Several Zig decls are `@compileError(todo_stuff.depth)` stubs — ported as unit structs with TODO; ColorScheme packed-struct → bitflags; arena arena threaded as &Arena.
 // ──────────────────────────────────────────────────────────────────────────

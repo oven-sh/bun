@@ -257,9 +257,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub base_url_string_for_joining: Box<[u8]>,
     pub config: ServerConfig,
     pub pending_requests: usize,
-    pub request_pool_allocator: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
+    pub request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     // TODO(port): conditional field
-    pub h3_request_pool_allocator: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
+    pub h3_request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
     pub all_closed_promise: jsc::JSPromiseStrong,
 
     pub listen_callback: jsc::AnyTask::AnyTask,
@@ -449,19 +449,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// (`release_request_context`) and request-dispatch paths; a `&mut`
     /// accessor would alias across re-entrant request handling.
     #[inline]
-    pub fn request_pool_allocator_ptr(
+    pub fn request_pool_ptr(
         &self,
     ) -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false> {
-        self.request_pool_allocator
+        self.request_pool
     }
 
     /// Raw pointer to the process-static H3 request pool. See
-    /// `request_pool_allocator_ptr` for why this is `*mut`, not `&mut`.
+    /// `request_pool_ptr` for why this is `*mut`, not `&mut`.
     #[inline]
-    pub fn h3_request_pool_allocator_ptr(
+    pub fn h3_request_pool_ptr(
         &self,
     ) -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true> {
-        self.h3_request_pool_allocator
+        self.h3_request_pool
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -642,9 +642,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // SAFETY: `request_pool_allocator` points at a process-static (or
+        // SAFETY: `request_pool` points at a process-static (or
         // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
-        let ctx_slot = bun_core::handle_oom(unsafe { (*server.request_pool_allocator).try_get() });
+        let ctx_slot = bun_core::handle_oom(unsafe { (*server.request_pool).try_get() });
         // SAFETY: `try_get` hands out an uninitialized slot; `create()` fully
         // initializes it via `MaybeUninit::write`.
         let ctx_uninit = unsafe {
@@ -1696,8 +1696,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_alt_svc: Box::<[u8]>::default(),
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
-            request_pool_allocator: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
-            h3_request_pool_allocator: <Self as ServerPools<SSL, DEBUG>>::h3_request_pool(),
+            request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
+            h3_request_pool: <Self as ServerPools<SSL, DEBUG>>::h3_request_pool(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::AnyTask {
                 ctx: None,
@@ -2780,10 +2780,10 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
         // it is `RequestContext<Self, SSL, DEBUG, is_h3>` by construction.
         unsafe {
             if is_h3 {
-                (*self.h3_request_pool_allocator)
+                (*self.h3_request_pool)
                     .put(&raw mut *ctx.cast::<request_context::RequestContext<Self, SSL, DEBUG, true>>());
             } else {
-                (*self.request_pool_allocator)
+                (*self.request_pool)
                     .put(&raw mut *ctx.cast::<request_context::RequestContext<Self, SSL, DEBUG, false>>());
             }
         }

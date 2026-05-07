@@ -7,7 +7,7 @@ use crate::css_values::percentage::Percentage;
 use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
 
 // PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` fed by
-// `input.allocator()`. Phase B threads `'bump` and switches to
+// `input.arena()`. Phase B threads `'bump` and switches to
 // `bun_alloc::ArenaVec<'bump, T>` crate-wide; until then `Vec<T>`.
 type ArrayList<T> = Vec<T>;
 
@@ -370,7 +370,7 @@ pub struct KeyframesListParser;
 // blocked_on: css::{DeclarationParser, AtRuleParser, QualifiedRuleParser,
 // RuleBodyItemParser} trait signatures (css_parser.rs round-5 surface),
 // Parser::parse_comma_separated, DeclarationBlock::parse, ParserOptions::default
-// allocator threading.
+// arena threading.
 
 const _: () = {
     use css::css_parser::{AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser};

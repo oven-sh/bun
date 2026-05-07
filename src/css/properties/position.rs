@@ -90,8 +90,8 @@ impl Position {
     }
 
     pub fn deep_clone(&self) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, allocator) — comptime-reflection deep copy.
-        // Rust: covered by #[derive(Clone)]; allocator param dropped (global mimalloc).
+        // Zig: css.implementDeepClone(@This(), this, arena) — comptime-reflection deep copy.
+        // Rust: covered by #[derive(Clone)]; arena param dropped (global mimalloc).
         self.clone()
     }
 }

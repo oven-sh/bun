@@ -46,7 +46,7 @@ impl<'a> CssModule<'a> {
                     }
                     break 'source path.as_ref();
                 };
-                // PORT NOTE: Zig `defer if (alloced) allocator.free(source);` — arena-allocated, bulk-freed on bump.reset()
+                // PORT NOTE: Zig `defer if (alloced) arena.free(source);` — arena-allocated, bulk-freed on bump.reset()
                 let _ = alloced;
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
                 hashes.push(hash(
@@ -103,7 +103,7 @@ impl<'a> CssModule<'a> {
     }
 
     // PORT NOTE: Zig `referenceDashed` took `*Printer` so it could read
-    // `dest.allocator` and call `dest.importRecord(idx)`. In Rust the only
+    // `dest.arena` and call `dest.importRecord(idx)`. In Rust the only
     // caller (`DashedIdentReference::to_css`) already holds a `&mut` borrow of
     // `dest.css_module` (which *is* `self`), so threading `&mut Printer` in
     // here would alias. The caller pre-resolves the import-record path and
@@ -170,7 +170,7 @@ impl<'a> CssModule<'a> {
             false,
         );
 
-        // PORT NOTE: std.fmt.allocPrint(allocator, "--{s}", .{the_hash}) → bump Vec
+        // PORT NOTE: std.fmt.allocPrint(arena, "--{s}", .{the_hash}) → bump Vec
         // (bumpalo::Vec<u8> lacks io::Write; the format string was a pure concat anyway).
         let mut k = BumpVec::with_capacity_in(2 + the_hash.len(), bump);
         k.extend_from_slice(b"--");
@@ -187,7 +187,7 @@ impl<'a> CssModule<'a> {
         _composes: &css::css_properties::css_modules::Composes,
         _source_index: u32,
     ) -> css::Maybe<(), css::PrinterErrorKind> {
-        // let bump = dest.allocator;
+        // let bump = dest.arena;
         for sel in selectors.v.slice() {
             if sel.len() == 1
                 && matches!(sel.components[0], css::selector::parser::Component::Class(_))

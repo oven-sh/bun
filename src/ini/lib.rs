@@ -349,7 +349,7 @@ impl<'a> Parser<'a> {
     // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
 
     pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
-        // TODO(port): borrowck — in Zig, `arena_allocator` is `self.arena.allocator()`;
+        // TODO(port): borrowck — in Zig, `arena_allocator` is `self.arena.arena()`;
         // here it is passed separately to avoid overlapping &mut self borrows.
         let src = self.src;
         let mut iter = src.split(|&b| b == b'\n');

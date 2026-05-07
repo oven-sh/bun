@@ -494,7 +494,7 @@ impl List {
         self.items[self.first_index as usize].as_ref().unwrap()
     }
 
-    // pub fn deinit(this: Package.Scripts.List, allocator: std.mem.Allocator) void {
+    // pub fn deinit(this: Package.Scripts.List, std.mem.Allocator param) void {
     //     for (this.items) |maybe_item| {
     //         if (maybe_item) |item| {
     //             allocator.free(item);

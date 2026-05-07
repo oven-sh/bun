@@ -54,8 +54,8 @@ impl<'a> ImportScanner<'a> {
 
         let mut scanner = ImportScanner::default();
         let mut stmts_end: usize = 0;
-        // PORT NOTE: `allocator` (p.allocator) dropped — see §Allocators (AST crate).
-        // Arena allocs below go through `p.allocator` (a &Bump) where they persist.
+        // PORT NOTE: `arena` (p.arena) dropped — see §Allocators (AST crate).
+        // Arena allocs below go through `p.arena` (a &Bump) where they persist.
         let is_typescript_enabled: bool = TYPESCRIPT;
 
         for i in 0..stmts.len() {
@@ -636,7 +636,7 @@ impl<'a> ImportScanner<'a> {
                         let expr = core::mem::take(&mut st.value).to_expr();
                         // Arena allocation that persists in the AST.
                         let export_default_args =
-                            p.allocator.alloc_slice_fill_default::<Expr>(2);
+                            p.arena.alloc_slice_fill_default::<Expr>(2);
                         export_default_args[0] = p.module_exports(expr.loc);
                         export_default_args[1] = expr;
                         // SAFETY: bump-allocated slice; lives for the AST arena's lifetime.

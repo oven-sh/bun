@@ -21,7 +21,7 @@ pub type IndexInt = u32;
 pub struct Graph {
     // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
     // (ThreadPool.v2, BACKREF) evidence states "BundleV2.graph.pool owns ThreadPool".
-    // bundle_v2.zig:992 allocates it from `this.allocator()` (the `self.heap` arena) and
+    // bundle_v2.zig:992 allocates it from `this.arena()` (the `self.heap` arena) and
     // bundle_v2.zig:2248 calls `pool.deinit()`, so this is arena-owned but self-referential
     // (sibling field). Phase B: decide between `Box<ThreadPool>` vs arena handle.
     pub pool: NonNull<ThreadPool>,
@@ -105,9 +105,9 @@ pub struct InputFile {
     pub secondary_path: Box<[u8]>,
     pub loader: options::Loader,
     pub side_effects: SideEffects,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator = bun.default_allocator`
+    // PORT NOTE: Zig stored `arena: std.mem.Allocator = bun.default_allocator`
     // here so deinit could free `source`/`secondary_path` with the right alloc.
-    // In Rust the owned fields (Box/Vec) carry their allocator; field dropped.
+    // In Rust the owned fields (Box/Vec) carry their arena; field dropped.
     pub additional_files: Vec<AdditionalFile>,
     pub unique_key_for_additional_file: Box<[u8]>,
     pub content_hash_for_additional_file: u64,

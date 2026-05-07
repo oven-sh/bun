@@ -6,7 +6,7 @@ use core::ptr::{self, NonNull};
 use bun_alloc::AllocError;
 use crate::strings;
 
-// PORT NOTE: Zig's `allocator: Allocator` field dropped — global mimalloc is used for
+// PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
 // node and duplicated-string allocations.
 // PERF(port): Zig recommended a stack-fallback allocator here — profile in Phase B.
 pub struct StringJoiner {
@@ -118,7 +118,7 @@ impl StringJoiner {
         self.push_raw(raw, true);
     }
 
-    // PORT NOTE: Zig signature was `push(data: []const u8, allocator: ?Allocator)`.
+    // PORT NOTE: Zig signature was `push(data: []const u8, ?Allocator param)`.
     // The optional allocator only encoded ownership of `data`, which has no Rust
     // analogue for a borrowed `&[u8]`; callers wanting owned semantics use
     // `push_owned`/`push_cloned` instead.

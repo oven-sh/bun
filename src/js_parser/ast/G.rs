@@ -219,7 +219,7 @@ impl Property {
             kind: self.kind,
             flags: self.flags,
             class_static_block,
-            // Zig: `try this.ts_decorators.deepClone(allocator)` — Vec<Expr> per-element deep clone.
+            // Zig: `try this.ts_decorators.deepClone(arena)` — Vec<Expr> per-element deep clone.
             ts_decorators: self.ts_decorators.try_deep_clone_with(|e| e.deep_clone(bump))?,
             key: match self.key {
                 Some(key) => Some(key.deep_clone(bump)?),
@@ -266,7 +266,7 @@ pub struct FnBody {
 
 impl FnBody {
     pub fn init_return_expr(bump: &bun_alloc::Arena, expr: ExprNodeIndex) -> core::result::Result<FnBody, bun_alloc::AllocError> {
-        // PERF(port): Zig used allocator.dupe over a 1-elem array literal; bumpalo equivalent
+        // PERF(port): Zig used arena.dupe over a 1-elem array literal; bumpalo equivalent
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(crate::ast::s::Return { value: Some(expr) }, expr.loc)
         });
@@ -308,7 +308,7 @@ impl Default for Fn {
 
 impl Fn {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Fn, bun_alloc::AllocError> {
-        // PERF(port): Zig allocator.alloc + per-index assign; bumpalo equivalent.
+        // PERF(port): Zig arena.alloc + per-index assign; bumpalo equivalent.
         // SAFETY: `self.args` is an arena-owned `*mut [Arg]` valid for the AST arena lifetime
         // (Zig: `[]Arg`).
         let src_args: &[Arg] = unsafe { &*self.args };
@@ -357,7 +357,7 @@ impl Default for Arg {
 impl Arg {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Arg, bun_alloc::AllocError> {
         Ok(Arg {
-            // Zig: `try this.ts_decorators.deepClone(allocator)` — Vec<Expr> per-element deep clone.
+            // Zig: `try this.ts_decorators.deepClone(arena)` — Vec<Expr> per-element deep clone.
             ts_decorators: self.ts_decorators.try_deep_clone_with(|e| e.deep_clone(bump))?,
             binding: self.binding,
             default: match self.default {

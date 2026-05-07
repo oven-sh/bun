@@ -20,7 +20,7 @@ impl IndexStringMap {
 
     pub fn put(&mut self, index: IndexInt, value: impl AsRef<[u8]>) -> Result<(), bun_alloc::AllocError> {
         let duped = Box::<[u8]>::from(value.as_ref());
-        // errdefer allocator.free(duped) — deleted: `duped` is Drop, `?` handles cleanup.
+        // errdefer arena.free(duped) — deleted: `duped` is Drop, `?` handles cleanup.
         self.map.insert(index, duped);
         Ok(())
     }
@@ -31,5 +31,5 @@ impl IndexStringMap {
 //   source:     src/bundler/IndexStringMap.zig (25 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      allocator params dropped (values retyped to Box<[u8]>); Index::Int path may need fixup
+//   notes:      arena params dropped (values retyped to Box<[u8]>); Index::Int path may need fixup
 // ──────────────────────────────────────────────────────────────────────────

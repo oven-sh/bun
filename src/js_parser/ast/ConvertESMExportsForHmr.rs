@@ -21,7 +21,7 @@ fn generate_temp_ref<'p, const TS: bool, J: JsxT, const SCAN: bool>(
     let will_use_renamer = p.options.bundle || p.options.features.minify_identifiers;
     let name: &'p [u8] = (if will_use_renamer { default_name } else { None }).unwrap_or_else(|| {
         p.temp_ref_count += 1;
-        bun_alloc::arena_format!(in p.allocator, "__bun_temp_ref_{:x}$", p.temp_ref_count)
+        bun_alloc::arena_format!(in p.arena, "__bun_temp_ref_{:x}$", p.temp_ref_count)
             .into_bump_str()
             .as_bytes()
     });
@@ -48,7 +48,7 @@ pub struct ConvertESMExportsForHmr<'a> {
     pub export_props: Vec<G::Property>,
     pub stmts: Vec<Stmt>,
 }
-// PORT NOTE: Zig used `std.ArrayListUnmanaged` with `p.allocator` for the four
+// PORT NOTE: Zig used `std.ArrayListUnmanaged` with `p.arena` for the four
 // collections; in Rust the parser arena is a `bumpalo::Bump`, but the consumers
 // (`Vec::move_from_list` for `export_props`, arena copy for `stmts`) want
 // global-heap `Vec<T>` anyway. Kept as `Vec` so callers can construct via
@@ -231,7 +231,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         let mut decls = G::DeclList::default();
                         VecExt::append(&mut decls, G::Decl {
                             binding: Binding::alloc(
-                                p.allocator,
+                                p.arena,
                                 B::Identifier { r#ref: temp_id },
                                 stmt.loc,
                             ),
@@ -463,7 +463,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // SAFETY: arena-owned slices valid for the parse; ClauseItem is POD-shaped.
                     let prev_len = unsafe { (&*stmt.items).len() };
                     let concat = p
-                        .allocator
+                        .arena
                         .alloc_slice_fill_with(prev_len + items_len, |_| {
                             js_ast::ClauseItem::default()
                         });
@@ -618,7 +618,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
             // 'get abc() { return abc }'
             let body_stmts = p
-                .allocator
+                .arena
                 .alloc_slice_copy(&[Stmt::alloc(S::Return { value: Some(id) }, loc)]);
             self.export_props.push(G::Property {
                 kind: G::PropertyKind::Get,
@@ -799,7 +799,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         // PORT NOTE: Zig assigned the ArrayList's `items` slice directly. `Stmt` is `Copy`;
         // copy into the parser arena so the `*mut [Stmt]` outlives this struct.
         let stmts = core::mem::take(&mut self.stmts);
-        self.last_part.stmts = std::ptr::from_mut::<[Stmt]>(p.allocator.alloc_slice_copy(&stmts));
+        self.last_part.stmts = std::ptr::from_mut::<[Stmt]>(p.arena.alloc_slice_copy(&stmts));
         self.last_part.tag = crate::PartTag::None;
         Ok(())
     }

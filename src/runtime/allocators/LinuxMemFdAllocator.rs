@@ -115,9 +115,9 @@ impl LinuxMemFdAllocator {
     }
 
     /// Zig: `if (allocator_.vtable == AllocatorInterface.VTable) @ptrCast(@alignCast(allocator_.ptr))`
-    pub fn from(allocator: StdAllocator) -> Option<*mut Self> {
-        if core::ptr::eq(allocator.vtable, allocator_interface::VTABLE) {
-            Some(allocator.ptr.cast::<Self>())
+    pub fn from(alloc: StdAllocator) -> Option<*mut Self> {
+        if core::ptr::eq(alloc.vtable, allocator_interface::VTABLE) {
+            Some(alloc.ptr.cast::<Self>())
         } else {
             None
         }
@@ -179,7 +179,7 @@ impl LinuxMemFdAllocator {
         ) {
             Ok(slice_ptr) => {
                 // Zig: `Blob.Store.Bytes{ .cap = @truncate(slice.len), .ptr = slice.ptr,
-                //                          .len = @truncate(len), .allocator = self.allocator() }`
+                //                          .len = @truncate(len), .allocator = self.arena() }`
                 // SAFETY: `slice_ptr[0..map_len]` is the mmap'd region; `Self::allocator(this)`
                 // is the vtable whose `free` will `munmap` exactly that region and then
                 // `deref` `this`. `len <= map_len` (cap) by construction.
@@ -295,13 +295,13 @@ impl LinuxMemFdAllocator {
             // the +1 to us (RefPtr has no `Drop`); on `Ok` that ref moves into
             // `res.allocator`, on `Err` we `deref` it explicitly — exactly the
             // Zig flow.
-            let linux_memfd_allocator: *mut Self = Self::new(fd, bytes.len()).into_raw();
+            let memfd: *mut Self = Self::new(fd, bytes.len()).into_raw();
 
-            // SAFETY: `linux_memfd_allocator` is the `Box::into_raw` pointer
+            // SAFETY: `memfd` is the `Box::into_raw` pointer
             // (full provenance) with one live ref — required by `Self::alloc`.
             match unsafe {
                 Self::alloc(
-                    linux_memfd_allocator,
+                    memfd,
                     bytes.len(),
                     0,
                     libc::MAP_SHARED, // Zig: `.{ .TYPE = .SHARED }`
@@ -311,7 +311,7 @@ impl LinuxMemFdAllocator {
                 Err(err) => {
                     // SAFETY: we still own the +1 from `into_raw()`; release it
                     // (closes the fd and frees the Box on hitting zero).
-                    unsafe { Self::deref(linux_memfd_allocator) };
+                    unsafe { Self::deref(memfd) };
                     Err(err)
                 }
             }
@@ -319,8 +319,8 @@ impl LinuxMemFdAllocator {
     }
 
     /// Zig: `allocator_.vtable == AllocatorInterface.VTable`
-    pub fn is_instance(allocator: StdAllocator) -> bool {
-        core::ptr::eq(allocator.vtable, allocator_interface::VTABLE)
+    pub fn is_instance(alloc: StdAllocator) -> bool {
+        core::ptr::eq(alloc.vtable, allocator_interface::VTABLE)
     }
 }
 

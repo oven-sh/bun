@@ -3136,7 +3136,7 @@ pub mod form_data {
     }
 
     /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.
-    /// PORT NOTE: Zig stored `allocator: std.mem.Allocator`; deleted (non-AST
+    /// PORT NOTE: Zig stored `std.mem.Allocator param`; deleted (non-AST
     /// crate, global mimalloc per §Allocators). `deinit` becomes `Drop` on the
     /// `Box`/`Box<[u8]>` fields — no explicit impl needed.
     #[derive(Debug)]

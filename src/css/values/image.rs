@@ -59,12 +59,12 @@ impl Image {
         }
     }
 
-    pub fn get_prefixed(&self, allocator: &Arena, prefix: css::VendorPrefix) -> Image {
+    pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
         match self {
             // PERF(port): was arena bulk-free — profile in Phase B
-            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(allocator, prefix))),
-            Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(allocator, prefix)),
-            _ => self.deep_clone(allocator),
+            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
+            Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
+            _ => self.deep_clone(arena),
         }
     }
 
@@ -96,7 +96,7 @@ impl Image {
     }
 
     /// Needed to satisfy ImageFallback interface
-    pub fn with_image(&self, _allocator: &Arena, image: Image) -> Self {
+    pub fn with_image(&self, _arena: &Arena, image: Image) -> Self {
         let _ = self;
         image
     }
@@ -114,30 +114,30 @@ impl Image {
         }
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, allocator)` (comptime field-walk).
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
+        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` (comptime field-walk).
         match self {
             Image::None => Image::None,
             Image::Url(u) => Image::Url(Url { import_record_idx: u.import_record_idx, loc: u.loc }),
-            Image::Gradient(g) => Image::Gradient(Box::new(g.deep_clone(allocator))),
-            Image::ImageSet(s) => Image::ImageSet(s.deep_clone(allocator)),
+            Image::Gradient(g) => Image::Gradient(Box::new(g.deep_clone(arena))),
+            Image::ImageSet(s) => Image::ImageSet(s.deep_clone(arena)),
         }
     }
 
     /// Returns a legacy `-webkit-gradient()` value for the image.
     ///
     /// May return an error in case the gradient cannot be converted.
-    pub fn get_legacy_webkit(&self, allocator: &Arena) -> Option<Image> {
+    pub fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
         match self {
             Image::Gradient(gradient) => {
                 // PERF(port): was arena bulk-free — profile in Phase B
-                Some(Image::Gradient(Box::new(gradient.get_legacy_webkit(allocator)?)))
+                Some(Image::Gradient(Box::new(gradient.get_legacy_webkit(arena)?)))
             }
-            _ => Some(self.deep_clone(allocator)),
+            _ => Some(self.deep_clone(arena)),
         }
     }
 
-    pub fn get_fallbacks(&mut self, allocator: &Arena, targets: css::targets::Targets) -> css::SmallList<Image, 6> {
+    pub fn get_fallbacks(&mut self, arena: &Arena, targets: css::targets::Targets) -> css::SmallList<Image, 6> {
         // Determine which prefixes and color fallbacks are needed.
         let prefixes = self.get_necessary_prefixes(targets);
         let fallbacks = self.get_necessary_fallbacks(targets);
@@ -145,7 +145,7 @@ impl Image {
 
         // Get RGB fallbacks if needed.
         let rgb = if fallbacks.contains(ColorFallbackKind::RGB) {
-            Some(self.get_fallback(allocator, ColorFallbackKind::RGB))
+            Some(self.get_fallback(arena, ColorFallbackKind::RGB))
         } else {
             None
         };
@@ -163,22 +163,22 @@ impl Image {
                 false && matches!(prefix_image, Image::Gradient(_))
             }
         {
-            if let Some(legacy) = prefix_image.get_legacy_webkit(allocator) {
+            if let Some(legacy) = prefix_image.get_legacy_webkit(arena) {
                 res.append(legacy);
             }
         }
 
         // Standard syntax, with prefixes.
         if prefixes.contains(VendorPrefix::WEBKIT) {
-            res.append(prefix_image.get_prefixed(allocator, css::VendorPrefix::WEBKIT));
+            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::WEBKIT));
         }
 
         if prefixes.contains(VendorPrefix::MOZ) {
-            res.append(prefix_image.get_prefixed(allocator, css::VendorPrefix::MOZ));
+            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::MOZ));
         }
 
         if prefixes.contains(VendorPrefix::O) {
-            res.append(prefix_image.get_prefixed(allocator, css::VendorPrefix::O));
+            res.append(prefix_image.get_prefixed(arena, css::VendorPrefix::O));
         }
 
         if prefixes.contains(VendorPrefix::NONE) {
@@ -189,12 +189,12 @@ impl Image {
 
             // P3 fallback.
             if fallbacks.contains(ColorFallbackKind::P3) {
-                res.append(self.get_fallback(allocator, ColorFallbackKind::P3));
+                res.append(self.get_fallback(arena, ColorFallbackKind::P3));
             }
 
             // Convert original to lab if needed (e.g. if oklab is not supported but lab is).
             if fallbacks.contains(ColorFallbackKind::LAB) {
-                *self = self.get_fallback(allocator, ColorFallbackKind::LAB);
+                *self = self.get_fallback(arena, ColorFallbackKind::LAB);
             }
         } else if let Some(last) = res.pop() {
             // Prefixed property with no unprefixed version.
@@ -206,11 +206,11 @@ impl Image {
         res
     }
 
-    pub fn get_fallback(&self, allocator: &Arena, kind: ColorFallbackKind) -> Image {
+    pub fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
         match self {
             // PERF(port): was arena bulk-free — profile in Phase B
-            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(allocator, kind))),
-            _ => self.deep_clone(allocator),
+            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
+            _ => self.deep_clone(arena),
         }
     }
 
@@ -260,12 +260,12 @@ impl crate::small_list::ImageFallback for Image {
     #[inline]
     fn get_image(&self) -> &Image { Image::get_image(self) }
     #[inline]
-    fn with_image(&self, allocator: &Arena, image: Image) -> Self {
-        Image::with_image(self, allocator, image)
+    fn with_image(&self, arena: &Arena, image: Image) -> Self {
+        Image::with_image(self, arena, image)
     }
     #[inline]
-    fn get_fallback(&self, allocator: &Arena, kind: ColorFallbackKind) -> Self {
-        Image::get_fallback(self, allocator, kind)
+    fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Self {
+        Image::get_fallback(self, arena, kind)
     }
     #[inline]
     fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
@@ -279,7 +279,7 @@ impl crate::small_list::ImageFallback for Image {
 /// display the most appropriate resolution or file type that it supports.
 pub struct ImageSet {
     /// The image options to choose from.
-    // PERF(port): was ArrayListUnmanaged fed arena allocator — profile in Phase B
+    // PERF(port): was ArrayListUnmanaged fed arena arena — profile in Phase B
     pub options: Vec<ImageSetOption>,
 
     /// The vendor prefix for the `image-set()` function.
@@ -341,10 +341,10 @@ impl ImageSet {
     }
 
     /// Returns the `image-set()` value with the given vendor prefix.
-    pub fn get_prefixed(&self, allocator: &Arena, prefix: css::VendorPrefix) -> ImageSet {
+    pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> ImageSet {
         ImageSet {
-            // TODO(port): was `css.deepClone(ImageSetOption, allocator, &this.options)` (comptime helper)
-            options: self.options.iter().map(|o| o.deep_clone(allocator)).collect(),
+            // TODO(port): was `css.deepClone(ImageSetOption, arena, &this.options)` (comptime helper)
+            options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: prefix,
         }
     }
@@ -356,10 +356,10 @@ impl ImageSet {
             && self.options.iter().zip(other.options.iter()).all(|(a, b)| a.eql(b))
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, allocator)` — derive Clone in Phase B
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
+        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone in Phase B
         ImageSet {
-            options: self.options.iter().map(|o| o.deep_clone(allocator)).collect(),
+            options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: self.vendor_prefix,
         }
     }
@@ -440,7 +440,7 @@ impl ImageSetOption {
                 // arg list so `filename()` (shared borrow) can run; result is `&'a _`.
                 let import_records = dest.get_import_records()?;
                 Some(UrlDependency::new(
-                    dest.allocator,
+                    dest.arena,
                     url,
                     dest.filename(),
                     import_records,
@@ -502,10 +502,10 @@ impl ImageSetOption {
         Ok(())
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, allocator)` — derive Clone in Phase B
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
+        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone in Phase B
         ImageSetOption {
-            image: self.image.deep_clone(allocator),
+            image: self.image.deep_clone(arena),
             resolution: self.resolution,
             file_type: self.file_type,
         }
@@ -538,5 +538,5 @@ fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
 //   source:     src/css/values/image.zig (408 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      DeriveParse/DeriveToCss/implementEql/implementDeepClone need proc-macro derives; file_type uses raw *const [u8] pending arena-lifetime design; allocator params dropped per Box<Gradient> TSV decision
+//   notes:      DeriveParse/DeriveToCss/implementEql/implementDeepClone need proc-macro derives; file_type uses raw *const [u8] pending arena-lifetime design; arena params dropped per Box<Gradient> TSV decision
 // ──────────────────────────────────────────────────────────────────────────

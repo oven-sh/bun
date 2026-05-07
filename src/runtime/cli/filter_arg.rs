@@ -150,7 +150,7 @@ pub fn get_candidate_package_patterns<'a>(
 }
 
 pub struct FilterSet {
-    // `allocator: std.mem.Allocator` — deleted (non-AST crate; global mimalloc).
+    // `std.mem.Allocator param` — deleted (non-AST crate; global mimalloc).
 
     // TODO: Pattern should be
     //  union (enum) { name: []const u32, path: []const u32, any_name: void }
@@ -277,7 +277,7 @@ pub struct PackageFilterIterator {
     walker: MaybeUninit<GlobWalker>,
     iter: MaybeUninit<GlobWalkerIterator>,
     valid: bool,
-    // `allocator: std.mem.Allocator` — deleted (non-AST crate).
+    // `std.mem.Allocator param` — deleted (non-AST crate).
 }
 
 impl PackageFilterIterator {

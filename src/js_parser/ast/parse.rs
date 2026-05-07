@@ -172,7 +172,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let body_loc = p.lexer.loc();
         p.lexer.expect(T::TOpenBrace)?;
-        let mut properties = BumpVec::<G::Property>::new_in(p.allocator);
+        let mut properties = BumpVec::<G::Property>::new_in(p.arena);
 
         // Allow "in" and private fields inside class bodies
         let old_allow_in = p.allow_in;
@@ -289,7 +289,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         include_raw: bool,
     ) -> Result<(*mut [E::TemplatePart], logger::Loc), Error> {
         let p = self;
-        let mut parts = BumpVec::<E::TemplatePart>::with_capacity_in(1, p.allocator);
+        let mut parts = BumpVec::<E::TemplatePart>::with_capacity_in(1, p.arena);
         // Allow "in" inside template literals
         let old_allow_in = p.allow_in;
         p.allow_in = true;
@@ -346,7 +346,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.allow_in = true;
         // TODO(port): errdefer — restore `p.allow_in = old_allow_in` on error path
 
-        let mut args = BumpVec::<Expr>::new_in(p.allocator);
+        let mut args = BumpVec::<Expr>::new_in(p.arena);
         p.lexer.expect(T::TOpenParen)?;
 
         while p.lexer.token != T::TCloseParen {
@@ -412,7 +412,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         opts: ParenExprOpts,
     ) -> Result<Expr, Error> {
         let p = self;
-        let mut items_list = BumpVec::<Expr>::new_in(p.allocator);
+        let mut items_list = BumpVec::<Expr>::new_in(p.arena);
         let mut errors = DeferredErrors::default();
         let mut arrow_arg_errors = DeferredArrowArgErrors::default();
         let mut spread_range = logger::Range::default();
@@ -513,8 +513,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 return Err(err!("SyntaxError"));
             }
 
-            let mut invalid_log = LocList::new_in(p.allocator);
-            let mut args = BumpVec::<G::Arg>::new_in(p.allocator);
+            let mut invalid_log = LocList::new_in(p.arena);
+            let mut args = BumpVec::<G::Arg>::new_in(p.arena);
 
             if opts.is_async {
                 // markl,oweredsyntaxpoksdpokasd
@@ -750,7 +750,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // errors on lone surrogates. The Rust port replaces them with U+FFFD; the
                 // surrogate-error diagnostic path is dropped until the strict variant lands.
                 let alias_utf8 = strings::to_utf8_alloc_with_type(estr.slice16());
-                let leaked: &'a [u8] = p.allocator.alloc_slice_copy(&alias_utf8);
+                let leaked: &'a [u8] = p.arena.alloc_slice_copy(&alias_utf8);
                 return Ok(leaked);
             }
         }
@@ -979,7 +979,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if !opts.is_using_statement {
                     p.lexer.next()?;
                     let mut is_single_line = !p.lexer.has_newline_before;
-                    let mut items = BumpVec::<ArrayBinding>::new_in(p.allocator);
+                    let mut items = BumpVec::<ArrayBinding>::new_in(p.arena);
                     let mut has_spread = false;
 
                     // "in" expressions are allowed
@@ -1064,7 +1064,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // p.markSyntaxFeature(compat.Destructuring, p.lexer.Range())
                     p.lexer.next()?;
                     let mut is_single_line = !p.lexer.has_newline_before;
-                    let mut properties = BumpVec::<B::Property>::new_in(p.allocator);
+                    let mut properties = BumpVec::<B::Property>::new_in(p.arena);
 
                     // "in" expressions are allowed
                     let old_allow_in = p.allow_in;
@@ -1219,7 +1219,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<G::DeclList, Error> {
         let p = self;
-        let mut decls = BumpVec::<G::Decl>::new_in(p.allocator);
+        let mut decls = BumpVec::<G::Decl>::new_in(p.arena);
 
         loop {
             // Forbid "let let" and "const let" but not "var let"
@@ -1420,7 +1420,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
         // PORT NOTE: ParseStatementOptions is not Clone (holds &'a [Expr]); reconstruct
         // a fresh per-iteration copy with the relevant scalar flags from `_opts`.
-        let mut stmts = StmtList::new_in(p.allocator);
+        let mut stmts = StmtList::new_in(p.arena);
 
         let mut return_without_semicolon_start: i32 = -1;
         let is_module_scope = _opts.is_module_scope;
@@ -1543,7 +1543,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let arg_binding =
                             p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
                         let args: &'a mut [G::Arg] =
-                            p.allocator.alloc_slice_fill_with(1, |_| G::Arg {
+                            p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                                 binding: arg_binding,
                                 ..Default::default()
                             });
@@ -1571,7 +1571,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let arg_loc = p.lexer.loc();
                         let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
                         let args: &'a mut [G::Arg] =
-                            p.allocator.alloc_slice_fill_with(1, |_| G::Arg {
+                            p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                                 binding: arg_binding,
                                 ..Default::default()
                             });

@@ -18,7 +18,7 @@ pub struct StaticRouteVisitor<'a> {
 }
 
 // PORT NOTE: Zig `deinit` only freed `cache` and `visited` with the default
-// allocator. Both are now owned types with `Drop`, so no explicit `impl Drop`
+// arena. Both are now owned types with `Drop`, so no explicit `impl Drop`
 // is needed.
 
 impl<'a> StaticRouteVisitor<'a> {

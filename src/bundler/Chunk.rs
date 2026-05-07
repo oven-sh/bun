@@ -269,16 +269,16 @@ pub struct CodeResult {
 // mimalloc — we don't need a vtable here yet. `()` is kept as a token so the
 // caller's `Option<&DynAlloc>` plumbing matches the Zig signature; the actual
 // allocation goes through `alloc_buf` (global mimalloc) regardless. Real
-// allocator threading (page_allocator vs default_allocator) lands when
+// arena threading (page_allocator vs default_allocator) lands when
 // `bun_alloc::Allocator` is a stable trait object.
 type DynAlloc = ();
 
-/// `allocator.alloc(u8, n)` — until `DynAlloc` is a real trait object, route
-/// through the global allocator. PERF(port): Zig picked page_allocator for
+/// `arena.alloc(u8, n)` — until `DynAlloc` is a real trait object, route
+/// through the global arena. PERF(port): Zig picked page_allocator for
 /// `n >= 512KiB`; mimalloc handles large allocations via mmap already so this
 /// is a behavior match in practice.
 #[inline]
-fn alloc_buf(_allocator: &DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
+fn alloc_buf(_arena: &DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
     // Zero-fill is required for soundness: `set_len` over uninit bytes violates
     // `Vec`'s safety contract, and `into_boxed_slice` may shrink-realloc (memcpy
     // of uninit). The memset cost is negligible next to the subsequent memcpy
@@ -638,9 +638,9 @@ impl IntermediateOutput {
                     0
                 };
 
-                let allocator =
+                let arena =
                     allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
-                let mut total_buf = alloc_buf(allocator, count + debug_id_len)?;
+                let mut total_buf = alloc_buf(arena, count + debug_id_len)?;
                 let mut remain: &mut [u8] = &mut total_buf;
 
                 for piece in pieces.slice() {
@@ -860,7 +860,7 @@ impl IntermediateOutput {
                 })
             }
             IntermediateOutput::Joiner(joiner) => {
-                let allocator =
+                let arena =
                     allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(joiner.len));
 
                 if let Some(amt) = display_size {
@@ -870,7 +870,7 @@ impl IntermediateOutput {
                 let buffer = 'brk: {
                     if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID {
                         // This comment must go before the //# sourceMappingURL comment
-                        // TODO(port): graph.heap.allocator() — arena allocator from Graph
+                        // TODO(port): graph.heap.arena() — arena arena from Graph
                         let mut debug_id_fmt = Vec::new();
                         write!(
                             &mut debug_id_fmt,
@@ -879,11 +879,11 @@ impl IntermediateOutput {
                         )
                         .ok();
 
-                        let _ = allocator; // PORT NOTE: StringJoiner::done* allocates from global mimalloc; allocator token is plumbing-only.
+                        let _ = arena; // PORT NOTE: StringJoiner::done* allocates from global mimalloc; arena token is plumbing-only.
                         break 'brk joiner.done_with_end(&debug_id_fmt)?;
                     }
 
-                    let _ = allocator;
+                    let _ = arena;
                     break 'brk joiner.done()?;
                 };
 

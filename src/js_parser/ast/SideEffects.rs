@@ -506,7 +506,7 @@ impl SideEffects {
         // ArrayList on `P`) to avoid per-call allocation. The Rust `P` field is
         // currently `ListManaged<'a, ()>` (placeholder element type — see P.rs:537),
         // so until that's reshaped to `BinaryExpressionSimplifyVisitor` we use a
-        // local Vec. Same iteration order; only the allocator differs.
+        // local Vec. Same iteration order; only the arena differs.
         let mut stack: Vec<StoreRef<E::Binary>> = Vec::with_capacity(8);
         stack.push(root_bin);
 

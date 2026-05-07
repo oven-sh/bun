@@ -162,7 +162,7 @@ impl Default for InitOptions {
 
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
-    // allocator: dropped per §Allocators (global mimalloc)
+    // allocator dropped per §Allocators (global mimalloc)
     pub has_loaded_constructors: bool,
     // TODO(port): lifetime — `Transpiler<'a>` borrows `log`/`allocator`; VM is
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
@@ -196,7 +196,7 @@ pub struct VirtualMachine {
     /// tier is installed (e.g. `bun_jsc` unit tests).
     ///
     /// PORT NOTE: the Zig `timer: api.Timer.All` and
-    /// `body_value_hive_allocator: webcore.Body.Value.HiveAllocator` value
+    /// `body_value_pool: webcore.Body.Value.HiveAllocator` value
     /// fields live inside this box rather than as `()` shadows here — both
     /// types are owned by `bun_runtime` (forward dep). Access goes through
     /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
@@ -1469,7 +1469,7 @@ pub struct RuntimeHooks {
     /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
     /// the type-erased pointer. Stored back into `vm.node_fs`.
     pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
-    /// `Body.Value.HiveRef.init(body, &vm.body_value_hive_allocator)` — spec
+    /// `Body.Value.HiveRef.init(body, &vm.body_value_pool)` — spec
     /// VirtualMachine.zig:255. The hive allocator lives inside `runtime_state`
     /// (high tier); `body` and the returned `*mut Body.Value.HiveRef` are
     /// erased here and cast back on the `bun_runtime` side.
@@ -2245,7 +2245,7 @@ impl VirtualMachine {
 ///
 /// Free function (file-level in Zig); takes `&JSGlobalObject` directly rather
 /// than `&mut VirtualMachine` because the body never touches VM state — Zig
-/// only used `globalThis.allocator()` for the format buffers, which is
+/// only used `globalThis.arena()` for the format buffers, which is
 /// `bun.default_allocator` (= global mimalloc) and dropped per §Allocators.
 pub fn process_fetch_log(
     global_this: &JSGlobalObject,
@@ -3456,7 +3456,6 @@ impl VirtualMachine {
                 source_code: bun_string::String::init(b""),
                 specifier,
                 source_url: create_if_different(&specifier, source_url),
-                allocator: core::ptr::null_mut(),
                 source_code_needs_deref: false,
                 ..Default::default()
             };

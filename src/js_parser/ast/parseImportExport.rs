@@ -79,7 +79,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // so capture the slice (arena-lifetime) before re-using `value` by-value below.
             let slice_opt: Option<&'a [u8]> = if let ExprData::EString(e_string) = &mut value.data {
                 if e_string.is_utf8() && e_string.is_present() {
-                    Some(e_string.slice(p.allocator))
+                    Some(e_string.slice(p.arena))
                 } else {
                     None
                 }
@@ -115,7 +115,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
         let p = self;
         // TODO(port): narrow error set
-        let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.allocator);
+        let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // this variable should not exist if we're not in a typescript file
@@ -295,7 +295,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
         // TODO(port): narrow error set
         let mut items =
-            bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.allocator);
+            bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         let mut first_non_identifier_loc = logger::Loc { start: 0 };

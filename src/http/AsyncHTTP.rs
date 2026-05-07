@@ -37,7 +37,7 @@ pub struct AsyncHTTP<'a> {
     // TODO(port): lifetime — caller-owned response buffer; never freed here.
     pub response_buffer: *mut MutableString,
     pub request_body: HTTPRequestBody<'a>,
-    // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc is used everywhere.
+    // PORT NOTE: `std.mem.Allocator param` field dropped — global mimalloc is used everywhere.
     pub request_header_buf: &'a [u8],
     pub method: Method,
     pub url: URL<'a>,

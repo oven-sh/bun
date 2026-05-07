@@ -78,12 +78,12 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 
     // SAFETY: `linker` outlives this task (owned by the bundle); each CSS chunk
     // gets exactly one `PrepareCssAstTask` (see generateChunksInParallel.rs),
-    // so `&mut *chunk` is unique. `worker.allocator` was initialized in
+    // so `&mut *chunk` is unique. `worker.arena` was initialized in
     // `Worker::create()` and points at the worker's heap arena.
     prepare_css_asts_for_chunk_impl(
         unsafe { &mut *linker },
         unsafe { &mut *chunk },
-        unsafe { &*worker.allocator },
+        unsafe { &*worker.arena },
     );
 }
 
@@ -297,7 +297,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 b"text/css",
                                 strings::trim(print_result.code.as_slice(), b" \n\r\t"),
                             );
-                            // PORT NOTE: Zig allocated into the worker arena (`allocator`).
+                            // PORT NOTE: Zig allocated into the worker arena (`arena`).
                             // `encode_string_as_shortest_data_url` returns a heap `Vec<u8>`;
                             // copy it into the worker bump so ownership matches Zig (freed
                             // at bundle teardown via arena reset). SAFETY: arena outlives

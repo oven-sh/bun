@@ -88,7 +88,7 @@ pub struct BundleThread<C: Node> {
 /// Rust those become trait accessors so the generic `BundleThread<C>` stays
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
 pub trait CompletionStruct: Node + Send + 'static {
-    /// Zig: `completion.configureBundler(transpiler, allocator)` — `allocator`
+    /// Zig: `completion.configureBundler(transpiler, arena)` — `arena`
     /// is the per-build mimalloc heap that backs `transpiler`, so the two
     /// share lifetime `'a` (option fields like `optimize_imports: &'a StringSet`
     /// borrow from `bump`).
@@ -117,10 +117,10 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// naming the concrete struct.
     fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
-    /// Zig: `const transpiler = try allocator.create(bun.Transpiler);` followed by
-    /// `try completion.configureBundler(transpiler, allocator);` — Zig left the
+    /// Zig: `const transpiler = try arena.create(bun.Transpiler);` followed by
+    /// `try completion.configureBundler(transpiler, arena);` — Zig left the
     /// `Transpiler` `undefined` and let `configureBundler` initialize it in place.
-    /// Rust's `Transpiler<'a>` has borrow-carrying fields (`allocator: &'a Arena`,
+    /// Rust's `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
     /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
     /// configure pair is folded into one trait call returning the
     /// arena-allocated, fully-configured transpiler.
@@ -129,7 +129,7 @@ pub trait CompletionStruct: Node + Send + 'static {
         bump: &'a Arena,
     ) -> Result<&'a mut Transpiler<'a>, bun_core::Error>;
 
-    /// Zig: `try BundleV2.init(transpiler, null, allocator, jsc.AnyEventLoop.init(allocator),
+    /// Zig: `try BundleV2.init(transpiler, null, arena, jsc.AnyEventLoop.init(arena),
     /// false, jsc.WorkPool.get(), heap)` → wire `this.{plugins,completion,file_map}`
     /// from `self` → `completion.transpiler = this` → `this.runFromJSInNewThread(...)`
     /// → on success `self.set_result(Value(..))` → `this.deinitWithoutFreeingArena()`;
@@ -141,7 +141,7 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// proves this body is `JSBundleCompletionTask`-specific, so the
     /// construction + run is delegated to the trait impl in T6, which has
     /// access to the concrete event-loop / work-pool wiring. The shared
-    /// scaffolding (arena, AST allocator push/pop, log copy,
+    /// scaffolding (arena, AST arena push/pop, log copy,
     /// `completeOnBundleThread`) stays in `generate_in_new_thread` below.
     fn init_and_run<'a>(
         &mut self,
@@ -299,20 +299,20 @@ impl<C: CompletionStruct> BundleThread<C> {
         let heap = Arena::new();
 
         let bump = &heap;
-        let ast_memory_allocator: &mut js_ast::ASTMemoryAllocator =
+        let ast_memory_store: &mut js_ast::ASTMemoryAllocator =
             bump.alloc(js_ast::ASTMemoryAllocator::new(bump));
-        ast_memory_allocator.reset();
-        ast_memory_allocator.push();
+        ast_memory_store.reset();
+        ast_memory_store.push();
 
-        // Zig: `const transpiler = try allocator.create(bun.Transpiler);`
-        //      `try completion.configureBundler(transpiler, allocator);`
+        // Zig: `const transpiler = try arena.create(bun.Transpiler);`
+        //      `try completion.configureBundler(transpiler, arena);`
         // Folded — see `create_and_configure_transpiler` doc.
         let transpiler = completion.create_and_configure_transpiler(bump)?;
 
         transpiler.resolver.generation = generation;
 
-        // Zig: `const this = try BundleV2.init(transpiler, null, allocator,
-        //       jsc.AnyEventLoop.init(allocator), false, jsc.WorkPool.get(), heap);`
+        // Zig: `const this = try BundleV2.init(transpiler, null, arena,
+        //       jsc.AnyEventLoop.init(arena), false, jsc.WorkPool.get(), heap);`
         // followed by field wiring + `runFromJSInNewThread`. Delegated — see
         // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
         // `completion` can be borrowed again below (Zig stored `*Transpiler`).
@@ -326,7 +326,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
         );
 
-        // PORT NOTE: Zig's overlapping `defer { ast_memory_allocator.pop();
+        // PORT NOTE: Zig's overlapping `defer { ast_memory_store.pop();
         // this.deinitWithoutFreeingArena(); }` + `errdefer { wait_groups; copy log }`
         // captured ≥2 disjoint &mut borrows. Restructured as straight-line: log copy
         // runs on both paths; `completeOnBundleThread` only on success (the error
@@ -344,7 +344,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             completion.complete_on_bundle_thread();
         }
 
-        ast_memory_allocator.pop();
+        ast_memory_store.pop();
         run
     }
 }

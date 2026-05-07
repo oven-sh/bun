@@ -84,12 +84,12 @@ mod ext {
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
         let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
             // PORT NOTE: reshaped for borrowck — `get_import_records` borrows
-            // &mut *dest, so capture allocator/filename first.
-            let allocator = dest.allocator;
+            // &mut *dest, so capture arena/filename first.
+            let arena = dest.arena;
             // SAFETY: filename borrows the printer arena/options which outlive `dest`.
             let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
             let records = dest.get_import_records()?;
-            Some(dependencies::UrlDependency::new(allocator, this, filename, records))
+            Some(dependencies::UrlDependency::new(arena, this, filename, records))
         } else {
             None
         };
@@ -105,7 +105,7 @@ mod ext {
             dest.write_char(b')')?;
 
             if let Some(dependencies) = &mut dest.dependencies {
-                // PORT NOTE: bun.handleOom dropped — Vec::push aborts on OOM via global allocator
+                // PORT NOTE: bun.handleOom dropped — Vec::push aborts on OOM via global arena
                 dependencies.push(crate::Dependency::Url(d));
             }
 
@@ -123,7 +123,7 @@ mod ext {
         };
 
         if dest.minify && !is_internal {
-            // PERF(port): was std.Io.Writer.Allocating with dest.allocator — using Vec<u8>; profile in Phase B
+            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile in Phase B
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             let _ = Token::UnquotedUrl(url).to_css_generic(&mut buf);
@@ -304,7 +304,7 @@ impl<'bump> DeepClone<'bump> for Token {
 
 // PERF(port): css is listed as an AST crate (arena-backed) in PORTING.md, but
 // LIFETIMES.tsv pre-classified the token vecs here as plain `Vec<TokenOrValue>`.
-// Phase A drops allocator params and uses global-alloc `Vec`; Phase B may need
+// Phase A drops arena params and uses global-alloc `Vec`; Phase B may need
 // to thread `&'bump Bump` if profiling shows it.
 
 /// Zig: `pub fn Result(comptime T: type) type` → `Maybe(T, ParseError(ParserError))`.

@@ -135,7 +135,7 @@ impl SerializedFailure {
         debug_assert!(!messages.is_empty());
 
         // Avoid small re-allocations without requesting so much from the heap
-        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.allocator())) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.arena())) — profile in Phase B
         let mut payload: Vec<u8> = Vec::with_capacity(65536);
         let w = &mut payload;
 

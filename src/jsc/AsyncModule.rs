@@ -1399,7 +1399,6 @@ impl AsyncModule {
         }
 
         Ok(ResolvedSource {
-            allocator: core::ptr::null_mut(),
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
             specifier: BunString::init(specifier),
             source_url: BunString::init(path.text),

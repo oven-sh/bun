@@ -52,7 +52,7 @@ pub struct TSNamespaceScope {
     pub arg_ref: Ref,
 
     /// This is shared between all sibling namespace blocks
-    // LIFETIMES.tsv: ARENA — p.allocator.create(Pair); &pair.map; shared across sibling scopes
+    // LIFETIMES.tsv: ARENA — p.arena.create(Pair); &pair.map; shared across sibling scopes
     pub exported_members: *mut TSNamespaceMemberMap,
 
     /// This is a lazily-generated map of identifiers that actually represent

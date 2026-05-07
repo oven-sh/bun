@@ -720,7 +720,7 @@ impl<S: SizeHandlerSpec> Default for SizeHandler<S> {
 
 // PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature +
 // PropertyHandlerContext::{targets,add_logical_rule} are real now.
-// `context.allocator` was dropped from PropertyHandlerContext; the arena is
+// `context.arena` was dropped from PropertyHandlerContext; the arena is
 // recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl<S: SizeHandlerSpec> SizeHandler<S> {
     // ---- @field(this, field) replacements ----
@@ -863,7 +863,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 dest,
                 context,
             );
-            // PORT NOTE: Zig stored `property.deepClone(allocator)`; reconstruct
+            // PORT NOTE: Zig stored `property.deepClone(arena)`; reconstruct
             // via the spec's `make_X(extract_X)` pair (same observable shape).
             self.logical_property_helper(
                 LogicalSlot::BlockStart,
@@ -1097,7 +1097,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             self.flush(dest, context);
         }
 
-        // Zig: `if (@field(this, field)) |*p| p.deinit(context.allocator);`
+        // Zig: `if (@field(this, field)) |*p| p.deinit(context.arena);`
         // Drop handles deinit; assigning over the Option drops the old value.
         *self.logical_slot(field) = Some(val);
         self.category = PropertyCategory::Logical;

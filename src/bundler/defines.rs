@@ -208,7 +208,7 @@ impl DefineExt for Define {
             list.extend_from_slice(existing);
             // PERF(port): was appendAssumeCapacity — profile in Phase B
             list.push(DotDefine { parts, data: value_define.clone() });
-            // Zig: define.allocator.free(gpe.value_ptr.*); — handled by Vec drop on assign
+            // Zig: define.arena.free(gpe.value_ptr.*); — handled by Vec drop on assign
             *existing = list;
         } else {
             let mut list: Vec<DotDefine> = Vec::with_capacity(1);
@@ -497,7 +497,7 @@ impl DefineDataExt for DefineData {
     }
 }
 
-// var nan_val = try allocator.create(js_ast.E.Number);
+// var nan_val = try arena.create(js_ast.E.Number);
 #[allow(dead_code)]
 const NAN_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
 

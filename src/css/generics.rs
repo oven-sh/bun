@@ -95,7 +95,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Option<T> {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump T {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // Zig: `bun.create(allocator, TT, deepClone(TT, this.*, allocator))`
+        // Zig: `bun.create(arena, TT, deepClone(TT, this.*, arena))`
         bump.alloc((**self).deep_clone(bump))
     }
 }
@@ -112,7 +112,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // Zig: `css.deepClone(T, allocator, this)` → alloc capacity, element-wise deepClone.
+        // Zig: `css.deepClone(T, arena, this)` → alloc capacity, element-wise deepClone.
         // PERF(port): Zig fast-paths simple-copy types with @memcpy — profile in Phase B.
         let mut out = ArrayList::with_capacity_in(self.len(), bump);
         for item in self.iter() {

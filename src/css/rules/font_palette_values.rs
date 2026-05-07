@@ -4,12 +4,12 @@ use crate::css_values::color::CssColor;
 use crate::css_values::ident::DashedIdent;
 use crate::{PrintErr, Printer};
 
-// PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` via `input.allocator()`.
+// PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` via `input.arena()`.
 // Phase B: thread `bump: &'bump Bump` and switch to `bun_alloc::ArenaVec<'bump, T>`
 // across the css crate in one pass (cascades lifetimes through every rule type).
 // Same pass must also restore the dropped `std.mem.Allocator` param on `deep_clone(&self)`
 // and `ParserOptions::default()` as `bump: &'bump Bump` — css is an AST crate, so the
-// allocator param is the arena, not deletable.
+// arena param is the arena, not deletable.
 type ArrayList<T> = Vec<T>;
 
 /// A [@font-palette-values](https://drafts.csswg.org/css-fonts-4/#font-palette-values) rule.
@@ -54,7 +54,7 @@ impl FontPaletteValuesRule {
         while let Some(result) = parser.next() {
             if let Ok(decl) = result {
                 properties.push(decl);
-                // PERF(port): was `append(input.allocator(), decl) catch unreachable`
+                // PERF(port): was `append(input.arena(), decl) catch unreachable`
             }
         }
 
@@ -272,7 +272,7 @@ const _: () = {
             }
 
             input.reset(&state);
-            // PERF(port): Zig passed `input.allocator()` + `null` here.
+            // PERF(port): Zig passed `input.arena()` + `null` here.
             let opts = ParserOptions::default(None);
             let custom = CustomProperty::parse(CustomPropertyName::from_str(name), input, &opts)?;
             Ok(FontPaletteValuesProperty::Custom(custom))
@@ -325,5 +325,5 @@ const _: () = {
 //   source:     src/css/rules/font_palette_values.zig (294 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      structs/enums un-gated except FontPaletteValuesProperty (payloads need gated_prop! properties::{font,custom}); ArrayList=Vec + deep_clone/ParserOptions allocator dropped (arena 'bump threading deferred to Phase B crate-wide pass); nested parser namespaces → trait impls; parse/to_css/deep_clone gated on properties::{font,custom} + RuleBodyParser + CSSIntegerFns + DeepClone
+//   notes:      structs/enums un-gated except FontPaletteValuesProperty (payloads need gated_prop! properties::{font,custom}); ArrayList=Vec + deep_clone/ParserOptions arena dropped (arena 'bump threading deferred to Phase B crate-wide pass); nested parser namespaces → trait impls; parse/to_css/deep_clone gated on properties::{font,custom} + RuleBodyParser + CSSIntegerFns + DeepClone
 // ──────────────────────────────────────────────────────────────────────────

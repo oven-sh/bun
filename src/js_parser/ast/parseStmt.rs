@@ -79,7 +79,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
             // laundering (forbidden per PORTING.md §Forbidden patterns).
             let ts_decorators_slice: &'a [Expr] =
-                p.allocator.alloc_slice_copy(ts_decorators.slice());
+                p.arena.alloc_slice_copy(ts_decorators.slice());
             opts.ts_decorators = Some(DeferredTsDecorators {
                 values: ts_decorators_slice,
                 scope_index,
@@ -334,7 +334,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // its `Result`, covering every `?` early-exit as well as explicit returns.
         let result: Result<Stmt> = (|| {
             p.lexer.expect(T::TOpenBrace)?;
-            let mut cases = bun_alloc::ArenaVec::<js_ast::Case>::new_in(p.allocator);
+            let mut cases = bun_alloc::ArenaVec::<js_ast::Case>::new_in(p.arena);
             let mut found_default = false;
             let mut stmt_opts = ParseStatementOptions {
                 lexical_decl: LexicalDecl::AllowAll,
@@ -342,7 +342,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             };
             let mut value: Option<js_ast::Expr> = None;
             while p.lexer.token != T::TCloseBrace {
-                let mut body = StmtList::new_in(p.allocator);
+                let mut body = StmtList::new_in(p.arena);
                 value = None;
                 if p.lexer.token == T::TDefault {
                     if found_default {
@@ -1154,14 +1154,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // "export * from 'path'"
                     p.lexer.expect_contextual_keyword(b"from")?;
                     path = p.parse_path()?;
-                    // Zig: `fs.PathName.init(path.text).nonUniqueNameString(allocator)` —
+                    // Zig: `fs.PathName.init(path.text).nonUniqueNameString(arena)` —
                     // sanitize the basename into an identifier and copy into the arena.
                     let name: &'a [u8] = {
                         use std::io::Write as _;
                         let base = fs::PathName::init(path.text).non_unique_name_string_base();
                         let mut buf: Vec<u8> = Vec::new();
                         write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
-                        p.allocator.alloc_slice_copy(&buf)
+                        p.arena.alloc_slice_copy(&buf)
                     };
                     namespace_ref = p.store_name_in_ref(name)?;
                 }
@@ -1255,7 +1255,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         )
                         .expect("unreachable");
                         // TODO(port): store_name_in_ref expects arena-owned slice; verify lifetime
-                        p.store_name_in_ref(p.allocator.alloc_slice_copy(&buf))?
+                        p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))?
                     };
 
                     if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1712,7 +1712,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         let mut _decls =
                                             bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
                                                 local.decls.len_u32() as usize,
-                                                p.allocator,
+                                                p.arena,
                                             );
                                         for decl in local.decls.slice() {
                                             Self::extract_decls_for_binding(

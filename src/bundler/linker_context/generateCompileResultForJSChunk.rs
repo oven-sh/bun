@@ -105,10 +105,10 @@ fn generate_compile_result_for_js_chunk_impl(
 
     // Client and server bundles for Bake must be globally allocated, as they
     // must outlive the bundle task.
-    // TODO(port): runtime allocator selection (dev_server vs default) —
+    // TODO(port): runtime arena selection (dev_server vs default) —
     // `DevServerHandle` does not yet expose an arena handle, and
-    // `BufferWriter::init()` / `DeclCollector.decls` use the global allocator
-    // in the Rust port. Once `dispatch::DevServerHandle::allocator()` exists,
+    // `BufferWriter::init()` / `DeclCollector.decls` use the global arena
+    // in the Rust port. Once `dispatch::DevServerHandle::arena()` exists,
     // thread it here so dev-server bundles outlive the worker arena.
     let _ = c.dev_server;
 
@@ -137,13 +137,13 @@ fn generate_compile_result_for_js_chunk_impl(
     let collect_decls = c.options.generate_bytecode_cache
         && c.options.output_format == OutputFormat::Esm
         && c.options.compile;
-    // PORT NOTE: Zig threaded `allocator` (dev_server or default) into
+    // PORT NOTE: Zig threaded `arena` (dev_server or default) into
     // DeclCollector; the Rust DeclCollector wants `*const Arena`. Use the
-    // worker heap for now (see TODO above re: dev_server allocator).
-    let mut dc = DeclCollector { allocator: worker.allocator, ..Default::default() };
+    // worker heap for now (see TODO above re: dev_server arena).
+    let mut dc = DeclCollector { arena: worker.arena, ..Default::default() };
 
-    // SAFETY: worker.allocator points at worker.heap, initialized in Worker::create.
-    let worker_alloc = unsafe { &*worker.allocator };
+    // SAFETY: worker.arena points at worker.heap, initialized in Worker::create.
+    let worker_alloc = unsafe { &*worker.arena };
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
     // touches `chunk.renamer` through its `chunk` parameter (Zig passes the renamer
     // union by value alongside `*Chunk`); take a raw-ptr view so borrowck doesn't
@@ -202,5 +202,5 @@ pub use crate::ParseTask;
 //   source:     src/bundler/linker_context/generateCompileResultForJSChunk.zig (110 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      @fieldParentPtr parent type for Worker::get assumed BundleV2; Worker::get + scopeguard for unget; show_crash_trace gated by #[cfg(feature)]; dev_server allocator selection deferred (DevServerHandle has no arena accessor yet)
+//   notes:      @fieldParentPtr parent type for Worker::get assumed BundleV2; Worker::get + scopeguard for unget; show_crash_trace gated by #[cfg(feature)]; dev_server arena selection deferred (DevServerHandle has no arena accessor yet)
 // ──────────────────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ use crate::AllocError;
 /// `bun.default_allocator`. In Rust the global allocator *is* mimalloc (via
 /// `#[global_allocator]`), so the default-vs-custom branch collapses and this is
 /// `Box::new`.
-// PORT NOTE: `allocator: std.mem.Allocator` param deleted per §Allocators (non-AST
+// PORT NOTE: `std.mem.Allocator param` param deleted per §Allocators (non-AST
 // crate). The `Environment.allow_assert && isDefault(allocator)` branch is gone with it.
 #[inline]
 pub fn create<T>(value: T) -> Result<Box<T>, AllocError> {

@@ -118,7 +118,7 @@ pub enum UnresolvedIndex<'a> {
     Html(&'a HTMLBundleRoute),
 }
 
-// Zig `pub fn deinit(rb: *RouteBundle, allocator: Allocator) void` is fully subsumed by Drop:
+// Zig `pub fn deinit(rb: *RouteBundle, std.mem.Allocator param) void` is fully subsumed by Drop:
 //   - client_bundle: Option<Arc<StaticRoute>> drops (== blob.deref())
 //   - Framework: Strong fields drop (== .deinit())
 //   - HTML: bundled_html_text Box<[u8]> drops (== allocator.free(text))

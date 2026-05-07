@@ -57,7 +57,7 @@ pub struct ComptimeClap<Id> {
     pub flags: Vec<bool>,
     pub pos: Box<[&'static [u8]]>,
     pub passthrough_positionals: Box<[&'static [u8]]>,
-    // `allocator: mem.Allocator` field deleted — global mimalloc (see PORTING.md §Allocators).
+    // `mem.Allocator param` field deleted — global mimalloc (see PORTING.md §Allocators).
 
     // Zig captures `converted_params` as a comptime const on the returned type; Rust
     // carries it as data so `flag`/`option`/`options`/`has_flag` can resolve names.

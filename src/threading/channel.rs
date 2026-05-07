@@ -74,7 +74,7 @@ impl<'a, T: Copy> Channel<T, SliceBuffer<'a, T>> {
 impl<T: Copy> Channel<T, DynamicBuffer<T>> {
     #[inline]
     pub fn init_dynamic() -> Self {
-        // PORT NOTE: Zig took `allocator: std.mem.Allocator`; dropped per
+        // PORT NOTE: Zig took `std.mem.Allocator param`; dropped per
         // §Allocators (non-AST crate uses global mimalloc).
         Self::with_buffer(LinearFifo::<T, DynamicBuffer<T>>::init())
     }

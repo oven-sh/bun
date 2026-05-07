@@ -128,7 +128,7 @@ impl FlexFlow {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
         // Both fields are Copy enum-property keywords.
         self.clone()
     }
@@ -247,7 +247,7 @@ impl Flex {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
         self.clone()
     }
 
@@ -589,7 +589,7 @@ impl FlexHandler {
                 maybe_flush!($prop, $val, $vp);
 
                 // Otherwise, update the value and add the prefix
-                // PORT NOTE: Zig threaded `context.allocator` into `css.generic.deepClone`;
+                // PORT NOTE: Zig threaded `context.arena` into `css.generic.deepClone`;
                 // every payload here is `Clone` (Copy enums / f32 / i32 / LengthPercentageOrAuto),
                 // so `.clone()` is the faithful equivalent.
                 if let Some(field) = &mut self.$prop {
@@ -676,7 +676,7 @@ impl FlexHandler {
             Property::Unparsed(val) => {
                 if Self::is_flex_property(&val.property_id) {
                     self.flush(dest, context);
-                    // PORT NOTE: Zig pushed `property.deepClone(context.allocator)`. `Property`
+                    // PORT NOTE: Zig pushed `property.deepClone(context.arena)`. `Property`
                     // has no blanket `deep_clone` yet; reconstruct from the matched payload.
                     let bump = dest.bump();
                     dest.push(Property::Unparsed(val.deep_clone(bump)));
@@ -728,7 +728,7 @@ impl FlexHandler {
                         dest.push(Property::$variant((val, prefix)));
                     } else {
                         // css.generic.eql(comptime T: type, lhs: *const T, rhs: *const T)
-                        // css.generic.deinit(@TypeOf(val), &val, ctx.allocator);
+                        // css.generic.deinit(@TypeOf(val), &val, ctx.arena);
                     }
                 }
             }};

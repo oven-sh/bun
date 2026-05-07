@@ -371,7 +371,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .jsx
                             .fragment
                             .iter()
-                            .map(|b| -> &'a [u8] { p.allocator.alloc_slice_copy(b) })
+                            .map(|b| -> &'a [u8] { p.arena.alloc_slice_copy(b) })
                             .collect();
                         break 'tagger p
                             .jsx_strings_to_member_expression(expr.loc, &parts)
@@ -448,7 +448,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .jsx
                             .factory
                             .iter()
-                            .map(|b| -> &'a [u8] { p.allocator.alloc_slice_copy(b) })
+                            .map(|b| -> &'a [u8] { p.arena.alloc_slice_copy(b) })
                             .collect();
                         p.jsx_strings_to_member_expression(expr.loc, &parts)
                             .expect("unreachable")
@@ -459,7 +459,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // The full helper is Pragma-shape-blocked, so replicate the side-effect
                         // for the Automatic + key-after-spread path and discard the result.
                         if let Some(first) = p.options.jsx.factory.first() {
-                            let name: &'a [u8] = p.allocator.alloc_slice_copy(first);
+                            let name: &'a [u8] = p.arena.alloc_slice_copy(first);
                             let _ = p.find_symbol(expr.loc, name).expect("unreachable");
                         }
                         p.jsx_import(JSXImport::CreateElement, expr.loc)
@@ -761,7 +761,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
-            return e_.fold(p.allocator, expr.loc);
+            return e_.fold(p.arena, expr.loc);
         }
         expr
     }
@@ -861,7 +861,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax {
             if let Some(mut s) = e_.index.data.e_string() {
-                if !s.is_utf16 && s.is_identifier(p.allocator) {
+                if !s.is_utf16 && s.is_identifier(p.arena) {
                     let dot = p.new_expr(
                         E::Dot {
                             name: s.data,
@@ -987,7 +987,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if !s.is_utf16 {
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
-                        if p.options.features.minify_syntax && s.is_identifier(p.allocator) {
+                        if p.options.features.minify_syntax && s.is_identifier(p.arena) {
                             let dot = p.new_expr(
                                 E::Dot {
                                     name: s.data,
@@ -1179,7 +1179,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         if p.options.features.minify_syntax {
-                            if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.allocator) {
+                            if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.arena) {
                                 return exp;
                             }
                             if let Data::EImportMetaMain(m) = &mut e_.value.data {
@@ -1516,7 +1516,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && spread_item_count > 0
             && in_.assign_target == js_ast::AssignTarget::None
         {
-            if let Ok(items) = e_.inline_spread_of_array_literals(p.allocator, spread_item_count) {
+            if let Ok(items) = e_.inline_spread_of_array_literals(p.arena, spread_item_count) {
                 e_.items = items;
             }
         }
@@ -1594,7 +1594,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     && matches!(property.key.expect("infallible: prop has key").data, Data::EString(..))
                 {
                     let key_str = property.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked");
-                    // PORT NOTE: Zig `string(allocator)` transcodes UTF-16; while
+                    // PORT NOTE: Zig `string(arena)` transcodes UTF-16; while
                     // E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).
                     p.decorator_class_name = if !key_str.is_utf16 { Some(key_str.data.slice()) } else { None };
@@ -2164,7 +2164,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if p.options.features.minify_syntax {
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
-                p.allocator,
+                p.arena,
                 &mut *e_,
                 &p.symbols,
                 expr.loc,
@@ -2293,7 +2293,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PERF(port): was arena dupe — profile in Phase B
         // SAFETY: `body.stmts` is an arena-owned slice (StmtNodeList = *mut [Stmt]).
         let body_slice: &[Stmt] = unsafe { &*e_.body.stmts };
-        let dupe: &'a mut [Stmt] = p.allocator.alloc_slice_copy(body_slice);
+        let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(body_slice);
 
         // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
         let args_mut: &mut [G::Arg] = unsafe { e_.args.slice_mut() };
@@ -2316,19 +2316,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.react_refresh.hook_ctx_storage =
             Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-        // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.allocator, dupe)` takes ownership of
+        // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.arena, dupe)` takes ownership of
         // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; Phase B may
         // want a custom arena Vec that can. Left as a copy with PERF note.
         // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B
         let mut stmts_list =
-            bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.allocator);
+            bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
         let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
-        // Zig: `p.allocator.free(e_.body.stmts)` — arena-backed, no individual free in Rust.
+        // Zig: `p.arena.free(e_.body.stmts)` — arena-backed, no individual free in Rust.
         p.pop_scope();
         p.pop_scope();
 

@@ -248,7 +248,7 @@ macro_rules! impl_from_f64_sat {
 impl_from_f64_sat!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
 // typedAllocator / namedAllocator — heap_breakdown is macOS-only profiling.
-// In Rust the global allocator handles this; callers just use Box/Vec.
+// In Rust the global pool handles this; callers just use Box/Vec.
 // TODO(port): heap_breakdown integration via #[global_allocator] wrapper
 
 // ─── PlatformIOVec ────────────────────────────────────────────────────────────
@@ -1278,8 +1278,8 @@ impl<T> DebugOnlyDisabler<T> {
 // stable Rust — Phase B: macro_rules! to stamp per-type statics.
 
 // FailingAllocator / failing_allocator — Rust has no equivalent vtable concept;
-// callers that needed "uninitialized allocator" should use Option<&dyn Allocator>.
-// TODO(port): failing_allocator — replace with panic-on-use allocator if needed
+// callers that needed "uninitialized pool" should use Option<&dyn Allocator>.
+// TODO(port): failing_allocator — replace with panic-on-use pool if needed
 
 // ─── reload process ───────────────────────────────────────────────────────────
 static RELOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -1562,21 +1562,21 @@ impl StringMap {
 // ─── HiveRef ──────────────────────────────────────────────────────────────────
 pub struct HiveRef<'a, T, const CAPACITY: u16> {
     pub ref_count: u32,
-    pub allocator: &'a mut bun_collections::HiveArrayFallback<HiveRef<'a, T, CAPACITY>, CAPACITY>,
+    pub pool: &'a mut bun_collections::HiveArrayFallback<HiveRef<'a, T, CAPACITY>, CAPACITY>,
     pub value: T,
 }
 
 impl<'a, T, const CAPACITY: u16> HiveRef<'a, T, CAPACITY> {
     pub fn init(
         value: T,
-        allocator: &'a mut bun_collections::HiveArrayFallback<HiveRef<'a, T, CAPACITY>, CAPACITY>,
+        pool: &'a mut bun_collections::HiveArrayFallback<HiveRef<'a, T, CAPACITY>, CAPACITY>,
     ) -> Result<&'a mut Self, OOM> {
-        let this = allocator.try_get()?;
+        let this = pool.try_get()?;
         // SAFETY: try_get returns uninitialized slot; we fully init it here
         unsafe {
             core::ptr::write(
                 this,
-                HiveRef { ref_count: 1, allocator, value },
+                HiveRef { ref_count: 1, pool, value },
             );
         }
         Ok(this)
@@ -1592,10 +1592,10 @@ impl<'a, T, const CAPACITY: u16> HiveRef<'a, T, CAPACITY> {
         self.ref_count = ref_count - 1;
         if ref_count == 1 {
             // TODO(port): @hasDecl(T, "deinit") — Drop on T handles this
-            // SAFETY: self came from allocator.try_get()
+            // SAFETY: self came from pool.try_get()
             unsafe {
-                let allocator: *mut _ = self.allocator;
-                (*allocator).put(self);
+                let pool: *mut _ = self.pool;
+                (*pool).put(self);
             }
             return None;
         }
@@ -3100,6 +3100,6 @@ pub fn get_use_system_ca(
 //   source:     src/bun.zig (3824 lines)
 //   confidence: low
 //   todos:      44
-//   notes:      Root re-export hub; heavy comptime reflection (span/sliceTo/serializable/ThreadlocalBuffers/MakePath) stubbed with TODO(port); allocator params erased per guide; argv stored as Vec<Box<ZStr>>; timespec::MockMode nesting reshaped (runtime param + PERF(port) markers).
+//   notes:      Root re-export hub; heavy comptime reflection (span/sliceTo/serializable/ThreadlocalBuffers/MakePath) stubbed with TODO(port); pool params erased per guide; argv stored as Vec<Box<ZStr>>; timespec::MockMode nesting reshaped (runtime param + PERF(port) markers).
 // ──────────────────────────────────────────────────────────────────────────
 

@@ -44,7 +44,7 @@ pub use super::ref_defs::RefDef;
 // lifetime. PORTING.md says "no struct lifetimes in Phase A", but raw-ptr here
 // would obscure every `ch()` call; one obvious `'a` is the honest mapping.
 pub struct Parser<'a> {
-    // Zig field `allocator: Allocator` — dropped; global mimalloc.
+    // Zig field `std.mem.Allocator` param — dropped; global mimalloc.
     pub text: &'a [u8],
     pub size: OFF,
     pub flags: Flags,

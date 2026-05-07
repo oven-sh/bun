@@ -42,7 +42,7 @@ impl TrackList {
 
             if let Some(track_size) = input.try_parse(TrackSize::parse).ok() {
                 // TODO: error handling
-                // TODO(port): Zig original omits allocator arg here (`items.append(.{...})`); mirroring with input.allocator()
+                // TODO(port): Zig original omits arena arg here (`items.append(.{...})`); mirroring with input.arena()
                 items.push(TrackListItem::TrackSize(track_size));
             } else if let Some(repeat) = input.try_parse(TrackRepeat::parse).ok() {
                 // TODO: error handling
@@ -313,7 +313,7 @@ impl TrackRepeat {
             i.expect_comma()?;
 
             // TODO: this code will not compile if used
-            // TODO(port): Zig calls `bun.Vec(T).init(i.allocator)` — using default + push(alloc, ..) here
+            // TODO(port): Zig calls `bun.Vec(T).init(i.arena)` — using default + push(alloc, ..) here
             let mut line_names = Vec::<CustomIdentList>::default();
             let mut track_sizes = Vec::<TrackSize>::default();
 
@@ -509,7 +509,7 @@ impl GridTemplateAreas {
             .ok()
         {
             let s = unsafe { &*s };
-            let parsed_columns = match Self::parse_string(input.allocator(), s, &mut tokens) {
+            let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {
                     // TODO(port): Zig uses `.{input.newError(.qualified_rule_invalid)}` — anonymous struct shorthand; mapping to Err(..)

@@ -262,7 +262,7 @@ fn apply_patch(
     patch_dir: Fd,
     state: &mut ApplyState,
 ) -> sys::Result<()> {
-    // PERF(port): was arena.allocator().dupeZ — profile in Phase B
+    // PERF(port): was arena.arena().dupeZ — profile in Phase B
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
     // Need to get the mode of the original file

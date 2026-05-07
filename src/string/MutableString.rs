@@ -27,7 +27,7 @@ pub struct SocketBuffer {
 
 #[derive(Default, Clone)]
 pub struct MutableString {
-    // Zig field `allocator: Allocator` — deleted (global mimalloc).
+    // Zig field `std.mem.Allocator` param — deleted (global mimalloc).
     pub list: Vec<u8>,
 }
 

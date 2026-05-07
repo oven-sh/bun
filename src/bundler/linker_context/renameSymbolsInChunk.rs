@@ -18,7 +18,7 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 /// esbuild does parallelize it.
 // TODO(port): narrow error set
 // TODO(port): bundler is an AST crate (PORTING.md §Allocators) — verify whether caller passes
-// an arena vs default_allocator for the dropped `allocator: std.mem.Allocator` param; if arena,
+// an arena vs default_allocator for the dropped `arena: std.mem.Allocator` param; if arena,
 // thread `bump: &'bump Bump` and switch working Vecs to bun_alloc::ArenaVec<'bump, T>.
 pub fn rename_symbols_in_chunk(
     c: &mut LinkerContext,
@@ -241,7 +241,7 @@ pub fn rename_symbols_in_chunk(
         r.add_top_level_symbol({ stable_ref.r#ref });
     }
 
-    // PORT NOTE: Zig used `r.temp_allocator` for this list; allocator param dropped
+    // PORT NOTE: Zig used `r.temp_arena` for this list; arena param dropped
     let mut sorted: Vec<u32> = Vec::new();
 
     for &source_index in files_in_order {

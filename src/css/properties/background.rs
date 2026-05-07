@@ -216,16 +216,16 @@ impl Background {
         &self.image
     }
 
-    pub fn with_image(&self, allocator: &Bump, image: Image) -> Self {
-        let mut ret = self.deep_clone(allocator);
+    pub fn with_image(&self, arena: &Bump, image: Image) -> Self {
+        let mut ret = self.deep_clone(arena);
         ret.image = image;
         ret
     }
 
-    pub fn get_fallback(&self, allocator: &Bump, kind: ColorFallbackKind) -> Background {
-        let mut ret = self.deep_clone(allocator);
-        ret.color = self.color.get_fallback(allocator, kind);
-        ret.image = self.image.get_fallback(allocator, kind);
+    pub fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Background {
+        let mut ret = self.deep_clone(arena);
+        ret.color = self.color.get_fallback(arena, kind);
+        ret.image = self.image.get_fallback(arena, kind);
         ret
     }
 
@@ -234,11 +234,11 @@ impl Background {
     }
 
     #[inline]
-    pub fn deep_clone(&self, allocator: &Bump) -> Self {
+    pub fn deep_clone(&self, arena: &Bump) -> Self {
         // PORT NOTE: `css.implementDeepClone` reflection — expanded field-wise.
         // `Image` is the only non-`Clone` field; it provides its own `deep_clone`.
         Self {
-            image: self.image.deep_clone(allocator),
+            image: self.image.deep_clone(arena),
             color: self.color.clone(),
             position: self.position.clone(),
             repeat: self.repeat,
@@ -286,7 +286,7 @@ impl ExplicitBackgroundSize {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+    pub fn deep_clone(&self, _arena: &Bump) -> Self {
         self.clone()
     }
 }
@@ -339,7 +339,7 @@ impl BackgroundSize {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+    pub fn deep_clone(&self, _arena: &Bump) -> Self {
         self.clone()
     }
 }
@@ -386,7 +386,7 @@ impl BackgroundPosition {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+    pub fn deep_clone(&self, _arena: &Bump) -> Self {
         self.clone()
     }
 }
@@ -453,7 +453,7 @@ impl BackgroundRepeat {
         self == rhs
     }
 
-    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+    pub fn deep_clone(&self, _arena: &Bump) -> Self {
         *self
     }
 }
@@ -626,7 +626,7 @@ pub struct BackgroundHandler {
     pub attachments: Option<SmallList<BackgroundAttachment, 1>>,
     pub origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(port): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.allocator`
+    // TODO(port): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.arena`
     // (CSS arena). Should be `bun_alloc::ArenaVec<'bump, Property>`; thread `'bump` on
     // BackgroundHandler in Phase B.
     pub decls: Vec<Property>,
@@ -683,15 +683,15 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        let allocator = dest.bump();
+        let arena = dest.bump();
         match property {
             Property::BackgroundColor(val) => {
                 flush_helper!(self, color, val, dest, context);
-                self.color = Some(val.deep_clone(allocator));
+                self.color = Some(val.deep_clone(arena));
             }
             Property::BackgroundImage(val) => {
                 self.background_helper(val, property, dest, context);
-                self.images = Some(val.deep_clone(allocator));
+                self.images = Some(val.deep_clone(arena));
             }
             Property::BackgroundPosition(val) => {
                 let len = val.len();
@@ -714,22 +714,22 @@ impl BackgroundHandler {
             }
             Property::BackgroundPositionX(val) => {
                 // Drop replaces deinit; just overwrite.
-                self.x_positions = Some(val.deep_clone(allocator));
+                self.x_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundPositionY(val) => {
-                self.y_positions = Some(val.deep_clone(allocator));
+                self.y_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundRepeat(val) => {
-                self.repeats = Some(val.deep_clone(allocator));
+                self.repeats = Some(val.deep_clone(arena));
             }
             Property::BackgroundSize(val) => {
-                self.sizes = Some(val.deep_clone(allocator));
+                self.sizes = Some(val.deep_clone(arena));
             }
             Property::BackgroundAttachment(val) => {
-                self.attachments = Some(val.deep_clone(allocator));
+                self.attachments = Some(val.deep_clone(arena));
             }
             Property::BackgroundOrigin(val) => {
-                self.origins = Some(val.deep_clone(allocator));
+                self.origins = Some(val.deep_clone(arena));
             }
             Property::BackgroundClip(x) => {
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
@@ -746,27 +746,27 @@ impl BackgroundHandler {
                     // frees it, so any borrow into `self.clips` would be stale
                     // once `flush()` returns. Do not touch it.
                     self.flush(dest, context);
-                    let allocator = dest.bump();
-                    self.clips = Some((val.deep_clone(allocator), vendor_prefix));
+                    let arena = dest.bump();
+                    self.clips = Some((val.deep_clone(arena), vendor_prefix));
                 } else if let Some((clips, vp)) = &mut self.clips {
                     if !SmallList::eql(val, clips) {
-                        *clips = val.deep_clone(allocator);
+                        *clips = val.deep_clone(arena);
                     }
                     vp.insert(vendor_prefix);
                 } else {
-                    self.clips = Some((val.deep_clone(allocator), vendor_prefix));
+                    self.clips = Some((val.deep_clone(arena), vendor_prefix));
                 }
             }
             Property::Background(val) => {
                 let mut images: SmallList<Image, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
-                    images.append_assume_capacity(b.image.deep_clone(allocator));
+                    images.append_assume_capacity(b.image.deep_clone(arena));
                 }
                 self.background_helper(&images, property, dest, context);
-                let allocator = dest.bump();
-                let color = val.last().unwrap().color.deep_clone(allocator);
+                let arena = dest.bump();
+                let color = val.last().unwrap().color.deep_clone(arena);
                 flush_helper!(self, color, &color, dest, context);
-                let allocator = dest.bump();
+                let arena = dest.bump();
                 let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
                     clips.append_assume_capacity(b.clip);
@@ -812,7 +812,7 @@ impl BackgroundHandler {
                 {
                     let sizes = init_small_list_helper!(self, sizes, len);
                     for (i, b) in val.slice().iter().enumerate() {
-                        sizes[i] = b.size.deep_clone(allocator);
+                        sizes[i] = b.size.deep_clone(arena);
                     }
                 }
                 {
@@ -833,9 +833,9 @@ impl BackgroundHandler {
             Property::Unparsed(val) => {
                 if is_background_property(val.property_id) {
                     self.flush(dest, context);
-                    let allocator = dest.bump();
-                    let mut unparsed = val.deep_clone(allocator);
-                    context.add_unparsed_fallbacks(allocator, &mut unparsed);
+                    let arena = dest.bump();
+                    let mut unparsed = val.deep_clone(arena);
+                    context.add_unparsed_fallbacks(arena, &mut unparsed);
                     if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id) {
                         self.flushed_properties.insert(prop);
                     }
@@ -865,8 +865,8 @@ impl BackgroundHandler {
         // targets. In this case, the necessary prefixes will be generated.
         self.has_prefix = val.any(|item: &Image| item.has_vendor_prefix());
         if self.has_prefix {
-            let allocator = dest.bump();
-            self.decls.push(property.deep_clone(allocator));
+            let arena = dest.bump();
+            self.decls.push(property.deep_clone(arena));
         } else if context.targets.browsers.is_some() {
             self.decls.clear();
         }
@@ -877,7 +877,7 @@ impl BackgroundHandler {
             return;
         }
         self.has_any = false;
-        let allocator = dest.bump();
+        let arena = dest.bump();
 
         let mut maybe_color: Option<CssColor> = self.color.take();
         let mut maybe_images: Option<SmallList<Image, 1>> = self.images.take();
@@ -926,7 +926,7 @@ impl BackgroundHandler {
                     clips.1
                 };
                 let clip_property = if clip_prefixes != VendorPrefix::NONE {
-                    Some(Property::BackgroundClip((clips.0.deep_clone(allocator), clip_prefixes)))
+                    Some(Property::BackgroundClip((clips.0.deep_clone(arena), clip_prefixes)))
                 } else {
                     None
                 };
@@ -937,11 +937,11 @@ impl BackgroundHandler {
                 for i in 0..(len as usize) {
                     backgrounds.append_assume_capacity(Background {
                         color: if i == (len as usize) - 1 {
-                            color.deep_clone(allocator)
+                            color.deep_clone(arena)
                         } else {
                             CssColor::default()
                         },
-                        image: images.slice()[i].deep_clone(allocator),
+                        image: images.slice()[i].deep_clone(arena),
                         position: BackgroundPosition {
                             x: x_positions.slice()[i].clone(),
                             y: y_positions.slice()[i].clone(),
@@ -964,7 +964,7 @@ impl BackgroundHandler {
                 // PERF(port): was arena bulk-free / move-then-clear — profile in Phase B
 
                 if self.flushed_properties.is_empty() {
-                    let mut fallbacks = backgrounds.get_fallbacks(allocator, context.targets);
+                    let mut fallbacks = backgrounds.get_fallbacks(arena, context.targets);
                     // PORT NOTE: Vec has no owning iterator; pop in reverse then
                     // re-reverse via a temp Vec to preserve order.
                     let mut tmp: Vec<SmallList<Background, 1>> = Vec::with_capacity(fallbacks.len());
@@ -990,7 +990,7 @@ impl BackgroundHandler {
 
         if let Some(mut color) = maybe_color.take() {
             if !self.flushed_properties.contains(BackgroundProperty::COLOR) {
-                let fallbacks = color.get_fallbacks(allocator, context.targets);
+                let fallbacks = color.get_fallbacks(arena, context.targets);
                 for fallback in fallbacks.into_iter() {
                     push_property!(self, dest, BackgroundColor, BackgroundProperty::BACKGROUND_COLOR, fallback);
                 }
@@ -1000,7 +1000,7 @@ impl BackgroundHandler {
 
         if let Some(mut images) = maybe_images.take() {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
-                let mut fallbacks = images.get_fallbacks(allocator, context.targets);
+                let mut fallbacks = images.get_fallbacks(arena, context.targets);
                 // PORT NOTE: Vec has no owning iterator; pop in reverse then
                 // re-reverse via a temp Vec to preserve order.
                 let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len());
@@ -1058,7 +1058,7 @@ impl BackgroundHandler {
             } else {
                 vp
             };
-            dest.push(Property::BackgroundClip((clips.deep_clone(allocator), prefixes)));
+            dest.push(Property::BackgroundClip((clips.deep_clone(arena), prefixes)));
             self.flushed_properties.insert(BackgroundProperty::CLIP);
         }
 
@@ -1086,11 +1086,11 @@ impl BackgroundHandler {
             // Drop handles deinit.
         }
 
-        let allocator = dest.bump();
+        let arena = dest.bump();
         for decl in self.decls.drain(..) {
             // PORT NOTE: Zig was `appendSlice` (bitwise copy of arena-backed
             // values). `Property` is not `Clone` here, so move out via drain.
-            let _ = allocator;
+            let _ = arena;
             dest.push(decl);
         }
 
@@ -1107,12 +1107,12 @@ impl crate::small_list::ImageFallback for Background {
         Background::get_image(self)
     }
     #[inline]
-    fn with_image(&self, allocator: &Bump, image: Image) -> Self {
-        Background::with_image(self, allocator, image)
+    fn with_image(&self, arena: &Bump, image: Image) -> Self {
+        Background::with_image(self, arena, image)
     }
     #[inline]
-    fn get_fallback(&self, allocator: &Bump, kind: ColorFallbackKind) -> Self {
-        Background::get_fallback(self, allocator, kind)
+    fn get_fallback(&self, arena: &Bump, kind: ColorFallbackKind) -> Self {
+        Background::get_fallback(self, arena, kind)
     }
     #[inline]
     fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {

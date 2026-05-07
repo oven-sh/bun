@@ -320,7 +320,7 @@ impl ModuleInfoDeserialized {
     /// corrupt/truncated data.
     pub fn create_from_cached_record(source: &[u8]) -> Option<Box<ModuleInfoDeserialized>> {
         // PORT NOTE: Zig matched on error.OutOfMemory → bun.outOfMemory(); in
-        // Rust, allocation failure aborts via the global allocator, so only
+        // Rust, allocation failure aborts via the global arena, so only
         // BadModuleInfo remains.
         match Self::create(source) {
             Ok(v) => Some(v),

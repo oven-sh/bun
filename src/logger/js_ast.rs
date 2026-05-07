@@ -1166,7 +1166,7 @@ std::thread_local! {
 /// the same lifetime as the `StoreRef`-backed `Expr` nodes that will reference
 /// it (bulk-freed on `Expr::data_store_reset`). Mirrors Zig call sites that
 /// write `Expr.init(E.String, .{ .data = try allocator.dupe(u8, …) }, …)` with
-/// the long-lived default allocator: callers that build an `EString` from a
+/// the long-lived default arena: callers that build an `EString` from a
 /// scratch buffer must intern the bytes here, not into a function-local
 /// `bumpalo::Bump`, or the resulting `EString.data` dangles once that bump
 /// drops. The lifetime is erased per the Phase-A `Str` convention used by

@@ -1296,7 +1296,7 @@ impl AlignHandler {
             Property::Unparsed(val) => {
                 if is_align_property(&val.property_id) {
                     self.flush(dest, context);
-                    // PORT NOTE: Zig pushed `property.deepClone(context.allocator)`. `Property`
+                    // PORT NOTE: Zig pushed `property.deepClone(context.arena)`. `Property`
                     // has no blanket `Clone` yet; reconstruct from the matched payload (same as flex.rs).
                     let bump = dest.bump();
                     dest.push(Property::Unparsed(val.deep_clone(bump)));

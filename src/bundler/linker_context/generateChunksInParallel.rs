@@ -46,7 +46,7 @@ const BYTECODE_EXTENSION: &str = ".jsc";
 bun_core::declare_scope!(PartRanges, hidden);
 
 /// Promote an arena-backed buffer to `&'static [u8]`. Mirrors Zig's
-/// `c.allocator().dupe(u8, ..)` where the linker arena outlives every reader of
+/// `c.arena().dupe(u8, ..)` where the linker arena outlives every reader of
 /// `Chunk.final_rel_path` / `metafile_chunk_json` / `Log` text. See
 /// `ParseTask.rs::leak_static` and `linker.rs::intern` for the same pattern.
 #[inline]
@@ -82,7 +82,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         debug!(" START {} renamers", chunks.len());
         // PORT NOTE: Zig `defer debug(...)` is moved to end-of-scope explicitly below.
         let ctx = GenerateChunkCtx { chunk: &raw mut chunks[0], c, chunks };
-        // TODO(port): worker_pool.eachPtr signature — allocator param dropped; Rust impl is infallible.
+        // TODO(port): worker_pool.eachPtr signature — arena param dropped; Rust impl is infallible.
         unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
         debug!("  DONE {} renamers", chunks.len());
     }
@@ -90,7 +90,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     if c.source_maps.line_offset_tasks.len() > 0 {
         debug!(" START {} source maps (line offset)", chunks.len());
         c.source_maps.line_offset_wait_group.wait();
-        // PORT NOTE: `c.allocator().free(...)` + `.len = 0` → Vec drop semantics.
+        // PORT NOTE: `c.arena().free(...)` + `.len = 0` → Vec drop semantics.
         c.source_maps.line_offset_tasks = Box::default();
         debug!("  DONE {} source maps (line offset)", chunks.len());
     }
@@ -113,7 +113,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug!(" START {} prepare CSS ast (total count)", total_count);
 
             let mut batch = ThreadPoolLib::Batch::default();
-            // PERF(port): was c.allocator().alloc — using Vec on global mimalloc
+            // PERF(port): was c.arena().alloc — using Vec on global mimalloc
             let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
             // SAFETY: we fully initialize `total_count` slots below before scheduling.
             unsafe { tasks.set_len(total_count) };
@@ -146,7 +146,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     {
-        // PERF(port): was c.allocator().alloc — using Vec on global mimalloc
+        // PERF(port): was c.arena().alloc — using Vec on global mimalloc
         let mut chunk_contexts: Vec<GenerateChunkCtx> = Vec::with_capacity(chunks.len());
         // SAFETY: every element is written in the zip loop below before any read.
         unsafe { chunk_contexts.set_len(chunks.len()) };
@@ -185,7 +185,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
 
             debug!(" START {} compiling part ranges", total_count);
-            // PERF(port): was c.allocator().alloc — using Vec on global mimalloc
+            // PERF(port): was c.arena().alloc — using Vec on global mimalloc
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
             // SAFETY: every slot is written via remaining_part_ranges[0] below.
             unsafe { combined_part_ranges.set_len(total_count) };
@@ -575,7 +575,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     //
     // PORT NOTE: Zig `defer` frees each buffer with `Chunk.IntermediateOutput.allocatorForSize(len)`.
     // Rust `Vec<Option<Box<[u8]>>>` frees via `Drop` (global mimalloc); if `allocatorForSize`
-    // returns a distinct allocator for large buffers, Phase B must restore matched-allocator
+    // returns a distinct arena for large buffers, Phase B must restore matched-arena
     // dealloc here.
     let mut standalone_chunk_contents: Option<Vec<Option<Box<[u8]>>>> = None;
 
@@ -894,7 +894,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 display_size: bytecode.len() as u32,
                                 data: options::OutputFileData::Buffer {
                                     data: bytecode,
-                                    // TODO(port): Zig stores `cached_bytecode.allocator()` for matched dealloc.
+                                    // TODO(port): Zig stores `cached_bytecode.arena()` for matched dealloc.
                                 },
                                 side: Some(side),
                                 entry_point_index: None,

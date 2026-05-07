@@ -53,10 +53,10 @@ impl LinkerContext<'_> {
         // (not RAII), so balance explicitly via scopeguard.
         let worker = scopeguard::guard(worker, |w| w.unget());
 
-        // we must use this allocator here
-        // SAFETY: `Worker::create` initializes `allocator` to point at
+        // we must use this arena here
+        // SAFETY: `Worker::create` initializes `arena` to point at
         // `worker.heap`; valid for the worker's lifetime.
-        let allocator: &Bump = unsafe { &*worker.allocator };
+        let arena: &Bump = unsafe { &*worker.arena };
 
         // PORT NOTE: reshaped for borrowck — Zig held overlapping
         // `&mut graph.meta` / `&graph.meta` borrows; we go through raw column
@@ -73,7 +73,7 @@ impl LinkerContext<'_> {
         // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
         let mut aliases = bun_alloc::ArenaVec::<&[u8]>::with_capacity_in(
             unsafe { (*resolved_exports).count() },
-            allocator,
+            arena,
         );
 
         // counting in here saves us an extra pass through the array
@@ -143,7 +143,7 @@ impl LinkerContext<'_> {
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
         self.create_exports_for_file(
-            allocator,
+            arena,
             id,
             // SAFETY: `resolved_exports` points at one slot of the
             // `meta.resolved_exports` SoA column; `imports_to_bind` is a
@@ -255,7 +255,7 @@ impl LinkerContext<'_> {
             //             continue :outer;
             //         }
             //
-            //         part.symbol_uses.reIndex(allocator) catch unreachable;
+            //         part.symbol_uses.reIndex(arena) catch unreachable;
             //     }
             // }
             if false {
@@ -302,7 +302,7 @@ impl LinkerContext<'_> {
     /// for other files within this method or you will create a data race.
     pub fn create_exports_for_file(
         &mut self,
-        allocator: &Bump,
+        arena: &Bump,
         id: u32,
         resolved_exports: &mut ResolvedExports,
         imports_to_bind: &[RefImportData],
@@ -318,7 +318,7 @@ impl LinkerContext<'_> {
 
         // 1 property per export
         let mut properties =
-            bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), allocator);
+            bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
 
         let mut ns_export_symbol_uses = PartSymbolUseMap::default();
         ns_export_symbol_uses
@@ -346,7 +346,7 @@ impl LinkerContext<'_> {
         // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
         // becomes a `write` + raw-slice carve.
         let stmts_slab: *mut [MaybeUninit<Stmt>] =
-            allocator.alloc_slice_fill_with(stmts_count, |_| MaybeUninit::uninit());
+            arena.alloc_slice_fill_with(stmts_count, |_| MaybeUninit::uninit());
         let mut stmts_head: usize = 0;
         macro_rules! stmts_eat1 {
             ($value:expr) => {{
@@ -407,7 +407,7 @@ impl LinkerContext<'_> {
 
             let fn_body = G::FnBody {
                 stmts: stmts_eat1!(Stmt::allocate(
-                    allocator,
+                    arena,
                     S::Return { value: Some(value) },
                     loc,
                 )),
@@ -415,7 +415,7 @@ impl LinkerContext<'_> {
             };
             properties.push(G::Property {
                 key: Some(Expr::allocate(
-                    allocator,
+                    arena,
                     // TODO: test emoji work as expected (relevant for WASM exports)
                     // SAFETY: `alias` borrows the worker arena which outlives the
                     // link pass; `E::String::data: &'static [u8]` is the arena
@@ -424,7 +424,7 @@ impl LinkerContext<'_> {
                     loc,
                 )),
                 value: Some(Expr::allocate(
-                    allocator,
+                    arena,
                     E::Arrow {
                         prefer_expr: true,
                         body: fn_body,
@@ -476,15 +476,15 @@ impl LinkerContext<'_> {
         // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
         if needs_exports_variable {
             emit_export_stmt!(Stmt::allocate(
-                allocator,
+                arena,
                 S::Local {
                     decls: G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
-                            allocator,
+                            arena,
                             bun_js_parser::ast::b::Identifier { r#ref: exports_ref },
                             loc,
                         ),
-                        value: Some(Expr::allocate(allocator, E::Object::default(), loc)),
+                        value: Some(Expr::allocate(arena, E::Object::default(), loc)),
                     }])
                     .expect("OOM"),
                     ..Default::default()
@@ -506,16 +506,16 @@ impl LinkerContext<'_> {
             let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());
             owned_props.extend(properties.drain(..));
             emit_export_stmt!(Stmt::allocate(
-                allocator,
+                arena,
                 S::SExpr {
                     value: Expr::allocate(
-                        allocator,
+                        arena,
                         E::Call {
                             target: Expr::init_identifier(export_ref, loc),
                             args: js_ast::ExprNodeList::from_slice(&[
                                 Expr::init_identifier(exports_ref, loc),
                                 Expr::allocate(
-                                    allocator,
+                                    arena,
                                     E::Object {
                                         properties: G::PropertyList::move_from_list(owned_props),
                                         ..Default::default()
@@ -557,7 +557,7 @@ impl LinkerContext<'_> {
             let to_common_js_ref = self.runtime_function(b"__toCommonJS");
             emit_export_stmt!(Stmt::assign(
                 Expr::allocate(
-                    allocator,
+                    arena,
                     E::Dot {
                         name: b"exports".into(),
                         name_loc: Loc::EMPTY,
@@ -567,7 +567,7 @@ impl LinkerContext<'_> {
                     Loc::EMPTY,
                 ),
                 Expr::allocate(
-                    allocator,
+                    arena,
                     E::Call {
                         target: Expr::init_identifier(to_common_js_ref, Loc::EMPTY),
                         args: js_ast::ExprNodeList::from_slice(&[Expr::init_identifier(

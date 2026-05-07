@@ -56,7 +56,7 @@ pub struct Options {
     /// Skip installing the package, only running the target command if its
     /// already downloaded. If its not, `bunx` exits with an error.
     pub no_install: bool,
-    // PORT NOTE: `allocator: Allocator` field dropped — global mimalloc.
+    // PORT NOTE: `std.mem.Allocator` param field dropped — global mimalloc.
 }
 
 impl Default for Options {

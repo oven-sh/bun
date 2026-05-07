@@ -59,8 +59,8 @@ pub const WEAK_REF_ENTRY_MAX: usize = 16;
 /// IncrementalGraph stores partial source maps for each file. A
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
-// PORT NOTE: Zig's `dev_allocator: DevAllocator` field is dropped — its sole
-// reader was `Entry.allocator()` which fed `paths`/`files` frees in `deinit`.
+// PORT NOTE: Zig's `dev_arena: DevAllocator` field is dropped — its sole
+// reader was `Entry.arena()` which fed `paths`/`files` frees in `deinit`.
 // In Rust those are `Box`/`Vec` backed by the global mimalloc; the borrowed
 // `AllocationScope` handle would be dead state and would force a lifetime
 // parameter on `Entry`.

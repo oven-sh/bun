@@ -109,8 +109,8 @@ impl SyntaxString {
         match self {
             SyntaxString::Universal => Ok(ParsedComponent::TokenList(TokenList::parse(
                 input,
-                // PORT NOTE: Zig passes `ParserOptions.default(input.allocator(), null)`;
-                // Rust's signature drops the allocator param (global-alloc Phase A).
+                // PORT NOTE: Zig passes `ParserOptions.default(input.arena(), null)`;
+                // Rust's signature drops the arena param (global-alloc Phase A).
                 &ParserOptions::default(None),
                 0,
             )?)),

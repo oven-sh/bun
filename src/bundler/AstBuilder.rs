@@ -210,7 +210,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         )?;
         let name = strings::append(b"import_", &non_unique)?;
         // PORT NOTE: copy into the arena so the raw `*const [u8]` stored on the
-        // Symbol outlives this stack frame (Zig used the parser arena allocator).
+        // Symbol outlives this stack frame (Zig used the parser arena arena).
         let name: &[u8] = self.bump.alloc_slice_copy(&name);
         let namespace_ref = self.new_symbol(SymbolKind::Other, name)?;
 
@@ -379,7 +379,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             target,
             top_level_await_keyword: Range::NONE,
             // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
-            //     renamer.assignNestedScopeSlots(p.allocator, p.scopes.items[0], p.symbols.items)
+            //     renamer.assignNestedScopeSlots(p.arena, p.scopes.items[0], p.symbols.items)
             // else
             //     js_ast.SlotCounts{},
             nested_scope_slot_counts: Default::default(),

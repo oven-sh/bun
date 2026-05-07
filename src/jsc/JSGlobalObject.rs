@@ -100,14 +100,6 @@ impl JSGlobalObject {
         self.as_mut_ptr()
     }
 
-    // PORT NOTE: `allocator()` returned `std.mem.Allocator` (this.bunVM().allocator).
-    // Allocator params are deleted in Rust (global mimalloc); keep as no-op accessor
-    // only if a caller still needs the VM's allocator handle.
-    #[inline]
-    pub fn allocator(&self) {
-        // intentionally no-op; callers should use the global allocator.
-    }
-
     pub fn throw_stack_overflow(&self) -> JsError {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
         unsafe { JSGlobalObject__throwStackOverflow(self) };

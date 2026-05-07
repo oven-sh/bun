@@ -133,18 +133,11 @@ impl CachedBytecode {
 impl bun_alloc::Allocator for CachedBytecode {}
 
 impl CachedBytecode {
-    /// Zig: `.{ .ptr = this, .vtable = VTable }`. The returned `&dyn Allocator`
-    /// fat pointer carries both halves: data = `self`, vtable = the
-    /// `<CachedBytecode as Allocator>` vtable.
-    pub fn allocator(&self) -> &dyn bun_alloc::Allocator {
-        self
-    }
-
     /// Zig: `allocator_.vtable == VTable`. Expressed as concrete-type identity
     /// via the `Allocator::type_id()` hook (the documented Rust mapping for
     /// Zig vtable-pointer equality checks).
-    pub fn is_instance(allocator: &dyn bun_alloc::Allocator) -> bool {
-        bun_alloc::Allocator::type_id(allocator) == core::any::TypeId::of::<CachedBytecode>()
+    pub fn is_instance(alloc: &dyn bun_alloc::Allocator) -> bool {
+        bun_alloc::Allocator::type_id(alloc) == core::any::TypeId::of::<CachedBytecode>()
     }
 }
 

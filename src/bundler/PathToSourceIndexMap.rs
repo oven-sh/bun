@@ -93,5 +93,5 @@ impl PathToSourceIndexMap {
 //   source:     src/bundler/PathToSourceIndexMap.zig (46 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      dropped allocator params (StringHashMapUnmanaged→StringHashMap); keys are arena-borrowed bytes per Zig doc comment; GetOrPutResult API needs bun_collections support
+//   notes:      dropped arena params (StringHashMapUnmanaged→StringHashMap); keys are arena-borrowed bytes per Zig doc comment; GetOrPutResult API needs bun_collections support
 // ──────────────────────────────────────────────────────────────────────────

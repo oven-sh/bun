@@ -47,7 +47,7 @@ impl Time {
                 Calc::Value(v) => {
                     let ret: Time = *v;
                     // redundant allocation
-                    // Zig: vvv.deinit(input.allocator()) — Drop handles this; line deleted.
+                    // Zig: vvv.deinit(input.arena()) — Drop handles this; line deleted.
                     return Ok(ret);
                 }
                 // Time is always compatible, so they will always compute to a value.
@@ -135,7 +135,7 @@ impl Time {
     }
 
     pub fn mul_f32(self, other: f32) -> Time {
-        // Zig allocator param dropped (unused).
+        // Zig arena param dropped (unused).
         match self {
             Time::Seconds(s) => Time::Seconds(s * other),
             Time::Milliseconds(ms) => Time::Milliseconds(ms * other),
@@ -143,7 +143,7 @@ impl Time {
     }
 
     pub fn add_internal(self, other: Time) -> Time {
-        // Zig allocator param dropped (forwarded but ultimately unused).
+        // Zig arena param dropped (forwarded but ultimately unused).
         self.add(other)
     }
 
@@ -153,7 +153,7 @@ impl Time {
     }
 
     pub fn add(self, other: Self) -> Time {
-        // Zig allocator param dropped (unused).
+        // Zig arena param dropped (unused).
         // PORT NOTE: Zig passes `void` ctx + free fn; Rust closure captures nothing.
         self.op(&other, |a, b| a + b)
     }
@@ -207,5 +207,5 @@ impl Time {
 //   source:     src/css/values/time.zig (215 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      op/op_to reshaped from bit-packed switch to tuple match; unused allocator params dropped; into_calc threads &'bump Arena per AST-crate rule.
+//   notes:      op/op_to reshaped from bit-packed switch to tuple match; unused arena params dropped; into_calc threads &'bump Arena per AST-crate rule.
 // ──────────────────────────────────────────────────────────────────────────

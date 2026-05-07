@@ -9,7 +9,7 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as 
 pub struct BuildMessage {
     pub msg: logger::Msg,
     // resolve_result: Resolver.Result,
-    // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc.
+    // PORT NOTE: `std.mem.Allocator param` field dropped — global mimalloc.
     pub logged: bool,
 }
 

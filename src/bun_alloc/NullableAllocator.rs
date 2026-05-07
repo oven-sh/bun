@@ -42,13 +42,13 @@ impl NullableAllocator {
 
     /// True iff `allocator`'s vtable is the global mimalloc vtable.
     #[inline]
-    pub fn is_default(allocator: StdAllocator) -> bool {
-        core::ptr::eq(allocator.vtable, crate::basic::C_ALLOCATOR.vtable)
+    pub fn is_default(alloc: StdAllocator) -> bool {
+        core::ptr::eq(alloc.vtable, crate::basic::C_ALLOCATOR.vtable)
     }
 
     #[inline]
-    pub fn init(allocator: Option<StdAllocator>) -> NullableAllocator {
-        match allocator {
+    pub fn init(alloc: Option<StdAllocator>) -> NullableAllocator {
+        match alloc {
             Some(a) => Self { ptr: a.ptr, vtable: Some(NonNull::from(a.vtable)) },
             None => Self::default(),
         }

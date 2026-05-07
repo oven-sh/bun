@@ -97,7 +97,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 // PERF(port): zero-capacity case carried a zero-size hive in Zig — profile in Phase B.
 pub struct Fallback<T, const CAPACITY: usize> {
     pub hive: HiveArray<T, CAPACITY>,
-    // PORT NOTE: `allocator: std.mem.Allocator` dropped — global mimalloc.
+    // PORT NOTE: `std.mem.Allocator param` dropped — global mimalloc.
 }
 
 impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
@@ -184,12 +184,12 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
 // from Zig's `u16`) to line up with `HiveArray`/`Fallback`'s const generic.
 
 /// Intrusive ref-counted slot allocated from a `HiveArray::Fallback` pool.
-/// `allocator` is a BACKREF (LIFETIMES.tsv class) — the pool strictly outlives
+/// `pool` is a BACKREF (LIFETIMES.tsv class) — the pool strictly outlives
 /// every `HiveRef` it hands out, so a raw pointer is the honest mapping.
 #[repr(C)]
 pub struct HiveRef<T, const CAPACITY: usize> {
     pub ref_count: u32,
-    pub allocator: *mut Fallback<HiveRef<T, CAPACITY>, CAPACITY>,
+    pub pool: *mut Fallback<HiveRef<T, CAPACITY>, CAPACITY>,
     pub value: T,
 }
 
@@ -197,21 +197,21 @@ pub struct HiveRef<T, const CAPACITY: usize> {
 pub type HiveAllocator<T, const CAPACITY: usize> = Fallback<HiveRef<T, CAPACITY>, CAPACITY>;
 
 impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
-    /// Zig: `pub fn init(value, allocator) !*@This()`.
+    /// Zig: `pub fn init(value, pool) !*@This()`.
     ///
     /// # Safety
-    /// `allocator` must be valid for the entire lifetime of the returned
+    /// `pool` must be valid for the entire lifetime of the returned
     /// `HiveRef` (i.e. until its `ref_count` drops to zero and it is `put`
     /// back). Callers hold the pool in a long-lived owner (e.g. `VirtualMachine`).
     pub unsafe fn init(
         value: T,
-        allocator: *mut Fallback<Self, CAPACITY>,
+        pool: *mut Fallback<Self, CAPACITY>,
     ) -> Result<*mut Self, AllocError> {
-        // SAFETY: caller contract — `allocator` is dereferenceable.
-        let this = unsafe { (*allocator).try_get()? };
+        // SAFETY: caller contract — `pool` is dereferenceable.
+        let this = unsafe { (*pool).try_get()? };
         // SAFETY: `try_get` returns an uninitialized slot; we fully initialize it.
         unsafe {
-            core::ptr::write(this, HiveRef { ref_count: 1, allocator, value });
+            core::ptr::write(this, HiveRef { ref_count: 1, pool, value });
         }
         Ok(this)
     }
@@ -227,15 +227,15 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
         let ref_count = self.ref_count;
         self.ref_count = ref_count - 1;
         if ref_count == 1 {
-            let allocator = self.allocator;
-            // SAFETY: `self` was produced by `init` above, so `allocator` is the
+            let pool = self.pool;
+            // SAFETY: `self` was produced by `init` above, so `pool` is the
             // pool that owns this slot and is still live (caller contract on
             // `init`). Zig's `if @hasDecl(T, "deinit") this.value.deinit()` maps
             // to dropping `value` in place; `Fallback::put` then poisons/recycles
             // the slot without running any destructor.
             unsafe {
                 core::ptr::drop_in_place(core::ptr::addr_of_mut!(self.value));
-                (*allocator).put(std::ptr::from_mut::<Self>(self));
+                (*pool).put(std::ptr::from_mut::<Self>(self));
             }
             return None;
         }

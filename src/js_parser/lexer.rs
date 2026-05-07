@@ -14,7 +14,7 @@ use identifier as js_identifier;
 use crate::lexer_tables as tables;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
 use crate::{Indentation, IndentationCharacter};
-// TODO(port): arena threading — js_parser is an AST crate; many `allocator.*` calls below
+// TODO(port): arena threading — js_parser is an AST crate; many `arena.*` calls below
 // should use `&'bump bumpalo::Bump`. For Phase A we keep a `&dyn Allocator`-ish slot and
 // route owned buffers through `Vec`/`Box`.
 use bun_alloc::Arena;
@@ -254,7 +254,7 @@ pub struct ScanResult<'a> {
 /// p.lexer.restore(&snap);
 /// ```
 ///
-/// This struct is `Copy` and intentionally excludes `log`, `source`, `allocator`
+/// This struct is `Copy` and intentionally excludes `log`, `source`, `arena`
 /// (shared/unique borrows that never change across a backtrack) and the three
 /// growable `Vec` buffers (captured as lengths only — `restore()` truncates).
 #[derive(Clone, Copy)]
@@ -344,7 +344,7 @@ pub struct LexerType<
     pub await_keyword_loc: Loc,
     pub fn_or_arrow_start_loc: Loc,
     pub regex_flags_start: Option<u16>,
-    pub allocator: &'a Arena,
+    pub arena: &'a Arena,
     pub string_literal_raw_content: &'a [u8],
     pub string_literal_start: usize,
     pub string_literal_raw_format: StringLiteralRawFormat,
@@ -477,7 +477,7 @@ lexer_impl_header! {
             return Ok(());
         }
 
-        // TODO(port): allocator routing — Zig uses `std.fmt.allocPrint(self.allocator, ..)`.
+        // TODO(port): arena routing — Zig uses `std.fmt.allocPrint(self.arena, ..)`.
         self.log().add_range_error_fmt(Some(self.source), r, args)?;
         self.prev_error_loc = r.loc;
 
@@ -501,7 +501,7 @@ lexer_impl_header! {
             return Ok(());
         }
 
-        // TODO(port): Zig dupes `notes` with `self.log.msgs.allocator`.
+        // TODO(port): Zig dupes `notes` with `self.log.msgs.arena`.
         let notes_owned: Box<[logger::Data]> = notes.to_vec().into_boxed_slice();
         self.log()
             .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args)?;
@@ -555,7 +555,7 @@ lexer_impl_header! {
 
     /// Rewind to a prior `snapshot()`. Mirrors Zig's `this.* = original.*` then
     /// patches back the growable buffers — here we copy each scalar field and
-    /// truncate the Vecs to their snapshotted lengths. `log`/`source`/`allocator`
+    /// truncate the Vecs to their snapshotted lengths. `log`/`source`/`arena`
     /// are left untouched.
     pub fn restore(&mut self, original: &LexerSnapshot<'a>) {
         // TODO(port): keep this list in sync with the struct fields.
@@ -2698,9 +2698,9 @@ lexer_impl_header! {
     pub fn init_json(
         log: &'a mut Log,
         source: &'a Source,
-        allocator: &'a Arena,
+        arena: &'a Arena,
     ) -> Result<Self, Error> {
-        let mut lex = Self::init_without_reading(log, source, allocator);
+        let mut lex = Self::init_without_reading(log, source, arena);
         lex.step();
         lex.next()?;
         Ok(lex)
@@ -2709,7 +2709,7 @@ lexer_impl_header! {
     pub fn init_without_reading(
         log: &'a mut Log,
         source: &'a Source,
-        allocator: &'a Arena,
+        arena: &'a Arena,
     ) -> Self {
         Self {
             log: core::ptr::NonNull::from(log),
@@ -2739,7 +2739,7 @@ lexer_impl_header! {
             await_keyword_loc: Loc::EMPTY,
             fn_or_arrow_start_loc: Loc::EMPTY,
             regex_flags_start: None,
-            allocator,
+            arena,
             string_literal_raw_content: b"",
             string_literal_start: 0,
             string_literal_raw_format: StringLiteralRawFormat::Ascii,
@@ -2757,9 +2757,9 @@ lexer_impl_header! {
     pub fn init(
         log: &'a mut Log,
         source: &'a Source,
-        allocator: &'a Arena,
+        arena: &'a Arena,
     ) -> Result<Self, Error> {
-        let mut lex = Self::init_without_reading(log, source, allocator);
+        let mut lex = Self::init_without_reading(log, source, arena);
         lex.step();
         lex.next()?;
         Ok(lex)
@@ -2802,11 +2802,11 @@ lexer_impl_header! {
                 let first_non_ascii = strings::first_non_ascii16(&tmp);
                 // prefer to store an ascii e.string rather than a utf-16 one. ascii takes less memory, and `+` folding is not yet supported on utf-16.
                 let out = if first_non_ascii.is_some() {
-                    let dup = self.allocator.alloc_slice_copy(&tmp);
+                    let dup = self.arena.alloc_slice_copy(&tmp);
                     js_ast::E::String::init_utf16(dup)
                 } else {
                     let result =
-                        self.allocator.alloc_slice_fill_default::<u8>(tmp.len());
+                        self.arena.alloc_slice_fill_default::<u8>(tmp.len());
                     strings::copy_utf16_into_utf8(result, &tmp);
                     js_ast::E::String::init(result)
                 };
@@ -2819,8 +2819,8 @@ lexer_impl_header! {
 
     pub fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String, Error> {
         let mut res = self.to_e_string()?;
-        res.to_utf8(self.allocator)?;
-        // TODO(port): allocator routing for E.String.toUTF8
+        res.to_utf8(self.arena)?;
+        // TODO(port): arena routing for E.String.toUTF8
         Ok(res)
     }
 
@@ -2919,10 +2919,10 @@ lexer_impl_header! {
         &self,
         js: JavascriptString<'_>,
     ) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): allocator routing — Zig: strings.toUTF8AllocWithType(lexer.allocator, js)
+        // TODO(port): arena routing — Zig: strings.toUTF8AllocWithType(lexer.arena, js)
         // PERF(port): goes through global Vec then dupes into the arena.
         let owned = strings::to_utf8_alloc_with_type(js);
-        Ok(self.allocator.alloc_slice_copy(&owned))
+        Ok(self.arena.alloc_slice_copy(&owned))
     }
 
     pub fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
@@ -3179,7 +3179,7 @@ lexer_impl_header! {
                 return Err(e);
             }
 
-            let dup = self.allocator.alloc_slice_copy(&tmp);
+            let dup = self.arena.alloc_slice_copy(&tmp);
             // SAFETY: reinterpret &[u16] as &[u8]
             self.string_literal_raw_content = unsafe {
                 core::slice::from_raw_parts(
@@ -3275,7 +3275,7 @@ lexer_impl_header! {
                             self.temp_buffer_u16 = tmp;
                             return Err(e);
                         }
-                        let dup = self.allocator.alloc_slice_copy(&tmp);
+                        let dup = self.arena.alloc_slice_copy(&tmp);
                         // SAFETY: reinterpret arena-owned &[u16] as &[u8]; alignment 1, len*2 bytes
                         self.string_literal_raw_content = unsafe {
                             core::slice::from_raw_parts(
@@ -3588,7 +3588,7 @@ lexer_impl_header! {
         }
 
         bytes.truncate(end);
-        self.allocator.alloc_slice_copy(&bytes)
+        self.arena.alloc_slice_copy(&bytes)
         // PERF(port): Zig used MutableString.toOwnedSliceLength — extra copy here.
     }
 
@@ -3737,7 +3737,7 @@ lexer_impl_header! {
                 // Filter out underscores;
                 if underscore_count > 0 {
                     let bytes = self
-                        .allocator
+                        .arena
                         .alloc_slice_fill_default::<u8>(text.len() - underscore_count);
                     let mut i: usize = 0;
                     for &char in text {
@@ -3873,9 +3873,9 @@ lexer_impl_header! {
             // Filter out underscores;
             if underscore_count > 0 {
                 let mut i: usize = 0;
-                // TODO(port): allocator routing — Zig uses lexer.allocator.alloc
+                // TODO(port): arena routing — Zig uses lexer.arena.alloc
                 let bytes = self
-                    .allocator
+                    .arena
                     .alloc_slice_fill_default::<u8>(text.len() - underscore_count);
                 for &char in text {
                     if char != b'_' {
@@ -4375,5 +4375,5 @@ impl fmt::Display for InvalidEscapeSequenceFormatter {
 //   source:     src/js_parser/lexer.zig (3401 lines)
 //   confidence: medium
 //   todos:      34
-//   notes:      8-way const-generic LexerType; 'a lifetime for log+source borrows is approximate (raw()/identifier alias source.contents); snapshot()/restore() use a Copy LexerSnapshot POD (Zig by-value struct copy is impossible here due to &mut Log); SIMD multiline-comment scanner is scalar fallback; arena allocator routing needs Phase B audit; FakeArrayList16 dropped (dead in Zig source).
+//   notes:      8-way const-generic LexerType; 'a lifetime for log+source borrows is approximate (raw()/identifier alias source.contents); snapshot()/restore() use a Copy LexerSnapshot POD (Zig by-value struct copy is impossible here due to &mut Log); SIMD multiline-comment scanner is scalar fallback; arena arena routing needs Phase B audit; FakeArrayList16 dropped (dead in Zig source).
 // ──────────────────────────────────────────────────────────────────────────

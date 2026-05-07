@@ -1123,8 +1123,8 @@ impl DeclaredSymbolList {
         Ok(this)
     }
 }
-// TODO(port): allocator threading — Zig passes `std.mem.Allocator` to every
-// MultiArrayList op. bun_collections::MultiArrayList owns its allocator (global
+// TODO(port): arena threading — Zig passes `std.mem.Allocator` to every
+// MultiArrayList op. bun_collections::MultiArrayList owns its arena (global
 // mimalloc); if Phase B needs arena-backed SoA storage, add a `&'bump Bump`
 // param here.
 
@@ -1425,7 +1425,7 @@ impl<T> Batcher<T> {
     where
         T: Default,
     {
-        // TODO(port): bumpalo alloc_slice for uninit T — Zig `allocator.alloc(Type, count)`.
+        // TODO(port): bumpalo alloc_slice for uninit T — Zig `arena.alloc(Type, count)`.
         // PERF(port): Zig left the slice uninitialized; bumpalo requires Default fill.
         let all = bump.alloc_slice_fill_default(count);
         Ok(Self { head: std::ptr::from_mut::<[T]>(all) })
@@ -2178,7 +2178,7 @@ pub mod defines_full_draft {
             };
             // TODO(b0-genuine): same-tier T4 dep on bun_interchange::json — direct call.
             let expr = bun_interchange::json::parse_env_json(&source, log, bump)?;
-            // Zig: `expr.data.deepClone(allocator)` followed by `expr.isPrimitiveLiteral()`.
+            // Zig: `expr.data.deepClone(arena)` followed by `expr.isPrimitiveLiteral()`.
             // The JSON parser returns the cycle-broken `bun_logger::js_ast::Expr`
             // subset; convert into the full `expr::Data` here (re-allocating
             // payloads in `bump` — this *is* the deep clone).
@@ -2407,7 +2407,7 @@ pub mod renamer {
     pub type SymbolMap = crate::ast::symbol::Map;
 
     pub fn assign_nested_scope_slots(
-        _allocator: &bun_alloc::Arena,
+        _arena: &bun_alloc::Arena,
         module_scope: &mut Scope,
         symbols: &mut [Symbol],
     ) -> SlotCounts {

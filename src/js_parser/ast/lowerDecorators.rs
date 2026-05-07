@@ -151,7 +151,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     /// Allocate args + callRuntime in one call.
     fn call_rt(&mut self, l: logger::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
-        let bump = self.allocator;
+        let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
         // SAFETY: `a` is a fresh bump slice valid for 'a; never grown.
         let list = unsafe { ExprNodeList::from_bump_slice(a) };
@@ -219,7 +219,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     /// Create a static block property from a single expression.
     fn make_static_block(&mut self, expr: Expr, l: logger::Loc) -> Property {
-        let bump = self.allocator;
+        let bump = self.arena;
         let stmt = self.s(S::SExpr { value: expr, ..Default::default() }, l);
         let stmts = bump.alloc_slice_copy(&[stmt]);
         // SAFETY: bump slice valid for 'a.
@@ -309,19 +309,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     /// Bump-format `_{prefix}{n}` (or just `_{prefix}` when n is omitted).
     fn bump_name(&self, prefix: &[u8], n: Option<usize>) -> &'a [u8] {
-        let mut v = BumpVec::<u8>::new_in(self.allocator);
+        let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(prefix);
         if let Some(n) = n {
             // PORT NOTE: bumpalo Vec<u8> doesn't impl io::Write; format into a
             // bump String and copy the bytes.
-            let s = bun_alloc::arena_format!(in self.allocator, "{}", n);
+            let s = bun_alloc::arena_format!(in self.arena, "{}", n);
             v.extend_from_slice(s.as_bytes());
         }
         v.into_bump_slice()
     }
 
     fn bump_name2(&self, a: &[u8], b: &[u8]) -> &'a [u8] {
-        let mut v = BumpVec::<u8>::new_in(self.allocator);
+        let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(a);
         v.extend_from_slice(b);
         v.into_bump_slice()
@@ -663,7 +663,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 },
                                 expr_loc,
                             );
-                            let bump = self.allocator;
+                            let bump = self.arena;
                             let orig_args = e.args.slice_mut();
                             let mut new_args =
                                 BumpVec::with_capacity_in(1 + orig_args.len(), bump);
@@ -914,7 +914,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         loc: logger::Loc,
         name_from_context: Option<&'a [u8]>,
     ) -> Expr {
-        let bump = self.allocator;
+        let bump = self.arena;
         let mut out = BumpVec::<Stmt>::new_in(bump);
         self.lower_impl(class, loc, name_from_context, true, None, &mut out);
         if out.is_empty() {
@@ -939,7 +939,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         out: &mut BumpVec<'a, Stmt>,
     ) {
         let p = self;
-        let bump = p.allocator;
+        let bump = p.arena;
 
         // ── Phase 1: Setup ───────────────────────────────
         let mut class_name_ref: Ref;

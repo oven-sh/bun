@@ -684,7 +684,7 @@ impl NumberRenamer {
             .take(len)
             .collect();
 
-        // PERF(port): HiveArray.Fallback was bound to arena.allocator() in Zig
+        // PERF(port): HiveArray.Fallback was bound to arena.arena() in Zig
         let number_scope_pool = HiveArrayFallback::<NumberScope, 128>::init();
 
         let mut root = NumberScope::default();

@@ -23,7 +23,7 @@ pub struct EndState {
 
 /// Packed source mapping data for a single file.
 pub struct PackedMap {
-    /// Allocated by `dev.allocator()`. Access with `.vlq()`.
+    /// Allocated by `dev.arena()`. Access with `.vlq()`.
     /// Stored to allow lazy construction of source map files.
     vlq_: Box<[u8]>,
     /// The bundler runs quoting on multiple threads, so it only makes sense

@@ -15,12 +15,12 @@ use super::route_bundle::RouteBundle;
 use super::DevServer;
 
 pub struct SerializedFailure {
-    /// Serialized data is always owned by `dev.allocator()`
+    /// Serialized data is always owned by `dev.arena()`
     /// The first 32 bits of this slice contain the owner
     pub data: Box<[u8]>,
 }
 
-// Zig `deinit` only freed `data` via `dev.allocator()`; `Box<[u8]>` drops automatically.
+// Zig `deinit` only freed `data` via `dev.arena()`; `Box<[u8]>` drops automatically.
 // No explicit `Drop` impl needed.
 
 /// The metaphorical owner of an incremental file error. The packed variant
@@ -177,7 +177,7 @@ impl SerializedFailure {
         debug_assert!(messages.len() > 0);
 
         // Avoid small re-allocations without requesting so much from the heap
-        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.allocator())) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.arena())) — profile in Phase B
         let mut payload: Vec<u8> = Vec::with_capacity(65536);
         let w = &mut payload;
 

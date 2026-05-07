@@ -9,7 +9,7 @@ use crate::ast::expr::{data, Data, PrimitiveType};
 
 #[inline]
 fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
-    // SAFETY: data::Store::append never returns null (slab/arena allocator).
+    // SAFETY: data::Store::append never returns null (slab/arena arena).
     unsafe { StoreRef::from_raw(data::Store::append(s)) }
 }
 
@@ -118,7 +118,7 @@ fn join_strings(left: &E::EString, right: &E::EString, has_inlined_enum_poison: 
     new
 }
 
-/// `std.mem.concat(allocator, E.TemplatePart, &.{a, b})` — bitwise concat into
+/// `std.mem.concat(arena, E.TemplatePart, &.{a, b})` — bitwise concat into
 /// the bump arena. `TemplatePart` is POD-shaped (no Drop) but not `Copy`
 /// because `EString` opted out, so we go through raw `copy_nonoverlapping`.
 fn concat_parts(

@@ -1240,7 +1240,7 @@ impl<'a> PackageInstaller<'a> {
             cache_dir: Dir::from_fd(Fd::INVALID), // assigned below
             destination_dir_subpath,
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
-            // PORT NOTE: zig `allocator: this.lockfile.allocator` dropped — global mimalloc.
+            // PORT NOTE: zig `arena: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
             patch: patch_patch.map(|p| package_install::Patch {
                 contents_hash: patch_contents_hash.unwrap(),

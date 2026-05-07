@@ -28,7 +28,7 @@ pub fn compute_cross_chunk_dependencies(
         return Ok(());
     }
 
-    // these must be global allocator
+    // these must be global arena
     let mut chunk_metas: Vec<ChunkMeta> = (0..chunks.len())
         .map(|_| ChunkMeta {
             imports: ChunkMetaMap::default(),
@@ -39,7 +39,7 @@ pub fn compute_cross_chunk_dependencies(
     // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
-        // PORT NOTE: Zig heap-allocated this via c.allocator().create() and destroyed it at
+        // PORT NOTE: Zig heap-allocated this via c.arena().create() and destroyed it at
         // scope end; in Rust we construct on the stack and let it drop.
         //
         // PORT NOTE: reshaped for borrowck — Zig's `c.graph.ast.items(.field)` returns
@@ -519,7 +519,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let alias: *const [u8] = if c.options.minify_identifiers {
                             // PORT NOTE: `next_minified_name` returns an owned Vec; leak into
                             // the arena so the alias lifetime matches Zig's arena dupe.
-                            std::ptr::from_ref::<[u8]>(c.allocator().alloc_slice_copy(&r.next_minified_name().expect("OOM")))
+                            std::ptr::from_ref::<[u8]>(c.arena().alloc_slice_copy(&r.next_minified_name().expect("OOM")))
                         } else {
                             std::ptr::from_ref::<[u8]>(r.next_renamed_name(original_name))
                         };
@@ -607,7 +607,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                         let mut clauses = bun_alloc::ArenaVec::<js_ast::ClauseItem>::with_capacity_in(
                             cross_chunk_import.sorted_import_items.len() as usize,
-                            c.allocator(),
+                            c.arena(),
                         );
                         for item in cross_chunk_import.sorted_import_items.slice() {
                             clauses.push(js_ast::ClauseItem {
@@ -663,5 +663,5 @@ use crate::options::Format as OutputFormat;
 //   source:     src/bundler/linker_context/computeCrossChunkDependencies.zig (459 lines)
 //   confidence: medium
 //   todos:      21
-//   notes:      heavy borrowck reshaping (index-based loops), Chunk::Content tagged-union checks via matches!/javascript_mut(), parallel `walk` aliasing needs UnsafeCell, AST node allocs via c.allocator() (&'bump Bump) — thread 'bump in Phase B
+//   notes:      heavy borrowck reshaping (index-based loops), Chunk::Content tagged-union checks via matches!/javascript_mut(), parallel `walk` aliasing needs UnsafeCell, AST node allocs via c.arena() (&'bump Bump) — thread 'bump in Phase B
 // ──────────────────────────────────────────────────────────────────────────

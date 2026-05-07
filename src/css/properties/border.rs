@@ -152,9 +152,9 @@ where
         + for<'b> css::generics::DeepClone<'b>
         + css::generics::CssEql,
 {
-    fn get_fallbacks(&mut self, allocator: &Bump, targets: Targets) -> SmallList<Self, 2> {
+    fn get_fallbacks(&mut self, arena: &Bump, targets: Targets) -> SmallList<Self, 2> {
         use css::generics::DeepClone as _;
-        let fallbacks = self.color.get_fallbacks(allocator, targets);
+        let fallbacks = self.color.get_fallbacks(arena, targets);
         // PERF(port): was arena bulk-free (fallbacks.deinit) — profile in Phase B
         let mut out: SmallList<Self, 2> = SmallList::init_capacity(fallbacks.len());
         out.set_len(fallbacks.len());
@@ -163,16 +163,16 @@ where
         for (color, o) in fallbacks.slice().iter().zip(out.slice_mut().iter_mut()) {
             *o = Self {
                 color: color.clone(),
-                width: self.width.deep_clone(allocator),
-                style: self.style.deep_clone(allocator),
+                width: self.width.deep_clone(arena),
+                style: self.style.deep_clone(arena),
             };
         }
 
         out
     }
 
-    pub fn deep_clone(&self, allocator: &Bump) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, arena: &Bump) -> Self {
+        css::implement_deep_clone(self, arena)
     }
 
     /// Deep-clone into a `GenericBorder` with a different const-generic
@@ -181,8 +181,8 @@ where
     /// multiple `Border*` aliases. Needed when one logical value must be
     /// emitted as two distinct physical `Property` variants (e.g.
     /// inline-start → BorderLeft + BorderRight).
-    pub fn clone_as<const Q: u8>(&self, allocator: &Bump) -> GenericBorder<S, Q> {
-        let cloned = self.deep_clone(allocator);
+    pub fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
+        let cloned = self.deep_clone(arena);
         GenericBorder {
             width: cloned.width,
             style: cloned.style,
@@ -272,7 +272,7 @@ impl BorderSideWidth {
         }
     }
 
-    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+    pub fn deep_clone(&self, _arena: &Bump) -> Self {
         // PORT NOTE: css.implementDeepClone — Length is value-type; Clone suffices.
         self.clone()
     }
@@ -299,10 +299,10 @@ macro_rules! impl_fallbacks {
         impl $T {
             pub fn get_fallbacks(
                 &mut self,
-                allocator: &Bump,
+                arena: &Bump,
                 targets: Targets,
             ) -> SmallList<$T, 2> {
-                let _ = allocator;
+                let _ = arena;
                 let mut fallbacks = ColorFallbackKind::empty();
                 $(
                     fallbacks.insert(self.$field.get_necessary_fallbacks(targets));
@@ -312,7 +312,7 @@ macro_rules! impl_fallbacks {
                 if fallbacks.contains(ColorFallbackKind::RGB) {
                     res.append(Self {
                         $(
-                            $field: self.$field.get_fallback(allocator, ColorFallbackKind::RGB),
+                            $field: self.$field.get_fallback(arena, ColorFallbackKind::RGB),
                         )+
                     });
                 }
@@ -320,14 +320,14 @@ macro_rules! impl_fallbacks {
                 if fallbacks.contains(ColorFallbackKind::P3) {
                     res.append(Self {
                         $(
-                            $field: self.$field.get_fallback(allocator, ColorFallbackKind::P3),
+                            $field: self.$field.get_fallback(arena, ColorFallbackKind::P3),
                         )+
                     });
                 }
 
                 if fallbacks.contains(ColorFallbackKind::LAB) {
                     $(
-                        self.$field = self.$field.get_fallback(allocator, ColorFallbackKind::LAB);
+                        self.$field = self.$field.get_fallback(arena, ColorFallbackKind::LAB);
                     )+
                 }
 
@@ -387,7 +387,7 @@ macro_rules! define_rect_shorthand {
                 .to_css(dest)
             }
 
-            pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+            pub fn deep_clone(&self, _arena: &Bump) -> Self {
                 self.clone()
             }
 
@@ -473,7 +473,7 @@ macro_rules! define_size_shorthand {
                 Ok(())
             }
 
-            pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+            pub fn deep_clone(&self, _arena: &Bump) -> Self {
                 self.clone()
             }
 
@@ -552,18 +552,18 @@ impl BorderShorthand {
     // `border: anytype` — any GenericBorder<S, P>
     pub fn set_border<S: for<'a> css::DeepClone<'a>, const P: u8>(
         &mut self,
-        allocator: &Bump,
+        arena: &Bump,
         border: &GenericBorder<S, P>,
     ) where
         S: Into<LineStyle>,
     {
         // TODO(port): Zig accepted `anytype`; all callers pass GenericBorder<LineStyle, _>.
-        self.width = Some(border.width.deep_clone(allocator));
-        self.style = Some(border.style.deep_clone(allocator).into());
-        self.color = Some(border.color.deep_clone(allocator));
+        self.width = Some(border.width.deep_clone(arena));
+        self.style = Some(border.style.deep_clone(arena).into());
+        self.color = Some(border.color.deep_clone(arena));
     }
 
-    fn reset(&mut self, _allocator: &Bump) {
+    fn reset(&mut self, _arena: &Bump) {
         // PERF(port): was arena bulk-free via bun.clear — profile in Phase B
         self.width = None;
         self.style = None;
@@ -577,11 +577,11 @@ impl BorderShorthand {
     /// Generic over the `P` const param so the same `BorderShorthand` data
     /// can populate any of `BorderTop`/`BorderLeft`/.../`Border` (Zig used a
     /// single anonymous struct literal that coerced to each alias).
-    fn to_border<const P: u8>(&self, allocator: &Bump) -> GenericBorder<LineStyle, P> {
+    fn to_border<const P: u8>(&self, arena: &Bump) -> GenericBorder<LineStyle, P> {
         GenericBorder {
-            width: css::generic::deep_clone(&self.width, allocator).unwrap(),
-            style: css::generic::deep_clone(&self.style, allocator).unwrap(),
-            color: css::generic::deep_clone(&self.color, allocator).unwrap(),
+            width: css::generic::deep_clone(&self.width, arena).unwrap(),
+            style: css::generic::deep_clone(&self.style, arena).unwrap(),
+            color: css::generic::deep_clone(&self.color, arena).unwrap(),
         }
     }
 }
@@ -762,16 +762,16 @@ struct FlushContext<'a, 'bump, 'ctx> {
     flushed_properties: &'a mut BorderProperty,
     dest: &'a mut DeclarationList<'bump>,
     ctx: &'a mut PropertyHandlerContext<'ctx>,
-    // PORT NOTE: `allocator` field dropped from PropertyHandlerContext; the
+    // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
     // arena is recovered once via `dest.bump()` and threaded here.
-    allocator: &'bump Bump,
+    arena: &'bump Bump,
     logical_supported: bool,
     logical_shorthand_supported: bool,
 }
 
 // `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
 // PORT NOTE: `$val` is evaluated *before* reborrowing `$f` so callers may pass
-// expressions that read `f.allocator` without tripping E0502.
+// expressions that read `f.arena` without tripping E0502.
 macro_rules! fc_logical_prop {
     // PORT NOTE: the `GenericBorder` shorthand pairs carry distinct const-generic
     // discriminants per side (BorderLeft = P=3, BorderRight = P=1), so a single
@@ -782,24 +782,24 @@ macro_rules! fc_logical_prop {
         let __val: BorderLeft = $val;
         let f = &mut *$f;
         f.ctx.add_logical_rule(
-            Property::BorderLeft(__val.clone_as(f.allocator)),
-            Property::BorderRight(__val.clone_as(f.allocator)),
+            Property::BorderLeft(__val.clone_as(f.arena)),
+            Property::BorderRight(__val.clone_as(f.arena)),
         );
     }};
     ($f:expr, BorderRight, BorderLeft, $val:expr) => {{
         let __val: BorderRight = $val;
         let f = &mut *$f;
         f.ctx.add_logical_rule(
-            Property::BorderRight(__val.clone_as(f.allocator)),
-            Property::BorderLeft(__val.clone_as(f.allocator)),
+            Property::BorderRight(__val.clone_as(f.arena)),
+            Property::BorderLeft(__val.clone_as(f.arena)),
         );
     }};
     ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
         let __val = $val;
         let f = &mut *$f;
         f.ctx.add_logical_rule(
-            Property::$ltr(__val.deep_clone(f.allocator)),
-            Property::$rtl(__val.deep_clone(f.allocator)),
+            Property::$ltr(__val.deep_clone(f.arena)),
+            Property::$rtl(__val.deep_clone(f.arena)),
         );
     }};
 }
@@ -814,7 +814,7 @@ macro_rules! fc_push {
         let f = &mut *$f;
         f.flushed_properties
             .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
-        f.dest.push(Property::$p(__val.deep_clone(f.allocator)));
+        f.dest.push(Property::$p(__val.deep_clone(f.arena)));
     }};
 }
 
@@ -827,7 +827,7 @@ macro_rules! fc_fallbacks {
             .flushed_properties
             .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())
         {
-            let fbs = val.get_fallbacks(f.allocator, f.ctx.targets);
+            let fbs = val.get_fallbacks(f.arena, f.ctx.targets);
             for fallback in css::generic::slice(&fbs) {
                 f.dest.push(Property::$p(fallback.clone()));
             }
@@ -1006,13 +1006,13 @@ macro_rules! flush_category {
                 // If only one of the sub-properties is different, only emit that.
                 // Otherwise, emit the full border value.
                 if eq_width && eq_style {
-                    fc_prop!(f, $color, css::generic::deep_clone(&$other.color, f.allocator).unwrap());
+                    fc_prop!(f, $color, css::generic::deep_clone(&$other.color, f.arena).unwrap());
                 } else if eq_width && eq_color {
-                    fc_prop!(f, $style, css::generic::deep_clone(&$other.style, f.allocator).unwrap());
+                    fc_prop!(f, $style, css::generic::deep_clone(&$other.style, f.arena).unwrap());
                 } else if eq_style && eq_color {
-                    fc_prop!(f, $width, css::generic::deep_clone(&$other.width, f.allocator).unwrap());
+                    fc_prop!(f, $width, css::generic::deep_clone(&$other.width, f.arena).unwrap());
                 } else {
-                    fc_prop!(f, $prop_name, $other.to_border(f.allocator));
+                    fc_prop!(f, $prop_name, $other.to_border(f.arena));
                 }
             }};
         }
@@ -1021,17 +1021,17 @@ macro_rules! flush_category {
         macro_rules! prop_diff {
             ($border:expr, $fallback:block, $border_fallback:literal) => {{
                 if !$is_logical && is_eq!(color) && is_eq!(style) {
-                    fc_prop!(f, Border, $border.to_border(f.allocator));
+                    fc_prop!(f, Border, $border.to_border(f.arena));
                     shorthand!(BorderWidth, BorderWidth, width);
                 } else if !$is_logical && is_eq!(width) && is_eq!(style) {
-                    fc_prop!(f, Border, $border.to_border(f.allocator));
+                    fc_prop!(f, Border, $border.to_border(f.arena));
                     shorthand!(BorderColor, BorderColor, color);
                 } else if !$is_logical && is_eq!(width) && is_eq!(color) {
-                    fc_prop!(f, Border, $border.to_border(f.allocator));
+                    fc_prop!(f, Border, $border.to_border(f.arena));
                     shorthand!(BorderStyle, BorderStyle, style);
                 } else {
                     if $border_fallback {
-                        fc_prop!(f, Border, $border.to_border(f.allocator));
+                        fc_prop!(f, Border, $border.to_border(f.arena));
                     }
                     $fallback
                 }
@@ -1042,18 +1042,18 @@ macro_rules! flush_category {
         macro_rules! side {
             ($val:expr, $short:ident, $width:ident, $style:ident, $color:ident) => {{
                 if $val.is_valid() {
-                    fc_prop!(f, $short, $val.to_border(f.allocator));
+                    fc_prop!(f, $short, $val.to_border(f.arena));
                 } else {
                     if let Some(sty) = &$val.style {
-                        fc_prop!(f, $style, sty.deep_clone(f.allocator));
+                        fc_prop!(f, $style, sty.deep_clone(f.arena));
                     }
 
                     if let Some(w) = &$val.width {
-                        fc_prop!(f, $width, w.deep_clone(f.allocator));
+                        fc_prop!(f, $width, w.deep_clone(f.arena));
                     }
 
                     if let Some(c) = &$val.color {
-                        fc_prop!(f, $color, c.deep_clone(f.allocator));
+                        fc_prop!(f, $color, c.deep_clone(f.arena));
                     }
                 }
             }};
@@ -1085,18 +1085,18 @@ macro_rules! flush_category {
             let bottom_eq_right = block_end.eql(inline_end);
 
             if top_eq_bottom && top_eq_left && top_eq_right {
-                fc_prop!(f, Border, block_start.to_border(f.allocator));
+                fc_prop!(f, Border, block_start.to_border(f.arena));
             } else if top_eq_bottom && top_eq_left {
-                fc_prop!(f, Border, block_start.to_border(f.allocator));
+                fc_prop!(f, Border, block_start.to_border(f.arena));
                 side_diff!(block_start, inline_end, $inline_end_prop, $inline_end_width, $inline_end_style, $inline_end_color);
             } else if top_eq_bottom && top_eq_right {
-                fc_prop!(f, Border, block_start.to_border(f.allocator));
+                fc_prop!(f, Border, block_start.to_border(f.arena));
                 side_diff!(block_start, inline_start, $inline_start_prop, $inline_start_width, $inline_start_style, $inline_start_color);
             } else if left_eq_right && bottom_eq_left {
-                fc_prop!(f, Border, inline_start.to_border(f.allocator));
+                fc_prop!(f, Border, inline_start.to_border(f.arena));
                 side_diff!(inline_start, block_start, $block_start_prop, $block_start_width, $block_start_style, $block_start_color);
             } else if left_eq_right && top_eq_left {
-                fc_prop!(f, Border, inline_start.to_border(f.allocator));
+                fc_prop!(f, Border, inline_start.to_border(f.arena));
                 side_diff!(inline_start, block_end, $block_end_prop, $block_end_width, $block_end_style, $block_end_color);
             } else if top_eq_bottom {
                 prop_diff!(block_start, {
@@ -1123,20 +1123,20 @@ macro_rules! flush_category {
                         if diff == 1 {
                             if !css::generic::eql(&inline_start.width, &block_start.width) {
                                 fc_prop!(f, BorderInlineWidth, BorderInlineWidth {
-                                    start: inline_start.width.as_ref().unwrap().deep_clone(f.allocator),
-                                    end: inline_end.width.as_ref().unwrap().deep_clone(f.allocator),
+                                    start: inline_start.width.as_ref().unwrap().deep_clone(f.arena),
+                                    end: inline_end.width.as_ref().unwrap().deep_clone(f.arena),
                                 });
                                 handled = true;
                             } else if !css::generic::eql(&inline_start.style, &block_start.style) {
                                 fc_prop!(f, BorderInlineStyle, BorderInlineStyle {
-                                    start: inline_start.style.as_ref().unwrap().deep_clone(f.allocator),
-                                    end: inline_end.style.as_ref().unwrap().deep_clone(f.allocator),
+                                    start: inline_start.style.as_ref().unwrap().deep_clone(f.arena),
+                                    end: inline_end.style.as_ref().unwrap().deep_clone(f.arena),
                                 });
                                 handled = true;
                             } else if !css::generic::eql(&inline_start.color, &block_start.color) {
                                 fc_prop!(f, BorderInlineColor, BorderInlineColor {
-                                    start: inline_start.color.as_ref().unwrap().deep_clone(f.allocator),
-                                    end: inline_end.color.as_ref().unwrap().deep_clone(f.allocator),
+                                    start: inline_start.color.as_ref().unwrap().deep_clone(f.arena),
+                                    end: inline_end.color.as_ref().unwrap().deep_clone(f.arena),
                                 });
                                 handled = true;
                             }
@@ -1145,7 +1145,7 @@ macro_rules! flush_category {
                             && css::generic::eql(&inline_start.style, &inline_end.style)
                             && css::generic::eql(&inline_start.color, &inline_end.color)
                         {
-                            fc_prop!(f, BorderInline, inline_start.to_border(f.allocator));
+                            fc_prop!(f, BorderInline, inline_start.to_border(f.arena));
                             handled = true;
                         }
                     }
@@ -1168,10 +1168,10 @@ macro_rules! flush_category {
                 }, true);
             } else {
                 prop_diff!(block_start, {
-                    fc_prop!(f, $block_start_prop, block_start.to_border(f.allocator));
-                    fc_prop!(f, $block_end_prop, block_end.to_border(f.allocator));
-                    fc_prop!(f, $inline_start_prop, inline_start.to_border(f.allocator));
-                    fc_prop!(f, $inline_end_prop, inline_end.to_border(f.allocator));
+                    fc_prop!(f, $block_start_prop, block_start.to_border(f.arena));
+                    fc_prop!(f, $block_end_prop, block_end.to_border(f.arena));
+                    fc_prop!(f, $inline_start_prop, inline_start.to_border(f.arena));
+                    fc_prop!(f, $inline_end_prop, inline_end.to_border(f.arena));
                 }, false);
             }
         } else {
@@ -1182,14 +1182,14 @@ macro_rules! flush_category {
             if $is_logical && block_start.eql(block_end) && block_start.is_valid() {
                 if f.logical_supported {
                     if f.logical_shorthand_supported {
-                        fc_prop!(f, BorderBlock, block_start.to_border(f.allocator));
+                        fc_prop!(f, BorderBlock, block_start.to_border(f.arena));
                     } else {
-                        fc_prop!(f, BorderBlockStart, block_start.to_border(f.allocator));
-                        fc_prop!(f, BorderBlockEnd, block_start.to_border(f.allocator));
+                        fc_prop!(f, BorderBlockStart, block_start.to_border(f.arena));
+                        fc_prop!(f, BorderBlockEnd, block_start.to_border(f.arena));
                     }
                 } else {
-                    fc_prop!(f, BorderTop, block_start.to_border(f.allocator));
-                    fc_prop!(f, BorderBottom, block_start.to_border(f.allocator));
+                    fc_prop!(f, BorderTop, block_start.to_border(f.arena));
+                    fc_prop!(f, BorderBottom, block_start.to_border(f.arena));
                 }
             } else {
                 if $is_logical
@@ -1209,14 +1209,14 @@ macro_rules! flush_category {
             if $is_logical && inline_start.eql(inline_end) && inline_start.is_valid() {
                 if f.logical_supported {
                     if f.logical_shorthand_supported {
-                        fc_prop!(f, BorderInline, inline_start.to_border(f.allocator));
+                        fc_prop!(f, BorderInline, inline_start.to_border(f.arena));
                     } else {
-                        fc_prop!(f, BorderInlineStart, inline_start.to_border(f.allocator));
-                        fc_prop!(f, BorderInlineEnd, inline_start.to_border(f.allocator));
+                        fc_prop!(f, BorderInlineStart, inline_start.to_border(f.arena));
+                        fc_prop!(f, BorderInlineEnd, inline_start.to_border(f.arena));
                     }
                 } else {
-                    fc_prop!(f, BorderLeft, inline_start.to_border(f.allocator));
-                    fc_prop!(f, BorderRight, inline_start.to_border(f.allocator));
+                    fc_prop!(f, BorderLeft, inline_start.to_border(f.arena));
+                    fc_prop!(f, BorderRight, inline_start.to_border(f.arena));
                 }
             } else {
                 if $is_logical && !inline_start.is_valid() && !inline_end.is_valid() {
@@ -1248,9 +1248,9 @@ impl BorderHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        // PORT NOTE: `allocator` field dropped from PropertyHandlerContext; the
+        // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
         // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
-        let allocator = dest.bump();
+        let arena = dest.bump();
 
         // Helper macros — Zig used local comptime closures with @field string access.
 
@@ -1274,7 +1274,7 @@ impl BorderHandler {
         macro_rules! property_helper {
             ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
                 flush_helper!($key, $prop, $val, $category);
-                self.$key.$prop = Some($val.deep_clone(allocator));
+                self.$key.$prop = Some($val.deep_clone(arena));
                 self.category = $category;
                 self.has_any = true;
             }};
@@ -1286,7 +1286,7 @@ impl BorderHandler {
                     self.flush(dest, context);
                 }
 
-                self.$key.set_border(allocator, $val);
+                self.$key.set_border(arena, $val);
                 self.category = $category;
                 self.has_any = true;
             }};
@@ -1396,15 +1396,15 @@ impl BorderHandler {
                 self.has_any = true;
             }
             Property::Border(val) => {
-                self.border_top.set_border(allocator, val);
-                self.border_bottom.set_border(allocator, val);
-                self.border_left.set_border(allocator, val);
-                self.border_right.set_border(allocator, val);
+                self.border_top.set_border(arena, val);
+                self.border_bottom.set_border(arena, val);
+                self.border_left.set_border(arena, val);
+                self.border_right.set_border(arena, val);
 
-                self.border_block_start.reset(allocator);
-                self.border_block_end.reset(allocator);
-                self.border_inline_start.reset(allocator);
-                self.border_inline_end.reset(allocator);
+                self.border_block_start.reset(arena);
+                self.border_block_end.reset(arena);
+                self.border_inline_start.reset(arena);
+                self.border_inline_end.reset(arena);
 
                 // Setting the `border` property resets `border-image`
                 self.border_image_handler.reset();
@@ -1455,12 +1455,12 @@ impl BorderHandler {
         // PORT NOTE: reshaped for borrowck — Zig stored `self: *BorderHandler` in
         // FlushContext and accessed self.border_* through it. We instead take
         // independent &mut borrows of each shorthand, plus &mut self.flushed_properties.
-        let allocator = dest.bump();
+        let arena = dest.bump();
         let mut flctx = FlushContext {
             flushed_properties: &mut self.flushed_properties,
             dest,
             ctx: context,
-            allocator,
+            arena,
             logical_supported,
             logical_shorthand_supported,
         };
@@ -1483,14 +1483,14 @@ impl BorderHandler {
             is_logical = true
         );
 
-        self.border_top.reset(allocator);
-        self.border_bottom.reset(allocator);
-        self.border_left.reset(allocator);
-        self.border_right.reset(allocator);
-        self.border_block_start.reset(allocator);
-        self.border_block_end.reset(allocator);
-        self.border_inline_start.reset(allocator);
-        self.border_inline_end.reset(allocator);
+        self.border_top.reset(arena);
+        self.border_bottom.reset(arena);
+        self.border_left.reset(arena);
+        self.border_right.reset(arena);
+        self.border_block_start.reset(arena);
+        self.border_block_end.reset(arena);
+        self.border_inline_start.reset(arena);
+        self.border_inline_end.reset(arena);
     }
 
     fn flush_unparsed(
@@ -1499,11 +1499,11 @@ impl BorderHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        let allocator = dest.bump();
+        let arena = dest.bump();
         let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
         if logical_supported {
-            let mut up = unparsed.deep_clone(allocator);
-            context.add_unparsed_fallbacks(allocator, &mut up);
+            let mut up = unparsed.deep_clone(arena);
+            context.add_unparsed_fallbacks(arena, &mut up);
             self.flushed_properties
                 .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
             dest.push(Property::Unparsed(up));
@@ -1514,8 +1514,8 @@ impl BorderHandler {
             ($id:ident) => {{
                 let _ = &dest; // autofix (matches Zig: `_ = d;`)
                 let mut upppppppppp =
-                    unparsed.with_property_id(allocator, PropertyId::$id);
-                context.add_unparsed_fallbacks(allocator, &mut upppppppppp);
+                    unparsed.with_property_id(arena, PropertyId::$id);
+                context.add_unparsed_fallbacks(arena, &mut upppppppppp);
                 self.flushed_properties
                     .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
                 // TODO(port): Zig did NOT push to dest here (likely a bug upstream) — preserved.
@@ -1526,10 +1526,10 @@ impl BorderHandler {
             ($ltr:ident, $rtl:ident) => {{
                 context.add_logical_rule(
                     Property::Unparsed(
-                        unparsed.with_property_id(allocator, PropertyId::$ltr),
+                        unparsed.with_property_id(arena, PropertyId::$ltr),
                     ),
                     Property::Unparsed(
-                        unparsed.with_property_id(allocator, PropertyId::$rtl),
+                        unparsed.with_property_id(arena, PropertyId::$rtl),
                     ),
                 );
             }};
@@ -1553,8 +1553,8 @@ impl BorderHandler {
             PropertyIdTag::BorderBlockEndColor => prop!(BorderBottomColor),
             PropertyIdTag::BorderBlockEndStyle => prop!(BorderBottomStyle),
             _ => {
-                let mut up = unparsed.deep_clone(allocator);
-                context.add_unparsed_fallbacks(allocator, &mut up);
+                let mut up = unparsed.deep_clone(arena);
+                context.add_unparsed_fallbacks(arena, &mut up);
                 self.flushed_properties
                     .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
                 dest.push(Property::Unparsed(up));

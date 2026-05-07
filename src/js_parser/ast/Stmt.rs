@@ -156,7 +156,7 @@ impl Stmt {
         orig_data: T,
         loc: logger::Loc,
     ) -> Stmt {
-        // `allocator.create(@TypeOf(origData)) catch unreachable; value.* = origData;`
+        // `arena.create(@TypeOf(origData)) catch unreachable; value.* = origData;`
         // → bump.alloc(orig_data), performed inside arena_alloc.
         Stmt {
             loc,
@@ -180,7 +180,7 @@ pub type Disabler = DebugOnlyDisabler<Stmt>;
 
 impl Stmt {
     /// When the lifetime of an Stmt.Data's pointer must exist longer than reset() is called, use this function.
-    /// Be careful to free the memory (or use an allocator that does it for you)
+    /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Stmt.init or Stmt.alloc when possible. This will be slower.
     pub fn allocate<T: StatementData>(
         bump: &bun_alloc::Arena,

@@ -523,7 +523,7 @@ impl Map {
     }
 
     pub fn init(source_count: usize) -> Map {
-        // Zig: `allocator.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
+        // Zig: `arena.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
         // Per PORTING.md §Allocators (non-arena path), use Vec → Vec.
         let mut v: Vec<List> = Vec::with_capacity(source_count);
         v.resize_with(source_count, List::default);

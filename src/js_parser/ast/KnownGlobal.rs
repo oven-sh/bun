@@ -72,7 +72,7 @@ impl KnownGlobal {
     }
 
     // PORT NOTE: `_bump` is kept for call-site shape parity with the Zig
-    // `std.mem.Allocator` arg. Phase-A `Vec` uses the global allocator.
+    // `std.mem.Allocator` arg. Phase-A `Vec` uses the global arena.
     #[inline(never)]
     pub fn minify_global_constructor(
         _bump: &Bump,
@@ -463,5 +463,5 @@ impl KnownGlobal {
 //   source:     src/js_parser/ast/KnownGlobal.zig (361 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      `_bump` arg retained for call-site parity (Phase-A Vec uses global allocator).
+//   notes:      `_bump` arg retained for call-site parity (Phase-A Vec uses global arena).
 // ──────────────────────────────────────────────────────────────────────────

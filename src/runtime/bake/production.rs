@@ -110,7 +110,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     let mut arena = Arena::new();
 
     let vm_ptr = VirtualMachine::init_bake(jsc::virtual_machine::Options {
-        // allocator: arena — dropped per §Allocators (global mimalloc)
+        // arena: arena — dropped per §Allocators (global mimalloc)
         log: NonNull::new(ctx.log),
         args: ctx.args.clone(),
         smol: ctx.runtime_options.smol,
@@ -141,7 +141,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         vm.preload = ctx.preloads.clone();
         vm.argv = ctx.passthrough.clone();
         vm.arena = NonNull::new(&raw mut arena);
-        // vm.allocator = arena.allocator() — dropped per §Allocators
+        // vm.allocator = arena.arena() — dropped per §Allocators
         // Spec production.zig:50: `b.options.install = ctx.install` (raw
         // `?*const Api.BunInstall` copy). `BundleOptions.install` is now
         // `Option<NonNull<_>>`, so no lifetime-extension cast is needed.

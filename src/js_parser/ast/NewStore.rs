@@ -1,7 +1,7 @@
 //! This "Store" is a specialized memory allocation strategy very similar to an
 //! arena, used for allocating expression and statement nodes during JavaScript
 //! parsing and visiting. Allocations are grouped into large blocks, where each
-//! block is treated as a fixed-buffer allocator. When a block runs out of
+//! block is treated as a fixed-buffer arena. When a block runs out of
 //! space, a new one is created; all blocks are joined as a linked list.
 //!
 //! Similarly to an arena, you can call .reset() to reset state, reusing memory

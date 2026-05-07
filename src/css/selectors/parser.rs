@@ -21,7 +21,7 @@ pub use bun_css::Printer as PrinterRe; // re-export parity (Printer/PrintErr wer
 /// `css::Result<T>` — the CSS parser result type (`Ok(T)` / `Err(css::ParseError)`).
 type CResult<T> = css::Result<T>;
 
-// TODO(port): arena lifetimes. The Zig code threads `parser.allocator` / `input.allocator()`
+// TODO(port): arena lifetimes. The Zig code threads `parser.arena` / `input.arena()`
 // (a bump arena) through every allocation. Phase A uses `Vec`/`Box` and a `Str` alias for
 // source-borrowed byte slices; Phase B should re-thread `'bump` and switch to
 // `bun_alloc::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators (AST crates).
@@ -67,7 +67,7 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
 }
 
 /// Allocate an ASCII-lowercased copy of `name` in the parse-session bump arena.
-/// Zig used `parser.allocator().alloc(u8, n)` (the bump arena owns the buffer
+/// Zig used `parser.arena().alloc(u8, n)` (the bump arena owns the buffer
 /// for the parse session and frees it on arena reset). Returns a raw arena
 /// pointer (`*const [u8]`) — `Ident.v`'s field type — so we don't fabricate a
 /// `'static` lifetime (PORTING.md §Forbidden: never `Box::leak` to satisfy
@@ -1200,7 +1200,7 @@ impl WebKitScrollbarPseudoElement {
 pub struct SelectorParser<'a> {
     pub is_nesting_allowed: bool,
     pub options: &'a ParserOptions<'a>,
-    // `allocator: Allocator` dropped — arena threaded via `input.allocator()` in Zig.
+    // `arena: Allocator` dropped — arena threaded via `input.arena()` in Zig.
     // PERF(port): was arena bulk-free — Phase B re-threads `&'bump Bump`.
 }
 
@@ -1227,7 +1227,7 @@ impl<'a> SelectorParser<'a> {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(raw, tag, bun_logger::Loc { start: i32::try_from(loc).expect("int cast") }),
                 #[cfg(debug_assertions)]
-                (raw, input.allocator()),
+                (raw, input.arena()),
             );
         }
         let _ = (input, tag, loc);
@@ -3125,7 +3125,7 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
             lower_name: {
                 // PERF: check if it's already lowercase
                 // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
-                Ident { v: arena_lowercase(input.allocator(), name) }
+                Ident { v: arena_lowercase(input.arena(), name) }
             },
             name: Ident { v: std::ptr::from_ref::<[u8]>(name) },
         }));
@@ -3343,7 +3343,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
             Err(_) => {
                 // [foo]
                 // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
-                let local_name_lower: *const [u8] = arena_lowercase(input.allocator(), local_name);
+                let local_name_lower: *const [u8] = arena_lowercase(input.arena(), local_name);
                 if let Some(ns) = namespace {
                     let x = attrs::AttrSelectorWithOptionalNamespace::<Impl> {
                         namespace: Some(ns),
@@ -3423,7 +3423,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         if let Some(first_uppercase) = first_uppercase {
             let str_ = &local_name[first_uppercase..];
             // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
-            let lowered: *const [u8] = arena_lowercase(input.allocator(), str_);
+            let lowered: *const [u8] = arena_lowercase(input.arena(), str_);
             break 'brk (Ident { v: lowered }, false);
         } else {
             break 'brk (Ident { v: std::ptr::from_ref::<[u8]>(local_name) }, true);

@@ -397,7 +397,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(res) = fold_string_addition(
                         e_.left,
                         e_.right,
-                        p.allocator,
+                        p.arena,
                         FoldStringAdditionKind::Normal,
                     ) {
                         return res;
@@ -409,7 +409,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                             if let Some(result) = fold_string_addition(
                                 left.right,
                                 e_.right,
-                                p.allocator,
+                                p.arena,
                                 FoldStringAdditionKind::NestedLeft,
                             ) {
                                 return p.new_expr(
@@ -553,7 +553,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                         return p.new_expr(E::Boolean { value: vals[0] < vals[1] }, v.loc);
                     }
                     if let Some(vals) =
-                        Expr::extract_string_values(&e_.left.data, &e_.right.data, p.allocator)
+                        Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
                         // SAFETY: extract_string_values returns live arena pointers (rope-resolved).
                         let ord = unsafe { (*vals[0]).order(&*vals[1]) };
@@ -572,7 +572,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                         return p.new_expr(E::Boolean { value: vals[0] > vals[1] }, v.loc);
                     }
                     if let Some(vals) =
-                        Expr::extract_string_values(&e_.left.data, &e_.right.data, p.allocator)
+                        Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
                         // SAFETY: see BinLt.
                         let ord = unsafe { (*vals[0]).order(&*vals[1]) };
@@ -591,7 +591,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                         return p.new_expr(E::Boolean { value: vals[0] <= vals[1] }, v.loc);
                     }
                     if let Some(vals) =
-                        Expr::extract_string_values(&e_.left.data, &e_.right.data, p.allocator)
+                        Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
                         // SAFETY: see BinLt.
                         let ord = unsafe { (*vals[0]).order(&*vals[1]) };
@@ -612,7 +612,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                         return p.new_expr(E::Boolean { value: vals[0] >= vals[1] }, v.loc);
                     }
                     if let Some(vals) =
-                        Expr::extract_string_values(&e_.left.data, &e_.right.data, p.allocator)
+                        Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
                         // SAFETY: see BinLt.
                         let ord = unsafe { (*vals[0]).order(&*vals[1]) };
@@ -741,7 +741,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
 //   notes:      Outer CreateBinaryExpressionVisitor wrapper flattened into const-generic struct;
 //               `in` field renamed `in_`. `Data::eql` shimmed locally — `require.main === module`
 //               arm is live (side-effects on ref usage), constant-folding arms TODO(port) until
-//               Expr.rs:2883 un-gates. `join_with_comma` dropped its allocator arg (Rust port
+//               Expr.rs:2883 un-gates. `join_with_comma` dropped its arena arg (Rust port
 //               uses the global Store). Tail return re-wraps the arena `*E.Binary` as `StoreRef`
 //               (verified same slot as Zig).
 // ──────────────────────────────────────────────────────────────────────────

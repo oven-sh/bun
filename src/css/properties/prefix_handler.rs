@@ -37,7 +37,7 @@ impl FallbackHandler {
         // TODO(port): proc-macro — if the field list grows, generate these arms from a
         // single source of truth shared with `Property`/`PropertyIdTag`.
 
-        let allocator = dest.bump();
+        let arena = dest.bump();
 
         // PORT NOTE: Zig's `inline for` over `std.meta.fields(FallbackHandler)` dispatched
         // each (field, Property variant) pair via a single generic body using `@field` /
@@ -56,11 +56,11 @@ impl FallbackHandler {
                 is_compat  = $ic:expr
             ) => {
                 if let Property::$Variant(payload) = property {
-                    let mut val = ($dc)(payload, allocator);
+                    let mut val = ($dc)(payload, arena);
 
                     if $self_field.is_none() {
                         // PORT NOTE: `has_fallbacks` only used in the vendor-prefixed branch in Zig.
-                        ($fb)(&mut val, allocator, context.targets, dest);
+                        ($fb)(&mut val, arena, context.targets, dest);
                     }
 
                     if $self_field.is_none()
@@ -72,7 +72,7 @@ impl FallbackHandler {
                     } else if let Some(index) = *$self_field {
                         dest[index] = Property::$Variant(val);
                     } else {
-                        // val dropped — Rust Drop handles cleanup (Zig: val.deinit(context.allocator))
+                        // val dropped — Rust Drop handles cleanup (Zig: val.deinit(context.arena))
                         drop(val);
                     }
 
@@ -165,7 +165,7 @@ impl FallbackHandler {
                 macro_rules! match_unparsed_unprefixed {
                     ($self_field:ident, $Variant:ident) => {
                         if val.property_id.tag() == PropertyIdTag::$Variant {
-                            let newval = val.deep_clone(allocator);
+                            let newval = val.deep_clone(arena);
                             break 'unparsed_and_index (newval, $self_field);
                         }
                     };
@@ -181,9 +181,9 @@ impl FallbackHandler {
                                 .prefix()
                                 .contains(VendorPrefix::NONE)
                             {
-                                val.get_prefixed(allocator, context.targets, Feature::$FeatureVariant)
+                                val.get_prefixed(arena, context.targets, Feature::$FeatureVariant)
                             } else {
-                                val.deep_clone(allocator)
+                                val.deep_clone(arena)
                             };
                             break 'unparsed_and_index (newval, $self_field);
                         }
@@ -201,7 +201,7 @@ impl FallbackHandler {
             // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
             // un-gates (blocked on `SupportsCondition::eql` in context.rs).
             
-            context.add_unparsed_fallbacks(allocator, &mut unparsed);
+            context.add_unparsed_fallbacks(arena, &mut unparsed);
             let _ = &mut unparsed;
             if let Some(i) = *index {
                 dest[i] = Property::Unparsed(unparsed);

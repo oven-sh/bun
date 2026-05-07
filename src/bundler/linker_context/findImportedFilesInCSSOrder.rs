@@ -102,13 +102,13 @@ unsafe fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImp
 #[cfg(feature = "css")]
 pub fn find_imported_files_in_css_order<'a>(
     this: &'a mut LinkerContext,
-    temp_allocator: &'a Arena,
+    temp_arena: &'a Arena,
     entry_points: &[Index],
 ) -> Vec<CssImportOrder> {
-    let _ = temp_allocator;
+    let _ = temp_arena;
 
     struct Visitor<'a> {
-        allocator: &'a Arena,
+        arena: &'a Arena,
         // PORT NOTE: `BundledAst.css` SoA column is type-erased to `*mut c_void`
         // (js_parser cannot depend on bun_css); cast back at the deref site.
         css_asts: &'a [Option<*mut core::ffi::c_void>],
@@ -116,7 +116,7 @@ pub fn find_imported_files_in_css_order<'a>(
 
         // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
         // dropped here to avoid an aliasing `&mut this.graph` borrow against
-        // `allocator`/`css_asts` (which already borrow `this.graph`).
+        // `arena`/`css_asts` (which already borrow `this.graph`).
         parse_graph: *mut Graph,
 
         has_external_import: bool,
@@ -206,14 +206,14 @@ pub fn find_imported_files_in_css_order<'a>(
                         if import_rule.has_conditions() {
                             // Fork our state
                             let mut nested_conditions =
-                                deep_clone_conditions(wrapping_conditions, self.allocator);
+                                deep_clone_conditions(wrapping_conditions, self.arena);
                             let mut nested_import_records =
                                 shallow_clone_records(wrapping_import_records);
 
                             // Clone these import conditions and append them to the state
                             nested_conditions.append_assume_capacity(
                                 import_rule.conditions_with_import_records(
-                                    self.allocator,
+                                    self.arena,
                                     &mut nested_import_records,
                                 ),
                             );
@@ -237,7 +237,7 @@ pub fn find_imported_files_in_css_order<'a>(
                     // Record external depednencies
                     if !record.flags.contains(ImportRecordFlags::IS_INTERNAL) {
                         let mut all_conditions =
-                            deep_clone_conditions(wrapping_conditions, self.allocator);
+                            deep_clone_conditions(wrapping_conditions, self.arena);
                         let mut all_import_records =
                             shallow_clone_records(wrapping_import_records);
                         // If this import has conditions, append it to the list of overall
@@ -248,7 +248,7 @@ pub fn find_imported_files_in_css_order<'a>(
                         if import_rule.has_conditions() {
                             all_conditions.append_assume_capacity(
                                 import_rule.conditions_with_import_records(
-                                    self.allocator,
+                                    self.arena,
                                     &mut all_import_records,
                                 ),
                             );
@@ -324,10 +324,10 @@ pub fn find_imported_files_in_css_order<'a>(
     // `items_css()` is type-erased (`*mut c_void`); cast back to `BundlerStyleSheet` at use sites.
     let css_asts_slice: &[Option<*mut core::ffi::c_void>] = this.graph.ast.items_css();
     let all_import_records_slice: &[Vec<ImportRecord>] = this.graph.ast.items_import_records();
-    let allocator = this.graph.allocator();
+    let arena = this.graph.arena();
 
     let mut visitor = Visitor {
-        allocator,
+        arena,
         parse_graph: this.parse_graph,
         visited: handle_oom(Vec::<Index>::init_capacity(16)),
         // SAFETY: re-borrow the same column slices; lifetime erased to decouple
@@ -725,14 +725,14 @@ pub fn find_imported_files_in_css_order<'a>(
 #[cfg(not(feature = "css"))]
 pub fn find_imported_files_in_css_order<'a>(
     _this: &'a mut LinkerContext,
-    _temp_allocator: &'a Arena,
+    _temp_arena: &'a Arena,
     _entry_points: &[Index],
 ) -> Vec<CssImportOrder> {
     // Without the CSS parser there are no CSS source files to order.
     Vec::new()
 }
 
-/// Zig: `wrapping_conditions.deepCloneInfallible(visitor.allocator)`.
+/// Zig: `wrapping_conditions.deepCloneInfallible(visitor.arena)`.
 ///
 /// Allocates in the bump arena (`Origin::Borrowed`) so `Drop` is a no-op:
 /// the returned list is later bitwise-copied into multiple `CssImportOrder`
@@ -744,17 +744,17 @@ pub fn find_imported_files_in_css_order<'a>(
 #[inline]
 fn deep_clone_conditions(
     list: &Vec<ImportConditions>,
-    allocator: &Arena,
+    arena: &Arena,
 ) -> Vec<ImportConditions> {
     let mut out =
-        Vec::<ImportConditions>::init_capacity_in(allocator, list.len() as usize + 1);
+        Vec::<ImportConditions>::init_capacity_in(arena, list.len() as usize + 1);
     for c in list.slice_const() {
-        out.append_assume_capacity(c.deep_clone(allocator));
+        out.append_assume_capacity(c.deep_clone(arena));
     }
     out
 }
 
-/// Zig: `bun.handleOom(wrapping_import_records.clone(allocator))` — shallow
+/// Zig: `bun.handleOom(wrapping_import_records.clone(arena))` — shallow
 /// memcpy of `ImportRecord` values into a fresh allocation.
 #[inline]
 fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
@@ -762,7 +762,7 @@ fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
     for r in list.slice_const() {
         // PORT NOTE: `ImportRecord` is plain-old-data in Zig (no destructor);
         // `Path<'static>` slices borrow resolver storage. Bitwise copy matches
-        // the Zig `clone(allocator)` semantics.
+        // the Zig `clone(arena)` semantics.
         out.append_assume_capacity(unsafe { bitwise_copy(r) });
     }
     out

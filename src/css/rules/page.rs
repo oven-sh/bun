@@ -3,7 +3,7 @@ use crate::css_rules::Location;
 use crate::{DeclarationBlock, PrintErr, Printer};
 
 // PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` fed by
-// `input.allocator()`. Phase B threads `'bump` and switches to
+// `input.arena()`. Phase B threads `'bump` and switches to
 // `bun_alloc::ArenaVec<'bump, T>` crate-wide; until then `Vec<T>`.
 type ArrayList<T> = Vec<T>;
 
@@ -217,11 +217,11 @@ impl PageRule {
         loc: Location,
         options: &css::ParserOptions,
     ) -> css::Result<PageRule> {
-        // SAFETY: `Tokenizer<'a>` owns `allocator: &'a Bump`; the arena outlives
+        // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see declaration.rs `DeclarationBlock::parse`).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.allocator()) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
         let mut declarations = DeclarationBlock::new_in(bump);
         let mut rules: ArrayList<PageMarginRule> = ArrayList::new();
         let mut rule_parser = PageRuleParser {
@@ -464,7 +464,7 @@ const _: () = {
 
         fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
             let loc = input.current_source_location();
-            match css::parse_utility::parse_string(input.allocator(), name, PageMarginBox::parse) {
+            match css::parse_utility::parse_string(input.arena(), name, PageMarginBox::parse) {
                 Ok(v) => Ok(v),
                 Err(_) => Err(loc.new_custom_error(ParserError::at_rule_invalid(std::ptr::from_ref::<[u8]>(name)))),
             }

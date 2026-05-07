@@ -114,11 +114,11 @@ impl PropertyRule {
             None => return Err(input.new_custom_error(ParserError::at_rule_body_invalid)),
         };
 
-        // SAFETY: `Tokenizer<'a>` owns `allocator: &'a Bump`; the arena outlives
+        // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // the sub-`ParserInput` constructed below. `'static` is the crate-wide
         // erasure (PORTING.md §AST crates).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.allocator()) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
 
         // `initial-value` is required unless the syntax is a universal definition.
         let initial_value = match syntax {

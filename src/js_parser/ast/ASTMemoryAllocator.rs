@@ -15,10 +15,10 @@ use crate::ast::stmt;
 // and `begin()` on the Rust `expr::data::Store` / `stmt::data::Store` (thread_local! + Cell).
 
 pub struct ASTMemoryAllocator {
-    // Zig fields `stack_allocator: SFA` + `bump_allocator: std.mem.Allocator` (the vtable into
-    // the SFA) collapse to a single bump arena. The `allocator: std.mem.Allocator` fallback
-    // field is dropped — bumpalo uses the global allocator implicitly.
-    // TODO(port): if any caller passed a non-default allocator into `enter` /
+    // Zig fields `stack_arena: SFA` + `bump_std.mem.Allocator param` (the vtable into
+    // the SFA) collapse to a single bump arena. The `arena: std.mem.Allocator` fallback
+    // field is dropped — bumpalo uses the global arena implicitly.
+    // TODO(port): if any caller passed a non-default arena into `enter` /
     // `init_without_stack`, that routing is lost here; revisit in Phase B.
     arena: Arena,
     previous: *mut ASTMemoryAllocator,
@@ -31,10 +31,10 @@ impl Default for ASTMemoryAllocator {
 }
 
 impl ASTMemoryAllocator {
-    /// Construct a fresh allocator.
+    /// Construct a fresh arena.
     ///
     /// Zig callers wrote `var a: ASTMemoryAllocator = undefined;` then
-    /// `a.enter(allocator)` (passing the fallback `std.mem.Allocator`). In the
+    /// `a.enter(arena)` (passing the fallback `std.mem.Allocator`). In the
     /// Rust port the SFA + fallback collapse to a single internal `Arena`, so
     /// the passed arena is currently unused — kept for call-site shape compat.
     // TODO(port): if Phase B routes the parser bump arena through here instead
@@ -51,8 +51,8 @@ impl ASTMemoryAllocator {
     }
 
     pub fn enter(&mut self) -> Scope<'_> {
-        // Zig: this.allocator = allocator;
-        //      this.stack_allocator = SFA{ .buffer = undefined, .fallback_allocator = allocator, .fixed_buffer_allocator = undefined };
+        // Zig: this.arena = arena;
+        //      this.stack_allocator = SFA{ .buffer = undefined, .fallback_allocator = arena, .fixed_buffer_allocator = undefined };
         //      this.bump_allocator = this.stack_allocator.get();
         self.arena = Arena::new();
         // PERF(port): was stack-fallback — profile in Phase B
@@ -66,7 +66,7 @@ impl ASTMemoryAllocator {
     }
 
     pub fn reset(&mut self) {
-        // Zig rebuilt the SFA against the stored fallback allocator; Arena::reset is equivalent.
+        // Zig rebuilt the SFA against the stored fallback arena; Arena::reset is equivalent.
         // PERF(port): was stack-fallback — profile in Phase B
         self.arena.reset();
     }

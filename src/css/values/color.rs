@@ -431,7 +431,7 @@ impl CssColor {
     }
 
     /// Project this color into the given fallback colorspace.
-    pub fn get_fallback(&self, _allocator: &Arena, kind: ColorFallbackKind) -> CssColor {
+    pub fn get_fallback(&self, _arena: &Arena, kind: ColorFallbackKind) -> CssColor {
         if matches!(self, CssColor::Rgba(_)) {
             return self.clone();
         }
@@ -445,7 +445,7 @@ impl CssColor {
 
     pub fn get_fallbacks(
         &mut self,
-        _allocator: &Arena,
+        _arena: &Arena,
         targets: targets::Targets,
     ) -> crate::SmallList<CssColor, 2> {
         let fallbacks = self.get_necessary_fallbacks(targets);
@@ -555,7 +555,7 @@ impl CssColor {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _allocator: &Arena) -> CssColor { self.clone() }
+    pub fn deep_clone(&self, _arena: &Arena) -> CssColor { self.clone() }
 
     #[inline]
     pub fn eql(&self, other: &CssColor) -> bool { self == other }
@@ -3411,5 +3411,5 @@ pub enum ConvertTo {
 //   source:     src/css/values/color.zig (4716 lines)
 //   confidence: low
 //   todos:      14
-//   notes:      Heavy comptime-reflection mixins (DefineColorspace/ColorIntoMixin) folded into Colorspace/ColorGamut/Interpolate traits + define_colorspace! macro + From impls; Calc::parse_with stack-ptr closures need Phase B API review; several Zig bugs (a99-rgb, XYZd50→XYZd65, SRGBLinear angle channel, LABColor::new_*) mirrored for parity; allocator params dropped (Box owns).
+//   notes:      Heavy comptime-reflection mixins (DefineColorspace/ColorIntoMixin) folded into Colorspace/ColorGamut/Interpolate traits + define_colorspace! macro + From impls; Calc::parse_with stack-ptr closures need Phase B API review; several Zig bugs (a99-rgb, XYZd50→XYZd65, SRGBLinear angle channel, LABColor::new_*) mirrored for parity; arena params dropped (Box owns).
 // ──────────────────────────────────────────────────────────────────────────

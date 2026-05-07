@@ -99,9 +99,9 @@ pub fn validate_path(
         return Box::default();
     }
     // TODO: switch to getFdPath()-based implementation
-    // PORT NOTE: Zig used `std.fs.path.resolve(allocator, &.{cwd, rel_path})`;
+    // PORT NOTE: Zig used `std.fs.path.resolve(arena, &.{cwd, rel_path})`;
     // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
-    // buffer which is then boxed (matches the allocator.dupe in the Zig path).
+    // buffer which is then boxed (matches the arena.dupe in the Zig path).
     let _ = path_kind;
     let out = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
     if out.is_empty() {
@@ -135,7 +135,7 @@ where
     V: Clone,
     // TODO(port): M is a StringArrayHashMap-like; this is a structural constraint in Zig (anytype)
 {
-    // TODO(port): Zig used `t.init(allocator)`; in Rust the map type owns its allocator.
+    // TODO(port): Zig used `t.init(arena)`; in Rust the map type owns its arena.
     let mut hash_map = M::default();
     if !keys.is_empty() {
         // TODO(port): ensureTotalCapacity / putAssumeCapacity — needs concrete map API
@@ -2075,7 +2075,7 @@ impl<'a> BundleOptions<'a> {
     // opaque).
     pub fn load_defines(
         &mut self,
-        allocator: &bun_alloc::Arena,
+        arena: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
     ) -> Result<(), bun_core::Error> {
         // PORT NOTE: spec `loadDefines(..., env: ?*const options.Env)` had its
@@ -2085,7 +2085,7 @@ impl<'a> BundleOptions<'a> {
         // `&self.env` here instead — disjoint from the `self.define` /
         // `self.defines_loaded` writes below, so borrowck splits it cleanly.
         //
-        // The `allocator` param is kept (spec passes `this.allocator`, i.e.
+        // The `arena` param is kept (spec passes `this.arena`, i.e.
         // `bun.default_allocator`) because `DefineData::from_input` JSON-parses
         // each define value into `EString` nodes whose `.data` slices borrow
         // the arena — they must outlive `self.define`, not just this call.
@@ -2122,7 +2122,7 @@ impl<'a> BundleOptions<'a> {
             // TODO(port): &self.drop is Box<[Box<[u8]>]>, callee wants &[&[u8]]
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
-            allocator,
+            arena,
         )?;
         self.defines_loaded = true;
         Ok(())
@@ -2641,7 +2641,7 @@ pub struct Env {
     pub behavior: api::DotEnvBehavior,
     pub prefix: Box<[u8]>,
     pub defaults: EnvList,
-    // allocator: dropped (global mimalloc)
+    // arena: dropped (global mimalloc)
 
     /// List of explicit env files to load (e..g specified by --env-file args)
     pub files: Box<[Box<[u8]>]>,

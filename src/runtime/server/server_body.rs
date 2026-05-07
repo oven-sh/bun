@@ -2771,9 +2771,9 @@ where
         // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_H3 {
-                bun_core::handle_oom((*self.h3_request_pool_allocator).try_get()).cast()
+                bun_core::handle_oom((*self.h3_request_pool).try_get()).cast()
             } else {
-                bun_core::handle_oom((*self.request_pool_allocator).try_get()).cast()
+                bun_core::handle_oom((*self.request_pool).try_get()).cast()
             }
         }; // bun.handleOom — aborts on OOM
         let self_ptr: *const Self = self;
@@ -2993,7 +2993,7 @@ where
         self.pending_requests += 1;
         req.set_yield(false);
         // SAFETY: handle_oom aborts on failure; pointer is non-null and owns a fresh pool slot.
-        let ctx_slot = unsafe { bun_core::handle_oom((*self.request_pool_allocator).try_get()) };
+        let ctx_slot = unsafe { bun_core::handle_oom((*self.request_pool).try_get()) };
         let mut should_deinit_context = false;
         let self_ptr: *mut Self = self;
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(

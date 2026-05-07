@@ -277,7 +277,7 @@ impl<'arena> BundledAst<'arena> {
             named_exports: ast.named_exports,
             export_star_import_records: ast.export_star_import_records,
 
-            // allocator: ast.allocator,
+            // arena: ast.arena,
             top_level_symbols_to_parts: ast.top_level_symbols_to_parts,
 
             commonjs_named_exports: ast.commonjs_named_exports,
@@ -327,7 +327,7 @@ impl<'arena> BundledAst<'arena> {
                 let encode_len = bun_base64::encode_len(contents);
                 let data_url_prefix_len = b"data:".len() + mime_type.len() + b";base64,".len();
                 let total_buffer_len = data_url_prefix_len + encode_len;
-                // PERF(port): was arena alloc via `allocator.alloc(u8, n)`; using bumpalo here.
+                // PERF(port): was arena alloc via `arena.alloc(u8, n)`; using bumpalo here.
                 let encoded: &mut [u8] = bump.alloc_slice_fill_copy(total_buffer_len, 0u8);
                 {
                     let mut cursor = &mut encoded[0..data_url_prefix_len];

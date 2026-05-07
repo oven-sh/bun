@@ -267,11 +267,11 @@ use crate::mal_prelude::*;
 //   references to data must NOT be allocated on a threadlocal heap.
 //
 //   For example, package.json and tsconfig.json read from the filesystem must be
-//   use the global allocator (bun.default_allocator) because bun's directory
+//   use the global arena (bun.default_allocator) because bun's directory
 //   entry cache and module resolution cache are globally shared across all
 //   threads.
 //
-//   Additionally, `LinkerContext`'s allocator is also threadlocal.
+//   Additionally, `LinkerContext`'s arena is also threadlocal.
 //
 // - Globally allocated data must be in a cache & reused, or we will create an infinite
 //   memory leak over time. To do that, we have a DirnameStore, FilenameStore, and the other
@@ -591,7 +591,7 @@ pub mod bake_types {
             /// `OpaqueFileId` is the insertion index into this map.
             pub files: EntryPointHashMap,
             /// Owned backing storage for the duped path bytes that `InputFile`
-            /// keys point into (raw ptr+len). Mirrors Zig's `map.allocator.dupe`
+            /// keys point into (raw ptr+len). Mirrors Zig's `map.arena.dupe`
             /// against `bun.default_allocator` — kept here so the allocations
             /// drop with the map (PORTING.md §Forbidden: no `Box::leak`).
             pub owned_paths: Vec<Box<[u8]>>,
@@ -609,9 +609,9 @@ pub mod bake_types {
                 if let Some(index) = self.files.get_index(&probe) {
                     return Ok(OpaqueFileId::init(index as u32));
                 }
-                // Zig: `gop.key_ptr.* = InputFile.init(try map.allocator.dupe(u8, abs_path), side);`
+                // Zig: `gop.key_ptr.* = InputFile.init(try map.arena.dupe(u8, abs_path), side);`
                 // The Zig `errdefer map.files.swapRemoveAt(gop.index)` only guards the
-                // `allocator.dupe`, which is infallible in Rust, so no rollback needed.
+                // `arena.dupe`, which is infallible in Rust, so no rollback needed.
                 let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
                 let key = InputFile::init(&owned, side);
                 self.owned_paths.push(owned);
@@ -856,7 +856,7 @@ pub mod api {
             /// joined against `dirname(source_file)` (with Windows
             /// drive-letter / separator normalization).
             ///
-            /// `arena` is the build's bump allocator (`BundleV2::allocator()`);
+            /// `arena` is the build's bump arena (`BundleV2::arena()`);
             /// the matched key is copied into it so the returned
             /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
             /// (lives for the entire build pass) instead of the map's key
@@ -869,7 +869,7 @@ pub mod api {
             ) -> Option<bun_resolver::Result> {
                 if self.map.is_empty() { return None; }
 
-                // SAFETY: ARENA — `arena` is the build-pass bump allocator
+                // SAFETY: ARENA — `arena` is the build-pass bump arena
                 // (never freed before the `Result` is consumed); detaching the
                 // borrow lifetime matches the established `Path<'static>`
                 // convention used throughout `bun_resolver` (PORTING.md
@@ -1622,7 +1622,7 @@ pub fn generic_path_with_pretty_initialized<'a>(
 /// collapse all three into a single `bun_paths::fs::Path<'a>` re-exported by
 /// `bun_logger`/`bun_resolver`; until then, callers must pass slices that are
 /// either `'static` literals, `FilenameStore`/`DirnameStore`-interned, or
-/// allocated from `BundleV2::allocator()` (the bundle-pass arena).
+/// allocated from `BundleV2::arena()` (the bundle-pass arena).
 ///
 /// Erase `&[u8]` to `&'static [u8]` for storage in the lifetime-erased
 /// `Logger::fs::Path`/`bun_paths::fs::Path<'static>` mirrors.
@@ -1631,7 +1631,7 @@ pub fn generic_path_with_pretty_initialized<'a>(
 /// Caller guarantees `s` is one of:
 ///   - a `'static` literal,
 ///   - interned in `FilenameStore`/`DirnameStore` (process-lifetime BSS lists),
-///   - allocated from the bundle-pass arena (`BundleV2::allocator()`), in which
+///   - allocated from the bundle-pass arena (`BundleV2::arena()`), in which
 ///     case the returned reference is valid only for the bundle pass and the
 ///     consuming `Path` must not outlive it.
 /// All call sites in this file satisfy one of these; this is the documented
@@ -1752,7 +1752,7 @@ impl<'a> BundleV2<'a> {
         // borrow so the returned `&'a mut Transpiler<'a>` doesn't keep `self`
         // borrowed.
         let arena: &'a bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.allocator()) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.arena()) };
 
         // PORT NOTE: Zig holds `this_transpiler = this.transpiler` (a `*Transpiler`)
         // and reads from it while also touching `this.client_transpiler`. In Rust
@@ -1827,10 +1827,10 @@ impl<'a> BundleV2<'a> {
             );
         }
 
-        // `set_log` / `set_allocator` only write raw-pointer / `&'a Arena`
+        // `set_log` / `set_arena` only write raw-pointer / `&'a Arena`
         // fields (no Drop); safe to call normally.
         client_transpiler.set_log(this_log);
-        client_transpiler.set_allocator(arena);
+        client_transpiler.set_arena(arena);
         // Zig: `client_transpiler.linker.resolver = &client_transpiler.resolver;`
         // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (Linker.resolver
         // is `*mut Resolver<'static>`; the resolver lives as long as the arena).
@@ -2283,7 +2283,7 @@ impl<'a> BundleV2<'a> {
 
         // Check the FileMap first for in-memory files
         if let Some(file_map) = self.file_map {
-            if let Some(_file_map_result) = file_map.resolve(self.allocator(), &import_record.source_file, &import_record.specifier) {
+            if let Some(_file_map_result) = file_map.resolve(self.arena(), &import_record.source_file, &import_record.specifier) {
                 let mut file_map_result = _file_map_result;
                 let mut path_primary = file_map_result.path_pair.primary.clone();
                 // PORT NOTE: reshaped for borrowck — `get_or_put` borrows `*self` mutably via
@@ -2304,7 +2304,7 @@ impl<'a> BundleV2<'a> {
                         break 'brk Fs::Path::init(path_primary.text).loader(unsafe { &(*transpiler).options.loaders }).unwrap_or(Loader::File);
                     };
                     // For virtual files, use the path text as-is (no relative path computation needed).
-                    path_primary.pretty = self.allocator().alloc_slice_copy(&path_primary.text);
+                    path_primary.pretty = self.arena().alloc_slice_copy(&path_primary.text);
                     let mut tmp_source = Logger::Source {
                         path: fs_path_to_logger(path_primary),
                         contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -2451,7 +2451,7 @@ impl<'a> BundleV2<'a> {
                 unsafe { (*(*transpiler).fs).top_level_dir }, &path.text);
             // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
             // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
-            path.pretty = unsafe { &*std::ptr::from_ref::<[u8]>(self.allocator().alloc_slice_copy(rel)) };
+            path.pretty = unsafe { &*std::ptr::from_ref::<[u8]>(self.arena().alloc_slice_copy(rel)) };
         }
         path.assert_pretty_is_valid();
         path.assert_file_path_is_absolute();
@@ -2559,7 +2559,7 @@ impl<'a> BundleV2<'a> {
             side_effects: result.primary_side_effects_data,
             ..Default::default()
         })?;
-        // Arena-owned (Zig: `allocator.create(ParseTask)`); freed on heap reset.
+        // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
         let task_val = ParseTask::init(&result, source_index.into(), self);
         // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
         let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
@@ -2638,7 +2638,7 @@ impl<'a> BundleV2<'a> {
             side_effects,
             ..Default::default()
         })?;
-        // Arena-owned (Zig: `allocator.create(ParseTask)`); freed on heap reset.
+        // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
         let task_val = ParseTask::init(result, source_index.into(), self);
         // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
         let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
@@ -2687,7 +2687,7 @@ impl<'a> BundleV2<'a> {
         thread_pool: Option<NonNull<ThreadPoolLib>>,
         heap: ThreadLocalArena,
     ) -> Result<Box<BundleV2<'a>>, Error> {
-        // TODO(port): arena-allocate self via bump.alloc — Box::new is wrong allocator (Zig: allocator.create(@This()) on arena)
+        // TODO(port): arena-allocate self via bump.alloc — Box::new is wrong arena (Zig: arena.create(@This()) on arena)
         unsafe { (*transpiler.env).load_tracy() };
 
         transpiler.options.mark_builtins_as_external = transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
@@ -2745,8 +2745,8 @@ impl<'a> BundleV2<'a> {
                 }
             }
         }
-        // PORT NOTE: Zig wired `heap.allocator()` into `transpiler.allocator` /
-        // `resolver.allocator` / `linker.allocator` / `log.msgs.allocator`. The
+        // PORT NOTE: Zig wired `heap.arena()` into `transpiler.arena` /
+        // `resolver.arena` / `linker.arena` / `log.msgs.arena`. The
         // Rust `Transpiler<'a>`/`Resolver<'a>` store `&'a Arena` and `Log.msgs`
         // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
         // backref into the now-stable `this.graph.heap` slot.
@@ -2795,10 +2795,10 @@ impl<'a> BundleV2<'a> {
 
         this.linker.dev_server = this.dev_server;
 
-        // Arena-owned (Zig: `allocator.create(ThreadPool)`). Coerce to `*mut`
-        // immediately so the `&this` borrow from `allocator()` ends before
+        // Arena-owned (Zig: `arena.create(ThreadPool)`). Coerce to `*mut`
+        // immediately so the `&this` borrow from `arena()` ends before
         // `ThreadPool::init` takes `&mut this`.
-        let pool: *mut ThreadPool = std::ptr::from_mut(this.allocator().alloc(ThreadPool::default()));
+        let pool: *mut ThreadPool = std::ptr::from_mut(this.arena().alloc(ThreadPool::default()));
         if cli_watch_flag {
             // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
             // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
@@ -2816,19 +2816,19 @@ impl<'a> BundleV2<'a> {
         Ok(this)
     }
 
-    pub fn allocator(&self) -> &bun_alloc::Arena {
+    pub fn arena(&self) -> &bun_alloc::Arena {
         &self.graph.heap
     }
 
     /// Allocate `value` into the bundler's arena (`self.graph.heap`) and return
-    /// a raw pointer. Mirrors Zig `allocator.create(T)` — the arena owns the
+    /// a raw pointer. Mirrors Zig `arena.create(T)` — the arena owns the
     /// slab and reclaims it on `deinit_without_freeing_arena` / `heap.reset()`.
     /// Returning `*mut T` (not `&'_ mut T`) releases the `&self` borrow at the
     /// call site so callers can immediately reborrow `&mut self` (PORTING.md
     /// §Allocators: `bump.alloc(init)` → `&'bump mut T`).
     #[inline]
     fn arena_create<T>(&self, value: T) -> *mut T {
-        std::ptr::from_mut::<T>(self.allocator().alloc(value))
+        std::ptr::from_mut::<T>(self.arena().alloc(value))
     }
 
     pub fn increment_scan_counter(&mut self) {
@@ -2879,7 +2879,7 @@ impl<'a> BundleV2<'a> {
 
             // Check FileMap first for in-memory entry points
             if let Some(file_map) = self.file_map {
-                if let Some(file_map_result) = file_map.resolve(self.allocator(), b"", entry_point) {
+                if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point) {
                     let _ = self.enqueue_entry_item(&mut {file_map_result}, true, self.transpiler.options.target)?;
                     continue;
                 }
@@ -3032,13 +3032,13 @@ impl<'a> BundleV2<'a> {
             ..Default::default()
         })?;
 
-        // try this.graph.entry_points.append(allocator, Index.runtime);
+        // try this.graph.entry_points.append(arena, Index.runtime);
         let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         self.path_to_source_index_map(self.transpiler.options.target).put(&b"bun:wrap"[..], Index::RUNTIME.get()).expect("oom");
         // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
         // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
-        // `allocator()` ends before we take `&mut self` below.
-        let runtime_parse_task: *mut ParseTask = self.allocator().alloc(rt.parse_task);
+        // `arena()` ends before we take `&mut self` below.
+        let runtime_parse_task: *mut ParseTask = self.arena().alloc(rt.parse_task);
         unsafe {
             // BACKREF — lifetime erased per ParseTask::ctx convention.
             (*runtime_parse_task).ctx = std::ptr::from_mut(self).cast::<BundleV2<'static>>();
@@ -3092,7 +3092,7 @@ impl<'a> BundleV2<'a> {
         // `&self` borrow so `server`/`client` don't keep `*self` borrowed across
         // the `self.graph.ast.set(...)` calls at the end of this function.
         let alloc: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.allocator()) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.arena()) };
 
         let hmr = self.transpiler.options.hot_module_reloading;
         let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
@@ -3255,7 +3255,7 @@ impl<'a> BundleV2<'a> {
         })?;
         // PORT NOTE: `ParseTask::init` takes `bun_js_parser::Index`; both Index newtypes
         // are `repr(transparent)` u32 so reconstruct via `.get()`.
-        // Arena-owned (Zig: `allocator.create(ParseTask)`); freed on heap reset.
+        // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
         let task_val = ParseTask::init(resolve_result, js_ast::Index::init(source_index.get()), self);
         // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
         let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
@@ -3311,7 +3311,7 @@ impl<'a> BundleV2<'a> {
         // `ContentsOrFd::Contents`. See `interned_slice` contract.
         let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
         // Compute borrow-heavy fields up front so the `&self` borrow taken by
-        // `allocator()` doesn't overlap `&mut self` uses inside the literal.
+        // `arena()` doesn't overlap `&mut self` uses inside the literal.
         let jsx = if known_target == Target::BakeServerComponentsSsr
             && !self.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph
         {
@@ -3322,8 +3322,8 @@ impl<'a> BundleV2<'a> {
         let tree_shaking = self.linker.options.tree_shaking;
         // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
         // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
-        // `allocator()` ends before we take `&mut self` below.
-        let task: *mut ParseTask = self.allocator().alloc(ParseTask {
+        // `arena()` ends before we take `&mut self` below.
+        let task: *mut ParseTask = self.arena().alloc(ParseTask {
             // PORT NOTE: Zig had a single `fs.Path`; Rust split it into
             // `bun_logger::fs::Path` (on `Source`) and `bun_resolver::fs::Path`
             // (on `ParseTask`). Reconstruct from the `text` slice — `pretty`/
@@ -3712,7 +3712,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
         if self.graph.estimated_file_loader_count > 0 {
-            // PORT NOTE: Zig per-file `allocator` column dropped — Box owns its alloc.
+            // PORT NOTE: Zig per-file `arena` column dropped — Box owns its alloc.
             // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
             // sidestep so we can hold several read-only column slices, one mutable
             // column slice (`additional_files`), and call `transpiler_for_target`
@@ -3894,11 +3894,11 @@ impl<'a> BundleV2<'a> {
                 // Ownership of `code.source_code` diverges on
                 // `should_copy_for_bundling` (spec bundle_v2.zig:1970):
                 // copy-for-bundling buffers are owned by the input-file slot
-                // (Zig: `InputFile.allocator` column → `ExternalFreeFunctionAllocator`)
+                // (Zig: `InputFile.arena` column → `ExternalFreeFunctionAllocator`)
                 // so they outlive `free_list` teardown for
                 // `dev.put_or_overwrite_asset`. The Rust port dropped that
                 // column, so own them in `source.contents` as `Cow::Owned`
-                // (same lifetime as the Zig per-slot allocator). Non-copy
+                // (same lifetime as the Zig per-slot arena). Non-copy
                 // buffers go to `free_list`.
                 let source_code: &'static [u8] = if should_copy_for_bundling {
                     let contents = &mut this.graph.input_files.items_source_mut()
@@ -4164,7 +4164,7 @@ impl<'a> BundleV2<'a> {
                             known_target: resolve.import_record.original_target,
                             ..Default::default()
                         };
-                        // Arena-owned (Zig: `allocator.create(ParseTask)`).
+                        // Arena-owned (Zig: `arena.create(ParseTask)`).
                         // SAFETY: arena outlives the bundle pass.
                         let task: &mut ParseTask = unsafe { &mut *this.arena_create(task_val) };
                         task.task.node.next = core::ptr::null_mut();
@@ -4609,10 +4609,10 @@ impl<'a> BundleV2<'a> {
             // TODO(port): leak js_files into arena — Zig returned .items
             // SAFETY: `alloc_slice_copy` returns into the bundler arena which outlives
             // this function. Erase the `&self` lifetime via `*const` so the borrow on
-            // `self.allocator()` does not extend across the `&mut self` calls below
+            // `self.arena()` does not extend across the `&mut self` calls below
             // (Phase-A arena-erasure convention; see also `path.pretty` ~L4770).
             break 'reachable_files unsafe {
-                &*std::ptr::from_ref::<[Index]>(self.allocator().alloc_slice_copy(&js_files))
+                &*std::ptr::from_ref::<[Index]>(self.arena().alloc_slice_copy(&js_files))
             };
         };
 
@@ -4665,7 +4665,7 @@ impl<'a> BundleV2<'a> {
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         // Generate chunks
-        let js_part_ranges = self.allocator().alloc_slice_fill_default::<crate::ungate_support::PartRange>(js_reachable_files.len());
+        let js_part_ranges = self.arena().alloc_slice_fill_default::<crate::ungate_support::PartRange>(js_reachable_files.len());
         let parts = self.graph.ast.items_parts();
         debug_assert_eq!(js_reachable_files.len(), js_part_ranges.len());
         for (source_index, part_range) in js_reachable_files.iter().zip(js_part_ranges.iter_mut()) {
@@ -4728,11 +4728,11 @@ impl<'a> BundleV2<'a> {
                 ..Chunk::default()
             });
         }
-        // Arena-owned (Zig allocates `chunks` from `this.allocator()`); the
+        // Arena-owned (Zig allocates `chunks` from `this.arena()`); the
         // `DevServerOutput` lifetime is documented as "tied to the bundler's
         // arena". `alloc_slice_fill_iter` moves each `Chunk` into the bump.
         let chunks: *mut [Chunk] = std::ptr::from_mut::<[Chunk]>(self
-            .allocator()
+            .arena()
             .alloc_slice_fill_iter(chunks.into_iter()));
         // SAFETY: arena outlives this fn and the `DevServerOutput` it produces.
         let chunks: &mut [Chunk] = unsafe { &mut *chunks };
@@ -4774,7 +4774,7 @@ impl<'a> BundleV2<'a> {
                     bstr::BStr::new(&import_record.path.text));
                 self.increment_scan_counter();
 
-                // Arena-owned (Zig: `allocator.create(Resolve)`); the dispatch
+                // Arena-owned (Zig: `arena.create(Resolve)`); the dispatch
                 // chain holds the raw `*mut Resolve` until the JS thread calls
                 // back, at which point the bundle pass is still alive.
                 // SAFETY: arena outlives the bundle pass.
@@ -4811,7 +4811,7 @@ impl<'a> BundleV2<'a> {
             if plugins.has_any_matches(&temp_path, false) {
                 bun_core::scoped_log!(Bundle, "Entry point '{}' plugin match", bstr::BStr::new(entry_point));
 
-                // Arena-owned (Zig: `allocator.create(Resolve)`).
+                // Arena-owned (Zig: `arena.create(Resolve)`).
                 // SAFETY: arena outlives the bundle pass.
                 let resolve: &mut jsc_api::JSBundler::Resolve =
                     unsafe { &mut *self.arena_create(jsc_api::JSBundler::Resolve::default()) };
@@ -4879,7 +4879,7 @@ impl<'a> BundleV2<'a> {
                 bun_core::scoped_log!(Bundle, "enqueue onLoad: {}:{}",
                     bstr::BStr::new(&parse.path.namespace),
                     bstr::BStr::new(&parse.path.text));
-                // Arena-owned (Zig: `allocator.create(Load)`); the dispatch
+                // Arena-owned (Zig: `arena.create(Load)`); the dispatch
                 // chain holds the raw `*mut Load` until the JS thread calls back.
                 let load_val = jsc_api::JSBundler::Load::init(self, parse);
                 // SAFETY: arena outlives the bundle pass.
@@ -4895,7 +4895,7 @@ impl<'a> BundleV2<'a> {
     fn path_with_pretty_initialized(&self, path: Fs::Path<'static>, target: options::Target) -> Result<Fs::Path<'static>, Error> {
         // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
         // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
-        let bump: &'static bun_alloc::Arena = unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.allocator()) };
+        let bump: &'static bun_alloc::Arena = unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.arena()) };
         generic_path_with_pretty_initialized(path, target, unsafe { &(*self.transpiler.fs).top_level_dir }, bump)
     }
 
@@ -5266,7 +5266,7 @@ impl<'a> BundleV2<'a> {
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) = file_map.resolve(self.allocator(), &source.path.text, &import_record.path.text) {
+                if let Some(_file_map_result) = file_map.resolve(self.arena(), &source.path.text, &import_record.path.text) {
                     let mut file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary.clone();
                     let import_record_loader = import_record.loader.unwrap_or_else(|| {
@@ -5290,12 +5290,12 @@ impl<'a> BundleV2<'a> {
                     // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
                     // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
                     // cascading borrow conflicts into every `&mut self` call below).
-                    path_primary.pretty = unsafe { &*std::ptr::from_ref::<[u8]>(self.allocator().alloc_slice_copy(&path_primary.text)) };
+                    path_primary.pretty = unsafe { &*std::ptr::from_ref::<[u8]>(self.arena().alloc_slice_copy(&path_primary.text)) };
                     import_record.path = ir_path_from_fs(&path_primary);
                     let _ = path_primary.text; // key already interned by get_or_put
                     bun_core::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));
                     file_map_result.path_pair.primary = path_primary;
-                    // Arena-owned (Zig: `allocator.create(ParseTask)`).
+                    // Arena-owned (Zig: `arena.create(ParseTask)`).
                     let resolve_task_val = ParseTask::init(&file_map_result, js_ast::Index::INVALID, self);
                     // SAFETY: arena outlives the bundle pass.
                     let resolve_task: &mut ParseTask = unsafe { &mut *self.arena_create(resolve_task_val) };
@@ -5522,7 +5522,7 @@ impl<'a> BundleV2<'a> {
                             // outlives this `ImportRecord`. See `interned_slice` contract.
                             import_record.path.pretty = unsafe {
                                 interned_slice(
-                                    self.allocator()
+                                    self.arena()
                                         .alloc_str(&format!(
                                             "{}/{:016x}{}",
                                             bake_types::ASSET_PREFIX,
@@ -5593,7 +5593,7 @@ impl<'a> BundleV2<'a> {
             import_record.path = ir_path_from_fs(path);
             // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
             bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
-            // Arena-owned (Zig: `allocator.create(ParseTask)`).
+            // Arena-owned (Zig: `arena.create(ParseTask)`).
             let resolve_task_val = ParseTask::init(&resolve_result, js_ast::Index::INVALID, self);
             // SAFETY: arena outlives the bundle pass.
             let resolve_task: &mut ParseTask = unsafe { &mut *self.arena_create(resolve_task_val) };
@@ -5816,7 +5816,7 @@ impl<'a> BundleV2<'a> {
         // arena-erasure convention. See `interned_slice` contract.
         let unique_key: &'static [u8] = unsafe {
             interned_slice(
-                self.allocator()
+                self.arena()
                     .alloc_str(&format!(
                         "{:x}H{:08}",
                         self.unique_key,
@@ -5827,7 +5827,7 @@ impl<'a> BundleV2<'a> {
         };
 
         // Extract raw pointers so the `&mut self` borrow from
-        // `transpiler_for_target` doesn't overlap `self.allocator()` below.
+        // `transpiler_for_target` doesn't overlap `self.arena()` below.
         // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler /
         // BACKREF set in `BundleV2::init`).
         let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_logger::Log) = {
@@ -5836,7 +5836,7 @@ impl<'a> BundleV2<'a> {
         };
 
         let ast_for_html_entrypoint = JSAst::init(bun_js_parser::new_lazy_export_ast(
-            self.allocator(),
+            self.arena(),
             unsafe { &mut *define_ptr },
             js_parser_options,
             unsafe { &mut *log_ptr },
@@ -5889,7 +5889,7 @@ impl<'a> BundleV2<'a> {
                 parse_task::ResultValue::Success(val) => val.source.index.0,
             };
             let loader: Loader = this.graph.input_files.items_loader()[source as usize];
-            // PORT NOTE: `InputFile.allocator` column dropped in the Rust port;
+            // PORT NOTE: `InputFile.arena` column dropped in the Rust port;
             // stash the finalizer regardless so plugin-owned bytes are freed.
             let _ = loader;
             this.finalizers.push(core::mem::take(&mut parse_result.external));
@@ -6893,15 +6893,15 @@ static EXTERNAL_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVT
     free: |ctx, buf, a, ra| ExternalFreeFunctionAllocator::free(ctx, buf, a, ra),
 };
 
-/// Returns true if `allocator` definitely has a valid `.ptr`.
+/// Returns true if `arena` definitely has a valid `.ptr`.
 /// May return false even if `.ptr` is valid.
 ///
-/// This function should check whether `allocator` matches any internal allocator types known to
+/// This function should check whether `arena` matches any internal arena types known to
 /// have valid pointers. Allocators defined outside of this file, like `std.heap.ArenaAllocator`,
 /// don't need to be checked.
-pub fn allocator_has_pointer(allocator: &bun_alloc::StdAllocator) -> bool {
+pub fn allocator_has_pointer(arena: &bun_alloc::StdAllocator) -> bool {
     // bundle_v2.zig:4443 — vtable identity check.
-    core::ptr::eq(allocator.vtable, &raw const EXTERNAL_FREE_VTABLE)
+    core::ptr::eq(arena.vtable, &raw const EXTERNAL_FREE_VTABLE)
 }
 
 // LAYERING: `BuildResult` / `BundleV2Result` are defined once in

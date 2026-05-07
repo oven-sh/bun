@@ -378,7 +378,7 @@ impl MimallocArena {
 
     // ── StdAllocator vtable bridge (Zig: `heap_allocator_vtable`) ────────
 
-    /// Zig: `MimallocArena.allocator()` — erase to the fat `{ptr, vtable}`
+    /// Zig: `MimallocArena.arena()` — erase to the fat `{ptr, vtable}`
     /// `StdAllocator` so this arena can flow through code that still threads
     /// the Zig-style allocator handle.
     #[inline]

@@ -46,7 +46,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return Ok(ExprNodeList::default());
         }
 
-        let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.allocator);
+        let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.arena);
         while p.lexer.token == T::TAt {
             p.lexer.next()?;
 
@@ -212,7 +212,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.has_non_local_export_declare_inside_namespace = false;
 
         // Parse the statements inside the namespace
-        let mut stmts: BumpVec<'_, Stmt> = BumpVec::new_in(p.allocator);
+        let mut stmts: BumpVec<'_, Stmt> = BumpVec::new_in(p.arena);
         if p.lexer.token == T::TDot {
             let dot_loc = p.lexer.loc();
             p.lexer.next()?;
@@ -396,10 +396,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
-                // PERF(port): strings::cat heap-allocates; Zig allocated into p.allocator.
+                // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
                 // Phase B: route through bump arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
-                let prefixed: &'a [u8] = p.allocator.alloc_slice_copy(&prefixed);
+                let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
@@ -509,7 +509,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let ref_ = p
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
             .expect("unreachable");
-        // PERF(port): was `allocator.alloc(Decl, 1)` into arena slice — profile in Phase B
+        // PERF(port): was `arena.alloc(Decl, 1)` into arena slice — profile in Phase B
         let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
         let decls = G::DeclList::init_one(G::Decl { binding, value: Some(value) })?;
         Ok(p.s(
@@ -567,7 +567,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.expect(T::TOpenBrace)?;
 
         // Parse the body
-        let mut values: BumpVec<'_, EnumValue> = BumpVec::new_in(p.allocator);
+        let mut values: BumpVec<'_, EnumValue> = BumpVec::new_in(p.arena);
         while p.lexer.token != T::TCloseBrace {
             // TODO(port): Zig `name = undefined` — placeholder empty slice; always overwritten or
             // we return SyntaxError before use.
@@ -665,10 +665,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
-                // PERF(port): strings::cat heap-allocates; Zig allocated into p.allocator.
+                // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
                 // Phase B: route through bump arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
-                let prefixed: &'a [u8] = p.allocator.alloc_slice_copy(&prefixed);
+                let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
@@ -711,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             let mut items: BumpVec<'_, ScopeOrder> =
-                BumpVec::with_capacity_in(count, p.allocator);
+                BumpVec::with_capacity_in(count, p.arena);
             for item in &p.scopes_in_order[scope_index..] {
                 let Some(item) = item else { continue };
                 items.push(*item);

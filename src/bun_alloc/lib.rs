@@ -755,8 +755,8 @@ impl String {
     /// Port of `bun.String.isWTFAllocator` — vtable-identity check against
     /// [`StringImplAllocator::VTABLE`].
     #[inline]
-    pub fn is_wtf_allocator(allocator: StdAllocator) -> bool {
-        core::ptr::eq(allocator.vtable, StringImplAllocator::VTABLE_PTR)
+    pub fn is_wtf_allocator(alloc: StdAllocator) -> bool {
+        core::ptr::eq(alloc.vtable, StringImplAllocator::VTABLE_PTR)
     }
 
     pub const EMPTY: String = String {
@@ -2459,8 +2459,8 @@ pub trait Allocator: 'static {
 /// Mimalloc`, the Rust default is `DefaultAlloc`; vtable-identity becomes a
 /// `TypeId` comparison.
 #[inline]
-pub fn is_default(allocator: &dyn Allocator) -> bool {
-    Allocator::type_id(allocator) == core::any::TypeId::of::<DefaultAlloc>()
+pub fn is_default(alloc: &dyn Allocator) -> bool {
+    Allocator::type_id(alloc) == core::any::TypeId::of::<DefaultAlloc>()
 }
 
 /// Legacy ZST naming `bun.default_allocator`. With `#[global_allocator]` set,

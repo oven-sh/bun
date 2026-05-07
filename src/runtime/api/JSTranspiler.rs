@@ -44,7 +44,7 @@ pub struct JSTranspiler {
     // TODO(port): non-AST crate keeps an arena field for bulk-freeing config strings.
     // Consider replacing with per-field Box ownership in Phase B.
     // Boxed so its address is stable across the move into `Box<JSTranspiler>` —
-    // `transpiler.allocator` holds a `&'static Arena` pointing into it.
+    // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
     // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`.
     // TODO(port): LIFETIMES.tsv classifies the consumer (`TransformTask.js_instance`) as
@@ -773,7 +773,7 @@ impl<'a> TransformTask<'a> {
         let resolver_ptr: *mut _ = &raw mut transform_task.transpiler.resolver;
         transform_task.transpiler.linker.resolver = resolver_ptr;
         transform_task.transpiler.set_log(&raw mut transform_task.log);
-        // `set_allocator(bun.default_allocator)` — Rust `Transpiler` carries an
+        // `set_arena(bun.default_allocator)` — Rust `Transpiler` carries an
         // `&Arena`, not a generic allocator. The work-thread `run()` immediately
         // overwrites it with the local arena, so leave the copied pointer as-is
         // here (it still points at `js_instance.arena`, which is kept alive).
@@ -797,7 +797,7 @@ impl<'a> TransformTask<'a> {
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
         self.transpiler
-            .set_allocator(unsafe { &*(&raw const arena) });
+            .set_arena(unsafe { &*(&raw const arena) });
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
@@ -807,7 +807,7 @@ impl<'a> TransformTask<'a> {
         };
 
         let parse_options = ParseOptions {
-            allocator: &arena,
+            arena: &arena,
             macro_remappings: clone_macro_map(&self.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
@@ -1143,7 +1143,7 @@ impl Drop for JSTranspiler {
 /// the next method call dereferences a dangling allocator/log.
 struct TranspilerStateGuard {
     transpiler: *mut Transpiler::Transpiler<'static>,
-    prev_allocator: &'static Arena,
+    prev_arena: &'static Arena,
     restore_log: *mut logger::Log,
     /// `Some(prev)` ⇒ also restore `macro_context` to `prev` (transformSync's
     /// by-value snapshot). `None` ⇒ leave untouched (scan / scanImports only
@@ -1184,11 +1184,11 @@ impl Drop for TranspilerStateGuard {
         // arena/log and so drops before them (reverse-decl order), ensuring the
         // Transpiler never observes a dangling `&'static Arena`.
         let restore_log = self.restore_log_ptr();
-        let prev_allocator = self.prev_allocator;
+        let prev_arena = self.prev_arena;
         let prev_macro_context = self.prev_macro_context.take();
         let transpiler = self.transpiler_mut();
         transpiler.set_log(restore_log);
-        transpiler.allocator = prev_allocator;
+        transpiler.arena = prev_arena;
         if let Some(prev) = prev_macro_context {
             transpiler.macro_context = prev;
         }
@@ -1231,7 +1231,7 @@ impl JSTranspiler {
         };
 
         let parse_options = ParseOptions {
-            allocator: arena,
+            arena: arena,
             macro_remappings: clone_macro_map(&self.config.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
@@ -1309,16 +1309,16 @@ impl JSTranspiler {
         let arena = Arena::new();
         let mut log = logger::Log::init();
         // defer log.deinit() → Drop
-        let prev_allocator = self.transpiler.allocator;
+        let prev_arena = self.transpiler.arena;
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
-        // `prev_allocator` and `&self.config.log` before either local drops.
+        // `prev_arena` and `&self.config.log` before either local drops.
         self.transpiler
-            .set_allocator(unsafe { &*(&raw const arena) });
+            .set_arena(unsafe { &*(&raw const arena) });
         self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
             transpiler: &raw mut self.transpiler,
-            prev_allocator,
+            prev_arena,
             restore_log: &raw mut self.config.log,
             prev_macro_context: None,
         };
@@ -1496,18 +1496,18 @@ impl JSTranspiler {
         // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
         let mut log = logger::Log::init();
         log.level = self.config.log.level;
-        let prev_allocator = self.transpiler.allocator;
+        let prev_arena = self.transpiler.arena;
         // `take()` both reads the prior value AND nulls it (spec: `macro_context = null`).
         let prev_macro_context = self.transpiler.macro_context.take();
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
-        // `prev_allocator`, `&self.config.log`, and `prev_macro_context` before either drops.
+        // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
         self.transpiler
-            .set_allocator(unsafe { &*(&raw const arena) });
+            .set_arena(unsafe { &*(&raw const arena) });
         self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
             transpiler: &raw mut self.transpiler,
-            prev_allocator,
+            prev_arena,
             restore_log: &raw mut self.config.log,
             prev_macro_context: Some(prev_macro_context),
         };
@@ -1680,16 +1680,16 @@ impl JSTranspiler {
         let arena = Arena::new();
         let mut log = logger::Log::init();
         // defer log.deinit() → Drop
-        let prev_allocator = self.transpiler.allocator;
+        let prev_arena = self.transpiler.arena;
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
-        // `prev_allocator` and `&self.config.log` before either local drops.
+        // `prev_arena` and `&self.config.log` before either local drops.
         self.transpiler
-            .set_allocator(unsafe { &*(&raw const arena) });
+            .set_arena(unsafe { &*(&raw const arena) });
         self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
             transpiler: &raw mut self.transpiler,
-            prev_allocator,
+            prev_arena,
             restore_log: &raw mut self.config.log,
             prev_macro_context: None,
         };

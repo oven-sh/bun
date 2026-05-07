@@ -1021,7 +1021,7 @@ impl MediaFeatureValue {
     /// boundary lowering. Consumes `self`.
     pub fn add_f32(self, other: f32) -> MediaFeatureValue {
         match self {
-            // Zig: `len.add(allocator, Length.px(other))` — calc lattice.
+            // Zig: `len.add(arena, Length.px(other))` — calc lattice.
             MediaFeatureValue::Length(len) => MediaFeatureValue::Length(len.add(Length::px(other))),
             MediaFeatureValue::Number(num) => MediaFeatureValue::Number(num + other),
             MediaFeatureValue::Integer(num) => {
@@ -1159,7 +1159,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 
     dest.delim(b':', false)?;
 
-    // PORT NOTE: Zig deepCloned `value` into `dest.allocator` then mutated; here
+    // PORT NOTE: Zig deepCloned `value` into `dest.arena` then mutated; here
     // `MediaFeatureValue: Clone` so we clone-by-value.
     let adjusted: Option<MediaFeatureValue> = match operator {
         MediaFeatureComparison::GreaterThan => Some(value.clone().add_f32(0.001)),
@@ -1177,7 +1177,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 }
 
 // ───────────────────────── deep_clone ─────────────────────────
-// Arena-aware `deep_clone` — port of Zig's per-type `deepClone(allocator)`
+// Arena-aware `deep_clone` — port of Zig's per-type `deepClone(arena)`
 // bodies. Un-gated this round so `rules::dc::{media_list,query_feature}` can
 // route through real impls instead of `#[derive(Clone)]` passthroughs.
 //
@@ -1200,7 +1200,7 @@ impl MediaList {
         }
     }
 
-    /// Zig: `pub fn clone(this, allocator)` — alias for `deepClone`.
+    /// Zig: `pub fn clone(this, arena)` — alias for `deepClone`.
     #[inline]
     pub fn clone_in(&self, bump: &bun_alloc::Arena) -> Self {
         self.deep_clone(bump)
@@ -1249,7 +1249,7 @@ impl MediaCondition {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         match self {
             MediaCondition::Feature(f) => MediaCondition::Feature(f.deep_clone(bump)),
-            // Zig: `bun.create(allocator, MediaCondition, c.deepClone(allocator))`
+            // Zig: `bun.create(arena, MediaCondition, c.deepClone(arena))`
             MediaCondition::Not(c) => MediaCondition::Not(Box::new(c.deep_clone(bump))),
             MediaCondition::Operation { operator, conditions } => MediaCondition::Operation {
                 operator: *operator,
@@ -1307,7 +1307,7 @@ impl MediaFeatureValue {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         use MediaFeatureValue as V;
         match self {
-            // Zig: `l.deepClone(allocator)` — real `values::length::Length`
+            // Zig: `l.deepClone(arena)` — real `values::length::Length`
             // owns a calc tree. The local `value_shims::Length` stand-in is a
             // unit struct, so `Clone` is faithful until the calc lattice
             // un-gates and the shim is replaced.
@@ -1318,7 +1318,7 @@ impl MediaFeatureValue {
             V::Resolution(r) => V::Resolution(*r),
             V::Ratio(r) => V::Ratio(*r),
             V::Ident(i) => V::Ident(i.deep_clone(bump)),
-            // Zig: `e.deepClone(allocator)` — `EnvironmentVariable` carries
+            // Zig: `e.deepClone(arena)` — `EnvironmentVariable` carries
             // `Vec<CSSInteger>` + `Option<TokenList>`; route through its
             // `#[derive(DeepClone)]` impl.
             V::Env(e) => {
@@ -1378,7 +1378,7 @@ impl MediaType {
 impl MediaList {
     /// Parse a media query list from CSS.
     pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaList> {
-        // PERF(port): was ArrayListUnmanaged(input.allocator())
+        // PERF(port): was ArrayListUnmanaged(input.arena())
         let mut media_queries: Vec<MediaQuery> = Vec::new();
         loop {
             match input
@@ -1527,7 +1527,7 @@ pub fn parse_query_condition_with_options<C: QueryCondition>(
         return Err(location.new_unexpected_token_error(css::Token::Ident(b"or")));
     }
 
-    // PERF(port): was ArrayListUnmanaged(input.allocator())
+    // PERF(port): was ArrayListUnmanaged(input.arena())
     let mut conditions: Vec<C> = Vec::new();
     conditions.push(first_condition);
     conditions.push(parse_parens_or_function::<C>(input, flags, options)?);

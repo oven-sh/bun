@@ -297,7 +297,7 @@ impl Position {
         self.x.is_zero() && self.y.is_zero()
     }
 
-    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         // TODO(port): css::implement_deep_clone is comptime-reflection; relies on Clone/arena semantics in Phase B
         self.clone()
     }
@@ -322,7 +322,7 @@ pub struct PositionComponentSide<S> {
 }
 
 impl<S: Clone + PartialEq> PositionComponentSide<S> {
-    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         // TODO(port): implement_deep_clone is comptime reflection — replace with arena-aware DeepClone trait/derive in Phase B
         self.clone()
     }
@@ -356,7 +356,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
         false
     }
 
-    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         // TODO(port): implement_deep_clone is comptime reflection — replace with arena-aware DeepClone trait/derive in Phase B
         self.clone()
     }
@@ -460,7 +460,7 @@ pub enum HorizontalPositionKeyword {
 }
 
 impl HorizontalPositionKeyword {
-    pub fn deep_clone(&self, _allocator: &Arena) -> HorizontalPositionKeyword {
+    pub fn deep_clone(&self, _arena: &Arena) -> HorizontalPositionKeyword {
         // Copy enum — comptime-reflection deep_clone reduces to bitwise copy.
         *self
     }
@@ -501,7 +501,7 @@ pub enum VerticalPositionKeyword {
 }
 
 impl VerticalPositionKeyword {
-    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &Arena) -> Self {
         // Copy enum — comptime-reflection deep_clone reduces to bitwise copy.
         *self
     }

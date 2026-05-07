@@ -208,7 +208,7 @@ impl IniTestingAPIs {
         let mut parser = Parser::init(b"<src>", src, env);
 
         // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena` (Zig passed
-        // `parser.arena.allocator()`); split the borrow via raw ptr so the bump
+        // `parser.arena.arena()`); split the borrow via raw ptr so the bump
         // outlives the `&mut parser` for the call. SAFETY: `parser.arena` is
         // not moved/dropped for the lifetime of `parser`.
         let bump: &bun_alloc::Arena = unsafe { &*(&raw const parser.arena) };

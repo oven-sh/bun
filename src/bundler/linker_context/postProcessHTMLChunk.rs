@@ -26,14 +26,14 @@ pub fn post_process_html_chunk(
 
     for compile_result in compile_results.iter() {
         // PORT NOTE: Zig `j.push(.., bun.default_allocator)` — code() borrows from
-        // chunk.compile_results_for_chunk which outlives `j.done()`; allocator arg dropped.
+        // chunk.compile_results_for_chunk which outlives `j.done()`; arena arg dropped.
         j.push_static(compile_result.code());
     }
 
     j.ensure_newline_at_end();
 
-    // SAFETY: `worker.allocator` is set by `Worker::create` and outlives the worker step.
-    let alloc = unsafe { &*worker.allocator };
+    // SAFETY: `worker.arena` is set by `Worker::create` and outlives the worker step.
+    let alloc = unsafe { &*worker.arena };
     chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
         alloc,
         &mut j,
@@ -52,5 +52,5 @@ pub fn post_process_html_chunk(
 //   source:     src/bundler/linker_context/postProcessHTMLChunk.zig (35 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      worker.allocator is a per-worker arena — thread `&'bump Bump` to StringJoiner in Phase B; default_allocator arg to j.push dropped
+//   notes:      worker.arena is a per-worker arena — thread `&'bump Bump` to StringJoiner in Phase B; default_allocator arg to j.push dropped
 // ──────────────────────────────────────────────────────────────────────────

@@ -1089,7 +1089,7 @@ pub fn initialize_mini_store() {
 
     struct MiniStore {
         heap: Arena,
-        memory_allocator: js_ast::ASTMemoryAllocator,
+        memory_store: js_ast::ASTMemoryAllocator,
     }
 
     thread_local! {
@@ -1099,17 +1099,17 @@ pub fn initialize_mini_store() {
     INSTANCE.with(|instance| {
         if instance.get().is_none() {
             let heap = Arena::new();
-            // Zig threads `heap.allocator()` into the AST allocator; in Rust
+            // Zig threads `heap.arena()` into the AST allocator; in Rust
             // the Bump (`Arena`) is passed by reference.
-            let memory_allocator = js_ast::ASTMemoryAllocator::new(&heap);
+            let memory_store = js_ast::ASTMemoryAllocator::new(&heap);
             let mini_store = Box::into_raw(Box::new(MiniStore {
                 heap,
-                memory_allocator,
+                memory_store,
             }));
             // SAFETY: just allocated, non-null, thread-local exclusive access
             unsafe {
-                (*mini_store).memory_allocator.reset();
-                (*mini_store).memory_allocator.push();
+                (*mini_store).memory_store.reset();
+                (*mini_store).memory_store.push();
             }
             instance.set(Some(mini_store));
         } else {
@@ -1126,8 +1126,8 @@ pub fn initialize_mini_store() {
             // watermark to inspect — `reset()` already releases all bump allocations.
             // PERF(port): was arena bulk-free (heap.deinit() + re-init) — profile in Phase B
             let _ = &mini_store.heap;
-            mini_store.memory_allocator.reset();
-            mini_store.memory_allocator.push();
+            mini_store.memory_store.reset();
+            mini_store.memory_store.push();
         }
     });
 }

@@ -188,7 +188,7 @@ fn render_named_template<W: bun_io::Write>(
 /// Zig: `Fallback.Base64FallbackMessage`
 pub struct Base64FallbackMessage<'a> {
     pub msg: &'a api::FallbackMessageContainer,
-    // Zig had `allocator: std.mem.Allocator` — dropped (global mimalloc)
+    // Zig had `arena: std.mem.Allocator` — dropped (global mimalloc)
 }
 
 impl fmt::Display for Base64FallbackMessage<'_> {
@@ -389,7 +389,7 @@ impl Features<'_> {
     /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
     /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
     pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<Box<StringSet>> {
-        // Zig returns `*const bun.StringSet` heap-allocated via `allocator.create`,
+        // Zig returns `*const bun.StringSet` heap-allocated via `arena.create`,
         // and the caller frees it on `BundleOptions` teardown. Empty path returns
         // `None` (≡ the static empty). Owned `Box` per PORTING.md §Forbidden — never
         // `Box::leak`.

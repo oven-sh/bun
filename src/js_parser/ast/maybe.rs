@@ -366,7 +366,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 {
                                     existing.loc_ref.ref_.expect("infallible: ref bound")
                                 } else {
-                                    let sym_name: &'a [u8] = p.allocator.alloc_slice_copy(
+                                    let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                         format!("${}", bun_core::fmt::fmt_identifier(name))
                                             .as_bytes(),
                                     );
@@ -506,7 +506,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
                             let bunstr = bun_string::String::from_bytes(p.source.path.text);
-                            let url = p.allocator.alloc_slice_copy(
+                            let url = p.arena.alloc_slice_copy(
                                 format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );
                             bunstr.deref();
@@ -588,7 +588,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     {
                                         existing.loc_ref.ref_.expect("infallible: ref bound")
                                     } else {
-                                        let sym_name: &'a [u8] = p.allocator.alloc_slice_copy(
+                                        let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
                                             format!("${}", bun_core::fmt::fmt_identifier(name))
                                                 .as_bytes(),
                                         );

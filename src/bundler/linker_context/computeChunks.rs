@@ -62,11 +62,11 @@ pub fn compute_chunks(
 
     // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the link step.
     let parse_graph = unsafe { &*this.parse_graph };
-    // SAFETY: `bump` is a backref into `BundleV2.graph.allocator`, valid for the link step.
+    // SAFETY: `bump` is a backref into `BundleV2.graph.arena`, valid for the link step.
     // Hoisted as a raw deref so the loop can hold disjoint &mut borrows into `this.graph`.
-    // PORT NOTE: `BundlerStyleSheet::empty()` no longer takes an allocator in Rust; kept for
+    // PORT NOTE: `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
     // Phase B when arena threading lands.
-    let _allocator: &Arena = unsafe { &*this.graph.bump };
+    let _arena: &Arena = unsafe { &*this.graph.bump };
 
     // PORT NOTE: borrowck escape hatch — the SoA column slices below hold disjoint
     // immutable borrows into `this.graph` while several helpers (and the BundleV2
@@ -496,7 +496,7 @@ pub fn compute_chunks(
         }
 
         break 'sort_chunks sorted_chunks;
-        // TODO(port): return type — Zig returns []Chunk allocated by this.allocator(); here we return Box<[Chunk]>.
+        // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
         // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
     };
     let chunks: &mut [Chunk] = sorted_chunks.slice_mut();
@@ -697,7 +697,7 @@ pub fn compute_chunks(
     this.unique_key_buf = unique_key_builder.move_to_slice();
 
     Ok(sorted_chunks.to_owned_slice()?)
-    // TODO(port): return type — Zig returns []Chunk allocated by this.allocator(); here we return Box<[Chunk]>.
+    // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
     // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
 }
 

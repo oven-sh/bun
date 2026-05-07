@@ -361,7 +361,7 @@ impl MimeType {
     }
 
     pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
-        // PORT NOTE: Zig signature is `(str_, allocator: ?Allocator, allocated: ?*bool)`.
+        // PORT NOTE: Zig signature is `(str_, ?Allocator param, allocated: ?*bool)`.
         // Allocator presence == "dupe the input"; replaced with `dupe: bool` (see §Allocators).
         let mut str = str_;
         if let Some(slash) = str.iter().position(|&b| b == b'/') {

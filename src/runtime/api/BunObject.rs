@@ -1979,14 +1979,15 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
         }
     });
     for (i, index) in sort_indices.iter().enumerate() {
-        let file = &mut unsorted_files[*index as usize];
+        let file: &mut GraphFile = &mut unsorted_files[*index as usize];
         // PORT NOTE (layering): `File::blob()` lives in the Zig spec's
         // `StandaloneModuleGraph.File`; that crate can't depend on
         // `bun_runtime::webcore::Blob`, so build the blob here from the
         // file's `cached_blob` slot / contents.
-        let input_blob = standalone_file_blob(file, global_this);
+        let input_blob: *mut Blob = standalone_file_blob(file, global_this);
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
-        let blob = Blob::new(input_blob.dupe_with_content_type(true));
+        // SAFETY: `standalone_file_blob` returns a non-null heap allocation.
+        let blob = Blob::new(unsafe { (*input_blob).dupe_with_content_type(true) });
         // SAFETY: `Blob::new` returned a fresh heap allocation.
         unsafe { (*blob).name = (*input_blob).name.dupe_ref() };
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.

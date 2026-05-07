@@ -2008,7 +2008,12 @@ where
             // Old Strong drops (releases) when overwritten.
             self.config.on_request = new_config.on_request.take();
         }
-        if new_config.on_node_http_request.is_some() {
+        // PORT NOTE (server.zig:1120): replaced whenever the values *differ* —
+        // no zero/undefined guard, unlike onRequest/onError. A reload that
+        // omits the node:http handler must clear it.
+        if self.config.on_node_http_request.as_ref().map(|s| s.get())
+            != new_config.on_node_http_request.as_ref().map(|s| s.get())
+        {
             self.config.on_node_http_request = new_config.on_node_http_request.take();
         }
         if new_config.on_error.as_ref().map_or(false, |s| !s.get().is_undefined()) {

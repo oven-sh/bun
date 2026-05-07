@@ -911,12 +911,13 @@ impl RunCommand {
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
-        // `MaybeUninit<Run>` and `Run` share layout, so the `.cast()` is sound.
+        // `entry_path` borrows the standalone graph's `entryPoint().name`; the
+        // graph is process-lifetime, so storing the raw slice pointer is sound.
         unsafe {
-            (&raw mut RUN).cast::<Run>().write(Run {
+            (&raw mut RUN).write(Run {
+                ctx: ctx as *mut ContextData,
                 vm: vm_ptr,
-                entry_path,
-                eval_and_print: false,
+                entry_path: entry_path as *const [u8],
             });
         }
 

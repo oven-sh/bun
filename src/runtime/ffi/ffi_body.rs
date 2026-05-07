@@ -350,7 +350,7 @@ impl FFI {
     /// `.classes.ts` declares `noConstructor: true`; the `JsClass` macro still
     /// requires the symbol to exist.
     pub fn constructor(global: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<FFI>> {
-        Err(global.throw("FFI is not constructable"))
+        Err(global.throw(format_args!("FFI is not constructable")))
     }
 }
 
@@ -942,7 +942,7 @@ impl CompileC {
                 return Err(bun_core::err!("DeferredErrors"));
             } else {
                 if !global_this.has_exception() {
-                    global_this.throw("TinyCC failed to compile");
+                    global_this.throw(format_args!("TinyCC failed to compile"));
                 }
                 return Err(bun_core::err!("JSError"));
             }
@@ -1040,8 +1040,8 @@ impl StringArray {
             if !val.is_string() {
                 // items dropped automatically
                 return Err(global_this.throw_invalid_argument_type_value(
-                    property,
-                    "array of strings",
+                    property.as_bytes(),
+                    b"array of strings",
                     val,
                 ));
             }
@@ -1065,8 +1065,8 @@ impl StringArray {
         }
         if !value.is_string() {
             return Err(global_this.throw_invalid_argument_type_value(
-                property,
-                "array of strings",
+                property.as_bytes(),
+                b"array of strings",
                 value,
             ));
         }
@@ -1100,9 +1100,9 @@ impl FFI {
     pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         #[cfg(not(feature = "tinycc"))]
         {
-            return Err(global_this.throw(
-                "bun:ffi cc() is not available in this build (TinyCC is disabled)",
-            ));
+            return Err(global_this.throw(format_args!(
+                "bun:ffi cc() is not available in this build (TinyCC is disabled)"
+            )));
         }
         let arguments = callframe.arguments_old::<1>();
         let arguments = arguments.slice();

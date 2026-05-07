@@ -3457,12 +3457,15 @@ impl DuplexUpgradeContext {
                     }
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;
                     if let Some(tls) = self.tls.take() {
-                        // `handleConnectError` consumes our +1 (its
-                        // `needs_deref` path) and detaches. Null
+                        // `handleConnectError` consumes our +1 — `tls.socket`
+                        // is `InternalSocket::UpgradedDuplex` (set before
+                        // `start_tls()` was queued), so `needs_deref =
+                        // !is_detached()` is true — and detaches. Null
                         // `this.tls` so `deinit` doesn't deref again.
                         let p = IntrusiveRc::into_raw(tls);
-                        // SAFETY: intrusive refcount; `handle_connect_error`
-                        // consumes the +1, so do NOT reconstruct the IntrusiveRc.
+                        // SAFETY: intrusive refcount; `handle_connect_error`'s
+                        // `needs_deref` arm releases the +1 transferred via
+                        // `into_raw` (socket is UpgradedDuplex, not Detached).
                         let _ = unsafe { (*p).handle_connect_error(errno) };
                     }
                     // `startTLS`/`startTLSWithCTX` failed before the

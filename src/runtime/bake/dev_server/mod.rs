@@ -522,6 +522,12 @@ pub struct HTMLRouter {
     pub map: StringHashMap<*const HTMLBundleRoute>,
     pub fallback: Option<*const HTMLBundleRoute>,
 }
+impl HTMLRouter {
+    /// `HTMLRouter.get` — DevServer.zig:4399.
+    pub fn get(&self, path: &[u8]) -> Option<*const HTMLBundleRoute> {
+        self.map.get(path).copied().or(self.fallback)
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule types (struct shapes un-gated; method bodies stay in drafts)

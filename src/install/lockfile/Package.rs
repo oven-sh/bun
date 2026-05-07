@@ -530,14 +530,12 @@ impl Package<u64> {
                 .extern_strings
                 .set_len(extern_strings_old_len + new_extern_string_count);
         }
-        // PORT NOTE: reshaped for borrowck — split extern_strings buffer into full slice + tail slice
+        // PORT NOTE: Zig passes both `new.buffers.extern_strings.items` (full slice) and a
+        // tail subslice into `bin.clone`; the full slice is only used to compute the tail's
+        // offset for `ExternalStringList::init`. In Rust those two views would alias, so
+        // `Bin::clone_with_buffers` takes the precomputed offset directly.
         let new_extern_strings_start = new.buffers.extern_strings.len() - new_extern_string_count;
-        let (extern_strings_all, _) = new.buffers.extern_strings.split_at_mut(0);
-        // TODO(port): the Zig passes both `new.buffers.extern_strings.items` and a tail slice into
-        // `bin.clone`. Rust borrowck won't allow two overlapping &mut. Phase B should rework
-        // `Bin::clone` to take base+offset.
         let new_extern_strings = &mut new.buffers.extern_strings[new_extern_strings_start..];
-        let _ = extern_strings_all;
 
         let dependencies: &mut [Dependency] =
             &mut new.buffers.dependencies[prev_len as usize..end as usize];
@@ -554,7 +552,7 @@ impl Package<u64> {
                 bin: self.bin.clone_with_buffers(
                     old_string_buf,
                     old_extern_string_buf,
-                    new.buffers.extern_strings.as_slice(),
+                    new_extern_strings_start as u32,
                     new_extern_strings,
                     &mut *builder,
                 ),

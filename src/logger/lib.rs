@@ -47,6 +47,11 @@ pub mod fs {
         path.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
     }
 
+    // `#[repr(C)]`: this type is one of three field-identical mirrors of
+    // `fs.zig:PathName` (`bun_logger::fs`, `bun_resolver::fs`, `bun_paths::fs`)
+    // pending unification. `bun_bundler::bundle_v2` bit-casts between them;
+    // pinning layout makes that defined.
+    #[repr(C)]
     #[derive(Clone, Default)]
     pub struct PathName {
         pub base: &'static [u8],

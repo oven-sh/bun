@@ -1469,18 +1469,50 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :366-384 — JSON/TOML/YAML/JSON5: export as a JS object.
-                // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`
-                // (`ast.parts.at(0).stmts[0].data.s_expr.value.to_js(...)`).
-                // Until that surfaces, fall through to the print path so the
-                // JSON/TOML body is emitted as JS source instead of a direct
-                // JSValue. This is the same behaviour as `Bun.Transpiler`
-                // (which also routes JSON through the printer).
-                
                 if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
-                    // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`
-                    // (`ast.parts.at(0).stmts[0].data.s_expr.value.to_js(...)`).
-                    // Until that surfaces, fall through to the print path below.
-                    todo!("blocked_on: bun_js_parser::Expr::to_js")
+                    // SAFETY: `jsc_vm.global` is set during init and live for
+                    // VM lifetime; `global_object` (if non-null) is the live
+                    // per-thread global.
+                    let global = unsafe {
+                        &*if global_object.is_null() {
+                            (*jsc_vm).global
+                        } else {
+                            global_object
+                        }
+                    };
+                    let jsvalue_for_export = if parse_result.empty {
+                        JSValue::create_empty_object(global, 0)
+                    } else {
+                        // `ast.parts.at(0).stmts[0].data.s_expr.value.toJS(...)`
+                        // — `Expr` lives in `bun_js_parser` (no JSC dep), so
+                        // the JS materialization is the `bun_js_parser_jsc`
+                        // extension fn.
+                        let part = parse_result.ast.parts.at(0);
+                        // SAFETY: `Part.stmts` is an arena-owned slice; the
+                        // arena outlives this call (returned to the VM by the
+                        // scopeguard above only after we return).
+                        let stmt = unsafe { &(*part.stmts)[0] };
+                        let bun_js_parser::StmtData::SExpr(s_expr) = &stmt.data else {
+                            // Parser guarantees JSON/TOML/YAML produce a single
+                            // `SExpr` part; anything else is a parser bug.
+                            unreachable!("JSON/TOML/YAML parse result is always SExpr")
+                        };
+                        bun_js_parser_jsc::expr_to_js(&s_expr.value, global).unwrap_or_else(
+                            |e| {
+                                bun_core::Output::panic(format_args!(
+                                    "Unexpected JS error: {}",
+                                    <&'static str>::from(e)
+                                ))
+                            },
+                        )
+                    };
+                    return Ok(ResolvedSource {
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        jsvalue_for_export,
+                        tag: ResolvedSourceTag::ExportsObject,
+                        ..Default::default()
+                    });
                 }
 
                 // Spec :386-398 — already-bundled (bytecode cache hit).

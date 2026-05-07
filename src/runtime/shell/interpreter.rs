@@ -2110,26 +2110,30 @@ impl ShellTask {
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         let this = unsafe { (ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask };
-        // SAFETY: `this` is live; we stay on raw pointers because the
-        // concurrent queue may dispatch on the main thread before this stack
-        // frame unwinds.
-        unsafe {
-            let event_loop = (*this).event_loop;
+        // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
+        // main thread may already be touching `*this`, so no live `&mut`
+        // into it may span that call.
+        // SAFETY: `this` is live and exclusively owned by this thread until
+        // the enqueue below.
+        let event_loop = unsafe { (*this).event_loop };
+        let task_ptr = unsafe {
             match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Zig: `concurrent_task.js.from(ctx, .manual_deinit)` —
                     // tag resolved via `C: Taskable`.
-                    let ct = ct.from(ctx, AutoDeinit::ManualDeinit) as *mut _;
-                    event_loop.enqueue_task_concurrent(EventLoopTaskPtr { js: ct });
+                    ct.from(ctx, AutoDeinit::ManualDeinit);
+                    EventLoopTaskPtr { js: ct as *mut _ }
                 }
                 EventLoopTask::Mini(at) => {
                     // Zig: `concurrent_task.mini.from(this, "runFromMainThreadMini")`.
                     // Rust passes the monomorphised callback explicitly.
-                    let at = at.from(this, shell_task_run_from_main_thread_mini::<C>);
-                    event_loop.enqueue_task_concurrent(EventLoopTaskPtr { mini: at });
+                    EventLoopTaskPtr {
+                        mini: at.from(this, shell_task_run_from_main_thread_mini::<C>),
+                    }
                 }
             }
-        }
+        };
+        event_loop.enqueue_task_concurrent(task_ptr);
     }
 
     /// Spec: interpreter.zig `InnerShellTask.runFromMainThread`. Unrefs the

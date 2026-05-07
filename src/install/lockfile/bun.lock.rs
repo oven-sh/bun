@@ -1892,7 +1892,7 @@ pub fn parse_into_binary_lockfile(
             }
 
             let pkg_info = &value.data.e_array().unwrap().items;
-            if pkg_info.len() < 3 {
+            if (pkg_info.len as usize) < 3 {
                 continue;
             }
             let maybe_info_obj = pkg_info.at(2);
@@ -1921,7 +1921,7 @@ pub fn parse_into_binary_lockfile(
             let mut i: usize = 0;
             let pkg_info = &value.data.e_array().unwrap().items;
 
-            if pkg_info.len() == 0 {
+            if (pkg_info.len as usize) == 0 {
                 log.add_error(Some(source), value.loc, b"Missing package info")?;
                 return Err(ParseError::InvalidPackageInfo);
             }
@@ -1967,7 +1967,7 @@ pub fn parse_into_binary_lockfile(
             };
 
             if res.tag == ResolutionTag::Npm {
-                if i >= pkg_info.len() {
+                if i >= (pkg_info.len as usize) {
                     log.add_error(Some(source), value.loc, b"Missing npm registry")?;
                     return Err(ParseError::InvalidPackageInfo);
                 }
@@ -2073,7 +2073,7 @@ pub fn parse_into_binary_lockfile(
                             break 'workspace_and_not_v0;
                         }
 
-                        if i >= pkg_info.len() {
+                        if i >= (pkg_info.len as usize) {
                             log.add_error(Some(source), value.loc, b"Missing dependencies object")?;
                             return Err(ParseError::InvalidPackageInfo);
                         }
@@ -2120,7 +2120,7 @@ pub fn parse_into_binary_lockfile(
                         }
                     }
                     ResolutionTag::Root => {
-                        if i >= pkg_info.len() {
+                        if i >= (pkg_info.len as usize) {
                             log.add_error(Some(source), value.loc, b"Missing package binaries object")?;
                             return Err(ParseError::InvalidPackageInfo);
                         }
@@ -2144,7 +2144,7 @@ pub fn parse_into_binary_lockfile(
             // integrity
             match res.tag {
                 ResolutionTag::Npm => {
-                    if i >= pkg_info.len() {
+                    if i >= (pkg_info.len as usize) {
                         log.add_error(Some(source), value.loc, b"Missing integrity")?;
                         return Err(ParseError::InvalidPackageInfo);
                     }
@@ -2159,7 +2159,7 @@ pub fn parse_into_binary_lockfile(
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     // integrity is optional for tarball deps (backward compat)
-                    if i < pkg_info.len() {
+                    if i < (pkg_info.len as usize) {
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
@@ -2169,7 +2169,7 @@ pub fn parse_into_binary_lockfile(
                 }
                 tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                     // .bun-tag
-                    if i >= pkg_info.len() {
+                    if i >= (pkg_info.len as usize) {
                         log.add_error(Some(source), value.loc, b"Missing git dependency tag")?;
                         return Err(ParseError::InvalidPackageInfo);
                     }
@@ -2190,7 +2190,7 @@ pub fn parse_into_binary_lockfile(
                     }
 
                     // Optional integrity hash (added to pin tarball content)
-                    if i < pkg_info.len() {
+                    if i < (pkg_info.len as usize) {
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
@@ -2230,8 +2230,23 @@ pub fn parse_into_binary_lockfile(
         let pkgs = lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
         let pkg_names = pkgs.items_name();
-        let pkg_metas = pkgs.items_meta_mut();
-        let pkg_resolutions = pkgs.items_resolution_mut();
+        // PORT NOTE: Zig's `pkgs.items(.meta)` / `.items(.resolution)` hand out
+        // two independent mutable column slices. `PackageSliceExt::items_*_mut`
+        // borrows `&mut pkgs` exclusively, so route through `items_raw` (the
+        // sanctioned escape hatch — see `Slice::items_raw`) to materialize the
+        // disjoint mutable views.
+        let pkgs_len = pkgs.len();
+        // SAFETY: `Meta` / `Resolution` are the exact column element types and
+        // the two columns occupy disjoint storage within the MultiArrayList.
+        let pkg_metas: &mut [Meta] = unsafe {
+            core::slice::from_raw_parts_mut(pkgs.items_raw::<Meta>(PackageField::Meta), pkgs_len)
+        };
+        let pkg_resolutions: &mut [Resolution] = unsafe {
+            core::slice::from_raw_parts_mut(
+                pkgs.items_raw::<Resolution>(PackageField::Resolution),
+                pkgs_len,
+            )
+        };
 
         {
             // first the root dependencies are resolved

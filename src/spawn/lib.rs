@@ -237,7 +237,7 @@ pub mod subprocess {
             let this = std::rc::Rc::new(Self {
                 source,
                 stdio_result: result,
-                inner: core::ptr::null_mut(),
+                inner: core::cell::Cell::new(core::ptr::null_mut()),
                 _parent: core::marker::PhantomData,
             });
             // SAFETY: §Dispatch cold-path — `hooks.create` is the registered
@@ -253,13 +253,7 @@ pub mod subprocess {
                     this.source.slice() as *const [u8],
                 )
             };
-            // SAFETY: sole `Rc` owner — no other strong refs exist yet, so
-            // `get_mut` cannot fail; write `inner` in-place (the field is
-            // private and only read through `&self` after this point).
-            unsafe {
-                let slot = &this.inner as *const *mut c_void as *mut *mut c_void;
-                core::ptr::write(slot, inner);
-            }
+            this.inner.set(inner);
             this
         }
 
@@ -268,13 +262,14 @@ pub mod subprocess {
             let hooks = pipe_writer_hooks();
             // SAFETY: `inner` was returned by `hooks.create` and is live until
             // `Drop` calls `hooks.deref`.
-            unsafe { (hooks.start)(self.inner) }
+            unsafe { (hooks.start)(self.inner.get()) }
         }
     }
 
     impl<P: ?Sized> Drop for StaticPipeWriter<P> {
         fn drop(&mut self) {
-            if self.inner.is_null() {
+            let inner = self.inner.get();
+            if inner.is_null() {
                 return;
             }
             let p = PIPE_WRITER_HOOKS.load(Ordering::Acquire);
@@ -285,7 +280,7 @@ pub mod subprocess {
             }
             // SAFETY: `p` is a `&'static PipeWriterHooks`; `inner` is the
             // intrusive-rc handle returned by `hooks.create`. Zig `deref()`.
-            unsafe { ((*p).deref)(self.inner) };
+            unsafe { ((*p).deref)(inner) };
         }
     }
 }

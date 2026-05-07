@@ -999,6 +999,14 @@ impl fmt::Display for MoreInstructions<'_> {
     }
 }
 
+/// CYCLEBREAK: the Zig spec's `if (cli.analyze)` branch (which constructs a
+/// `bun.bundle_v2.BundleV2.DependenciesScanner` and calls
+/// `bun.cli.BuildCommand.exec`) was MOVED UP to `bun_runtime::cli::pm_update_package_json`
+/// — both `bun_bundler` and `bun_runtime` are higher-tier than `bun_install` and a
+/// dependency edge here would form a cycle. CLI entry points (`bun add`/`remove`/
+/// `update`/`patch`) call the runtime wrapper, which handles `--analyze` and then
+/// re-enters this crate via `update_package_json_and_install_and_cli`. This function
+/// is retained for install-internal callers that never set `cli.analyze`.
 pub fn update_package_json_and_install(
     ctx: Command::Context,
     subcommand: Subcommand,
@@ -1007,131 +1015,12 @@ pub fn update_package_json_and_install(
     // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
     // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
     // `parse` requires `<const CMD: Subcommand>`, expand to a `match` in Phase B.
-    let mut cli = CommandLineArguments::parse(subcommand)?;
-
-    // The way this works:
-    // 1. Run the bundler on source files
-    // 2. Rewrite positional arguments to act identically to the developer
-    //    typing in the dependency names
-    // 3. Run the install command
-    if cli.analyze {
-        // Zig stores `*PackageManager.CommandLineArguments` (freely-aliasing ptr) in the Analyzer
-        // while `fetcher.entry_points` simultaneously borrows `cli.positionals[1..]`. Mirroring
-        // that with `&mut cli` here would assert exclusive access to `cli` and make the later
-        // `&mut *(ctx as *mut Analyzer)` deref UB under Stacked Borrows, so keep `cli` as a raw
-        // ptr end-to-end and only materialize `&mut` inside the callback once `entry_points` is
-        // no longer read (the callback never returns — it exits the process).
-        let cli_ptr: *mut CommandLineArguments = core::ptr::addr_of_mut!(cli);
-        let mut analyzer = Analyzer {
-            ctx,
-            cli: cli_ptr,
-            subcommand,
-        };
-        let mut fetcher = DependenciesScanner {
-            ctx: core::ptr::addr_of_mut!(analyzer) as *mut (),
-            entry_points: &cli.positionals[1..],
-            on_fetch: Analyzer::on_analyze_erased,
-        };
-
-        // This runs the bundler.
-        // bun_runtime::cli::BuildCommand::exec via hook (GENUINE b0).
-        let hook = BUILD_COMMAND_EXEC_HOOK.load(Ordering::Acquire);
-        debug_assert!(!hook.is_null(), "BUILD_COMMAND_EXEC_HOOK unset (bun_runtime::init not called)");
-        // SAFETY: hook signature documented on BUILD_COMMAND_EXEC_HOOK; set once at startup.
-        let f: unsafe fn(*mut (), *mut ()) -> Result<(), Error> = unsafe { core::mem::transmute(hook) };
-        // SAFETY: `Command::get()` returns the process-global `*mut ContextData` (always live);
-        // `fetcher` is a stack local that outlives the call; the hook is the registered
-        // `BuildCommand::exec` and only reads `entry_points` before invoking `on_fetch`, so the raw
-        // `fetcher.ctx → analyzer` and `analyzer.cli → cli` chain remains exclusively owned until
-        // the callback materializes `&mut`.
-        unsafe {
-            f(
-                Command::get() as *mut (),
-                &mut fetcher as *mut _ as *mut (),
-            )?;
-        }
-        return Ok(());
-    }
-
+    let cli = CommandLineArguments::parse(subcommand)?;
+    debug_assert!(
+        !cli.analyze,
+        "`--analyze` must be handled by bun_runtime::cli::pm_update_package_json (CYCLEBREAK)",
+    );
     update_package_json_and_install_and_cli(ctx, subcommand, cli)
-}
-
-/// Local mirror of `bun_bundler::bundle_v2::DependenciesScanner` (GENUINE b0).
-/// `bun_bundler` is not yet a dependency of `bun_install` (see Cargo.toml — gated until the
-/// crate is green), and the `--analyze` path already crosses the crate boundary via the
-/// type-erased `BUILD_COMMAND_EXEC_HOOK`. The hook receives `&mut fetcher as *mut ()`, so the
-/// concrete struct only needs to be layout-compatible with the bundler's definition.
-/// TODO(b1): once `bun_bundler` is un-gated, replace with a direct re-export and drop this.
-pub struct DependenciesScanner {
-    pub ctx: *mut (),
-    pub entry_points: &'static [&'static [u8]],
-    pub on_fetch: fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
-}
-
-/// Local mirror of `bun_bundler::bundle_v2::DependenciesScannerResult` (GENUINE b0).
-/// `on_analyze` only reads `dependencies.keys()`; `reachable_files` / `bundle_v2` are kept as
-/// opaque pointers because their concrete types live in `bun_bundler`. Field order matches
-/// `bundle_v2.rs` so the type-erased `*mut ()` round-trip in `on_analyze_erased` is sound.
-/// TODO(b1): replace with `bun_bundler::bundle_v2::DependenciesScannerResult` once un-gated.
-pub struct DependenciesScannerResult {
-    pub dependencies: bun_collections::StringSet,
-    reachable_files: *const (),
-    bundle_v2: *mut (),
-}
-
-struct Analyzer<'a> {
-    ctx: Command::Context<'a>,
-    /// Raw ptr (not `&mut`) to mirror Zig's `*PackageManager.CommandLineArguments`: the
-    /// `DependenciesScanner.entry_points` field holds a shared borrow into `cli.positionals`
-    /// for the duration of the scan, so storing `&mut CommandLineArguments` here would alias.
-    cli: *mut CommandLineArguments,
-    subcommand: Subcommand,
-}
-
-impl Analyzer<'_> {
-    pub fn on_analyze(
-        &mut self,
-        result: &mut DependenciesScannerResult,
-    ) -> Result<(), Error> {
-        // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-        let keys = result.dependencies.keys();
-        // PORT NOTE: Zig allocates with the default (process-lifetime) allocator and never
-        // frees — `Global::exit(0)` follows immediately, so the allocation IS process-
-        // lifetime. `cli.positionals` is typed `&'static [&'static [u8]]`; we mirror the
-        // Zig leak-then-exit by promoting both layers to `'static`. The inner slices borrow
-        // `result.dependencies` which is held by the bundler until exit.
-        let mut positionals: Vec<&'static [u8]> = Vec::with_capacity(keys.len() + 1);
-        positionals.push(b"add");
-        debug_assert_eq!(positionals.capacity() - 1, keys.len());
-        for src in keys.iter() {
-            // SAFETY: `Global::exit(0)` below diverges; `result.dependencies` (and the
-            // `Box<[u8]>` keys it owns) outlives every read of `cli.positionals`.
-            positionals.push(unsafe { &*(src.as_ref() as *const [u8]) });
-        }
-        // SAFETY: `self.cli` points at the stack `cli` local in `update_package_json_and_install`,
-        // which outlives this callback. The bundler has finished reading `entry_points` (the only
-        // other borrow of `*self.cli`) before invoking `on_fetch`, and this callback never returns
-        // (`Global::exit` below), so this is the sole live access to `*self.cli` from here on.
-        let cli = unsafe { &mut *self.cli };
-        cli.positionals = Vec::leak(positionals);
-
-        update_package_json_and_install_and_cli(self.ctx, self.subcommand, cli.clone())?;
-
-        Global::exit(0);
-    }
-
-    // Type-erased thunk matching `DependenciesScanner.on_fetch`'s
-    // `fn(*mut (), &mut DependenciesScannerResult) -> Result<(), Error>` signature.
-    fn on_analyze_erased(
-        ctx: *mut (),
-        result: &mut DependenciesScannerResult,
-    ) -> Result<(), Error> {
-        // SAFETY: `ctx` is `addr_of_mut!(analyzer)` from `update_package_json_and_install`; the
-        // `analyzer` local outlives this callback and is not otherwise borrowed (the only other
-        // handle is the raw `fetcher.ctx` we were just passed), so materializing `&mut` is unique.
-        let this = unsafe { &mut *(ctx as *mut Analyzer) };
-        this.on_analyze(result)
-    }
 }
 
 use super::options::{Do, LogLevel, PatchFeatures};
@@ -1146,4 +1035,7 @@ use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 //   notes:      `manager.update_requests` ownership reshaped (Zig stored a slice header,
 //               Rust field is owning Box) — moved into manager before install, taken back
 //               after; AST swap-remove uses `slice.swap` since `G::Property` is `!Clone`.
+//               `--analyze` branch (Zig L693-727) moved up into
+//               `bun_runtime::cli::pm_update_package_json` to break the
+//               install→{bundler,runtime} dependency cycle.
 // ──────────────────────────────────────────────────────────────────────────

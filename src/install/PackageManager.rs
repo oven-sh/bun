@@ -305,7 +305,8 @@ pub use self::run_tasks::{
 };
 
 pub use self::update_package_json_and_install::{
-    update_package_json_and_install_catch_error, update_package_json_and_install_with_manager,
+    update_package_json_and_install_and_cli, update_package_json_and_install_catch_error,
+    update_package_json_and_install_with_manager,
 };
 
 pub use self::populate_manifest_cache::populate_manifest_cache;

@@ -1131,12 +1131,13 @@ impl JSValkeyClient {
         // PORT NOTE: `bun_event_loop::Timespec` is a local stub distinct from
         // `bun_core::Timespec`; convert by fields until B-2 unifies them.
         timer_ref.next = Timer::Timespec { sec: now.sec, nsec: now.nsec };
-        // TODO(b2-blocked): VirtualMachine.timer is type-erased to `()` in
-        // Phase A; the real `vm.timer.insert(timer_ref)` lands with the
-        // high-tier timer heap. Recorded as blocked.
-        let _ = timer_ref;
-        todo!("blocked_on: bun_jsc::VirtualMachine::timer.insert");
-        #[allow(unreachable_code)]
+        // `vm.timer.insert(timer)` — `Timer::All` lives in `bun_runtime`;
+        // dispatched through `RuntimeHooks` (see VirtualMachine::timer_insert).
+        let vm = self.client.vm as *const VirtualMachine as *mut VirtualMachine;
+        // SAFETY: `vm` is the live per-thread VM; `timer` is an unlinked
+        // `EventLoopTimer` field of the boxed `JSValkeyClient` (stable address
+        // until `remove_timer`/`stop_timers` unlinks it).
+        unsafe { VirtualMachine::timer_insert(vm, timer) };
         self.ref_();
     }
 
@@ -1146,13 +1147,13 @@ impl JSValkeyClient {
         let timer_ref = unsafe { &mut *timer };
         if timer_ref.state == Timer::State::ACTIVE {
             // Remove the timer from the event loop
-            // TODO(b2-blocked): see `add_timer` — `vm.timer.remove(timer_ref)`.
-            let _ = timer_ref;
-            todo!("blocked_on: bun_jsc::VirtualMachine::timer.remove");
+            let vm = self.client.vm as *const VirtualMachine as *mut VirtualMachine;
+            // SAFETY: `vm` is the live per-thread VM; `timer` is currently
+            // linked into the heap (state == ACTIVE checked above).
+            unsafe { VirtualMachine::timer_remove(vm, timer) };
 
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
-            #[allow(unreachable_code)]
             self.deref();
         }
     }

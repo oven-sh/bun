@@ -112,6 +112,46 @@ pub fn runtime_state() -> *mut RuntimeState {
     RUNTIME_STATE.with(Cell::get)
 }
 
+/// `RareData.defaultClientSslCtx()` (Spec rare_data.zig:741) — lazy
+/// default-trust-store client `SSL_CTX*`, shared by every `tls: true` outbound
+/// connection that didn't supply explicit options.
+///
+/// PORT NOTE: lives here (high tier) because the storage slot
+/// (`RareData.default_client_ssl_ctx`) is in `bun_jsc` but population requires
+/// `RuntimeState.ssl_ctx_cache` (this crate). The cached `SSL_CTX*` is held
+/// for the VM's lifetime so the weak-cache entry never tombstones.
+///
+/// # Safety
+/// `vm` must be the live per-thread VM; called only from the JS thread.
+pub unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
+    // SAFETY: per fn contract; `rare_data()` lazy-inits the box.
+    let rare = unsafe { (*vm).rare_data() };
+    if rare.default_client_ssl_ctx.is_none() {
+        let mut err = bun_uws::create_bun_socket_error_t::none;
+        let state = runtime_state();
+        debug_assert!(!state.is_null(), "default_client_ssl_ctx before init_runtime_state");
+        // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
+        // address for the VM's lifetime and is only touched from the JS thread.
+        let cache = unsafe { &mut (*state).ssl_ctx_cache };
+        // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
+        // each client SSL to VERIFY_PEER + the shared bundled-root store, so
+        // `new WebSocket("wss://…")` (which shares this CTX and defaults to
+        // rejectUnauthorized:true) verifies real servers. Route through the
+        // weak cache so a `tls.connect()` with default options later resolves
+        // to the same CTX rather than building a second one with the same
+        // digest. The +1 ref returned here is held for the VM's lifetime, so
+        // the entry never tombstones.
+        match cache.get_or_create_opts(Default::default(), &mut err) {
+            Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
+            None => bun_core::Output::panic(format_args!(
+                "default client SSL_CTX init failed: {}",
+                bun_str::DebugBytes(err.message().unwrap_or(b"unknown")),
+            )),
+        }
+    }
+    rare.default_client_ssl_ctx.unwrap()
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // RuntimeHooks bodies
 // ════════════════════════════════════════════════════════════════════════════

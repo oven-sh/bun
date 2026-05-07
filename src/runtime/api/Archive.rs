@@ -693,10 +693,21 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
     const TAG: TaskTag = C::TAG;
 }
 
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly; the Rust port routes through the manual
+/// vtable bridge installed by `bun_runtime::init()`.
+#[inline]
+fn vm_ctx() -> EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(AllocatorType::Js)
+}
+
 impl<C: TaskContext> AsyncTask<C> {
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
-        // SAFETY: bun_vm() returns the live owning VM for this global; valid for process lifetime.
-        let vm: *mut VirtualMachine = global.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
+        // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
+        // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
+        // `*const _ as *mut _` — that derives a writeable pointer from a shared
+        // reference and is UB under Stacked Borrows.
+        let vm: *mut VirtualMachine = global.bun_vm_ptr();
         let this = Box::new(AsyncTask {
             ctx,
             promise: JSPromiseStrong::init(global),
@@ -706,10 +717,9 @@ impl<C: TaskContext> AsyncTask<C> {
             keep_alive: KeepAlive::default(),
         });
         let raw = Box::into_raw(this);
-        // SAFETY: raw was just produced by Box::into_raw; not yet shared.
-        // TODO(port): KeepAlive::ref_ now takes EventLoopCtx; pass once VM→ctx bridge stabilizes.
-        let _ = unsafe { &mut (*raw).keep_alive };
-        // TODO(port): bun_aio::KeepAlive::ref_(EventLoopCtx) — VM bridge
+        // SAFETY: raw was just produced by Box::into_raw; not yet shared. Keep the event
+        // loop alive until `run_from_js` unrefs after the threadpool work completes.
+        unsafe { (*raw).keep_alive.ref_(vm_ctx()) };
         Ok(raw)
     }
 
@@ -739,10 +749,7 @@ impl<C: TaskContext> AsyncTask<C> {
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
         let mut owned = unsafe { Box::from_raw(this) };
-        // TODO(port): `KeepAlive::unref` now takes `EventLoopCtx`; the VM→ctx
-        // bridge is not wired yet (see matching TODO in `create`). The ref was
-        // never taken above, so skipping the unref is a no-op for now.
-        let _ = &mut owned.keep_alive;
+        owned.keep_alive.unref(vm_ctx());
 
         // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
         // exit (ctx implements Drop).
@@ -1335,18 +1342,20 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
 
     let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
 
-    // Use stack buffer for small data, heap for large
+    // Use a small scratch buffer for small data, single allocation for large.
+    // PERF(port): the Zig spec used a 256 KiB on-stack array; Rust moves the
+    // scratch to the heap to avoid stack overflow. The allocation is gated on
+    // the small path so the large path doesn't pay for an unused 256 KiB Vec.
     const STACK_THRESHOLD: usize = 256 * 1024;
-    // PERF(port): was 256 KiB on-stack buffer; Rust uses heap Vec to avoid stack overflow.
-    // Phase B: consider Box<[u8; STACK_THRESHOLD]> or thread-local.
-    let mut stack_buf = vec![0u8; STACK_THRESHOLD];
 
     if max_size <= STACK_THRESHOLD {
+        let mut stack_buf = vec![0u8; STACK_THRESHOLD];
         let result = compressor.gzip(data, &mut stack_buf);
         if result.status != libdeflate::Status::Success {
             return Err(CompressError::GzipCompressFailed);
         }
-        return Ok(stack_buf[..result.written].to_vec());
+        stack_buf.truncate(result.written);
+        return Ok(stack_buf);
     }
 
     let mut output = vec![0u8; max_size];

@@ -426,7 +426,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 
     pub fn package_name(&self, id: PackageID) -> bun_semver::string::Formatter<'_> {
-        // TODO(port): MultiArrayList column accessor (`packages.items(.name)`) — exact API TBD in bun_collections.
         self.lockfile.packages.items_name()[id as usize]
             .fmt(self.lockfile.buffers.string_bytes.as_slice())
     }
@@ -506,7 +505,6 @@ pub fn is_filtered_dependency_or_workspace(
     }
 
     let pkgs = lockfile.packages.slice();
-    // TODO(port): MultiArrayList column accessors.
     let pkg_names = pkgs.items_name();
     let pkg_metas = pkgs.items_meta();
     let pkg_resolutions = pkgs.items_resolution();
@@ -1045,7 +1043,7 @@ pub type TreeFiller =
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/lockfile/Tree.zig (813 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      hoist_dependency reshaped to take self_id and re-derive read-only views from builder.list (no overlapping &mut); MultiArrayList column accessors + LinearFifo + AbsPath APIs are speculative; conditional void fields collapsed to Option.
+//   confidence: high
+//   todos:      4
+//   notes:      hoist_dependency reshaped to take self_id and re-derive read-only views from builder.list (no overlapping &mut); conditional void fields collapsed to Option.
 // ──────────────────────────────────────────────────────────────────────────

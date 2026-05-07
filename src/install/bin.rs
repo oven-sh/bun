@@ -1419,10 +1419,17 @@ impl<'a> Linker<'a> {
                     let unscoped_package_name =
                         Dependency::unscoped_package_name(self.package_name.slice());
 
-                    let package_dir = &self.abs_target_buf[0..package_dir_len];
                     // for normalizing `target`
-                    let abs_target =
-                        self.resolve_bin_target(package_dir, target, unscoped_package_name);
+                    let abs_target: &ZStr = {
+                        let package_dir = &self.abs_target_buf[0..package_dir_len];
+                        let r = self.resolve_bin_target(package_dir, target, unscoped_package_name);
+                        // SAFETY: `resolve_bin_target` writes into the thread-local
+                        // `PARSER_JOIN_INPUT_BUFFER` (via `join_abs_string_z`); the
+                        // returned slice does not actually borrow `self` or
+                        // `package_dir`. Detach the lifetime so `self` can be
+                        // re-borrowed mutably below.
+                        ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                    };
 
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
                         .copy_from_slice(unscoped_package_name);
@@ -1442,10 +1449,13 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    let package_dir = &self.abs_target_buf[0..package_dir_len];
                     // for normalizing `target`
-                    let abs_target =
-                        self.resolve_bin_target(package_dir, target, normalized_name);
+                    let abs_target: &ZStr = {
+                        let package_dir = &self.abs_target_buf[0..package_dir_len];
+                        let r = self.resolve_bin_target(package_dir, target, normalized_name);
+                        // SAFETY: thread-local buffer; see Tag::File above.
+                        ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                    };
 
                     self.abs_dest_buf[dest_off..dest_off + normalized_name.len()]
                         .copy_from_slice(normalized_name);
@@ -1473,9 +1483,12 @@ impl<'a> Linker<'a> {
                             continue;
                         }
 
-                        let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let abs_target =
-                            self.resolve_bin_target(package_dir, bin_target, normalized_bin_dest);
+                        let abs_target: &ZStr = {
+                            let package_dir = &self.abs_target_buf[0..package_dir_len];
+                            let r = self.resolve_bin_target(package_dir, bin_target, normalized_bin_dest);
+                            // SAFETY: thread-local buffer; see Tag::File above.
+                            ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                        };
 
                         dest_off = abs_dest_dir_end;
                         self.abs_dest_buf[dest_off..dest_off + normalized_bin_dest.len()]
@@ -1497,10 +1510,16 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    let package_dir = &self.abs_target_buf[0..package_dir_len];
                     // for normalizing `target`
-                    let abs_target_dir =
-                        resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
+                    let abs_target_dir: &ZStr = {
+                        let package_dir = &self.abs_target_buf[0..package_dir_len];
+                        let r = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
+                        // SAFETY: `join_abs_string_z` writes into the thread-local
+                        // `PARSER_JOIN_INPUT_BUFFER`; result does not borrow
+                        // `package_dir`. Detached so `abs_target_buf` can be
+                        // reused inside the loop body (see Zig comment below).
+                        ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                    };
 
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
@@ -1524,11 +1543,19 @@ impl<'a> Linker<'a> {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
                                 let entry_name = entry.name.slice_u8();
                                 // `self.abs_target_buf` is available now because `path::join_abs_string_z` copied everything into `parse_join_input_buffer`
-                                let abs_target = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
-                                    abs_target_dir.as_bytes(),
-                                    self.abs_target_buf,
-                                    &[entry_name],
-                                );
+                                let abs_target: &ZStr = {
+                                    let r = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
+                                        abs_target_dir.as_bytes(),
+                                        self.abs_target_buf,
+                                        &[entry_name],
+                                    );
+                                    // SAFETY: result lives in `self.abs_target_buf`, which
+                                    // `link_bin_or_create_shim` does not write to (only
+                                    // `rel_buf`/`node_modules_path`/`seen`/`err`/
+                                    // `skipped_due_to_missing_bin` are touched). Mirrors
+                                    // the Zig aliasing.
+                                    ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                                };
 
                                 dest_off = abs_dest_dir_end;
                                 self.abs_dest_buf[dest_off..dest_off + entry_name.len()]

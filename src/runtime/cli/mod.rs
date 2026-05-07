@@ -1323,53 +1323,61 @@ To create a project with the official Next.js scaffolding tool, run\n\
             }
             Tag::BunxCommand => {
                 pretty_errorln!(
-                    "<b>Usage<r>: <b><green>bunx<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> [flags and arguments for the package]<r>\n\
-Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.\n\
-\n\
-Flags:\n\
-  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js\n\
-  <cyan>-p, --package <blue>\\<package\\><r>    Specify package to install when binary name differs from package name\n\
-  <cyan>--no-install<r>           Skip installation if package is not already installed\n\
-  <cyan>--verbose<r>              Enable verbose output during installation\n\
-  <cyan>--silent<r>               Suppress output during installation\n\
-\n\
-Examples<d>:<r>\n\
-  <b><green>bunx<r> <blue>prisma<r> migrate<r>\n\
-  <b><green>bunx<r> <blue>prettier<r> foo.js<r>\n\
-  <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app\n\
-  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>\n"
+                    "\
+<b>Usage<r>: <b><green>bunx<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> [flags and arguments for the package]<r>
+Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
+
+Flags:
+  <cyan>--bun<r>                  Force the command to run with Bun instead of Node.js
+  <cyan>-p, --package <blue>\\<package\\><r>    Specify package to install when binary name differs from package name
+  <cyan>--no-install<r>           Skip installation if package is not already installed
+  <cyan>--verbose<r>              Enable verbose output during installation
+  <cyan>--silent<r>               Suppress output during installation
+
+Examples<d>:<r>
+  <b><green>bunx<r> <blue>prisma<r> migrate<r>
+  <b><green>bunx<r> <blue>prettier<r> foo.js<r>
+  <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app
+  <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
+"
                 );
                 Output::flush();
             }
             Tag::BuildCommand => {
                 pretty!(
-                    "<b>Usage<r>:\n\
-  Transpile and bundle one or more files.\n\
-  <b><green>bun build<r> <cyan>[flags]<r> <blue>\\<entrypoint\\><r>\n\n"
+                    "\
+<b>Usage<r>:
+  Transpile and bundle one or more files.
+  <b><green>bun build<r> <cyan>[flags]<r> <blue>\\<entrypoint\\><r>
+
+"
                 );
                 Output::flush();
                 pretty!("<b>Flags:<r>");
                 Output::flush();
                 bun_clap::simple_help(arguments::BUILD_ONLY_PARAMS.as_slice());
                 pretty!(
-                    "\n\n<b>Examples:<r>\n\
-  <d>Frontend web apps:<r>\n\
-  <b><green>bun build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>\n\
-  <b><green>bun build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>\n\
-\n\
-  <d>Bundle code to be run in Bun (reduces server startup time)<r>\n\
-  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>\n\
-\n\
-  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>\n\
-  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>\n\
-\n\
-A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>\n"
+                    "\n\n\
+<b>Examples:<r>
+  <d>Frontend web apps:<r>
+  <b><green>bun build<r> <cyan>--outfile=bundle.js<r> <blue>./src/index.ts<r>
+  <b><green>bun build<r> <cyan>--minify --splitting --outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
+
+  <d>Bundle code to be run in Bun (reduces server startup time)<r>
+  <b><green>bun build<r> <cyan>--target=bun --outfile=server.js<r> <blue>./server.ts<r>
+
+  <d>Creating a standalone executable (see https://bun.com/docs/bundler/executables)<r>
+  <b><green>bun build<r> <cyan>--compile --outfile=my-app<r> <blue>./cli.ts<r>
+
+A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
+"
                 );
                 Output::flush();
             }
             Tag::TestCommand => {
                 pretty!(
-                    "<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\\<patterns\\>]<r>\n\
+                    "\
+<b>Usage<r>: <b><green>bun test<r> <cyan>[flags]<r> <blue>[\\<patterns\\>]<r>
   Run all matching test files and print the results to stdout"
                 );
                 Output::flush();
@@ -1377,46 +1385,50 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>\n"
                 Output::flush();
                 bun_clap::simple_help(arguments::TEST_ONLY_PARAMS);
                 pretty!(
-                    "\n\n<b>Examples:<r>\n\
-  <d>Run all test files<r>\n\
-  <b><green>bun test<r>\n\
-\n\
-  <d>Run all test files with \"foo\" or \"bar\" in the file name<r>\n\
-  <b><green>bun test<r> <blue>foo bar<r>\n\
-\n\
-  <d>Run all test files, only including tests whose names includes \"baz\"<r>\n\
-  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>\n\
-\n\
-Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>\n"
+                    "\n\n\
+<b>Examples:<r>
+  <d>Run all test files<r>
+  <b><green>bun test<r>
+
+  <d>Run all test files with \"foo\" or \"bar\" in the file name<r>
+  <b><green>bun test<r> <blue>foo bar<r>
+
+  <d>Run all test files, only including tests whose names includes \"baz\"<r>
+  <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
+"
                 );
                 Output::flush();
             }
             Tag::CreateCommand => {
                 pretty!(
-                    "<b>Usage<r><d>:<r>\n\
-  <b><green>bun create<r> <magenta>\\<MyReactComponent.(jsx|tsx)\\><r>\n\
-  <b><green>bun create<r> <magenta>\\<template\\><r> <cyan>[...flags]<r> <blue>dest<r>\n\
-  <b><green>bun create<r> <magenta>\\<github-org/repo\\><r> <cyan>[...flags]<r> <blue>dest<r>\n\
-\n\
-<b>Environment variables<r><d>:<r>\n\
-  <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>\n\
-  <cyan>GITHUB_API_DOMAIN<r>    <d>Configure custom/enterprise GitHub domain. Default \"api.github.com\"<r>\n\
-  <cyan>NPM_CLIENT<r>           <d>Absolute path to the npm client executable<r>\n\
-  <cyan>BUN_CREATE_DIR<r>       <d>Custom path for global templates (default: $HOME/.bun-create)<r>\n\
-\n\
-<b>React Component Projects<r><d>:<r>\n\
-  • Turn an existing React component into a complete frontend dev environment\n\
-  • Automatically starts a hot-reloading dev server\n\
-  • Auto-detects & configures TailwindCSS and shadcn/ui\n\
-\n\
-  <b><magenta>bun create \\<MyReactComponent.(jsx|tsx)\\><r>\n\
-\n\
-<b>Templates<r><d>:<r>\n\
-  • NPM: Runs <b><magenta>bunx create-\\<template\\><r> with given arguments\n\
-  • GitHub: Downloads repository contents as template\n\
-  • Local: Uses templates from $HOME/.bun-create/\\<name\\> or ./.bun-create/\\<name\\>\n\
-\n\
-Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>\n"
+                    "\
+<b>Usage<r><d>:<r>
+  <b><green>bun create<r> <magenta>\\<MyReactComponent.(jsx|tsx)\\><r>
+  <b><green>bun create<r> <magenta>\\<template\\><r> <cyan>[...flags]<r> <blue>dest<r>
+  <b><green>bun create<r> <magenta>\\<github-org/repo\\><r> <cyan>[...flags]<r> <blue>dest<r>
+
+<b>Environment variables<r><d>:<r>
+  <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>
+  <cyan>GITHUB_API_DOMAIN<r>    <d>Configure custom/enterprise GitHub domain. Default \"api.github.com\"<r>
+  <cyan>NPM_CLIENT<r>           <d>Absolute path to the npm client executable<r>
+  <cyan>BUN_CREATE_DIR<r>       <d>Custom path for global templates (default: $HOME/.bun-create)<r>
+
+<b>React Component Projects<r><d>:<r>
+  • Turn an existing React component into a complete frontend dev environment
+  • Automatically starts a hot-reloading dev server
+  • Auto-detects & configures TailwindCSS and shadcn/ui
+
+  <b><magenta>bun create \\<MyReactComponent.(jsx|tsx)\\><r>
+
+<b>Templates<r><d>:<r>
+  • NPM: Runs <b><magenta>bunx create-\\<template\\><r> with given arguments
+  • GitHub: Downloads repository contents as template
+  • Local: Uses templates from $HOME/.bun-create/\\<name\\> or ./.bun-create/\\<name\\>
+
+Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
+"
                 );
                 Output::flush();
             }
@@ -1429,17 +1441,19 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>\n"
                     };
 
                 pretty!(
-                    "<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>\n\
-  Upgrade Bun\n\
-\n\
-<b>Examples:<r>\n\
-  <d>Install the latest {} version<r>\n\
-  <b><green>bun upgrade<r>\n\
-\n\
-  <d>{}<r>\n\
-  <b><green>bun upgrade<r> <cyan>--{}<r>\n\
-\n\
-Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>\n",
+                    "\
+<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
+  Upgrade Bun
+
+<b>Examples:<r>
+  <d>Install the latest {} version<r>
+  <b><green>bun upgrade<r>
+
+  <d>{}<r>
+  <b><green>bun upgrade<r> <cyan>--{}<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
+",
                     latest,
                     switch_desc,
                     switch_flag,
@@ -1448,22 +1462,26 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
             }
             Tag::ReplCommand => {
                 pretty!(
-                    "<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>\n\
-  Open a Bun REPL\n"
+                    "\
+<b>Usage<r>: <b><green>bun repl<r> <cyan>[flags]<r>
+  Open a Bun REPL
+"
                 );
                 Output::flush();
             }
             Tag::ExecCommand => {
                 pretty!(
-                    "<b>Usage: bun exec <r><cyan>\\<script\\><r>\n\
-\n\
-Execute a shell script directly from Bun.\n\
-\n\
-<b><red>Note<r>: If executing this from a shell, make sure to escape the string!\n\
-\n\
-<b>Examples<d>:<r>\n\
-  <b>bun exec \"echo hi\"<r>\n\
-  <b>bun exec \"echo \\\"hey friends\\\"!\"<r>\n"
+                    "\
+<b>Usage: bun exec <r><cyan>\\<script\\><r>
+
+Execute a shell script directly from Bun.
+
+<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
+
+<b>Examples<d>:<r>
+  <b>bun exec \"echo hi\"<r>
+  <b>bun exec \"echo \\\"hey friends\\\"!\"<r>
+"
                 );
                 Output::flush();
             }
@@ -1491,65 +1509,71 @@ Execute a shell script directly from Bun.\n\
             }
             Tag::InfoCommand => {
                 pretty!(
-                    "<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>\n\
-  Display package metadata from the registry.\n\
-\n\
-<b>Examples:<r>\n\
-  <d>View basic information about a package<r>\n\
-  <b><green>bun info<r> <blue>react<r>\n\
-\n\
-  <d>View specific version<r>\n\
-  <b><green>bun info<r> <blue>react@18.0.0<r>\n\
-\n\
-  <d>View specific property<r>\n\
-  <b><green>bun info<r> <blue>react<r> version\n\
-  <b><green>bun info<r> <blue>react<r> dependencies\n\
-  <b><green>bun info<r> <blue>react<r> versions\n\
-\n\
-Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>\n"
+                    "\
+<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
+  Display package metadata from the registry.
+
+<b>Examples:<r>
+  <d>View basic information about a package<r>
+  <b><green>bun info<r> <blue>react<r>
+
+  <d>View specific version<r>
+  <b><green>bun info<r> <blue>react@18.0.0<r>
+
+  <d>View specific property<r>
+  <b><green>bun info<r> <blue>react<r> version
+  <b><green>bun info<r> <blue>react<r> dependencies
+  <b><green>bun info<r> <blue>react<r> versions
+
+Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
+"
                 );
                 Output::flush();
             }
             Tag::WhyCommand => {
                 pretty!(
-                    "<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>\n\
-Explain why a package is installed\n\
-\n\
-<b>Arguments:<r>\n\
-  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
-\n\
-<b>Options:<r>\n\
-  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>\n\
-  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>\n\
-\n\
-<b>Examples:<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
-\n\
-Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>\n"
+                    "\
+<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
+Explain why a package is installed
+
+<b>Arguments:<r>
+  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>
+
+<b>Options:<r>
+  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
+  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>
+
+<b>Examples:<r>
+  <d>$<r> <b><green>bun why<r> <blue>react<r>
+  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>
+  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
+"
                 );
                 Output::flush();
             }
             Tag::InitCommand => {
                 pretty!(
-                    "<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\\<folder\\>]<r>\n\
-  Initialize a Bun project in the current directory.\n\
-  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.\n\
-\n\
-<b>Flags<r>:\n\
-      <cyan>--help<r>             Print this menu\n\
-  <cyan>-y, --yes<r>              Accept all default options\n\
-  <cyan>-m, --minimal<r>          Only initialize type definitions\n\
-  <cyan>-r, --react<r>            Initialize a React project\n\
-      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS\n\
-      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS\n\
-\n\
-<b>Examples:<r>\n\
-  <b><green>bun init<r>\n\
-  <b><green>bun init<r> <cyan>--yes<r>\n\
-  <b><green>bun init<r> <cyan>--react<r>\n\
-  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>\n"
+                    "\
+<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\\<folder\\>]<r>
+  Initialize a Bun project in the current directory.
+  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
+
+<b>Flags<r>:
+      <cyan>--help<r>             Print this menu
+  <cyan>-y, --yes<r>              Accept all default options
+  <cyan>-m, --minimal<r>          Only initialize type definitions
+  <cyan>-r, --react<r>            Initialize a React project
+      <cyan>--react=tailwind<r>   Initialize a React project with TailwindCSS
+      <cyan>--react=shadcn<r>     Initialize a React project with @shadcn/ui and TailwindCSS
+
+<b>Examples:<r>
+  <b><green>bun init<r>
+  <b><green>bun init<r> <cyan>--yes<r>
+  <b><green>bun init<r> <cyan>--react<r>
+  <b><green>bun init<r> <cyan>--react=tailwind<r> <blue>my-app<r>
+"
                 );
                 Output::flush();
             }
@@ -1563,18 +1587,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>\n"
             }
             Tag::PackageManagerCommand => {
                 pretty!(
-                    "<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>\n\
-  Run package manager utilities.\n\
-\n\
-<b>Commands:<r>\n\
-  <b><green>bun pm<r> <blue>bin<r>              print the path to bin folder\n\
-  <b><green>bun pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile\n\
-  <b><green>bun pm<r> <blue>whoami<r>           print the current npm username\n\
-  <b><green>bun pm<r> <blue>hash<r>             generate & print the hash of the current lockfile\n\
-  <b><green>bun pm<r> <blue>cache<r>            print the path to the cache folder\n\
-  <b><green>bun pm<r> <blue>cache rm<r>         clear the cache\n\
-\n\
-Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>\n"
+                    "\
+<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>
+  Run package manager utilities.
+
+<b>Commands:<r>
+  <b><green>bun pm<r> <blue>bin<r>              print the path to bin folder
+  <b><green>bun pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile
+  <b><green>bun pm<r> <blue>whoami<r>           print the current npm username
+  <b><green>bun pm<r> <blue>hash<r>             generate & print the hash of the current lockfile
+  <b><green>bun pm<r> <blue>cache<r>            print the path to the cache folder
+  <b><green>bun pm<r> <blue>cache rm<r>         clear the cache
+
+Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
+"
                 );
                 Output::flush();
             }

@@ -129,16 +129,18 @@ impl RunCommand {
         pretty!("<b>Flags:<r>");
         bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS.as_slice());
         pretty!(
-            "\n\n<b>Examples:<r>\n\
-  <d>Run a JavaScript or TypeScript file<r>\n\
-  <b><green>bun run<r> <blue>./index.js<r>\n\
-  <b><green>bun run<r> <blue>./index.tsx<r>\n\
-\n\
-  <d>Run a package.json script<r>\n\
-  <b><green>bun run<r> <blue>dev<r>\n\
-  <b><green>bun run<r> <blue>lint<r>\n\
-\n\
-Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>\n"
+            "\n\n\
+<b>Examples:<r>
+  <d>Run a JavaScript or TypeScript file<r>
+  <b><green>bun run<r> <blue>./index.js<r>
+  <b><green>bun run<r> <blue>./index.tsx<r>
+
+  <d>Run a package.json script<r>
+  <b><green>bun run<r> <blue>dev<r>
+  <b><green>bun run<r> <blue>lint<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
+"
         );
 
         if let Some(pkg) = package_json {

@@ -1,7 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
 use core::ffi::{c_uint, c_void};
-use std::sync::Arc;
 
 use enumset::EnumSet;
 
@@ -20,6 +19,7 @@ use bun_ptr::weak_ptr::WeakPtrData;
 use crate::api::AnyRequestContext;
 use crate::webcore::body::{self, Body, BodyMixin, Value as BodyValue};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
+use bun_jsc::AbortSignalRef;
 use super::response::HeadersRef;
 use bun_str::{strings, String as BunString, ZigString};
 use bun_uws as uws;
@@ -81,7 +81,12 @@ pub struct Request {
     pub url: BunString,
 
     headers: Option<HeadersRef>,
-    pub signal: Option<Arc<AbortSignal>>,
+    // PORT NOTE: Zig `?*AbortSignal` with manual `ref()`/`unref()`. AbortSignal
+    // is an opaque C++ handle with intrusive WebCore refcounting — `Arc` of an
+    // opaque ZST is meaningless (its payload address is not the C++ object).
+    // `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes Clone/Drop to
+    // the C++ ref/unref.
+    pub signal: Option<AbortSignalRef>,
     // TODO(port): mapped from *Body.Value.HiveRef per LIFETIMES.tsv. Zig pools
     // BodyValue in a HiveAllocator and mutates `#body.value` in place; Phase B
     // must decide on `Arc<RefCell<BodyValue>>` vs `IntrusiveRc<HiveRef>` once
@@ -729,11 +734,17 @@ impl Request {
         if let Some(headers) = &mut self.headers {
             // TODO(port): Zig has `try` here but fn returns plain `string` — preserved as
             // non-fallible; FetchHeaders.fastGet may need to be infallible in Rust.
-            if let Some(_content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
-                // TODO(port): blocked_on lifetimes — `fast_get` returns an owned
-                // `ZigString` whose slice borrows a local; cannot return `&[u8]`.
-                // Phase B: change return type to owned slice or `bun.String`.
-                todo!("blocked_on: bun_jsc::FetchHeaders::fast_get borrowed-slice return");
+            if let Some(content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
+                // PORT NOTE: `fast_get` returns a `ZigString` by value whose
+                // bytes borrow the FetchHeaders' WTF::String storage (NOT the
+                // local). `ZigString::slice` ties the borrow to the local
+                // `content_type`; detach and re-anchor on `self` so the
+                // returned `&[u8]` outlives the temporary.
+                let s = content_type.slice();
+                let (ptr, len) = (s.as_ptr(), s.len());
+                // SAFETY: `ptr[..len]` points into `self.headers`' WTF storage,
+                // which is held alive for the borrow `&mut self`.
+                return unsafe { core::slice::from_raw_parts(ptr, len) };
             }
         }
 
@@ -786,14 +797,18 @@ impl Request {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_signal(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        let _ = global_this;
         // Already have a C++ instance
-        if let Some(_signal) = &self.signal {
-            todo!("blocked_on: bun_jsc::AbortSignal::to_js")
-        } else {
-            // Lazy create default signal
-            todo!("blocked_on: bun_jsc::AbortSignal::create / from_js")
+        if let Some(signal) = &self.signal {
+            return signal.to_js(global_this);
         }
+        // Lazy create default signal
+        let js_signal = AbortSignal::create(global_this);
+        js_signal.ensure_still_alive();
+        if let Some(signal) = AbortSignalRef::from_js(js_signal) {
+            // `from_js` already bumped the C++ refcount (Zig: `signal.ref()`).
+            self.signal = Some(signal);
+        }
+        js_signal
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
@@ -1305,14 +1320,13 @@ impl Request {
                         // first value
                     }
                     Ok(None) => {
+                        let implements = match value.implements_to_string(global_this) {
+                            Ok(b) => b,
+                            Err(e) => bail!(Err(e)),
+                        };
                         if value == values_to_try[values_to_try.len() - 1]
                             && !is_first_argument_a_url
-                            && {
-                                let _ = value;
-                                todo!("blocked_on: bun_jsc::JSValue::implements_to_string");
-                                #[allow(unreachable_code)]
-                                false
-                            }
+                            && implements
                         {
                             let str = match BunString::from_js(value, global_this) {
                                 Ok(s) => s,

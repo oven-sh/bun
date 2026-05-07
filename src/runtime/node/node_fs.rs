@@ -4348,10 +4348,11 @@ impl NodeFS {
     }
 
     pub fn fstat(&mut self, args: &args::Fstat, _: Flavor) -> Maybe<ret::Fstat> {
-        // TODO(port): `Syscall::fstatx` / `SUPPORTS_STATX_ON_LINUX` —
-        // blocked_on: bun_sys::statx (the statx fast-path is not yet wired
-        // into `bun_sys`; falls through to the plain `fstat` path, which is
-        // exactly what the Zig code does when statx is unavailable).
+        // PORT NOTE: Zig has a `Syscall::fstatx` / `SUPPORTS_STATX_ON_LINUX`
+        // fast-path (Linux ≥4.11). `bun_sys` does not expose `statx` yet, so
+        // this falls through to plain `fstat` — identical to the Zig behaviour
+        // when statx is unavailable.
+        // PERF(port): wire `bun_sys::fstatx` once it lands — profile in Phase B.
         match Syscall::fstat(args.fd) {
             Maybe::Ok(result) => Maybe::Ok(Stats::init(&PosixStat::init(&result), args.big_int)),
             Maybe::Err(err) => Maybe::Err(err),
@@ -4428,7 +4429,7 @@ impl NodeFS {
     }
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
-        // TODO(port): `Syscall::lstatx` — blocked_on: bun_sys::statx (see fstat).
+        // PERF(port): `Syscall::lstatx` fast-path — see `fstat`.
         match Syscall::lstat(args.path.slice_z(&mut self.sync_error_buf)) {
             Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {
@@ -5916,7 +5917,7 @@ impl NodeFS {
                 return Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int)));
             }
         }
-        // TODO(port): `Syscall::statx` — blocked_on: bun_sys::statx (see fstat).
+        // PERF(port): `Syscall::statx` fast-path — see `fstat`.
         match Syscall::stat(path) {
             Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {

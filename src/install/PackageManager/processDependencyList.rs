@@ -322,12 +322,24 @@ impl PackageManager {
                             Global::crash();
                         }
                     };
+                    // PORT NOTE: `bun_json` returns the T2 `bun_logger::js_ast::Expr`;
+                    // `Scripts::parse_*` are typed against `bun_js_parser::Expr`. The
+                    // logger AST has an `Into` lift (see js_parser/ast/Expr.rs).
+                    let json_root: bun_js_parser::Expr = json_root.into();
+                    // PORT NOTE: reshaped for borrowck — `string_builder()` borrows
+                    // the whole `Lockfile` mutably, so split out the `packages`
+                    // column pointer first (Zig accessed both freely).
+                    let scripts_ptr: *mut Scripts = {
+                        debug_assert!(*package_id != INVALID_PACKAGE_ID);
+                        &mut self.lockfile.packages.items_scripts_mut()[*package_id as usize]
+                    };
                     let mut builder = self.lockfile.string_builder();
                     Scripts::parse_count(&mut builder, &json_root);
                     builder.allocate().expect("unreachable");
-                    debug_assert!(*package_id != INVALID_PACKAGE_ID);
-                    let scripts =
-                        &mut self.lockfile.packages.items_scripts_mut()[*package_id as usize];
+                    // SAFETY: `scripts_ptr` points into `lockfile.packages` which is
+                    // disjoint from `lockfile.buffers.string_bytes` /
+                    // `lockfile.string_pool` (the only fields `builder` touches).
+                    let scripts = unsafe { &mut *scripts_ptr };
                     scripts.parse_alloc(&mut builder, &json_root);
                     scripts.filled = true;
                 }

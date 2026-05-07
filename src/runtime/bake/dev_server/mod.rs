@@ -1592,22 +1592,107 @@ impl DevServer {
         None
     }
 
-    /// `DevServer.routeToBundleIndexSlow`. Full body in gated `../DevServer.rs`
-    /// draft (depends on `FrameworkRouter::match_slow` + `html_router`).
-    pub fn route_to_bundle_index_slow(&mut self, _pattern: &[u8]) -> Option<route_bundle::Index> {
-        todo!("blocked_on: dev_server::DevServer::route_to_bundle_index_slow body un-gate")
+    /// `DevServer.routeToBundleIndexSlow` -- DevServer.zig:4021.
+    pub fn route_to_bundle_index_slow(&mut self, pattern: &[u8]) -> Option<route_bundle::Index> {
+        let mut params: framework_router::MatchedParams = Default::default();
+        if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
+            return Some(bun_core::handle_oom(
+                self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index)),
+            ));
+        }
+        if let Some(html) = self.html_router.get(pattern) {
+            return Some(bun_core::handle_oom(
+                self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html)),
+            ));
+        }
+        None
     }
 
-    /// `DevServer.emitVisualizerMessageIfNeeded`. Full body in gated
-    /// `../DevServer.rs` draft.
+    /// `DevServer.emitVisualizerMessageIfNeeded` -- DevServer.zig:3665.
     pub fn emit_visualizer_message_if_needed(&mut self) {
-        todo!("blocked_on: dev_server::DevServer::emit_visualizer_message_if_needed body un-gate")
+        #[cfg(not(feature = "bake_debugging_features"))]
+        return;
+        #[cfg(feature = "bake_debugging_features")]
+        {
+            // PORT NOTE: erase to raw ptr so the `defer` closure doesn't hold a
+            // unique borrow of `self` for the rest of the scope.
+            let self_ptr: *mut DevServer = self;
+            // SAFETY: `self_ptr` points into `*self`, which outlives `_g`.
+            let _g = scopeguard::guard((), move |_| unsafe {
+                (*self_ptr).emit_memory_visualizer_message_if_needed()
+            });
+            if self.emit_incremental_visualizer_events == 0 {
+                return;
+            }
+
+            // PERF(port): was stackFallback(65536) -- profile in Phase B
+            let mut payload: Vec<u8> = Vec::with_capacity(65536);
+
+            if self.write_visualizer_message(&mut payload).is_err() {
+                return; // visualizer does not get an update if it OOMs
+            }
+
+            self.publish(HmrTopic::IncrementalVisualizer, &payload, bun_uws::Opcode::BINARY);
+        }
     }
 
-    /// `DevServer.emitMemoryVisualizerMessage`. Full body in gated
-    /// `../DevServer.rs` draft.
+    /// `DevServer.emitMemoryVisualizerMessage` -- DevServer.zig:3695.
     pub fn emit_memory_visualizer_message(&mut self) {
-        todo!("blocked_on: dev_server::DevServer::emit_memory_visualizer_message body un-gate")
+        debug_assert!(cfg!(feature = "bake_debugging_features"));
+        debug_assert!(self.emit_memory_visualizer_events > 0);
+
+        // PERF(port): was stackFallback(65536) -- profile in Phase B
+        let mut payload: Vec<u8> = Vec::with_capacity(65536);
+        payload.push(MessageId::MemoryVisualizer.char());
+        if memory_cost_body::write_memory_visualizer_message(self, &mut payload).is_err() {
+            return; // drop packet
+        }
+        self.publish(HmrTopic::MemoryVisualizer, &payload, bun_uws::Opcode::BINARY);
+    }
+
+    /// `DevServer.writeVisualizerMessage` -- DevServer.zig:3710. Serializes the
+    /// incremental-graph state into the visualizer wire format.
+    #[cfg(feature = "bake_debugging_features")]
+    fn write_visualizer_message(&self, payload: &mut Vec<u8>) -> Result<(), bun_core::Error> {
+        payload.push(MessageId::Visualizer.char());
+
+        // PORT NOTE: Zig used `inline for` over a `[2]bake.Side` tuple -- written
+        // out as a small macro to avoid duplicating ~20 lines per side while
+        // still monomorphizing on the const-generic graph type.
+        macro_rules! emit_files {
+            ($side:expr, $g:expr) => {{
+                let g = $g;
+                payload.extend_from_slice(&u32::try_from(g.bundled_files.count()).unwrap().to_le_bytes());
+                for (i, (k, v)) in g.bundled_files.keys().iter().zip(g.bundled_files.values()).enumerate() {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let normalized_key = self.relative_path(&mut *buf, k);
+                    payload.extend_from_slice(&u32::try_from(normalized_key.len()).unwrap().to_le_bytes());
+                    if k.is_empty() { continue; }
+                    payload.extend_from_slice(normalized_key);
+                    payload.push((g.stale_files.is_set(i) || v.failed) as u8);
+                    payload.push(($side == Side::Server && v.is_rsc) as u8);
+                    payload.push(($side == Side::Server && v.is_ssr) as u8);
+                    payload.push(match $side {
+                        Side::Server => v.is_route,
+                        Side::Client => v.html_route_bundle_index.is_some(),
+                    } as u8);
+                    payload.push(($side == Side::Client && v.is_special_framework_file) as u8);
+                    payload.push(match $side {
+                        Side::Server => v.is_client_component_boundary,
+                        Side::Client => v.is_hmr_root,
+                    } as u8);
+                }
+            }};
+        }
+        emit_files!(Side::Client, &self.client_graph);
+        emit_files!(Side::Server, &self.server_graph);
+
+        // TODO(port): edge serialization -- `incremental_graph::IncrementalGraph`
+        // does not yet expose `edges_free_list`/iterable `edges` on the keystone
+        // shape. Emit zero-length edge sections so the wire shape stays valid.
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        Ok(())
     }
 }
 

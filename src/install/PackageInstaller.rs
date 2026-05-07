@@ -665,7 +665,7 @@ impl<'a> PackageInstaller<'a> {
                         // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
                         // — `Progress::log` takes a single `Arguments` so format inline.
                         if log_level.show_progress() {
-                            self.progress.log(format_args!(
+                            progress!(self).log(format_args!(
                                 "{}",
                                 Output::pretty_fmt_rt(
                                     format_args!(
@@ -736,11 +736,7 @@ impl<'a> PackageInstaller<'a> {
                     let name = self.names[package_id as usize];
                     let resolution = &self.resolutions[package_id as usize] as *const Resolution;
                     self.node_modules.tree_id = context.tree_id;
-                    // PORT NOTE: `context.path` is a `*const [u8]` borrowed from this
-                    // installer's path buffer; copy bytes into the owned Vec.
-                    self.node_modules.path.clear();
-                    // SAFETY: BACKREF — set from `self.node_modules.path` earlier this pass.
-                    self.node_modules.path.extend_from_slice(unsafe { &*context.path });
+                    self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
 
                     const NEEDS_VERIFY: bool = false;
@@ -794,7 +790,7 @@ impl<'a> PackageInstaller<'a> {
                     // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
                     // — `Progress::log` takes a single `Arguments` so format inline.
                     if log_level.show_progress() {
-                        self.progress.log(format_args!(
+                        progress!(self).log(format_args!(
                             "{}",
                             Output::pretty_fmt_rt(
                                 format_args!(
@@ -956,13 +952,9 @@ impl<'a> PackageInstaller<'a> {
                 let callback_resolution =
                     &self.resolutions[callback_package_id as usize] as *const Resolution;
                 self.node_modules.tree_id = context.tree_id;
-                // PORT NOTE: zig assigns `context.path` (ArrayList struct copy). The
-                // Rust `DependencyInstallContext.path` is a borrowed `*const [u8]` into
-                // the installer's path buffer; copy the bytes into the owned Vec.
-                self.node_modules.path.clear();
-                // SAFETY: BACKREF — `context.path` was set from this installer's
-                // `node_modules.path` buffer earlier in this pass.
-                self.node_modules.path.extend_from_slice(unsafe { &*context.path });
+                // PORT NOTE: zig assigns `context.path` (ArrayList struct copy).
+                // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
+                self.node_modules.path = context.path.clone();
                 self.current_tree_id = context.tree_id;
                 const NEEDS_VERIFY: bool = false;
                 const IS_PENDING_PACKAGE_INSTALL: bool = false;
@@ -1191,7 +1183,7 @@ impl<'a> PackageInstaller<'a> {
 
         let mut installer = PackageInstall {
             progress: if self.manager.options.log_level.show_progress() {
-                Some(self.progress as *const Progress as *mut Progress)
+                Some(progress!(self))
             } else {
                 None
             },
@@ -1202,7 +1194,7 @@ impl<'a> PackageInstaller<'a> {
             package_name: pkg_name,
             patch: patch_patch.map(|p| package_install::Patch {
                 contents_hash: patch_contents_hash.unwrap(),
-                path: p,
+                path: Box::<[u8]>::from(p),
             }),
             package_version,
             node_modules: &self.node_modules,
@@ -1374,7 +1366,7 @@ impl<'a> PackageInstaller<'a> {
                 let context = TaskCallbackContext::DependencyInstallContext(
                     DependencyInstallContext {
                         tree_id: self.current_tree_id,
-                        path: self.node_modules.path.as_slice() as *const [u8],
+                        path: self.node_modules.path.clone(),
                         dependency_id,
                     },
                 );
@@ -1503,10 +1495,10 @@ impl<'a> PackageInstaller<'a> {
                     // SAFETY: `task` was just `Box::into_raw`'d in `new_apply_patch_hash`;
                     // we hold the only pointer until `enqueue_patch_task` takes ownership.
                     if let patch_install::Callback::Apply(apply) = unsafe { &mut (*task).callback } {
-                        apply.install_context = Some(DependencyInstallContext {
+                        apply.install_context = Some(patch_install::InstallContext {
                             dependency_id,
                             tree_id: self.current_tree_id,
-                            path: self.node_modules.path.as_slice() as *const [u8],
+                            path: self.node_modules.path.clone(),
                         });
                     }
                     // SAFETY: `task` was `Box::into_raw`'d above; reconstitute for the queue.
@@ -1526,7 +1518,7 @@ impl<'a> PackageInstaller<'a> {
                     .push(DependencyInstallContext {
                         dependency_id,
                         tree_id: self.current_tree_id,
-                        path: self.node_modules.path.as_slice() as *const [u8],
+                        path: self.node_modules.path.clone(),
                     });
                 return;
             }
@@ -1892,12 +1884,12 @@ impl<'a> PackageInstaller<'a> {
                                 };
 
                                 // SAFETY: getuid/getgid are infallible on POSIX.
-                                let is_writable = if stat.uid == unsafe { bun_sys::c::getuid() } {
-                                    stat.mode & bun_sys::S::IWUSR > 0
-                                } else if stat.gid == unsafe { bun_sys::c::getgid() } {
-                                    stat.mode & bun_sys::S::IWGRP > 0
+                                let is_writable = if stat.st_uid == unsafe { bun_sys::c::getuid() } {
+                                    stat.st_mode & bun_sys::S::IWUSR > 0
+                                } else if stat.st_gid == unsafe { bun_sys::c::getgid() } {
+                                    stat.st_mode & bun_sys::S::IWGRP > 0
                                 } else {
-                                    stat.mode & bun_sys::S::IWOTH > 0
+                                    stat.st_mode & bun_sys::S::IWOTH > 0
                                 };
 
                                 if !is_writable {
@@ -2106,7 +2098,7 @@ impl<'a> PackageInstaller<'a> {
             Err(err) => {
                 if log_level != Options::LogLevel::Silent {
                     if log_level.show_progress() {
-                        self.progress.log(format_args!(
+                        progress!(self).log(format_args!(
                             "{}",
                             Output::pretty_fmt_rt(
                                 format_args!(

@@ -703,9 +703,7 @@ impl ErrorDeferred {
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
             hostname: self.hostname.take().unwrap_or(bstr::String::empty()),
-            path: bstr::String::empty(),
-            fd: -1,
-            dest: bstr::String::empty(),
+            ..Default::default()
         };
 
         // SAFETY: sole `&mut JSPromise` borrow; consumed immediately as `&JSPromise`.

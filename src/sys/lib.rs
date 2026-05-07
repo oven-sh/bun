@@ -5372,8 +5372,14 @@ impl Dir {
     }
 }
 
-#[cfg(unix)] const AT_REMOVEDIR: i32 = libc::AT_REMOVEDIR;
-#[cfg(windows)] const AT_REMOVEDIR: i32 = 0x200;
+#[cfg(unix)] pub const AT_REMOVEDIR: i32 = libc::AT_REMOVEDIR;
+#[cfg(windows)] pub const AT_REMOVEDIR: i32 = 0x200;
+
+/// sys.zig:2928 `rmdirat` — `unlinkat(dir, path, AT_REMOVEDIR)`.
+#[inline]
+pub fn rmdirat(dirfd: Fd, path: &ZStr) -> Maybe<()> {
+    unlinkat_with_flags(dirfd, path, AT_REMOVEDIR)
+}
 
 /// `unlinkat` taking a non-sentinel slice (NUL-terminates into a path buffer).
 fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {

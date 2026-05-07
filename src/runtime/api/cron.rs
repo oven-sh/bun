@@ -1519,14 +1519,18 @@ impl CronJob {
     }
 
     pub fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
-        // SAFETY: timer heap holds the entry; the bracket-ref below keeps `this`
-        // alive across scheduleNext → finishDeferredStop.
-        let this_ref = unsafe { &mut *this };
-        this_ref.event_loop_timer.state = EventLoopTimerState::FIRED;
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
         // SAFETY: timer heap holds the entry; `this` is live until the guard drops.
+        // Taken *before* the `&mut *this` reborrow below so `ref_guard`'s
+        // `(*this).ref_()` (which retags via `&*this`) doesn't pop an
+        // outstanding Unique tag under Stacked Borrows.
         let _guard = unsafe { Self::ref_guard(this) };
+        // SAFETY: bracket-ref above keeps `this` alive across scheduleNext →
+        // finishDeferredStop. Local reborrow, no protector; ends at last use
+        // under NLL before `_guard` drops.
+        let this_ref = unsafe { &mut *this };
+        this_ref.event_loop_timer.state = EventLoopTimerState::FIRED;
 
         if this_ref.stopped {
             return;

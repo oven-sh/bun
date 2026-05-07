@@ -95,23 +95,43 @@ pub mod Macro {
         str_.starts_with(NAMESPACE_WITH_COLON)
     }
 
+    /// Spec `bundler_jsc/PluginRunner.zig:MacroJSCtx` (= `JSC.JSValue`).
+    ///
+    /// `JSValue` is `#[repr(transparent)] i64` (PORTING.md §JSC types). This
+    /// newtype carries the encoded bits at the lowest tier that needs them so
+    /// `Transpiler::ParseOptions.macro_js_ctx` and `MacroContext.javascript_object`
+    /// share one canonical type without `bun_js_parser` / `bun_bundler` taking a
+    /// `bun_jsc` dep. Higher tiers convert with `JSValue(ctx.0)` / `MacroJSCtx(v.0)`.
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    pub struct MacroJSCtx(pub i64);
+    impl MacroJSCtx {
+        /// Spec `default_macro_js_value` = `JSValue.zero`.
+        pub const ZERO: Self = MacroJSCtx(0);
+    }
+    impl Default for MacroJSCtx {
+        #[inline]
+        fn default() -> Self {
+            Self::ZERO
+        }
+    }
+
     /// Stand-in for `js_parser_jsc::Macro::MacroContext`.
     ///
     /// Real fields (`env`, `macros`, `remap`) reference `Transpiler` and JSC
     /// types; the higher-tier *_jsc crate owns the full definition.
-    /// `javascript_object` is surfaced here as an opaque pointer so
-    /// `Transpiler::parse` can thread `this_parse.macro_js_ctx` through
-    /// (spec transpiler.zig:938-940) without this crate depending on
-    /// `bun_jsc::JSValue`.
+    /// `javascript_object` is surfaced here so `Transpiler::parse` can thread
+    /// `this_parse.macro_js_ctx` through (spec transpiler.zig:938-940) without
+    /// this crate depending on `bun_jsc::JSValue`.
     pub struct MacroContext {
-        /// Opaque stand-in for `JSC.JSValue` (the caller-supplied macro JS
-        /// context). `bun_js_parser_jsc` reinterprets this as a `JSValue`.
-        pub javascript_object: *mut (),
+        /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
+        /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
+        pub javascript_object: MacroJSCtx,
     }
     impl Default for MacroContext {
         #[inline]
         fn default() -> Self {
-            Self { javascript_object: core::ptr::null_mut() }
+            Self { javascript_object: MacroJSCtx::ZERO }
         }
     }
     impl MacroContext {

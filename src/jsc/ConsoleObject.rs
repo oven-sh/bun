@@ -3877,6 +3877,7 @@ pub mod formatter {
                             bstr::BStr::new(out_buf),
                             pf!("<r>")
                         ));
+                        if writer.failed { self.failed = true; }
                         return Ok(());
                     }
 

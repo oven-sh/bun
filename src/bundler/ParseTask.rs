@@ -790,44 +790,55 @@ fn get_ast(
         Loader::Toml => {
             let _trace = perf::trace("Bundler.ParseTOML");
             let mut temp_log = Log::init();
-            // TODO(port): errdefer/defer reshaped — Zig had `defer { temp_log.cloneToWithRecycled(log) }`.
-            // scopeguard captured `log`/`temp_log` by-ref while both are also borrowed
-            // mutably below (NLL conflict); folded into the linear control flow.
-            let root: Expr = bun_interchange::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
-            let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, &mut temp_log, root, source, b"")?
+            // PORT NOTE: Zig `defer { temp_log.cloneToWithRecycled(log, true);
+            // temp_log.msgs.clearAndFree() }` runs on the error path too.
+            // scopeguard would alias `log`/`temp_log` (both borrowed mutably
+            // below); reshape as a closure so every `?` exits through one
+            // post-amble that flushes `temp_log`.
+            let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let root: Expr =
+                    bun_interchange::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
+                Ok(JSAst::init(
+                    js_parser::new_lazy_export_ast(
+                        bump, &mut topts.define, opts, &mut temp_log, root, source, b"",
+                    )?
                     .unwrap(),
-            );
+                ))
+            })();
             let _ = temp_log.clone_to_with_recycled(log, true);
-            return Ok(result);
+            return result;
         }
         Loader::Yaml => {
             let _trace = perf::trace("Bundler.ParseYAML");
             let mut temp_log = Log::init();
-            let root: Expr = match bun_interchange::yaml::YAML::parse(source, &mut temp_log, bump) {
-                Ok(r) => r.into(),
-                Err(_) => {
-                    let _ = temp_log.clone_to_with_recycled(log, true);
-                    return Err(err!("ParserError"));
-                }
-            };
-            let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, &mut temp_log, root, source, b"")?
+            let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let root: Expr =
+                    bun_interchange::yaml::YAML::parse(source, &mut temp_log, bump)?.into();
+                Ok(JSAst::init(
+                    js_parser::new_lazy_export_ast(
+                        bump, &mut topts.define, opts, &mut temp_log, root, source, b"",
+                    )?
                     .unwrap(),
-            );
+                ))
+            })();
             let _ = temp_log.clone_to_with_recycled(log, true);
-            return Ok(result);
+            return result;
         }
         Loader::Json5 => {
             let _trace = perf::trace("Bundler.ParseJSON5");
             let mut temp_log = Log::init();
-            let root: Expr = bun_interchange::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
-            let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, &mut temp_log, root, source, b"")?
+            let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let root: Expr =
+                    bun_interchange::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
+                Ok(JSAst::init(
+                    js_parser::new_lazy_export_ast(
+                        bump, &mut topts.define, opts, &mut temp_log, root, source, b"",
+                    )?
                     .unwrap(),
-            );
+                ))
+            })();
             let _ = temp_log.clone_to_with_recycled(log, true);
-            return Ok(result);
+            return result;
         }
         Loader::Text => {
             let root = Expr::init(E::String { data: leak_static(&source.contents), ..Default::default() }, Loc { start: 0 });

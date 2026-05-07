@@ -5133,13 +5133,6 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js()
 }
 
-// Local FFI bridge — `JSGlobalObject::clear_exception` lives in the gated
-// `JSGlobalObject.rs`; declare the extern here so the un-gated callers above
-// can clear the pending VM exception without depending on the gated module.
-unsafe extern "C" {
-    fn JSGlobalObject__clearException(this: *const JSGlobalObject);
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/VirtualMachine.zig (~3840 lines)

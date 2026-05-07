@@ -359,7 +359,7 @@ pub fn generate_code_for_lazy_export(
                 let mut template_parts: Vec<E::TemplatePart> = Vec::new();
                 let mut value = Expr::init(
                     E::NameOfSymbol {
-                        ref_: to_js_ref(ref_.to_real_ref(source_index)),
+                        ref_: ref_.to_real_ref(source_index),
                         ..Default::default()
                     },
                     stmt.loc,

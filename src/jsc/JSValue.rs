@@ -1425,6 +1425,7 @@ unsafe extern "C" {
     fn JSC__JSValue__toError_(this: JSValue) -> JSValue;
     fn JSC__JSValue__toZigException(this: JSValue, global: *const JSGlobalObject, exception: *mut ZigException);
     fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
+    fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putBunString(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);

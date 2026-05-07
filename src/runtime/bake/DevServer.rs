@@ -2355,7 +2355,7 @@ impl DevServer {
 
         // Extract route params by re-matching the URL
         let mut params: framework_router::MatchedParams = Default::default();
-        let url_bunstr = match &req {
+        let url_bunstr = OwnedString::new(match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
             SavedRequestUnion::Stack(r) => BunString::borrow_utf8((**r).url()),
             SavedRequestUnion::Saved(data) => 'brk: {
@@ -2364,8 +2364,7 @@ impl DevServer {
                 url.ref_();
                 break 'brk url;
             }
-        };
-        let _deref = scopeguard::guard((), |_| url_bunstr.deref());
+        });
         let url = url_bunstr.to_utf8();
 
         // Extract pathname from URL (remove protocol, host, query, hash)

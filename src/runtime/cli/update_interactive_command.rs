@@ -70,7 +70,7 @@ impl fmt::Display for TerminalHyperlink<'_> {
 
 pub struct UpdateInteractiveCommand;
 
-struct OutdatedPackage<'a> {
+struct OutdatedPackage {
     name: Box<[u8]>,
     current_version: Box<[u8]>,
     latest_version: Box<[u8]>,
@@ -82,7 +82,17 @@ struct OutdatedPackage<'a> {
     workspace_name: Box<[u8]>,
     behavior: Behavior,
     use_latest: bool,
-    manager: &'a PackageManager,
+    /// Raw back-pointer to the process-singleton `PackageManager`.
+    ///
+    /// PORT NOTE: Zig stores `*PackageManager` here and freely aliases it with
+    /// the caller's mutable handle. Storing `&PackageManager` would tie the
+    /// returned `Vec<OutdatedPackage>`'s lifetime to the `&mut PackageManager`
+    /// reborrow inside `get_outdated_packages`, blocking every later use of
+    /// `manager` in `update_interactive` (and is Stacked-Borrows UB while the
+    /// caller's `&mut` is live). The pointer is dereferenced only at render
+    /// time for the read-only `options.scope` / `scope_for_package_name`
+    /// projections, never across a write to `manager`.
+    manager: *const PackageManager,
     is_catalog: bool,
     catalog_name: Option<Box<[u8]>>,
 }

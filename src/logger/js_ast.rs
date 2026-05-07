@@ -815,6 +815,22 @@ impl Expr {
         }
     }
 
+    /// Zig: `Expr.asStringZ(allocator)` — `Some(utf8, NUL-terminated)` when
+    /// `data` is `e_string`, transcoding UTF-16 into `bump` if necessary.
+    /// Moved down from `bun_js_parser::Expr` so install-tier callers that
+    /// hold the T2 JSON `Expr` (e.g. `WorkspaceMap::process_names_array`)
+    /// don't need a T4 dep just for the sentinel variant.
+    #[inline]
+    pub fn as_string_z<'b>(
+        &self,
+        bump: &'b Bump,
+    ) -> Result<Option<&'b bun_string::ZStr>, AllocError> {
+        match &self.data {
+            expr::Data::EString(s) => Ok(Some(s.get().string_z(bump)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Zig: `Expr.asString(allocator)` — `Some(utf8)` when `data` is `e_string`.
     pub fn as_utf8_string_literal(&self) -> Option<&[u8]> {
         if let expr::Data::EString(s) = &self.data {

@@ -1076,8 +1076,7 @@ impl JSValkeyClient {
     }
 
     // PORT NOTE: `host_fn(getter)`/`host_fn(setter)` macros don't pass the JS
-    // `this_value` through. The cached-slot accessors are codegen-stubbed
-    // (`todo!` bodies) anyway, so recover `this_value` from the JsRef.
+    // `this_value` through; recover it from the JsRef (set in `create()`).
     #[bun_jsc::host_fn(getter)]
     pub fn get_on_connect(&self, _global: &JSGlobalObject) -> JSValue {
         let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
@@ -2198,6 +2197,6 @@ impl Options {
 // PORT STATUS
 //   source:     src/runtime/valkey_jsc/js_valkey.zig (1674 lines)
 //   confidence: medium
-//   todos:      15
-//   notes:      Holder.ctx is BACKREF (raw *mut + intrusive ref/deref) — LIFETIMES.tsv needs SHARED→BACKREF update; scopeguard closures capture &mut self (borrowck reshaping needed in Phase B); ValkeyClient/Address/Flags struct shapes assumed; ON_HANDSHAKE const-fn-ptr needs specialization.
+//   todos:      6
+//   notes:      Holder.ctx is BACKREF (raw *mut + intrusive ref/deref) — LIFETIMES.tsv needs SHARED→BACKREF update.
 // ──────────────────────────────────────────────────────────────────────────

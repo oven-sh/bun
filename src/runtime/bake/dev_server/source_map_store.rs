@@ -500,10 +500,12 @@ impl SourceMapStore {
     /// live, heap-allocated `DevServer` (always true for production use; the
     /// `Default::default()` instance must never call this).
     pub unsafe fn owner(&mut self) -> *mut DevServer {
-        (self as *mut Self)
-            .cast::<u8>()
-            .sub(offset_of!(DevServer, source_maps))
-            .cast::<DevServer>()
+        unsafe {
+            (self as *mut Self)
+                .cast::<u8>()
+                .sub(offset_of!(DevServer, source_maps))
+                .cast::<DevServer>()
+        }
     }
 
     /// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()`

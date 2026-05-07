@@ -1986,6 +1986,85 @@ impl_asymmetric_matcher_class!(
     ExpectStringMatching,
 );
 
+// ─── matcher dispatch ──────────────────────────────────────────────────────
+// The generate-classes.ts Rust emitter calls every prototype matcher as
+// `Expect::to_*(&mut *this, global, callframe)`. Roughly half the
+// `expect/to*.rs` files already attach via `impl Expect { .. }`; the rest are
+// free `pub fn to_*(this: &mut Expect, ..)` functions (Phase-A drafts couldn't
+// open `impl Expect` from a sibling crate-module without seeing the struct
+// definition first). Those modules are mounted under the `super::expect`
+// façade (mod.rs `matchers!`), so we add inherent forwarders here — the real
+// bodies stay in their per-matcher files, this is the layering bridge.
+macro_rules! __forward_matcher {
+    ( $( $method:ident => $module:ident :: $func:ident ),* $(,)? ) => {
+        impl Expect {
+            $(
+                #[inline]
+                pub fn $method(
+                    &mut self,
+                    global: &JSGlobalObject,
+                    frame: &CallFrame,
+                ) -> JsResult<JSValue> {
+                    super::expect::$module::$func(self, global, frame)
+                }
+            )*
+        }
+    };
+}
+__forward_matcher! {
+    to_be_array                              => to_be_array::to_be_array,
+    to_be_array_of_size                      => to_be_array_of_size::to_be_array_of_size,
+    to_be_boolean                            => to_be_boolean::to_be_boolean,
+    to_be_date                               => to_be_date::to_be_date,
+    to_be_defined                            => to_be_defined::to_be_defined,
+    to_be_empty                              => to_be_empty::to_be_empty,
+    to_be_empty_object                       => to_be_empty_object::to_be_empty_object,
+    to_be_even                               => to_be_even::to_be_even,
+    to_be_function                           => to_be_function::to_be_function,
+    to_be_greater_than_or_equal              => to_be_greater_than_or_equal::to_be_greater_than_or_equal,
+    to_be_instance_of                        => to_be_instance_of::to_be_instance_of,
+    to_be_integer                            => to_be_integer::to_be_integer,
+    // codegen snake-cases `toBeNaN` → `to_be_na_n`; the matcher module/file uses `to_be_nan`.
+    to_be_na_n                               => to_be_nan::to_be_nan,
+    to_be_negative                           => to_be_negative::to_be_negative,
+    to_be_number                             => to_be_number::to_be_number,
+    to_be_odd                                => to_be_odd::to_be_odd,
+    to_be_one_of                             => to_be_one_of::to_be_one_of,
+    to_be_positive                           => to_be_positive::to_be_positive,
+    to_be_truthy                             => to_be_truthy::to_be_truthy,
+    to_be_type_of                            => to_be_type_of::to_be_type_of,
+    to_be_valid_date                         => to_be_valid_date::to_be_valid_date,
+    to_contain_all_keys                      => to_contain_all_keys::to_contain_all_keys,
+    to_contain_all_values                    => to_contain_all_values::to_contain_all_values,
+    to_contain_any_keys                      => to_contain_any_keys::to_contain_any_keys,
+    to_contain_any_values                    => to_contain_any_values::to_contain_any_values,
+    to_contain_equal                         => to_contain_equal::to_contain_equal,
+    to_contain_keys                          => to_contain_keys::to_contain_keys,
+    to_end_with                              => to_end_with::to_end_with,
+    to_equal_ignoring_whitespace             => to_equal_ignoring_whitespace::to_equal_ignoring_whitespace,
+    to_have_been_called                      => to_have_been_called::to_have_been_called,
+    to_have_been_called_once                 => to_have_been_called_once::to_have_been_called_once,
+    to_have_been_called_times                => to_have_been_called_times::to_have_been_called_times,
+    to_have_been_called_with                 => to_have_been_called_with::to_have_been_called_with,
+    to_have_been_last_called_with            => to_have_been_last_called_with::to_have_been_last_called_with,
+    to_have_been_nth_called_with             => to_have_been_nth_called_with::to_have_been_nth_called_with,
+    to_have_last_returned_with               => to_have_last_returned_with::to_have_last_returned_with,
+    to_have_length                           => to_have_length::to_have_length,
+    to_have_nth_returned_with                => to_have_nth_returned_with::to_have_nth_returned_with,
+    to_have_property                         => to_have_property::to_have_property,
+    to_have_returned_with                    => to_have_returned_with::to_have_returned_with,
+    to_include                               => to_include::to_include,
+    to_match                                 => to_match::to_match,
+    to_match_inline_snapshot                 => to_match_inline_snapshot::to_match_inline_snapshot,
+    to_match_object                          => to_match_object::to_match_object,
+    to_match_snapshot                        => to_match_snapshot::to_match_snapshot,
+    to_satisfy                               => to_satisfy::to_satisfy,
+    to_start_with                            => to_start_with::to_start_with,
+    to_throw                                 => to_throw::to_throw,
+    to_throw_error_matching_inline_snapshot  => to_throw_error_matching_inline_snapshot::to_throw_error_matching_inline_snapshot,
+    to_throw_error_matching_snapshot         => to_throw_error_matching_snapshot::to_throw_error_matching_snapshot,
+}
+
 // Codegen'd `cache: true` accessors (`.classes.ts`) — Rust has no associated
 // modules, so each lives as a sibling module instead of `Self::js::...`.
 pub mod expect_string_matching_js {

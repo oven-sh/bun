@@ -8,7 +8,7 @@ use core::ffi::c_void;
 
 struct StructuredCloneWriter {
     ctx: *mut c_void,
-    // TODO(port): callconv(jsc.conv) — see note on `on_structured_clone_serialize`.
+    // callconv(jsc.conv) → codegen `WriteBytesFn` typedef.
     impl_: unsafe extern "C" fn(*mut c_void, *const u8, u32),
 }
 

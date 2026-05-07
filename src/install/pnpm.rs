@@ -11,6 +11,7 @@ use bun_string::strings;
 use bun_sys::{self as sys, Fd};
 
 use crate::bin::Bin;
+use crate::bun_json::JsonExprView as _;
 use crate::dependency::{self, Dependency};
 use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
@@ -33,17 +34,17 @@ macro_rules! sbuf {
     };
 }
 
-// Detached read-only view of `lockfile.buffers.string_bytes` to bypass borrowck
-// when a `&mut lockfile` method also needs to read the same buffer it owns
-// (Zig has no borrow checker; the buffer is never reallocated mid-call).
+// PORT NOTE: Zig freely passes `lockfile.buffers.string_bytes.items` alongside
+// `&mut lockfile`. In Rust we keep the borrows field-disjoint instead — every
+// concurrent mutation in this file touches `buffers.dependencies`,
+// `buffers.resolutions`, `packages`, etc., never `string_bytes` itself, so a
+// plain `lockfile.buffers.string_bytes.as_slice()` at the use site is sound
+// and checked. The one exception (`append_package_dedupe` taking `&mut self`)
+// reads the slice from `self` internally.
 macro_rules! string_bytes {
-    ($lockfile:expr) => {{
-        let v: &Vec<u8> = &$lockfile.buffers.string_bytes;
-        // SAFETY: `string_bytes` is not mutated for the duration of the slice
-        // use (callers only push to `packages`/`dependencies`, never to the
-        // string buffer while this view is live).
-        unsafe { core::slice::from_raw_parts(v.as_ptr(), v.len()) }
-    }};
+    ($lockfile:expr) => {
+        $lockfile.buffers.string_bytes.as_slice()
+    };
 }
 
 /// returns (peers_index, patch_hash_index)
@@ -147,8 +148,16 @@ impl From<AllocError> for MigratePnpmLockfileError {
 }
 
 impl From<bun_core::Error> for MigratePnpmLockfileError {
-    fn from(_: bun_core::Error) -> Self {
-        Self::InvalidPnpmLockfile
+    fn from(e: bun_core::Error) -> Self {
+        // Preserve the variants Zig's error-set union carried through; only
+        // collapse genuinely-unknown tags to InvalidPnpmLockfile.
+        if e == bun_core::err!(OutOfMemory) {
+            Self::OutOfMemory
+        } else if e == bun_core::err!(DependencyLoop) {
+            Self::DependencyLoop
+        } else {
+            Self::InvalidPnpmLockfile
+        }
     }
 }
 
@@ -194,9 +203,10 @@ fn expr_tag_name(data: &ExprData) -> &'static str {
 
 #[inline]
 fn as_string(expr: &Expr) -> Option<&'static [u8]> {
-    // YAML / package.json parse always produces UTF-8 EStrings.
-    expr.as_utf8_string_literal()
-        .map(|s| unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) })
+    // YAML / package.json parse always produces UTF-8 EStrings; `E.String.data`
+    // is `&'static [u8]` (Store-backed), so the `'static` here is the field's
+    // own lifetime — no laundering.
+    expr.json_utf8_string()
 }
 
 #[inline]
@@ -207,7 +217,7 @@ fn get_string(expr: &Expr, name: &[u8]) -> Option<(&'static [u8], logger::Loc)> 
 
 fn e_object(expr: &Expr) -> &E::Object {
     match &expr.data {
-        ExprData::EObject(o) => unsafe { &*o.as_ptr() },
+        ExprData::EObject(o) => &**o,
         _ => unreachable!("e_object called on non-object"),
     }
 }
@@ -596,14 +606,19 @@ pub fn migrate_pnpm_lockfile<'a>(
                 pkg.resolutions = ExternalSlice::new(off, len);
 
                 if let Some(bin_expr) = workspace_root.get(b"bin") {
-                    pkg.bin = bin_parse_append(&bin_expr, lockfile)?;
+                    pkg.bin = Bin::parse_append(
+                        &bin_expr,
+                        &mut sbuf!(lockfile),
+                        &mut lockfile.buffers.extern_strings,
+                    )?;
                 } else if let Some(dirs_q) = workspace_root.as_property(b"directories") {
                     if let Some(bin_expr) = dirs_q.expr.get(b"bin") {
-                        pkg.bin = bin_parse_append_from_directories(&bin_expr, lockfile)?;
+                        pkg.bin =
+                            Bin::parse_append_from_directories(&bin_expr, &mut sbuf!(lockfile))?;
                     }
                 }
 
-                let pkg_id = lockfile.append_package_dedupe(&mut pkg, string_bytes!(lockfile))?;
+                let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
                 let entry = pkg_map.get_or_put(&abs_path)?;
                 if entry.found_existing {
@@ -704,8 +719,8 @@ pub fn migrate_pnpm_lockfile<'a>(
                                 continue;
                             }
 
-                            *pkg_entry.value_ptr = lockfile
-                                .append_package_dedupe(&mut pkg, string_bytes!(lockfile))?;
+                            *pkg_entry.value_ptr =
+                                lockfile.append_package_dedupe(&mut pkg)?;
                         }
                     }
                     dependency::VersionTag::Symlink => {
@@ -910,7 +925,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 pkg.resolutions = ExternalSlice::new(off, len);
                 pkg.resolution = res.copy();
 
-                let pkg_id = lockfile.append_package_dedupe(&mut pkg, string_bytes!(lockfile))?;
+                let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
                 let entry = pkg_map.get_or_put(key_str)?;
                 if entry.found_existing {
@@ -1388,14 +1403,8 @@ fn parse_append_package_dependencies(
     let end = lockfile.buffers.dependencies.len();
 
     {
-        let bytes = string_bytes!(lockfile);
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| {
-            if Dependency::is_less_than(bytes, a, b) {
-                core::cmp::Ordering::Less
-            } else {
-                core::cmp::Ordering::Greater
-            }
-        });
+        let bytes = lockfile.buffers.string_bytes.as_slice();
+        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
     }
 
     Ok((
@@ -1590,14 +1599,8 @@ fn parse_append_importer_dependencies(
     let end = lockfile.buffers.dependencies.len();
 
     {
-        let bytes = string_bytes!(lockfile);
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| {
-            if Dependency::is_less_than(bytes, a, b) {
-                core::cmp::Ordering::Less
-            } else {
-                core::cmp::Ordering::Greater
-            }
-        });
+        let bytes = lockfile.buffers.string_bytes.as_slice();
+        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
     }
 
     Ok((

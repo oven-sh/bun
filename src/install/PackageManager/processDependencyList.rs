@@ -62,14 +62,27 @@ impl<'a> ResolverContext for GitResolver<'a> {
         repo.resolved = builder.append::<SemverString>(self.resolved);
         Ok(ResolutionType::init(match self.resolution.tag {
             ResolutionTag::Git => TaggedValue::Git(repo),
-            _ => TaggedValue::Github(repo),
+            ResolutionTag::Github => TaggedValue::Github(repo),
+            // Only constructed inside the `.git | .github` arm of
+            // `process_extracted_tarball_package`; any other tag is a bug.
+            _ => unreachable!(),
         }))
     }
 
     fn resolution<SemverIntType: VersionInt>(&self) -> &ResolutionType<SemverIntType> {
-        // SAFETY: `ResolutionType<S>` layout is invariant under `S` for the
-        // git/github payload (only `Value::npm` carries `Version<S>`); callers
-        // gate on `IS_GIT_RESOLVER` so the npm arm is never read.
+        // The trait method is generic over `SemverIntType`, but
+        // `ResolutionType<S>` only has identical layout to `Resolution`
+        // (= `ResolutionType<u64>`) when `S == u64` — the `Value::npm` arm
+        // embeds `Version<S>`. Guard at compile time so a future `u32`
+        // instantiation can't silently produce a mis-sized reborrow.
+        const {
+            assert!(
+                core::mem::size_of::<ResolutionType<SemverIntType>>()
+                    == core::mem::size_of::<Resolution>()
+            )
+        };
+        // SAFETY: size/layout equality enforced above; callers gate on
+        // `IS_GIT_RESOLVER` so the npm arm is never read.
         unsafe { &*(self.resolution as *const Resolution as *const ResolutionType<SemverIntType>) }
     }
     fn dep_id(&self) -> DependencyID {
@@ -326,22 +339,27 @@ impl PackageManager {
                     // `Scripts::parse_*` are typed against `bun_js_parser::Expr`. The
                     // logger AST has an `Into` lift (see js_parser/ast/Expr.rs).
                     let json_root: bun_js_parser::Expr = json_root.into();
-                    // PORT NOTE: reshaped for borrowck — `string_builder()` borrows
-                    // the whole `Lockfile` mutably, so split out the `packages`
-                    // column pointer first (Zig accessed both freely).
-                    let scripts_ptr: *mut Scripts = {
-                        debug_assert!(*package_id != INVALID_PACKAGE_ID);
-                        &mut self.lockfile.packages.items_scripts_mut()[*package_id as usize]
-                    };
+                    // PORT NOTE (spec parity): Zig writes
+                    //   var scripts = manager.lockfile.packages.items(.scripts)[package_id.*];
+                    // which COPIES the `Scripts` struct into a local; the
+                    // subsequent `parseAlloc` / `.filled = true` mutate the
+                    // local and are never stored back, so
+                    // `lockfile.packages[id].scripts` is not updated. This is
+                    // a latent dead-store bug in processDependencyList.zig,
+                    // but we match it exactly so .rs/.zig observable behavior
+                    // agree. The `builder` appends still land in
+                    // `lockfile.buffers.string_bytes`, preserving that side
+                    // effect. (Hoisted above `string_builder()` for borrowck —
+                    // `parse_count`/`allocate` don't touch `packages`.)
+                    debug_assert!(*package_id != INVALID_PACKAGE_ID);
+                    let mut scripts: Scripts =
+                        self.lockfile.packages.items_scripts()[*package_id as usize];
                     let mut builder = self.lockfile.string_builder();
                     Scripts::parse_count(&mut builder, &json_root);
                     builder.allocate().expect("unreachable");
-                    // SAFETY: `scripts_ptr` points into `lockfile.packages` which is
-                    // disjoint from `lockfile.buffers.string_bytes` /
-                    // `lockfile.string_pool` (the only fields `builder` touches).
-                    let scripts = unsafe { &mut *scripts_ptr };
                     scripts.parse_alloc(&mut builder, &json_root);
                     scripts.filled = true;
+                    let _ = scripts;
                 }
 
                 None

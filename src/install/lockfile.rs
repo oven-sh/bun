@@ -2033,11 +2033,16 @@ impl Lockfile {
         None
     }
 
-    /// Appends `pkg` to `this.packages`, and adds to `this.package_index`
+    /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
+    ///
+    /// PORT NOTE: Zig takes `string_buf: []const u8` as a separate parameter
+    /// (always `lockfile.buffers.string_bytes.items`). In Rust that aliases the
+    /// `&mut self` borrow, so read it from `self` and split borrows at the
+    /// field level (`package_index` / `packages` / `buffers.string_bytes` are
+    /// disjoint).
     pub fn append_package_dedupe(
         &mut self,
         pkg: &mut Package,
-        buf: &[u8],
     ) -> Result<PackageID, AllocError> {
         let entry = self.package_index.get_or_put(pkg.name_hash)?;
 
@@ -2049,6 +2054,7 @@ impl Lockfile {
             return Ok(new_id);
         }
 
+        let buf = self.buffers.string_bytes.as_slice();
         let mut resolutions = self.packages.items_resolution();
 
         match entry.value_ptr {

@@ -278,9 +278,15 @@ impl TarballStream {
             if (*this).draining.swap(true, Ordering::AcqRel) {
                 return;
             }
+            // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
+            // pointer inherits `this`'s full-struct provenance: the
+            // thread-pool callback recovers the parent `*mut TarballStream`
+            // via `offset_of!` (Zig: `@fieldParentPtr`), which is OOB for a
+            // pointer whose provenance is limited to the `drain_task` field
+            // bytes. See ThreadPool.rs:442 for the same pattern.
             (*(*this).package_manager)
                 .thread_pool
-                .schedule(thread_pool::Batch::from(&mut (*this).drain_task));
+                .schedule(thread_pool::Batch::from(core::ptr::addr_of_mut!((*this).drain_task)));
         }
     }
 
@@ -311,7 +317,7 @@ impl TarballStream {
                 // remainder of the download.
                 let more = Self::take_pending(this);
 
-                if let Err(err) = (*this).step() {
+                if let Err(err) = Self::step(this) {
                     (*this).fail = Some(err);
                     (*this).close_output_file();
                 }
@@ -450,44 +456,59 @@ impl TarballStream {
     /// Run libarchive until it needs more input (`Retry`) or hits a
     /// terminal state. All libarchive state persists on the heap, so
     /// returning from here and re-entering later is safe.
-    fn step(&mut self) -> Result<(), bun_core::Error> {
-        if self.archive.is_none() {
-            self.open_archive()?;
+    ///
+    /// # Safety
+    /// `this` must be live. Takes `*mut Self` (not `&mut self`) because
+    /// `open_archive()` hands `this` to libarchive as client_data and the
+    /// read callback dereferences it across MULTIPLE `step()` invocations.
+    /// A `&mut self` receiver would mint a fresh Unique tag on each call,
+    /// popping the SharedRW tag the stored client_data pointer carries and
+    /// leaving the callback with dead provenance (Stacked Borrows UB).
+    /// Threading the Box-rooted `*mut Self` from `drain()` keeps one
+    /// provenance alive for the lifetime of the archive.
+    unsafe fn step(this: *mut Self) -> Result<(), bun_core::Error> {
+        // SAFETY: see fn-level # Safety — raw-ptr field projection only; no
+        // `&mut TarballStream` is held across any libarchive call (which may
+        // re-enter `archive_read_callback` and access `*this` via the same
+        // provenance). Transient `&mut *this` for `open_destination` /
+        // `begin_entry` / `write_data_block` / `close_output_file` is sound:
+        // those do not call into libarchive.
+        unsafe {
+        if (*this).archive.is_none() {
+            Self::open_archive(this)?;
         }
-        if self.dest.is_none() {
-            self.open_destination()?;
+        if (*this).dest.is_none() {
+            (*this).open_destination()?;
         }
 
-        // SAFETY: `archive` is Some after `open_archive()` succeeds and points
-        // to a libarchive heap allocation disjoint from `*self`. Only the
-        // single active drain task touches it (guarded by `draining`), so
-        // this `&mut` is unique; nothing below reads or writes
-        // `self.archive` while it is live.
-        let archive = unsafe { &mut *self.archive.unwrap() };
+        // `archive` points to a libarchive heap allocation disjoint from
+        // `*this`; holding `&mut lib::Archive` across the loop does not
+        // alias any access to `*this`.
+        let archive = &mut *(*this).archive.unwrap();
 
         loop {
-            match self.phase {
+            match (*this).phase {
                 Phase::Done => return Ok(()),
                 Phase::WantHeader => {
                     let mut entry: *mut lib::Entry = core::ptr::null_mut();
                     match archive.read_next_header(&mut entry) {
                         lib::Result::Retry => return Ok(()),
                         lib::Result::Eof => {
-                            self.phase = Phase::Done;
+                            (*this).phase = Phase::Done;
                             return Ok(());
                         }
                         lib::Result::Ok | lib::Result::Warn => {
-                            // SAFETY: libarchive returned OK/WARN with a valid
-                            // entry pointer owned by `archive`; it stays valid
-                            // until the next `read_next_header`. No other Rust
+                            // libarchive returned OK/WARN with a valid entry
+                            // pointer owned by `archive`; it stays valid until
+                            // the next `read_next_header`. No other Rust
                             // reference to it exists.
-                            self.begin_entry(unsafe { &mut *entry })?;
+                            (*this).begin_entry(&mut *entry)?;
                         }
                         lib::Result::Failed | lib::Result::Fatal => {
                             bun_output::scoped_log!(
                                 TarballStream,
                                 "readNextHeader: {}",
-                                bstr::BStr::new(lib::Archive::error_string(self.archive.unwrap()))
+                                bstr::BStr::new(lib::Archive::error_string((*this).archive.unwrap()))
                             );
                             return Err(bun_core::err!("Fail"));
                         }
@@ -497,22 +518,22 @@ impl TarballStream {
                     let mut offset: i64 = 0;
                     let Some(block) = archive.next(&mut offset) else {
                         // End of this entry's data.
-                        self.close_output_file();
-                        self.phase = Phase::WantHeader;
+                        (*this).close_output_file();
+                        (*this).phase = Phase::WantHeader;
                         continue;
                     };
                     match block.result {
                         lib::Result::Retry => return Ok(()),
                         lib::Result::Ok | lib::Result::Warn => {
-                            if let Some(fd) = self.out_fd {
-                                self.write_data_block(fd, block)?;
+                            if let Some(fd) = (*this).out_fd {
+                                (*this).write_data_block(fd, block)?;
                             }
                         }
                         _ => {
                             bun_output::scoped_log!(
                                 TarballStream,
                                 "read_data_block: {}",
-                                bstr::BStr::new(lib::Archive::error_string(self.archive.unwrap()))
+                                bstr::BStr::new(lib::Archive::error_string((*this).archive.unwrap()))
                             );
                             return Err(bun_core::err!("Fail"));
                         }
@@ -520,6 +541,7 @@ impl TarballStream {
                 }
             }
         }
+        } // unsafe
     }
 
     fn open_archive(&mut self) -> Result<(), bun_core::Error> {

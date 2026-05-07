@@ -699,11 +699,10 @@ impl AnyRoute {
 
         init_ctx.user_routes.push(server_config::StaticRouteEntry {
             path: builder.into_boxed_slice(),
-            route,
+            route: route.into_mod_any_route(),
             method: methods,
         });
         Ok(None)
-        }
     }
 
     /// This is the JS representation of an HTMLImportManifest
@@ -713,8 +712,36 @@ impl AnyRoute {
         argument: JSValue,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
-        let _ = (argument, init_ctx);
-        todo!("blocked_on: bun_jsc::JSValue::get_optional::<ZigString::Slice>")
+        if !argument.is_object() {
+            return Ok(None);
+        }
+
+        let Some(index) = argument.get_optional_slice(init_ctx.global, b"index")? else {
+            return Ok(None);
+        };
+        let _index_guard = scopeguard::guard((), |_| index.deinit());
+
+        let Some(files) = argument.get_array(init_ctx.global, b"files")? else { return Ok(None); };
+        let mut iter = files.array_iterator(init_ctx.global)?;
+        let mut html_route: Option<AnyRoute> = None;
+        while let Some(file_entry) = iter.next()? {
+            if let Some(item) = Self::bundled_html_manifest_item_from_js(file_entry, index.slice(), init_ctx)? {
+                html_route = Some(item);
+            }
+        }
+
+        Ok(html_route)
+    }
+
+    /// Convert this Phase-A `server_body::AnyRoute` to the variant-isomorphic
+    /// `super::AnyRoute` (mod.rs) used by `StaticRouteEntry`.
+    fn into_mod_any_route(self) -> super::AnyRoute {
+        match self {
+            AnyRoute::Static(p) => super::AnyRoute::Static(p),
+            AnyRoute::File(p) => super::AnyRoute::File(p),
+            AnyRoute::Html(refptr) => super::AnyRoute::Html(refptr),
+            AnyRoute::FrameworkRouter(idx) => super::AnyRoute::FrameworkRouter(idx),
+        }
     }
 
     pub fn from_options(
@@ -722,9 +749,6 @@ impl AnyRoute {
         headers: Option<&FetchHeaders>,
         path: &mut Node::PathOrFileDescriptor,
     ) -> JsResult<AnyRoute> {
-        let _ = (global, headers, path);
-        todo!("blocked_on: Blob::find_or_create_file_from_path disambiguation");
-        {
         // The file/static route doesn't ref it.
         let blob = Blob::find_or_create_file_from_path(path, global, false);
 
@@ -737,24 +761,24 @@ impl AnyRoute {
             // and the process exits with a non-zero status code.
             if let Some(store) = blob.store() {
                 if let Some(store_path) = store.get_path() {
-                    match sys::exists_at_type(sys::Fd::cwd(), store_path) {
-                        Ok(file_type) => {
-                            if file_type == sys::ExistsAtType::Directory {
-                                return global.throw_invalid_arguments(
-                                    format_args!(
-                                        "Bundled file {} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.",
-                                        bun_fmt::quote(store_path)
-                                    ),
-                                );
-                            }
+                    // PORT NOTE: `sys::exists_at_type` takes `&ZStr`; the store
+                    // path is a borrowed byte slice. NUL-terminate into a path
+                    // buffer for the syscall.
+                    let mut buf = bun_paths::PathBuffer::default();
+                    let zpath = bun_paths::z(store_path, &mut buf);
+                    match sys::exists_at_type(sys::Fd::cwd(), zpath) {
+                        Ok(sys::ExistsAtType::Directory) => {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "Bundled file {} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.",
+                                bun_fmt::quote(store_path)
+                            )));
                         }
+                        Ok(sys::ExistsAtType::File) => {}
                         Err(_) => {
-                            return global.throw_invalid_arguments(
-                                format_args!(
-                                    "Bundled file {} not found. You may want to configure --asset-naming or `naming` when bundling.",
-                                    bun_fmt::quote(store_path)
-                                ),
-                            );
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "Bundled file {} not found. You may want to configure --asset-naming or `naming` when bundling.",
+                                bun_fmt::quote(store_path)
+                            )));
                         }
                     }
                 }
@@ -764,7 +788,7 @@ impl AnyRoute {
             return Ok(AnyRoute::File(unsafe {
                 NonNull::new_unchecked(FileRoute::init_from_blob(
                     blob,
-                    FileRoute::Options { server: None, headers },
+                    super::file_route::InitOptions { server: None, status_code: 200, headers },
                 ))
             }));
         }
@@ -772,11 +796,10 @@ impl AnyRoute {
         // SAFETY: init_from_any_blob returns a freshly Box::into_raw'd StaticRoute (rc=1).
         Ok(AnyRoute::Static(unsafe {
             NonNull::new_unchecked(StaticRoute::init_from_any_blob(
-                &Blob::Any::Blob(blob),
-                StaticRoute::Options { server: None, headers },
+                &AnyBlob::Blob(blob),
+                super::static_route::InitFromBytesOptions { server: None, headers, ..Default::default() },
             ))
         }))
-        }
     }
 
     pub fn html_route_from_js(
@@ -1362,28 +1385,28 @@ pub struct PreparedRequestFor<'a, Ctx> {
     pub ctx: &'a mut Ctx,
 }
 
-impl<'a, Ctx: RequestCtx> PreparedRequestFor<'a, Ctx> {
+impl<'a, Ctx: RequestCtxOps> PreparedRequestFor<'a, Ctx> {
     /// This is used by DevServer for deferring calling the JS handler
     /// to until the bundle is actually ready.
     pub fn save(
         self,
-        _global: &JSGlobalObject,
-        _req: &mut Ctx::Req,
-        _resp: &mut Ctx::Resp,
-    ) -> SavedRequest<'a> {
-        // TODO(port): if Ctx::IS_H3 { compile_error!("PreparedRequest.save is HTTP/1-only") }
+        global: &JSGlobalObject,
+        req: &mut Ctx::Req,
+        resp: &mut Ctx::Resp,
+    ) -> SavedRequest {
+        // Zig: `if (comptime Ctx.is_h3) @compileError("PreparedRequest.save is HTTP/1-only")`
+        debug_assert!(!Ctx::IS_H3, "PreparedRequest.save is HTTP/1-only");
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
-        //
-        // PORT NOTE: `to_async` is an inherent method on the concrete
-        // `NewRequestContext<..>` monomorphizations, not exposed via the
-        // `RequestCtx` trait yet; likewise `AnyRequestContext::init` is
-        // bounded by `CtxKind` (only implemented for the six concrete ctx
-        // aliases) and `AnyResponse::init` only accepts the three concrete
-        // `*mut Response<_>` types. The generic `Ctx` here erases those, so
-        // this body is deferred until the trait surface is widened.
-        todo!("blocked_on: bun_runtime::server::request_context::RequestContext::to_async (generic dispatch)")
+        RequestCtxOps::to_async(self.ctx, req, self.request_object);
+
+        SavedRequest {
+            js_request: Strong::create(self.js_request, global),
+            request: self.request_object,
+            ctx: AnyRequestContext::init(self.ctx as *const Ctx),
+            response: RespLike::to_any_response(resp),
+        }
     }
 }
 
@@ -1505,7 +1528,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         _raw_plugins: &[&[u8]],
         _bunfig_path: &[u8],
     ) {
-        todo!("blocked_on: bun_runtime::server::ServePlugins::loadAndResolvePluginsForHtmlBundle")
+        // PORT NOTE: `getPluginsAsync` does not exist on `ThisServer` in
+        // server.zig — it's only referenced from `AnyServer.getPluginsAsync`
+        // (server.zig:3442), which dispatches to a method that the Zig source
+        // never defines (dead path; bundle-side wiring in HTMLBundle.zig calls
+        // `getOrLoadPlugins` instead). Mirror that by routing through
+        // `get_or_load_plugins` with the html-bundle callback.
+        // TODO(port): wire `loadAndResolvePluginsForHtmlBundle` once the
+        // HTMLBundle-side caller is ported and the actual contract is clear.
+        let _ = self.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(_bundle));
     }
 
     /// Returns:

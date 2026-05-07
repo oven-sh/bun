@@ -5743,11 +5743,33 @@ impl<'a> BundleV2<'a> {
         }
 
         // To minimize contention, watchers are appended on the bundle thread.
-        // CYCLEBREAK GENUINE: `bun_watcher` is an opaque `Option<NonNull<()>>`;
-        // `add_file` lives in T6 (`bun_runtime::hot_reloader`). The dispatch
-        // hook for it lands with the WatcherVTable; until then we drop the fd
-        // bookkeeping (the fd is closed by the worker on Result drop).
-        let _ = this.bun_watcher;
+        if let Some(watcher) = this.bun_watcher {
+            if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
+                let source_index = match &parse_result.value {
+                    parse_task::ResultValue::Empty { source_index } => source_index.get(),
+                    parse_task::ResultValue::Err(data) => data.source_index.get(),
+                    parse_task::ResultValue::Success(val) => val.source.index.0,
+                };
+                // PORT NOTE: borrowck — read source path/loader before
+                // `should_add_watcher(&self)` so the column borrow is released.
+                let source_path = this.graph.input_files.items_source()[source_index as usize]
+                    .path
+                    .text
+                    .clone();
+                let loader = this.graph.input_files.items_loader()[source_index as usize];
+                if this.should_add_watcher(&source_path) {
+                    let _ = watcher.add_file(
+                        parse_result.watcher_data.fd,
+                        &source_path,
+                        bun_wyhash::hash(source_path.as_ref()) as u32,
+                        loader,
+                        parse_result.watcher_data.dir_fd,
+                        None,
+                        cfg!(windows),
+                    );
+                }
+            }
+        }
 
         match &mut parse_result.value {
             parse_task::ResultValue::Empty { source_index: empty_source_index } => {

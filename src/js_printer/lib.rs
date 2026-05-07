@@ -1222,12 +1222,14 @@ pub mod options {
     pub use super::{Indentation, IndentationCharacter};
 }
 
-/// Downstream-compat: `print_json` callers pass this. The real fn body (still
-/// ``-gated below) ignores everything but `indent`/`mangled_props`.
+/// Downstream-compat: `print_json` callers pass this. The Zig spec passes the
+/// full `Options` struct; only the fields any caller actually sets are surfaced
+/// here and forwarded into `Options { .. }` inside `print_json`.
 #[derive(Default)]
 pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
+    pub minify_whitespace: bool,
 }
 
 // `print_json` lives below the `Printer` impl (after `__gated_printer`) so it
@@ -7000,6 +7002,7 @@ pub fn print_json<W: WriterTrait>(
     let full_opts = Options {
         indent: opts.indent,
         mangled_props: opts.mangled_props,
+        minify_whitespace: opts.minify_whitespace,
         ..Default::default()
     };
     let mut printer = PrinterType::<W>::init(

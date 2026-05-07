@@ -442,15 +442,18 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
         // https://github.com/oven-sh/bun/issues/12288
-        let root_package_json = match manager.workspace_package_json_cache.get_with_path(
-            // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-            unsafe { &mut *manager.log },
-            root_package_json_path,
-            GetJSONOptions {
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) {
+        // PORT NOTE: reshaped for borrowck — see `current_package_json_ptr` above.
+        let root_package_json_ptr: *mut MapEntry = match manager
+            .workspace_package_json_cache
+            .get_with_path(
+                // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
+                unsafe { &mut *manager.log },
+                root_package_json_path,
+                GetJSONOptions {
+                    guess_indentation: true,
+                    ..Default::default()
+                },
+            ) {
             GetResult::ParseErr(err) => {
                 // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
                 let _ = unsafe { &*manager.log }.print(Output::error_writer() as *mut _);
@@ -470,8 +473,12 @@ fn update_package_json_and_install_with_manager_with_updates(
                 );
                 Global::crash();
             }
-            GetResult::Entry(entry) => entry,
+            GetResult::Entry(entry) => entry as *mut MapEntry,
         };
+        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
+        // next `get_with_path` (after this block). `edit_patched_dependencies` touches
+        // only disjoint manager fields.
+        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
 
         if let Some(stuff) = &not_in_workspace_root {
             PackageJSONEditor::edit_patched_dependencies(
@@ -1150,7 +1157,7 @@ impl Analyzer<'_> {
 use super::options::{Do, LogLevel, PatchFeatures};
 use super::TrackInstalledBin;
 use super::package_json_editor::EditOptions;
-use super::workspace_package_json_cache::{GetResult, GetJSONOptions};
+use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -6127,6 +6127,14 @@ struct PromiseEnsureRouteBundledCtx<'a> {
 }
 
 impl<'a> PromiseEnsureRouteBundledCtx<'a> {
+    /// Reborrow the erased `dev` pointer.
+    /// SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
+    /// construction; the ctx is stack-local in the request handler scope.
+    #[inline]
+    fn dev_mut(&mut self) -> &mut DevServer {
+        unsafe { &mut *self.dev }
+    }
+
     fn ensure_promise(&mut self) -> jsc::JSPromiseStrong {
         if self.promise.is_none() {
             let strong = jsc::JSPromiseStrong::init(self.global);
@@ -6145,7 +6153,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
         match bundle_field {
             BundleQueueType::CurrentBundle => {
-                let cb = self.dev.current_bundle.as_mut().unwrap();
+                let cb = self.dev_mut().current_bundle.as_mut().unwrap();
                 if cb.promise.strong.has_value() {
                     cb.promise
                         .route_bundle_indices
@@ -6156,7 +6164,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     return Ok(());
                 }
                 let strong_promise = self.ensure_promise();
-                let cb = self.dev.current_bundle.as_mut().unwrap();
+                let cb = self.dev_mut().current_bundle.as_mut().unwrap();
                 cb.promise
                     .route_bundle_indices
                     .put(self.route_bundle_index, ())
@@ -6165,25 +6173,25 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                 Ok(())
             }
             BundleQueueType::NextBundle => {
-                if self.dev.next_bundle.promise.strong.has_value() {
-                    self.dev
+                if self.dev_mut().next_bundle.promise.strong.has_value() {
+                    self.dev_mut()
                         .next_bundle
                         .promise
                         .route_bundle_indices
                         .put(self.route_bundle_index, ())
                         .expect("oom");
                     // SAFETY: sole `&mut JSPromise` borrow; stored as raw pointer.
-                    self.p = Some(unsafe { self.dev.next_bundle.promise.strong.get() });
+                    self.p = Some(unsafe { self.dev_mut().next_bundle.promise.strong.get() });
                     return Ok(());
                 }
                 let strong_promise = self.ensure_promise();
-                self.dev
+                self.dev_mut()
                     .next_bundle
                     .promise
                     .route_bundle_indices
                     .put(self.route_bundle_index, ())
                     .expect("oom");
-                self.dev.next_bundle.promise.strong = strong_promise;
+                self.dev_mut().next_bundle.promise.strong = strong_promise;
                 Ok(())
             }
         }
@@ -6194,7 +6202,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // SAFETY: p was set by ensure_promise
         unsafe { &mut *self.p.unwrap() }.resolve(self.global, JSValue::TRUE)?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        self.dev.vm_mut().drain_microtasks();
+        self.dev_mut().vm_mut().drain_microtasks();
         Ok(())
     }
 
@@ -6217,7 +6225,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // SAFETY: `failure` points into `route_bundles[i].data` which is not
         // mutated by `send_serialized_failures`.
         let failures = ::core::slice::from_ref(unsafe { &*failure });
-        self.dev.send_serialized_failures(
+        self.dev_mut().send_serialized_failures(
             DevResponse::Promise(promise_response),
             failures,
             ErrorPageKind::Evaluation,
@@ -6232,7 +6240,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         unsafe { &mut *self.p.unwrap() }
             .reject(self.global, BunString::static_("Plugin error").to_js(self.global))?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        self.dev.vm_mut().drain_microtasks();
+        self.dev_mut().vm_mut().drain_microtasks();
         Ok(())
     }
 
@@ -6327,8 +6335,9 @@ fn bundle_new_route_js_function_impl(
     let route_bundle_index = dev
         .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
         .expect("oom");
+    let dev_ptr: *mut DevServer = dev;
     let mut ctx = PromiseEnsureRouteBundledCtx {
-        dev,
+        dev: dev_ptr,
         global,
         promise: None,
         p: None,
@@ -6339,7 +6348,6 @@ fn bundle_new_route_js_function_impl(
     let rbi = ctx.route_bundle_index;
     // SAFETY: `ctx.dev` aliases the same DevServer; Zig passed both freely.
     // Reborrow via raw ptr to satisfy borrowck while ctx is also &mut-borrowed.
-    let dev_ptr: *mut DevServer = ctx.dev;
     ensure_route_is_bundled(unsafe { &mut *dev_ptr }, rbi, &mut ctx)?;
 
     let array = JSValue::create_empty_array(global, 2)?;

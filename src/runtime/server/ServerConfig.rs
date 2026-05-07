@@ -26,9 +26,11 @@ pub struct ServerConfig {
     pub idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub has_idle_timeout: bool,
     // TODO: use webkit URL parser instead of bun's
-    // PORT NOTE: Zig URL borrows into base_uri; URL<'static> + empty default
-    // until OwnedURL or self-referential reshape lands (see Phase-A todo below).
-    pub base_url: URL<'static>,
+    // PORT NOTE: Zig stores `base_url: URL` borrowing into `base_uri: []const u8`
+    // (self-referential). Rust keeps only the owned buffer; callers parse on
+    // demand via [`ServerConfig::base_url`] so the borrow lifetime is tied to
+    // `&self` instead of erased to `'static` (PORTING.md §Forbidden — lifetime
+    // extension).
     pub base_uri: Box<[u8]>,
 
     pub ssl_config: Option<SSLConfig>,
@@ -74,7 +76,6 @@ impl Default for ServerConfig {
             address: Address::default(),
             idle_timeout: 10,
             has_idle_timeout: false,
-            base_url: URL::default(),
             base_uri: Box::default(),
             ssl_config: None,
             sni: None,
@@ -100,22 +101,6 @@ impl Default for ServerConfig {
             bake: None,
         }
     }
-}
-
-/// Parse `bytes` into a `URL<'static>` by erasing the borrow lifetime.
-///
-/// # Safety
-/// The returned `URL` borrows directly into `bytes`. Caller must guarantee the
-/// backing allocation (ServerConfig::base_uri's heap buffer) outlives every
-/// read of the returned URL's fields, and that `base_url` is reset to
-/// `URL::default()` *before* `base_uri` is freed or reassigned. This mirrors
-/// the self-referential `base_url -> base_uri` layout from ServerConfig.zig
-/// until an owned-URL reshape lands (see PORT NOTE on the struct fields).
-#[inline]
-unsafe fn parse_base_url_static(bytes: &[u8]) -> URL<'static> {
-    let extended: &'static [u8] =
-        unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
-    URL::parse(extended)
 }
 
 pub enum Address {
@@ -157,6 +142,15 @@ impl ServerConfig {
         self.development.is_development()
     }
 
+    /// Parsed view over [`Self::base_uri`]. Replaces the Zig `base_url: URL`
+    /// field, which borrowed self-referentially into `base_uri`.
+    // PERF(port): re-parses on each call. The only out-of-module reader takes
+    // `href` (== `base_uri`) directly; in-module reads happen once in `from_js`.
+    #[inline]
+    pub fn base_url(&self) -> URL<'_> {
+        URL::parse(&self.base_uri)
+    }
+
     pub fn memory_cost(&self) -> usize {
         // ignore size_of::<ServerConfig>(), assume already included.
         let mut cost: usize = 0;
@@ -164,7 +158,7 @@ impl ServerConfig {
             cost += entry.memory_cost();
         }
         cost += self.id.len();
-        cost += self.base_url.href.len();
+        cost += self.base_uri.len();
         for route in self.negative_routes.iter() {
             cost += route.as_bytes().len();
         }

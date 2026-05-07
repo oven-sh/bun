@@ -163,11 +163,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
         let mut iter = match ArchiveIterator::init(&tarball_bytes) {
             ArchiveIterResult::Err { archive, message } => {
-                Output::err_generic("{}: {}", format_args!(
+                Output::err_generic(
                     "{}: {}",
-                    bstr::BStr::new(message),
-                    bstr::BStr::new(Archive::error_string(archive)),
-                ));
+                    (
+                        bstr::BStr::new(message),
+                        bstr::BStr::new(Archive::error_string(archive)),
+                    ),
+                );
                 Global::crash();
             }
             ArchiveIterResult::Result(res) => res,
@@ -181,11 +183,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         loop {
             let next = match iter.next() {
                 ArchiveIterResult::Err { archive, message } => {
-                    Output::err_generic("{}: {}", format_args!(
+                    Output::err_generic(
                         "{}: {}",
-                        bstr::BStr::new(message),
-                        bstr::BStr::new(Archive::error_string(archive)),
-                    ));
+                        (
+                            bstr::BStr::new(message),
+                            bstr::BStr::new(Archive::error_string(archive)),
+                        ),
+                    );
                     Global::crash();
                 }
                 ArchiveIterResult::Result(res) => res,
@@ -230,11 +234,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     {
                         maybe_package_json_contents = match next.read_entry_data(iter.archive)? {
                             ArchiveIterResult::Err { archive, message } => {
-                                Output::err_generic("{}: {}", format_args!(
+                                Output::err_generic(
                                     "{}: {}",
-                                    bstr::BStr::new(message),
-                                    bstr::BStr::new(Archive::error_string(archive)),
-                                ));
+                                    (
+                                        bstr::BStr::new(message),
+                                        bstr::BStr::new(Archive::error_string(archive)),
+                                    ),
+                                );
                                 Global::crash();
                             }
                             ArchiveIterResult::Result(bytes) => Some(bytes),
@@ -252,11 +258,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
         match iter.close() {
             ArchiveIterResult::Err { archive, message } => {
-                Output::err_generic("{}: {}", format_args!(
+                Output::err_generic(
                     "{}: {}",
-                    bstr::BStr::new(message),
-                    bstr::BStr::new(Archive::error_string(archive)),
-                ));
+                    (
+                        bstr::BStr::new(message),
+                        bstr::BStr::new(Archive::error_string(archive)),
+                    ),
+                );
                 Global::crash();
             }
             ArchiveIterResult::Result(()) => {}
@@ -271,7 +279,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             Box::leak(package_json_contents);
 
         let bump = bun_alloc::Arena::new();
-        let (package_name, package_version, mut json, json_source) = {
+        let (package_name, package_version, json, json_source) = {
             let source = logger::Source::init_path_string(b"package.json", package_json_contents);
             // SAFETY: `manager.log` is set once at `PackageManager::init`.
             let log = unsafe { &mut *manager.log };
@@ -354,12 +362,14 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         sha512.r#final(&mut integrity);
         drop(sha512);
 
-        // TODO(port): `json_mod::Expr` (= `bun_logger::js_ast::Expr`) and
-        // `bun_js_parser::Expr` are split in Phase-A; `normalized_package`
-        // types against the parser-shaped one (so `pack_command` can pass
-        // `WorkspacePackageJSONCache::MapEntry.root`). The two unify under
-        // reconciler-6; until then this call carries the same type-bridge as
-        // `WorkspacePackageJSONCache::get_with_path`.
+        // `json_mod::parse_package_json_utf8` returns the value-shaped
+        // `bun_logger::js_ast::Expr`; `normalized_package` (and `print_json`)
+        // operate on the full parser-shaped `bun_js_parser::Expr`. Lift via the
+        // documented `From<logger::js_ast::Expr>` bridge — same conversion
+        // `WorkspacePackageJSONCache::get_with_path` applies before stashing
+        // `MapEntry.root`. The thread-local `data::Store` has already been
+        // initialised by `PackageManager::init`.
+        let mut json: Expr = Expr::from(json);
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
             &package_name,
@@ -614,7 +624,10 @@ impl PublishCommand {
                 ),
             ).into();
             let script_env = context.script_env.expect("DIRECTORY_PUBLISH=true sets script_env");
-            let _ = script_env.map.put(b"npm_command", b"publish");
+            script_env
+                .map
+                .put(b"npm_command", b"publish")
+                .map_err(|_| err!(OutOfMemory))?;
 
             // PORT NOTE: reshaped for borrowck — `command_ctx: &mut ContextData`
             // is held by `context`; `run_package_script_foreground` needs
@@ -1358,8 +1371,8 @@ impl PublishCommand {
             &mut writer,
             *json,
             json_source,
-            // TODO(port): `minify_whitespace` not yet on `PrintJsonOptions` (gated upstream).
             bun_js_printer::PrintJsonOptions {
+                minify_whitespace: true,
                 mangled_props: None,
                 ..Default::default()
             },

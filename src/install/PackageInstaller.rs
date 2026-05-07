@@ -1427,9 +1427,8 @@ impl<'a> PackageInstaller<'a> {
                             self.manager,
                             dependency_id,
                             package_id,
-                            resolution
-                                .value
-                                .remote_tarball
+                            // SAFETY: tag == RemoteTarball checked by match arm.
+                            unsafe { resolution.value.remote_tarball }
                                 .slice(self.lockfile.buffers.string_bytes.as_slice()),
                             context,
                             patch_name_and_version_hash,
@@ -1441,11 +1440,13 @@ impl<'a> PackageInstaller<'a> {
                         }
                     }
                     resolution::Tag::Npm => {
+                        // SAFETY: tag == Npm checked by match arm.
+                        let npm = unsafe { resolution.value.npm };
                         #[cfg(debug_assertions)]
                         {
                             // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
                             // This caused bugs. We can't assert on it because they could come from old lockfiles
-                            if resolution.value.npm.url.is_empty() {
+                            if npm.url.is_empty() {
                                 Output::debug_warn(format_args!(
                                     "package {}@{} missing tarball_url",
                                     bstr::BStr::new(
@@ -1465,12 +1466,8 @@ impl<'a> PackageInstaller<'a> {
                             pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice()),
                             dependency_id,
                             package_id,
-                            resolution.value.npm.version,
-                            resolution
-                                .value
-                                .npm
-                                .url
-                                .slice(self.lockfile.buffers.string_bytes.as_slice()),
+                            npm.version,
+                            npm.url.slice(self.lockfile.buffers.string_bytes.as_slice()),
                             context,
                             patch_name_and_version_hash,
                         ) {
@@ -1693,7 +1690,8 @@ impl<'a> PackageInstaller<'a> {
                                 postinstall_optimizer::PkgInfo {
                                     name_hash: pkg_name_hash,
                                     version: if resolution.tag == resolution::Tag::Npm {
-                                        Some(resolution.value.npm.version)
+                                        // SAFETY: tag == Npm checked above.
+                                        Some(unsafe { resolution.value.npm }.version)
                                     } else {
                                         None
                                     },

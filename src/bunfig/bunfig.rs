@@ -1,12 +1,10 @@
 //! Port of `src/runtime/cli/bunfig.zig`.
 //!
-//! `Bunfig::parse` and the inner `Parser` are un-gated and route through the
-//! real `bun_interchange::{toml,json}` parsers (which produce the value-shaped
-//! `bun_logger::js_ast::Expr` tree). Field-writes that target the still-opaque
-//! peechy-generated `api::TransformOptions` / `api::BunInstall` structs are
-//! re-gated at statement granularity with `` and
-//! `// TODO(b2-blocked): api::… (peechy codegen)` markers so the surrounding
-//! control flow, error reporting, and `ctx.*` writes are live.
+//! `Bunfig::parse` and the inner `Parser` route through the real
+//! `bun_interchange::{toml,json}` parsers (which produce the value-shaped
+//! `bun_logger::js_ast::Expr` tree) and write into `ctx.args`
+//! (`api::TransformOptions`), `ctx.install` (`api::BunInstall`), and the rest
+//! of `ContextData`.
 
 #![allow(clippy::collapsible_if, clippy::needless_return)]
 
@@ -103,6 +101,91 @@ fn expr_as_string<'b>(expr: &Expr, bump: &'b Bump) -> Option<&'b [u8]> {
 #[inline]
 fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
+}
+
+/// Port of `resolver/package_json.zig` `PackageJSON.parseMacrosJSON`.
+///
+/// Re-ported here against the value-shaped `bun_logger::js_ast::Expr` (the
+/// tree produced by the TOML/JSON parsers) and returning the
+/// `bun_options_types::Context::MacroMap` shape so the result slots directly
+/// into `ctx.debug.macros` without crossing the `bun_js_parser::ast::Expr` /
+/// `StringArrayHashMap` newtype boundary that `bun_resolver`'s copy uses.
+fn parse_macros_json(
+    macros: &Expr,
+    log: &mut logger::Log,
+    json_source: &logger::Source,
+    bump: &Bump,
+) -> MacroMap {
+    let mut macro_map = MacroMap::default();
+    let ExprData::EObject(obj) = &macros.data else {
+        return macro_map;
+    };
+
+    for property in obj.properties.slice() {
+        let Some(key_expr) = property.key.as_ref() else { continue };
+        let Some(key) = expr_as_string(key_expr, bump) else { continue };
+        if !bun_resolver::is_package_path(key) {
+            log.add_range_warning_fmt(
+                Some(json_source),
+                json_source.range_of_string(key_expr.loc),
+                format_args!(
+                    "\"{}\" is not a package path. \"macros\" remaps package paths to macros. Skipping.",
+                    bstr::BStr::new(key)
+                ),
+            )
+            .expect("unreachable");
+            continue;
+        }
+
+        let Some(value) = property.value.as_ref() else { continue };
+        let ExprData::EObject(value_obj) = &value.data else {
+            log.add_warning_fmt(
+                Some(json_source),
+                value.loc,
+                format_args!(
+                    "Invalid macro remapping in \"{}\": expected object where the keys are import names and the value is a string path to replace",
+                    bstr::BStr::new(key)
+                ),
+            )
+            .expect("unreachable");
+            continue;
+        };
+
+        let remap_properties = value_obj.properties.slice();
+        if remap_properties.is_empty() {
+            continue;
+        }
+
+        let mut map = MacroImportReplacementMap::default();
+        map.reserve(remap_properties.len());
+        for remap in remap_properties {
+            let Some(remap_key) = remap.key.as_ref() else { continue };
+            let Some(import_name) = expr_as_string(remap_key, bump) else { continue };
+            let Some(remap_value) = remap.value.as_ref() else { continue };
+            let remap_value_str = match &remap_value.data {
+                ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
+                _ => {
+                    log.add_warning_fmt(
+                        Some(json_source),
+                        remap_value.loc,
+                        format_args!(
+                            "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
+                            bstr::BStr::new(import_name)
+                        ),
+                    )
+                    .expect("unreachable");
+                    continue;
+                }
+            };
+            map.insert(Box::<[u8]>::from(import_name), remap_value_str);
+        }
+
+        if map.len() > 0 {
+            macro_map.insert(Box::<[u8]>::from(key), map);
+        }
+    }
+
+    macro_map
 }
 
 #[inline]
@@ -1034,34 +1117,30 @@ impl<'a> Parser<'a> {
                     self.ctx.debug.macros = MacroOptions::Disable;
                 }
             } else {
-                // TODO(b2-blocked): bun_resolver::package_json::PackageJSON::parse_macros_json
-                // takes `bun_js_parser::ast::Expr`; the value-shaped T2 tree must be
-                // lifted via `Expr::from` first. Gate until the From-bridge is verified.
-                
-                {
-                    let _ = &expr;
-                    self.ctx.debug.macros = MacroOptions::Map(
-                        todo!("blocked_on: bun_resolver::package_json::MacroMap vs bun_options_types::Context::MacroMap"),
-                    );
-                }
+                self.ctx.debug.macros = MacroOptions::Map(parse_macros_json(
+                    &expr,
+                    self.log,
+                    self.source,
+                    self.bump,
+                ));
             }
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }
 
         if let Some(expr) = expr_get(&json, b"external") {
             match &expr.data {
-                ExprData::EString(_) => {
-                    // TODO(b2-blocked): api::TransformOptions.external (peechy codegen)
-                    
-                    { /* see phase_a_draft */ }
+                ExprData::EString(s) => {
+                    self.ctx.args.external = vec![estring_to_owned(s, self.bump)];
                 }
                 ExprData::EArray(array) => {
-                    for item in array.items.slice() {
+                    let items = array.items.slice();
+                    let mut externals: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                    for item in items {
                         self.expect_string(item)?;
+                        let ExprData::EString(s) = &item.data else { unreachable!() };
+                        externals.push(estring_to_owned(s, self.bump));
                     }
-                    // TODO(b2-blocked): api::TransformOptions.external (peechy codegen)
-                    
-                    { /* see phase_a_draft */ }
+                    self.ctx.args.external = externals;
                 }
                 _ => self.add_error(expr.loc, b"Expected string or array")?,
             }
@@ -1071,6 +1150,8 @@ impl<'a> Parser<'a> {
             self.expect(&expr, ExprTag::EObject)?;
             let obj = expr.data.e_object().unwrap();
             let properties = obj.properties.slice();
+            let mut loader_names: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
+            let mut loader_values: Vec<api::Loader> = Vec::with_capacity(properties.len());
             for item in properties {
                 let key_expr = item.key.as_ref().unwrap();
                 let key = expr_as_string(key_expr, self.bump).unwrap();
@@ -1085,18 +1166,19 @@ impl<'a> Parser<'a> {
                 }
                 let value = item.value.as_ref().unwrap();
                 self.expect_string(value)?;
-                if bun_bundler::options::Loader::from_string(
+                let Some(loader) = bun_bundler::options::Loader::from_string(
                     expr_as_string(value, self.bump).unwrap(),
-                )
-                .is_none()
-                {
+                ) else {
                     self.add_error(value.loc, b"Invalid loader")?;
-                }
+                    unreachable!();
+                };
+                loader_names.push(key.into());
+                loader_values.push(loader.to_api());
             }
-            // TODO(b2-blocked): api::TransformOptions.loaders (peechy codegen) — only the
-            // `self.ctx.args.loaders = api::LoaderMap{…}` write is gated; validation above is live.
-            
-            { /* see phase_a_draft */ }
+            self.ctx.args.loaders = Some(api::LoaderMap {
+                extensions: loader_names,
+                loaders: loader_values,
+            });
         }
 
         Ok(())

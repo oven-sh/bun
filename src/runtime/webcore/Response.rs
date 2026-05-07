@@ -1110,9 +1110,9 @@ impl Response {
                 break 'brk Init::init(global_this, arguments[1])?.expect("unreachable");
             }
             if !global_this.has_exception() {
-                return Err(global_this.throw_invalid_arguments(
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "Failed to construct 'Response': The provided body value is not of type 'ResponseInit'",
-                ));
+                )));
             }
             return Err(bun_jsc::JsError::Thrown);
         };

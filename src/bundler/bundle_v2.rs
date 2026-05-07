@@ -2701,11 +2701,9 @@ impl<'a> BundleV2<'a> {
             // TODO(port): resolver.opts.tree_shaking — field absent on FORWARD_DECL BundleOptions subset
         }
 
-        // BACKREF: `LinkerContext.resolver` stores `*mut Resolver<'static>` as a
-        // lifetime-erased backref (see LIFETIMES.tsv). Cast through `*mut` to
-        // erase `'a` — the resolver lives in `transpiler` which outlives `self`.
-        this.linker.resolver =
-            (&mut this.transpiler.resolver as *mut Resolver<'a>).cast::<Resolver<'static>>();
+        // BACKREF: `LinkerContext<'a>.resolver` is `*mut Resolver<'a>`; the
+        // resolver lives in `transpiler` which outlives `self` (same `'a`).
+        this.linker.resolver = &mut this.transpiler.resolver as *mut Resolver<'a>;
         this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
 
         this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
@@ -5967,8 +5965,21 @@ impl<'a> BundleV2<'a> {
                 // value types so the `set` is a shallow copy). The Rust port
                 // moves `result.ast` into `graph.ast` and swapped `result.source`
                 // earlier, so snapshot the data the use-directive block needs
-                // *before* the move. Only paid for files with a directive.
-                let named_exports_for_scb = if result.use_directive != crate::UseDirective::None {
+                // *before* the move. Only paid for files that hit the SCB gate.
+                let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
+                    && {
+                        let separate = this
+                            .framework
+                            .as_ref()
+                            .unwrap()
+                            .server_components
+                            .as_ref()
+                            .unwrap()
+                            .separate_ssr_graph;
+                        let is_client = result.use_directive == crate::UseDirective::Client;
+                        let is_browser = result_ast_target == Target::Browser;
+                        if separate { is_client == is_browser } else { is_client != is_browser }
+                    } {
                     Some(result.ast.named_exports.clone().expect("oom"))
                 } else {
                     None
@@ -5980,8 +5991,8 @@ impl<'a> BundleV2<'a> {
                 // un-defer barrel records that are now needed.
                 // TODO(b2-blocked): `schedule_barrel_deferred_imports` is gated.
 
-                if let Some(named_exports) = scb_named_exports {
-                    if result_use_directive == crate::UseDirective::Server {
+                if let Some(named_exports) = named_exports_for_scb {
+                    if result.use_directive == crate::UseDirective::Server {
                         bun_core::todo_panic!("\"use server\"");
                     }
 
@@ -6011,7 +6022,7 @@ impl<'a> BundleV2<'a> {
                                 crate::ServerComponentParseTask::Data::ClientReferenceProxy(
                                     crate::ServerComponentParseTask::ReferenceProxy {
                                         other_source,
-                                        named_exports: named_exports_for_scb.unwrap(),
+                                        named_exports,
                                     },
                                 ),
                                 scb_source,

@@ -1199,17 +1199,22 @@ impl CssImportOrder {
         }
     }
 
-    pub fn fmt<'a>(&'a self, ctx: &'a LinkerContext<'a>) -> CssImportOrderDebug<'a> {
+    pub fn fmt<'a, 'ctx>(&'a self, ctx: &'a LinkerContext<'ctx>) -> CssImportOrderDebug<'a, 'ctx> {
         CssImportOrderDebug { inner: self, ctx }
     }
 }
 
-pub struct CssImportOrderDebug<'a> {
+pub struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
-    ctx: &'a LinkerContext<'a>,
+    // PORT NOTE: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
+    // so coupling the borrow lifetime to the struct param (`&'a LinkerContext<'a>`)
+    // forces every caller's `&CssImportOrder` and `&LinkerContext` to share one
+    // region. The Display impl only reads `ctx.parse_graph` (a raw `*mut Graph`),
+    // so the inner `'ctx` need not relate to `'a`.
+    ctx: &'a LinkerContext<'ctx>,
 }
 
-impl<'a> fmt::Display for CssImportOrderDebug<'a> {
+impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(writer, "{} = ", <&'static str>::from(&self.inner.kind))?;
         match &self.inner.kind {

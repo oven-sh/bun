@@ -640,3 +640,4 @@ pub extern "C" fn BlobArrayBuffer_deallocator(
 }
 
 fn __test_compile_reaches_here() { let x: () = 1u32; }
+this is not rust

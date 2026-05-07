@@ -2861,8 +2861,9 @@ impl HasAutoFlusher for H2FrameParser {
     }
 }
 
-// (`JsValueArrayPush` shim removed — `bun_jsc::JSValue::push` is the inherent
-// method now; `VmReportExtraMemory` shim removed — duplicate of `H2VMExt`.)
+// (`JsValueArrayPush` / `VmReportExtraMemory` shims removed —
+// `bun_jsc::JSValue::push` and `bun_jsc::VM::deprecated_report_extra_memory`
+// are inherent methods now.)
 
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — frame handlers

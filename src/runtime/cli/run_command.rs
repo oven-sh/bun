@@ -709,7 +709,6 @@ impl RunCommand {
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
     ) -> Result<(), bun_core::Error> {
-        let _ = loader;
         // PORT NOTE: `jsc::initialize(false)` + `Expr/Stmt::Store::create()` +
         // `MimallocArena::init()` precede VM init in Zig. `bun_jsc::initialize`
         // is now real (calls `JSCInitialize` over `bun_sys::environ()`); the
@@ -741,6 +740,12 @@ impl RunCommand {
         // process-lifetime here (the runner never returns), matching Zig's
         // `allocator.dupe` + no-free.
         vm.set_main(&entry_path);
+
+        // Zig: `vm.main_is_html_entrypoint = (loader orelse
+        //   vm.transpiler.options.loader(ext)) == .html`.
+        vm.main_is_html_entrypoint = loader
+            .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(&entry_path)))
+            == Loader::Html;
 
         // ctx → transpiler/resolver option mapping (bun.js.zig:110-170).
         // TODO(port): `serve_plugins`/`bunfig_path`/`macros` map shapes still

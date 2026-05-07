@@ -58,6 +58,7 @@ bun_sys.workspace = true
 bun_threading.workspace = true
 bun_transpiler.workspace = true
 bun_url.workspace = true
+bun_uws.workspace = true
 bun_which.workspace = true
 bun_wyhash.workspace = true
 bun_zlib.workspace = true

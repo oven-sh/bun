@@ -1359,13 +1359,14 @@ impl<'a> PackageInstaller<'a> {
                 let context = TaskCallbackContext::DependencyInstallContext(
                     DependencyInstallContext {
                         tree_id: self.current_tree_id,
-                        path: self.node_modules.path.clone(),
+                        path: self.node_modules.path.as_slice() as *const [u8],
                         dependency_id,
                     },
                 );
                 match resolution.tag {
                     resolution::Tag::Git => {
-                        self.manager.enqueue_git_for_checkout(
+                        package_manager::enqueue_git_for_checkout(
+                            self.manager,
                             dependency_id,
                             alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
                             resolution,
@@ -1375,8 +1376,9 @@ impl<'a> PackageInstaller<'a> {
                     }
                     resolution::Tag::Github => {
                         let url = self.manager.alloc_github_url(&resolution.value.github);
-                        // PORT NOTE: `defer this.manager.allocator.free(url)` — url: Box<[u8]>/Vec drops.
-                        match self.manager.enqueue_tarball_for_download(
+                        // PORT NOTE: `defer this.manager.allocator.free(url)` — url: Vec<u8> drops.
+                        match package_manager::enqueue_tarball_for_download(
+                            self.manager,
                             dependency_id,
                             package_id,
                             &url,
@@ -1384,14 +1386,14 @@ impl<'a> PackageInstaller<'a> {
                             patch_name_and_version_hash,
                         ) {
                             Ok(()) => {}
-                            Err(e) if e == bun_core::err!("OutOfMemory") => bun_core::out_of_memory(),
-                            Err(e) if e == bun_core::err!("InvalidURL") => self
+                            Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
+                            Err(ForTarballError::InvalidURL) => self
                                 .fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level),
-                            Err(_) => unreachable!(),
                         }
                     }
                     resolution::Tag::LocalTarball => {
-                        self.manager.enqueue_tarball_for_reading(
+                        package_manager::enqueue_tarball_for_reading(
+                            self.manager,
                             dependency_id,
                             package_id,
                             alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
@@ -1400,7 +1402,8 @@ impl<'a> PackageInstaller<'a> {
                         );
                     }
                     resolution::Tag::RemoteTarball => {
-                        match self.manager.enqueue_tarball_for_download(
+                        match package_manager::enqueue_tarball_for_download(
+                            self.manager,
                             dependency_id,
                             package_id,
                             resolution
@@ -1411,10 +1414,9 @@ impl<'a> PackageInstaller<'a> {
                             patch_name_and_version_hash,
                         ) {
                             Ok(()) => {}
-                            Err(e) if e == bun_core::err!("OutOfMemory") => bun_core::out_of_memory(),
-                            Err(e) if e == bun_core::err!("InvalidURL") => self
+                            Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
+                            Err(ForTarballError::InvalidURL) => self
                                 .fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level),
-                            Err(_) => unreachable!(),
                         }
                     }
                     resolution::Tag::Npm => {

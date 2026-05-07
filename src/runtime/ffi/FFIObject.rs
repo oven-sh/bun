@@ -858,7 +858,7 @@ mod fields {
         let args = callframe.arguments_old::<1>();
         let mut iter = args.slice().iter();
         let ctx = eat_required(global, &mut iter)?;
-        Ok(FFI::close_callback(global, ctx))
+        Ok(FfiImpl::close_callback(global, ctx))
     }
 
     // CString → new_cstring(global, JSValue, ?JSValue, ?JSValue) -> JsResult<JSValue>

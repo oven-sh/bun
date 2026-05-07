@@ -494,7 +494,7 @@ impl<'a> PatchTask<'a> {
                 &mut label,
                 "{}",
                 resolution.fmt(
-                    &self.manager.lockfile.buffers.string_bytes,
+                    self.manager.lockfile.buffers.string_bytes.as_slice(),
                     bun_core::fmt::PathSep::Posix,
                 )
             )

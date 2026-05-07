@@ -73,15 +73,20 @@ pub trait S3Ext {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
+    /// `store` is the heap `Store` that owns `self` (`self == &mut store.data.S3`).
+    /// Passed as `NonNull` (raw) rather than `&Store` because the caller already
+    /// holds `&mut self` into `store.data` — materialising a `&Store` over the
+    /// same allocation would invalidate that unique borrow under Stacked Borrows.
     fn unlink(
         &mut self,
-        store: &Store,
+        store: NonNull<Store>,
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
+    /// See `unlink` for why `store` is `NonNull<Store>` instead of `&Store`.
     fn list_objects(
         &mut self,
-        store: &Store,
+        store: NonNull<Store>,
         global_this: &JSGlobalObject,
         list_options: JSValue,
         extra_options: Option<JSValue>,

@@ -78,7 +78,10 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
     fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
         // SAFETY: handler was Box::into_raw'd by doReadFile(); we take ownership here.
         let mut handler = unsafe { Box::from_raw(handler) };
-        let promise = handler.promise.swap();
+        // PORT NOTE: `Strong::swap()` ties the returned `&mut JSPromise` to
+        // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
+        // Decay to a raw pointer so `handler` can be dropped before resolution.
+        let promise: *mut JSPromise = handler.promise.swap();
         let mut blob = core::mem::take(&mut handler.context);
         // `context` was populated via `this.dupe()` in doReadFile(), so it
         // owns a store ref, a name ref, and possibly a content_type copy.

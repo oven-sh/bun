@@ -130,12 +130,9 @@ pub use jsc::codegen::JSBlob as js;
 #[allow(non_snake_case, clippy::too_many_arguments)]
 pub trait BlobExt {
     fn get_form_data_encoding(&mut self) -> Option<Box<bun_core::form_data::AsyncFormData>>;
-    fn has_content_type_from_user(&self) -> bool;
-    fn content_type_or_mime_type(&self) -> Option<&[u8]>;
-    fn is_bun_file(&self) -> bool;
-    fn is_s3(&self) -> bool;
-    fn needs_to_read_file(&self) -> bool;
-    fn get_file_name(&self) -> Option<&[u8]>;
+    // `has_content_type_from_user`/`content_type_or_mime_type`/`is_bun_file`/
+    // `is_s3`/`needs_to_read_file`/`get_file_name`: data-only predicates,
+    // hoisted to inherent `impl Blob` in `bun_jsc::webcore_types` (LAYERING).
     fn do_read_from_s3<F: read_file::ReadFileToJs>(
         &mut self,
         global: &JSGlobalObject,
@@ -357,64 +354,6 @@ impl BlobExt for Blob {
         Some(bun_core::form_data::AsyncFormData::init(encoding))
     }
 
-    fn has_content_type_from_user(&self) -> bool {
-        self.content_type_was_set
-            || self
-                .store
-                .as_ref()
-                .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))
-                .unwrap_or(false)
-    }
-
-    fn content_type_or_mime_type(&self) -> Option<&[u8]> {
-        let ct = self.content_type_slice();
-        if !ct.is_empty() {
-            return Some(ct);
-        }
-        if let Some(store) = &self.store {
-            match &store.data {
-                store::Data::File(file) => return Some(&file.mime_type.value),
-                store::Data::S3(s3) => return Some(&s3.mime_type.value),
-                _ => return None,
-            }
-        }
-        None
-    }
-
-    fn is_bun_file(&self) -> bool {
-        let Some(store) = &self.store else { return false };
-        matches!(store.data, store::Data::File(_))
-    }
-
-    fn is_s3(&self) -> bool {
-        if let Some(store) = &self.store {
-            return matches!(store.data, store::Data::S3(_));
-        }
-        false
-    }
-
-    fn needs_to_read_file(&self) -> bool {
-        self.store
-            .as_ref()
-            .map(|s| matches!(s.data, store::Data::File(_)))
-            .unwrap_or(false)
-    }
-
-    fn get_file_name(&self) -> Option<&[u8]> {
-        let store = self.store.as_deref()?;
-        match &store.data {
-            store::Data::Bytes(bytes) => {
-                let n = bytes.stored_name.slice();
-                if n.is_empty() { None } else { Some(n) }
-            }
-            store::Data::File(file) => match &file.pathlike {
-                PathOrFileDescriptor::Path(path) => Some(path.slice()),
-                _ => None,
-            },
-            // Zig: `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
-            store::Data::S3(s3) => Some(s3.path()),
-        }
-    }
     /// `Function` is the comptime `*WithBytes` callback (Zig: `comptime Function: anytype`).
     /// Modeled as a [`read_file::ReadFileToJs`] impl so the wrapped fn-pointer
     /// monomorphizes per call site without `fn_traits`.

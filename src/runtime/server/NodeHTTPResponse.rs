@@ -264,38 +264,13 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
     AnyServer { tag, ptr: repr.get::<()>() }
 }
 
-/// `jsc.Codegen.JSNodeHTTPResponse` cached-property accessors. Thin wrappers
-/// over the inherent `Self::on{Data,Aborted,Writable}_{get,set}_cached` fns
-/// that `generate-classes.ts` adds to this struct in
-/// `crate::generated_classes`, named to match the Zig spelling so the
+/// `jsc.Codegen.JSNodeHTTPResponse` cached-property accessors.
+/// `codegen_cached_accessors!` emits `on_{data,aborted,writable}_{get,set}_cached`
+/// thin wrappers over the C++ `NodeHTTPResponsePrototype__on*{Get,Set}CachedValue`
+/// `WriteBarrier<Unknown>` slots, named to match the Zig spelling so the
 /// `.zig` ↔ `.rs` diff lines up.
 pub mod js {
-    use super::{JSGlobalObject, JSValue, NodeHTTPResponse};
-
-    #[inline]
-    pub fn on_data_get_cached(this_value: JSValue) -> Option<JSValue> {
-        NodeHTTPResponse::onData_get_cached(this_value)
-    }
-    #[inline]
-    pub fn on_data_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        NodeHTTPResponse::onData_set_cached(this_value, global, value)
-    }
-    #[inline]
-    pub fn on_aborted_get_cached(this_value: JSValue) -> Option<JSValue> {
-        NodeHTTPResponse::onAborted_get_cached(this_value)
-    }
-    #[inline]
-    pub fn on_aborted_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        NodeHTTPResponse::onAborted_set_cached(this_value, global, value)
-    }
-    #[inline]
-    pub fn on_writable_get_cached(this_value: JSValue) -> Option<JSValue> {
-        NodeHTTPResponse::onWritable_get_cached(this_value)
-    }
-    #[inline]
-    pub fn on_writable_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        NodeHTTPResponse::onWritable_set_cached(this_value, global, value)
-    }
+    bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable);
 }
 
 impl NodeHTTPResponse {
@@ -1283,8 +1258,8 @@ impl NodeHTTPResponse {
             if arguments.len() > 2 && !arguments[2].is_undefined() {
                 if !arguments[2].is_callable() {
                     return Err(global_object.throw_invalid_argument_type_value(
-                        "callback",
-                        "function",
+                        b"callback",
+                        b"function",
                         arguments[2],
                     ));
                 }
@@ -1310,8 +1285,8 @@ impl NodeHTTPResponse {
             if !encoding_value.is_undefined_or_null() {
                 if !encoding_value.is_string() {
                     return Err(global_object.throw_invalid_argument_type_value(
-                        "encoding",
-                        "string",
+                        b"encoding",
+                        b"string",
                         encoding_value,
                     ));
                 }
@@ -1319,7 +1294,8 @@ impl NodeHTTPResponse {
                 encoding = match crate::node::Encoding::from_js(encoding_value, global_object)? {
                     Some(e) => e,
                     None => {
-                        return Err(global_object.throw_invalid_arguments("Invalid encoding"));
+                        return Err(global_object
+                            .throw_invalid_arguments(format_args!("Invalid encoding")));
                     }
                 };
             }
@@ -1333,8 +1309,8 @@ impl NodeHTTPResponse {
                 Some(r) => break 'brk r,
                 None => {
                     return Err(global_object.throw_invalid_argument_type_value(
-                        "input",
-                        "string or buffer",
+                        b"input",
+                        b"string or buffer",
                         input_value,
                     ));
                 }
@@ -1699,8 +1675,8 @@ impl NodeHTTPResponse {
 
         if !arguments.ptr[0].is_callable() {
             return Err(global_object.throw_invalid_argument_type_value(
-                "cork",
-                "function",
+                b"cork",
+                b"function",
                 arguments.ptr[0],
             ));
         }
@@ -1729,7 +1705,7 @@ impl NodeHTTPResponse {
             if !result.is_empty() {
                 Err(global_object.throw_value(result))
             } else {
-                Err(global_object.throw("unknown error"))
+                Err(global_object.throw(format_args!("unknown error")))
             }
         } else if result.is_empty() {
             Ok(JSValue::UNDEFINED)
@@ -1864,8 +1840,11 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
         response_ref.body_read_ref.r#ref(vm);
     }
     response_ref.poll_ref.r#ref(vm);
-    // Inherent `to_js(*mut Self, &JSGlobalObject)` is added by the codegen.
-    let js_this = NodeHTTPResponse::to_js(response, global_object);
+    // SAFETY: `response` is a fresh `Box::into_raw` heap payload; ownership of
+    // the +1 wrapper ref transfers to the GC (`NodeHTTPResponseClass__finalize`
+    // calls `finalize` → `deref`). `to_js_ptr` is the `#[JsClass]`-generated
+    // no-rebox wrapper around `NodeHTTPResponse__create`.
+    let js_this = unsafe { NodeHTTPResponse::to_js_ptr(response, global_object) };
     // SAFETY: out-param provided by caller.
     unsafe { *node_response_ptr = response };
     js_this
@@ -1883,7 +1862,7 @@ pub extern "C" fn NodeHTTPResponse__setTimeout(
 
     if !seconds.is_number() {
         let _: jsc::JsError =
-            global_this.throw_invalid_argument_type_value("timeout", "number", seconds);
+            global_this.throw_invalid_argument_type_value(b"timeout", b"number", seconds);
         return false;
     }
 

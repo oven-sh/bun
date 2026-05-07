@@ -202,8 +202,11 @@ unsafe extern "C" {
 }
 
 struct Argv0Result {
-    argv0: ZBox, // TODO(port): lifetime — was arena-owned [:0]const u8; caller must keep alive past spawn_process
-    arg0: ZBox,  // TODO(port): lifetime — was arena-owned [:0]u8; caller must keep alive past spawn_process
+    /// Was arena-owned `[:0]const u8`; caller stashes in its `Vec<ZBox>` backing
+    /// store so the pointer outlives `spawn_process`.
+    argv0: ZBox,
+    /// Was arena-owned `[:0]u8`; caller stashes in its `Vec<ZBox>` backing store.
+    arg0: ZBox,
 }
 
 // This is split into a separate function to conserve stack space.
@@ -274,6 +277,11 @@ fn get_argv0(
 }
 
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
+///
+/// `storage` receives ownership of every NUL-terminated string whose pointer is
+/// pushed into `argv` / `argv0`. The Zig original used a bump arena freed at the
+/// end of `spawnMaybeSync`; here the caller's `Vec<ZBox>` plays the same role
+/// and is dropped after `spawn_process` returns.
 fn get_argv(
     global_this: &JSGlobalObject,
     args: JSValue,
@@ -281,6 +289,7 @@ fn get_argv(
     cwd: &[u8],
     argv0: &mut Option<*const c_char>,
     argv: &mut Vec<Option<*const c_char>>,
+    storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
     if args.is_empty_or_undefined_or_null() {
         return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings")));
@@ -299,6 +308,7 @@ fn get_argv(
     // + 1 for argv0
     // + 1 for null terminator
     *argv = Vec::with_capacity(cmds_array.len as usize + 2);
+    storage.reserve(cmds_array.len as usize + 2);
 
     let argv0_result = get_argv0(
         global_this,
@@ -311,9 +321,10 @@ fn get_argv(
 
     *argv0 = Some(argv0_result.argv0.as_ptr());
     argv.push(Some(argv0_result.arg0.as_ptr()));
-    // TODO(port): lifetime — argv0_result.{argv0,arg0} are owned ZBox and drop at end of this
-    // fn. Phase B: collect into a backing Vec<ZBox> in the caller that lives past spawn_process.
-    core::mem::forget(argv0_result);
+    // Transfer ownership to the caller's backing store so the pointers above
+    // stay valid past `spawn_process` (Zig used a bump arena freed at fn exit).
+    storage.push(argv0_result.argv0);
+    storage.push(argv0_result.arg0);
 
     let mut arg_index: usize = 1;
     while let Some(value) = cmds_array.next()? {

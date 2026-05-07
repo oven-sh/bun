@@ -1142,9 +1142,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         let mut output_digest_buf: H::Digest = H::new_digest();
 
         if is_bun_file_blob(input) {
-            return Err(global.throw(
-                "Bun.file() is not supported here yet (it needs an async version)",
-            ));
+            return Err(global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )));
         }
 
         if H::HAS_ENGINE {
@@ -1210,9 +1210,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         // `defer input.deinit()` — handled by Drop.
 
         if is_bun_file_blob(&input) {
-            return Err(global.throw(
-                "Bun.file() is not supported here yet (it needs an async version)",
-            ));
+            return Err(global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )));
         }
 
         if let Some(string_or_buffer) = output {
@@ -1274,17 +1274,17 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         let buffer = match BlobOrStringOrBuffer::from_js(global, input)? {
             Some(b) => b,
             None => {
-                return Err(global.throw_invalid_arguments(
-                    "expected blob or string or buffer",
-                ));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "expected blob or string or buffer"
+                )));
             }
         };
         // `defer buffer.deinit()` — handled by Drop.
 
         if is_bun_file_blob(&buffer) {
-            return Err(global.throw(
-                "Bun.file() is not supported here yet (it needs an async version)",
-            ));
+            return Err(global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )));
         }
         this.hashing.update(buffer.slice());
         Ok(this_value)

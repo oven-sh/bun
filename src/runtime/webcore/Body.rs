@@ -11,7 +11,7 @@ use crate::webcore::jsc::{
     JsResult, Strong, SystemError, URLSearchParams, VirtualMachine,
 };
 use crate::webcore::{
-    self, blob, streams, AnyBlob, Blob, ByteStream, DrainResult, FetchHeaders,
+    self, blob, streams, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders,
     Lifetime, Pipe, ReadableStream,
 };
 // Re-export so callers can write `body::InternalBlob` (mirrors Zig nested-type access).
@@ -2007,7 +2007,7 @@ fn lifetime_wrap(
     lifetime: Lifetime,
 ) -> impl Fn(&mut AnyBlob, &JSGlobalObject) -> JSValue {
     move |this, global_object| {
-        jsc::to_js_host_call(global_object, f(this, global_object, lifetime))
+        jsc::to_js_host_call(global_object, || f(this, global_object, lifetime))
     }
 }
 
@@ -2310,8 +2310,8 @@ impl<'a> ValueBufferer<'a> {
                         assignment_result.then_with_value(
                             global_this,
                             cell,
-                            jsc::to_js_host_fn(Self::on_resolve_stream),
-                            jsc::to_js_host_fn(Self::on_reject_stream),
+                            Bun__BodyValueBufferer__onResolveStream,
+                            Bun__BodyValueBufferer__onRejectStream,
                         );
                     }
                     jsc::js_promise::Status::Fulfilled => {

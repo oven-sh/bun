@@ -116,6 +116,14 @@ impl VM {
         unsafe { JSC__VM__reportExtraMemory(self.as_mut_ptr(), size) }
     }
 
+    /// Alias retained for parity with the Zig comment naming this the
+    /// "deprecated" GC accounting hook (the underlying C++ is
+    /// `Heap::deprecatedReportExtraMemory`). Forward to [`report_extra_memory`].
+    #[inline]
+    pub fn deprecated_report_extra_memory(&self, size: usize) {
+        self.report_extra_memory(size);
+    }
+
     pub fn delete_all_code(&self, global_object: &JSGlobalObject) {
         // SAFETY: self and global_object are valid live JSC objects.
         unsafe { JSC__VM__deleteAllCode(self.as_mut_ptr(), global_object.as_mut_ptr()) }

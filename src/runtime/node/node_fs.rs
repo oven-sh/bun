@@ -276,8 +276,8 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
 /// `&mut` for the duration of each lookup (single-threaded JS / workpool
 /// callers never overlap on the same `File`).
 #[inline]
-fn standalone_module_graph_get() -> Option<*mut bun_standalone_graph::StandaloneModuleGraph> {
-    bun_standalone_graph::StandaloneModuleGraph::get()
+fn standalone_module_graph_get() -> Option<*mut bun_standalone_graph::Graph> {
+    bun_standalone_graph::Graph::get()
 }
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
@@ -912,7 +912,7 @@ impl FsReturn for Stats {
 impl FsReturn for FD {
     #[inline]
     fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(super::types::FdJsc::to_js(*self, global))
+        Ok(crate::node::types::FdJsc::to_js(*self, global))
     }
 }
 impl FsReturn for ZigString {

@@ -2284,7 +2284,7 @@ impl BlobExt for Blob {
         // which is not yet implemented. Decrement the intrusive refcount directly;
         // `deref` calls `deinit()` (which `drop(Box::from_raw)`s if heap-allocated)
         // when the count reaches zero.
-        super::Blob__deref(this_ref);
+        Blob__deref(this_ref);
     }
 
     fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob {
@@ -3549,21 +3549,20 @@ impl FormDataContext {
                         store::Data::File(file) => {
                             // TODO: make this async + lazy
                             // PORT NOTE (layering): Zig used the per-VM cached
-                            // `globalThis.bunVM().nodeFS()`. That accessor lives
-                            // behind a `bun_runtime → bun_jsc` cycle, so use a
-                            // fresh stack `NodeFS` (it is stateless aside from a
-                            // path scratch buffer; the per-VM cache is purely a
-                            // perf reuse).
-                            let mut node_fs = crate::node::node_fs::NodeFS::default();
+                            // `globalThis.bunVM().nodeFS()`. That accessor is not
+                            // yet ported on `VirtualMachine`, so use a fresh stack
+                            // `NodeFS` (it is stateless aside from a path scratch
+                            // buffer; the per-VM cache is purely a perf reuse).
+                            let mut node_fs = crate::node::fs::NodeFS::default();
                             let res = node_fs.read_file(
-                                &crate::node::node_fs::args::ReadFile {
+                                &crate::node::fs::args::ReadFile {
                                     encoding: crate::node::types::Encoding::Buffer,
                                     path: file.pathlike.clone(),
                                     offset: blob.offset,
                                     max_size: Some(blob.size),
                                     ..Default::default()
                                 },
-                                crate::node::node_fs::Flavor::Sync,
+                                crate::node::fs::Flavor::Sync,
                             );
                             match res {
                                 bun_sys::Maybe::Err(err) => {

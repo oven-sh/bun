@@ -172,9 +172,9 @@ impl FileOpener for ReadFile {
     fn set_system_error(&mut self, e: jsc::SystemError) { self.system_error = Some(e); }
     fn pathlike(&self) -> &PathOrFileDescriptor { &self.file_store.pathlike }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!("ReadFile is POSIX-only; see ReadFileUV") }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { unreachable!("ReadFile is POSIX-only; see ReadFileUV") }
     #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_uv_sys::uv_fs_t { unreachable!("ReadFile is POSIX-only; see ReadFileUV") }
+    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t { unreachable!("ReadFile is POSIX-only; see ReadFileUV") }
     #[cfg(windows)]
     fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) { unreachable!() }
     #[cfg(windows)]
@@ -193,7 +193,7 @@ impl FileCloser for ReadFile {
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask { &mut self.task }
     fn update(&mut self) { ReadFile::update(self) }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!() }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { unreachable!() }
 
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.

@@ -274,6 +274,8 @@ fn create_parsed_shell_script_impl(
         ) {
             Ok(ast) => ast,
             Err(err) => {
+                // `out_lex_result.is_some()` ⇔ `err == ParseError::Lex` — `Interpreter::parse`
+                // only populates `out_lex_result` on the Lex error path.
                 if let Some(lex) = out_lex_result.as_ref() {
                     debug_assert!(!lex.errors.is_empty());
                     let str = lex.combine_errors(arena);

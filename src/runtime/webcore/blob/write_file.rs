@@ -2,30 +2,26 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use bun_core::{self, Error};
+use bun_core::Error;
 use bun_io as io;
 use bun_jsc::{
-    self as jsc, JSGlobalObject, JSValue, JsTerminated, SystemError, WorkPool, WorkPoolTask,
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError, SysErrorJsc,
 };
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_str::ZigString;
 use bun_sys::{self as sys, Fd};
-use bun_threading::thread_pool::Task as ThreadPoolTask;
+use bun_threading::{WorkPool, WorkPoolTask};
 
 use crate::webcore::blob::{
-    self as blob, mkdir_if_not_exists, Blob, ClosingState, FileCloser, FileOpener, MkdirpTarget,
-    Retry, SizeType,
+    self, mkdir_if_not_exists, Blob, ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry,
+    SizeType,
 };
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
 
-macro_rules! bloblog {
-    ($($t:tt)*) => { bun_output::scoped_log!(WriteFile, $($t)*) };
-}
-
-// PORT NOTE: `SystemError.Maybe(T)` is a tagged `{ result: T } | { err: SystemError }`
-// union; modeled here as a plain Rust enum (never crosses FFI from this module).
+// TODO(port): SystemError::Maybe(T) is a tagged { result: T } | { err: SystemError } union;
+// modeled here as a plain Rust enum. Verify layout if it crosses FFI.
 pub enum WriteFileResultType {
     Result(SizeType),
     Err(SystemError),
@@ -34,15 +30,15 @@ pub enum WriteFileResultType {
 pub type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated>;
 
-pub type WriteFileTask = jsc::work_task::WorkTask<WriteFile>;
+pub type WriteFileTask = bun_jsc::work_task::WorkTask<WriteFile>;
 
-impl jsc::work_task::WorkTaskContext for WriteFile {
+impl bun_jsc::work_task::WorkTaskContext for WriteFile {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileTask;
-    fn run(this: *mut Self, task: *mut jsc::work_task::WorkTask<Self>) {
-        // SAFETY: `WorkTask::run_from_thread_pool` guarantees `this` is live.
+    fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
+        // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
         unsafe { (*this).run(task) }
     }
-    fn then(this: *mut Self, global: &JSGlobalObject) -> Result<(), JsTerminated> {
+    fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), JsTerminated> {
         WriteFile::then(this, global)
     }
 }
@@ -54,7 +50,7 @@ pub struct WriteFile {
     pub opened_fd: Fd,
     pub system_error: Option<SystemError>,
     pub errno: Option<Error>,
-    pub task: ThreadPoolTask,
+    pub task: WorkPoolTask,
     pub io_task: Option<*mut WriteFileTask>,
     pub io_poll: io::Poll,
     pub io_request: io::Request,
@@ -69,12 +65,10 @@ pub struct WriteFile {
     pub mkdirp_if_not_exists: bool,
 }
 
-// ── FileOpener / FileCloser / MkdirpTarget mixins ────────────────────────────
-//
+// ──────────────────────────────────────────────────────────────────────────
 // Zig: `pub const getFd = FileOpener(@This()).getFd;`
 //      `pub const doClose = FileCloser(WriteFile).doClose;`
-// In Rust the comptime-struct mixins are traits with default-method bodies; the
-// concrete type supplies field accessors.
+// ──────────────────────────────────────────────────────────────────────────
 
 impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
@@ -82,7 +76,7 @@ impl FileOpener for WriteFile {
 
     fn opened_fd(&self) -> Fd { self.opened_fd }
     fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
-    fn set_errno(&mut self, e: bun_core::Error) { self.errno = Some(e); }
+    fn set_errno(&mut self, e: Error) { self.errno = Some(e); }
     fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
     fn pathlike(&self) -> &PathOrFileDescriptor {
         &self.file_blob.store.as_ref().unwrap().data.as_file().pathlike
@@ -93,13 +87,13 @@ impl FileOpener for WriteFile {
         path: &bun_str::ZStr,
         display_path: &[u8],
     ) -> Retry {
-        // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...))`
+        // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...)) { ... }`
         mkdir_if_not_exists(self, err, path, display_path)
     }
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!("WriteFile is POSIX-only; see WriteFileWindows") }
     #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_uv_sys::uv_fs_t { unreachable!("WriteFile is POSIX-only; see WriteFileWindows") }
+    fn req(&mut self) -> &mut bun_uv_sys::uv_fs_t { unreachable!("WriteFile is POSIX-only") }
     #[cfg(windows)]
     fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) { unreachable!() }
     #[cfg(windows)]
@@ -109,14 +103,13 @@ impl FileOpener for WriteFile {
 impl MkdirpTarget for WriteFile {
     fn mkdirp_if_not_exists(&self) -> bool { self.mkdirp_if_not_exists }
     fn set_mkdirp_if_not_exists(&mut self, v: bool) { self.mkdirp_if_not_exists = v; }
-    fn set_system_error(&mut self, e: bun_sys::SystemError) { self.system_error = Some(e.into()); }
-    fn set_errno_if_present(&mut self, e: bun_core::Error) { self.errno = Some(e); }
+    fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
+    fn set_errno_if_present(&mut self, e: Error) { self.errno = Some(e); }
     fn set_opened_fd_if_present(&mut self, fd: Fd) { self.opened_fd = fd; }
 }
 
 impl FileCloser for WriteFile {
     const IO_TAG: io::Tag = io::Tag::WriteFile;
-
     fn opened_fd(&self) -> Fd { self.opened_fd }
     fn set_opened_fd(&mut self, fd: Fd) { self.opened_fd = fd; }
     fn close_after_io(&self) -> bool { self.close_after_io }
@@ -124,42 +117,39 @@ impl FileCloser for WriteFile {
     fn state(&self) -> &AtomicU8 { &self.state }
     fn io_request(&mut self) -> Option<&mut io::Request> { Some(&mut self.io_request) }
     fn io_poll(&mut self) -> &mut io::Poll { &mut self.io_poll }
-    fn task(&mut self) -> &mut WorkPoolTask { &mut self.task }
-    fn update(&mut self) { self.do_write_loop(); }
+    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask { &mut self.task }
+    fn update(&mut self) { WriteFile::update(self) }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!("WriteFile is POSIX-only; see WriteFileWindows") }
+    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!() }
 
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
-        // SAFETY: `request` points to `WriteFile.io_request` (Zig `@fieldParentPtr`).
+        // SAFETY: request is &mut self.io_request (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *(request as *mut io::Request as *mut u8)
+            &mut *((request as *mut io::Request as *mut u8)
                 .sub(offset_of!(WriteFile, io_request))
-                .cast::<WriteFile>()
+                .cast::<WriteFile>())
         };
+        fn on_done(ctx: *mut ()) {
+            // SAFETY: ctx is `self as *mut WriteFile` set below.
+            let this = unsafe { &mut *(ctx as *mut WriteFile) };
+            <WriteFile as FileCloser>::on_io_request_closed(this);
+        }
         io::Action::Close(io::CloseAction {
-            ctx: (this as *mut WriteFile).cast(),
             fd: this.opened_fd,
-            // SAFETY: erasing `&mut WriteFile` → `*mut ()` in first param; ABI-compatible.
-            on_done: unsafe {
-                core::mem::transmute::<fn(&mut WriteFile), fn(*mut ())>(
-                    Self::on_io_request_closed as fn(&mut WriteFile),
-                )
-            },
             poll: &mut this.io_poll,
+            ctx: this as *mut WriteFile as *mut (),
             tag: <Self as FileCloser>::IO_TAG,
+            on_done,
         })
     }
 
-    unsafe fn on_close_io_request(task: *mut WorkPoolTask) {
-        bloblog!("onCloseIORequest()");
-        // SAFETY: `task` points to `WriteFile.task` (Zig `@fieldParentPtr`).
+    unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
+        // SAFETY: task is &mut self.task (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *(task as *mut u8)
-                .sub(offset_of!(WriteFile, task))
-                .cast::<WriteFile>()
+            &mut *((task as *mut u8).sub(offset_of!(WriteFile, task)).cast::<WriteFile>())
         };
         this.close_after_io = false;
-        FileCloser::update(this);
+        WriteFile::update(this);
     }
 }
 
@@ -170,7 +160,7 @@ impl WriteFile {
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
     pub fn on_writable(request: &mut io::Request) {
-        // SAFETY: `request` points to `WriteFile.io_request`.
+        // SAFETY: request points to WriteFile.io_request
         let this: &mut WriteFile = unsafe {
             &mut *(request as *mut io::Request as *mut u8)
                 .sub(offset_of!(WriteFile, io_request))
@@ -180,47 +170,42 @@ impl WriteFile {
     }
 
     pub fn on_ready(&mut self) {
-        bloblog!("WriteFile.onReady()");
-        self.task = ThreadPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
+        bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
+        self.task = WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
         WorkPool::schedule(&mut self.task);
     }
 
-    pub fn on_io_error(&mut self, err: sys::Error) {
-        bloblog!("WriteFile.onIOError()");
-        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-        self.system_error = Some(jsc::SysErrorJsc::to_system_error(&err));
-        self.task = ThreadPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
-        WorkPool::schedule(&mut self.task);
+    pub fn on_io_error(this: *mut (), err: sys::Error) {
+        bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
+        // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
+        let this = unsafe { &mut *(this as *mut WriteFile) };
+        this.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+        this.system_error = Some(err.to_system_error());
+        this.task = WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
+        WorkPool::schedule(&mut this.task);
     }
 
     pub fn on_request_writable(request: &mut io::Request) -> io::Action<'_> {
-        bloblog!("WriteFile.onRequestWritable()");
+        bun_output::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
         request.scheduled = false;
-        // SAFETY: `request` points to `WriteFile.io_request`.
+        // SAFETY: request points to WriteFile.io_request (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
             &mut *(request as *mut io::Request as *mut u8)
                 .sub(offset_of!(WriteFile, io_request))
                 .cast::<WriteFile>()
         };
         io::Action::Writable(io::FileAction {
-            // SAFETY: erasing `&mut WriteFile` → `*mut ()` in first param; ABI-compatible.
-            on_error: unsafe {
-                core::mem::transmute::<fn(&mut WriteFile, sys::Error), fn(*mut (), sys::Error)>(
-                    Self::on_io_error as fn(&mut WriteFile, sys::Error),
-                )
-            },
-            ctx: (this as *mut WriteFile).cast(),
+            on_error: Self::on_io_error,
+            ctx: this as *mut WriteFile as *mut (),
             fd: this.opened_fd,
             poll: &mut this.io_poll,
-            tag: Self::IO_TAG,
+            tag: WriteFile::IO_TAG,
         })
     }
 
     pub fn wait_for_writable(&mut self) {
         self.close_after_io = true;
-        // Zig: `@atomicStore(fn-ptr, &io_request.callback, &onRequestWritable, .seq_cst)`.
-        // Rust has no `AtomicFnPtr`; `store_callback_seq_cst` lowers to a volatile write
-        // + SeqCst fence (matches the io thread's pop-then-read ordering).
+        // Zig: `@atomicStore(?*const fn, &self.io_request.callback, &onRequestWritable, .seq_cst)`.
         self.io_request.store_callback_seq_cst(Self::on_request_writable);
         if !self.io_request.scheduled {
             io::Loop::get().schedule(&mut self.io_request);
@@ -240,10 +225,10 @@ impl WriteFile {
             opened_fd: Fd::INVALID,
             system_error: None,
             errno: None,
-            task: ThreadPoolTask { node: Default::default(), callback: Self::do_write_loop_task },
+            task: WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task },
             io_task: None,
             io_poll: io::Poll::default(),
-            io_request: io::Request { callback: Self::on_request_writable, ..Default::default() },
+            io_request: io::Request::new(Self::on_request_writable),
             state: AtomicU8::new(ClosingState::Running as u8),
             on_complete_ctx: on_write_file_context,
             on_complete_callback,
@@ -252,11 +237,13 @@ impl WriteFile {
             close_after_io: false,
             mkdirp_if_not_exists,
         }));
-        // PORT NOTE: Zig followed with `file_blob.store.?.ref()` because Zig
-        // passes `Blob` by bitcopy (no ref bump) and has no destructors. In
-        // Rust the caller passes a `+1` Blob (via `dupe()`/`StoreRef::clone`)
-        // and `WriteFile::then` releases it via `Box::from_raw → StoreRef::Drop`,
-        // so the explicit ref/deref pair is folded into RAII.
+        // SAFETY: just allocated; bump intrusive store refcounts to match Zig's
+        // `file_blob.store.?.ref()` / `bytes_blob.store.?.ref()` (the Zig caller
+        // bitwise-copied the Blob, so both ends share the same +1 until this).
+        unsafe {
+            (*write_file).file_blob.store.as_ref().unwrap().ref_();
+            (*write_file).bytes_blob.store.as_ref().unwrap().ref_();
+        }
         Ok(write_file)
     }
 
@@ -267,8 +254,8 @@ impl WriteFile {
         callback: fn(ctx: *mut C, bytes: WriteFileResultType) -> Result<(), JsTerminated>,
         mkdirp_if_not_exists: bool,
     ) -> Result<*mut WriteFile, Error> {
-        // SAFETY: erasing `*mut C` → `*mut c_void` in the first param; fn-pointer ABI is
-        // identical. Mirrors Zig's `Handler.run` thunk (a no-op cast wrapper).
+        // SAFETY: erasing *mut C to *mut c_void in the first param; fn-pointer ABI is identical.
+        // Mirrors Zig's Handler.run thunk which is a no-op cast wrapper.
         let erased: WriteFileOnWriteFileCallback = unsafe {
             core::mem::transmute::<
                 fn(*mut C, WriteFileResultType) -> Result<(), JsTerminated>,
@@ -285,8 +272,8 @@ impl WriteFile {
     }
 
     // PORT NOTE: reshaped for borrowck — Zig passed `buffer: []const u8` borrowed from
-    // `self.bytes_blob` alongside `*WriteFile`. Take (off, len) here and re-derive the
-    // slice internally so callers don't hold a borrow of `self` across the &mut call.
+    // self.bytes_blob alongside &mut self. Take (off, len) here and re-derive the slice
+    // internally so callers don't hold a borrow of self across the &mut self call.
     pub fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
         let fd = self.opened_fd;
         debug_assert!(fd != Fd::INVALID);
@@ -296,16 +283,16 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        let result: bun_sys::Maybe<usize> =
+        let result: bun_sys::Result<usize> =
             sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]);
 
         loop {
             match &result {
-                bun_sys::Maybe::Ok(res) => {
+                bun_sys::Result::Ok(res) => {
                     *wrote = *res;
                     self.total_written += *res;
                 }
-                bun_sys::Maybe::Err(err) => {
+                bun_sys::Result::Err(err) => {
                     if err.get_errno() == io::RETRY {
                         if !self.could_block {
                             // regular files cannot use epoll.
@@ -315,8 +302,8 @@ impl WriteFile {
                         self.wait_for_writable();
                         return false;
                     } else {
-                        self.errno = Some(bun_core::errno_to_zig_err(err.get_errno() as i32));
-                        self.system_error = Some(jsc::SysErrorJsc::to_system_error(err));
+                        self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                        self.system_error = Some(err.to_system_error());
                         return false;
                     }
                 }
@@ -328,7 +315,7 @@ impl WriteFile {
     }
 
     pub fn then(this: *mut WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
-        // SAFETY: `this` is a Box-allocated WriteFile owned by the WorkTask flow; consumed here.
+        // SAFETY: `this` is a Box-allocated WriteFile owned by the WorkTask flow; we consume it here.
         let cb;
         let cb_ctx;
         let system_error;
@@ -337,9 +324,11 @@ impl WriteFile {
             cb = (*this).on_complete_callback;
             cb_ctx = (*this).on_complete_ctx;
 
-            // PORT NOTE: Zig `bytes_blob.store.?.deref()` → handled by
-            // `StoreRef::Drop` when the Box is reclaimed below (paired with the
-            // RAII note in `create_with_ctx`).
+            // PORT NOTE: Zig `bytes_blob.store.?.deref()` / `file_blob.store.?.deref()` —
+            // drop the `Option<StoreRef>` to release the +1 from `create_with_ctx`.
+            (*this).bytes_blob.store = None;
+            (*this).file_blob.store = None;
+
             system_error = (*this).system_error.take();
             total_written = (*this).total_written;
             drop(Box::from_raw(this));
@@ -368,14 +357,18 @@ impl WriteFile {
     }
 
     pub fn is_allowed_to_close(&self) -> bool {
-        matches!(
-            self.file_blob.store.as_ref().unwrap().data.as_file().pathlike,
-            PathOrFileDescriptor::Path(_)
-        )
+        self.file_blob
+            .store
+            .as_ref()
+            .unwrap()
+            .data
+            .as_file()
+            .pathlike
+            .is_path()
     }
 
     fn on_finish(&mut self) {
-        bloblog!("WriteFile.onFinish()");
+        bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
         let close_after_io = self.close_after_io;
         if self.do_close(self.is_allowed_to_close()) {
@@ -383,7 +376,8 @@ impl WriteFile {
         }
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
-                WriteFileTask::on_finish(io_task);
+                // SAFETY: io_task is a backref set in run(); WorkTask owns lifetime.
+                unsafe { bun_jsc::work_task::WorkTask::on_finish(io_task) };
             }
         }
     }
@@ -398,8 +392,8 @@ impl WriteFile {
 
         self.could_block = 'brk: {
             if let Some(store) = self.file_blob.store.as_ref() {
-                if let jsc::webcore_types::store::Data::File(file) = &store.data {
-                    if matches!(file.pathlike, PathOrFileDescriptor::Fd(_)) {
+                if let blob::store::Data::File(file) = &store.data {
+                    if file.pathlike.is_fd() {
                         // If seekable was set, then so was mode
                         if file.seekable.is_some() {
                             // This is mostly to handle pipes which were passsed to the process somehow
@@ -459,10 +453,8 @@ impl WriteFile {
         self.do_write_loop();
     }
 
-    /// SAFETY: `task` points to the `task` field of a heap-allocated `WriteFile`
-    /// (Zig `@fieldParentPtr("task", task)`).
     unsafe fn do_write_loop_task(task: *mut WorkPoolTask) {
-        // SAFETY: see fn doc.
+        // SAFETY: task points to WriteFile.task
         let this: &mut WriteFile = unsafe {
             &mut *(task as *mut u8)
                 .sub(offset_of!(WriteFile, task))
@@ -487,7 +479,7 @@ impl WriteFile {
         }
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
             let remain_full = self.bytes_blob.shared_view();
-            // PORT NOTE: reshaped for borrowck — capture len/offset before mut borrow.
+            // PORT NOTE: reshaped for borrowck — capture len/offset before mut borrow
             let off = self.total_written.min(remain_full.len());
             let remain_len = remain_full.len() - off;
 
@@ -531,24 +523,25 @@ impl WriteFile {
 
 // ──────────────────────────────────────────────────────────────────────────
 // WriteFileWindows
-// ──────────────────────────────────────────────────────────────────────────
 //
-// `bun_sys::windows::libuv` is `#![cfg(windows)]`-gated; the only call site
-// (`Blob::write_file_with_source_destination`) is also `#[cfg(windows)]`, so the
-// whole struct is gated rather than stubbing libuv types on POSIX.
+// libuv-backed write path used by `Blob.writeFileInternal` on Windows. The
+// whole impl is `#[cfg(windows)]`-gated because `bun_sys::windows::libuv`
+// (and the libuv `fs_t`/`uv_buf_t` types) only exist when targeting Windows.
+// ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub use self::windows::*;
+pub use self::windows_impl::{WriteFileWindows, WriteFileWindowsError};
 
 #[cfg(windows)]
-mod windows {
+mod windows_impl {
     use super::*;
+    use core::ptr::null_mut;
+
     use bun_aio::{self as aio, KeepAlive};
     use bun_jsc::{ConcurrentTask, EventLoop, ManagedTask};
     use bun_sys::windows::libuv as uv;
-    use core::ptr::null_mut;
 
-    pub struct WriteFileWindows<'a> {
+    pub struct WriteFileWindows {
         pub io_request: uv::fs_t,
         pub file_blob: Blob,
         pub bytes_blob: Blob,
@@ -560,7 +553,7 @@ mod windows {
         pub fd: uv::uv_file,
         pub err: Option<sys::Error>,
         pub total_written: usize,
-        pub event_loop: &'a EventLoop,
+        pub event_loop: *mut EventLoop,
         pub poll_ref: KeepAlive,
 
         pub owned_fd: bool,
@@ -580,27 +573,24 @@ mod windows {
         }
     }
 
-    impl<'a> WriteFileWindows<'a> {
+    impl WriteFileWindows {
         pub fn create_with_ctx(
             file_blob: Blob,
             bytes_blob: Blob,
-            event_loop: &'a EventLoop,
+            event_loop: *mut EventLoop,
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
-        ) -> Result<*mut WriteFileWindows<'a>, WriteFileWindowsError> {
+        ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
-                && matches!(
-                    file_blob.store.as_ref().unwrap().data.as_file().pathlike,
-                    PathOrFileDescriptor::Path(_)
-                );
+                && file_blob.store.as_ref().unwrap().data.as_file().pathlike.is_path();
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
                 mkdirp_if_not_exists: mkdirp,
-                // SAFETY: all-zero is a valid uv::fs_t (C struct).
+                // SAFETY: all-zero is a valid uv::fs_t (C struct)
                 io_request: unsafe { core::mem::zeroed::<uv::fs_t>() },
                 uv_bufs: [uv::uv_buf_t { base: null_mut(), len: 0 }],
                 event_loop,
@@ -610,12 +600,12 @@ mod windows {
                 poll_ref: KeepAlive::default(),
                 owned_fd: false,
             });
-            // SAFETY: just allocated, sole owner until returned.
+            // SAFETY: just allocated, sole owner until returned
             unsafe {
                 let wf = &mut *write_file;
                 wf.file_blob.store.as_ref().unwrap().ref_();
                 wf.bytes_blob.store.as_ref().unwrap().ref_();
-                wf.io_request.loop_ = event_loop.virtual_machine.event_loop_handle.unwrap();
+                wf.io_request.loop_ = (*event_loop).virtual_machine.event_loop_handle.unwrap();
                 wf.io_request.data = write_file.cast::<c_void>();
 
                 match &wf.file_blob.store.as_ref().unwrap().data.as_file().pathlike {
@@ -624,7 +614,7 @@ mod windows {
                     }
                     PathOrFileDescriptor::Fd(fd) => {
                         wf.fd = 'brk: {
-                            if let Some(rare) = event_loop.virtual_machine.rare_data.as_ref() {
+                            if let Some(rare) = (*event_loop).virtual_machine.rare_data.as_ref() {
                                 if wf.file_blob.store == rare.stdout_store {
                                     break 'brk 1;
                                 } else if wf.file_blob.store == rare.stderr_store {
@@ -642,14 +632,15 @@ mod windows {
                     }
                 }
 
-                wf.poll_ref.ref_(wf.event_loop.virtual_machine);
+                wf.poll_ref.ref_((*wf.event_loop).virtual_machine);
             }
             Ok(write_file)
         }
 
         #[inline]
         pub fn loop_(&self) -> *mut uv::Loop {
-            self.event_loop.virtual_machine.event_loop_handle.unwrap()
+            // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
+            unsafe { (*self.event_loop).virtual_machine.event_loop_handle.unwrap() }
         }
 
         pub fn open(&mut self) -> Result<(), WriteFileWindowsError> {
@@ -674,9 +665,8 @@ mod windows {
                     }));
                 }
             };
-            // SAFETY: `self.io_request` is a valid `uv_fs_t` embedded in a Box-allocated
-            // `WriteFileWindows`; `self.loop_()` is the VM's libuv loop which outlives this
-            // request; `posix_path` is NUL-terminated.
+            // SAFETY: self.io_request is a valid uv_fs_t embedded in a Box-allocated WriteFileWindows;
+            // self.loop_() is the VM's libuv loop which outlives this request; posix_path is NUL-terminated.
             let rc = unsafe {
                 uv::uv_fs_open(
                     self.loop_(),
@@ -710,17 +700,21 @@ mod windows {
         }
 
         pub extern "C" fn on_open(req: *mut uv::fs_t) {
-            // SAFETY: `req` points to `WriteFileWindows.io_request`.
-            let this: &mut WriteFileWindows<'_> = unsafe {
+            // SAFETY: req points to WriteFileWindows.io_request
+            let this: &mut WriteFileWindows = unsafe {
                 &mut *(req as *mut u8)
-                    .sub(offset_of!(WriteFileWindows<'_>, io_request))
-                    .cast::<WriteFileWindows<'_>>()
+                    .sub(offset_of!(WriteFileWindows, io_request))
+                    .cast::<WriteFileWindows>()
             };
-            // SAFETY: `req == &this.io_request`; data was set to `this` in create_with_ctx/open.
-            debug_assert!(core::ptr::eq(this, unsafe { (*req).data }.cast()));
+            debug_assert!(core::ptr::eq(
+                this,
+                // SAFETY: req == &this.io_request; data was set to `this` in create_with_ctx/open.
+                unsafe { (*req).data }.cast::<WriteFileWindows>()
+            ));
             let rc = this.io_request.result;
             #[cfg(debug_assertions)]
-            bloblog!(
+            bun_output::scoped_log!(
+                WriteFile,
                 "onOpen({}) = {}",
                 bstr::BStr::new(
                     this.file_blob
@@ -739,8 +733,8 @@ mod windows {
             if let Some(err) = rc.err_enum() {
                 if err == sys::E::NOENT && this.mkdirp_if_not_exists {
                     // cleanup the request so we can reuse it later.
-                    // SAFETY: `req` points to `this.io_request` (valid uv_fs_t); libuv permits
-                    // cleanup between uses to reuse the same req struct.
+                    // SAFETY: req points to this.io_request (valid uv_fs_t); libuv permits cleanup
+                    // between uses to reuse the same req struct.
                     unsafe { (*req).deinit() };
 
                     // attempt to create the directory on another thread
@@ -782,7 +776,7 @@ mod windows {
         }
 
         fn mkdirp(&mut self) {
-            bloblog!("mkdirp");
+            bun_output::scoped_log!(WriteFile, "mkdirp");
             self.mkdirp_if_not_exists = false;
 
             let path = self
@@ -796,20 +790,18 @@ mod windows {
                 .path()
                 .slice();
             crate::node::fs::async_::AsyncMkdirp::new(crate::node::fs::async_::AsyncMkdirp {
-                // SAFETY: erasing `&mut Self` → `*mut c_void` for the completion ctx;
-                // ABI-compatible cast.
+                // SAFETY: erasing &mut Self to *mut c_void for the completion ctx; ABI-compatible cast.
                 completion: unsafe {
                     core::mem::transmute::<
-                        fn(&mut WriteFileWindows<'_>, bun_sys::Maybe<()>),
+                        fn(&mut WriteFileWindows, bun_sys::Result<()>),
                         crate::node::fs::async_::CompletionFn,
                     >(Self::on_mkdirp_complete_concurrent)
                 },
                 completion_ctx: (self as *mut Self).cast::<c_void>(),
-                path: bun_paths::dirname(path)
+                path: bun_core::dirname(path)
                     // this shouldn't happen
                     .unwrap_or(path)
                     .into(),
-                ..Default::default()
             })
             .schedule();
         }
@@ -817,8 +809,8 @@ mod windows {
         fn on_mkdirp_complete(&mut self) {
             let err = self.err.take();
             if let Some(err_) = err {
-                // PORT NOTE: Zig `defer bun.default_allocator.free(err_.path)` — handled by Drop
-                // of `sys::Error.path` (owned `Box<[u8]>`); no explicit free needed.
+                // PORT NOTE: Zig `defer bun.default_allocator.free(err_.path)` — handled by Drop of
+                // sys::Error.path (owned Box<[u8]>); no explicit free needed.
                 match self.throw(err_) {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::JSTerminated => {} // TODO: properly propagate exception upwards
@@ -834,27 +826,33 @@ mod windows {
             }
         }
 
-        fn on_mkdirp_complete_concurrent(&mut self, err_: bun_sys::Maybe<()>) {
-            bloblog!("mkdirp complete");
+        fn on_mkdirp_complete_concurrent(&mut self, err_: bun_sys::Result<()>) {
+            bun_output::scoped_log!(WriteFile, "mkdirp complete");
             debug_assert!(self.err.is_none());
             self.err = match err_ {
-                bun_sys::Maybe::Err(e) => Some(e),
-                bun_sys::Maybe::Ok(()) => None,
+                bun_sys::Result::Err(e) => Some(e),
+                bun_sys::Result::Ok(()) => None,
             };
-            self.event_loop.enqueue_task_concurrent(ConcurrentTask::create(
-                ManagedTask::new::<WriteFileWindows<'_>, _>(Self::on_mkdirp_complete, self),
-            ));
+            // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
+            unsafe {
+                (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
+                    ManagedTask::new::<WriteFileWindows, _>(Self::on_mkdirp_complete, self),
+                ));
+            }
         }
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
-            // SAFETY: `req` points to `WriteFileWindows.io_request`.
-            let this: &mut WriteFileWindows<'_> = unsafe {
+            // SAFETY: req points to WriteFileWindows.io_request
+            let this: &mut WriteFileWindows = unsafe {
                 &mut *(req as *mut u8)
-                    .sub(offset_of!(WriteFileWindows<'_>, io_request))
-                    .cast::<WriteFileWindows<'_>>()
+                    .sub(offset_of!(WriteFileWindows, io_request))
+                    .cast::<WriteFileWindows>()
             };
-            // SAFETY: `req == &this.io_request`; data was set to `this` in `do_write_loop`.
-            debug_assert!(core::ptr::eq(this, unsafe { (*req).data }.cast()));
+            debug_assert!(core::ptr::eq(
+                this,
+                // SAFETY: req == &this.io_request; data was set to `this` in do_write_loop.
+                unsafe { (*req).data }.cast::<WriteFileWindows>()
+            ));
             let rc = this.io_request.result;
             if let Some(err) = rc.errno() {
                 match this.throw(sys::Error {
@@ -880,12 +878,8 @@ mod windows {
         pub fn on_finish(&mut self) -> WriteFileWindowsError {
             // SAFETY: VM-owned EventLoop lives for process lifetime; the guard
             // forms short-lived `&mut` only at the enter/exit call sites (see
-            // `EventLoopEnterGuard` docs) so it does not alias `self`.
-            let _exit = unsafe {
-                jsc::event_loop::EventLoop::enter_scope(
-                    self.event_loop as *const _ as *mut _,
-                )
-            };
+            // EventLoopEnterGuard docs) so it does not alias `self`.
+            let _exit = unsafe { jsc::event_loop::EventLoop::enter_scope(self.event_loop) };
 
             // We don't need to enqueue task since this is already in a task.
             self.run_from_js_thread()
@@ -896,17 +890,13 @@ mod windows {
             let cb_ctx = self.on_complete_ctx;
 
             if let Some(err) = self.to_system_error() {
-                // SAFETY: `self` was allocated via `Self::new` (Box::into_raw); reclaim and drop.
-                // `self` must not be used after this line.
-                unsafe { drop(Box::from_raw(self as *mut Self)) };
+                self.deinit();
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(err)) {
                     return e.into();
                 }
             } else {
                 let wrote = self.total_written;
-                // SAFETY: `self` was allocated via `Self::new` (Box::into_raw); reclaim and drop.
-                // `self` must not be used after this line.
-                unsafe { drop(Box::from_raw(self as *mut Self)) };
+                self.deinit();
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Result(wrote as SizeType)) {
                     return e.into();
                 }
@@ -923,9 +913,10 @@ mod windows {
 
         pub fn to_system_error(&self) -> Option<SystemError> {
             if let Some(err) = &self.err {
-                let sys_err = match &self.file_blob.store.as_ref().unwrap().data.as_file().pathlike {
-                    PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
-                    PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
+                let mut sys_err = err.clone();
+                sys_err = match &self.file_blob.store.as_ref().unwrap().data.as_file().pathlike {
+                    PathOrFileDescriptor::Path(path) => sys_err.with_path(path.slice()),
+                    PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
                 };
 
                 return Some(sys_err.to_system_error());
@@ -948,12 +939,11 @@ mod windows {
             self.uv_bufs[0].base = remain.as_ptr() as *mut u8;
             self.uv_bufs[0].len = remain.len() as u32;
 
-            // SAFETY: `self.io_request` is a valid `uv_fs_t` embedded in this Box-allocated
-            // struct; cleanup is safe to call between uses of the same req.
+            // SAFETY: self.io_request is a valid uv_fs_t embedded in this Box-allocated struct;
+            // cleanup is safe to call between uses of the same req.
             unsafe { uv::uv_fs_req_cleanup(&mut self.io_request) };
-            // SAFETY: `uv_loop` is the VM's libuv loop (outlives self); `io_request`/`uv_bufs`
-            // are embedded in `self` which stays alive until `on_write_complete` fires; `fd`
-            // is open.
+            // SAFETY: uv_loop is the VM's libuv loop (outlives self); io_request/uv_bufs are
+            // embedded in self which stays alive until on_write_complete fires; fd is open.
             let rc = unsafe {
                 uv::uv_fs_write(
                     uv_loop,
@@ -988,19 +978,37 @@ mod windows {
             Ok(())
         }
 
-        pub fn new(init: WriteFileWindows<'a>) -> *mut WriteFileWindows<'a> {
+        pub fn new(init: WriteFileWindows) -> *mut WriteFileWindows {
             Box::into_raw(Box::new(init))
         }
 
+        pub fn deinit(&mut self) {
+            let fd = self.fd;
+            if fd > 0 && self.owned_fd {
+                aio::Closer::close(Fd::from_uv(fd), self.io_request.loop_);
+            }
+            // PORT NOTE: Zig `file_blob.store.?.deref()` / `bytes_blob.store.?.deref()` —
+            // drop the `Option<StoreRef>` to release the +1 from `create_with_ctx`.
+            self.file_blob.store = None;
+            self.bytes_blob.store = None;
+            self.poll_ref.disable();
+            // SAFETY: self.io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
+            // is safe on a zeroed or previously-used req.
+            unsafe { uv::uv_fs_req_cleanup(&mut self.io_request) };
+            // SAFETY: self was allocated via Self::new (Box::into_raw); reclaim and drop here.
+            // self must not be used after this line.
+            unsafe { drop(Box::from_raw(self as *mut Self)) };
+        }
+
         pub fn create<C>(
-            event_loop: &'a EventLoop,
+            event_loop: *mut EventLoop,
             file_blob: Blob,
             bytes_blob: Blob,
             context: *mut C,
             callback: fn(ctx: *mut C, bytes: WriteFileResultType) -> Result<(), JsTerminated>,
             mkdirp_if_not_exists: bool,
-        ) -> Result<*mut WriteFileWindows<'a>, WriteFileWindowsError> {
-            // SAFETY: erasing `*mut C` → `*mut c_void` in first param; fn-pointer ABI identical.
+        ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
+            // SAFETY: erasing *mut C → *mut c_void in first param; fn-pointer ABI identical.
             let erased: WriteFileOnWriteFileCallback = unsafe {
                 core::mem::transmute::<
                     fn(*mut C, WriteFileResultType) -> Result<(), JsTerminated>,
@@ -1017,45 +1025,37 @@ mod windows {
             )
         }
     }
-
-    impl Drop for WriteFileWindows<'_> {
-        fn drop(&mut self) {
-            let fd = self.fd;
-            if fd > 0 && self.owned_fd {
-                aio::Closer::close(Fd::from_uv(fd), self.io_request.loop_);
-            }
-            self.file_blob.store.as_ref().unwrap().deref();
-            self.bytes_blob.store.as_ref().unwrap().deref();
-            self.poll_ref.disable();
-            // SAFETY: `self.io_request` is a valid `uv_fs_t` embedded in this struct;
-            // `uv_fs_req_cleanup` is safe on a zeroed or previously-used req.
-            unsafe { uv::uv_fs_req_cleanup(&mut self.io_request) };
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct WriteFilePromise<'a> {
+pub struct WriteFilePromise {
     pub promise: jsc::JSPromiseStrong,
-    pub global_this: &'a JSGlobalObject,
+    pub global_this: *const JSGlobalObject,
 }
 
-impl<'a> WriteFilePromise<'a> {
+impl WriteFilePromise {
     pub fn run(handler: *mut Self, count: WriteFileResultType) -> Result<(), JsTerminated> {
-        // SAFETY: `handler` is a Box-allocated `WriteFilePromise` (see Blob.rs:4171).
-        // Zig: `var promise = handler.promise.swap(); ...; bun.destroy(handler);`. Rust's
-        // `Strong::swap` borrows `&mut self`, so reclaim the Box first and operate on the
-        // owned value — same effect (the strong handle is released by `swap`).
-        let mut h = unsafe { Box::from_raw(handler) };
-        let global_this = h.global_this;
-        let promise = h.promise.swap();
+        // SAFETY: handler is a Box-allocated WriteFilePromise (see Blob.zig:1172); consumed here.
+        // `swap()` releases the Strong's handle slot and yields a GC-owned `*mut JSPromise`,
+        // which stays valid past `drop(Box::from_raw(handler))`.
+        let (promise, global_this): (*mut JSPromise, &JSGlobalObject) = unsafe {
+            let h = &mut *handler;
+            let promise = h.promise.swap() as *mut JSPromise;
+            let global_this = &*h.global_this;
+            drop(Box::from_raw(handler));
+            (promise, global_this)
+        };
+        // SAFETY: GC-owned cell; sole `&mut` borrow at each call site.
+        let promise = unsafe { &mut *promise };
         let value = promise.to_js();
         value.ensure_still_alive();
         match count {
             WriteFileResultType::Err(err) => {
-                let err_js = err.to_error_instance_with_async_stack(global_this, promise);
-                promise.reject(global_this, Ok(err_js))?;
+                promise.reject(
+                    global_this,
+                    Ok(err.to_error_instance_with_async_stack(global_this, promise)),
+                )?;
             }
             WriteFileResultType::Result(wrote) => {
                 promise.resolve(global_this, JSValue::js_number_from_uint64(wrote as u64))?;
@@ -1067,54 +1067,56 @@ impl<'a> WriteFilePromise<'a> {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct WriteFileWaitFromLockedValueTask<'a> {
+pub struct WriteFileWaitFromLockedValueTask {
     pub file_blob: Blob,
-    pub global_this: &'a JSGlobalObject,
+    pub global_this: *const JSGlobalObject,
     pub promise: jsc::JSPromiseStrong,
     pub mkdirp_if_not_exists: bool,
 }
 
-impl<'a> WriteFileWaitFromLockedValueTask<'a> {
+impl WriteFileWaitFromLockedValueTask {
     pub fn then_wrap(this: *mut c_void, value: &mut body::Value) {
-        let _ = Self::then(this.cast::<WriteFileWaitFromLockedValueTask<'_>>(), value);
+        let _ = Self::then(this.cast::<WriteFileWaitFromLockedValueTask>(), value);
         // TODO: properly propagate exception upwards
     }
 
     pub fn then(
-        this: *mut WriteFileWaitFromLockedValueTask<'a>,
+        this: *mut WriteFileWaitFromLockedValueTask,
         value: &mut body::Value,
     ) -> Result<(), JsTerminated> {
-        // SAFETY: `this` is a Box-allocated task (see Blob.zig:1581).
+        // SAFETY: this is a Box-allocated task (see Blob.zig:1581).
         let this_ref = unsafe { &mut *this };
-        // SAFETY: sole `&mut JSPromise` borrow in this scope.
-        let promise: *mut jsc::JSPromise = unsafe { this_ref.promise.get() };
-        let global_this = this_ref.global_this;
-        // PORT NOTE: Zig `var file_blob = this.file_blob;` — `Blob` is a value
-        // type in Zig (bitwise copy, no ref bump). `dupe()` does the same here:
-        // shallow copy with `store: None`, then re-seat the `StoreRef` without
-        // bumping (manual move semantics — original is dropped with `this`).
+        // SAFETY: sole `&mut JSPromise` borrow in this scope; `get()` returns a
+        // GC-owned cell, valid past `Box::from_raw(this)`.
+        let promise: *mut JSPromise = unsafe { this_ref.promise.get() };
+        // SAFETY: `global_this` was set from a live `&JSGlobalObject` when this
+        // task was scheduled; the global outlives every `Body::Value` callback.
+        let global_this = unsafe { &*this_ref.global_this };
+        // PORT NOTE: Zig copied `var file_blob = this.file_blob;` by value (Blob is a value type
+        // in Zig). `dupe()` is the explicit shallow copy that bumps `Store`'s
+        // intrusive refcount, matching the Zig copy semantics.
         let mut file_blob = this_ref.file_blob.dupe();
-        file_blob.store = this_ref.file_blob.store.take();
         match value {
             body::Value::Error(err_ref) => {
-                let err_js = err_ref.to_js(global_this);
+                let err = err_ref.to_js(global_this);
                 file_blob.detach();
                 let _ = value.use_();
-                // SAFETY: consume Box allocation (drops `promise: Strong` → deinit).
+                // SAFETY: consume Box allocation (drops `promise`/`file_blob` Strongs).
                 unsafe { drop(Box::from_raw(this)) };
-                // SAFETY: GC-owned cell; sole `&mut JSPromise` borrow at this point.
-                unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(err_js))?;
+                // SAFETY: GC-owned cell; sole `&mut` borrow.
+                unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(err))?;
             }
             body::Value::Used => {
                 file_blob.detach();
                 let _ = value.use_();
-                // SAFETY: consume Box allocation (drops `promise: Strong` → deinit).
+                // SAFETY: consume Box allocation.
                 unsafe { drop(Box::from_raw(this)) };
-                use bun_jsc::ZigStringJsc as _;
-                let err = ZigString::init(b"Body was used after it was consumed")
-                    .to_error_instance(global_this);
-                // SAFETY: GC-owned cell; sole `&mut JSPromise` borrow at this point.
-                unsafe { &mut *promise }.reject(global_this, Ok(err))?;
+                // SAFETY: GC-owned cell; sole `&mut` borrow.
+                unsafe { &mut *promise }.reject(
+                    global_this,
+                    Ok(ZigString::init(b"Body was used after it was consumed")
+                        .to_error_instance(global_this)),
+                )?;
             }
             body::Value::WTFStringImpl(_)
             | body::Value::InternalBlob(_)
@@ -1135,34 +1137,37 @@ impl<'a> WriteFileWaitFromLockedValueTask<'a> {
                     Ok(p) => p,
                     Err(err) => {
                         file_blob.detach();
-                        // SAFETY: consume Box allocation (drops `promise: Strong` → deinit).
+                        // SAFETY: consume Box allocation.
                         unsafe { drop(Box::from_raw(this)) };
-                        // SAFETY: GC-owned cell; sole `&mut JSPromise` borrow at this point.
+                        // SAFETY: GC-owned cell; sole `&mut` borrow.
                         unsafe { &mut *promise }.reject(global_this, Err(err))?;
                         return Ok(());
                     }
                 };
 
                 // PORT NOTE: Zig `defer bun.destroy(this); defer this.promise.deinit();
-                // defer file_blob.detach();` — defers run in reverse at scope exit. Reclaim
-                // the Box now so it drops last; the file_blob guard declared after drops first.
-                // SAFETY: `this` was Box-allocated; `this_ref` is dead past this point.
+                // defer file_blob.detach();` — defers run in reverse order at scope
+                // exit. Reclaim the Box now so it drops last; `file_blob` (a local
+                // declared after) drops first.
+                // SAFETY: `this` was Box-allocated (see Self::new). `this_ref` is dead
+                // past this point — all further field access goes through `_this_box`.
                 let _this_box = unsafe { Box::from_raw(this) };
-                let _g = scopeguard::guard(&mut file_blob, |fb| fb.detach());
+                let _g = scopeguard::guard((), |()| file_blob.detach());
 
                 if let Some(p) = new_promise.as_any_promise() {
-                    // SAFETY: GC-owned cell; sole `&mut JSPromise` borrow at this point.
-                    let promise = unsafe { &mut *promise };
                     match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                         // Fulfill the new promise using the pending promise
                         jsc::PromiseResult::Pending => {
-                            promise.resolve(global_this, new_promise)?
+                            // SAFETY: GC-owned cell; sole `&mut` borrow.
+                            unsafe { &mut *promise }.resolve(global_this, new_promise)?
                         }
                         jsc::PromiseResult::Rejected(err) => {
-                            promise.reject(global_this, Ok(err))?
+                            // SAFETY: GC-owned cell; sole `&mut` borrow.
+                            unsafe { &mut *promise }.reject(global_this, Ok(err))?
                         }
                         jsc::PromiseResult::Fulfilled(result) => {
-                            promise.resolve(global_this, result)?
+                            // SAFETY: GC-owned cell; sole `&mut` borrow.
+                            unsafe { &mut *promise }.resolve(global_this, result)?
                         }
                     }
                 }
@@ -1180,8 +1185,7 @@ impl<'a> WriteFileWaitFromLockedValueTask<'a> {
 // PORT STATUS
 //   source:     src/runtime/webcore/blob/write_file.zig (757 lines)
 //   confidence: medium
-//   notes:      Intrusive-ptr/@fieldParentPtr patterns kept raw; FileOpener/
-//               FileCloser are trait impls. WriteFileWindows is cfg(windows)-gated
-//               (libuv types unavailable on POSIX); revisit once cross-compile
-//               check is wired up.
+//   notes:      FileOpener/FileCloser modeled as traits (matching ReadFile);
+//               WriteFileWindows is `#[cfg(windows)]`-gated since libuv types
+//               are Windows-only in the Rust crate graph.
 // ──────────────────────────────────────────────────────────────────────────

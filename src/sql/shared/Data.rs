@@ -1,11 +1,11 @@
-use bun_collections::{BabyList, BoundedArray};
+use bun_collections::{VecExt, BoundedArray};
 use bun_string::ZStr;
 
 pub type InlineStorage = BoundedArray<u8, 15>;
 
 /// Represents data that can be either owned or temporary
 pub enum Data {
-    Owned(BabyList<u8>),
+    Owned(Vec<u8>),
     // TODO(port): lifetime — `Temporary` borrows external bytes (see `substring`, which
     // returns a `Data` aliasing `self`). Stored as a raw fat pointer in Phase A; revisit
     // whether a `<'a>` on `Data` is acceptable in Phase B.
@@ -39,23 +39,19 @@ impl Data {
                 InlineStorage::from_slice(possibly_inline_bytes).expect("len <= 15 checked above");
             return Ok(Data::InlineStorage(inline_storage));
         }
-        Ok(Data::Owned(BabyList::from_owned_slice(Box::<[u8]>::from(
-            possibly_inline_bytes,
-        ))))
+        Ok(Data::Owned(possibly_inline_bytes.to_vec()))
     }
 
-    pub fn to_owned(self) -> Result<BabyList<u8>, bun_alloc::AllocError> {
+    pub fn to_owned(self) -> Result<Vec<u8>, bun_alloc::AllocError> {
         match self {
             Data::Owned(owned) => Ok(owned),
             Data::Temporary(temporary) => {
                 // SAFETY: caller guarantees the borrowed slice is still valid (same as Zig)
                 let slice = unsafe { &*temporary };
-                Ok(BabyList::from_owned_slice(Box::<[u8]>::from(slice)))
+                Ok(slice.to_vec())
             }
-            Data::Empty => Ok(BabyList::default()),
-            Data::InlineStorage(inline_storage) => Ok(BabyList::from_owned_slice(
-                Box::<[u8]>::from(inline_storage.as_slice()),
-            )),
+            Data::Empty => Ok(Vec::new()),
+            Data::InlineStorage(inline_storage) => Ok(inline_storage.as_slice().to_vec()),
         }
     }
 
@@ -131,7 +127,7 @@ impl Data {
     }
 }
 
-// PORT NOTE: Zig `deinit` freed `Owned`'s buffer. In Rust, `BabyList<T>: Drop`
+// PORT NOTE: Zig `deinit` freed `Owned`'s buffer. In Rust, `Vec<T>: Drop`
 // already frees on drop, so an explicit `impl Drop for Data` is redundant (and
 // would prevent moving fields out in `to_owned`). The other variants own no heap.
 
@@ -140,5 +136,5 @@ impl Data {
 //   source:     src/sql/shared/Data.zig (94 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      `Temporary` stored as raw `*const [u8]` (self-borrowing via `substring`); BabyList<u8>/BoundedArray API surface assumed; `bun.freeSensitive` mapped to `bun_alloc::free_sensitive`.
+//   notes:      `Temporary` stored as raw `*const [u8]` (self-borrowing via `substring`); Vec<u8>/BoundedArray API surface assumed; `bun.freeSensitive` mapped to `bun_alloc::free_sensitive`.
 // ──────────────────────────────────────────────────────────────────────────

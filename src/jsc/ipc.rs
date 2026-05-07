@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
@@ -1903,7 +1904,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
             let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
                 unreachable!()
             };
-            if adv_buf.len == 0 {
+            if adv_buf.len() == 0 {
                 loop {
                     let result =
                         match decode_ipc_message(Mode::Advanced, data, global_this, None) {
@@ -1962,11 +1963,11 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                             // copy the remaining bytes to the start of the buffer
                             // SAFETY: src/dst may overlap; use ptr::copy (memmove).
                             unsafe {
-                                let base = adv_buf.ptr.as_ptr();
+                                let base = adv_buf.as_mut_ptr();
                                 core::ptr::copy(base.add(slice_start), base, slice_len);
                             }
                             debug_assert!(slice_len <= u32::MAX as usize);
-                            adv_buf.len = u32::try_from(slice_len).unwrap();
+                            unsafe { adv_buf.set_len(slice_len) };
                             log!("hit NotEnoughBytes2");
                             return;
                         }
@@ -1994,7 +1995,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                     let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    adv_buf.len = 0;
+                    adv_buf.clear();
                     return;
                 }
             }
@@ -2162,14 +2163,14 @@ pub mod IPCHandlers {
                         unreachable!()
                     };
                     debug_assert!(
-                        json_buf.data.len as usize + buffer.len() <= json_buf.data.cap as usize
+                        json_buf.data.len() as usize + buffer.len() <= json_buf.data.capacity() as usize
                     );
                     // SAFETY: allocated_slice() yields `[MaybeUninit<u8>]`; we
                     // only inspect its address range here, never read its bytes.
                     debug_assert!(bun_core::is_slice_in_buffer(buffer, unsafe {
                         core::slice::from_raw_parts(
-                            json_buf.data.ptr.as_ptr().cast::<u8>(),
-                            json_buf.data.cap as usize,
+                            json_buf.data.as_mut_ptr().cast::<u8>(),
+                            json_buf.data.capacity() as usize,
                         )
                     }));
 
@@ -2219,19 +2220,17 @@ pub mod IPCHandlers {
                     let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    adv_buf.len = adv_buf
-                        .len
-                        .saturating_add(u32::try_from(buffer.len()).unwrap());
-                    let total_len = adv_buf.len as usize;
+                    unsafe { adv_buf.set_len(adv_buf.len().saturating_add(buffer.len())) };
+                    let total_len = adv_buf.len() as usize;
                     let mut slice_start: usize = 0;
 
-                    debug_assert!(adv_buf.len <= adv_buf.cap);
+                    debug_assert!(adv_buf.len() <= adv_buf.capacity());
                     // SAFETY: allocated_slice() yields `[MaybeUninit<u8>]`; we
                     // only inspect its address range here, never read its bytes.
                     debug_assert!(bun_core::is_slice_in_buffer(buffer, unsafe {
                         core::slice::from_raw_parts(
-                            adv_buf.ptr.as_ptr().cast::<u8>(),
-                            adv_buf.cap as usize,
+                            adv_buf.as_mut_ptr().cast::<u8>(),
+                            adv_buf.capacity() as usize,
                         )
                     }));
 
@@ -2252,12 +2251,12 @@ pub mod IPCHandlers {
                                 // copy the remaining bytes to the start of the buffer
                                 // SAFETY: src/dst may overlap; ptr::copy is memmove.
                                 unsafe {
-                                    let base = adv_buf.ptr.as_ptr();
+                                    let base = adv_buf.as_mut_ptr();
                                     core::ptr::copy(base.add(slice_start), base, slice_len);
                                 }
                                 // slice.len is guaranteed <= adv_buf.len (u32) since it's derived from adv_buf.slice()
                                 debug_assert!(slice_len <= u32::MAX as usize);
-                                adv_buf.len = u32::try_from(slice_len).unwrap();
+                                unsafe { adv_buf.set_len(slice_len) };
                                 log!("hit NotEnoughBytes3");
                                 return;
                             }
@@ -2287,7 +2286,7 @@ pub mod IPCHandlers {
                             else {
                                 unreachable!()
                             };
-                            adv_buf.len = 0;
+                            adv_buf.clear();
                             return;
                         }
                     }

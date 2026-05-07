@@ -3,6 +3,7 @@
 //! In the NodeId-arena port `IO` is a plain `Clone` value (the Zig version
 //! used intrusive refcounts on `IOReader`/`IOWriter`; here those are `Arc`).
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::fmt;
 
 use crate::shell::interpreter::{ByteList, OutputNeedsIOSafeGuard};

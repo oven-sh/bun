@@ -16,6 +16,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![feature(adt_const_params)]
 
+use bun_collections::VecExt;
 extern crate bun_string as bun_str;
 
 use core::ffi::c_void;
@@ -93,7 +94,7 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 // the JSC IdentifierArray bridge stay in tier-6 (bun_bundler_jsc) — deferred to Pass C.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod analyze_transpiled_module {
-    use bun_collections::{ArrayHashMap, HashMap};
+    use bun_collections::{ArrayHashMap, HashMap, VecExt};
 
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -7001,15 +7002,8 @@ pub fn print_json<W: WriterTrait>(
     // `printExpr(expr, ...)` directly without ever walking those parts. Rust
     // constructs the same empty inputs without round-tripping through `Ast`.
     let bump = bun_alloc::Arena::new();
-    // SAFETY: borrowed lists are empty / read-only and never freed (the
-    // resulting `Map` is moved into a `NoOpRenamer` whose drop is a no-op for
-    // borrowed BabyLists).
-    let list = unsafe { js_ast::ast::symbol::List::from_borrowed_slice_dangerous(&[]) };
-    let nested_list = unsafe {
-        js_ast::ast::symbol::NestedList::from_borrowed_slice_dangerous(core::slice::from_ref(&*list))
-    };
     let mut no_op = rename::NoOpRenamer::init(
-        js_ast::ast::symbol::Map::init_list(core::mem::ManuallyDrop::into_inner(nested_list)),
+        js_ast::ast::symbol::Map::init_list(vec![Vec::new()]),
         source,
     );
 

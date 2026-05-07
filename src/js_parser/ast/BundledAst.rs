@@ -6,6 +6,7 @@
 //!
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
+use bun_collections::VecExt;
 use std::io::Write as _;
 
 // TODO(b2-blocked): bun_css::BundlerStyleSheet — bun_css crate not a dep of js_parser (would back-edge T4→T4).

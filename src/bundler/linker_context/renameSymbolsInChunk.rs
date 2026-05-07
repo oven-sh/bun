@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use bun_js_parser::ast::bundled_ast::{BundledAstField as AstField, Flags as AstFlags};
@@ -74,7 +75,7 @@ pub fn rename_symbols_in_chunk(
     let make_symbols_view = || -> symbol::Map {
         unsafe {
             let inner = (*symbols_ptr).symbols_for_source.slice_mut();
-            symbol::Map { symbols_for_source: bun_collections::BabyList::from_bump_slice(inner) }
+            symbol::Map { symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe { <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(inner) }) }
         }
     };
 
@@ -96,7 +97,7 @@ pub fn rename_symbols_in_chunk(
         };
         let mut count: u32 = 0;
         for item in imports_from_other_chunks {
-            count += item.len;
+            count += item.len() as u32;
         }
 
         // PERF(port): Zig pre-set len and filled via slice writes; using push() here

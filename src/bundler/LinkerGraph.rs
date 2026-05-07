@@ -1,5 +1,5 @@
 use bun_alloc::Arena;
-use bun_collections::{AutoBitSet, BabyList, DynamicBitSetUnmanaged as BitSet, MultiArrayList};
+use bun_collections::{AutoBitSet, VecExt, DynamicBitSetUnmanaged as BitSet, MultiArrayList};
 use bun_js_parser as js_ast;
 use bun_js_parser::ast::base::RefTag;
 use bun_js_parser::ast::bundled_ast;
@@ -60,10 +60,10 @@ pub struct LinkerGraph {
     /// If you need to iterate over all files in the linking operation, iterate
     /// over this array. This array is also sorted in a deterministic ordering
     /// to help ensure deterministic builds (source indices are random).
-    pub reachable_files: BabyList<Index>,
+    pub reachable_files: Vec<Index>,
 
     /// Index from `.parse_graph.input_files` to index in `.files`
-    pub stable_source_indices: BabyList<u32>,
+    pub stable_source_indices: Vec<u32>,
 
     pub is_scb_bitset: BitSet,
 
@@ -103,8 +103,8 @@ impl LinkerGraph {
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
-            reachable_files: BabyList::default(),
-            stable_source_indices: BabyList::default(),
+            reachable_files: Vec::new(),
+            stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
             ts_enums: js_ast::ast::ast::TsEnumsMap::default(),
         })
@@ -124,8 +124,8 @@ impl Default for LinkerGraph {
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
-            reachable_files: BabyList::default(),
-            stable_source_indices: BabyList::default(),
+            reachable_files: Vec::new(),
+            stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
             ts_enums: js_ast::ast::ast::TsEnumsMap::default(),
         }
@@ -160,27 +160,26 @@ impl LinkerGraph {
         // The Rust `Ref` is a packed `u64` with no public `tag` field, so use
         // the `Ref::new` constructor that takes the tag explicitly.
         let ref_ = Ref::new(
-            source_symbols.len, // @truncate (u32 → u31 in pack())
+            source_symbols.len() as u32, // @truncate (u32 → u31 in pack())
             source_index,       // @truncate
             RefTag::Symbol,
         );
 
         // TODO: will this crash on resize due to using threadlocal mimalloc heap?
         source_symbols
-            .append(Symbol {
+            .push(Symbol {
                 kind,
                 // PORT NOTE: `Symbol.original_name` is a raw `*const [u8]` —
                 // arena-owned slice whose lifetime is erased (matches the Zig
                 // `[]const u8`); caller guarantees it outlives the symbol table.
                 original_name: original_name as *const [u8],
                 ..Default::default()
-            })
-            .unwrap_or_else(|_| bun_core::out_of_memory());
+            });
 
         self.ast.items_module_scope_mut()[source_index as usize]
             .generated
             .append(ref_)
-            .unwrap_or_else(|_| bun_core::out_of_memory());
+                ;
         ref_
     }
 
@@ -213,8 +212,8 @@ impl LinkerGraph {
 
     pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
         let parts: &mut part::List = &mut self.ast.items_parts_mut()[id as usize];
-        let part_id = parts.len; // @truncate (u32)
-        parts.append(part)?;
+        let part_id = parts.len() as u32; // @truncate (u32)
+        parts.push(part);
 
         // PORT NOTE: borrowck reshape. The Zig closure simultaneously holds
         //   * `&mut parts[part_id].declared_symbols`   (column `parts` of `ast`)
@@ -252,20 +251,14 @@ impl LinkerGraph {
                 if let Some(original_parts) =
                     ctx.graph.ast.items_top_level_symbols_to_parts()[id as usize].get(&ref_)
                 {
-                    let mut list = Vec::<u32>::with_capacity(original_parts.len as usize + 1);
-                    list.extend_from_slice(original_parts.slice());
-                    // PERF(port): was assume_capacity
+                    let mut list = original_parts.clone();
                     list.push(part_id);
-                    *entry.value_ptr = BabyList::move_from_list(list);
+                    *entry.value_ptr = list;
                 } else {
-                    *entry.value_ptr = BabyList::<u32>::from_slice(&[part_id])
-                        .unwrap_or_else(|_| bun_core::out_of_memory());
+                    *entry.value_ptr = vec![part_id];
                 }
             } else {
-                entry
-                    .value_ptr
-                    .append(part_id)
-                    .unwrap_or_else(|_| bun_core::out_of_memory());
+                entry.value_ptr.push(part_id);
             }
         });
 
@@ -611,12 +604,7 @@ impl LinkerGraph {
             // reinterpreting `[Index]` as `[u32]` is sound. The arena-allocated
             // slice is never freed individually (whole arena dropped with
             // `BundleV2`), so a borrowed `BabyList` is correct.
-            self.stable_source_indices = core::mem::ManuallyDrop::into_inner(unsafe {
-                BabyList::from_borrowed_slice_dangerous(core::slice::from_raw_parts(
-                    stable_source_indices.as_ptr().cast::<u32>(),
-                    stable_source_indices.len(),
-                ))
-            });
+            self.stable_source_indices = unsafe { core::slice::from_raw_parts(stable_source_indices.as_ptr().cast::<u32>(), stable_source_indices.len()) }.to_vec();
         }
 
         {
@@ -626,23 +614,17 @@ impl LinkerGraph {
             // derive (it carries a raw `*const [u8]`), so spell out the
             // bitwise copy explicitly — `Symbol` has no `Drop` impl.
             let src_symbols: &[symbol::List] = self.ast.items_symbols();
-            let mut symbols = symbol::NestedList::init_capacity(src_symbols.len())
-                .unwrap_or_else(|_| bun_core::out_of_memory());
+            let mut symbols: symbol::NestedList = Vec::with_capacity(src_symbols.len());
             for src in src_symbols {
-                let n = src.len as usize;
-                let mut dest = symbol::List::init_capacity(n)
-                    .unwrap_or_else(|_| bun_core::out_of_memory());
+                let n = src.len();
+                let mut dest: symbol::List = Vec::with_capacity(n);
                 // SAFETY: `dest` has capacity `n`; `src` is `n` initialized
                 // `Symbol`s; `Symbol` is bitwise-copyable (no `Drop`).
                 unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        src.ptr.as_ptr(),
-                        dest.ptr.as_ptr(),
-                        n,
-                    );
-                    dest.len = n as u32;
+                    core::ptr::copy_nonoverlapping(src.as_ptr(), dest.as_mut_ptr(), n);
+                    dest.set_len(n);
                 }
-                symbols.append_assume_capacity(dest);
+                symbols.push(dest);
             }
             self.symbols = symbol::Map::init_list(symbols);
         }
@@ -721,30 +703,11 @@ impl LinkerGraph {
         Ok(())
     }
 
-    /// Transfers ownership of the AST to the graph allocator.
-    ///
-    /// PORT NOTE: the Zig body calls `BabyList::transfer_ownership(heap)` with
-    /// a `MimallocArena::Borrowed` downcast of the graph allocator — purely
-    /// `CheckedAllocator` bookkeeping, since mimalloc can free across heaps.
-    /// In Rust the parser-side lists live in a `bumpalo::Bump` (see
-    /// `P::to_ast` → `from_bump_slice`), so `transfer_ownership` must actually
-    /// reallocate Borrowed buffers into the global heap before the linker
-    /// starts `append`ing to them. This walk is therefore unconditional, not
-    /// `SAFETY_CHECKS`-gated as in Zig.
-    pub fn take_ast_ownership(&mut self) {
-        for import_records in self.ast.items_import_records_mut().iter_mut() {
-            import_records.transfer_ownership();
-        }
-        for parts in self.ast.items_parts_mut().iter_mut() {
-            parts.transfer_ownership();
-            for part in parts.slice_mut().iter_mut() {
-                part.dependencies.transfer_ownership();
-            }
-        }
-        for symbols in self.ast.items_symbols_mut().iter_mut() {
-            symbols.transfer_ownership();
-        }
-    }
+    /// No-op: with `BabyList` replaced by `Vec` (cat-4, BABYLIST_REPLACEMENT.md),
+    /// the parser hands the linker globally-owned `Vec`s directly — there is
+    /// nothing to "transfer". Kept as an empty fn so the call site in
+    /// `LinkerGraph::load` stays diff-stable; delete once that caller drops it.
+    pub fn take_ast_ownership(&mut self) {}
 
     pub fn propagate_async_dependencies(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set

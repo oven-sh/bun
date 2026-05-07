@@ -6,7 +6,7 @@ use bun_threading::thread_pool as ThreadPoolLib;
 use crate::{BundleV2, Chunk, LinkerContext};
 
 #[cfg(feature = "css")]
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 #[cfg(feature = "css")]
 use crate::bun_css::{
     BundlerStyleSheet, ImportConditions, ImportInfo, LocalsResultsMap, PrinterOptions, Targets,
@@ -136,7 +136,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
         // can split the disjoint `CssChunk` struct fields (`imports_in_chunk_in_order`
         // vs `asts`) without raw pointers.
         let Content::Css(css_chunk) = &mut chunk.content else { unreachable!() };
-        let mut i: usize = css_chunk.imports_in_chunk_in_order.len as usize;
+        let mut i: usize = css_chunk.imports_in_chunk_in_order.len() as usize;
         while i != 0 {
             i -= 1;
             let entry = css_chunk.imports_in_chunk_in_order.mut_(i);
@@ -145,13 +145,13 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
             match &mut entry.kind {
                 CssImportOrderKind::Layers(layers) => {
                     let inner = layers.inner();
-                    let len = inner.len;
+                    let len = inner.len();
                     let mut rules = BundlerCssRuleList::default();
                     if len > 0 {
                         // PORT NOTE: Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
                         // is a bitwise BabyList→SmallList header transfer. In Rust the
                         // `Chunk::Layers` payload is the lifetime-erased shadow
-                        // `ungate_support::bun_css::LayerName { v: BabyList<Box<[u8]>> }`,
+                        // `ungate_support::bun_css::LayerName { v: Vec<Box<[u8]>> }`,
                         // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
                         // so the layouts differ. Rebuild the real list element-by-element;
                         // segments are arena-owned (`'bump`-laundered to `'static`) so the
@@ -194,9 +194,9 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     // the duration, aliasing those reads. The pointer is not actually
                     // dereferenced until after the loop (.zig:119), so defer acquiring
                     // the index-0 borrow until `actual_conditions` is built below.
-                    let had_conditions = entry.conditions.len > 0;
+                    let had_conditions = entry.conditions.len() > 0;
                     if had_conditions {
-                        bun_core::handle_oom(entry.condition_import_records.append(
+                        entry.condition_import_records.push(
                             ImportRecord {
                                 kind: ImportKind::At,
                                 path: import_record_path_from_fs(p),
@@ -208,7 +208,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 original_path: b"",
                                 flags: ImportRecordFlags::default(),
                             },
-                        ));
+                        );
 
                         // Handling a chain of nested conditions is complicated. We can't
                         // necessarily join them together because a) there may be multiple
@@ -218,7 +218,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         // Instead we handle them by preserving the "@import" nesting using
                         // imports of data URL stylesheets. This may seem strange but I think
                         // this is the only way to do this in CSS.
-                        let mut j: usize = entry.conditions.len as usize;
+                        let mut j: usize = entry.conditions.len() as usize;
                         while j != 1 {
                             j -= 1;
 
@@ -231,7 +231,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                     let mut rules = BundlerCssRuleList::default();
                                     let mut import_rule = ImportRule {
                                         url: p.pretty,
-                                        import_record_idx: entry.condition_import_records.len,
+                                        import_record_idx: entry.condition_import_records.len() as u32,
                                         loc: Location::dummy(),
                                         ..Default::default()
                                     };
@@ -327,7 +327,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         &mut empty_conditions
                     };
 
-                    bun_core::handle_oom(entry.condition_import_records.append(ImportRecord {
+                    entry.condition_import_records.push(ImportRecord {
                         kind: ImportKind::At,
                         path: import_record_path_from_fs(p),
                         range: Range::NONE,
@@ -337,14 +337,14 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         module_id: 0,
                         original_path: b"",
                         flags: ImportRecordFlags::default(),
-                    }));
+                    });
 
                     css_chunk.asts[i] = BundlerStyleSheet {
                         rules: 'rules: {
                             let mut rules = BundlerCssRuleList::default();
                             let mut import_rule = ImportRule::from_url_and_import_record_idx(
                                 p.pretty,
-                                entry.condition_import_records.len,
+                                entry.condition_import_records.len() as u32,
                             );
                             // SAFETY: Zig `actual_conditions.*` — shallow struct copy.
                             *import_rule.conditions_mut() =
@@ -476,11 +476,11 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
 fn wrap_rules_with_conditions(
     ast: &mut BundlerStyleSheet,
     temp_bump: &Bump,
-    conditions: &BabyList<ImportConditions>,
+    conditions: &Vec<ImportConditions>,
 ) {
-    let mut dummy_import_records: BabyList<ImportRecord> = BabyList::default();
+    let mut dummy_import_records: Vec<ImportRecord> = Vec::new();
 
-    let mut i: usize = conditions.len as usize;
+    let mut i: usize = conditions.len() as usize;
     while i > 0 {
         i -= 1;
         let item = conditions.at(i);
@@ -562,7 +562,7 @@ fn wrap_rules_with_conditions(
         }
     }
 
-    debug_assert!(dummy_import_records.len == 0);
+    debug_assert!(dummy_import_records.len() == 0);
 }
 
 pub use crate::DeferredBatchTask;

@@ -968,16 +968,433 @@ impl<T: fmt::Debug> fmt::Display for BabyList<T> {
     }
 }
 
-pub type ByteList = BabyList<u8>;
+// ──────────────────────────────────────────────────────────────────────────
+// `VecExt` — BabyList-compat method names on `Vec<T>`.
+//
+// Migration shim (see `docs/BABYLIST_REPLACEMENT.md`): every cat-3/cat-4
+// `BabyList<T>` site becomes a plain `Vec<T>`, and this trait supplies the
+// Zig-ported method vocabulary (`.slice()`, `.append()`, `.init_capacity()`, …)
+// so call sites need only a type-level rewrite.  Method signatures preserve the
+// `Result<_, AllocError>` shape so `?`/`handle_oom` callers compile unchanged;
+// internally `Vec` aborts on OOM, so the `Err` arm is effectively dead.
+//
+// NOTE: `.first()`/`.last()`/`.insert()`/`.contains()`/`.clone()` are
+// intentionally *not* provided — they collide with `Vec`/slice inherent methods
+// whose return types differ.  Call sites that relied on the BabyList variants
+// (`first()->Option<&mut T>`, `clone()->Result<Self,_>`) are patched at the
+// call site to `.first_mut()` / `.to_vec()` etc.
+// ──────────────────────────────────────────────────────────────────────────
 
-/// `ByteList` is the canonical pooled scratch buffer (`ObjectPool<ByteList, ..>`
-/// in Zig). `INIT` allocates an empty list; `reset` truncates to len=0 while
-/// keeping capacity so the next user reuses the buffer.
-impl crate::pool::ObjectPoolType for ByteList {
-    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(ByteList::default()));
+pub trait VecExt<T>: Sized {
+    // ── constructors ──────────────────────────────────────────────────────
+    fn init_capacity(n: usize) -> Result<Self, AllocError>;
+    fn init_one(value: T) -> Result<Self, AllocError>;
+    fn from_slice(items: &[T]) -> Result<Self, AllocError>
+    where
+        T: Clone;
+    fn move_from_list(list: Vec<T>) -> Self;
+    fn from_owned_slice(items: Box<[T]>) -> Self;
+    /// Arena-builder → owned `Vec<T>`.  In Zig this was zero-copy (arena ptr
+    /// adopted as `Borrowed`); in the Rust port the linker always called
+    /// `transfer_ownership` afterwards (full copy), so doing the copy up-front
+    /// here is no worse and lets the arena round-trip disappear.
+    fn from_bump_slice(items: &mut [T]) -> Self;
+    /// Arena pre-reservation: `Vec` cannot allocate from a bump arena, so this
+    /// becomes a global-allocator `with_capacity`.  The arena is ignored.
+    fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self;
+    /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
+    /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
+    /// Kept only for the `StreamResult::Temporary*` pattern; new code should
+    /// take `&[T]` instead.
+    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self>;
+
+    // ── accessors ─────────────────────────────────────────────────────────
+    fn slice(&self) -> &[T];
+    fn slice_mut(&mut self) -> &mut [T];
+    fn slice_const(&self) -> &[T];
+    fn at(&self, index: usize) -> &T;
+    fn mut_(&mut self, index: usize) -> &mut T;
+    /// `.len` field access (BabyList stored a `u32`); kept for sites that did
+    /// arithmetic on the raw `u32`.
+    fn len_u32(&self) -> u32;
+    fn cap_u32(&self) -> u32;
+
+    // ── mutation ──────────────────────────────────────────────────────────
+    fn append(&mut self, value: T) -> Result<(), AllocError>;
+    fn append_assume_capacity(&mut self, value: T);
+    fn append_slice(&mut self, vals: &[T]) -> Result<(), AllocError>
+    where
+        T: Clone;
+    fn append_slice_assume_capacity(&mut self, vals: &[T])
+    where
+        T: Copy;
+    fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError>;
+    fn ensure_total_capacity_precise(&mut self, n: usize) -> Result<(), AllocError>;
+    fn ensure_unused_capacity(&mut self, n: usize) -> Result<(), AllocError>;
+    fn shrink_retaining_capacity(&mut self, new_len: usize);
+    fn shrink_and_free(&mut self, new_len: usize);
+    fn clear_retaining_capacity(&mut self);
+    fn clear_and_free(&mut self);
+    fn ordered_remove(&mut self, index: usize) -> T;
+    fn insert_slice(&mut self, index: usize, vals: &[T]) -> Result<(), AllocError>
+    where
+        T: Clone;
+    fn replace_range(
+        &mut self,
+        start: usize,
+        len: usize,
+        new_items: &[T],
+    ) -> Result<(), AllocError>
+    where
+        T: Clone;
+    fn expand_to_capacity(&mut self);
+    fn writable_slice(&mut self, additional: usize) -> Result<&mut [T], AllocError>;
+
+    // ── ownership transfer ────────────────────────────────────────────────
+    fn move_to_list(&mut self) -> Vec<T>;
+    fn move_to_list_managed(&mut self) -> Vec<T>;
+    fn to_owned_slice(&mut self) -> Result<Box<[T]>, AllocError>;
+    /// No-op for `Vec` — already globally owned.  Kept so cat-4 call sites
+    /// (`LinkerGraph::load`) compile during incremental migration; delete once
+    /// all callers are gone.
+    #[inline]
+    fn transfer_ownership(&mut self) {}
+    /// Non-owning header alias.  For `Vec` this is `from_raw_parts` into a
+    /// `ManuallyDrop` — same UB-if-dropped contract as before.
+    fn shallow_copy(&self) -> ManuallyDrop<Self>;
+    fn shallow_clone(&self) -> ManuallyDrop<Self>;
+
+    // ── misc ──────────────────────────────────────────────────────────────
+    fn unused_capacity_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>];
+    fn allocated_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>];
+    fn memory_cost(&self) -> usize;
+    fn sort_asc(&mut self)
+    where
+        T: AsRef<[u8]>;
+    fn deep_clone_with<F>(&self, clone_one: F) -> Self
+    where
+        F: FnMut(&T) -> T;
+    fn try_deep_clone_with<F, E>(&self, clone_one: F) -> Result<Self, E>
+    where
+        F: FnMut(&T) -> Result<T, E>,
+        E: From<AllocError>;
+    fn deep_clone_fallible(&self) -> Result<Self, bun_core::Error>
+    where
+        T: DeepClone;
+    fn deep_clone_infallible(&self) -> Self
+    where
+        T: DeepClone;
+}
+
+impl<T> VecExt<T> for Vec<T> {
+    #[inline]
+    fn init_capacity(n: usize) -> Result<Self, AllocError> {
+        Ok(Vec::with_capacity(n))
+    }
+    #[inline]
+    fn init_one(value: T) -> Result<Self, AllocError> {
+        Ok(vec![value])
+    }
+    #[inline]
+    fn from_slice(items: &[T]) -> Result<Self, AllocError>
+    where
+        T: Clone,
+    {
+        Ok(items.to_vec())
+    }
+    #[inline]
+    fn move_from_list(list: Vec<T>) -> Self {
+        list
+    }
+    #[inline]
+    fn from_owned_slice(items: Box<[T]>) -> Self {
+        items.into_vec()
+    }
+    #[inline]
+    fn from_bump_slice(items: &mut [T]) -> Self {
+        // SAFETY: `items` is a leaked bump-arena slice (`into_bump_slice_mut`);
+        // bitwise-move elements into a fresh global allocation, leaving the
+        // arena bytes abandoned (they were already leaked into the bump).
+        let mut v = Vec::with_capacity(items.len());
+        unsafe {
+            core::ptr::copy_nonoverlapping(items.as_ptr(), v.as_mut_ptr(), items.len());
+            v.set_len(items.len());
+        }
+        v
+    }
+    #[inline]
+    fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self {
+        Vec::with_capacity(cap)
+    }
+    #[inline]
+    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
+        // SAFETY: caller must never drop or grow the returned `Vec` — its
+        // buffer is borrowed.  Same contract as the BabyList original.
+        ManuallyDrop::new(unsafe {
+            Vec::from_raw_parts(items.as_ptr() as *mut T, items.len(), items.len())
+        })
+    }
+
+    #[inline]
+    fn slice(&self) -> &[T] {
+        self.as_slice()
+    }
+    #[inline]
+    fn slice_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+    #[inline]
+    fn slice_const(&self) -> &[T] {
+        self.as_slice()
+    }
+    #[inline]
+    fn at(&self, index: usize) -> &T {
+        &self[index]
+    }
+    #[inline]
+    fn mut_(&mut self, index: usize) -> &mut T {
+        &mut self[index]
+    }
+    #[inline]
+    fn len_u32(&self) -> u32 {
+        self.len() as u32
+    }
+    #[inline]
+    fn cap_u32(&self) -> u32 {
+        self.capacity() as u32
+    }
+
+    #[inline]
+    fn append(&mut self, value: T) -> Result<(), AllocError> {
+        self.push(value);
+        Ok(())
+    }
+    #[inline]
+    fn append_assume_capacity(&mut self, value: T) {
+        debug_assert!(self.len() < self.capacity());
+        self.push(value);
+    }
+    #[inline]
+    fn append_slice(&mut self, vals: &[T]) -> Result<(), AllocError>
+    where
+        T: Clone,
+    {
+        self.extend_from_slice(vals);
+        Ok(())
+    }
+    #[inline]
+    fn append_slice_assume_capacity(&mut self, vals: &[T])
+    where
+        T: Copy,
+    {
+        self.extend_from_slice(vals);
+    }
+    #[inline]
+    fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
+        let need = n.saturating_sub(self.len());
+        self.reserve(need);
+        Ok(())
+    }
+    #[inline]
+    fn ensure_total_capacity_precise(&mut self, n: usize) -> Result<(), AllocError> {
+        let need = n.saturating_sub(self.len());
+        self.reserve_exact(need);
+        Ok(())
+    }
+    #[inline]
+    fn ensure_unused_capacity(&mut self, n: usize) -> Result<(), AllocError> {
+        self.reserve(n);
+        Ok(())
+    }
+    #[inline]
+    fn shrink_retaining_capacity(&mut self, new_len: usize) {
+        self.truncate(new_len);
+    }
+    #[inline]
+    fn shrink_and_free(&mut self, new_len: usize) {
+        self.truncate(new_len);
+        self.shrink_to_fit();
+    }
+    #[inline]
+    fn clear_retaining_capacity(&mut self) {
+        self.clear();
+    }
+    #[inline]
+    fn clear_and_free(&mut self) {
+        *self = Vec::new();
+    }
+    #[inline]
+    fn ordered_remove(&mut self, index: usize) -> T {
+        self.remove(index)
+    }
+    #[inline]
+    fn insert_slice(&mut self, index: usize, vals: &[T]) -> Result<(), AllocError>
+    where
+        T: Clone,
+    {
+        self.splice(index..index, vals.iter().cloned());
+        Ok(())
+    }
+    #[inline]
+    fn replace_range(
+        &mut self,
+        start: usize,
+        len: usize,
+        new_items: &[T],
+    ) -> Result<(), AllocError>
+    where
+        T: Clone,
+    {
+        self.splice(start..start + len, new_items.iter().cloned());
+        Ok(())
+    }
+    #[inline]
+    fn expand_to_capacity(&mut self) {
+        // SAFETY: matches Zig semantics — exposes uninit tail as initialized.
+        // Callers immediately overwrite every element.
+        unsafe { self.set_len(self.capacity()) };
+    }
+    fn writable_slice(&mut self, additional: usize) -> Result<&mut [T], AllocError> {
+        self.reserve(additional);
+        let prev = self.len();
+        // SAFETY: capacity reserved; tail is treated as write-only by callers.
+        unsafe { self.set_len(prev + additional) };
+        Ok(&mut self[prev..])
+    }
+
+    #[inline]
+    fn move_to_list(&mut self) -> Vec<T> {
+        core::mem::take(self)
+    }
+    #[inline]
+    fn move_to_list_managed(&mut self) -> Vec<T> {
+        core::mem::take(self)
+    }
+    #[inline]
+    fn to_owned_slice(&mut self) -> Result<Box<[T]>, AllocError> {
+        Ok(core::mem::take(self).into_boxed_slice())
+    }
+    #[inline]
+    fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        // SAFETY: caller must not drop/grow the alias; original stays the owner.
+        ManuallyDrop::new(unsafe {
+            Vec::from_raw_parts(self.as_ptr() as *mut T, self.len(), self.capacity())
+        })
+    }
+    #[inline]
+    fn shallow_clone(&self) -> ManuallyDrop<Self> {
+        self.shallow_copy()
+    }
+
+    #[inline]
+    fn unused_capacity_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>] {
+        self.spare_capacity_mut()
+    }
+    #[inline]
+    fn allocated_slice(&mut self) -> &mut [core::mem::MaybeUninit<T>] {
+        // SAFETY: ptr[0..cap] is the full allocation.
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.as_mut_ptr() as *mut core::mem::MaybeUninit<T>,
+                self.capacity(),
+            )
+        }
+    }
+    #[inline]
+    fn memory_cost(&self) -> usize {
+        self.capacity() * core::mem::size_of::<T>()
+    }
+    #[inline]
+    fn sort_asc(&mut self)
+    where
+        T: AsRef<[u8]>,
+    {
+        self.sort_unstable_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    }
+    fn deep_clone_with<F>(&self, clone_one: F) -> Self
+    where
+        F: FnMut(&T) -> T,
+    {
+        self.iter().map(clone_one).collect()
+    }
+    fn try_deep_clone_with<F, E>(&self, clone_one: F) -> Result<Self, E>
+    where
+        F: FnMut(&T) -> Result<T, E>,
+        E: From<AllocError>,
+    {
+        self.iter().map(clone_one).collect()
+    }
+    fn deep_clone_fallible(&self) -> Result<Self, bun_core::Error>
+    where
+        T: DeepClone,
+    {
+        self.iter().map(|x| x.deep_clone()).collect()
+    }
+    fn deep_clone_infallible(&self) -> Self
+    where
+        T: DeepClone,
+    {
+        self.deep_clone_fallible().expect("OutOfMemory")
+    }
+}
+
+/// `BabyList<u8>`-only helpers, re-expressed for `Vec<u8>`.
+pub trait ByteVecExt {
+    fn append_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), AllocError>;
+    fn write(&mut self, str: &[u8]) -> Result<u32, AllocError>;
+    fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError>;
+    fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
+    fn write_type_as_bytes_assume_capacity<Int: Copy>(&mut self, int: Int);
+}
+
+impl ByteVecExt for Vec<u8> {
+    fn append_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), AllocError> {
+        use std::io::Write;
+        write!(self, "{}", args).map_err(|_| AllocError)
+    }
+    fn write(&mut self, str: &[u8]) -> Result<u32, AllocError> {
+        let initial = self.len();
+        self.extend_from_slice(str);
+        Ok((self.len() - initial) as u32)
+    }
+    fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError> {
+        let initial = self.len();
+        let old = core::mem::take(self);
+        let old_len = old.len();
+        *self = strings::allocate_latin1_into_utf8_with_list(old, old_len, str);
+        Ok((self.len() - initial) as u32)
+    }
+    fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError> {
+        let initial = self.len();
+        let estimate = if (self.capacity() - self.len()) <= (str.len() * 3 + 2) {
+            bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(str)
+        } else {
+            str.len()
+        };
+        self.reserve(estimate);
+        strings::convert_utf16_to_utf8_append(self, str);
+        Ok((self.len() - initial) as u32)
+    }
+    fn write_type_as_bytes_assume_capacity<Int: Copy>(&mut self, int: Int) {
+        let size = core::mem::size_of::<Int>();
+        debug_assert!(self.capacity() >= self.len() + size);
+        let prev = self.len();
+        // SAFETY: capacity asserted; writing `size` bytes into the uninit tail.
+        unsafe {
+            (self.as_mut_ptr().add(prev) as *mut Int).write_unaligned(int);
+            self.set_len(prev + size);
+        }
+    }
+}
+
+/// `bun.ByteList` — now a plain `Vec<u8>` (see BABYLIST_REPLACEMENT.md cat-3).
+pub type ByteList = Vec<u8>;
+
+impl crate::pool::ObjectPoolType for Vec<u8> {
+    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Vec::new()));
     #[inline]
     fn reset(&mut self) {
-        self.clear_retaining_capacity();
+        self.clear();
     }
 }
 
@@ -993,37 +1410,34 @@ impl OffsetByteList {
     }
 
     pub fn write(&mut self, bytes: &[u8]) -> Result<(), AllocError> {
-        // TODO(port): narrow error set
-        let _ = self.byte_list.write(bytes)?;
+        self.byte_list.extend_from_slice(bytes);
         Ok(())
     }
 
     pub fn slice(&self) -> &[u8] {
-        &self.byte_list.slice()[0..self.head as usize]
+        &self.byte_list[..self.head as usize]
     }
 
     pub fn remaining(&self) -> &[u8] {
-        &self.byte_list.slice()[self.head as usize..]
+        &self.byte_list[self.head as usize..]
     }
 
     pub fn consume(&mut self, bytes: u32) {
         self.head = self.head.saturating_add(bytes);
-        if self.head >= self.byte_list.len {
+        if self.head as usize >= self.byte_list.len() {
             self.head = 0;
-            self.byte_list.len = 0;
+            self.byte_list.clear();
         }
     }
 
     pub fn len(&self) -> u32 {
-        self.byte_list.len - self.head
+        self.byte_list.len() as u32 - self.head
     }
 
     pub fn clear(&mut self) {
         self.head = 0;
-        self.byte_list.len = 0;
+        self.byte_list.clear();
     }
-
-    // PORT NOTE: `deinit` → handled by `impl Drop for ByteList` on the `byte_list` field.
 
     pub fn clear_and_free(&mut self) {
         *self = Self::default();

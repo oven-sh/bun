@@ -10,7 +10,7 @@ use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::{self, declare_scope, scoped_log, err, Error as AnyError, FeatureFlags};
 use bun_logger::{self as logger, Loc, Location, Log, Msg, Source};
 use bun_options_types::ImportRecord;
@@ -668,8 +668,8 @@ pub struct FileLoaderHash {
 // CSS Symbol bridge — `bun_logger::Symbol` ↔ `bun_js_parser::Symbol`
 //
 // Both port the same Zig `js_ast.Symbol` (Symbol.zig). Under
-// `feature = "css"` `StylesheetExtra.symbols` is `BabyList<bun_logger::Symbol>`;
-// `new_lazy_export_ast_impl` takes `BabyList<bun_js_parser::Symbol>`. Convert
+// `feature = "css"` `StylesheetExtra.symbols` is `Vec<bun_logger::Symbol>`;
+// `new_lazy_export_ast_impl` takes `Vec<bun_js_parser::Symbol>`. Convert
 // field-by-field so CSS-module local refs (`ref.inner_index()`) index a
 // populated symbol table (.zig:613). Under no-css the shim already yields the
 // parser type, so this is the identity.
@@ -677,10 +677,10 @@ pub struct FileLoaderHash {
 
 #[cfg(feature = "css")]
 fn css_symbols_to_parser_symbols(
-    src: BabyList<bun_logger::Symbol>,
+    src: Vec<bun_logger::Symbol>,
 ) -> bun_js_parser::ast::symbol::List {
     use bun_js_parser::ast::symbol::{Kind as PKind, Symbol as PSym};
-    let mut out = bun_core::handle_oom(BabyList::<PSym>::init_capacity(src.len as usize));
+    let mut out = bun_core::handle_oom(Vec::<PSym>::init_capacity(src.len() as usize));
     for s in src.slice() {
         // SAFETY: both `Kind`/`ImportItemStatus` are `#[repr(u8)]` ports of the
         // same Zig enums (Symbol.zig:192, ImportItemStatus); discriminants are
@@ -719,7 +719,7 @@ fn css_symbols_to_parser_symbols(
 #[cfg(not(feature = "css"))]
 #[inline(always)]
 fn css_symbols_to_parser_symbols(
-    src: BabyList<bun_js_parser::ast::symbol::Symbol>,
+    src: Vec<bun_js_parser::ast::symbol::Symbol>,
 ) -> bun_js_parser::ast::symbol::List {
     src
 }
@@ -971,7 +971,7 @@ fn get_ast(
                 E::Call {
                     target: require_property,
                     // SAFETY: bump-owned slice; never grown via this BabyList.
-                    args: unsafe { BabyList::<Expr>::from_bump_slice(require_args) },
+                    args: unsafe { bun_collections::BabyList::<Expr>::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -1031,7 +1031,7 @@ fn get_ast(
                         loc: Loc { start: 0 },
                     },
                     // SAFETY: bump-owned slice; never grown via this BabyList.
-                    args: unsafe { BabyList::<Expr>::from_bump_slice(require_args) },
+                    args: unsafe { bun_collections::BabyList::<Expr>::from_bump_slice(require_args) },
                     ..Default::default()
                 },
                 Loc { start: 0 },
@@ -1058,7 +1058,7 @@ fn get_ast(
             // Reuse existing code for creating the AST
             // because it handles the various Ref and other structs we
             // need in order to print code later.
-            let import_records_len = import_records.len;
+            let import_records_len = import_records.len();
             let output_format = opts.output_format;
             let mut ast = js_parser::new_lazy_export_ast(
                 bump,
@@ -1092,8 +1092,8 @@ fn get_ast(
                     // Generate a single part that depends on all the import records.
                     // This is to ensure that we generate a JavaScript bundle containing all the user's code.
                     let mut import_record_indices =
-                        BabyList::<u32>::init_capacity(import_records_len as usize)?;
-                    import_record_indices.len = import_records_len;
+                        Vec::<u32>::init_capacity(import_records_len as usize)?;
+                    unsafe { import_record_indices.set_len((import_records_len) as usize) };
                     for (index, import_record) in import_record_indices.slice_mut().iter_mut().enumerate() {
                         *import_record = u32::try_from(index).unwrap();
                     }
@@ -1113,7 +1113,7 @@ fn get_ast(
         }
         Loader::Css => {
             // make css ast
-            let mut import_records = BabyList::<ImportRecord>::default();
+            let mut import_records = Vec::<ImportRecord>::default();
             let source_code = &source.contents;
             let mut temp_log = Log::init();
             // PORT NOTE: Zig `defer { temp_log.appendToMaybeRecycled(log, source) }` —
@@ -1168,7 +1168,7 @@ fn get_ast(
             #[cfg(all(debug_assertions, feature = "css"))]
             if css_ast.local_scope.count() > 0 {
                 for entry in css_ast.local_scope.values() {
-                    debug_assert!(entry.ref_.inner_index() < extra.symbols.len);
+                    debug_assert!(entry.ref_.inner_index() < extra.symbols.len() as u32);
                 }
             }
             if let Err(e) = css_ast.minify(
@@ -1194,8 +1194,8 @@ fn get_ast(
             let root = Expr::init(E::Object::default(), Loc { start: 0 });
             let css_ast_heap = bump.alloc(css_ast) as *mut _ as *mut c_void;
             // PORT NOTE: under `feature = "css"` `StylesheetExtra.symbols` is
-            // `BabyList<bun_logger::Symbol>`; `new_lazy_export_ast_impl` takes
-            // `BabyList<bun_js_parser::Symbol>`. Both port the same Zig
+            // `Vec<bun_logger::Symbol>`; `new_lazy_export_ast_impl` takes
+            // `Vec<bun_js_parser::Symbol>`. Both port the same Zig
             // `js_ast.Symbol`; convert field-by-field so CSS-module local refs
             // index a populated symbol table (.zig:613).
             let symbols = css_symbols_to_parser_symbols(extra.symbols);
@@ -2496,7 +2496,7 @@ fn run_with_source_code(
     };
 
     ast.target = target;
-    if ast.parts.len <= 1
+    if ast.parts.len() <= 1
         && ast.css.is_none()
         && (task.loader.is_none() || task.loader.unwrap() != Loader::Html)
     {

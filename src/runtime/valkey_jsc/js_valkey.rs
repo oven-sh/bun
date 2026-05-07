@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::mem::offset_of;
 use core::ptr::NonNull;
@@ -1680,8 +1681,8 @@ impl JSValkeyClient {
         let mut memory_cost: usize = core::mem::size_of::<JSValkeyClient>();
 
         // Add size of all internal buffers
-        memory_cost += self.client.write_buffer.byte_list.cap as usize;
-        memory_cost += self.client.read_buffer.byte_list.cap as usize;
+        memory_cost += self.client.write_buffer.byte_list.capacity() as usize;
+        memory_cost += self.client.read_buffer.byte_list.capacity() as usize;
 
         // Add queue sizes
         memory_cost += self.client.in_flight.readable_length()

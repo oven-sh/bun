@@ -14,7 +14,7 @@
 use core::cmp::Ordering;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 // Zig `std.hash.Wyhash` (iterative) → `bun_wyhash::Wyhash` (the final4 variant
 // matching upstream `std.hash.Wyhash`; NOT `Wyhash11`, which is a legacy v0.11
 // variant kept only for on-disk lockfile compat — different digest).
@@ -122,7 +122,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
     }
 }
 
-impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for BabyList<T> {
+impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Vec<T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
         // `BabyList::deep_clone_with` takes a per-element closure so the arena
@@ -174,17 +174,6 @@ impl<'bump> DeepClone<'bump> for &'bump str {
     }
 }
 
-impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Vec<T> {
-    #[inline]
-    fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // PERF(port): Zig fast-paths simple-copy types with @memcpy — profile in Phase B.
-        let mut out = Vec::with_capacity(self.len());
-        for item in self.iter() {
-            out.push(item.deep_clone(bump));
-        }
-        out
-    }
-}
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Box<T> {
     #[inline]
@@ -289,7 +278,7 @@ impl<'bump, T: CssEql> CssEql for ArrayList<'bump, T> {
     }
 }
 
-impl<T: CssEql> CssEql for BabyList<T> {
+impl<T: CssEql> CssEql for Vec<T> {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
         self.slice_const().eql(other.slice_const())
@@ -341,12 +330,6 @@ impl<T: CssEql, const N: usize> CssEql for [T; N] {
     }
 }
 
-impl<T: CssEql> CssEql for Vec<T> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.as_slice().eql(other.as_slice())
-    }
-}
 
 impl<T: CssEql + ?Sized> CssEql for Box<T> {
     #[inline]
@@ -675,7 +658,7 @@ mod inherent_bridge {
     );
     bridge_deep_clone!(FontFamily);
     bridge_eql_partialeq!(FontFamily);
-    // `Font` carries a `BabyList<FontFamily>` so derives don't apply — field-wise impl.
+    // `Font` carries a `Vec<FontFamily>` so derives don't apply — field-wise impl.
     impl<'bump> DeepClone<'bump> for Font {
         fn deep_clone(&self, bump: &'bump Arena) -> Self {
             Font {
@@ -875,7 +858,7 @@ pub fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash)
     }
 }
 
-pub fn hash_baby_list<V: CssHash>(this: &BabyList<V>, hasher: &mut Wyhash) {
+pub fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
     for item in this.slice_const() {
         item.hash(hasher);
     }
@@ -940,7 +923,7 @@ impl<'bump, T: CssHash> CssHash for ArrayList<'bump, T> {
     }
 }
 
-impl<T: CssHash> CssHash for BabyList<T> {
+impl<T: CssHash> CssHash for Vec<T> {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
         hash_baby_list(self, hasher)
@@ -991,14 +974,6 @@ impl CssHash for str {
     }
 }
 
-impl<T: CssHash> CssHash for Vec<T> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        for item in self.iter() {
-            item.hash(hasher);
-        }
-    }
-}
 
 impl<T: CssHash + ?Sized> CssHash for Box<T> {
     #[inline]
@@ -1042,7 +1017,7 @@ impl<'bump, T> ListContainer for ArrayList<'bump, T> {
         self.as_slice()
     }
 }
-impl<T> ListContainer for BabyList<T> {
+impl<T> ListContainer for Vec<T> {
     type Item = T;
     #[inline]
     fn slice(&self) -> &[T] {
@@ -1154,7 +1129,6 @@ macro_rules! is_compatible_container {
 }
 is_compatible_container!(
     ('bump, T) ArrayList<'bump, T>,
-    (T) BabyList<T>,
     (T, const N: usize) SmallList<T, N>,
 );
 
@@ -1264,18 +1238,6 @@ impl<T: Parse, const N: usize> ParseWithOptions for SmallList<T, N> {
     }
 }
 
-impl<T: Parse> Parse for BabyList<T> {
-    #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
-        input.parse_comma_separated(T::parse).map(BabyList::move_from_list)
-    }
-}
-impl<T: Parse> ParseWithOptions for BabyList<T> {
-    #[inline]
-    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
-        <Self as Parse>::parse(input)
-    }
-}
 
 impl<T: Parse + Clone + PartialEq> Parse for Size2D<T> {
     #[inline]
@@ -1398,12 +1360,6 @@ impl<T: ToCss, const N: usize> ToCss for SmallList<T, N> {
     }
 }
 
-impl<T: ToCss> ToCss for BabyList<T> {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::to_css::from_list(self.slice(), dest)
-    }
-}
 
 impl<T: ToCss + Clone + PartialEq> ToCss for Size2D<T> {
     #[inline]

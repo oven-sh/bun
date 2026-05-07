@@ -14,6 +14,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena → bumpalo::Bump
+use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, env_var, FeatureFlags, output as Output};
 use bun_logger as Logger;

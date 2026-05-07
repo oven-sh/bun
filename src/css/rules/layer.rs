@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_alloc::Arena;
-use bun_collections::{ArrayHashMap, BabyList};
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_options_types::ImportRecord;
 
 use crate as css;
@@ -54,7 +54,7 @@ impl LayerName {
     pub fn clone_with_import_records(
         &self,
         _bump: &Arena,
-        _: &mut BabyList<ImportRecord>,
+        _: &mut Vec<ImportRecord>,
     ) -> Self {
         // `[]const u8` segments are arena-borrowed, not owned, so the Zig
         // `deepClone` here was a shallow `SmallList` copy. No import records to

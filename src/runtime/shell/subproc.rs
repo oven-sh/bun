@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 // const IPC = @import("../jsc/ipc.zig");
 
 use core::ffi::{c_char, c_void};
@@ -1473,7 +1474,7 @@ impl BufferedOutput {
     #[inline]
     pub fn len(&self) -> usize {
         match self {
-            BufferedOutput::Bytelist(b) => b.len as usize,
+            BufferedOutput::Bytelist(b) => b.len() as usize,
             BufferedOutput::ArrayBuffer { i, .. } => *i as usize,
         }
     }

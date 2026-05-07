@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::zstr;
 use bun_threading::{Mutex, UnboundedQueue};
 
@@ -345,7 +345,7 @@ pub struct FSEventsLoop {
     sem: Semaphore,
     pub thread: Option<std::thread::JoinHandle<()>>,
     pub tasks: UnboundedQueue<ConcurrentTask>,
-    pub watchers: BabyList<Option<NonNull<FSEventsWatcher>>>,
+    pub watchers: Vec<Option<NonNull<FSEventsWatcher>>>,
     pub watcher_count: u32,
     pub fsevent_stream: FSEventStreamRef,
     pub paths: Option<Box<[*mut c_void]>>,
@@ -473,7 +473,7 @@ impl FSEventsLoop {
             sem: Semaphore::default(),
             thread: None,
             tasks: UnboundedQueue::default(),
-            watchers: BabyList::default(),
+            watchers: Vec::new(),
             watcher_count: 0,
             fsevent_stream: ptr::null_mut(),
             paths: None,
@@ -766,9 +766,9 @@ impl FSEventsLoop {
     fn register_watcher(&mut self, watcher: *mut FSEventsWatcher) {
         {
             let _guard = self.mutex.lock();
-            if self.watcher_count == self.watchers.len {
+            if self.watcher_count as usize == self.watchers.len() {
                 self.watcher_count += 1;
-                bun_core::handle_oom(self.watchers.append(NonNull::new(watcher)));
+                self.watchers.push(NonNull::new(watcher));
             } else {
                 let watchers = self.watchers.slice_mut();
                 for (i, w) in watchers.iter_mut().enumerate() {
@@ -798,7 +798,7 @@ impl FSEventsLoop {
         {
             let _guard = self.mutex.lock();
             // PORT NOTE: reshaped for borrowck — capture len before mutable iteration
-            let len = self.watchers.len as usize;
+            let len = self.watchers.len() as usize;
             let watchers = self.watchers.slice_mut();
             for i in 0..len {
                 if let Some(item) = watchers[i] {
@@ -806,7 +806,7 @@ impl FSEventsLoop {
                         watchers[i] = None;
                         // if is the last one just pop
                         if i == len - 1 {
-                            self.watchers.len -= 1;
+                            let _ = self.watchers.pop();
                         }
                         self.watcher_count -= 1;
                         break;
@@ -864,7 +864,7 @@ impl Drop for FSEventsLoop {
         }
 
         // BabyList storage freed by its own Drop (or explicit deinit)
-        // TODO(port): confirm BabyList<T> implements Drop or needs explicit deinit()
+        // TODO(port): confirm Vec<T> implements Drop or needs explicit deinit()
     }
 }
 

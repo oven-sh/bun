@@ -8,11 +8,12 @@ use crate::linker_graph::FileListExt as _;
 #[allow(unused_imports)]
 use crate::ungate_support::EntryPointListExt as _;
 
+use bun_collections::VecExt as _VecExt;
 use bun_alloc::AllocError;
 #[cfg(feature = "css")]
 use bun_alloc::Arena;
 #[cfg(feature = "css")]
-use bun_collections::{ArrayHashMap, BabyList, DynamicBitSetUnmanaged};
+use bun_collections::{ArrayHashMap, VecExt, DynamicBitSetUnmanaged};
 #[cfg(feature = "css")]
 use bun_core::fmt as bun_fmt;
 use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
@@ -35,7 +36,7 @@ use crate::{Index, IndexInt, LinkerContext};
 #[cfg(feature = "css")]
 type BitSet = DynamicBitSetUnmanaged;
 #[cfg(feature = "css")]
-type SymbolList = BabyList<Symbol>;
+type SymbolList = Vec<Symbol>;
 
 /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
 /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
@@ -109,7 +110,7 @@ pub fn generate_code_for_lazy_export(
             let mut exports = E::Object::default();
 
             let symbols: &SymbolList = &this.graph.ast.items_symbols()[source_index as usize];
-            let all_import_records: &[BabyList<ImportRecord>] =
+            let all_import_records: &[Vec<ImportRecord>] =
                 this.graph.ast.items_import_records();
 
             let values = css_ast.local_scope.values();
@@ -134,7 +135,7 @@ pub fn generate_code_for_lazy_export(
                 // Zig: `std.AutoArrayHashMap(Ref, void)` → `ArrayHashMap` per collections map.
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
                 parts: &'a mut Vec<E::TemplatePart>,
-                all_import_records: &'a [BabyList<ImportRecord>],
+                all_import_records: &'a [Vec<ImportRecord>],
                 // Type-erased `*mut BundlerStyleSheet` SoA column (BundledAst.rs).
                 all_css_asts: &'a [Option<*mut core::ffi::c_void>],
                 all_sources: &'a [Source],
@@ -233,7 +234,7 @@ pub fn generate_code_for_lazy_export(
                             match &compose.from {
                                 // it is imported
                                 Some(CssSpecifier::ImportRecordIndex(import_record_idx)) => {
-                                    let import_records: &BabyList<ImportRecord> =
+                                    let import_records: &Vec<ImportRecord> =
                                         &self.all_import_records[idx as usize];
                                     let import_record =
                                         import_records.at(*import_record_idx as usize);
@@ -350,7 +351,7 @@ pub fn generate_code_for_lazy_export(
 
             for entry in values {
                 let ref_ = entry.ref_;
-                debug_assert!(ref_.inner_index() < symbols.len);
+                debug_assert!(ref_.inner_index() < symbols.len() as u32);
 
                 // PERF(port): was arena-backed ArrayList (no deinit; `.items` moved into E.Template).
                 let mut template_parts: Vec<E::TemplatePart> = Vec::new();

@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use bun_logger as logger;
 use bun_string::strings;
 use bun_core::{Output, Global};
+use bun_collections::VecExt;
 use bun_collections::{StringHashMap, StringArrayHashMap, ArrayHashMap, MultiArrayList};
 use bun_resolver::fs as Fs;
 #[allow(unused_imports)]

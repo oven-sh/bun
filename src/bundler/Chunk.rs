@@ -2,7 +2,7 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, AutoBitSet, BabyList};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
 use bun_core::{FeatureFlags, Output};
 use bun_options_types::{ImportKind, ImportRecord};
 use bun_js_parser::{Ref, Stmt};
@@ -60,7 +60,7 @@ pub struct Chunk {
     pub template: PathTemplate,
 
     /// For code splitting
-    pub cross_chunk_imports: BabyList<ChunkImport>,
+    pub cross_chunk_imports: Vec<ChunkImport>,
 
     pub content: Content,
 
@@ -122,7 +122,7 @@ impl Default for Chunk {
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             final_rel_path: b"",
             template: PathTemplate::default(),
-            cross_chunk_imports: BabyList::default(),
+            cross_chunk_imports: Vec::new(),
             content: Content::default(),
             entry_point: EntryPoint::default(),
             output_source_map: source_map::SourceMapPieces::default(),
@@ -245,7 +245,7 @@ pub enum IntermediateOutput {
     /// constructed later when merging the pieces together.
     ///
     /// See OutputPiece's documentation comment for more details.
-    Pieces(BabyList<OutputPiece>),
+    Pieces(Vec<OutputPiece>),
 
     /// If the chunk doesn't have any references to other chunks, then
     /// `joiner` contains the contents of the chunk. This is more efficient
@@ -507,7 +507,7 @@ impl IntermediateOutput {
                     before: Default::default(),
                 };
                 let mut shifts: Vec<source_map::SourceMapShifts> = if ENABLE_SOURCE_MAP_SHIFTS {
-                    Vec::with_capacity(pieces.len as usize + 1)
+                    Vec::with_capacity(pieces.len() as usize + 1)
                 } else {
                     Vec::new()
                 };
@@ -571,7 +571,7 @@ impl IntermediateOutput {
                             let file_path: &[u8] = match piece.query.kind() {
                                 QueryKind::Asset => {
                                     let files = &additional_files[index];
-                                    if !(files.len > 0) {
+                                    if !(files.len() > 0) {
                                         Output::panic(format_args!(
                                             "Internal error: missing asset file"
                                         ));
@@ -717,7 +717,7 @@ impl IntermediateOutput {
                             let file_path: &[u8] = match piece.query.kind() {
                                 QueryKind::Asset => 'brk: {
                                     let files = &additional_files[index];
-                                    debug_assert!(files.len > 0);
+                                    debug_assert!(files.len() > 0);
 
                                     let output_file = additional_output_file_index(
                                         files.slice().last().unwrap(),
@@ -1063,8 +1063,8 @@ pub struct JavaScriptChunk {
     // TODO(port): Zig uses ArrayHashMapUnmanaged(Ref, string, Ref.ArrayHashCtx, false) — custom hash ctx
     pub exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
     pub imports_from_other_chunks: ImportsFromOtherChunks,
-    pub cross_chunk_prefix_stmts: BabyList<Stmt>,
-    pub cross_chunk_suffix_stmts: BabyList<Stmt>,
+    pub cross_chunk_prefix_stmts: Vec<Stmt>,
+    pub cross_chunk_suffix_stmts: Vec<Stmt>,
 
     /// Indexes to CSS chunks. Currently this will only ever be zero or one
     /// items long, but smarter css chunking will allow multiple js entry points
@@ -1080,7 +1080,7 @@ pub struct JavaScriptChunk {
 }
 
 pub struct CssChunk {
-    pub imports_in_chunk_in_order: BabyList<CssImportOrder>,
+    pub imports_in_chunk_in_order: Vec<CssImportOrder>,
     /// When creating a chunk, this is to be an uninitialized slice with
     /// length of `imports_in_chunk_in_order`
     ///
@@ -1099,8 +1099,8 @@ pub struct CssChunk {
 pub type CssImportKind = CssImportOrderKind;
 
 pub struct CssImportOrder {
-    pub conditions: BabyList<bun_css::ImportConditions>,
-    pub condition_import_records: BabyList<ImportRecord>,
+    pub conditions: Vec<bun_css::ImportConditions>,
+    pub condition_import_records: Vec<ImportRecord>,
 
     pub kind: CssImportOrderKind,
 }
@@ -1119,20 +1119,20 @@ pub enum CssImportOrderKind {
     SourceIndex(Index),
 }
 
-// TODO(port): bun.ptr.Cow(BabyList<LayerName>, { copy = deepCloneInfallible, deinit = clearAndFree })
+// TODO(port): bun.ptr.Cow(Vec<LayerName>, { copy = deepCloneInfallible, deinit = clearAndFree })
 // LayerName payload allocations live in the arena, so the Zig deinit is a shallow clearAndFree.
-// `std::borrow::Cow<'_, BabyList<_>>` requires `BabyList: Clone` (not implemented). Port the
+// `std::borrow::Cow<'_, Vec<_>>` requires `BabyList: Clone` (not implemented). Port the
 // Zig `bun.ptr.Cow` shape directly: a tag + raw pointer for the borrowed arm. Phase B should
 // thread `'bump` (arena-borrowed) and confirm Clone semantics match deepCloneInfallible.
 pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
-    Borrowed(*const BabyList<bun_css::LayerName>),
-    Owned(BabyList<bun_css::LayerName>),
+    Borrowed(*const Vec<bun_css::LayerName>),
+    Owned(Vec<bun_css::LayerName>),
 }
 
 impl Layers {
     #[inline]
-    pub fn inner(&self) -> &BabyList<bun_css::LayerName> {
+    pub fn inner(&self) -> &Vec<bun_css::LayerName> {
         match self {
             // SAFETY: borrowed pointer is into arena-owned storage that outlives
             // the chunk pipeline (see TODO(port) above re: `'bump`).
@@ -1143,23 +1143,23 @@ impl Layers {
 
     /// Zig: `Chunk.CssImportOrder.Layers.borrow(ptr)` — Cow::Borrowed.
     #[inline]
-    pub fn borrow(p: *const BabyList<bun_css::LayerName>) -> Self {
+    pub fn borrow(p: *const Vec<bun_css::LayerName>) -> Self {
         Layers::Borrowed(p)
     }
 
     /// Zig: `bun.ptr.Cow.replace` — drop owned (arena-backed, so no-op) and
     /// install a fresh owned value.
     #[inline]
-    pub fn replace(&mut self, new: BabyList<bun_css::LayerName>) {
+    pub fn replace(&mut self, new: Vec<bun_css::LayerName>) {
         *self = Layers::Owned(new);
     }
 
     /// Zig: `bun.ptr.Cow.toOwned` — if borrowed, deep-clone into an owned
     /// list and return `&mut` to it; if already owned, return as-is.
-    pub fn to_owned(&mut self) -> &mut BabyList<bun_css::LayerName> {
+    pub fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
         if let Layers::Borrowed(p) = *self {
             // SAFETY: see `inner()`.
-            let borrowed: &BabyList<bun_css::LayerName> = unsafe { &*p };
+            let borrowed: &Vec<bun_css::LayerName> = unsafe { &*p };
             *self = Layers::Owned(borrowed.deep_clone_with(|l| l.clone()));
         }
         match self {
@@ -1187,7 +1187,7 @@ impl CssImportOrder {
             CssImportOrderKind::Layers(layers) => {
                 for layer in layers.inner().slice() {
                     for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        let is_last = i == layers.inner().len as usize - 1;
+                        let is_last = i == layers.inner().len() as usize - 1;
                         if is_last {
                             hasher.update(layer_name);
                         } else {

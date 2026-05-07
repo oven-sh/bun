@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -1103,7 +1104,7 @@ impl<C: SourceContext> NewSource<C> {
     ) -> JsResult<JSValue> {
         self.this_jsvalue = call_frame.this();
         let mut list = self.drain();
-        if list.len > 0 {
+        if list.len() > 0 {
             // Ownership of the buffer transfers to JSC: `to_js` installs
             // `MarkedArrayBuffer_deallocator` which `mi_free`s on GC. Suppress
             // `BabyList::Drop` so the same allocation isn't freed twice (once

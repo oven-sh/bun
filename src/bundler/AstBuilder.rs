@@ -11,7 +11,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::Output;
 use bun_logger as logger;
 use bun_logger::{Loc, Log, Range, Source};
@@ -290,7 +290,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let module_scope = self.current_scope;
 
         let mut parts = PartList::init_capacity(2)?;
-        parts.len = 2;
+        unsafe { parts.set_len((2) as usize) };
         *parts.mut_(0) = Part::default();
         *parts.mut_(1) = Part {
             stmts: self.stmts.as_mut_slice() as *mut [Stmt],
@@ -328,7 +328,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // in Rust, so allocate a fresh one per key.
         for &ref_ in module_scope_ref.generated.slice() {
             top_level_symbols_to_parts
-                .put_assume_capacity(ref_, BabyList::<u32>::from_slice(&[1])?);
+                .put_assume_capacity(ref_, Vec::<u32>::from_slice(&[1])?);
         }
         top_level_symbols_to_parts.re_index()?;
 
@@ -352,7 +352,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
         parts.mut_(1).declared_symbols = core::mem::take(&mut self.declared_symbols);
         parts.mut_(1).scopes = self.scopes.as_mut_slice() as *mut [*mut Scope];
-        parts.mut_(1).import_record_indices = BabyList::<u32>::move_from_list(
+        parts.mut_(1).import_record_indices = Vec::<u32>::move_from_list(
             core::mem::take(&mut self.import_records_for_current_part),
         );
 

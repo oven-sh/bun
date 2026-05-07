@@ -8,6 +8,7 @@
 //! `requested_exports` to see what's already been requested. No graph scan needed.
 
 use bun_alloc::AllocError;
+use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_js_parser::ast::bundled_ast as JSAst;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
@@ -96,7 +97,7 @@ fn apply_barrel_optimization_impl(
         return Ok(());
     }
     let ast = &mut result.ast;
-    if ast.import_records.len == 0 {
+    if ast.import_records.len() == 0 {
         return Ok(());
     }
     if ast.named_exports.count() == 0 && ast.export_star_import_records.len() == 0 {
@@ -187,7 +188,7 @@ fn apply_barrel_optimization_impl(
         let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
 
         for rec_idx in needed_records.keys() {
-            if *rec_idx < ast.import_records.len {
+            if *rec_idx < ast.import_records.len() as u32 {
                 needed_paths.put(ast.import_records.slice()[*rec_idx as usize].path.text, ())?;
             }
         }
@@ -195,7 +196,7 @@ fn apply_barrel_optimization_impl(
         // Add all records sharing a needed path to the needed set.
         for entry in ast.named_exports.values() {
             if let Some(imp) = ast.named_imports.get(&entry.ref_) {
-                if imp.import_record_index < ast.import_records.len {
+                if imp.import_record_index < ast.import_records.len() as u32 {
                     if needed_paths.contains(
                         ast.import_records.slice()[imp.import_record_index as usize].path.text,
                     ) {
@@ -216,7 +217,7 @@ fn apply_barrel_optimization_impl(
         if let Some(imp) = ast.named_imports.get(&entry.ref_) {
             let iri = imp.import_record_index;
             if !needed_records.contains(&iri) {
-                if iri < ast.import_records.len {
+                if iri < ast.import_records.len() as u32 {
                     ast.import_records.slice_mut()[iri as usize]
                         .flags
                         .insert(import_record::Flags::IS_UNUSED);
@@ -264,7 +265,7 @@ fn apply_barrel_optimization_impl(
 
 /// Clear is_unused on a deferred barrel record. Returns true if the record was un-deferred.
 fn un_defer_record(import_records: &mut import_record::List, record_idx: u32) -> bool {
-    if record_idx >= import_records.len {
+    if record_idx >= import_records.len() as u32 {
         return false;
     }
     let rec = &mut import_records.slice_mut()[record_idx as usize];
@@ -417,7 +418,7 @@ pub fn schedule_barrel_deferred_imports(
 
     // SAFETY: see PORT NOTE above — read-only deref valid through Phase 2.
     for ni in unsafe { &*file_named_imports }.values() {
-        if ni.import_record_index >= file_import_records.len {
+        if ni.import_record_index >= file_import_records.len() as u32 {
             continue;
         }
         named_ir_indices.put(ni.import_record_index, ())?;
@@ -523,7 +524,7 @@ pub fn schedule_barrel_deferred_imports(
 
     // SAFETY: see PORT NOTE above — read-only deref valid through Phase 2.
     for ni in unsafe { &*file_named_imports }.values() {
-        if ni.import_record_index >= file_import_records.len {
+        if ni.import_record_index >= file_import_records.len() as u32 {
             continue;
         }
         let ir = &file_import_records.slice()[ni.import_record_index as usize];
@@ -689,13 +690,13 @@ pub fn schedule_barrel_deferred_imports(
 
         if item_is_star {
             // PORT NOTE: reshaped for borrowck — read flags by index, then mutate
-            let len = barrel_ir.len;
+            let len = barrel_ir.len();
             for idx in 0..len {
-                let flags = barrel_ir.slice()[idx as usize].flags;
+                let flags = barrel_ir.slice()[idx].flags;
                 if flags.contains(import_record::Flags::IS_UNUSED)
                     && !flags.contains(import_record::Flags::IS_INTERNAL)
                 {
-                    if un_defer_record(barrel_ir, idx) {
+                    if un_defer_record(barrel_ir, idx as u32) {
                         barrels_to_resolve.put(barrel_idx, ())?;
                     }
                 }
@@ -720,7 +721,7 @@ pub fn schedule_barrel_deferred_imports(
             for star_idx in star_records {
                 let barrel_ir =
                     &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-                if star_idx >= barrel_ir.len {
+                if star_idx >= barrel_ir.len() as u32 {
                     continue;
                 }
                 if un_defer_record(barrel_ir, star_idx) {
@@ -760,7 +761,7 @@ pub fn schedule_barrel_deferred_imports(
             Some(p) => unsafe { &*p },
             None => alias,
         };
-        if resolution.import_record_index < barrel_ir.len {
+        if resolution.import_record_index < barrel_ir.len() as u32 {
             let mut rec_si = barrel_ir.slice()[resolution.import_record_index as usize].source_index;
             if !rec_si.is_valid() {
                 // Deferred record was never resolved — resolve inline now.

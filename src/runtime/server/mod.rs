@@ -6,6 +6,7 @@
 //! `bun_uws` write/close surface stay ``-gated inside each file.
 //! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
 
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 

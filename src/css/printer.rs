@@ -3,7 +3,7 @@ use core::fmt;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_options_types::ImportRecord;
 
 use crate::css_parser as css;
@@ -103,7 +103,7 @@ pub use css::targets::Features;
 
 #[derive(Clone, Copy)]
 pub struct ImportInfo<'a> {
-    pub import_records: &'a BabyList<ImportRecord>,
+    pub import_records: &'a Vec<ImportRecord>,
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
@@ -113,7 +113,7 @@ pub struct ImportInfo<'a> {
 impl<'a> ImportInfo<'a> {
     /// Only safe to use when outside the bundler. As in, the import records
     /// were not resolved to source indices. This will out-of-bounds otherwise.
-    pub fn init_outside_of_bundler(records: &'a BabyList<ImportRecord>) -> ImportInfo<'a> {
+    pub fn init_outside_of_bundler(records: &'a Vec<ImportRecord>) -> ImportInfo<'a> {
         ImportInfo {
             import_records: records,
             ast_urls_for_css: &[],
@@ -342,7 +342,7 @@ impl<'a> Printer<'a> {
     }
 
     #[inline]
-    pub fn get_import_records(&mut self) -> PrintResult<&'a BabyList<ImportRecord>> {
+    pub fn get_import_records(&mut self) -> PrintResult<&'a Vec<ImportRecord>> {
         if let Some(info) = &self.import_info {
             return Ok(info.import_records);
         }

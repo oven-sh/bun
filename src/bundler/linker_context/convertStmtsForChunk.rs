@@ -4,7 +4,7 @@ use crate::ungate_support::js_meta::JSMetaListExt as _;
 use crate::Graph::InputFileListExt as _;
 use crate::linker_graph::FileListExt as _;
 use crate::ungate_support::EntryPointListExt as _;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::FeatureFlags;
 use bun_js_parser::ast::{self as js_ast, Binding, Expr, ExprNodeList, Stmt};
 use bun_js_parser::ast::{B, E, G, S};
@@ -213,7 +213,7 @@ pub fn convert_stmts_for_chunk(
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: BabyList::<Expr>::from_owned_slice(
+                                                args: bun_collections::BabyList::<Expr>::from_owned_slice(
                                                     args.into_boxed_slice(),
                                                 ),
                                                 ..Default::default()

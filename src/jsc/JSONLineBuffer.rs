@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use bun_collections::ByteList; // bun.ByteList == BabyList<u8> (#[repr(C)] ptr+len+cap)
 use bun_string::strings;
 
@@ -66,15 +67,15 @@ impl JSONLineBuffer {
         // PORT NOTE: reshaped for borrowck — capture ptr/len instead of holding active_slice()
         // across the mutable write. Uses ptr::copy (memmove) because src/dst overlap.
         let head = self.head as usize;
-        let active_len = (self.data.len as usize) - head;
+        let active_len = (self.data.len() as usize) - head;
         // SAFETY: both ranges lie within the same allocation of `data` (cap >= len >= head);
         // ptr::copy permits overlapping regions (memmove semantics), matching bun.copy.
         unsafe {
-            let base = self.data.ptr.as_ptr();
+            let base = self.data.as_mut_ptr();
             core::ptr::copy(base.add(head), base, active_len);
         }
         debug_assert!((active_len as u64) <= u32::MAX as u64);
-        self.data.len = u32::try_from(active_len).unwrap();
+        unsafe { self.data.set_len(active_len) };
         self.head = 0;
     }
 
@@ -117,12 +118,12 @@ impl JSONLineBuffer {
         }
 
         // Check if we've consumed everything
-        if self.head >= self.data.len {
+        if self.head as usize >= self.data.len() {
             // Free memory if capacity exceeds threshold, otherwise just reset
-            if self.data.cap >= Self::COMPACTION_THRESHOLD {
+            if self.data.capacity() as u32 >= Self::COMPACTION_THRESHOLD {
                 self.data = ByteList::default();
             } else {
-                self.data.len = 0;
+                self.data.clear();
             }
             self.head = 0;
             self.scanned_pos = 0;
@@ -137,7 +138,7 @@ impl JSONLineBuffer {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.head >= self.data.len
+        self.head as usize >= self.data.len()
     }
 
     pub fn unused_capacity_slice(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
@@ -151,10 +152,7 @@ impl JSONLineBuffer {
     /// Notify the buffer that data was written directly (e.g., via pre-allocated slice).
     pub fn notify_written(&mut self, new_data: &[u8]) {
         debug_assert!((new_data.len() as u64) <= u32::MAX as u64);
-        self.data.len = self
-            .data
-            .len
-            .saturating_add(u32::try_from(new_data.len()).unwrap());
+        unsafe { self.data.set_len(self.data.len().saturating_add(new_data.len())) };
         self.scan_for_newline();
     }
 }

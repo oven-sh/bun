@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 #[allow(unused_imports)]
@@ -1931,7 +1932,7 @@ where
             core::mem::take(&mut this.response_body_readable_stream_ref);
 
         let is_in_progress = response_stream.sink.has_backpressure
-            || !(response_stream.sink.wrote == 0 && response_stream.sink.buffer.len == 0);
+            || !(response_stream.sink.wrote == 0 && response_stream.sink.buffer.len() == 0);
 
         if !stream.is_locked(global_this) && !is_in_progress {
             // TODO: properly propagate exception upwards

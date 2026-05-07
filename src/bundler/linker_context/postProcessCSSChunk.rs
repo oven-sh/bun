@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::MultiArrayList;
 use bun_logger as logger;
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};

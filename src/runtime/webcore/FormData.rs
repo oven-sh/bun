@@ -1,7 +1,7 @@
 //! HTML `FormData` parsing + JS bridge. Moved from `url/url.zig` because the
 //! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
 
-use bun_collections::{ArrayHashMap, BabyList};
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::{self, declare_scope, err, scoped_log};
 use bun_jsc::{
     AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
@@ -97,7 +97,7 @@ impl Default for Field {
 
 pub enum FieldEntry {
     Field(Field),
-    List(BabyList<Field>),
+    List(Vec<Field>),
 }
 
 #[repr(C)]

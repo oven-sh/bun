@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use bun_collections::{VecExt, ByteVecExt};
 use bun_collections::ByteList;
 use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};

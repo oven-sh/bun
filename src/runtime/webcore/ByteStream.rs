@@ -1,6 +1,6 @@
 use core::mem::offset_of;
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::Output;
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromiseStrong, JSValue};
@@ -9,7 +9,7 @@ use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::Pipe;
 use crate::webcore::{blob, readable_stream};
 
-type ByteList = BabyList<u8>;
+type ByteList = Vec<u8>;
 
 bun_output::declare_scope!(ByteStream, visible);
 

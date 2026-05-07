@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 // Port of src/js_parser/ast/P.zig
 //
 // This file defines the `P` parser struct (generic over typescript/jsx/scan_only
@@ -145,21 +146,13 @@ impl<'a> ImportRecordList<'a> {
     /// Drop then ran element destructors on records the returned `Ast` still
     /// pointed at. This adapter restores Zig's move-and-zero semantics for both
     /// the bump-backed and externally-borrowed variants.
-    pub fn move_to_baby_list(&mut self, allocator: &'a Bump) -> BabyList<ImportRecord> {
+    pub fn move_to_baby_list(&mut self, allocator: &'a Bump) -> Vec<ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(allocator))) {
             Self::Owned(v) => {
-                // `into_bump_slice_mut` leaks the BumpVec into the arena (no
-                // element Drop) and yields the `'a`-lived storage.
                 let leaked: &'a mut [ImportRecord] = v.into_bump_slice_mut();
-                // SAFETY: arena storage outlives every consumer of the returned
-                // Ast; Borrowed origin → BabyList::drop is a no-op.
-                unsafe { BabyList::from_bump_slice(leaked) }
+                Vec::from_bump_slice(leaked)
             }
-            Self::Borrowed(v) => {
-                // Scan-only callers own the Vec; take it and hand ownership to
-                // the BabyList (Origin::Owned, freed by global allocator).
-                BabyList::move_from_list(core::mem::take(v))
-            }
+            Self::Borrowed(v) => core::mem::take(v),
         }
     }
 }
@@ -1882,7 +1875,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         parts.push(js_ast::Part {
             stmts,
             declared_symbols,
-            import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_i])),
+            import_record_indices: vec![import_record_i],
             tag: crate::PartTag::Runtime,
             ..Default::default()
         });
@@ -2012,7 +2005,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         parts.push(js_ast::Part {
             stmts,
             declared_symbols,
-            import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_i])),
+            import_record_indices: vec![import_record_i],
             tag: crate::PartTag::Runtime,
             ..Default::default()
         });
@@ -2145,7 +2138,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         parts.push(js_ast::Part {
             stmts,
             declared_symbols,
-            import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_index])),
+            import_record_indices: vec![import_record_index],
             tag: crate::PartTag::Runtime,
             ..Default::default()
         });
@@ -4678,7 +4671,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         &mut self.import_records_for_current_part,
                         BumpVec::new_in(self.allocator),
                     );
-                    BabyList::<u32>::from_owned_slice(v.as_slice().to_vec().into_boxed_slice())
+                    v.as_slice().to_vec()
                 },
                 // SAFETY: fresh bump allocation, uniquely owned by the new Part.
                 scopes: core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.allocator))
@@ -7333,8 +7326,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 .expect("unreachable");
                         }
 
-                        if part.import_record_indices.len == 0 {
-                            // SAFETY: bump-arena slice; BabyList::from_bump_slice marks
+                        if part.import_record_indices.is_empty() {
+                            // SAFETY: bump-arena slice; Vec::from_bump_slice marks
                             // origin Borrowed so Drop is a no-op (matches Zig's
                             // `ImportRecord.List.init(dupe(...))` arena ownership).
                             // The *old* value is a bitwise duplicate of
@@ -7344,7 +7337,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             core::mem::forget(core::mem::replace(
                                 &mut part.import_record_indices,
                                 unsafe {
-                                    BabyList::from_bump_slice(
+                                    Vec::from_bump_slice(
                                         allocator.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
                                     )
                                 },
@@ -7524,7 +7517,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if !entry.found_existing {
                             *entry.value_ptr = Default::default();
                         }
-                        entry.value_ptr.append(ctx.part_index).expect("oom");
+                        entry.value_ptr.push(ctx.part_index);
                     },
                 );
             }
@@ -7535,7 +7528,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if !entry.found_existing {
                     *entry.value_ptr = Default::default();
                 }
-                entry.value_ptr.append(js_ast::NAMESPACE_EXPORT_PART_INDEX).expect("oom");
+                entry.value_ptr.push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
             }
         }
 
@@ -7619,17 +7612,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             core::mem::replace(&mut self.symbols, BumpVec::new_in(allocator)).into_bump_slice_mut();
         // SAFETY: bump-arena storage lives for 'a, which outlives the Ast;
         // Borrowed origin → BabyList::drop is a no-op.
-        let symbols = unsafe { js_ast::symbol::List::from_bump_slice(symbols_slice) };
+        let symbols = js_ast::symbol::List::from_bump_slice(symbols_slice);
         let parts_slice: &'a mut [js_ast::Part] =
             core::mem::replace(parts, BumpVec::new_in(allocator)).into_bump_slice_mut();
         // SAFETY: same — `parts` was a BumpVec<'a, Part>; now leaked into the arena.
-        let parts_list = unsafe { BabyList::<js_ast::Part>::from_bump_slice(parts_slice) };
+        let parts_list = Vec::<js_ast::Part>::from_bump_slice(parts_slice);
         // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
         // Round-G fix: use the dedicated adapter so the parser-side list is
         // left empty (Zig move-and-zero) and the BumpVec is leaked into the
         // arena rather than dropped — downstream (printer, linker) resolves
         // every `S.Import`/`E.RequireString`/`E.Import` by index against this.
-        let import_records: BabyList<ImportRecord> =
+        let import_records: Vec<ImportRecord> =
             self.import_records.move_to_baby_list(allocator);
 
         Ok(js_ast::Ast {

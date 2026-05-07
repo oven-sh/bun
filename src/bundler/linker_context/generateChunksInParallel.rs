@@ -8,6 +8,7 @@ use std::borrow::Cow;
 
 use bun_core::Output;
 use bun_core::Environment;
+use bun_collections::VecExt;
 use bun_collections::AutoBitSet;
 use bun_collections::StringHashMap;
 use bun_collections::StringArrayHashMap;
@@ -173,9 +174,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     }
                     crate::chunk::Content::Css(css) => {
                         has_css_chunk = true;
-                        total_count += css.imports_in_chunk_in_order.len as usize;
+                        total_count += css.imports_in_chunk_in_order.len() as usize;
                         chunk.compile_results_for_chunk =
-                            vec![CompileResult::default(); css.imports_in_chunk_in_order.len as usize].into_boxed_slice();
+                            vec![CompileResult::default(); css.imports_in_chunk_in_order.len() as usize].into_boxed_slice();
                     }
                     crate::chunk::Content::Html => {
                         has_html_chunk = true;
@@ -235,7 +236,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         }
                     }
                     crate::chunk::Content::Css(css) => {
-                        for i in 0..css.imports_in_chunk_in_order.len as usize {
+                        for i in 0..css.imports_in_chunk_in_order.len() as usize {
                             remaining_part_ranges[0] = PendingPartRange {
                                 part_range: Default::default(),
                                 i: u32::try_from(i).unwrap(),

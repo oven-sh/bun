@@ -1,4 +1,5 @@
 use bun_alloc::{AllocError, Arena as Bump};
+use bun_collections::VecExt;
 use bun_alloc::ArenaVecExt as _;
 use bun_js_parser::ast as js_ast;
 use bun_js_parser::ast::{

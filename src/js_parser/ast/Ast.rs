@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap, StringHashMap};
 use bun_logger as logger;
 use bun_options_types::ImportRecord;
@@ -17,9 +18,9 @@ use crate::ast::part::List as PartList;
 use crate::ast::symbol::List as SymbolList;
 // TODO(port): `ImportRecord.List` is `BabyList<ImportRecord>` in Zig; the
 // options_types crate hasn't yet exposed a `List` alias, so define it here.
-type ImportRecordList = bun_collections::BabyList<ImportRecord>;
+type ImportRecordList = Vec<ImportRecord>;
 
-pub type TopLevelSymbolToParts = ArrayHashMap<Ref, BabyList<u32>>;
+pub type TopLevelSymbolToParts = ArrayHashMap<Ref, Vec<u32>>;
 
 pub struct Ast {
     pub approximate_newline_count: usize,

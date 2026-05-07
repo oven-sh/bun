@@ -1,3 +1,4 @@
+use bun_collections::{VecExt, ByteVecExt};
 // Entry point for Valkey client
 //
 // This file contains the core Valkey client implementation with protocol handling

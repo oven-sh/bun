@@ -8,7 +8,7 @@
 
 #![allow(unused)]
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_string::strings;
 // `Ref` is re-exported (pub use) below for `crate::Ref`; the local `use` here
 // is intentionally folded into that to avoid duplicate-import errors.
@@ -71,7 +71,7 @@ pub mod perf {
 /// stubs the rest. Once `Chunk` gains a `'bump` lifetime and `bun_css`
 /// un-gates `BundlerStyleSheet`, this collapses to a plain `pub use ::bun_css`.
 pub mod bun_css {
-    use bun_collections::BabyList;
+    use bun_collections::VecExt;
 
     // ── feature = "css" (default) ────────────────────────────────────────
     // The real crate now un-gates `BundlerStyleSheet` (= `StyleSheet<BundlerAtRule>`)
@@ -95,7 +95,7 @@ pub mod bun_css {
     pub use self::no_css::*;
     #[cfg(not(feature = "css"))]
     mod no_css {
-        use bun_collections::BabyList;
+        use bun_collections::VecExt;
         use bun_options_types::ImportRecord;
 
         pub use bun_options_types::BundleEnums::Index as SrcIndex;
@@ -116,7 +116,7 @@ pub mod bun_css {
                 _allocator: &bun_alloc::Arena,
                 _code: &[u8],
                 _options: ParserOptions,
-                _import_records: &mut BabyList<ImportRecord>,
+                _import_records: &mut Vec<ImportRecord>,
                 _source_index: SrcIndex,
             ) -> core::result::Result<(Self, StylesheetExtra), ()> {
                 Ok((Self::default(), StylesheetExtra::default()))
@@ -133,7 +133,7 @@ pub mod bun_css {
         }
         #[derive(Default)]
         pub struct StylesheetExtra {
-            pub symbols: BabyList<bun_js_parser::Symbol>,
+            pub symbols: Vec<bun_js_parser::Symbol>,
         }
         pub struct ParserOptions {
             pub filename: &'static [u8],
@@ -174,24 +174,24 @@ pub mod bun_css {
     pub use self::no_css_layer::LayerName;
     #[cfg(not(feature = "css"))]
     mod no_css_layer {
-        use bun_collections::BabyList;
+        use bun_collections::VecExt;
 
         pub struct LayerName {
-            pub v: BabyList<Box<[u8]>>,
+            pub v: Vec<Box<[u8]>>,
         }
-        // PORT NOTE: `BabyList<T>` has no blanket `Clone`; manual deep-clone via
+        // PORT NOTE: `Vec<T>` has no blanket `Clone`; manual deep-clone via
         // `BabyList::from_slice` (matches Zig `deepCloneInfallible`). OOM on a
         // tiny layer-name list is unrecoverable — `handle_oom`.
         impl Clone for LayerName {
             fn clone(&self) -> Self {
-                Self { v: bun_core::handle_oom(BabyList::from_slice(self.v.slice())) }
+                Self { v: self.v.clone() }
             }
         }
         impl LayerName {
             /// Mirror of `bun_css::LayerName::eql` for the lifetime-erased shadow
             /// type. Compares each dot-segment by bytes.
             pub fn eql(&self, rhs: &LayerName) -> bool {
-                if self.v.len != rhs.v.len {
+                if self.v.len() != rhs.v.len() {
                     return false;
                 }
                 for (l, r) in self.v.slice().iter().zip(rhs.v.slice()) {
@@ -292,7 +292,7 @@ pub struct CrossChunkImportItem {
     pub export_alias: Box<[u8]>,
     pub r#ref: Ref,
 }
-pub type CrossChunkImportItemList = BabyList<CrossChunkImportItem>;
+pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
 /// `bundle_v2.zig:CrossChunkImport`.
 #[derive(Default)]
 pub struct CrossChunkImport {
@@ -870,14 +870,14 @@ pub mod entry_point {
 /// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see the gated
 /// `bundle_v2.rs` draft body for full doc-comments.
 pub mod js_meta {
-    use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap};
+    use bun_collections::{ArrayHashMap, VecExt, StringArrayHashMap};
     use bun_js_parser::{Dependency, Ref};
 
     use crate::{ImportTracker, Index, WrapKind};
 
     #[derive(Default)]
     pub struct ImportData {
-        pub re_exports: BabyList<Dependency>,
+        pub re_exports: Vec<Dependency>,
         pub data: ImportTracker,
     }
     /// Alias used by `LinkerGraph::generate_symbol_import_and_use`.
@@ -885,7 +885,7 @@ pub mod js_meta {
 
     #[derive(Default)]
     pub struct ExportData {
-        pub potentially_ambiguous_export_star_refs: BabyList<ImportData>,
+        pub potentially_ambiguous_export_star_refs: Vec<ImportData>,
         pub data: ImportTracker,
     }
     /// Alias used by `LinkerGraph::load`.

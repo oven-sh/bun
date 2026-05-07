@@ -1,5 +1,5 @@
 use crate::schema::api;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_logger::Range;
 use bun_paths::fs::Path;
 // move-in resolved: Loader & ast::Index now live in this crate (BundleEnums.rs)
@@ -251,7 +251,7 @@ bitflags::bitflags! {
     }
 }
 
-pub type List = BabyList<ImportRecord>;
+pub type List = Vec<ImportRecord>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

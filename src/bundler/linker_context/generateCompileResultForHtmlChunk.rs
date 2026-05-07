@@ -9,6 +9,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
+use bun_collections::VecExt;
 use bun_collections::BoundedArray;
 use bun_logger::Log;
 use bun_lolhtml_sys::lol_html as lol;

@@ -6,7 +6,7 @@ use bun_alloc::Arena as Bump;
 // TYPE_ONLY: bun_bundler::options::Format → bun_options_types::Format
 use bun_options_types::Format;
 use bun_collections::hive_array::Fallback as HiveArrayFallback;
-use bun_collections::{BabyList, HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
 use bun_js_parser as js_ast;
 use bun_js_parser::ast::symbol;
@@ -606,7 +606,7 @@ impl SlotAndCount {
 
 pub struct NumberRenamer {
     pub symbols: symbol::Map,
-    pub names: Box<[BabyList<NameStr>]>,
+    pub names: Box<[Vec<NameStr>]>,
     // PERF(port): Zig had separate allocator/temp_allocator; global mimalloc now
     pub number_scope_pool: HiveArrayFallback<NumberScope, 128>,
     // PERF(port): was arena bulk-free for NumberScope pool + name temp buffers
@@ -635,8 +635,8 @@ impl NumberRenamer {
         let ref_ = self.symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
-        let inner: &mut BabyList<NameStr> = &mut self.names[ref_.source_index() as usize];
-        if inner.len > ref_.inner_index() && inner.at(ref_.inner_index() as usize).len() > 0 {
+        let inner: &mut Vec<NameStr> = &mut self.names[ref_.source_index() as usize];
+        if inner.len() > ref_.inner_index() as usize && inner[ref_.inner_index() as usize].len() > 0 {
             return;
         }
 
@@ -654,37 +654,19 @@ impl NumberRenamer {
             UnusedName::Renamed(name) => name,
             UnusedName::NoCollision => symbol.original_name,
         };
-        let new_len = inner.len.max(ref_.inner_index() + 1);
-        if inner.cap <= new_len {
-            let prev_cap = inner.len;
-            inner
-                .ensure_unused_capacity((new_len - prev_cap) as usize)
-                .expect("unreachable");
-            // SAFETY: ptr[prev_cap..cap] is allocated; the empty `*const [u8]` sentinel
-            // is non-null but zero-len, written explicitly below (cannot zero-memset a
-            // fat pointer to a valid value).
-            unsafe {
-                let to_write = core::slice::from_raw_parts_mut(
-                    inner.ptr.as_ptr().add(prev_cap as usize),
-                    (inner.cap - prev_cap) as usize,
-                );
-                for slot in to_write.iter_mut() {
-                    core::ptr::write(slot, name_str_empty());
-                }
-            }
+        let new_len = inner.len().max(ref_.inner_index() as usize + 1);
+        if inner.len() < new_len {
+            inner.resize(new_len, name_str_empty());
         }
-        inner.len = new_len;
-        *inner.mut_(ref_.inner_index() as usize) = name;
+        inner[ref_.inner_index() as usize] = name;
     }
 
     pub fn init(
         symbols: symbol::Map,
         root_names: StringHashMap<u32>,
     ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
-        let len = symbols.symbols_for_source.len as usize;
-        // PORT NOTE: `BabyList<T>` does not impl `Clone`, so `vec![default; len]` is
-        // unavailable; build via repeat-with instead.
-        let names: Box<[BabyList<NameStr>]> = core::iter::repeat_with(BabyList::<NameStr>::default)
+        let len = symbols.symbols_for_source.len();
+        let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
             .take(len)
             .collect();
 
@@ -854,8 +836,8 @@ impl NumberRenamer {
 
         let renamed_list = &self.names[source_index as usize];
 
-        if renamed_list.len > inner_index {
-            let renamed: NameStr = *renamed_list.at(inner_index as usize);
+        if renamed_list.len() > inner_index as usize {
+            let renamed: NameStr = renamed_list[inner_index as usize];
             if renamed.len() > 0 {
                 // SAFETY: `renamed` was allocated from `self.arena` (or borrows
                 // an AST-arena `original_name`); both outlive `self`.
@@ -867,9 +849,7 @@ impl NumberRenamer {
         unsafe {
             &*self
                 .symbols
-                .symbols_for_source
-                .at(source_index as usize)
-                .at(inner_index as usize)
+                .symbols_for_source[source_index as usize][inner_index as usize]
                 .original_name
         }
     }

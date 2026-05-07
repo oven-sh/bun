@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::BabyList;
 
 use crate::ImportItemStatus;
@@ -354,8 +355,8 @@ pub struct Use {
     pub count_estimate: u32,
 }
 
-pub type List = BabyList<Symbol>;
-pub type NestedList = BabyList<List>;
+pub type List = Vec<Symbol>;
+pub type NestedList = Vec<List>;
 
 impl Symbol {
     pub fn merge_contents_with(&mut self, old: &mut Symbol) {
@@ -388,7 +389,7 @@ impl Map {
             bun_core::prettyln!(
                 "\n\n-- Source ID: {} ({} symbols) --\n",
                 i,
-                symbols.len,
+                symbols.len(),
             );
             for (inner_index, symbol) in symbols.slice().iter().enumerate() {
                 let display_ref = if symbol.has_link() {
@@ -501,13 +502,13 @@ impl Map {
         }
         let src = ref_.source_index() as usize;
         let idx = ref_.inner_index() as usize;
-        debug_assert!(src < self.symbols_for_source.len as usize);
+        debug_assert!(src < self.symbols_for_source.len());
         // SAFETY: src in-bounds (parser-produced ref); raw-ptr field read — no `&` to the
         // element is created. idx in-bounds of the inner list.
         unsafe {
-            let inner: *mut List = self.symbols_for_source.ptr.as_ptr().add(src);
-            debug_assert!(idx < (*inner).len as usize);
-            Some((*inner).ptr.as_ptr().add(idx))
+            let inner: *mut List = (self.symbols_for_source.as_ptr() as *mut List).add(src);
+            debug_assert!(idx < (*inner).len());
+            Some((*inner).as_mut_ptr().add(idx))
         }
     }
 
@@ -568,13 +569,13 @@ impl Map {
         // `get`). follow() does not reallocate symbols_for_source. Derive *mut from the
         // raw NonNull fields directly (NOT via `.slice()`, which would yield read-only
         // provenance).
-        let outer_len = self.symbols_for_source.len as usize;
-        let outer = self.symbols_for_source.ptr.as_ptr();
+        let outer_len = self.symbols_for_source.len();
+        let outer = self.symbols_for_source.as_ptr() as *mut List;
         for src in 0..outer_len {
             // SAFETY: src in-bounds; raw-ptr field reads — no `&` created.
             let (base, inner_len) = unsafe {
                 let inner: *mut List = outer.add(src);
-                ((*inner).ptr.as_ptr(), (*inner).len as usize)
+                ((*inner).as_mut_ptr(), (*inner).len())
             };
             for i in 0..inner_len {
                 // SAFETY: in-bounds; storage stable across follow(). Raw-ptr access — no

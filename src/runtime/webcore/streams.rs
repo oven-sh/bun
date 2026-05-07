@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
-use bun_collections::BabyList;
+use bun_collections::{VecExt, ByteVecExt};
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSPromise, JSPromiseStrong,
     JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
@@ -37,7 +37,7 @@ pub mod bun_s3 {
 // fn-pointer signature is structurally identical to callers that name the public
 // re-export (e.g. `sink::SinkSignal::init`).
 type BlobSizeType = crate::webcore::BlobSizeType;
-type ByteList = BabyList<u8>;
+type ByteList = Vec<u8>;
 
 // Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
@@ -1117,7 +1117,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // TODO: include Socket send buffer size. We can't here because we
         // don't track if it's still accessible.
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
-        self.buffer.cap as usize
+        self.buffer.capacity() as usize
     }
 
     // TODO(port): const-generic string selection — Rust cannot branch on const bool to produce &'static str at type level
@@ -1251,16 +1251,16 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.offset += amount;
         self.wrote += amount;
 
-        if self.offset >= self.buffer.len as BlobSizeType {
+        if self.offset >= self.buffer.len() as BlobSizeType {
             self.offset = 0;
-            self.buffer.len = 0;
+            self.buffer.clear();
         }
         bun_core::scoped_log!(
             HTTPServerWritableLog,
             "handleWrote: {} offset: {}, {}",
             amount1,
             self.offset,
-            self.buffer.len
+            self.buffer.len()
         );
     }
 
@@ -1357,8 +1357,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // SAFETY: offset <= len <= cap; ptr is valid for cap bytes
         unsafe {
             core::slice::from_raw_parts(
-                self.buffer.ptr.as_ptr().add(self.offset as usize),
-                (self.buffer.len as u64 - self.offset) as usize,
+                self.buffer.as_ptr().add(self.offset as usize),
+                (self.buffer.len() as u64 - self.offset) as usize,
             )
         }
         // TODO(port): Zig `this.buffer.ptr[this.offset..this.buffer.len]` — verify ByteList field access
@@ -1380,7 +1380,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // do not write more than available
         // if we do, it will cause this to be delayed until the next call, each time
         // TODO: should we break it in smaller chunks?
-        let to_write = (write_offset as BlobSizeType).min(self.buffer.len as BlobSizeType - 1);
+        let to_write = (write_offset as BlobSizeType).min(self.buffer.len() as BlobSizeType - 1);
         // PORT NOTE: reshaped for borrowck — capture chunk len before send()
         let chunk_start = to_write as usize;
         let chunk_len = self.readable_slice().len().saturating_sub(chunk_start);
@@ -1444,7 +1444,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.wrote_at_start_of_flush = 0;
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
 
-        if self.buffer.cap == 0 {
+        if self.buffer.capacity() == 0 {
             debug_assert!(self.pooled_buffer.is_none());
             if FeatureFlags::HTTP_BUFFER_POOLING {
                 if let Some(pooled_node) = ByteListPool::get_if_exists() {
@@ -1464,7 +1464,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         }
 
-        self.buffer.len = 0;
+        self.buffer.clear();
 
         if let Start::ChunkSize(chunk_size) = stream_start {
             if chunk_size > 0 {
@@ -1531,7 +1531,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             return bun_sys::Result::Ok(unsafe { &*prom }.to_js());
         }
 
-        if self.buffer.len == 0 || self.done {
+        if self.buffer.len() == 0 || self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 global_this,
                 JSValue::js_number_from_int32(0),
@@ -1590,7 +1590,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let len = bytes.len() as BlobSizeType;
         bun_core::scoped_log!(HTTPServerWritableLog, "write({})", bytes.len());
 
-        if self.buffer.len == 0 && len >= self.high_water_mark {
+        if self.buffer.len() == 0 && len >= self.high_water_mark {
             // fast path:
             // - large-ish chunk
             // - no backpressure
@@ -1601,7 +1601,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.buffer.write(bytes).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
             }
-        } else if self.buffer.len as BlobSizeType + len >= self.high_water_mark {
+        } else if self.buffer.len() as BlobSizeType + len >= self.high_water_mark {
             // TODO: attempt to write both in a corked buffer?
             if self.buffer.write(bytes).is_err() {
                 return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write));
@@ -1647,7 +1647,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let len = bytes.len() as BlobSizeType;
         bun_core::scoped_log!(HTTPServerWritableLog, "writeLatin1({})", bytes.len());
 
-        if self.buffer.len == 0 && len >= self.high_water_mark {
+        if self.buffer.len() == 0 && len >= self.high_water_mark {
             let mut do_send = true;
             // common case
             if strings::is_all_ascii(bytes) {
@@ -1674,7 +1674,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     return Writable::Owned(len);
                 }
             }
-        } else if self.buffer.len as BlobSizeType + len >= self.high_water_mark {
+        } else if self.buffer.len() as BlobSizeType + len >= self.high_water_mark {
             // kinda fast path:
             // - combined chunk is large enough to flush automatically
             // - no backpressure
@@ -1941,8 +1941,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if let Some(pooled) = self.pooled_buffer {
-            self.buffer.len = 0;
-            if self.buffer.cap > 64 * 1024 {
+            self.buffer.clear();
+            if self.buffer.capacity() > 64 * 1024 {
                 self.buffer.clear_and_free();
             }
             // SAFETY: pooled is a valid pool node checkout
@@ -1956,14 +1956,14 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // PORT NOTE: Zig `pooled.release()` → Rust `ObjectPool::release(node)`
             // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
             ByteListPool::release(pooled.as_ptr());
-        } else if self.buffer.cap == 0 {
+        } else if self.buffer.capacity() == 0 {
             //
         } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
             let buffer = core::mem::take(&mut self.buffer);
             ByteListPool::push(buffer);
         } else {
             // Don't release this buffer until destroy() is called
-            self.buffer.len = 0;
+            self.buffer.clear();
         }
     }
 
@@ -2651,13 +2651,13 @@ impl ReadResult {
                     // the caller transfers a default-allocator heap allocation of
                     // exactly `len` bytes (cap == len), all initialized.
                     StreamResult::OwnedAndDone(unsafe {
-                        ByteList::from_raw_parts(slice_ptr, len, len)
+                        Vec::from_raw_parts(slice_ptr, len as usize, len as usize)
                     })
                 } else if owned {
                     let len = u32::try_from(slice_len).unwrap();
                     // SAFETY: see above — ownership of `slice` is transferred here.
                     StreamResult::Owned(unsafe {
-                        ByteList::from_raw_parts(slice_ptr, len, len)
+                        Vec::from_raw_parts(slice_ptr, len as usize, len as usize)
                     })
                 } else if done {
                     StreamResult::IntoArrayAndDone(IntoArray {

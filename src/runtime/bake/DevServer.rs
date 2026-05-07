@@ -10,6 +10,7 @@
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
+use bun_collections::{VecExt, ByteVecExt};
 use ::core::ffi::c_void;
 use ::core::mem::offset_of;
 use std::io::Write as _;
@@ -2691,7 +2692,7 @@ impl DevServer {
     fn generate_javascript_code_for_html_file(
         &mut self,
         index: bun_js_parser::ast::Index,
-        import_records: &[bun_collections::BabyList<ImportRecord>],
+        import_records: &[Vec<ImportRecord>],
         input_file_sources: &[bun_logger::Source],
         loaders: &[Loader],
     ) -> Result<Box<[u8]>, bun_core::Error> {
@@ -3452,7 +3453,7 @@ pub struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
     pub sources: &'a [bun_logger::Source],
     /// bundle_v2.Graph.ast.items(.import_records)
-    pub import_records: &'a [bun_collections::BabyList<ImportRecord>],
+    pub import_records: &'a [Vec<ImportRecord>],
     /// bundle_v2.Graph.server_component_boundaries.slice()
     pub scbs: bun_js_parser::ast::server_component_boundary::Slice<'a>,
     /// bundle_v2.Graph.input_files.items(.loader)

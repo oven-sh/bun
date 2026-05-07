@@ -1,7 +1,7 @@
 use std::ffi::CString;
 use std::io::Write as _;
 
-use bun_collections::{BabyList, StringHashMap};
+use bun_collections::{VecExt, StringHashMap};
 use bun_str::strings;
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
@@ -32,8 +32,8 @@ pub struct ServerConfig {
     pub base_uri: Box<[u8]>,
 
     pub ssl_config: Option<SSLConfig>,
-    // TODO(port): verify BabyList<SSLConfig> drops elements; Zig looped + deinit each.
-    pub sni: Option<BabyList<SSLConfig>>,
+    // TODO(port): verify Vec<SSLConfig> drops elements; Zig looped + deinit each.
+    pub sni: Option<Vec<SSLConfig>>,
     pub max_request_body_size: usize,
     pub development: DevelopmentOption,
     pub broadcast_console_log_from_browser_to_server_for_bake: bool,
@@ -1345,14 +1345,10 @@ impl ServerConfig {
                                 )));
                             }
                             if args.sni.is_none() {
-                                args.sni = Some(bun_core::handle_oom(BabyList::init_capacity(
-                                    (value_iter.len - 1) as usize,
-                                )));
+                                args.sni = Some(Vec::with_capacity((value_iter.len - 1) as usize));
                             }
 
-                            bun_core::handle_oom(
-                                args.sni.as_mut().unwrap().append(ssl_config),
-                            );
+                            args.sni.as_mut().unwrap().push(ssl_config);
                         }
                     }
                 }

@@ -1,4 +1,5 @@
 //! CSS dependency tracking — `@import` and `url()` references collected during printing.
+use bun_collections::VecExt;
 
 use crate::SourceLocation;
 // const Location = css.Location; — shadowed by the local `Location` below in Zig too.
@@ -148,7 +149,7 @@ impl UrlDependency {
         bump: &'bump bun_alloc::Arena,
         url: &crate::values::url::Url,
         filename: &[u8],
-        import_records: &bun_collections::BabyList<bun_options_types::ImportRecord>,
+        import_records: &Vec<bun_options_types::ImportRecord>,
     ) -> UrlDependency {
         // TODO(port): `bun_paths::fs::Path::pretty` is currently `&'static str`;
         // should become `&[u8]` per PORTING.md §Strings. Until then, `.as_bytes()`.

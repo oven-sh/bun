@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use bun_collections::StringHashMap;
 use bun_js_parser as js_ast;
 use bun_js_parser::ast::expr::IntoExprData;

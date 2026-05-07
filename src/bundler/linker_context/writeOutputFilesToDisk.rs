@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::mem::offset_of;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use crate::ungate_support::js_meta::JSMetaListExt as _;

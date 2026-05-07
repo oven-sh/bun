@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 
 use bun_aio::Loop as AsyncLoop;
 use bun_boringssl_sys as boringssl;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use bun_core::timespec;
 use bun_io::{StreamingWriter, WriteStatus};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -67,7 +67,7 @@ pub struct WindowsNamedPipe {
     // trait impl (`impl StreamingWriterHandler for WindowsNamedPipe`) or const-generic vtable.
     pub writer: StreamingWriter<WindowsNamedPipe>,
 
-    pub incoming: BabyList<u8>, // Maybe we should use IPCBuffer here as well
+    pub incoming: Vec<u8>, // Maybe we should use IPCBuffer here as well
     pub ssl_error: CertError,
     pub handlers: Handlers,
     #[cfg(windows)]
@@ -151,8 +151,8 @@ impl WindowsNamedPipe {
 
     fn on_read(&mut self, buffer: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", buffer.len());
-        self.incoming.len += buffer.len() as u32;
-        debug_assert!(self.incoming.len <= self.incoming.cap);
+        unsafe { self.incoming.set_len(self.incoming.len() + buffer.len()) };
+        debug_assert!(self.incoming.len() <= self.incoming.capacity());
         debug_assert!({
             let alloc = self.incoming.allocated_slice();
             // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; only used for
@@ -175,7 +175,7 @@ impl WindowsNamedPipe {
         } else {
             (self.handlers.on_data)(self.handlers.ctx, data);
         }
-        self.incoming.len = 0;
+        self.incoming.clear();
     }
 
     fn on_write(&mut self, amount: usize, status: WriteStatus) {
@@ -406,7 +406,7 @@ impl WindowsNamedPipe {
             handlers,
             // defaults:
             writer: StreamingWriter::default(),
-            incoming: BabyList::default(),
+            incoming: Vec::new(),
             ssl_error: CertError::default(),
             // SAFETY: all-zero is a valid uv_connect_t (#[repr(C)] POD, libuv expects zeroed)
             connect_req: unsafe { core::mem::zeroed::<uv::uv_connect_t>() },

@@ -1,6 +1,6 @@
 use bun_alloc::AllocError;
 use bun_collections::multi_array_list::MultiArrayElement;
-use bun_collections::{BabyList, MultiArrayList};
+use bun_collections::{VecExt, MultiArrayList};
 use bun_logger::Loc;
 use bun_str::strings;
 
@@ -16,7 +16,7 @@ use bun_str::strings;
 /// as an optimization.
 #[derive(Default)]
 pub struct LineOffsetTable {
-    pub columns_for_non_ascii: BabyList<i32>,
+    pub columns_for_non_ascii: Vec<i32>,
     pub byte_offset_to_first_non_ascii: u32,
     pub byte_offset_to_start_of_line: u32,
 }
@@ -63,7 +63,7 @@ impl ListExt for List {
 
 // Manual `MultiArrayElement` impl — `#[derive(MultiArrayElement)]` proc-macro
 // does not exist yet (see bun_collections TODO). Fields sorted by alignment
-// descending: BabyList<i32> (align 8, size 16) first, then the two u32s.
+// descending: Vec<i32> (align 8, size 16) first, then the two u32s.
 #[repr(usize)]
 #[derive(Copy, Clone)]
 pub enum LineOffsetTableField {
@@ -75,10 +75,10 @@ pub enum LineOffsetTableField {
 impl MultiArrayElement for LineOffsetTable {
     type Field = LineOffsetTableField;
     const FIELD_COUNT: usize = 3;
-    const ALIGN: usize = core::mem::align_of::<BabyList<i32>>();
+    const ALIGN: usize = core::mem::align_of::<Vec<i32>>();
     // sorted by alignment descending (BabyList has ptr → align 8; u32 align 4)
     const SIZES_BYTES: &'static [usize] = &[
-        core::mem::size_of::<BabyList<i32>>(),
+        core::mem::size_of::<Vec<i32>>(),
         core::mem::size_of::<u32>(),
         core::mem::size_of::<u32>(),
     ];
@@ -91,7 +91,7 @@ impl MultiArrayElement for LineOffsetTable {
     unsafe fn scatter(self, ptrs: &[*mut u8], index: usize) {
         // SAFETY: caller guarantees `ptrs[0..3]` are valid columns with capacity > `index`.
         unsafe {
-            ptrs[0].cast::<BabyList<i32>>().add(index).write(self.columns_for_non_ascii);
+            ptrs[0].cast::<Vec<i32>>().add(index).write(self.columns_for_non_ascii);
             ptrs[1].cast::<u32>().add(index).write(self.byte_offset_to_first_non_ascii);
             ptrs[2].cast::<u32>().add(index).write(self.byte_offset_to_start_of_line);
         }
@@ -102,7 +102,7 @@ impl MultiArrayElement for LineOffsetTable {
         // SAFETY: caller guarantees `ptrs[0..3]` are valid columns with len > `index`.
         unsafe {
             LineOffsetTable {
-                columns_for_non_ascii: ptrs[0].cast::<BabyList<i32>>().add(index).read(),
+                columns_for_non_ascii: ptrs[0].cast::<Vec<i32>>().add(index).read(),
                 byte_offset_to_first_non_ascii: ptrs[1].cast::<u32>().add(index).read(),
                 byte_offset_to_start_of_line: ptrs[2].cast::<u32>().add(index).read(),
             }
@@ -270,7 +270,7 @@ impl LineOffsetTable {
                     // Here the scratch is a heap Vec; we always dupe into a fresh BabyList
                     // (mirrors `allocator.dupe`) and `.clear()` to reuse capacity. Profile in
                     // Phase B.
-                    let owned = BabyList::from_slice(&columns_for_non_ascii)?;
+                    let owned = columns_for_non_ascii.to_vec();
 
                     list.append(LineOffsetTable {
                         byte_offset_to_start_of_line: line_byte_offset,
@@ -312,7 +312,7 @@ impl LineOffsetTable {
         {
             // PERF(port): Zig checked stack_fallback.ownsSlice and duped onto `allocator` if so;
             // here we always dupe the scratch Vec into a fresh BabyList.
-            let owned = BabyList::from_slice(&columns_for_non_ascii)?;
+            let owned = columns_for_non_ascii.to_vec();
             list.append(LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,
                 byte_offset_to_first_non_ascii,

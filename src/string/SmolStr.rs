@@ -2,7 +2,7 @@ use core::mem;
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 
 // NOTE: the tag-bit scheme below only works on little-endian systems (matches Zig comment).
 const _: () = assert!(cfg!(target_endian = "little"));
@@ -113,18 +113,16 @@ impl SmolStr {
         inlined
     }
 
-    pub fn from_baby_list(baby_list: BabyList<u8>) -> SmolStr {
-        // PORT NOTE: BabyList<u8> is #[repr(C)] { ptr, len, cap }. We take ownership of its
-        // storage by reading the raw parts and forgetting the list; Drop on SmolStr frees it.
-        // TODO(port): verify BabyList<u8> field names / into_raw_parts API.
-        let len = baby_list.len;
-        let cap = baby_list.cap;
-        let p = baby_list.ptr;
-        mem::forget(baby_list);
+    pub fn from_baby_list(baby_list: Vec<u8>) -> SmolStr {
+        // Take ownership of the Vec's storage; Drop on SmolStr frees it.
+        let mut baby_list = mem::ManuallyDrop::new(baby_list);
+        let len = baby_list.len() as u32;
+        let cap = baby_list.capacity() as u32;
+        let p = baby_list.as_mut_ptr();
         let mut smol_str = SmolStr(0);
         smol_str.set_raw_len(len);
         smol_str.set_raw_cap(cap);
-        smol_str.set_raw_ptr_bits(p.as_ptr() as usize);
+        smol_str.set_raw_ptr_bits(p as usize);
         smol_str.mark_heap();
         smol_str
     }
@@ -144,8 +142,8 @@ impl SmolStr {
 
     pub fn from_slice(values: &[u8]) -> Result<SmolStr, AllocError> {
         if values.len() > Inlined::MAX_LEN {
-            // TODO(port): verify BabyList<u8>::init_capacity / append_slice_assume_capacity API.
-            let mut baby_list = BabyList::<u8>::init_capacity(values.len())?;
+            // TODO(port): verify Vec<u8>::init_capacity / append_slice_assume_capacity API.
+            let mut baby_list = Vec::<u8>::init_capacity(values.len())?;
             baby_list.append_slice_assume_capacity(values);
             // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
             return Ok(SmolStr::from_baby_list(baby_list));
@@ -170,19 +168,12 @@ impl SmolStr {
         if self.is_inlined() {
             let mut inlined = self.to_inlined();
             if inlined.len() as usize + 1 > Inlined::MAX_LEN {
-                let mut baby_list = BabyList::<u8>::init_capacity(inlined.len() as usize + 1)?;
+                let mut baby_list = Vec::<u8>::init_capacity(inlined.len() as usize + 1)?;
                 baby_list.append_slice_assume_capacity(inlined.slice());
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-                baby_list.append(char)?;
+                baby_list.push(char);
                 // PORT NOTE: overwrite raw bits without running Drop — old value was inlined (no heap).
-                let len = baby_list.len;
-                let cap = baby_list.cap;
-                let p = baby_list.ptr;
-                mem::forget(baby_list);
-                self.set_raw_len(len);
-                self.set_raw_ptr_bits(p.as_ptr() as usize);
-                self.set_raw_cap(cap);
-                self.mark_heap();
+                unsafe { ptr::write(self, SmolStr::from_baby_list(baby_list)) };
                 return Ok(());
             }
             let old_len = inlined.len() as usize;
@@ -193,24 +184,15 @@ impl SmolStr {
             return Ok(());
         }
 
-        // SAFETY: ptr/len/cap were produced by a prior BabyList<u8> allocation.
+        // SAFETY: ptr/len/cap were produced by a prior Vec<u8> allocation.
         let mut baby_list = unsafe {
-            BabyList::<u8>::from_raw_parts(self.ptr(), self.raw_len(), self.raw_cap())
+            Vec::<u8>::from_raw_parts(self.ptr(), self.raw_len() as usize, self.raw_cap() as usize)
         };
-        // TODO(port): verify BabyList<u8>::from_raw_parts exists; else construct fields directly.
         // Ownership of the allocation has moved into `baby_list`; neutralize self so an
         // error return below (which drops `baby_list`) does not double-free via SmolStr::drop.
         self.0 = Inlined::EMPTY.0;
-        baby_list.append(char)?;
-
-        let len = baby_list.len;
-        let cap = baby_list.cap;
-        let p = baby_list.ptr;
-        mem::forget(baby_list);
-        self.set_raw_len(len);
-        self.set_raw_ptr_bits(p.as_ptr() as usize);
-        self.set_raw_cap(cap);
-        // (already heap-tagged)
+        baby_list.push(char);
+        unsafe { ptr::write(self, SmolStr::from_baby_list(baby_list)) };
         Ok(())
     }
 
@@ -219,7 +201,7 @@ impl SmolStr {
             let mut inlined = self.to_inlined();
             let old_len = inlined.len() as usize;
             if old_len + values.len() > Inlined::MAX_LEN {
-                let mut baby_list = BabyList::<u8>::init_capacity(old_len + values.len())?;
+                let mut baby_list = Vec::<u8>::init_capacity(old_len + values.len())?;
                 baby_list.append_slice_assume_capacity(inlined.slice());
                 baby_list.append_slice_assume_capacity(values);
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
@@ -234,15 +216,15 @@ impl SmolStr {
             return Ok(());
         }
 
-        // SAFETY: ptr/len/cap were produced by a prior BabyList<u8> allocation; we logically
+        // SAFETY: ptr/len/cap were produced by a prior Vec<u8> allocation; we logically
         // move ownership into `baby_list` and write the result back without dropping the old self.
         let mut baby_list = unsafe {
-            BabyList::<u8>::from_raw_parts(self.ptr(), self.raw_len(), self.raw_cap())
+            Vec::<u8>::from_raw_parts(self.ptr(), self.raw_len() as usize, self.raw_cap() as usize)
         };
         // Ownership of the allocation has moved into `baby_list`; neutralize self so an
         // error return below (which drops `baby_list`) does not double-free via SmolStr::drop.
         self.0 = Inlined::EMPTY.0;
-        baby_list.append_slice(values)?;
+        baby_list.extend_from_slice(values);
 
         // SAFETY: old *self is now inlined-empty (no heap ownership); ptr::write skips its Drop.
         unsafe { ptr::write(self, SmolStr::from_baby_list(baby_list)) };
@@ -253,10 +235,10 @@ impl SmolStr {
 impl Drop for SmolStr {
     fn drop(&mut self) {
         if !self.is_inlined() {
-            // SAFETY: ptr/len/cap describe a BabyList<u8> allocation we own; reconstruct to free.
-            // TODO(port): verify BabyList<u8> Drop frees; else dealloc via global allocator directly.
+            // SAFETY: ptr/len/cap describe a Vec<u8> allocation we own; reconstruct to free.
+            // TODO(port): verify Vec<u8> Drop frees; else dealloc via global allocator directly.
             let list = unsafe {
-                BabyList::<u8>::from_raw_parts(self.ptr(), self.raw_len(), self.raw_cap())
+                Vec::<u8>::from_raw_parts(self.ptr(), self.raw_len() as usize, self.raw_cap() as usize)
             };
             drop(list);
         }
@@ -423,5 +405,5 @@ mod tests {
 //   source:     src/string/SmolStr.zig (275 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      packed u128 bit-layout reimplemented with manual shift accessors; Drop replaces deinit so heap-backed mutators neutralize self before fallible BabyList ops to avoid error-path double-free; BabyList<u8> raw-parts API needs verification in Phase B.
+//   notes:      packed u128 bit-layout reimplemented with manual shift accessors; Drop replaces deinit so heap-backed mutators neutralize self before fallible BabyList ops to avoid error-path double-free; Vec<u8> raw-parts API needs verification in Phase B.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+use bun_collections::VecExt;
 use core::ffi::c_void;
 use bun_alloc::ArenaVecExt as _;
 
@@ -1366,7 +1367,7 @@ impl<'a> Parser<'a> {
                                         // BabyList view (matches `P::to_ast`); `p` is dropped
                                         // immediately after this return so no double-ownership.
                                         import_records: unsafe {
-                                            BabyList::from_bump_slice(p.import_records.items_mut())
+                                            Vec::from_bump_slice(p.import_records.items_mut())
                                         },
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
@@ -1452,9 +1453,7 @@ impl<'a> Parser<'a> {
                                             new_stmts.into_bump_slice_mut()
                                         };
 
-                                        part.import_record_indices
-                                            .append(req.import_record_index)
-                                            .expect("oom");
+                                        part.import_record_indices.push(req.import_record_index);
                                         p.symbols.as_mut_slice()
                                             [p.module_ref.inner_index() as usize]
                                             .use_count_estimate = 0;
@@ -1550,7 +1549,7 @@ impl<'a> Parser<'a> {
                             // TODO(port): Zig set `.allocator = p.allocator`; arena ownership tracked elsewhere in Rust
                             // SAFETY: see note on the matching arm above.
                             import_records: unsafe {
-                                BabyList::from_bump_slice(p.import_records.items_mut())
+                                Vec::from_bump_slice(p.import_records.items_mut())
                             },
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),
@@ -1910,7 +1909,7 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
-                    import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_id])),
+                    import_record_indices: vec![import_record_id],
                     tag: crate::PartTag::BunTest,
                     ..Default::default()
                 });
@@ -1961,7 +1960,7 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
-                    import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_id])),
+                    import_record_indices: vec![import_record_id],
                     tag: crate::PartTag::BunTest,
                     ..Default::default()
                 });

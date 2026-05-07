@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 use core::ptr;
 
-use bun_collections::BabyList;
+use bun_collections::VecExt;
 use crate::generics as generic;
 use crate::css_parser::{CssResult, Delimiters, Parser};
 
@@ -223,12 +223,12 @@ impl<T, const N: usize> SmallList<T, N> {
     }
 
     /// NOTE: This will deinit the list
-    pub fn from_baby_list(list: BabyList<T>) -> Self {
-        if list.cap > u32::try_from(N).unwrap() {
-            let cap = list.cap;
-            let len = list.len;
-            let ptr = list.ptr.as_ptr();
-            // Ownership of the buffer transfers to SmallList; suppress BabyList's Drop to avoid double-free.
+    pub fn from_baby_list(mut list: Vec<T>) -> Self {
+        let cap = u32::try_from(list.capacity()).unwrap();
+        let len = u32::try_from(list.len()).unwrap();
+        if cap > u32::try_from(N).unwrap() {
+            let ptr = list.as_mut_ptr();
+            // Ownership of the buffer transfers to SmallList; suppress Vec's Drop to avoid double-free.
             core::mem::forget(list);
             return SmallList {
                 capacity: cap,
@@ -236,20 +236,16 @@ impl<T, const N: usize> SmallList<T, N> {
             };
         }
         let mut this = SmallList::<T, N> {
-            capacity: list.len,
+            capacity: len,
             // SAFETY: array of MaybeUninit<T> needs no initialization
             data: Data { inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }) },
         };
-        // SAFETY: list.len <= N
+        // SAFETY: len <= N
         unsafe {
-            ptr::copy_nonoverlapping(list.ptr.as_ptr(), (*this.data.inlined).as_mut_ptr().cast::<T>(), list.len as usize);
+            ptr::copy_nonoverlapping(list.as_ptr(), (*this.data.inlined).as_mut_ptr().cast::<T>(), len as usize);
+            // Elements were bitwise-moved out; zero `len` so only the buffer is freed.
+            list.set_len(0);
         }
-        // Elements were bitwise-moved out. BabyList::Drop reconstructs
-        // `Vec::from_raw_parts(ptr, len, cap)` which would drop elements
-        // [0..len) again — double-drop. Zero `len` first so only the buffer is
-        // freed (matching Zig `list_.deinit(allocator)` which never destructs).
-        let mut list = list;
-        list.len = 0;
         drop(list);
         this
     }
@@ -257,35 +253,11 @@ impl<T, const N: usize> SmallList<T, N> {
     /// Transfers the buffer from `list` without dropping its elements (Zig
     /// `fromBabyListNoDeinit` took the list by value). See
     /// [`from_list_no_deinit`] for the ownership contract.
-    pub fn from_baby_list_no_deinit(list: BabyList<T>) -> Self
+    pub fn from_baby_list_no_deinit(list: Vec<T>) -> Self
     where
         T: Copy,
     {
-        if list.cap > u32::try_from(N).unwrap() {
-            let cap = list.cap;
-            let len = list.len;
-            let ptr = list.ptr.as_ptr();
-            core::mem::forget(list);
-            return SmallList {
-                capacity: cap,
-                data: Data { heap: HeapData { len, ptr } },
-            };
-        }
-        let len = list.len as usize;
-        let mut this = SmallList::<T, N> {
-            capacity: list.len,
-            // SAFETY: array of MaybeUninit<T> needs no initialization
-            data: Data { inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }) },
-        };
-        // SAFETY: len <= N; T: Copy so bitwise copy is sound; inlined storage active
-        unsafe {
-            ptr::copy_nonoverlapping(list.ptr.as_ptr(), (*this.data.inlined).as_mut_ptr().cast::<T>(), len);
-        }
-        // T: Copy so element drop is a no-op; let BabyList free the source buffer.
-        let mut list = list;
-        list.len = 0;
-        drop(list);
-        this
+        Self::from_baby_list(list)
     }
 
     pub fn with_one(val: T) -> Self {
@@ -924,7 +896,7 @@ impl<T: ImageFallback> SmallList<T, 1> {
         &mut self,
         allocator: &bun_alloc::Arena,
         targets: crate::targets::Targets,
-    ) -> BabyList<SmallList<T, 1>> {
+    ) -> Vec<SmallList<T, 1>> {
         fallbacks_gated::get_fallbacks_image(self, allocator, targets)
     }
 }
@@ -945,7 +917,7 @@ pub fn get_fallbacks_image<T>(
     this: &mut SmallList<T, 1>,
     allocator: &bun_alloc::Arena,
     targets: css::targets::Targets,
-) -> BabyList<SmallList<T, 1>>
+) -> Vec<SmallList<T, 1>>
 where
     T: super::ImageFallback,
 {
@@ -953,7 +925,7 @@ where
     // Determine what vendor prefixes and color fallbacks are needed.
     let mut prefixes = css::VendorPrefix::default();
     let mut fallbacks = ColorFallbackKind::default();
-    let mut res: BabyList<SmallList<T, 1>> = BabyList::default();
+    let mut res: Vec<SmallList<T, 1>> = Vec::new();
     for item in this.slice() {
         prefixes.insert(item.get_image().get_necessary_prefixes(targets));
         fallbacks.insert(item.get_necessary_fallbacks(targets));
@@ -994,7 +966,7 @@ where
             break 'images images;
         };
         if !images.is_empty() {
-            let _ = res.append(images);
+            res.push(images);
         }
     }
 
@@ -1003,7 +975,7 @@ where
         prefix: &'static str,
         pfs: &css::VendorPrefix,
         pfi: &SmallList<T, 1>,
-        r: &mut BabyList<SmallList<T, 1>>,
+        r: &mut Vec<SmallList<T, 1>>,
         alloc: &bun_alloc::Arena,
     ) {
         if pfs.contains(css::VendorPrefix::from_name_str(prefix)) {
@@ -1016,7 +988,7 @@ where
                 // SAFETY: i < len; slot uninitialized after set_len
                 unsafe { ptr::write(images.as_ptr().add(i as usize), in_.with_image(alloc, image)) };
             }
-            let _ = r.append(images);
+            r.push(images);
         }
     }
 
@@ -1026,7 +998,7 @@ where
 
     if prefixes.contains(css::VendorPrefix::NONE) {
         if let Some(r) = rgb {
-            let _ = res.append(r);
+            res.push(r);
         }
 
         if fallbacks.contains(ColorFallbackKind::P3) {
@@ -1039,7 +1011,7 @@ where
                 // SAFETY: i < len; slot uninitialized after set_len
                 unsafe { ptr::write(p3_images.as_ptr().add(i as usize), out_val) };
             }
-            let _ = res.append(p3_images);
+            res.push(p3_images);
         }
 
         // Convert to lab if needed (e.g. if oklab is not supported but lab is).

@@ -1,5 +1,5 @@
 use bun_alloc::Arena;
-use bun_collections::{BabyList, DynamicBitSet};
+use bun_collections::{VecExt, DynamicBitSet};
 use bun_options_types::ImportRecord;
 
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
@@ -30,10 +30,10 @@ pub fn find_imported_css_files_in_js_order(
     this: &LinkerContext,
     _temp: &Arena,
     entry_point: Index,
-) -> BabyList<Index> {
+) -> Vec<Index> {
     // PERF(port): was arena bulk-free (DynamicBitSet now Box<[usize]>-backed) — profile in Phase B
     let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
-    let mut order: BabyList<Index> = BabyList::default();
+    let mut order: Vec<Index> = Vec::new();
 
     let all_import_records = this.graph.ast.items_import_records();
     // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the bundle lifetime.
@@ -45,11 +45,11 @@ pub fn find_imported_css_files_in_js_order(
     #[allow(clippy::too_many_arguments)]
     fn visit(
         c: &LinkerContext,
-        import_records: &[BabyList<ImportRecord>],
+        import_records: &[Vec<ImportRecord>],
         parts: &[PartList],
         loaders: &[Loader],
         visits: &mut BitSet,
-        o: &mut BabyList<Index>,
+        o: &mut Vec<Index>,
         source_index: Index,
         is_css: bool,
     ) {
@@ -88,7 +88,7 @@ pub fn find_imported_css_files_in_js_order(
 
         if is_css && source_index.is_valid() {
             // bun.handleOom(o.append(temp, source_index)) — Rust BabyList uses global allocator.
-            o.append(source_index).expect("oom");
+            o.push(source_index);
         }
     }
 

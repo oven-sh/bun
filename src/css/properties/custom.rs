@@ -1,6 +1,7 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //!
 //! Ported from `src/css/properties/custom.zig`.
+use bun_collections::VecExt;
 //
 // ─── B-2 round 9 status ────────────────────────────────────────────────────
 // `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,

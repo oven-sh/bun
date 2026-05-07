@@ -677,20 +677,6 @@ impl String {
         w::latin1(self.latin1())
     }
 
-    /// `bun.String.visibleWidth` — terminal column width of `self`
-    /// (string.zig:850). Dispatches on encoding to [`strings::visible::width`].
-    pub fn visible_width(&self, ambiguous_as_wide: bool) -> usize {
-        use crate::strings::visible::width as w;
-        if self.is_utf16() {
-            return w::utf16(self.utf16(), ambiguous_as_wide);
-        }
-        if self.is_utf8() {
-            // SAFETY: tag is ZigString/StaticZigString and 8-bit; `slice()` is
-            // the UTF-8 byte view.
-            return w::utf8(unsafe { self.value.zig.slice() });
-        }
-        w::latin1(self.latin1())
-    }
 
     /// `bun.String.visibleWidthExcludeANSIColors` — terminal column width of
     /// `self`, treating ANSI escape sequences as zero-width (string.zig).
@@ -1282,12 +1268,135 @@ impl ZigStringSlice {
         }
     }
 }
+impl ZigStringSlice {
+    /// `ZigString.Slice.length()` — byte length of the underlying UTF-8/Latin-1 view.
+    #[inline]
+    pub fn length(&self) -> usize {
+        match self {
+            Self::Static(_, l) => *l,
+            Self::Owned(v) => v.len(),
+            Self::WTF { len, .. } => *len,
+        }
+    }
+    /// True iff this slice owns its allocation (Zig: `allocator.get().is_some()`).
+    /// `Static` borrows return `false`; `Owned`/`WTF` return `true`.
+    #[inline]
+    pub fn is_allocated(&self) -> bool {
+        !matches!(self, Self::Static(..))
+    }
+    /// True iff this slice is backed by a WTFStringImpl ref
+    /// (Zig: `String.isWTFAllocator(allocator)`).
+    #[inline]
+    pub fn is_wtf_allocated(&self) -> bool {
+        matches!(self, Self::WTF { .. })
+    }
+}
 impl Drop for ZigStringSlice {
     fn drop(&mut self) {
         if let Self::WTF { string_impl, .. } = *self {
             // SAFETY: constructor took a ref; we now release it.
             unsafe { wtf::Bun__WTFStringImpl__deref(string_impl) }
         }
+    }
+}
+
+/// `bun.SliceWithUnderlyingString` (string.zig:1035) — a UTF-8 byte view paired
+/// with the `bun.String` that may back it. `utf8` is either a borrowed/owned
+/// byte slice or empty; `underlying` is the `String` whose ref keeps `utf8`
+/// alive when WTF-backed.
+pub struct SliceWithUnderlyingString {
+    pub utf8: ZigStringSlice,
+    pub underlying: String,
+    #[cfg(debug_assertions)]
+    pub did_report_extra_memory_debug: bool,
+}
+
+impl Default for SliceWithUnderlyingString {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            utf8: ZigStringSlice::EMPTY,
+            underlying: String::DEAD,
+            #[cfg(debug_assertions)]
+            did_report_extra_memory_debug: false,
+        }
+    }
+}
+
+impl SliceWithUnderlyingString {
+    /// `isWTFAllocated` — true iff `utf8`'s allocator is the WTFStringImpl
+    /// allocator (i.e. it borrows latin1 bytes out of a refcounted impl).
+    #[inline]
+    pub fn is_wtf_allocated(&self) -> bool {
+        self.utf8.is_wtf_allocated()
+    }
+
+    /// `dupeRef` — bump `underlying`'s refcount; the new value's `utf8` is
+    /// left empty (callers re-derive the slice from `underlying`).
+    pub fn dupe_ref(&self) -> SliceWithUnderlyingString {
+        SliceWithUnderlyingString {
+            utf8: ZigStringSlice::EMPTY,
+            underlying: self.underlying.dupe_ref(),
+            #[cfg(debug_assertions)]
+            did_report_extra_memory_debug: false,
+        }
+    }
+
+    /// `fromUTF8` — wrap a borrowed UTF-8 slice (caller keeps it alive).
+    /// Zig assumed `default_allocator`; Rust port uses `Static` (no free).
+    #[inline]
+    pub fn from_utf8(utf8: &[u8]) -> SliceWithUnderlyingString {
+        SliceWithUnderlyingString {
+            utf8: ZigStringSlice::from_utf8_never_free(utf8),
+            underlying: String::DEAD,
+            #[cfg(debug_assertions)]
+            did_report_extra_memory_debug: false,
+        }
+    }
+
+    /// `slice` — the UTF-8 byte view.
+    #[inline]
+    pub fn slice(&self) -> &[u8] {
+        self.utf8.slice()
+    }
+
+    /// `deinit` — release `utf8`'s allocation (if any) and deref `underlying`.
+    /// Explicit for parity with Zig call sites; `Drop` is intentionally not
+    /// implemented because `underlying: String` is `Copy` (matches Zig manual
+    /// `defer .deinit()` pattern).
+    pub fn deinit(self) {
+        // `utf8` drops via ZigStringSlice::Drop.
+        self.underlying.deref();
+    }
+
+    /// `toThreadSafe` — if `underlying` is WTF-backed, migrate it to a
+    /// thread-safe impl and re-derive `utf8` if it was a ref-counted view
+    /// into the old impl (string.zig:1090).
+    pub fn to_thread_safe(&mut self) {
+        if self.underlying.tag == Tag::WTFStringImpl {
+            // SAFETY: tag check guarantees the wtf union arm is active.
+            let orig = unsafe { self.underlying.value.wtf };
+            self.underlying.to_thread_safe();
+            // SAFETY: still WTFStringImpl after to_thread_safe().
+            let new = unsafe { self.underlying.value.wtf };
+            if new != orig {
+                if self.utf8.is_wtf_allocated() {
+                    self.utf8 = ZigStringSlice::EMPTY;
+                    // SAFETY: `new` is a live WTFStringImpl just installed by
+                    // `to_thread_safe`; takes a ref for the latin1 view.
+                    self.utf8 = unsafe { (*new).to_latin1_slice() };
+                }
+            }
+        }
+    }
+}
+
+impl fmt::Display for SliceWithUnderlyingString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.utf8.length() == 0 {
+            return self.underlying.fmt(f);
+        }
+        f.write_str(&std::string::String::from_utf8_lossy(self.utf8.slice()))
     }
 }
 

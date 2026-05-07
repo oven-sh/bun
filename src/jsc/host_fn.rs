@@ -117,7 +117,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
         }
     }
     let _ = func;
-    bun_core::assert_eq!(value.is_empty(), global_this.has_exception());
+    debug_assert_eq!(value.is_empty(), global_this.has_exception());
 }
 
 pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {

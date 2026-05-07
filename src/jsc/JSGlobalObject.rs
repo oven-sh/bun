@@ -1,20 +1,19 @@
-use core::ffi::c_void;
+use core::ffi::{c_char, c_void};
 use core::fmt::Arguments;
 use core::marker::{PhantomData, PhantomPinned};
+use core::panic::Location;
 
-use crate::{
-    CommonStrings, ErrorableString, Exception, JSValue, JsError, JsResult, VirtualMachine, VM,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER,
-};
 use crate::error_code::ErrorBuilder;
+use crate::virtual_machine::VirtualMachine;
+use crate::DOMExceptionCode;
 use crate::Error as JscError; // jsc.Error (ErrorCode enum)
-use crate::node::ErrorCode as NodeErrorCode;
-use crate::webcore::{DOMExceptionCode, ReadableStream, Response};
+use crate::{
+    CommonStrings, ErrorableString, Exception, JSValue, JsError, JsResult, StringJsc, ZigStringJsc,
+    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+};
 
-use bun_core::{fmt as bun_fmt, perf, Output, StackCheck};
-use bun_runtime::napi::NapiEnv;
-use bun_str::{self as bstr_mod, strings, String as BunString, ZigString};
-use bun_webcore::ScriptExecutionContext;
+use bun_core::{fmt as bun_fmt, perf, StackCheck};
+use bun_string::{strings, String as BunString, ZigString};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -88,7 +87,7 @@ impl JSGlobalObject {
         second: i32,
         millisecond: i32,
     ) -> JsResult<f64> {
-        crate::mark_binding(core::panic::Location::caller());
+        crate::mark_binding();
         // TODO(port): move to jsc_sys
         // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args are by value.
         Ok(unsafe {
@@ -106,7 +105,7 @@ impl JSGlobalObject {
         second: i32,
         millisecond: i32,
     ) -> JsResult<f64> {
-        crate::mark_binding(core::panic::Location::caller());
+        crate::mark_binding();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args are by value.
         Ok(unsafe {
             Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, false)
@@ -114,7 +113,7 @@ impl JSGlobalObject {
     }
 
     pub fn ms_to_gregorian_date_time_utc(&self, ms: f64) -> GregorianDateTime {
-        crate::mark_binding(core::panic::Location::caller());
+        crate::mark_binding();
         let mut dt = GregorianDateTime {
             year: 0,
             month: 0,
@@ -190,9 +189,10 @@ impl JSGlobalObject {
 
     #[inline]
     pub fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError {
-        // TODO(port): Zig version is comptime over `arg_names.len` (0 => @compileError).
+        // PORT NOTE: Zig version is comptime over `arg_names.len` (0/4+ => @compileError).
+        // Runtime panic stands in for the compile-time check.
         match arg_names.len() {
-            0 => unreachable!("requires at least one argument"),
+            0 => panic!("requires at least one argument"),
             1 => self
                 .err(JscError::MISSING_ARGS, format_args!("The \"{}\" argument must be specified", arg_names[0]))
                 .throw(),
@@ -214,7 +214,7 @@ impl JSGlobalObject {
                     ),
                 )
                 .throw(),
-            _ => unreachable!("implement this message"),
+            _ => panic!("implement this message"),
         }
     }
 
@@ -234,8 +234,14 @@ impl JSGlobalObject {
         .to_js()
     }
 
-    pub fn to_js<T>(&self, value: T) -> JsResult<JSValue> {
-        JSValue::from_any(self, value)
+    /// Generic value→JSValue conversion. Zig's `JSValue.fromAny` reflects over
+    /// `@TypeOf(value)`; in Rust the supported set is whatever implements
+    /// `Into<JSValue>` (numbers, bools, JSValue itself). Struct/array reflection
+    /// goes through `JSObject::create` per type.
+    // TODO(port): widen via a `ToJsValue` trait once `JSValue::from_any` is fully ported.
+    pub fn to_js<T: Into<JSValue>>(&self, value: T) -> JsResult<JSValue> {
+        let _ = self; // global only needed for non-primitive paths in the Zig version.
+        Ok(value.into())
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
@@ -354,12 +360,17 @@ impl JSGlobalObject {
         if err != 0 {
             let mut buf = [0u8; 256];
             // SAFETY: FFI — `buf` is a 256-byte stack buffer; `len` matches its capacity;
-            // ERR_error_string_n NUL-terminates within `len` bytes.
-            let msg = unsafe { bun_boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr(), buf.len()) };
+            // ERR_error_string_n NUL-terminates within `len` bytes and returns `buf`.
+            let msg_ptr = unsafe {
+                bun_boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr() as *mut c_char, buf.len())
+            };
+            // SAFETY: ERR_error_string_n returns a NUL-terminated string inside `buf`
+            // (or a static empty string); valid for CStr::from_ptr.
+            let msg = unsafe { core::ffi::CStr::from_ptr(msg_ptr) };
             return self
                 .err(
                     JscError::CRYPTO_INVALID_SCRYPT_PARAMS,
-                    format_args!("Invalid scrypt params: {}", bstr::BStr::new(msg)),
+                    format_args!("Invalid scrypt params: {}", bstr::BStr::new(msg.to_bytes())),
                 )
                 .throw();
         }

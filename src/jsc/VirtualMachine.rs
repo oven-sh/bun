@@ -87,7 +87,7 @@ pub struct InitOptions {
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
-    pub graph: *mut c_void,
+    pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -111,7 +111,7 @@ impl Default for InitOptions {
             args: alloc::vec::Vec::new(),
             log: None,
             env_loader: None,
-            graph: core::ptr::null_mut(),
+            graph: None,
             smol: false,
             eval_mode: false,
             is_main_thread: false,
@@ -162,8 +162,12 @@ pub struct VirtualMachine {
     pub pending_unref_counter: i32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
-    // TODO(port): lifetime — `Option<&'a StandaloneModuleGraph>`.
-    pub standalone_module_graph: Option<NonNull<c_void>>,
+    // PORT NOTE: layering — the concrete `bun_standalone_graph::Graph` lives
+    // in a higher-tier crate. The resolver already broke that cycle with the
+    // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
+    // object here so `init_with_module_graph` can hand it straight to
+    // `transpiler.resolver.standalone_module_graph` without a downcast.
+    pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
     // TODO(b2-cycle): `dns_result_order` is `bun_runtime::api::dns::Resolver::Order`.
     pub dns_result_order: u8,
@@ -1473,7 +1477,7 @@ impl VirtualMachine {
         vm_ref.origin_timer = std::time::Instant::now();
         vm_ref.origin_timestamp = get_origin_timestamp();
         vm_ref.smol = opts.smol;
-        vm_ref.standalone_module_graph = NonNull::new(opts.graph);
+        vm_ref.standalone_module_graph = opts.graph;
         vm_ref.initial_script_execution_context_identifier = opts
             .context_id
             .unwrap_or(if opts.is_main_thread { 1 } else { i32::MAX });
@@ -2082,9 +2086,10 @@ pub struct Options {
     pub dns_result_order: u8,
     /// `--print` needs the result from evaluating the main module.
     pub eval: bool,
-    // TODO(b2-cycle): real type is `bun_standalone_module_graph::StandaloneModuleGraph`,
-    // but that crate is not at this tier. Stored opaque.
-    pub graph: Option<NonNull<c_void>>,
+    // PORT NOTE: layering — concrete `bun_standalone_graph::Graph` is in a
+    // forward-dep crate; callers pass it as the resolver's trait object so
+    // both VM and resolver can hold it without the cycle.
+    pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     // PORT NOTE: Zig `debugger: bun.cli.Command.Debugger` dropped — debugger
     // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
     // CLI option struct lives in `bun_cli`, a forward dep). See
@@ -2631,9 +2636,7 @@ impl VirtualMachine {
                 // (the VM is dead; don't bump the counter or invoke the
                 // handler).
                 // SAFETY: `event_loop` is a self-pointer into this VM.
-                if let Err(JsError::Terminated) =
-                    unsafe { (*self.event_loop()).drain_microtasks() }
-                {
+                if unsafe { (*self.event_loop()).drain_microtasks() }.is_err() {
                     return;
                 }
             }
@@ -3054,7 +3057,7 @@ impl VirtualMachine {
                 let (ptr, len) = if DUPE {
                     let buf = Box::<[u8]>::from(input_);
                     let len = buf.len();
-                    (Box::into_raw(buf).cast::<u8>(), len)
+                    (Box::into_raw(buf).cast::<u8>().cast_const(), len)
                 } else {
                     (input_.as_ptr(), input_.len())
                 };
@@ -4345,18 +4348,16 @@ impl VirtualMachine {
                     let preview = unsafe { *self.enable_source_code_preview };
                     let slice = unsafe { &*self.source_code_slice };
                     if !preview && slice.is_some() {
-                        bun_core::Output::panic(
-                            "Do not collect source code when we don't need to",
-                            (),
-                        );
+                        bun_core::Output::panic(format_args!(
+                            "Do not collect source code when we don't need to"
+                        ));
                     }
                     // SAFETY: `source_lines_numbers[0]` is always valid —
                     // `Holder` backs it with a `[i32; SOURCE_LINES_COUNT]`.
                     if !preview && unsafe { *exception.stack.source_lines_numbers } != -1 {
-                        bun_core::Output::panic(
-                            "Do not collect source code when we don't need to",
-                            (),
-                        );
+                        bun_core::Output::panic(format_args!(
+                            "Do not collect source code when we don't need to"
+                        ));
                     }
                 }
                 #[cfg(not(debug_assertions))]
@@ -5036,7 +5037,7 @@ impl VirtualMachine {
 use core::fmt::Write as _;
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {
-    jsc::from_js_host_call_generic(global_object, || unsafe {
+    jsc::from_js_host_call_generic(global_object, core::panic::Location::caller(), || unsafe {
         Bun__promises__isErrorLike(global_object.as_ptr(), reason)
     })
 }

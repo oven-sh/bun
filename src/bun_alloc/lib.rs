@@ -157,25 +157,6 @@ pub type TypedArena<T> = typed_arena::Arena<T>;
 pub const USE_MIMALLOC: bool = true;
 
 /// `bun.default_allocator.realloc(buf, new_size)` — shrink or grow a
-/// mimalloc-owned byte slice, returning a slice over the new allocation.
-/// On OOM, aborts (matches `bun.handleOom(default_allocator.realloc(...))`).
-///
-/// # Safety
-/// - `buf` must point to a block previously obtained from mimalloc (the
-///   global allocator) with alignment ≤ [`mimalloc::MI_MAX_ALIGN_SIZE`].
-/// - On return the original `buf` storage may have been freed; only the
-///   returned slice is valid.
-pub unsafe fn realloc_slice<'a>(buf: &mut [u8], new_size: usize) -> &'a mut [u8] {
-    // SAFETY: caller guarantees `buf.as_mut_ptr()` is a live mimalloc block.
-    let new = unsafe { mimalloc::mi_realloc(buf.as_mut_ptr().cast(), new_size) };
-    if new.is_null() {
-        out_of_memory();
-    }
-    // SAFETY: `mi_realloc` returns a block of at least `new_size` bytes,
-    // preserving `min(old_size, new_size)` bytes of `buf`'s contents.
-    unsafe { core::slice::from_raw_parts_mut(new.cast::<u8>(), new_size) }
-}
-
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 // These modelled Zig's `std.mem.Allocator` vtable. With `#[global_allocator]`

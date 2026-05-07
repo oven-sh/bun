@@ -4243,91 +4243,23 @@ pub mod formatter {
             js_type: jsc::JSType,
             remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
-            macro_rules! pf { ($s:literal) => { pfmt!($s, C) }; }
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
-
-            if let Some(response) = value.as_::<bun_runtime::webcore::Response>() {
-                let _ = response.write_format::<C>(self, writer_);
-                return Ok(());
-            } else if let Some(request) = value.as_::<bun_runtime::webcore::Request>() {
-                let _ = request.write_format::<C>(value, self, writer_);
-                return Ok(());
-            } else if let Some(build) = value.as_::<bun_runtime::api::BuildArtifact>() {
-                let _ = build.write_format::<C>(self, writer_);
-                return Ok(());
-            } else if let Some(blob) = value.as_::<bun_runtime::webcore::Blob>() {
-                let _ = blob.write_format::<C>(self, writer_);
-                return Ok(());
-            } else if let Some(s3client) = value.as_::<bun_runtime::webcore::S3Client>() {
-                let _ = s3client.write_format::<C>(self, writer_);
-                return Ok(());
-            } else if let Some(archive) = value.as_::<bun_runtime::api::Archive>() {
-                let _ = archive.write_format::<C>(self, writer_);
-                return Ok(());
-            } else if value.as_::<bun_runtime::webcore::FetchHeaders>().is_some() {
-                if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
-                    self.add_for_new_line("Headers ".len());
-                    writer.write_all(pf!("<r>Headers ").as_bytes());
-                    let prev_quote_keys = self.quote_keys;
-                    self.quote_keys = true;
-                    let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-
-                    let result = to_json_function
-                        .call(self.global_this, value, &[])
-                        .unwrap_or_else(|err| self.global_this.take_exception(err));
-                    return self.print_as::<{ Tag::Object }, C>(writer_, result, jsc::JSType::Object);
+            // LAYERING: the Zig spec walks an `if (value.as(T))` chain over
+            // `Response`/`Request`/`Blob`/`S3Client`/`Archive`/`BuildArtifact`/
+            // `FetchHeaders`/`TimeoutObject`/`ImmediateObject`/`BuildMessage`/
+            // `ResolveMessage`/Jest asymmetric matchers — all of which live in
+            // `bun_runtime` (forward-dep). Dispatch through `RuntimeHooks` so
+            // the high tier owns the downcasts. Hook returns `true` when it
+            // formatted `value`; otherwise we fall through to the generic
+            // object printer below.
+            if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+                let handled = NAME_BUF.with_borrow_mut(|buf| {
+                    // SAFETY: JS-thread only; `self`/`writer_` borrow stack
+                    // locals for the hook's duration.
+                    unsafe { (hooks.console_print_runtime_object)(self, writer_, value, buf, C) }
+                })?;
+                if handled {
+                    return Ok(());
                 }
-            } else if let Some(timer) = value.as_::<bun_runtime::api::timer::TimeoutObject>() {
-                self.add_for_new_line(
-                    "Timeout(# ) ".len()
-                        + bun_core::fmt::fast_digit_count(timer.internals.id.max(0) as u64) as usize,
-                );
-                if timer.internals.flags.kind == bun_runtime::api::timer::Kind::SetInterval {
-                    self.add_for_new_line(
-                        "repeats ".len()
-                            + bun_core::fmt::fast_digit_count(timer.internals.id.max(0) as u64) as usize,
-                    );
-                    writer.print(format_args!(
-                        "{}Timeout{} {}(#{}{}{}{}, repeats){}",
-                        pf!("<r><blue>"), pf!("<r>"), pf!("<d>"), pf!("<yellow>"),
-                        timer.internals.id, pf!("<r>"), pf!("<d>"), pf!("<r>")
-                    ));
-                } else {
-                    writer.print(format_args!(
-                        "{}Timeout{} {}(#{}{}{}{}){}",
-                        pf!("<r><blue>"), pf!("<r>"), pf!("<d>"), pf!("<yellow>"),
-                        timer.internals.id, pf!("<r>"), pf!("<d>"), pf!("<r>")
-                    ));
-                }
-                return Ok(());
-            } else if let Some(immediate) = value.as_::<bun_runtime::api::timer::ImmediateObject>() {
-                self.add_for_new_line(
-                    "Immediate(# ) ".len()
-                        + bun_core::fmt::fast_digit_count(immediate.internals.id.max(0) as u64) as usize,
-                );
-                writer.print(format_args!(
-                    "{}Immediate{} {}(#{}{}{}{}){}",
-                    pf!("<r><blue>"), pf!("<r>"), pf!("<d>"), pf!("<yellow>"),
-                    immediate.internals.id, pf!("<r>"), pf!("<d>"), pf!("<r>")
-                ));
-                return Ok(());
-            } else if let Some(build_log) = value.as_::<bun_runtime::api::BuildMessage>() {
-                let _ = build_log.msg.write_format::<C>(writer_);
-                return Ok(());
-            } else if let Some(resolve_log) = value.as_::<bun_runtime::api::ResolveMessage>() {
-                let _ = resolve_log.msg.write_format::<C>(writer_);
-                return Ok(());
-            } else if NAME_BUF.with_borrow_mut(|buf| {
-                bun_runtime::test_runner::pretty_format::JestPrettyFormat
-                    ::print_asymmetric_matcher::<C>(
-                        self, &mut writer, writer_, buf, value,
-                    )
-            })? {
-                return Ok(());
             }
 
             // `DOMFormData` is a C++-backed WebCore type — no `JsClass` derive,

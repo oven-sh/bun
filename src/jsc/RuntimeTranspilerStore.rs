@@ -26,7 +26,7 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_string::{strings, MutableString, String};
-use bun_sys::{self, Dir, Fd, File, OpenDirOptions};
+use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::Mutex;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -36,9 +36,19 @@ use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source_tag::ResolvedSourceTag;
+use crate::runtime_transpiler_cache::{
+    Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
+    RuntimeTranspilerCache as JscRuntimeTranspilerCache, JSC_PARSER_CACHE_VTABLE,
+};
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{create_if_different, SourceMapHandlerGetter, VirtualMachine};
-use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult, ResolvedSource, RuntimeTranspilerCache};
+use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult, ResolvedSource};
+
+// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
+// lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
+// JSC-tier disk-backed `Entry` is round-tripped through it type-erased via
+// `JSC_PARSER_CACHE_VTABLE` (see RuntimeTranspilerCache.rs).
+use bun_bundler::RuntimeTranspilerCache;
 
 #[allow(non_upper_case_globals)]
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
@@ -78,7 +88,7 @@ pub fn dump_source_string_failiable(
     if !cfg!(debug_assertions) {
         return Ok(());
     }
-    if bun_core::env_var::feature_flag::BUN_DEBUG_NO_DUMP.get() {
+    if bun_core::env_var::feature_flag::BUN_DEBUG_NO_DUMP.get().unwrap_or(false) {
         return Ok(());
     }
 
@@ -266,8 +276,9 @@ impl RuntimeTranspilerStore {
         // Box::from_raw on `path.text`.
         let owned_text: *mut [u8] = Box::into_raw(Box::<[u8]>::from(path.text));
         // SAFETY: owned_text was just allocated via Box::into_raw and lives until
-        // `reset_for_pool` reconstructs and drops the Box.
-        let owned_path = Fs::Path::init(unsafe { &*owned_text });
+        // `reset_for_pool` reconstructs and drops the Box. The unbounded
+        // lifetime from raw-ptr deref coerces to `'static` for `logger::fs::Path`.
+        let owned_path = logger::fs::Path::init(unsafe { &*(owned_text as *const [u8]) });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
@@ -335,7 +346,10 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 pub type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
-    pub path: Fs::Path<'static>,
+    // PORT NOTE: stored as the lower-tier `bun_logger::fs::Path` (the type
+    // `ParseOptions.path` / `logger::Source.path` use). The slices borrow the
+    // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
+    pub path: logger::fs::Path,
     pub non_threadsafe_input_specifier: String,
     pub non_threadsafe_referrer: String,
     pub loader: Loader,
@@ -377,30 +391,6 @@ unsafe impl unbounded_queue::Node for TranspilerJob {
     }
 }
 
-// SAFETY: `next` is the intrusive link field; all four accessors target it.
-// Atomicity is provided by reinterpreting the `*mut` slot as `AtomicPtr` (same
-// layout/align). The queue only touches `next` while it owns the node.
-unsafe impl bun_threading::unbounded_queue::Node for TranspilerJob {
-    unsafe fn get_next(item: *mut Self) -> *mut Self {
-        unsafe { (*item).next }
-    }
-    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
-        unsafe { (*item).next = ptr; }
-    }
-    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
-        unsafe {
-            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
-                .load(ordering)
-        }
-    }
-    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
-        unsafe {
-            core::sync::atomic::AtomicPtr::from_ptr(core::ptr::addr_of_mut!((*item).next))
-                .store(ptr, ordering)
-        }
-    }
-}
-
 pub enum Fetcher {
     VirtualModule(String),
     File,
@@ -432,7 +422,7 @@ impl TranspilerJob {
     fn reset_for_pool(&mut self) {
         // bun.default_allocator.free(this.path.text) — `path.text` was Box-duplicated in
         // `transpile()`; reconstruct the Box and drop it.
-        let old_path = core::mem::replace(&mut self.path, Fs::Path::EMPTY);
+        let old_path = core::mem::take(&mut self.path);
         if !old_path.text.is_empty() {
             // SAFETY: `text` is exactly the slice returned by `Box::into_raw` in
             // `transpile()`; len matches, and this is the unique owner.
@@ -591,7 +581,14 @@ impl TranspilerJob {
 
         // PORT NOTE: Zig threaded the arena into `output_code_allocator`; the Rust port of
         // RuntimeTranspilerCache dropped the per-allocator fields (Box<[u8]> + global mimalloc).
-        let mut cache = RuntimeTranspilerCache::default();
+        // LAYERING: this is the canonical `bun_js_parser::RuntimeTranspilerCache`
+        // wired with the JSC vtable so the parser's `cache.get()` reaches the
+        // disk-backed `Entry` loader; on a hit `cache.entry` holds a type-erased
+        // `*mut CacheEntry` which is unboxed below.
+        let mut cache = RuntimeTranspilerCache {
+            vtable: Some(&JSC_PARSER_CACHE_VTABLE),
+            ..Default::default()
+        };
 
         let mut log = logger::Log::init();
         // `defer { this.log = ...; log.cloneToWithRecycled(&this.log, true) }`

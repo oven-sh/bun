@@ -891,28 +891,38 @@ impl AsyncModule {
             b"PackageResolveError"
         };
 
-        let error_instance = ZigString::from_bytes(&msg).to_error_instance(global_this);
+        let error_instance = ZigString::from_bytes(&msg)
+            .with_encoding()
+            .to_error_instance(global_this);
         if !result.url.is_empty() {
             error_instance.put(
                 global_this,
                 b"url",
-                ZigString::from_bytes(result.url).to_js(global_this),
+                ZigString::from_bytes(result.url)
+                    .with_encoding()
+                    .to_js(global_this),
             );
         }
         error_instance.put(
             global_this,
             b"name",
-            ZigString::from_bytes(name).to_js(global_this),
+            ZigString::from_bytes(name)
+                .with_encoding()
+                .to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"pkg",
-            ZigString::from_bytes(result.name).to_js(global_this),
+            ZigString::from_bytes(result.name)
+                .with_encoding()
+                .to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"specifier",
-            ZigString::from_bytes(self.specifier()).to_js(global_this),
+            ZigString::from_bytes(self.specifier())
+                .with_encoding()
+                .to_js(global_this),
         );
         let location = logger::range_data(
             Some(&self.parse_result.source),
@@ -928,7 +938,9 @@ impl AsyncModule {
         error_instance.put(
             global_this,
             b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text).to_js(global_this),
+            ZigString::from_bytes(self.parse_result.source.path.text)
+                .with_encoding()
+                .to_js(global_this),
         );
         error_instance.put(
             global_this,
@@ -939,7 +951,9 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"lineText",
-                ZigString::from_bytes(line_text).to_js(global_this),
+                ZigString::from_bytes(line_text)
+                    .with_encoding()
+                    .to_js(global_this),
             );
         }
         error_instance.put(
@@ -952,7 +966,9 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"referrer",
-                ZigString::from_bytes(referrer).to_js(global_this),
+                ZigString::from_bytes(referrer)
+                    .with_encoding()
+                    .to_js(global_this),
             );
         }
 
@@ -978,7 +994,7 @@ impl AsyncModule {
         import_record_id: u32,
         result: PackageDownloadError<'_>,
     ) -> Result<(), bun_core::Error> {
-        let global_this = self.global_this;
+        let global_this = self.global_this();
 
         let string_bytes: *const [u8] = vm
             .package_manager()
@@ -1090,30 +1106,40 @@ impl AsyncModule {
             b"TarballDownloadError"
         };
 
-        let error_instance = ZigString::from_bytes(&msg).to_error_instance(global_this);
+        let error_instance = ZigString::from_bytes(&msg)
+            .with_encoding()
+            .to_error_instance(global_this);
         if !result.url.is_empty() {
             error_instance.put(
                 global_this,
                 b"url",
-                ZigString::from_bytes(result.url).to_js(global_this),
+                ZigString::from_bytes(result.url)
+                    .with_encoding()
+                    .to_js(global_this),
             );
         }
         error_instance.put(
             global_this,
             b"name",
-            ZigString::from_bytes(name).to_js(global_this),
+            ZigString::from_bytes(name)
+                .with_encoding()
+                .to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"pkg",
-            ZigString::from_bytes(result.name).to_js(global_this),
+            ZigString::from_bytes(result.name)
+                .with_encoding()
+                .to_js(global_this),
         );
         let specifier = self.specifier();
         if !specifier.is_empty() && specifier != b"undefined" {
             error_instance.put(
                 global_this,
                 b"referrer",
-                ZigString::from_bytes(specifier).to_js(global_this),
+                ZigString::from_bytes(specifier)
+                    .with_encoding()
+                    .to_js(global_this),
             );
         }
 
@@ -1139,12 +1165,15 @@ impl AsyncModule {
                     .path
                     .text,
             )
+            .with_encoding()
             .to_js(global_this),
         );
         error_instance.put(
             global_this,
             b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text).to_js(global_this),
+            ZigString::from_bytes(self.parse_result.source.path.text)
+                .with_encoding()
+                .to_js(global_this),
         );
         error_instance.put(
             global_this,
@@ -1155,7 +1184,9 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"lineText",
-                ZigString::from_bytes(line_text).to_js(global_this),
+                ZigString::from_bytes(line_text)
+                    .with_encoding()
+                    .to_js(global_this),
             );
         }
         error_instance.put(

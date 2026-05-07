@@ -1743,6 +1743,23 @@ impl JSValue {
         StringFormatter { value: self, global }
     }
 
+    /// `JSValue.toFmt(formatter)` (JSValue.zig:2037) — reset `formatter` for a
+    /// fresh top-level format of `self` and return a `Display` adapter.
+    ///
+    /// The Zig spec also called `formatter.deinit()` when `map_node != null`
+    /// (releasing the visited-pool node mid-flight); the Rust `Formatter` runs
+    /// that logic in `Drop`, so reusing a formatter that already owns a
+    /// `map_node` is handled at end-of-scope instead. All current callers pass
+    /// a freshly-constructed formatter (`map_node == None`).
+    pub fn to_fmt<'a, 'b>(
+        self,
+        formatter: &'a mut crate::console_object::Formatter<'b>,
+    ) -> crate::console_object::ZigFormatter<'a, 'b> {
+        formatter.remaining_values = &[];
+        formatter.stack_check.update();
+        crate::console_object::ZigFormatter::new(formatter, self)
+    }
+
     // ── Next-tick scheduling (JSValue.zig:275). ───────────────────────────
     /// `JSValue.callNextTick(global, .{arg})` for the 1-arg case.
     pub fn call_next_tick_1(

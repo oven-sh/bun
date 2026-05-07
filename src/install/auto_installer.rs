@@ -52,18 +52,9 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> &resolution::Resolution {
     unsafe { &*(r as *const hooks::Resolution as *const resolution::Resolution) }
 }
 
-#[inline]
-fn tag_from_hooks(t: hooks::DependencyVersionTag) -> dependency::Tag {
-    // SAFETY: both `#[repr(u8)]` with identical discriminants
-    // (src/install/dependency.zig `Version.Tag`).
-    unsafe { core::mem::transmute::<hooks::DependencyVersionTag, dependency::Tag>(t) }
-}
-
-#[inline]
-fn tag_to_hooks(t: dependency::Tag) -> hooks::DependencyVersionTag {
-    // SAFETY: see `tag_from_hooks`.
-    unsafe { core::mem::transmute::<dependency::Tag, hooks::DependencyVersionTag>(t) }
-}
+// `dependency::Tag` is a re-export of `hooks::DependencyVersionTag`
+// (src/install/dependency.rs), so no overlay helper is needed — values pass
+// through nominally.
 
 // ─── impl AutoInstaller ───────────────────────────────────────────────────
 
@@ -382,7 +373,7 @@ impl hooks::AutoInstaller for PackageManager {
             name,
             Some(name_hash),
             version,
-            tag_from_hooks(tag),
+            tag,
             sliced,
             log,
             Some(self as &mut dyn dependency::NpmAliasRegistry),
@@ -390,6 +381,6 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {
-        tag_to_hooks(<dependency::Tag as dependency::TagExt>::infer(dep))
+        <dependency::Tag as dependency::TagExt>::infer(dep)
     }
 }

@@ -249,6 +249,40 @@ impl Blob {
     }
 }
 
+// SAFETY: `Blob__ref`/`Blob__deref` (Blob.zig:5100) operate on the intrusive
+// `ref_count` of a heap-allocated `Blob`; the pointee remains valid while the
+// count is > 0, and `ext_deref` boxes-from-raw and drops when it falls to 0.
+unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
+    unsafe fn ext_ref(this: *mut Self) {
+        // SAFETY: caller upholds `this` is a live, heap-allocated `Blob`.
+        let blob = unsafe { &mut *this };
+        bun_core::assertf!(
+            blob.is_heap_allocated(),
+            "cannot ref: this Blob is not heap-allocated",
+        );
+        blob.ref_count += 1;
+    }
+
+    unsafe fn ext_deref(this: *mut Self) {
+        // SAFETY: caller upholds `this` is a live, heap-allocated `Blob`.
+        let blob = unsafe { &mut *this };
+        bun_core::assertf!(
+            blob.is_heap_allocated(),
+            "cannot deref: this Blob is not heap-allocated",
+        );
+        blob.ref_count -= 1;
+        if blob.ref_count == 0 {
+            // Re-arm so `is_heap_allocated()` stays true through `Drop` (mirrors
+            // Blob.zig:5112 which increments before `deinit` so its own
+            // heap-allocation guard around `bun.destroy` succeeds).
+            blob.ref_count = 1;
+            // SAFETY: `this` was produced by `Box::into_raw` in `Blob::new`;
+            // dropping the reconstituted `Box` runs `Blob::drop` then frees.
+            drop(unsafe { Box::from_raw(this) });
+        }
+    }
+}
+
 impl Drop for Blob {
     /// `Blob.deinit` (Blob.zig:3720) sans the trailing `bun.destroy(this)` —
     /// `Box::drop` handles the allocation when `is_heap_allocated()`.

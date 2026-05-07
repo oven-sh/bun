@@ -1921,9 +1921,7 @@ impl TestCommand {
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
             // SAFETY: `vm.global` initialised by `VirtualMachine::init`.
-            // blocked_on: bun_jsc::VM::set_control_flow_profiler — VM.rs is cfg-gated upstream.
-            // Zig: `vm.global.vm().setControlFlowProfiler(true)`
-            let _ = unsafe { (*vm.global).vm() };
+            unsafe { (*vm.global).vm() }.set_control_flow_profiler(true);
         }
 
         // For tests, we default to UTC time zone

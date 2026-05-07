@@ -229,17 +229,8 @@ impl Start {
                         }));
                     }
 
-                    // `bun.FD.fromJS` — `bun_sys_jsc::FdJsc` isn't a dep of this crate yet,
-                    // so inline the body (int → range-check → `Fd::from_uv`).
-                    let fd = {
-                        let fd64 = fd_value.to_int64();
-                        if fd64 < 0 || fd64 > i64::from(i32::MAX) {
-                            None
-                        } else {
-                            Some(Fd::from_uv(fd64 as i32))
-                        }
-                    };
-                    if let Some(fd) = fd {
+                    use bun_sys_jsc::FdJsc as _;
+                    if let Some(fd) = Fd::from_js(fd_value) {
                         return Ok(Start::FileSink(FileSinkOptions {
                             chunk_size,
                             input_path: crate::webcore::PathOrFileDescriptor::Fd(fd),

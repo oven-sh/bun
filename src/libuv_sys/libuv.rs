@@ -212,7 +212,7 @@ impl fs_t {
         }
     }
     #[inline]
-    fn assert_cleaned_up(&self) {
+    pub fn assert_cleaned_up(&self) {
         #[cfg(debug_assertions)]
         {
             if self.loop_ as usize == 0xAAAA_AAAA_AAAA_0000usize { return; }

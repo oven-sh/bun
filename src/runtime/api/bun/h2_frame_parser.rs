@@ -327,22 +327,6 @@ impl H2GlobalErrExt for JSGlobalObject {
     }
 }
 
-// Local shim: `bun_jsc::VM` (lib.rs) lacks `deprecated_report_extra_memory`
-// (the impl in `VM.rs` is not yet wired into the crate).
-pub(crate) trait H2VMExt {
-    fn deprecated_report_extra_memory(&self, size: usize);
-}
-impl H2VMExt for bun_jsc::VM {
-    #[inline]
-    fn deprecated_report_extra_memory(&self, size: usize) {
-        unsafe extern "C" {
-            fn JSC__VM__reportExtraMemory(vm: *mut bun_jsc::VM, size: usize);
-        }
-        // SAFETY: `self` is a live opaque JSC VM handle (interior-mutable via UnsafeCell).
-        unsafe { JSC__VM__reportExtraMemory(self.as_mut_ptr(), size) }
-    }
-}
-
 // Local shim: `JSValue::to(u32)` / `JSValue::to(u64)` from Zig — coerce via the
 // double path (callers gate on `is_number()`).
 pub(crate) trait H2JSValueExt {

@@ -1463,7 +1463,7 @@ impl RunCommand {
                             if sys::windows::CreateHardLinkW(
                                 file_slice.as_ptr(),
                                 image_path.as_ptr(),
-                                core::ptr::null_mut(),
+                                std::ptr::null_mut(),
                             ) == 0
                             {
                                 return Ok(());

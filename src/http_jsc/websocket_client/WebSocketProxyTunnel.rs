@@ -99,6 +99,14 @@ pub struct WebSocketProxyTunnel {
     socket: SocketUnion,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: StreamBuffer,
+    /// Snapshot of `wrapper.ssl` taken in `start()`.
+    ///
+    /// Callbacks fired from inside `SslWrapper::{start,receive_data,...}` run while
+    /// the caller holds a live `&mut SslWrapper`; under Stacked Borrows, *any* read
+    /// of `(*ctx).wrapper` bytes through the Box-provenance `ctx` pops that Unique
+    /// tag. Snapshotting the `*mut SSL` here lets `on_handshake` read it without
+    /// touching `wrapper`'s bytes.
+    ssl: Option<NonNull<boringssl::c::SSL>>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
     /// Whether to reject unauthorized certificates
@@ -180,8 +188,12 @@ impl WebSocketProxyTunnel {
     /// as long as no other code over-releases).
     #[inline]
     pub unsafe fn ref_scope(this: *mut Self) -> TunnelRefGuard {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_() };
+        // SAFETY: caller contract — `this` is live. Project to `ref_count` only;
+        // do NOT call `ref_(&self)` (whole-struct `&Self` would overlap `wrapper`
+        // and pop the `&mut SslWrapper` held by the SslWrapper frame that fired
+        // this callback — Stacked Borrows UB).
+        let rc = unsafe { &(*this).ref_count };
+        rc.set(rc.get() + 1);
         // PORT NOTE: captures raw *mut (not &self) so the guard does not borrow
         // the tunnel — lets the guarded scope take &mut self without borrowck
         // conflict, and gives `deref` proper write provenance for Box::from_raw.
@@ -218,6 +230,7 @@ impl WebSocketProxyTunnel {
             wrapper: None,
             socket,
             write_buffer: StreamBuffer::default(),
+            ssl: None,
             sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
             reject_unauthorized,
         });

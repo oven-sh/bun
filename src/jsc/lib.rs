@@ -1325,6 +1325,46 @@ impl FromJsEnum for bun_sys::SignalCode {
     }
 }
 
+// `FromJsEnum` impls for the `bun_http_types` Fetch* enums. Orphan rule forces
+// these here (the trait crate) — `bun_http_types` is jsc-free and `bun_http_jsc`
+// owns neither the trait nor the type. Powers
+// `JSValue::get_optional_enum::<FetchRedirect>()` in `Request::construct_into`
+// / `fetch.rs`. The `to_js` direction stays in `bun_http_jsc::fetch_enums_jsc`.
+impl FromJsEnum for bun_http_types::FetchRedirect::FetchRedirect {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, property_name: &'static str) -> JsResult<Self> {
+        v.to_enum_from_map(
+            global,
+            property_name,
+            &bun_http_types::FetchRedirect::MAP,
+            "'follow', 'manual' or 'error'",
+        )
+    }
+}
+
+impl FromJsEnum for bun_http_types::FetchRequestMode::FetchRequestMode {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, property_name: &'static str) -> JsResult<Self> {
+        use bun_http_types::FetchRequestMode::FetchRequestMode;
+        v.to_enum_from_map(
+            global,
+            property_name,
+            &FetchRequestMode::MAP,
+            "'same-origin', 'no-cors', 'cors' or 'navigate'",
+        )
+    }
+}
+
+impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, property_name: &'static str) -> JsResult<Self> {
+        use bun_http_types::FetchCacheMode::FetchCacheMode;
+        v.to_enum_from_map(
+            global,
+            property_name,
+            &FetchCacheMode::MAP,
+            "'default', 'no-store', 'reload', 'no-cache', 'force-cache' or 'only-if-cached'",
+        )
+    }
+}
+
 // `URL::path_from_file_url` / `URL::href_from_js` live in `URL.rs` (the
 // dedicated port file); the lib.rs copies were duplicate definitions.
 

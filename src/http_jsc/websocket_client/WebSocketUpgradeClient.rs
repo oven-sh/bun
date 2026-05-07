@@ -2103,46 +2103,13 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     result
 }
 
-/// Parse SSLConfig from a JavaScript TLS options object.
-/// This function is exported for C++ to call from JSWebSocket.cpp.
-/// Returns null if parsing fails (an exception will be set on globalThis).
-/// The returned SSLConfig is heap-allocated and ownership is transferred to the caller.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebSocket__parseSSLConfig(
-    global_this: &JSGlobalObject,
-    tls_value: JSValue,
-) -> Option<Box<SSLConfig>> {
-    // CYCLEBREAK: `SSLConfig::from_js` lives in `bun_runtime::socket::SSLConfig`
-    // (it dereferences Blob/JSCArrayBuffer values, tier-6). bun_http_jsc cannot
-    // depend on bun_runtime (runtime → http_jsc), so this body is gated and the
-    // canonical export lives in bun_runtime/socket/SSLConfig.rs which already
-    // owns `from_js`. Phase B: route the C++ caller to the runtime-crate export
-    // or hoist `from_js` into a shared lower crate per docs/PORTING.md.
-    let _ = (global_this, tls_value);
-    {
-        let vm = global_this.bun_vm();
-        let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {
-            Ok(c) => c,
-            Err(_) => return None,
-        };
-        if let Some(config) = config_opt {
-            return Some(Box::new(config));
-        }
-    }
-    None
-}
-
-/// Free an SSLConfig previously returned by `parseSSLConfig`.
-/// Exported for C++ so error/early-return paths in JSWebSocket.cpp and
-/// WebSocket.cpp can release ownership without leaking the heap allocation
-/// (and all duped cert/key/CA strings inside it) when `connect()` never
-/// hands the pointer off to a Zig upgrade client.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut SSLConfig) {
-    // SAFETY: `config` was produced by `Box::into_raw` (via `Option<Box<_>>` FFI
-    // niche) in `Bun__WebSocket__parseSSLConfig`; caller transfers ownership.
-    drop(unsafe { Box::from_raw(config) });
-}
+// LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`
+// live in `bun_runtime::socket::ssl_config` (src/runtime/socket/SSLConfig.rs).
+// `SSLConfig::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
+// `bun_runtime → bun_http_jsc`, so the C-ABI export is hosted upstream where
+// `from_js` is defined. The result is bridged to `bun_http::ssl_config::SSLConfig`
+// (the type `connect()` consumes) via `into_http()` before boxing. C++ links by
+// symbol name; crate of origin is irrelevant at link time.
 
 // ──────────────────────────────────────────────────────────────────────────
 // extern "C" export shims for the generic `connect`/`cancel`/`memoryCost`.

@@ -748,11 +748,17 @@ impl WebWorker {
             // Spec web_worker.zig:445-476 — parse `execArgv` with the
             // RunCommand param table. The param table lives in
             // `bun_runtime::cli` (forward-dep), so dispatch through
-            // `RuntimeHooks::parse_worker_exec_argv`. Currently only honours
-            // `--no-addons`; the hook owns the temporary UTF-8 alloc + clap
-            // parse + `args.deinit()` (the full `defer` chain in the .zig).
+            // `RuntimeHooks::parse_worker_exec_argv_allow_addons`. Currently
+            // only honours `--no-addons`; the hook owns the temporary UTF-8
+            // alloc + clap parse + `args.deinit()` (the full `defer` chain in
+            // the .zig). `None` ↔ Zig's `catch break :parse_new_args` arm.
             // SAFETY: hook contract.
-            unsafe { (hooks.parse_worker_exec_argv)(exec_argv, &mut transform_options) };
+            if let Some(allow_addons) =
+                unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) }
+            {
+                // override the existing even if it was set
+                transform_options.allow_addons = Some(allow_addons);
+            }
         }
 
         // SAFETY: worker-thread only field; no other thread reads `arena`.
@@ -765,7 +771,7 @@ impl WebWorker {
         // Bun__setEnvValue on the main thread — it covers both the slot swap
         // and the map.put, so cloneFrom and cloneWithAllocator see the same
         // state.
-        let mut temp_proxy_storage = jsc::rare_data::ProxyEnvStorage::default();
+        let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
         // PORT NOTE: Zig allocated Map/Loader on the worker arena (bulk-freed
         // in shutdown). Rust's `Arena = bumpalo::Bump` doesn't run Drop, so
@@ -774,15 +780,14 @@ impl WebWorker {
         // PERF(port): MimallocArena bulk-free — profile in Phase B.
         let mut map = Box::new(bun_dotenv::Map::default());
         {
-            let parent_storage = &parent.proxy_env_storage;
-            let _guard = parent_storage.lock.lock();
-            temp_proxy_storage.clone_from(parent_storage);
+            let parent_slots = parent.proxy_env_storage.lock();
+            temp_proxy_slots.clone_from(&parent_slots);
             // SAFETY: `parent.transpiler.env` is the parent-owned `DotEnv::Loader`
             // set in `Transpiler::init`; valid while `parent` lives. Read-only.
             *map = unsafe { (*parent.transpiler.env).map.clone_with_allocator()? };
         }
         // Ensure map entries point at the exact bytes we hold refs on.
-        temp_proxy_storage.sync_into(&mut map);
+        temp_proxy_slots.sync_into(&mut map);
 
         // TODO(port): ownership — `Loader<'static>` borrows `map` for its
         // lifetime. In Zig both lived on the worker arena; here both are
@@ -800,7 +805,7 @@ impl WebWorker {
         // above, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
-            drop(temp_proxy_storage);
+            drop(temp_proxy_slots);
             self.shutdown();
         }
 
@@ -829,7 +834,7 @@ impl WebWorker {
                 NonNull::new(unsafe { (*self.arena.get()).as_mut().unwrap() } as *mut _);
 
             // Move the pre-cloned proxy storage into the worker VM.
-            vm_ref.proxy_env_storage = core::mem::take(&mut temp_proxy_storage);
+            *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
 
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
@@ -1108,7 +1113,7 @@ impl WebWorker {
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract; `vm` exclusive.
-                unsafe { (hooks.cron_clear_all_for_vm)(vm) };
+                unsafe { (hooks.cron_clear_all_teardown)(vm) };
             }
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs

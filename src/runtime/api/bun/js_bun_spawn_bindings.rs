@@ -345,10 +345,9 @@ fn get_argv(
                 .throw());
         }
 
-        // TODO(port): lifetime — owned ZBox dropped at end of loop body; Phase B: collect into backing Vec.
         let owned = arg.to_owned_slice_z();
         argv.push(Some(owned.as_ptr()));
-        core::mem::forget(owned);
+        storage.push(owned);
         arg_index += 1;
     }
 
@@ -393,15 +392,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     // PERF(port): was arena bulk-free — argv/env strings allocated per-iteration; profile in Phase B.
-    // TODO(port): lifetime — argv/env_array hold *const c_char into owned ZBoxes; collect those
-    // into a backing `Vec<ZBox>` here that lives past spawn_process (Zig used a bump arena).
+    // Backing store for every NUL-terminated string whose `*const c_char` is
+    // pushed into `argv` / `argv0` / `env_array` below. Zig used a bump arena
+    // (`arena.deinit()` at fn exit); this `Vec` is the Rust equivalent and
+    // drops after `spawn_process` returns, freeing all argv/env allocations.
+    let mut cstr_storage: Vec<ZBox> = Vec::new();
 
     let mut override_env = false;
     let mut env_array: Vec<Option<*const c_char>> = Vec::new();
-    // Backing storage for the inherited-env path (`!override_env`). Zig used a
-    // bump arena freed at function exit; here the owning struct keeps the
-    // `K=V\0` buffers alive for as long as `env_array` borrows their pointers.
-    let mut inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> = None;
     // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
     // outlives this call frame.
     let jsc_vm: &mut jsc::VirtualMachineRef = unsafe { &mut *global_this.bun_vm() };
@@ -493,10 +491,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(argv0_) = args.get_truthy(global_this, "argv0")? {
                 let argv0_str = argv0_.get_zig_string(global_this)?;
                 if argv0_str.len > 0 {
-                    // TODO(port): lifetime — owned ZBox; Phase B: stash in backing Vec.
                     let owned = argv0_str.to_owned_slice_z();
                     argv0 = Some(owned.as_ptr());
-                    core::mem::forget(owned);
+                    cstr_storage.push(owned);
                 }
             }
 

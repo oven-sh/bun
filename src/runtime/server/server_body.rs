@@ -37,7 +37,9 @@ use bun_uws_sys as uws_sys;
 use crate::bake::{self as bake};
 use crate::bake::dev_server::{self as dev_server_mod, DevServer};
 use crate::bake::framework_router as FrameworkRouter;
-use bun_paths::fs::FileSystem;
+use bun_resolver::fs::FileSystem;
+use crate::node::types::PathLikeExt as _;
+use crate::webcore::blob::BlobExt as _;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_jsc::uuid::UUID;
 use bun_wyhash::hash;
@@ -138,7 +140,11 @@ pub trait RequestCtxOps: RequestCtx {
     // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`)
     fn on_start_buffering_callback(this: *mut c_void);
     fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult;
-    fn on_request_body_readable_stream_available(this: *mut c_void, stream: JSValue);
+    fn on_request_body_readable_stream_available(
+        this: *mut c_void,
+        global_this: &JSGlobalObject,
+        readable: WebCore::ReadableStream,
+    );
 }
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
@@ -240,8 +246,12 @@ where
         Self::on_start_streaming_request_body_callback(this)
     }
     #[inline]
-    fn on_request_body_readable_stream_available(this: *mut c_void, stream: JSValue) {
-        Self::on_request_body_readable_stream_available(this, stream)
+    fn on_request_body_readable_stream_available(
+        this: *mut c_void,
+        global_this: &JSGlobalObject,
+        readable: WebCore::ReadableStream,
+    ) {
+        Self::on_request_body_readable_stream_available(this, global_this, readable)
     }
 }
 
@@ -524,10 +534,14 @@ impl AnyRoute {
         }
 
         let Some(path_js) = argument.get(init_ctx.global, b"path")? else { return Ok(None); };
-        let path_string = bun_str::OwnedString::new(BunString::from_js(path_js, init_ctx.global)?);
+        let mut path_string = BunString::from_js(path_js, init_ctx.global)?;
         let mut path = Node::PathOrFileDescriptor::Path(
-            Node::PathLike::from_bun_string(init_ctx.global, &path_string, false)?,
+            Node::PathLike::from_bun_string(init_ctx.global, &mut path_string, false)?,
         );
+        // PORT NOTE: Zig `defer path_string.deref()`. `from_bun_string` clones
+        // the bytes (or bumps the WTF ref) into the PathLike payload, so we can
+        // release the source ref immediately — `bun_str::String` has no `Drop`.
+        path_string.deref();
         // path is dropped at scope end
 
         // Construct the route by stripping paths above the root.

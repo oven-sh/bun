@@ -961,7 +961,7 @@ impl Value {
 
         if let Some(readable) = ReadableStream::from_js(value, global_this)? {
             if readable.is_disturbed(global_this) {
-                return Err(global_this.throw("ReadableStream has already been used"));
+                return Err(global_this.throw(format_args!("ReadableStream has already been used")));
             }
 
             match readable.ptr {
@@ -999,7 +999,7 @@ impl Value {
                     // `error.InvalidArguments` producer is gated on `require_array`),
                     // and every other failure path throws first (sets the exception).
                     // The Rust `JsResult` collapse is therefore semantics-preserving.
-                    return Err(global_this.throw_invalid_arguments("Invalid Body object"));
+                    return Err(global_this.throw_invalid_arguments(format_args!("Invalid Body object")));
                 }
                 return Err(bun_jsc::JsError::Thrown);
             }
@@ -2469,8 +2469,9 @@ pub extern "C" fn Bun__BodyValueBufferer__onResolveStream(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
 ) -> JSValue {
-    // TODO(port): proc-macro — jsc::to_js_host_fn wraps the Rust host fn into JSC ABI.
-    jsc::to_js_host_fn(ValueBufferer::on_resolve_stream)(global, callframe)
+    // SAFETY: JSC guarantees both pointers are live for the duration of the host-fn call.
+    let (global, callframe) = unsafe { (&*global, &*callframe) };
+    jsc::to_js_host_fn_result(global, ValueBufferer::on_resolve_stream(global, callframe))
 }
 
 #[unsafe(no_mangle)]
@@ -2478,7 +2479,9 @@ pub extern "C" fn Bun__BodyValueBufferer__onRejectStream(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
 ) -> JSValue {
-    jsc::to_js_host_fn(ValueBufferer::on_reject_stream)(global, callframe)
+    // SAFETY: JSC guarantees both pointers are live for the duration of the host-fn call.
+    let (global, callframe) = unsafe { (&*global, &*callframe) };
+    jsc::to_js_host_fn_result(global, ValueBufferer::on_reject_stream(global, callframe))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

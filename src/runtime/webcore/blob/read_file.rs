@@ -98,11 +98,15 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // `Function` into the `toJSHostCall` shape; Rust closures + the
                 // `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // give the same source-location/exception-scope behaviour.
-                AnyPromise::Normal(promise as *mut _).wrap(global_this, move |g| {
+                AnyPromise::Normal(promise).wrap(global_this, move |g| {
                     F::call(&mut blob, g, bytes, Lifetime::Temporary)
                 })?;
             }
             ReadFileResultType::Err(err) => {
+                // SAFETY: `promise` was just swapped out of a live `Strong`
+                // handle; the JS heap cell is kept alive by the caller's
+                // `JSRef` over the ReadFile task.
+                let promise = unsafe { &mut *promise };
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
                 promise.reject(global_this, Ok(val))?;
             }

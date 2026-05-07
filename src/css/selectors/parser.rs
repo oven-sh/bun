@@ -3979,9 +3979,8 @@ impl ViewTransitionPartName {
         // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
         // serializer concern, not a grammar concern — the gated impl just
         // toggles the second arg).
-        // SAFETY: `CustomIdent.v` borrows the parser arena.
         let write_ci = |name: &CustomIdent, dest: &mut Printer| -> Result<(), PrintErr> {
-            css::serializer::serialize_identifier(unsafe { &*name.v }, dest)
+            css::serializer::serialize_identifier(name.v(), dest)
                 .map_err(|_| PrintErr::CSSPrintError)
         };
         match self {

@@ -145,8 +145,8 @@ impl Animation {
         // string slice up front instead.
         let name_str: Option<&[u8]> = match &self.name {
             AnimationName::None => None,
-            // SAFETY: arena-owned slices live for the parse session.
-            AnimationName::Ident(ident) => Some(unsafe { &*ident.v }),
+            AnimationName::Ident(ident) => Some(ident.v()),
+            // SAFETY: arena-owned slice lives for the parse session.
             AnimationName::String(s) => Some(unsafe { &**s }),
         };
 

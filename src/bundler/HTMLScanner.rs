@@ -437,7 +437,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         let res: Result<(), Error> = (|| {
             // SAFETY: `builder` is a live FFI handle.
             let rewriter = unsafe { &mut *builder }
-                .build(lol::Encoding::UTF8, memory_settings, false, &mut sink)
+                .build(lol::Encoding::UTF8, memory_settings, false, &raw mut sink)
                 .map_err(lol_err)?;
             // Zig: defer rewriter.deinit()
             let _rewriter_guard = scopeguard::guard(rewriter, |r| {

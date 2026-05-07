@@ -64,7 +64,7 @@ impl_gradient_position!(AnglePercentage);
 /// `'static` is a Phase-A lie that becomes `&'bump [u8]` once `'bump` threads.
 #[inline]
 unsafe fn src_str(s: &[u8]) -> &'static [u8] {
-    unsafe { &*(s as *const [u8]) }
+    unsafe { &*std::ptr::from_ref::<[u8]>(s) }
 }
 
 /// Side-keyword protocol for `WebKitGradientPointComponent<S>` (instantiated

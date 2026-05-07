@@ -676,7 +676,7 @@ unsafe fn vtable_free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, re
 
 #[inline]
 pub fn is_instance(allocator: StdAllocator) -> bool {
-    ENABLED && core::ptr::eq(allocator.vtable, &VTABLE)
+    ENABLED && core::ptr::eq(allocator.vtable, &raw const VTABLE)
 }
 
 #[inline]

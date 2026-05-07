@@ -124,7 +124,7 @@ pub trait PosixPipeWriter {
         let buffer_len = self.get_buffer().len();
         log!("onPoll({})", buffer_len);
         if buffer_len == 0 && !received_hup {
-            let self_addr = self as *const _ as *const () as usize;
+            let self_addr = std::ptr::from_ref(self).cast::<()>() as usize;
             log!(
                 "PosixPipeWriter(0x{:x}) handle={}",
                 self_addr,
@@ -367,7 +367,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             unsafe { Parent::event_loop(self.parent()) },
             fd,
             Parent::POLL_OWNER_TAG,
-            self as *mut _ as *mut c_void,
+            std::ptr::from_mut(self).cast::<c_void>(),
         )
     }
 
@@ -505,7 +505,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = self as *mut _ as *mut c_void;
+        let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(Parent::POLL_OWNER_TAG, owner);
     }
 
@@ -728,7 +728,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = self as *mut _ as *mut c_void;
+        let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(Parent::POLL_OWNER_TAG, owner);
     }
 
@@ -1044,7 +1044,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let poll = match self.get_poll() {
             Some(p) => p,
             None => {
-                let p = FilePoll::init(loop_, fd, Parent::POLL_OWNER_TAG, self as *mut _ as *mut c_void);
+                let p = FilePoll::init(loop_, fd, Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast::<c_void>());
                 self.handle = PollOrFd::Poll(p);
                 p
             }
@@ -1622,7 +1622,7 @@ impl StreamBuffer {
     pub fn write_type_as_bytes<T>(&mut self, data: &T) -> Result<(), OOM> {
         // SAFETY: caller passes POD T (matches Zig std.mem.asBytes contract).
         let bytes = unsafe {
-            core::slice::from_raw_parts(data as *const T as *const u8, mem::size_of::<T>())
+            core::slice::from_raw_parts(std::ptr::from_ref::<T>(data).cast::<u8>(), mem::size_of::<T>())
         };
         self.write(bytes)
     }
@@ -1631,7 +1631,7 @@ impl StreamBuffer {
         // TODO(port): Zig round-trips through bun.Vec<u8> here; Rust just writes bytes.
         // SAFETY: caller passes POD T.
         let bytes = unsafe {
-            core::slice::from_raw_parts(&data as *const T as *const u8, mem::size_of::<T>())
+            core::slice::from_raw_parts((&raw const data).cast::<u8>(), mem::size_of::<T>())
         };
         // PERF(port): was assume_capacity
         self.list.extend_from_slice(bytes);

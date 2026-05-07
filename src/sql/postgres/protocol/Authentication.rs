@@ -148,7 +148,7 @@ impl Authentication {
                     while let Some(item) = iter.next() {
                         if item.len() > 2 {
                             let key = item[0];
-                            let after_equals: *const [u8] = &item[2..];
+                            let after_equals: *const [u8] = &raw const item[2..];
                             if key == b'r' {
                                 r = Some(after_equals);
                             } else if key == b's' {

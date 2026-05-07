@@ -423,8 +423,8 @@ impl S3HttpSimpleTask {
         if is_done {
             // PORT NOTE: compute the raw self-pointer before borrowing `this.concurrent_task`
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
-            let this_ptr = this as *mut Self;
-            let task = this.concurrent_task.from(this_ptr, AutoDeinit::ManualDeinit) as *mut ConcurrentTask;
+            let this_ptr = std::ptr::from_mut::<Self>(this);
+            let task = std::ptr::from_mut::<ConcurrentTask>(this.concurrent_task.from(this_ptr, AutoDeinit::ManualDeinit));
             // SAFETY: `vm` is the live per-thread VM pointer captured at task creation; event_loop
             // is set during VM init and outlives this task.
             unsafe { (*(*this.vm).event_loop()).enqueue_task_concurrent(task) };
@@ -574,8 +574,8 @@ pub fn execute_simple_s3_request(
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
     // passed raw slices with the same ownership contract.
-    let url = URL::parse(unsafe { &*(&*task.sign_result.url as *const [u8]) });
-    let headers_buf: &'static [u8] = unsafe { &*(task.headers.buf.as_slice() as *const [u8]) };
+    let url = URL::parse(unsafe { &*(&raw const *task.sign_result.url) });
+    let headers_buf: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(task.headers.buf.as_slice()) };
     // SAFETY (lifetime extension): unlike the borrows above, `body` is NOT stored in the task —
     // it is caller-owned (e.g. multipart upload part data / multipart_upload_list). The Zig source
     // (.zig:431) passes the caller's slice directly with the same implicit contract: every call
@@ -583,9 +583,9 @@ pub fn execute_simple_s3_request(
     // lifetime-extension pattern, retained verbatim to match Zig semantics.
     // TODO(port): take body as `*const [u8]` in AsyncHTTP::init (or store an owned copy on the
     // task) to drop the `'static` pretence.
-    let body: &'static [u8] = unsafe { &*(options.body as *const [u8]) };
+    let body: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(options.body) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(URL::parse(unsafe { &*(&*task.proxy_url as *const [u8]) }))
+        Some(URL::parse(unsafe { &*(&raw const *task.proxy_url) }))
     } else {
         None
     };
@@ -598,7 +598,7 @@ pub fn execute_simple_s3_request(
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
-        &mut task.response_buffer as *mut MutableString,
+        &raw mut task.response_buffer,
         body,
         HTTPClientResultCallback::new::<S3HttpSimpleTask>(task_ptr, S3HttpSimpleTask::http_callback),
         FetchRedirect::Follow,

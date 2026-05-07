@@ -172,12 +172,12 @@ impl Watcher {
             watchlist: &WatchList,
         ) {
             // SAFETY: ctx_opaque was stored from *mut T in init()
-            let ctx = unsafe { &mut *(ctx_opaque as *mut T) };
+            let ctx = unsafe { &mut *ctx_opaque.cast::<T>() };
             ctx.on_file_update(events, changed_files, watchlist);
         }
         fn on_error_wrapped<T: WatcherContext>(ctx_opaque: *mut (), err: sys::Error) {
             // SAFETY: ctx_opaque was stored from *mut T in init()
-            let ctx = unsafe { &mut *(ctx_opaque as *mut T) };
+            let ctx = unsafe { &mut *ctx_opaque.cast::<T>() };
             ctx.on_watch_error(err);
         }
 
@@ -186,7 +186,7 @@ impl Watcher {
             watchlist: WatchList::default(),
             mutex: Mutex::default(),
             cwd: top_level_dir,
-            ctx: ctx as *mut (),
+            ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
             platform: Platform::default(),
@@ -219,7 +219,7 @@ impl Watcher {
         debug_assert!(self.watchloop_handle.is_none());
         // TODO(port): thread spawn — Watcher must be Send across the spawned
         // thread boundary; Zig passed *Watcher. Using raw ptr + manual safety.
-        let this = self as *mut Watcher as usize;
+        let this = std::ptr::from_mut::<Watcher>(self) as usize;
         // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
         // via `running`/`close_descriptors` and the thread frees the Box.
         self.thread = Some(std::thread::spawn(move || unsafe {
@@ -296,7 +296,7 @@ impl Watcher {
 
         // SAFETY: self is the heap allocation from init(); thread owns it now.
         // TODO(port): ownership model — see shutdown()
-        drop(unsafe { Box::from_raw(self as *mut Self) });
+        drop(unsafe { Box::from_raw(std::ptr::from_mut::<Self>(self)) });
         Ok(())
     }
 
@@ -924,11 +924,11 @@ impl Watcher {
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
         unsafe fn wrap(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
             // SAFETY: ctx was stored from *mut Watcher in get_resolve_watcher()
-            let this = unsafe { &mut *(ctx as *mut Watcher) };
+            let this = unsafe { &mut *ctx.cast::<Watcher>() };
             Watcher::on_maybe_watch_directory(this, dir_path, dir_fd);
         }
         AnyResolveWatcher {
-            context: self as *mut Self as *mut (),
+            context: std::ptr::from_mut::<Self>(self).cast::<()>(),
             callback: wrap,
         }
     }

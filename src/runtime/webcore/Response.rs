@@ -475,7 +475,7 @@ impl Response {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
         // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
-        let js_value = js::to_js(self as *mut Self as *mut (), global_object);
+        let js_value = js::to_js(std::ptr::from_mut::<Self>(self).cast::<()>(), global_object);
         self.js_ref = JsRef::init_weak(js_value);
 
         self.check_body_stream_ref(global_object);
@@ -758,7 +758,7 @@ impl Response {
             // the raw pointer is only dereferenced in the closure at scope exit, at which point
             // no other borrow of `formatter` is live.
             let _indent_guard = scopeguard::guard(
-                formatter as *mut F,
+                std::ptr::from_mut::<F>(formatter),
                 |p| unsafe { (*p).indent_dec() },
             );
 
@@ -911,7 +911,7 @@ impl Response {
                 // future field additions. Zig's `bun.destroy()` only frees the
                 // allocation; match that with a raw dealloc.
                 let layout = std::alloc::Layout::new::<Response>();
-                std::alloc::dealloc(this as *mut u8, layout);
+                std::alloc::dealloc(this.cast::<u8>(), layout);
             }
         }
     }
@@ -1267,7 +1267,7 @@ impl Response {
 
         response.calculate_estimated_byte_size();
         response.check_body_stream_ref(global_this);
-        Ok(response as *mut Response)
+        Ok(std::ptr::from_mut::<Response>(response))
     }
 }
 

@@ -198,7 +198,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // PORT NOTE: `StmtOrExpr` is not `Copy`; read by ptr to avoid moving
                     // out of the StoreRef deref.
                     // SAFETY: StoreRef points into a live arena; value is POD-shaped.
-                    let value = unsafe { core::ptr::read(&st.value) }.to_expr();
+                    let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
                     self.export_props.push(G::Property {
                         key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                         value: Some(value),
@@ -228,7 +228,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         });
 
                         // SAFETY: as above — POD-shaped read out of arena.
-                        let value = unsafe { core::ptr::read(&st.value) }.to_expr();
+                        let value = unsafe { core::ptr::read(&raw const st.value) }.to_expr();
                         let mut decls = G::DeclList::default();
                         VecExt::append(&mut decls, G::Decl {
                             binding: Binding::alloc(
@@ -481,7 +481,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             items_len,
                         );
                     }
-                    stmt.items = concat as *mut [js_ast::ClauseItem];
+                    stmt.items = std::ptr::from_mut::<[js_ast::ClauseItem]>(concat);
                 }
             }
             if namespace_ref.is_valid() {
@@ -628,7 +628,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     E::Function {
                         func: G::Fn {
                             body: G::FnBody {
-                                stmts: body_stmts as *mut [Stmt],
+                                stmts: std::ptr::from_mut::<[Stmt]>(body_stmts),
                                 loc,
                             },
                             ..Default::default()
@@ -800,7 +800,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         // PORT NOTE: Zig assigned the ArrayList's `items` slice directly. `Stmt` is `Copy`;
         // copy into the parser arena so the `*mut [Stmt]` outlives this struct.
         let stmts = core::mem::take(&mut self.stmts);
-        self.last_part.stmts = p.allocator.alloc_slice_copy(&stmts) as *mut [Stmt];
+        self.last_part.stmts = std::ptr::from_mut::<[Stmt]>(p.allocator.alloc_slice_copy(&stmts));
         self.last_part.tag = crate::PartTag::None;
         Ok(())
     }

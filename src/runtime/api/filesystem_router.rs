@@ -75,14 +75,14 @@ static RESOLVER_DIR_INFO_VTABLE: Router::DirInfoVTable = Router::DirInfoVTable {
     get_entries_const: |owner| {
         // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo` produced by
         // `dir_info_ref` below; the resolver's BSSMap singleton outlives the walk.
-        let di = unsafe { &*(owner as *const bun_resolver::DirInfo) };
-        di.get_entries_const().map(|e| e as *const Fs::DirEntry)
+        let di = unsafe { &*owner.cast::<bun_resolver::DirInfo>() };
+        di.get_entries_const().map(|e| std::ptr::from_ref::<Fs::DirEntry>(e))
     },
 };
 
 #[inline]
 fn dir_info_ref(di: *const bun_resolver::DirInfo) -> Router::DirInfoRef {
-    Router::DirInfoRef { owner: di as *const (), vtable: &RESOLVER_DIR_INFO_VTABLE }
+    Router::DirInfoRef { owner: di.cast::<()>(), vtable: &RESOLVER_DIR_INFO_VTABLE }
 }
 
 /// Newtype so the orphan rule lets us `impl ResolverLike` for the foreign
@@ -97,7 +97,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
     fn fs_impl(&self) -> *mut Fs::Implementation {
         // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { (&mut (*self.0.fs()).fs) as *mut Fs::Implementation }
+        unsafe { &raw mut (*self.0.fs()).fs }
     }
     #[inline]
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<Router::DirInfoRef> {
@@ -224,7 +224,7 @@ impl FileSystemRouter {
                 // backing allocation outlives this slice. Cast through raw ptr to detach the
                 // borrow from `arena` so it can be moved below.
                 let leaked: &'static [u8] =
-                    unsafe { &*(arena.alloc_slice_copy(&bytes) as *const [u8]) };
+                    unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(&bytes)) };
                 extensions.push(&leaked[1..]);
             }
         }
@@ -241,7 +241,7 @@ impl FileSystemRouter {
             // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
             // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
             let leaked: &'static [u8] =
-                unsafe { &*(arena.alloc_slice_copy(s.slice()) as *const [u8]) };
+                unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(s.slice())) };
             asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
         }
         let mut log = Log::Log::new();
@@ -254,7 +254,7 @@ impl FileSystemRouter {
         let _restore_log = unsafe {
             Resolver::scoped_log(
                 core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                &mut log,
+                &raw mut log,
             )
         };
 
@@ -334,15 +334,14 @@ impl FileSystemRouter {
 
         let mut fs_router = Box::new(FileSystemRouter {
             origin: if !origin_str.slice().is_empty() {
-                Some(vm.ref_counted_string::<true>(origin_str.slice(), None) as *mut RefString)
+                Some(vm.ref_counted_string::<true>(origin_str.slice(), None).cast::<RefString>())
             } else {
                 None
             },
-            base_dir: Some(vm.ref_counted_string::<true>(base_dir_str, None) as *mut RefString),
+            base_dir: Some(vm.ref_counted_string::<true>(base_dir_str, None).cast::<RefString>()),
             asset_prefix: if !asset_prefix_slice.slice().is_empty() {
                 Some(
-                    vm.ref_counted_string::<true>(asset_prefix_slice.slice(), None)
-                        as *mut RefString,
+                    vm.ref_counted_string::<true>(asset_prefix_slice.slice(), None).cast::<RefString>(),
                 )
             } else {
                 None
@@ -461,7 +460,7 @@ impl FileSystemRouter {
         let _restore_log = unsafe {
             Resolver::scoped_log(
                 core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
-                &mut log,
+                &raw mut log,
             )
         };
 

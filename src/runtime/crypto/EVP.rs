@@ -170,8 +170,8 @@ impl EVP {
         // preconditions on a zeroed ctx. md/engine are caller-validated (md is a static
         // singleton, engine may be null).
         unsafe {
-            boringssl::EVP_MD_CTX_init(&mut ctx);
-            let _ = boringssl::EVP_DigestInit_ex(&mut ctx, md, engine);
+            boringssl::EVP_MD_CTX_init(&raw mut ctx);
+            let _ = boringssl::EVP_DigestInit_ex(&raw mut ctx, md, engine);
         }
         EVP { ctx, md, algorithm }
     }
@@ -182,7 +182,7 @@ impl EVP {
         // static singleton.
         unsafe {
             boringssl::ERR_clear_error();
-            let _ = boringssl::EVP_DigestInit_ex(&mut self.ctx, self.md, engine);
+            let _ = boringssl::EVP_DigestInit_ex(&raw mut self.ctx, self.md, engine);
         }
     }
 
@@ -196,7 +196,7 @@ impl EVP {
                 input.as_ptr().cast(),
                 input.len(),
                 output.as_mut_ptr(),
-                &mut outsize,
+                &raw mut outsize,
                 self.md,
                 engine,
             )
@@ -213,7 +213,7 @@ impl EVP {
         unsafe { boringssl::ERR_clear_error() };
         let mut outsize: u32 = (output.len() as u16).min(self.size()) as u32;
         // SAFETY: output points to a valid mutable slice; outsize bounded by output.len().
-        if unsafe { boringssl::EVP_DigestFinal_ex(&mut self.ctx, output.as_mut_ptr(), &mut outsize) } != 1 {
+        if unsafe { boringssl::EVP_DigestFinal_ex(&raw mut self.ctx, output.as_mut_ptr(), &raw mut outsize) } != 1 {
             return &mut output[..0];
         }
 
@@ -227,14 +227,14 @@ impl EVP {
         // initialized; input.as_ptr() is valid for input.len() bytes.
         unsafe {
             boringssl::ERR_clear_error();
-            let _ = boringssl::EVP_DigestUpdate(&mut self.ctx, input.as_ptr().cast(), input.len());
+            let _ = boringssl::EVP_DigestUpdate(&raw mut self.ctx, input.as_ptr().cast(), input.len());
         }
     }
 
     pub fn size(&self) -> u16 {
         // SAFETY: FFI into BoringSSL; self.ctx was initialized in init() and is valid for
         // the lifetime of EVP.
-        unsafe { boringssl::EVP_MD_CTX_size(&self.ctx) as u16 }
+        unsafe { boringssl::EVP_MD_CTX_size(&raw const self.ctx) as u16 }
     }
 
     pub fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
@@ -243,7 +243,7 @@ impl EVP {
         let mut new = EVP::init(self.algorithm, self.md, engine);
         // SAFETY: FFI into BoringSSL; both new.ctx and self.ctx are initialized EVP_MD_CTX
         // values (new.ctx via EVP::init above, self.ctx via the invariant on EVP).
-        if unsafe { boringssl::EVP_MD_CTX_copy_ex(&mut new.ctx, &self.ctx) } == 0 {
+        if unsafe { boringssl::EVP_MD_CTX_copy_ex(&raw mut new.ctx, &raw const self.ctx) } == 0 {
             return Err(AllocError);
         }
         Ok(new)
@@ -306,7 +306,7 @@ impl Drop for EVP {
         // SAFETY: FFI into BoringSSL; self.ctx is valid for the lifetime of EVP and
         // EVP_MD_CTX_cleanup is safe to call on any initialized ctx (idempotent).
         unsafe {
-            let _ = boringssl::EVP_MD_CTX_cleanup(&mut self.ctx);
+            let _ = boringssl::EVP_MD_CTX_cleanup(&raw mut self.ctx);
         }
     }
 }

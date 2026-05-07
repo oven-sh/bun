@@ -59,8 +59,8 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
                 "allocator mismatch",
                 format_args!(
                     "vtables differ: {:p} and {:p}",
-                    alloc1.vtable as *const _,
-                    alloc2.vtable as *const _,
+                    std::ptr::from_ref(alloc1.vtable),
+                    std::ptr::from_ref(alloc2.vtable),
                 ),
             );
             break 'blk;
@@ -74,7 +74,7 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
             "allocator mismatch",
             format_args!(
                 "vtables are both {:p} but pointers differ: {:p} and {:p}",
-                alloc1.vtable as *const _, ptr1, ptr2,
+                std::ptr::from_ref(alloc1.vtable), ptr1, ptr2,
             ),
         );
     }

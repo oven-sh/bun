@@ -32,12 +32,12 @@ impl ListenSocket {
         // SAFETY: ListenSocket is layout-compatible with us_socket_t on the C side
         // (a listen socket IS a us_socket_t); Zig does `@ptrCast(this)`. The returned
         // borrow reborrows `&mut self` exclusively — no alias is live while it exists.
-        unsafe { &mut *(self as *mut ListenSocket).cast::<us_socket_t>() }
+        unsafe { &mut *std::ptr::from_mut::<ListenSocket>(self).cast::<us_socket_t>() }
     }
 
     pub fn socket<const IS_SSL: bool>(&mut self) -> crate::socket::NewSocketHandler<'static, IS_SSL> {
         // NewSocketHandler is local (crate::socket); no upward dep.
-        crate::socket::NewSocketHandler::<IS_SSL>::from(self.get_socket() as *mut us_socket_t)
+        crate::socket::NewSocketHandler::<IS_SSL>::from(std::ptr::from_mut::<us_socket_t>(self.get_socket()))
     }
 
     /// Group accepted sockets are linked into.

@@ -601,9 +601,9 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
         unsafe {
             let mut sa: libc::sigaction = core::mem::zeroed();
             sa.sa_sigaction = libc::SIG_DFL;
-            libc::sigemptyset(&mut sa.sa_mask);
+            libc::sigemptyset(&raw mut sa.sa_mask);
             sa.sa_flags = libc::SA_RESETHAND;
-            let _ = libc::sigaction(sig, &sa, core::ptr::null_mut());
+            let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
         }
     }
 
@@ -665,7 +665,7 @@ pub struct SyncCStr(pub *const c_char);
 unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 pub static Bun__userAgent: SyncCStr =
-    SyncCStr(concatcp!(user_agent, "\0").as_ptr() as *const c_char);
+    SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {

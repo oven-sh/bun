@@ -177,13 +177,13 @@ impl FetchHeaders {
     // `pico_headers.list.ptr` / `.list.len`. In Rust, callers pass the slice directly.
     pub fn create_from_pico_headers<T>(pico_headers_list: &[T]) -> NonNull<FetchHeaders> {
         let out = PicoHeaders {
-            ptr: pico_headers_list.as_ptr() as *const c_void,
+            ptr: pico_headers_list.as_ptr().cast::<c_void>(),
             len: pico_headers_list.len(),
         };
         // SAFETY: &out lives across the call; C++ copies the headers synchronously and never returns null
         unsafe {
             NonNull::new_unchecked(WebCore__FetchHeaders__createFromPicoHeaders_(
-                &out as *const PicoHeaders as *const c_void,
+                (&raw const out).cast::<c_void>(),
             ))
         }
     }
@@ -212,7 +212,7 @@ impl FetchHeaders {
             let zs = ZigString::init(value);
             // SAFETY: self/global are valid; &zs lives across the call; `global` is an opaque
             // ZST handle passed by address only.
-            unsafe { WebCore__FetchHeaders__put(self, name_, &zs, global) }
+            unsafe { WebCore__FetchHeaders__put(self, name_, &raw const zs, global) }
         })
     }
 

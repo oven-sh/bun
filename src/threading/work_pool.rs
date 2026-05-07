@@ -51,7 +51,7 @@ impl WorkPool {
             // SAFETY: `task` points to the `task` field of a `TaskType<C>` allocated below
             // via Box::into_raw; recover the parent pointer, run the user fn, then free.
             unsafe {
-                let this_task = (task as *mut u8)
+                let this_task = task.cast::<u8>()
                     .sub(core::mem::offset_of!(TaskType<C>, task))
                     .cast::<TaskType<C>>();
                 let this_task = Box::from_raw(this_task);

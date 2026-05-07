@@ -351,7 +351,7 @@ impl MySQLConnection {
         // `bun_uws` mirrors, so cast the group pointer through.
         let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
             // SAFETY: `tls_group` is non-null (lazy-init in `mysql_group`).
-            unsafe { &mut *(tls_group as *mut bun_uws_sys::SocketGroup) },
+            unsafe { &mut *tls_group.cast::<bun_uws_sys::SocketGroup>() },
             bun_uws_sys::SocketKind::MysqlTls,
             ssl_ctx,
             sni,
@@ -695,9 +695,9 @@ impl MySQLConnection {
         self.set_status(ConnectionState::Authenticating);
 
         let mut encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
-            password: &*self.password as *const [u8],
-            public_key: response.data.slice() as *const [u8],
-            nonce: &*self.auth_data as *const [u8],
+            password: &raw const *self.password,
+            public_key: std::ptr::from_ref::<[u8]>(response.data.slice()),
+            nonce: &raw const *self.auth_data,
             sequence_id: self.sequence_id,
         };
         encrypted_password.write(self.writer())?;
@@ -899,7 +899,7 @@ impl MySQLConnection {
             // PORT NOTE: reshaped for borrowck — `get_statement()` borrows
             // `*request` mutably; downgrade to a raw pointer immediately so
             // `request` can be re-borrowed below and `&mut self` isn't aliased.
-            let statement = statement as *mut MySQLStatement;
+            let statement = std::ptr::from_mut::<MySQLStatement>(statement);
             // TODO(b2-blocked): MySQLStatement intrusive ref_/deref_ (bun_ptr).
             // Skipped here; the queue's ref on `request` keeps the statement
             // alive for the duration of this call.
@@ -959,8 +959,8 @@ impl MySQLConnection {
             capability_flags: self.capabilities,
             max_packet_size: 0, // 16777216,
             character_set: CharacterSet::default(),
-            username: Data::Temporary(&*self.user as *const [u8]),
-            database: Data::Temporary(&*self.database as *const [u8]),
+            username: Data::Temporary(&raw const *self.user),
+            database: Data::Temporary(&raw const *self.database),
             auth_plugin_name: Data::Temporary(if let Some(plugin) = self.auth_plugin {
                 match plugin {
                     AuthMethod::MysqlNativePassword => b"mysql_native_password",
@@ -1024,13 +1024,13 @@ impl MySQLConnection {
 
     pub fn writer(&mut self) -> NewWriter<Writer> {
         NewWriter {
-            wrapped: Writer { connection: self as *mut Self },
+            wrapped: Writer { connection: std::ptr::from_mut::<Self>(self) },
         }
     }
 
     pub fn buffered_reader(&mut self) -> NewReader<Reader> {
         NewReader {
-            wrapped: Reader { connection: self as *mut Self },
+            wrapped: Reader { connection: std::ptr::from_mut::<Self>(self) },
         }
     }
 
@@ -1082,7 +1082,7 @@ impl MySQLConnection {
         // PORT NOTE: reshaped for borrowck — downgrade to raw pointer so `&mut
         // self` (passed to `check_if_prepared_statement_is_done`) doesn't alias
         // the statement borrow rooted in `self.queue`.
-        let statement = statement as *mut MySQLStatement;
+        let statement = std::ptr::from_mut::<MySQLStatement>(statement);
         // TODO(b2-blocked): MySQLStatement intrusive ref_/deref_ (bun_ptr).
         // SAFETY: statement is a live *mut MySQLStatement owned by the request.
         let statement = unsafe { &mut *statement };
@@ -1253,7 +1253,7 @@ impl MySQLConnection {
         // from `&self` (`*const`) would carry SharedReadOnly provenance and
         // make any subsequent write UB under Stacked Borrows.
         unsafe {
-            (self as *mut Self as *mut u8)
+            std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(offset_of!(JSMySQLConnection, connection))
                 .cast::<JSMySQLConnection>()
         }
@@ -1318,7 +1318,7 @@ impl MySQLConnection {
                 };
                 // PORT NOTE: reshaped for borrowck — downgrade to raw pointer so
                 // `&mut self` calls below don't alias the statement borrow.
-                let statement = statement as *mut MySQLStatement;
+                let statement = std::ptr::from_mut::<MySQLStatement>(statement);
                 // TODO(b2-blocked): MySQLStatement intrusive ref_/deref_ (bun_ptr).
                 // SAFETY: statement is a live *mut MySQLStatement owned by the request.
                 let statement = unsafe { &mut *statement };
@@ -1562,7 +1562,7 @@ impl ReaderContext for Reader {
         }
 
         // PORT NOTE: reshaped for borrowck — capture slice ptr before skip().
-        let slice = &remaining[0..count] as *const [u8];
+        let slice = &raw const remaining[0..count];
         self.skip(isize::try_from(count).expect("int cast"));
         Ok(Data::Temporary(slice))
     }
@@ -1571,7 +1571,7 @@ impl ReaderContext for Reader {
         // SAFETY: see `mark_message_start`.
         let remaining = unsafe { (*self.connection).read_buffer.remaining() };
         if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
-            let slice = &remaining[0..zero as usize] as *const [u8];
+            let slice = &raw const remaining[0..zero as usize];
             self.skip(isize::try_from(zero + 1).expect("int cast"));
             return Ok(Data::Temporary(slice));
         }

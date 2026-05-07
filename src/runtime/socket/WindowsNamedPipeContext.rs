@@ -279,8 +279,8 @@ impl WindowsNamedPipeContext {
         // SAFETY: `vm` is the process-global VirtualMachine; `enqueue_task` mutates
         // its task queue. We hold `&'static VirtualMachine` (JSC_BORROW) so cast
         // through a raw pointer to obtain the `&mut` the upstream API requires.
-        let vm = self.vm as *const VirtualMachine as *mut VirtualMachine;
-        unsafe { (*vm).enqueue_task(Task::init(&mut self.task)) };
+        let vm = std::ptr::from_ref::<VirtualMachine>(self.vm).cast_mut();
+        unsafe { (*vm).enqueue_task(Task::init(&raw mut self.task)) };
     }
 
     pub fn create(global_this: &JSGlobalObject, socket: SocketType) -> *mut WindowsNamedPipeContext {
@@ -294,7 +294,7 @@ impl WindowsNamedPipeContext {
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
         let handlers = NamedPipeHandlers {
-            ctx: this as *mut c_void,
+            ctx: this.cast::<c_void>(),
             // SAFETY: fn pointers cast to erased callback ABI; receiver layout matches ctx type
             ref_ctx: unsafe { core::mem::transmute(Self::ref_ as fn(*mut Self)) },
             deref_ctx: unsafe { core::mem::transmute(Self::deref as fn(*mut Self)) },

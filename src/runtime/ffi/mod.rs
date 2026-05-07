@@ -369,7 +369,7 @@ impl Default for Function {
 }
 
 // TODO(port): mutable static — wrap in OnceLock or similar
-pub static mut LIB_DIR_Z: *const c_char = b"\0".as_ptr() as *const c_char;
+pub static mut LIB_DIR_Z: *const c_char = b"\0".as_ptr().cast::<c_char>();
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {

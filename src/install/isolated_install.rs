@@ -238,7 +238,7 @@ pub fn install_isolated_packages(
     // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while also
     // passing `*PackageManager` (which owns it); take a raw pointer so column
     // borrows below don't tie up `&mut manager`.
-    let lockfile: *mut Lockfile = &mut *manager.lockfile;
+    let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
     let store: Store = 'store: {
@@ -1890,7 +1890,7 @@ pub fn install_isolated_packages(
         let mut download_node: ProgressNode = ProgressNode::default();
         let mut install_node: ProgressNode = ProgressNode::default();
         let mut scripts_node: ProgressNode = ProgressNode::default();
-        let progress: *mut Progress = &mut manager.progress;
+        let progress: *mut Progress = &raw mut manager.progress;
         // SAFETY: `progress` aliases `manager.progress`; reborrows below are
         // disjoint from the other `manager.*` field accesses (Zig holds the
         // same two pointers freely).
@@ -1909,7 +1909,7 @@ pub fn install_isolated_packages(
 
             manager.downloads_node = None;
             manager.scripts_node = Some(core::ptr::NonNull::from(&mut scripts_node));
-            manager.downloads_node = Some(&mut download_node as *mut _);
+            manager.downloads_node = Some(&raw mut download_node);
         }
 
         let nodes_slice = store.nodes.slice();
@@ -2011,7 +2011,7 @@ pub fn install_isolated_packages(
         // (raw back-ref, no real `'static` data), so erase the lifetime via a
         // void-pointer cast — `*mut T` is invariant and won't coerce on its own.
         let installer_ptr: *mut store::Installer<'static> =
-            (&mut installer as *mut store::Installer<'_>).cast::<()>().cast();
+            (&raw mut installer).cast::<()>().cast();
         for task in installer.tasks.iter_mut() {
             task.installer = installer_ptr;
         }
@@ -2503,7 +2503,7 @@ pub fn install_isolated_packages(
 #[inline]
 fn bytes_of<T: Copy>(v: &T) -> &[u8] {
     // SAFETY: T is Copy/POD; reading its bytes is sound.
-    unsafe { core::slice::from_raw_parts((v as *const T).cast::<u8>(), core::mem::size_of::<T>()) }
+    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
 }
 
 /// `std.fmt.bytesToHex(.., .lower)`

@@ -70,7 +70,7 @@ mod ext {
         let url = input.expect_url()?;
         // SAFETY: `url` borrows the parser source/arena which outlives the
         // `add_import_record` call (same lifetime erasure as `src_str`).
-        let url: &'static [u8] = unsafe { &*(url as *const [u8]) };
+        let url: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
         let import_record_idx =
             input.add_import_record(url, start_pos, css_parser::ImportKind::Url)?;
         Ok(Url {
@@ -87,7 +87,7 @@ mod ext {
             // &mut *dest, so capture allocator/filename first.
             let allocator = dest.allocator;
             // SAFETY: filename borrows the printer arena/options which outlive `dest`.
-            let filename: &[u8] = unsafe { &*(dest.filename() as *const [u8]) };
+            let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
             let records = dest.get_import_records()?;
             Some(dependencies::UrlDependency::new(allocator, this, filename, records))
         } else {
@@ -119,7 +119,7 @@ mod ext {
         let url: &'static [u8] = {
             let u = dest.get_import_record_url(this.import_record_idx)?;
             // SAFETY: import-record paths are arena/source-owned and outlive `dest`.
-            unsafe { &*(u as *const [u8]) }
+            unsafe { &*std::ptr::from_ref::<[u8]>(u) }
         };
 
         if dest.minify && !is_internal {
@@ -182,7 +182,7 @@ mod ext {
         // SAFETY: arena-owned slice valid for the printer's `'a` lifetime.
         let v: &[u8] = unsafe { &*this.v };
         // SAFETY: same arena-slice provenance as `Printer::write_dashed_ident`.
-        let v: &'static [u8] = unsafe { &*(v as *const [u8]) };
+        let v: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(v) };
         dest.write_ident(v, css_module_custom_idents_enabled)
     }
 }
@@ -341,11 +341,11 @@ impl TokenList {
                         && is_custom_property
                         && !url.is_absolute(dest.get_import_records()?)
                     {
-                        let pretty = dest
+                        let pretty = std::ptr::from_ref::<[u8]>(dest
                             .get_import_records()?
                             .at(url.import_record_idx as usize)
                             .path
-                            .pretty as *const [u8];
+                            .pretty);
                         return dest.new_error(
                             css::PrinterErrorKind::ambiguous_url_in_custom_property { url: pretty },
                             Some(url.loc),
@@ -612,7 +612,7 @@ impl TokenList {
                         let arguments = input
                             .parse_nested_block(|input2| TokenListFns::parse(input2, options, depth + 1))?;
                         tokens.push(TokenOrValue::Function(Function {
-                            name: Ident { v: *f as *const [u8] },
+                            name: Ident { v: std::ptr::from_ref::<[u8]>(*f) },
                             arguments,
                         }));
                         last_is_delim = true; // Whitespace is not required after any of these chars.
@@ -647,7 +647,7 @@ impl TokenList {
                 Token::Ident(name) => {
                     if name.starts_with(b"--") {
                         tokens.push(TokenOrValue::DashedIdent(DashedIdent {
-                            v: *name as *const [u8],
+                            v: std::ptr::from_ref::<[u8]>(*name),
                         }));
                         last_is_delim = false;
                         last_is_whitespace = false;
@@ -1526,9 +1526,9 @@ impl CustomPropertyName {
 
     pub fn from_str(name: &[u8]) -> CustomPropertyName {
         if name.starts_with(b"--") {
-            return CustomPropertyName::Custom(DashedIdent { v: name as *const [u8] });
+            return CustomPropertyName::Custom(DashedIdent { v: std::ptr::from_ref::<[u8]>(name) });
         }
-        CustomPropertyName::Unknown(Ident { v: name as *const [u8] })
+        CustomPropertyName::Unknown(Ident { v: std::ptr::from_ref::<[u8]>(name) })
     }
 
     #[inline]

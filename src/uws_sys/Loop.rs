@@ -191,7 +191,7 @@ impl PosixLoop {
     pub fn tick_without_idle(&mut self) {
         let timespec = Timespec { sec: 0, nsec: 0 };
         // SAFETY: self is a valid loop pointer; &timespec lives for the call
-        unsafe { c::us_loop_run_bun_tick(self, &timespec) };
+        unsafe { c::us_loop_run_bun_tick(self, &raw const timespec) };
     }
 
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
@@ -199,7 +199,7 @@ impl PosixLoop {
         unsafe {
             c::us_loop_run_bun_tick(
                 self,
-                timespec.map_or(core::ptr::null(), |t| t as *const _),
+                timespec.map_or(core::ptr::null(), |t| std::ptr::from_ref(t)),
             )
         };
     }

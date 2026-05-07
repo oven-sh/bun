@@ -80,7 +80,7 @@ impl BrotliDecoder {
         let mut decoded_size = decoded.len();
         let decoded_ptr = decoded.as_mut_ptr();
         // SAFETY: encoded/decoded are valid slices; decoded_size is in-out
-        let result = unsafe { BrotliDecoderDecompress(encoded.len(), encoded.as_ptr(), &mut decoded_size, decoded_ptr) };
+        let result = unsafe { BrotliDecoderDecompress(encoded.len(), encoded.as_ptr(), &raw mut decoded_size, decoded_ptr) };
         // PORT NOTE: reshaped for borrowck — Zig mutated `decoded.len` in place via `*[]u8`
         // SAFETY: decoded_ptr points to the same allocation; decoded_size <= original len per brotli contract
         *decoded = unsafe { core::slice::from_raw_parts_mut(decoded_ptr, decoded_size) };
@@ -96,7 +96,7 @@ impl BrotliDecoder {
                 next_in,
                 available_out,
                 next_out,
-                total_out.map(|p| p as *mut usize).unwrap_or(core::ptr::null_mut()),
+                total_out.map(|p| std::ptr::from_mut::<usize>(p)).unwrap_or(core::ptr::null_mut()),
             )
         }
     }
@@ -109,7 +109,7 @@ impl BrotliDecoder {
     pub fn take_output(state: &mut BrotliDecoder) -> &[u8] {
         let mut max_size: usize = usize::MAX;
         // SAFETY: state is a valid &mut BrotliDecoder; max_size is in-out
-        let ptr = unsafe { BrotliDecoderTakeOutput(state, &mut max_size) };
+        let ptr = unsafe { BrotliDecoderTakeOutput(state, &raw mut max_size) };
         if ptr.is_null() {
             return b"";
         }
@@ -400,7 +400,7 @@ impl BrotliEncoder {
     pub fn take_output(state: &mut BrotliEncoder) -> &[u8] {
         let mut size: usize = 0;
         // SAFETY: state is a valid &mut BrotliEncoder; size is in-out
-        let ptr = unsafe { BrotliEncoderTakeOutput(state, &mut size) };
+        let ptr = unsafe { BrotliEncoderTakeOutput(state, &raw mut size) };
         if !ptr.is_null() {
             // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
             // valid until the next encoder call
@@ -426,13 +426,13 @@ impl BrotliEncoder {
         // SAFETY: state is a valid *mut BrotliEncoder for 'a; in/out pointers are valid;
         // next_out is null (we use take_output below); total_out is null (unused)
         result.success = unsafe {
-            BrotliEncoderCompressStream(state, op, &mut available_in, &mut next_in, &mut available_out, core::ptr::null_mut(), core::ptr::null_mut()) > 0
+            BrotliEncoderCompressStream(state, op, &raw mut available_in, &raw mut next_in, &raw mut available_out, core::ptr::null_mut(), core::ptr::null_mut()) > 0
         };
 
         if result.success {
             let mut size: usize = 0;
             // SAFETY: state is a valid *mut BrotliEncoder; size is in-out
-            let ptr = unsafe { BrotliEncoderTakeOutput(state, &mut size) };
+            let ptr = unsafe { BrotliEncoderTakeOutput(state, &raw mut size) };
             if !ptr.is_null() {
                 // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
                 // valid until the next encoder call (bounded by 'a)

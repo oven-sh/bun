@@ -284,9 +284,9 @@ impl Fs {
     /// the detached buffer; the caller MUST take ownership of it and keep it alive for as long as
     /// `parse_result.source.contents` may be read.
     pub fn reset_shared_buffer(&mut self, buffer: *const MutableString) -> MutableString {
-        if core::ptr::eq(buffer, &self.shared_buffer) {
+        if core::ptr::eq(buffer, &raw const self.shared_buffer) {
             core::mem::replace(&mut self.shared_buffer, MutableString::init_empty())
-        } else if core::ptr::eq(buffer, &self.macro_shared_buffer) {
+        } else if core::ptr::eq(buffer, &raw const self.macro_shared_buffer) {
             core::mem::replace(&mut self.macro_shared_buffer, MutableString::init_empty())
         } else {
             unreachable!("resetSharedBuffer: invalid buffer");
@@ -845,7 +845,7 @@ impl Json {
     /// SAFETY: `self` must outlive every use of the returned handle.
     pub fn as_resolver_cache(&mut self) -> ResolverJsonCache {
         ResolverJsonCache {
-            ptr: self as *mut Json as *mut (),
+            ptr: std::ptr::from_mut::<Json>(self).cast::<()>(),
             vtable: &JSON_CACHE_VTABLE,
         }
     }

@@ -125,7 +125,7 @@ impl SSLConfig {
     where
         D: core::ops::Deref<Target = SSLConfig>,
     {
-        maybe_shared.map(|s| &**s as *const SSLConfig)
+        maybe_shared.map(|s| &raw const **s)
     }
 
     pub fn as_usockets(&self) -> uws::socket_context::BunSocketContextOptions {

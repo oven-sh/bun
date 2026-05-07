@@ -128,8 +128,8 @@ impl CppWebSocket {
                 socket,
                 buffered_data,
                 buffered_len,
-                deflate_params.map_or(core::ptr::null(), |p| p as *const _),
-                secure.map_or(core::ptr::null_mut(), |p| p as *mut _),
+                deflate_params.map_or(core::ptr::null(), |p| std::ptr::from_ref(p)),
+                secure.map_or(core::ptr::null_mut(), |p| std::ptr::from_mut(p)),
             )
         };
         event_loop.exit();
@@ -153,7 +153,7 @@ impl CppWebSocket {
                 tunnel,
                 buffered_data,
                 buffered_len,
-                deflate_params.map_or(core::ptr::null(), |p| p as *const _),
+                deflate_params.map_or(core::ptr::null(), |p| std::ptr::from_ref(p)),
             )
         };
         event_loop.exit();

@@ -473,7 +473,7 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
             // Reap what we just killed so their children (if any raced) reparent.
             loop {
                 let mut st: c_int = 0;
-                if libc::waitpid(-1, &mut st, libc::WNOHANG) <= 0 {
+                if libc::waitpid(-1, &raw mut st, libc::WNOHANG) <= 0 {
                     break;
                 }
             }

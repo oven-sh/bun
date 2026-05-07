@@ -566,7 +566,7 @@ pub mod posix_spawn {
             let mut pid: c_int = 0;
 
             // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
-            let rc = unsafe { posix_spawn_bun(&mut pid, path.as_ptr(), &req, argv, envp) };
+            let rc = unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), &raw const req, argv, envp) };
             let _ = &mut req; // keep req alive across the call (matches Zig taking &req of a local copy)
 
             if cfg!(debug_assertions) {
@@ -869,7 +869,7 @@ pub mod posix_spawn {
         loop {
             // SAFETY: status is a valid out-pointer
             let rc = unsafe {
-                system::waitpid(pid, &mut status, c_int::try_from(flags).expect("int cast"))
+                system::waitpid(pid, &raw mut status, c_int::try_from(flags).expect("int cast"))
             };
             match errno(rc) {
                 Errno::SUCCESS => {
@@ -900,7 +900,7 @@ pub mod posix_spawn {
         // PORT NOTE: reshaped for borrowck — Zig passes the same `?*Rusage` every loop
         // iteration via @ptrCast(usage); convert once to a raw ptr that is Copy.
         let usage_ptr: *mut system::rusage = match usage {
-            Some(u) => (u as *mut process::Rusage).cast(),
+            Some(u) => std::ptr::from_mut::<process::Rusage>(u).cast(),
             None => ptr::null_mut(),
         };
         loop {
@@ -908,7 +908,7 @@ pub mod posix_spawn {
             let rc = unsafe {
                 system::wait4(
                     pid,
-                    &mut status,
+                    &raw mut status,
                     c_int::try_from(flags).expect("int cast"),
                     usage_ptr,
                 )

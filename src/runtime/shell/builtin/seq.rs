@@ -34,8 +34,8 @@ impl Default for Seq {
             start: 1.0,
             end: 1.0,
             increment: 1.0,
-            separator: b"\n" as *const [u8],
-            terminator: b"" as *const [u8],
+            separator: std::ptr::from_ref::<[u8]>(b"\n"),
+            terminator: std::ptr::from_ref::<[u8]>(b""),
             fixed_width: false,
         }
     }
@@ -64,12 +64,12 @@ impl Seq {
                 let next = Builtin::of(interp, cmd).args_slice()[idx];
                 // SAFETY: argv entries are NUL-terminated.
                 let bytes = unsafe { CStr::from_ptr(next) }.to_bytes();
-                Self::state_mut(interp, cmd).separator = bytes as *const [u8];
+                Self::state_mut(interp, cmd).separator = std::ptr::from_ref::<[u8]>(bytes);
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-s") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).separator = &arg[2..] as *const [u8];
+                Self::state_mut(interp, cmd).separator = &raw const arg[2..];
                 idx += 1;
                 continue;
             }
@@ -81,12 +81,12 @@ impl Seq {
                 let next = Builtin::of(interp, cmd).args_slice()[idx];
                 // SAFETY: argv entries are NUL-terminated.
                 let bytes = unsafe { CStr::from_ptr(next) }.to_bytes();
-                Self::state_mut(interp, cmd).terminator = bytes as *const [u8];
+                Self::state_mut(interp, cmd).terminator = std::ptr::from_ref::<[u8]>(bytes);
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-t") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).terminator = &arg[2..] as *const [u8];
+                Self::state_mut(interp, cmd).terminator = &raw const arg[2..];
                 idx += 1;
                 continue;
             }

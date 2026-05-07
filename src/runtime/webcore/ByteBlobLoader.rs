@@ -82,7 +82,7 @@ impl ByteBlobLoader {
         // SAFETY: self is the `context` field embedded inside a `Source`; callers only invoke
         // this on a `ByteBlobLoader` that was constructed as `Source.context`.
         unsafe {
-            &mut *(self as *mut Self as *mut u8)
+            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(offset_of!(Source, context))
                 .cast::<Source>()
         }
@@ -195,7 +195,7 @@ impl ByteBlobLoader {
         if !self.content_type.is_empty() {
             let ct = core::mem::take(&mut self.content_type);
             blob.content_type_was_set = !ct.is_empty();
-            blob.content_type = Box::into_raw(ct) as *const [u8];
+            blob.content_type = Box::into_raw(ct).cast_const();
             blob.content_type_allocated = self.content_type_allocated;
             self.content_type_allocated = false;
         }

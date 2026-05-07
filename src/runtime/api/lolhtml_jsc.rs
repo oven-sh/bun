@@ -25,7 +25,7 @@ pub fn html_string_to_string(this: HTMLString) -> BunString {
         return BunString::create_external::<*mut u8>(
             bytes,
             true,
-            this.ptr as *mut u8,
+            this.ptr.cast_mut(),
             HTMLString::deinit_external,
         );
     }

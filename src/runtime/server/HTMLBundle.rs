@@ -508,7 +508,7 @@ impl Route {
         bun_output::scoped_log!(
             debug,
             "HTMLBundleRoute(0x{:x}) plugins rejected",
-            self as *const _ as usize
+            std::ptr::from_ref(self) as usize
         );
         self.state = State::Err(Log::init());
         self.resume_pending_responses();
@@ -519,7 +519,7 @@ impl Route {
         // For the build task — matches the ref() taken in on_plugins_resolved.
         // SAFETY: self is IntrusiveRc-managed.
         let _drop_build_ref =
-            scopeguard::guard(self as *mut Route, |p| unsafe { RefCount::<Route>::deref(p) });
+            scopeguard::guard(std::ptr::from_mut::<Route>(self), |p| unsafe { RefCount::<Route>::deref(p) });
 
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {

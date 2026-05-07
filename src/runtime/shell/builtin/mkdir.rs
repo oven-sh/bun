@@ -365,7 +365,7 @@ impl ShellMkdirTask {
 
         if this.opts.parents {
             let vtable = MkdirVerboseVTable {
-                inner: &mut this.created_directories,
+                inner: &raw mut this.created_directories,
                 active: this.opts.verbose,
             };
             if let Err(e) = node_fs.mkdir_recursive_impl(&args, vtable) {
@@ -482,7 +482,7 @@ impl FlagParser for Opts {
                 self.verbose = true;
                 None
             }
-            _ => Some(ParseFlagResult::IllegalOption(&smallflags[1 + i..] as *const [u8])),
+            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[1 + i..])),
         }
     }
 }

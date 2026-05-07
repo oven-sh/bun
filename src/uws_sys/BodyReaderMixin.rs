@@ -41,9 +41,9 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
         // const-generic one, so dispatch on `SSL` here. Same shape as Zig's
         // `AnyResponse.init` switching on @TypeOf.
         if SSL {
-            AnyResponse::SSL((self as *mut Self).cast())
+            AnyResponse::SSL(std::ptr::from_mut::<Self>(self).cast())
         } else {
-            AnyResponse::TCP((self as *mut Self).cast())
+            AnyResponse::TCP(std::ptr::from_mut::<Self>(self).cast())
         }
     }
 }

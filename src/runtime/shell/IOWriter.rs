@@ -303,7 +303,7 @@ impl IOWriter {
         // (`*const bun_event_loop::EventLoopHandle`) and never write through
         // it. The pointee lives inside `Arc<IOWriter>` and outlives every
         // FilePoll callback.
-        bun_io::EventLoopHandle(&self.state().evtloop as *const _ as *mut c_void)
+        bun_io::EventLoopHandle(&raw const self.state().evtloop as *mut c_void)
     }
 
     // ── start ────────────────────────────────────────────────────────────
@@ -1113,7 +1113,7 @@ impl Drop for IOWriter {
         // FilePoll vtable to recover. `s` (and thus `&s.evtloop`) is live for
         // the duration of this call.
         s.writer.disable_keeping_process_alive(bun_io::EventLoopHandle(
-            &s.evtloop as *const _ as *mut c_void,
+            &raw const s.evtloop as *mut c_void,
         ));
     }
 }
@@ -1163,7 +1163,7 @@ pub fn on_io_writer_chunk(
             // the owning ShellSubprocess until `on_close_io` runs, which only
             // happens after the writer has finished draining. Single-threaded.
             let cw = unsafe {
-                &mut *(child.raw as *mut crate::shell::subproc::CapturedWriter)
+                &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>()
             };
             cw.on_iowriter_chunk(written, err)
         }

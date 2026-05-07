@@ -128,7 +128,7 @@ impl ChromeProcess {
         status: Status,
         _rusage: *const Rusage,
     ) {
-        let this = owner as *mut ChromeProcess;
+        let this = owner.cast::<ChromeProcess>();
         scoped_log!(Chrome, "chrome exited: {}", status);
         let signo: i32 = if let Some(sig) = status.signal_code() {
             sig as i32

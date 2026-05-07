@@ -103,7 +103,7 @@ impl HostProcess {
         status: Status,
         _rusage: *const Rusage,
     ) {
-        let this = owner as *mut HostProcess;
+        let this = owner.cast::<HostProcess>();
         scoped_log!(WebViewHost, "child exited: {}", status);
         let signo: i32 = if let Some(sig) = status.signal_code() {
             sig as i32

@@ -133,13 +133,13 @@ pub fn detect_and_load_other_lockfile<'a>(
                     }
                     MigratePnpmLockfileError::WorkspaceNameMissing => {
                         if log.has_errors() {
-                            let _ = log.print(Output::error_writer() as *mut _);
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
                         Output::warn("pnpm-lock.yaml migration failed due to missing workspace name.");
                     }
                     MigratePnpmLockfileError::YamlParseError => {
                         if log.has_errors() {
-                            let _ = log.print(Output::error_writer() as *mut _);
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
                         Output::warn("Failed to parse pnpm-lock.yaml.");
                     }
@@ -158,7 +158,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                         // These errors are continuable - log the error but don't exit
                         // The install will continue with a fresh install instead of migration
                         if log.has_errors() {
-                            let _ = log.print(Output::error_writer() as *mut _);
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
                     }
                     _ => {}

@@ -26,7 +26,7 @@ impl Callback {
             // Zig side uses @ptrCast on a comptime fn param. `context` is only
             // ever passed back to this callback, which knows its real type.
             callback: unsafe { core::mem::transmute::<fn(*mut T), fn(*mut c_void)>(callback) },
-            context: context as *mut c_void,
+            context: context.cast::<c_void>(),
         }
     }
 

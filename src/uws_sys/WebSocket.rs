@@ -20,7 +20,7 @@ pub struct NewWebSocket<const SSL_FLAG: i32> {
 impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     #[inline]
     pub fn raw(&mut self) -> *mut RawWebSocket {
-        self as *mut Self as *mut RawWebSocket
+        std::ptr::from_mut::<Self>(self).cast::<RawWebSocket>()
     }
 
     /// Cast the C-side user data pointer to `&mut T`.
@@ -33,7 +33,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         // the opaque user-data pointer. Caller upholds the type invariant.
         unsafe {
             let p = c::uws_ws_get_user_data(SSL_FLAG, self.raw());
-            (p as *mut T).as_mut()
+            p.cast::<T>().as_mut()
         }
     }
 
@@ -103,11 +103,11 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         unsafe extern "C" fn wrap<C>(user_data: *mut c_void) {
             // SAFETY: user_data is &mut (ptr, fn) on the caller's stack frame,
             // which outlives the synchronous uws_ws_cork call.
-            let data = unsafe { &mut *(user_data as *mut (*mut C, fn(&mut C))) };
+            let data = unsafe { &mut *user_data.cast::<(*mut C, fn(&mut C))>() };
             // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
             (data.1)(unsafe { &mut *data.0 });
         }
-        let mut data: (*mut C, fn(&mut C)) = (ctx as *mut C, callback);
+        let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
         // SAFETY: self.raw() is a live uWS-owned socket; `data` lives on this
         // stack frame for the duration of the synchronous uws_ws_cork call.
         unsafe {
@@ -115,7 +115,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
                 SSL_FLAG,
                 self.raw(),
                 Some(wrap::<C>),
-                &mut data as *mut _ as *mut c_void,
+                (&raw mut data).cast::<c_void>(),
             )
         }
     }
@@ -182,7 +182,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn get_remote_address<'a>(&mut self, buf: &'a mut [u8]) -> &'a mut [u8] {
         let mut ptr: *mut u8 = core::ptr::null_mut();
-        let len = unsafe { c::uws_ws_get_remote_address(SSL_FLAG, self.raw(), &mut ptr) };
+        let len = unsafe { c::uws_ws_get_remote_address(SSL_FLAG, self.raw(), &raw mut ptr) };
         // SAFETY: uWS returns a pointer+len into its internal buffer.
         let src = unsafe { core::slice::from_raw_parts(ptr, len) };
         buf[..len].copy_from_slice(src);
@@ -212,7 +212,7 @@ impl RawWebSocket {
     ///
     ///   (struct us_socket_t *)socket
     pub fn as_socket(&mut self) -> *mut Socket {
-        self as *mut RawWebSocket as *mut Socket
+        std::ptr::from_mut::<RawWebSocket>(self).cast::<Socket>()
     }
 }
 
@@ -245,8 +245,8 @@ impl AnyWebSocket {
         // B should scope this to the callback frame or return *mut T.
         unsafe {
             match self {
-                AnyWebSocket::Ssl(p) => (c::uws_ws_get_user_data(1, p) as *mut T).as_mut(),
-                AnyWebSocket::Tcp(p) => (c::uws_ws_get_user_data(0, p) as *mut T).as_mut(),
+                AnyWebSocket::Ssl(p) => c::uws_ws_get_user_data(1, p).cast::<T>().as_mut(),
+                AnyWebSocket::Tcp(p) => c::uws_ws_get_user_data(0, p).cast::<T>().as_mut(),
             }
         }
     }
@@ -306,12 +306,12 @@ impl AnyWebSocket {
         unsafe extern "C" fn wrap<C>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack tuple alive for the duration
             // of the synchronous uws_ws_cork call.
-            let data = unsafe { &mut *(user_data as *mut (*mut C, fn(&mut C))) };
+            let data = unsafe { &mut *user_data.cast::<(*mut C, fn(&mut C))>() };
             // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
             (data.1)(unsafe { &mut *data.0 });
         }
-        let mut data: (*mut C, fn(&mut C)) = (ctx as *mut C, callback);
-        let ud = &mut data as *mut _ as *mut c_void;
+        let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
+        let ud = (&raw mut data).cast::<c_void>();
         // SAFETY: `p` is a live uWS-owned socket; `data` lives on this stack
         // frame for the duration of the synchronous uws_ws_cork call.
         match self {
@@ -391,13 +391,13 @@ impl AnyWebSocket {
         if ssl {
             uws::NewApp::<true>::publish_with_options(
                 // SAFETY: caller guarantees `app` is the matching uws_app_t*.
-                unsafe { &mut *(app as *mut uws::NewApp<true>) },
+                unsafe { &mut *app.cast::<uws::NewApp<true>>() },
                 topic, message, opcode, compress,
             )
         } else {
             uws::NewApp::<false>::publish_with_options(
                 // SAFETY: caller guarantees `app` is the matching uws_app_t*.
-                unsafe { &mut *(app as *mut uws::NewApp<false>) },
+                unsafe { &mut *app.cast::<uws::NewApp<false>>() },
                 topic, message, opcode, compress,
             )
         }
@@ -418,7 +418,7 @@ impl AnyWebSocket {
         };
         let mut ptr: *mut u8 = core::ptr::null_mut();
         // SAFETY: `p` is a live uWS-owned socket; out-param is a valid *mut *mut u8.
-        let len = unsafe { c::uws_ws_get_remote_address(ssl_flag, p, &mut ptr) };
+        let len = unsafe { c::uws_ws_get_remote_address(ssl_flag, p, &raw mut ptr) };
         // SAFETY: uWS returns a pointer+len into its internal buffer.
         let src = unsafe { core::slice::from_raw_parts(ptr, len) };
         buf[..len].copy_from_slice(src);
@@ -610,9 +610,9 @@ where
         id: usize,
     ) {
         // SAFETY: `ptr` is the *Server passed to uws_ws() at registration time.
-        let server = unsafe { &mut *(ptr as *mut Server) };
+        let server = unsafe { &mut *ptr.cast::<Server>() };
         server.on_websocket_upgrade(
-            res as *mut uws::NewAppResponse<SSL>,
+            res.cast::<uws::NewAppResponse<SSL>>(),
             // SAFETY: uWS passes non-null req/context valid for the duration of
             // the upgrade callback.
             unsafe { &mut *req },

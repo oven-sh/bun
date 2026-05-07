@@ -369,7 +369,7 @@ pub type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(value) = input.try_parse(|p| p.expect_string().map(|s| s as *const [u8])) {
+        if let Ok(value) = input.try_parse(|p| p.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))) {
             // arena-owned: parser slice lives for 'bump
             return Ok(FontFamily::FamilyName(value));
         }
@@ -380,11 +380,11 @@ impl FontFamily {
 
         // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*(input.allocator() as *const bun_alloc::Arena) };
-        let value: *const [u8] = input.expect_ident()? as *const [u8];
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.allocator()) };
+        let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
         // AST crate: ArrayListUnmanaged fed input.allocator() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
-        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(|s| s as *const [u8])) {
+        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(|s| std::ptr::from_ref::<[u8]>(s))) {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
                 // SAFETY: arena-owned slice valid for 'bump.
@@ -400,7 +400,7 @@ impl FontFamily {
         }
 
         let final_value: *const [u8] = match string {
-            Some(s) => s.into_bump_slice() as *const [u8],
+            Some(s) => std::ptr::from_ref::<[u8]>(s.into_bump_slice()),
             None => value,
         };
 
@@ -1225,7 +1225,7 @@ fn compatible_font_family(
         if let Some(i) = families.slice_const().iter().position(is_system_ui) {
             for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
                 // TODO(port): families.insert(allocator, idx, val) — Vec::insert with arena
-                families.insert(i + j + 1, FontFamily::FamilyName(*name as *const [u8]));
+                families.insert(i + j + 1, FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(*name)));
             }
         }
     }

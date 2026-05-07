@@ -342,11 +342,11 @@ impl FileReader {
         // global); deref to call `event_loop()`.
         let global = unsafe { &*(*self.parent()).global_this };
         self.event_loop =
-            EventLoopHandle::init(global.bun_vm().as_mut().event_loop() as *mut ());
+            EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
     }
 
     pub fn on_start(&mut self) -> streams::Start {
-        let parent_ptr = self as *mut Self as *mut _;
+        let parent_ptr = std::ptr::from_mut::<Self>(self).cast();
         self.reader().set_parent(parent_ptr);
         let was_lazy = !matches!(self.lazy, Lazy::None);
         let mut pollable = false;
@@ -409,7 +409,7 @@ impl FileReader {
         {
             let global = unsafe { &*(*self.parent()).global_this };
             self.event_loop =
-                EventLoopHandle::init(global.bun_vm().as_mut().event_loop() as *mut ());
+                EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
         }
 
         if was_lazy {
@@ -495,7 +495,7 @@ impl FileReader {
         // a tight `unsafe { (*ptr).method() }` scope and never hold the
         // resulting `&mut Source` across other `self.*` accesses.
         unsafe {
-            (self as *mut Self as *mut u8)
+            std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(mem::offset_of!(Source, context))
                 .cast::<Source>()
         }
@@ -801,7 +801,7 @@ impl FileReader {
                 let global = unsafe { &*(*self.parent()).global_this };
                 self.pending_value.set(global, array);
                 self.pending_view = buffer;
-                return streams::Result::Pending(&mut self.pending as *mut _);
+                return streams::Result::Pending(&raw mut self.pending);
             }
 
             let buffer_len = buffer.len();
@@ -841,7 +841,7 @@ impl FileReader {
                     self.pending_value.set(global, array);
                     self.pending_view = remaining_buf;
                     bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
-                    return streams::Result::Pending(&mut self.pending as *mut _);
+                    return streams::Result::Pending(&raw mut self.pending);
                 }
                 ReadDuringJSOnPullResult::Temporary(buf) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
@@ -885,7 +885,7 @@ impl FileReader {
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
-        streams::Result::Pending(&mut self.pending as *mut _)
+        streams::Result::Pending(&raw mut self.pending)
     }
 
     pub fn drain(&mut self) -> Vec<u8> {

@@ -463,7 +463,7 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
     // SAFETY: ssl_ptr is a valid &mut so non-null/aligned; sk_X509_value returns
     // a borrowed cert pointer valid for the lifetime of the chain.
     unsafe {
-        let cert_chain = boring::SSL_get_peer_cert_chain(ssl_ptr as *mut _);
+        let cert_chain = boring::SSL_get_peer_cert_chain(std::ptr::from_mut(ssl_ptr));
         if !cert_chain.is_null() {
             let x509 = boring::sk_X509_value(cert_chain, 0);
             if let Some(x509) = x509.as_mut() {

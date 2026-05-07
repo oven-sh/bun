@@ -21,7 +21,7 @@ impl<'a> BufferFallbackAllocator<'a> {
 
     pub fn allocator(&mut self) -> StdAllocator {
         StdAllocator {
-            ptr: self as *mut Self as *mut c_void,
+            ptr: std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             vtable: &VTABLE,
         }
     }

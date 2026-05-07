@@ -103,7 +103,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         crate::mark_binding();
         // SAFETY: recover the parent via offset_of (Zig: `@fieldParentPtr`).
         let this: *mut Self = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(offset_of!(Self, task))
                 .cast::<Self>()
         };
@@ -132,7 +132,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         this.ref_.ref_(js_event_loop_ctx());
         // SAFETY: `global_this` outlives the WorkTask (BACKREF).
         this.async_task_tracker.did_schedule(unsafe { &*this.global_this });
-        WorkPool::schedule(&mut this.task);
+        WorkPool::schedule(&raw mut this.task);
     }
 
     pub fn on_finish(this: *mut Self) {
@@ -140,7 +140,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         let event_loop = unsafe { &*(*this).event_loop };
         // SAFETY: `concurrent_task` is an intrusive field of `*this`; `from`
         // re-initializes it in place and returns the same address.
-        let task = unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) } as *mut _;
+        let task = std::ptr::from_mut(unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) });
         event_loop.enqueue_task_concurrent(task);
     }
 }

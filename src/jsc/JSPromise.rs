@@ -317,7 +317,7 @@ impl JSPromise {
             F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
         {
             // SAFETY: `this` is `&mut Wrapper<F>` passed below; `g` is a live JSGlobalObject.
-            let this = unsafe { &mut *(this as *mut Wrapper<F>) };
+            let this = unsafe { &mut *this.cast::<Wrapper<F>>() };
             let g = unsafe { &*g };
             let f = this.f.take().unwrap();
             // Zig: `jsc.toJSHostCall(g, @src(), Fn, this.args)` — `@src()` mapped to
@@ -362,7 +362,7 @@ impl JSPromise {
         let promise = unsafe {
             JSC__JSPromise__wrap(
                 global.as_ptr(),
-                &mut ctx as *mut _ as *mut c_void,
+                (&raw mut ctx).cast::<c_void>(),
                 call::<F>,
             )
         };

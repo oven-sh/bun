@@ -173,7 +173,7 @@ impl WTFStringImplStruct {
         // deref happens via FFI on Drop. Mutation of m_ref_count is C++-side
         // interior mutability, same as `r#ref`/`deref` already rely on.
         ZigStringSlice::WTF {
-            string_impl: self as *const Self,
+            string_impl: std::ptr::from_ref::<Self>(self),
             ptr: s.as_ptr(),
             len: s.len(),
         }
@@ -332,7 +332,7 @@ pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
     }
     let mut count: usize = 0;
     // SAFETY: buf is a valid slice; WTF__parseDouble reads at most `length` bytes.
-    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &mut count) };
+    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
     if count == 0 {
         return Err(InvalidCharacter);
     }

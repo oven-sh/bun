@@ -1407,7 +1407,7 @@ impl Lockfile {
         // PORT NOTE: `tree::Builder` stores `lockfile: *const Lockfile` so the
         // `&mut buffers.resolutions` split-borrow below can coexist with the
         // read-only lockfile view inside the builder (see Tree.rs SAFETY note).
-        let lockfile_ptr: *const Lockfile = &*self;
+        let lockfile_ptr: *const Lockfile = &raw const *self;
         let mut builder = tree::Builder::<METHOD> {
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
@@ -2787,7 +2787,7 @@ impl Lockfile {
                 &mut depth_buf,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr: *const [u8] = &*tree_path;
+            let tree_path_ptr: *const [u8] = &raw const *tree_path;
             tree_paths.push(tree_path);
             for &l_dep_id in l_tree.dependencies.get(l_hoisted_deps) {
                 if l_dep_id == invalid_dependency_id {
@@ -2817,7 +2817,7 @@ impl Lockfile {
                 &mut depth_buf,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr: *const [u8] = &*tree_path;
+            let tree_path_ptr: *const [u8] = &raw const *tree_path;
             tree_paths.push(tree_path);
             for &r_dep_id in r_tree.dependencies.get(r_hoisted_deps) {
                 if r_dep_id == invalid_dependency_id {

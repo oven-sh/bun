@@ -530,7 +530,7 @@ impl Routes {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
                 let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
-                    params: params as *mut _,
+                    params: std::ptr::from_mut(params),
                     name: index.name,
                     path: index.abs_path.slice(),
                     pathname: url_path.pathname,
@@ -553,7 +553,7 @@ impl Routes {
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
             return Some(Match {
-                params: params as *mut _,
+                params: std::ptr::from_mut(params),
                 name: route.name,
                 path: route.abs_path.slice(),
                 pathname: url_path.pathname,
@@ -595,7 +595,7 @@ impl Routes {
             .zip(dynamic.iter())
         {
             if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
-                return Some(&**route as *const Route);
+                return Some(&raw const **route);
             }
         }
 
@@ -610,7 +610,7 @@ impl Routes {
         let pathname = strings::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
-            return self.index.map(|p| p.as_ptr() as *const Route);
+            return self.index.map(|p| p.as_ptr().cast_const());
         }
 
         self.static_
@@ -669,7 +669,7 @@ impl<'a> RouteLoader<'a> {
             }
 
             let new_route = Box::new(route);
-            let new_route_ptr: *const Route = &*new_route;
+            let new_route_ptr: *const Route = &raw const *new_route;
 
             // Handle static routes with uppercase characters by ensuring exact case still matches
             // Longer-term:

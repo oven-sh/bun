@@ -159,7 +159,7 @@ pub fn load_config(
                     // SAFETY: process-global Log; see `load_bunfig` note.
                     let log = unsafe { &mut *ctx.log };
                     if log.has_any() {
-                        let _ = log.print(Output::error_writer() as *mut _);
+                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                     }
                     if log.has_any() {
                         Output::print_error("\n");
@@ -231,7 +231,7 @@ pub fn load_config(
         // SAFETY: process-global Log; see `load_bunfig` note.
         let log = unsafe { &mut *ctx.log };
         if log.has_any() {
-            let _ = log.print(Output::error_writer() as *mut _);
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         }
         if log.has_any() {
             Output::print_error("\n");

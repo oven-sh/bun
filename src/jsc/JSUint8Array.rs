@@ -17,7 +17,7 @@ impl JSUint8Array {
         // pointer lives at a fixed byte offset computed by the C++ codegen (sizes.zig).
         // Using byte_add preserves provenance vs. the Zig `@ptrFromInt(@intFromPtr(..)+off)`.
         unsafe {
-            (self as *const Self)
+            std::ptr::from_ref::<Self>(self)
                 .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_VECTOR)
                 .cast::<*mut u8>()
                 .read()
@@ -28,7 +28,7 @@ impl JSUint8Array {
         // SAFETY: same invariant as `ptr()` — fixed byte offset into the JSUint8Array
         // cell where the typed-array length is stored.
         unsafe {
-            (self as *const Self)
+            std::ptr::from_ref::<Self>(self)
                 .byte_add(sizes::BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_LENGTH)
                 .cast::<usize>()
                 .read()

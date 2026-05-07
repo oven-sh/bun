@@ -67,7 +67,7 @@ unsafe fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImp
     debug_assert!(order.capacity() >= wip.len());
     unsafe {
         core::ptr::copy_nonoverlapping(
-            wip.as_mut_ptr() as *const CssImportOrder,
+            wip.as_mut_ptr().cast_const(),
             order.as_mut_ptr(),
             wip.len() as usize,
         );
@@ -438,11 +438,9 @@ pub fn find_imported_files_in_css_order<'a>(
                             // types until the ungate shadow is removed; cast through
                             // raw pointer to satisfy `Layers::borrow`.
                             let layer_names_ptr = unsafe {
-                                &(*(css_asts[idx.get() as usize].unwrap()
+                                (&raw const (*(css_asts[idx.get() as usize].unwrap()
                                     as *const BundlerStyleSheet))
-                                    .layer_names
-                                    as *const Vec<_>
-                                    as *const Vec<LayerName>
+                                    .layer_names).cast::<Vec<LayerName>>()
                             };
                             order.mut_(i as usize).kind =
                                 CssImportOrderKind::Layers(Layers::borrow(layer_names_ptr));
@@ -576,9 +574,9 @@ pub fn find_imported_files_in_css_order<'a>(
             let layers_key: *const [LayerName] = match &entry.kind {
                 CssImportOrderKind::SourceIndex(idx) => unsafe {
                     // PORT NOTE: see LayerName nominal-type note above.
-                    (*(css_asts[idx.get() as usize].unwrap() as *const BundlerStyleSheet))
+                    std::ptr::from_ref::<[_]>((*(css_asts[idx.get() as usize].unwrap() as *const BundlerStyleSheet))
                         .layer_names
-                        .slice_const() as *const [_] as *const [LayerName]
+                        .slice_const()) as *const [LayerName]
                 },
                 CssImportOrderKind::Layers(layers) => layers.inner().slice_const(),
                 CssImportOrderKind::ExternalPath(_) => &[][..],
@@ -963,7 +961,7 @@ fn debug_css_order_impl(
         // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
         // pointers — same layout, used read-only by the printer.
         let local_names: &LocalsResultsMap =
-            unsafe { &*(&this.mangled_props as *const _ as *const LocalsResultsMap) };
+            unsafe { &*(&raw const this.mangled_props).cast::<LocalsResultsMap>() };
         let symbols = bun_logger::symbol::Map::init_list(Default::default());
 
         for (i, entry) in order.slice().iter().enumerate() {

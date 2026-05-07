@@ -243,7 +243,7 @@ fn os_monotonic_ns() -> u64 {
             // joined the vDSO in 5.3.
             // SAFETY: spec is a valid out-pointer.
             unsafe {
-                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut spec);
+                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut spec);
             }
         }
         #[cfg(target_os = "macos")]

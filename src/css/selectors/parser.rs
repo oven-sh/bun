@@ -78,7 +78,7 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
 fn arena_lowercase(bump: &Bump, name: &[u8]) -> *const [u8] {
     let buf = bump.alloc_slice_fill_copy(name.len(), 0u8);
     let _ = strings::copy_lowercase(name, buf);
-    buf as *const [u8]
+    std::ptr::from_ref::<[u8]>(buf)
 }
 
 // ─── selector-slice protocol helpers ─────────────────────────────────────────
@@ -1231,7 +1231,7 @@ impl<'a> SelectorParser<'a> {
             );
         }
         let _ = (input, tag, loc);
-        <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ident(Ident { v: raw as *const [u8] })
+        <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ident(Ident { v: std::ptr::from_ref::<[u8]>(raw) })
     }
 
     pub fn namespace_for_prefix(&mut self, prefix: Ident) -> Option<Str> {
@@ -3128,7 +3128,7 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
                 // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
                 Ident { v: arena_lowercase(input.allocator(), name) }
             },
-            name: Ident { v: name as *const [u8] },
+            name: Ident { v: std::ptr::from_ref::<[u8]>(name) },
         }));
     } else {
         sink.push_simple_selector(GenericComponent::ExplicitUniversalType);
@@ -3411,7 +3411,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
 
     let attribute_flags = parse_attribute_flags(input)?;
 
-    let value: Impl::AttrValue = value_str as *const [u8];
+    let value: Impl::AttrValue = std::ptr::from_ref::<[u8]>(value_str);
     let (local_name_lower, local_name_is_ascii_lowercase): (Impl::LocalName, bool) = 'brk: {
         let first_uppercase = 'a: {
             for (i, &b) in local_name.iter().enumerate() {
@@ -3427,7 +3427,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
             let lowered: *const [u8] = arena_lowercase(input.allocator(), str_);
             break 'brk (Ident { v: lowered }, false);
         } else {
-            break 'brk (Ident { v: local_name as *const [u8] }, true);
+            break 'brk (Ident { v: std::ptr::from_ref::<[u8]>(local_name) }, true);
         }
     };
     let case_sensitivity: attrs::ParsedCaseSensitivity =
@@ -3437,7 +3437,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         Ok(GenericComponent::AttributeOther(Box::new(
             attrs::AttrSelectorWithOptionalNamespace::<Impl> {
                 namespace,
-                local_name: Ident { v: local_name as *const [u8] },
+                local_name: Ident { v: std::ptr::from_ref::<[u8]>(local_name) },
                 local_name_lower,
                 never_matches,
                 operation: attrs::ParsedAttrSelectorOperation::WithValue {

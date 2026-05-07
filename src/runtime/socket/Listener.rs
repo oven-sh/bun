@@ -309,7 +309,7 @@ impl Listener {
         // out by raw ptr and prevent double-drop by clearing the source via
         // `deinit_excluding_handlers` + `mem::forget`.
         // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
-        let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+        let handlers_moved: Handlers = unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
         let default_data = socket_config.default_data;
         // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
@@ -338,14 +338,14 @@ impl Listener {
         }));
         // SAFETY: just allocated, non-null, exclusive
         let this_ref = unsafe { &mut *this };
-        this_ref.group.init(uws::Loop::get(), None, this as *mut c_void);
+        this_ref.group.init(uws::Loop::get(), None, this.cast::<c_void>());
         // `Listener` is mimalloc-allocated, so LSAN can't trace `loop->data.head →
         // this.group → head_sockets → us_socket_t` once the only pointer into the
         // group lives inside a mimalloc page. Registering the embedded group as a
         // root region restores reachability for the accepted sockets' allocations.
         // Paired unregister in `deinit()` (and the errdefer below).
         bun_core::asan::register_root_region(
-            &this_ref.group as *const _ as *const c_void,
+            (&raw const this_ref.group).cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
         // errdefer: on any early return below, tear down the half-built Listener.
@@ -359,11 +359,11 @@ impl Listener {
             }
             // protos: Box drops automatically when Listener is dropped below
             bun_core::asan::unregister_root_region(
-                &this_ref.group as *const _ as *const c_void,
+                (&raw const this_ref.group).cast::<c_void>(),
                 size_of::<uws::SocketGroup>(),
             );
             // SAFETY: group was init'd above; not concurrently walked.
-            unsafe { uws::SocketGroup::destroy(&mut this_ref.group) };
+            unsafe { uws::SocketGroup::destroy(&raw mut this_ref.group) };
             // SAFETY: reclaim the Box we leaked via into_raw
             drop(unsafe { Box::from_raw(this) });
         });
@@ -521,7 +521,7 @@ impl Listener {
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: NonNull::new(&mut listener.handlers as *mut Handlers),
+            handlers: NonNull::new(&raw mut listener.handlers),
             socket: uws::NewSocketHandler::<SSL>::DETACHED,
             protos: listener.protos.clone(),
             // PORT NOTE: Zig shared the listener's slice (`owned_protos = false`);
@@ -567,7 +567,7 @@ impl Listener {
 
         let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
-            handlers: NonNull::new(&mut listener.handlers as *mut Handlers),
+            handlers: NonNull::new(&raw mut listener.handlers),
             socket,
             protos: listener.protos.clone(),
             // TODO(port): protos borrow semantics — Zig shared the listener's slice; here we clone.
@@ -597,7 +597,7 @@ impl Listener {
         }
         if let Some(ctx) = socket.ext::<*mut c_void>() {
             // SAFETY: ext storage is at least pointer-sized; we stash *mut NewSocket<SSL>
-            unsafe { *ctx = this_socket as *mut c_void };
+            unsafe { *ctx = this_socket.cast::<c_void>() };
         }
         if let uws::InternalSocket::Connected(s) = socket.socket {
             // SAFETY: s is a live us_socket_t* from the accept callback.
@@ -810,11 +810,11 @@ impl Listener {
             this_ref.group.close_all();
         }
         bun_core::asan::unregister_root_region(
-            &this_ref.group as *const _ as *const c_void,
+            (&raw const this_ref.group).cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
         // SAFETY: group was init'd in listen(); not concurrently walked.
-        unsafe { uws::SocketGroup::destroy(&mut this_ref.group) };
+        unsafe { uws::SocketGroup::destroy(&raw mut this_ref.group) };
         if let Some(ctx) = this_ref.secure_ctx {
             // SAFETY: FFI — secure_ctx holds one owned SSL_CTX ref; release it
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
@@ -1226,7 +1226,7 @@ impl Listener {
 
         // PORT NOTE: by-value move of Handlers. See `listen()` for rationale.
         // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
-        let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+        let handlers_moved: Handlers = unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let allow_half_open = socket_config.allow_half_open;
         let mut ssl_taken = socket_config.ssl.take();
         core::mem::forget(socket_config);

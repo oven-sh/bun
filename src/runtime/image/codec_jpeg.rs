@@ -145,7 +145,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
         let mut n: c_int = 0;
         // SAFETY: FFI — writes a count into `n` and returns a pointer to a
         // static const table inside libjpeg-turbo; no handle required.
-        let sfs = unsafe { tj3GetScalingFactors(&mut n) };
+        let sfs = unsafe { tj3GetScalingFactors(&raw mut n) };
         if !sfs.is_null() {
             let mut best = ScalingFactor { num: 1, denom: 1 };
             // SAFETY: tj3GetScalingFactors returned `n` valid ScalingFactor entries at `sfs`.
@@ -228,7 +228,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
     let mut icc_size: usize = 0;
     let icc: Option<Vec<u8>> = 'blk: {
         // SAFETY: `h` is live; out-params are valid `&mut` locals.
-        if unsafe { tj3GetICCProfile(h, &mut icc_ptr, &mut icc_size) } != 0 || icc_size == 0 {
+        if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0 {
             break 'blk None;
         }
         let _free = scopeguard::guard(icc_ptr, |p| {
@@ -294,8 +294,8 @@ pub fn encode(rgba: &[u8], w: u32, ht: u32, quality: u8, progressive: bool, icc_
             0,
             c_int::try_from(ht).expect("int cast"),
             TJPF_RGBA,
-            &mut out_ptr,
-            &mut out_len,
+            &raw mut out_ptr,
+            &raw mut out_len,
         )
     } != 0
     {

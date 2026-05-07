@@ -104,7 +104,7 @@ impl Version {
                 // SAFETY: START_TIME is a plain i128/i64 — viewing its bytes is sound
                 let bytes = unsafe {
                     core::slice::from_raw_parts(
-                        core::ptr::addr_of!(Cli::START_TIME) as *const u8,
+                        core::ptr::addr_of!(Cli::START_TIME).cast::<u8>(),
                         core::mem::size_of::<i128>(),
                     )
                 };
@@ -209,7 +209,7 @@ pub static Bun__githubURL: SyncCStr = SyncCStr(
         Version::ZIP_FILENAME,
         "\0"
     )
-    .as_ptr() as *const c_char,
+    .as_ptr().cast::<c_char>(),
 );
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ impl UpgradeCommand {
             api_url,
             header_entries,
             headers_buf,
-            metadata_body as *mut MutableString,
+            std::ptr::from_mut::<MutableString>(metadata_body),
             b"",
             http_proxy,
             None,
@@ -357,7 +357,7 @@ impl UpgradeCommand {
                     refresher.expect("infallible: progress active").refresh();
 
                     if log.errors > 0 {
-                        let _ = log.print(Output::error_writer() as *mut _);
+                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         Global::exit(1);
                     } else {
                         Output::pretty_errorln(
@@ -379,7 +379,7 @@ impl UpgradeCommand {
                 progress.expect("infallible: progress active").end();
                 refresher.expect("infallible: progress active").refresh();
 
-                let _ = log.print(Output::error_writer() as *mut _);
+                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 Global::exit(1);
             }
 
@@ -711,7 +711,7 @@ impl UpgradeCommand {
                 zip_url,
                 headers::EntryList::default(),
                 b"",
-                zip_file_buffer as *mut MutableString,
+                std::ptr::from_mut::<MutableString>(zip_file_buffer),
                 b"",
                 http_proxy,
                 None,
@@ -1331,7 +1331,7 @@ impl UpgradeCommand {
                 if let Ok(envp) = env_loader.map.create_null_delimited_env_map() {
                     let _ = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&completions_argv),
-                        envp: Some(envp.as_ptr() as *const *const c_char),
+                        envp: Some(envp.as_ptr().cast::<*const c_char>()),
                         cwd: Box::<[u8]>::from(target_dirname.as_bytes()),
                         stdout: spawn_sync::SyncStdio::Buffer,
                         stderr: spawn_sync::SyncStdio::Buffer,

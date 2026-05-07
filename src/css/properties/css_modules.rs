@@ -159,7 +159,7 @@ impl Specifier {
             // SAFETY: `s` borrows the parser source/arena which outlives the
             // `add_import_record` call. Detach the borrow so `input` is reusable
             // (same trick as `css_parser::src_str` — Token payloads are arena-static).
-            Ok::<&'static [u8], _>(unsafe { &*(s as *const [u8]) })
+            Ok::<&'static [u8], _>(unsafe { &*std::ptr::from_ref::<[u8]>(s) })
         }) {
             let import_record_index = input.add_import_record(
                 file,
@@ -180,7 +180,7 @@ impl Specifier {
                 // SAFETY: `url` borrows printer-owned import-record storage
                 // which outlives the `serialize_string` call. Detach so `dest`
                 // is reborrowable as the `WriteAll` sink.
-                let url: &[u8] = unsafe { &*(url as *const [u8]) };
+                let url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
                 if css::serializer::serialize_string(url, dest).is_err() {
                     return Err(dest.add_fmt_error());
                 }

@@ -325,7 +325,7 @@ impl Execution {
         // SAFETY: self points to BunTest.execution (Execution is only ever constructed embedded in BunTest)
         unsafe {
             NonNull::new_unchecked(
-                (self as *mut Execution as *mut u8)
+                std::ptr::from_mut::<Execution>(self).cast::<u8>()
                     .sub(core::mem::offset_of!(BunTest, execution))
                     .cast::<BunTest>(),
             )

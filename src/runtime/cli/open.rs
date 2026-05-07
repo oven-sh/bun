@@ -578,7 +578,7 @@ impl EditorContext {
         // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
         // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
         // we return immediately so only one `&mut` is ever live.
-        let buf_ptr: *mut PathBuffer = &mut buf;
+        let buf_ptr: *mut PathBuffer = &raw mut buf;
         let mut out: &[u8] = b"";
 
         // first: choose from user preference

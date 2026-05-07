@@ -169,7 +169,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             ref_count: Cell::new(ref_count),
             js_this: JsRef::empty(),
             stream: crate::webcore::readable_stream::Strong::default(),
-            global_this: global_this as *const JSGlobalObject,
+            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
             context,
             high_water_mark: 16384,
             status: Status::Started,

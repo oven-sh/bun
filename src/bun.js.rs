@@ -54,7 +54,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 
     // SAFETY: `vm.log` is set in `init`.
     if let Some(mut p) = vm.log {
-        let _ = unsafe { p.as_mut() }.print(writer as *mut _);
+        let _ = unsafe { p.as_mut() }.print(std::ptr::from_mut(writer));
     }
 }
 

@@ -38,7 +38,7 @@ impl JSCDeferredWorkTask {
         });
         // SAFETY: `self` is a live opaque pointer handed to us by C++; Bun__runDeferredWork
         // consumes it on the C++ side.
-        unsafe { Bun__runDeferredWork(self as *mut Self) };
+        unsafe { Bun__runDeferredWork(std::ptr::from_mut::<Self>(self)) };
         // Zig: `try scope.assertNoExceptionExceptTermination()` — the only error variant
         // that fn returns is termination, so map the wider `JsError` back down.
         // SAFETY: `scope_ptr` is live; the short-lived `&mut` reborrow ends before

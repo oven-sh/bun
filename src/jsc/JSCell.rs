@@ -42,23 +42,23 @@ impl JSCell {
     }
 
     pub fn to_js(&self) -> JSValue {
-        JSValue::from_cell(self as *const JSCell)
+        JSValue::from_cell(std::ptr::from_ref::<JSCell>(self))
     }
 
     pub fn get_getter_setter(&self) -> &GetterSetter {
         // TODO(b2-blocked): bun_jsc::JSValue::is_getter_setter (debug_assert dropped while JSValue.rs gated)
         // SAFETY: caller-asserted invariant — this cell's JSType is GetterSetter.
-        unsafe { &*(self as *const JSCell as *const GetterSetter) }
+        unsafe { &*std::ptr::from_ref::<JSCell>(self).cast::<GetterSetter>() }
     }
 
     pub fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
         // TODO(b2-blocked): bun_jsc::JSValue::is_custom_getter_setter (debug_assert dropped while JSValue.rs gated)
         // SAFETY: caller-asserted invariant — this cell's JSType is CustomGetterSetter.
-        unsafe { &*(self as *const JSCell as *const CustomGetterSetter) }
+        unsafe { &*std::ptr::from_ref::<JSCell>(self).cast::<CustomGetterSetter>() }
     }
 
     pub fn ensure_still_alive(&self) {
-        core::hint::black_box(self as *const JSCell);
+        core::hint::black_box(std::ptr::from_ref::<JSCell>(self));
     }
 }
 

@@ -120,7 +120,7 @@ impl us_socket_t {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_local_address(self, buf.as_mut_ptr(), &mut length);
+            c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
             let errno = bun_errno::get_errno(length);
@@ -138,7 +138,7 @@ impl us_socket_t {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_remote_address(self, buf.as_mut_ptr(), &mut length);
+            c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
             let errno = bun_errno::get_errno(length);
@@ -177,7 +177,7 @@ impl us_socket_t {
         }
         unsafe {
             // SAFETY: is_tls() guarantees the native handle is a non-null SSL*
-            (c::us_socket_get_native_handle(self) as *mut bun_boringssl_sys::SSL).as_mut()
+            c::us_socket_get_native_handle(self).cast::<bun_boringssl_sys::SSL>().as_mut()
         }
     }
 
@@ -194,7 +194,7 @@ impl us_socket_t {
         unsafe {
             // SAFETY: us_socket_ext returns LIBUS_EXT_ALIGNMENT-aligned storage
             // sized for T at socket creation; caller picks the same T it stored.
-            &mut *(c::us_socket_ext(self) as *mut T)
+            &mut *c::us_socket_ext(self).cast::<T>()
         }
     }
 
@@ -203,7 +203,7 @@ impl us_socket_t {
     pub fn ext_ptr(&mut self) -> *mut u8 {
         // TODO(port): Rust pointer types do not carry alignment; LIBUS_EXT_ALIGNMENT == 16
         // SAFETY: self is a live us_socket_t; us_socket_ext returns aligned ext storage
-        unsafe { c::us_socket_ext(self) as *mut u8 }
+        unsafe { c::us_socket_ext(self).cast::<u8>() }
     }
 
     pub fn group(&mut self) -> &mut SocketGroup {

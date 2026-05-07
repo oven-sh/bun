@@ -403,13 +403,13 @@ impl<'a> Request<'a> {
             c::phr_parse_request(
                 buf.as_ptr(),
                 buf.len(),
-                &mut method_ptr as *mut *const u8 as *mut *const core::ffi::c_char,
-                &mut method_len,
-                &mut path_ptr as *mut *const u8 as *mut *const core::ffi::c_char,
-                &mut path_len,
-                &mut minor_version,
+                (&raw mut method_ptr).cast::<*const core::ffi::c_char>(),
+                &raw mut method_len,
+                (&raw mut path_ptr).cast::<*const core::ffi::c_char>(),
+                &raw mut path_len,
+                &raw mut minor_version,
                 src.as_mut_ptr().cast::<c::phr_header>(),
-                &mut num_headers,
+                &raw mut num_headers,
                 0,
             )
         };
@@ -419,7 +419,7 @@ impl<'a> Request<'a> {
             // SAFETY: path_ptr points into buf; the byte after the path is the
             // space before "HTTP/1.x" which picohttpparser has already consumed,
             // so writing a NUL there is in-bounds. Zig casts away const here too.
-            unsafe { (path_ptr as *mut u8).add(path_len).write(0) };
+            unsafe { path_ptr.cast_mut().add(path_len).write(0) };
         }
 
         match rc {
@@ -630,12 +630,12 @@ impl<'a> Response<'a> {
             c::phr_parse_response(
                 buf.as_ptr(),
                 buf.len(),
-                &mut minor_version,
-                &mut status_code,
-                &mut status_ptr as *mut *const u8 as *mut *const core::ffi::c_char,
-                &mut status_len,
+                &raw mut minor_version,
+                &raw mut status_code,
+                (&raw mut status_ptr).cast::<*const core::ffi::c_char>(),
+                &raw mut status_len,
                 src.as_mut_ptr().cast::<c::phr_header>(),
-                &mut num_headers,
+                &raw mut num_headers,
                 *offset,
             )
         };
@@ -729,7 +729,7 @@ impl<'a> Headers<'a> {
                 buf.as_ptr(),
                 buf.len(),
                 src.as_mut_ptr().cast::<c::phr_header>(),
-                &mut num_headers as *mut usize,
+                &raw mut num_headers,
                 0,
             )
         };

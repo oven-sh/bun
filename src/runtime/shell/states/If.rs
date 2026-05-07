@@ -83,7 +83,7 @@ impl If {
                     IfState::Idle => {
                         me.state = IfState::Exec(Exec {
                             state: ExecBranch::Cond,
-                            stmts: &n.cond,
+                            stmts: &raw const n.cond,
                             stmt_idx: 0,
                             last_exit_code: 0,
                         });
@@ -95,7 +95,7 @@ impl If {
                                 ExecBranch::Cond => {
                                     if exec.last_exit_code == 0 {
                                         exec.state = ExecBranch::Then;
-                                        exec.stmts = &n.then;
+                                        exec.stmts = &raw const n.then;
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -104,13 +104,13 @@ impl If {
                                         0 => Action::Done(0),
                                         1 => {
                                             exec.state = ExecBranch::Else;
-                                            exec.stmts = &n.else_parts[0];
+                                            exec.stmts = &raw const n.else_parts[0];
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
                                         _ => {
                                             exec.state = ExecBranch::Elif { idx: 0 };
-                                            exec.stmts = &n.else_parts[0];
+                                            exec.stmts = &raw const n.else_parts[0];
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
@@ -123,7 +123,7 @@ impl If {
                                         // `elif` cond at `idx + 1`.
                                         let then_idx = *idx + 1;
                                         exec.state = ExecBranch::Then;
-                                        exec.stmts = &n.else_parts[then_idx as usize];
+                                        exec.stmts = &raw const n.else_parts[then_idx as usize];
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -133,11 +133,11 @@ impl If {
                                         Action::Done(0)
                                     } else if *idx == else_len - 1 {
                                         exec.state = ExecBranch::Else;
-                                        exec.stmts = &n.else_parts[(else_len - 1) as usize];
+                                        exec.stmts = &raw const n.else_parts[(else_len - 1) as usize];
                                         exec.stmt_idx = 0;
                                         continue;
                                     } else {
-                                        exec.stmts = &n.else_parts[*idx as usize];
+                                        exec.stmts = &raw const n.else_parts[*idx as usize];
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -150,7 +150,7 @@ impl If {
                             // SAFETY: `i` was bounds-checked against
                             // `stmts_len()`.
                             let stmt_node: *const ast::Stmt =
-                                unsafe { &(&*exec.stmts)[i as usize] as *const _ };
+                                unsafe { &raw const (&*exec.stmts)[i as usize] };
                             Action::SpawnStmt(stmt_node)
                         }
                     }

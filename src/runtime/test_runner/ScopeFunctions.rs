@@ -848,7 +848,7 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
         Bun__JSValue__setPrototypeDirect(
             value,
             prototype,
-            global as *const JSGlobalObject as *mut JSGlobalObject,
+            std::ptr::from_ref::<JSGlobalObject>(global).cast_mut(),
         );
     }
     if global.has_exception() {

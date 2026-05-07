@@ -167,7 +167,7 @@ impl ServerWebSocket {
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
         let this = Box::into_raw(Box::new(ServerWebSocket {
-            handler: handler as *const WebSocketServerHandler,
+            handler: std::ptr::from_ref::<WebSocketServerHandler>(handler),
             this_value: JsRef::empty(),
             flags: Flags::default(),
             signal,
@@ -434,7 +434,7 @@ impl ServerWebSocket {
         // raw pointer is sound and avoids Stacked-Borrows aliasing through `self`.
         let was_not_empty = self.this_value.is_not_empty();
         let cached_this = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
-        let this_value_ptr: *mut JsRef = &mut self.this_value;
+        let this_value_ptr: *mut JsRef = &raw mut self.this_value;
         let _cleanup = scopeguard::guard(signal, move |sig| {
             if let Some(sig) = sig {
                 // SAFETY: `sig` was stored with a +1 ref by the upgrade caller;

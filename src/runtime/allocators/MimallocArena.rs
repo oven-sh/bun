@@ -186,7 +186,7 @@ impl<'a> Borrowed<'a> {
 
     pub fn downcast(std_alloc: ZigAllocator) -> Self {
         debug_assert!(
-            ptr::eq(std_alloc.vtable, &HEAP_ALLOCATOR_VTABLE),
+            ptr::eq(std_alloc.vtable, &raw const HEAP_ALLOCATOR_VTABLE),
             "not an owned MimallocArena heap (vtable is {:p})",
             std_alloc.vtable,
         );
@@ -389,7 +389,7 @@ unsafe fn global_vtable_remap(_: *mut c_void, buf: &mut [u8], alignment: Alignme
 }
 
 pub fn is_instance(alloc: ZigAllocator) -> bool {
-    ptr::eq(alloc.vtable, &HEAP_ALLOCATOR_VTABLE) || ptr::eq(alloc.vtable, &GLOBAL_MIMALLOC_VTABLE)
+    ptr::eq(alloc.vtable, &raw const HEAP_ALLOCATOR_VTABLE) || ptr::eq(alloc.vtable, &raw const GLOBAL_MIMALLOC_VTABLE)
 }
 
 /// VTable for owned heaps created with `mi_heap_new`.

@@ -548,7 +548,7 @@ pub mod on_unhandled_rejection {
             // PORT NOTE: split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
-                .map(|e| e as *mut bun_test::ExecutionEntry);
+                .map(|e| std::ptr::from_mut::<bun_test::ExecutionEntry>(e));
             if let Some(entry) = entry_ptr {
                 if let Some(sequence) = current_state_data.sequence(buntest) {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry) {

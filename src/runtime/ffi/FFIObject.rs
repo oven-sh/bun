@@ -126,7 +126,7 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     }
 
     // SAFETY: `put` is the C++-side `FFI__ptr__put` helper; global_object is live.
-    unsafe { (DOM_CALL.put)(global_object as *const _ as *mut _, object) };
+    unsafe { (DOM_CALL.put)(std::ptr::from_ref(global_object).cast_mut(), object) };
     object.put(global_object, b"read", reader::to_js(global_object));
 
     object
@@ -159,7 +159,7 @@ pub mod reader {
         let obj = JSValue::create_empty_object(global_this, DOM_CALLS.len());
         for (_, dc) in DOM_CALLS {
             // SAFETY: `put` is a C++-side helper; global_this is live for the call.
-            unsafe { (dc.put)(global_this as *const _ as *mut _, obj) };
+            unsafe { (dc.put)(std::ptr::from_ref(global_this).cast_mut(), obj) };
         }
         obj
     }

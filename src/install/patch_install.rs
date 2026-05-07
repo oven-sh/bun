@@ -78,7 +78,7 @@ unsafe impl bun_threading::unbounded_queue::Node for PatchTask {
         ordering: core::sync::atomic::Ordering,
     ) -> *mut Self {
         unsafe {
-            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
                 .load(ordering)
         }
     }
@@ -89,7 +89,7 @@ unsafe impl bun_threading::unbounded_queue::Node for PatchTask {
         ordering: core::sync::atomic::Ordering,
     ) {
         unsafe {
-            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
                 .store(ptr, ordering)
         }
     }
@@ -193,7 +193,7 @@ impl PatchTask {
     pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: `task` points to the `task` field of a live `PatchTask` (set at construction).
         let patch_task: &mut PatchTask = unsafe {
-            &mut *(task as *mut u8)
+            &mut *task.cast::<u8>()
                 .sub(offset_of!(PatchTask, task))
                 .cast::<PatchTask>()
         };
@@ -228,7 +228,7 @@ impl PatchTask {
         // holds an exclusive borrow on.
         let mgr = self.manager;
         unsafe {
-            (*mgr).patch_task_queue.push(self as *mut Self);
+            (*mgr).patch_task_queue.push(std::ptr::from_mut::<Self>(self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -277,7 +277,7 @@ impl PatchTask {
                 "failed to apply patchfile ({})",
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
-            let _ = apply.logger.print(Output::error_writer() as *mut _);
+            let _ = apply.logger.print(std::ptr::from_mut(Output::error_writer()));
             // PORT NOTE: Zig called `apply.logger.deinit()` here under `defer`. The `Log` is a
             // field and will be dropped with the task; explicit early drop is skipped to avoid
             // double-drop. If `Log::deinit` is reset-to-empty (idempotent), Phase B can restore
@@ -300,7 +300,7 @@ impl PatchTask {
         let Some(hash) = calc_hash.result else {
             if log_level != LogLevel::Silent {
                 if calc_hash.logger.has_errors() {
-                    let _ = calc_hash.logger.print(Output::error_writer() as *mut _);
+                    let _ = calc_hash.logger.print(std::ptr::from_mut(Output::error_writer()));
                 } else {
                     Output::err_generic(
                         "Failed to calculate hash for patch <b>{}<r>",
@@ -797,13 +797,13 @@ impl PatchTask {
         // only touches the lock-free queue and event-loop wake atomics.
         let mgr = self.manager;
         unsafe {
-            (*mgr).patch_task_queue.push(self as *mut Self);
+            (*mgr).patch_task_queue.push(std::ptr::from_mut::<Self>(self));
             PackageManager::wake_raw(mgr);
         }
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {
-        batch.push(Batch::from(&mut self.task));
+        batch.push(Batch::from(&raw mut self.task));
     }
 
     pub fn new_calc_patch_hash(
@@ -834,7 +834,7 @@ impl PatchTask {
                 result: None,
                 logger: Log::init(),
             }),
-            manager: manager as *mut PackageManager,
+            manager: std::ptr::from_mut::<PackageManager>(manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
@@ -911,7 +911,7 @@ impl PatchTask {
                 task_id: None,
                 install_context: None,
             }),
-            manager: pkg_manager as *mut PackageManager,
+            manager: std::ptr::from_mut::<PackageManager>(pkg_manager),
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),

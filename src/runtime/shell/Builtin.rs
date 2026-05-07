@@ -396,7 +396,7 @@ impl Builtin {
             let me = interp.as_cmd(cmd);
             let mut argv: Vec<*const c_char> = Vec::with_capacity(me.args.len().saturating_sub(1));
             for a in me.args.iter().skip(1) {
-                argv.push(a.as_ptr() as *const c_char);
+                argv.push(a.as_ptr().cast::<c_char>());
             }
             // Spec: `.fd → dupeRef`. `Arc::clone` (inside `OutFd: Clone` /
             // `InKind: Clone`) bumps the `IOWriter`/`IOReader` refcount; the

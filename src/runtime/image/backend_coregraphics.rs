@@ -97,8 +97,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
             bytes.as_ptr(),
             bytes.len(),
             max_pixels,
-            &mut w,
-            &mut h,
+            &raw mut w,
+            &raw mut h,
             core::ptr::null_mut(),
         )
     } {
@@ -116,8 +116,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
             bytes.as_ptr(),
             bytes.len(),
             max_pixels,
-            &mut w,
-            &mut h,
+            &raw mut w,
+            &raw mut h,
             out.as_mut_ptr(),
         )
     } {
@@ -149,7 +149,7 @@ pub fn encode(
             fmt,
             i32::from(opts.quality),
             core::ptr::null_mut(),
-            &mut len,
+            &raw mut len,
         )
     } {
         CG_OK => {}
@@ -167,7 +167,7 @@ pub fn encode(
             fmt,
             i32::from(opts.quality),
             out.as_mut_ptr(),
-            &mut len,
+            &raw mut len,
         )
     } {
         CG_OK => {}
@@ -248,7 +248,7 @@ unsafe extern "C" {
 pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=0 → shim fills len with required byte count.
-    if unsafe { bun_coregraphics_clipboard(core::ptr::null_mut(), &mut len, 0) } != CG_OK {
+    if unsafe { bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 0) } != CG_OK {
         return Err(BackendError::BackendUnavailable);
     }
     if len == 0 {
@@ -257,7 +257,7 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     // PERF(port): Zig used uninitialized alloc — profile in Phase B
     let mut out = vec![0u8; len];
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
-    if unsafe { bun_coregraphics_clipboard(out.as_mut_ptr(), &mut len, 0) } != CG_OK {
+    if unsafe { bun_coregraphics_clipboard(out.as_mut_ptr(), &raw mut len, 0) } != CG_OK {
         return Err(BackendError::BackendUnavailable);
     }
     out.truncate(len);
@@ -267,7 +267,7 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
 pub fn has_clipboard_image() -> bool {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=1 → shim only checks for image presence.
-    unsafe { bun_coregraphics_clipboard(core::ptr::null_mut(), &mut len, 1) == CG_OK && len > 0 }
+    unsafe { bun_coregraphics_clipboard(core::ptr::null_mut(), &raw mut len, 1) == CG_OK && len > 0 }
 }
 
 // TODO(port): move to runtime_sys

@@ -187,7 +187,7 @@ impl Node {
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> Node {
         Node {
             context: self.context,
-            parent: self as *mut Node,
+            parent: std::ptr::from_mut::<Node>(self),
             name,
             unit: Unit::None,
             recently_updated_child: AtomicPtr::new(ptr::null_mut()),
@@ -202,7 +202,7 @@ impl Node {
         if let Some(parent) = unsafe { self.parent.as_mut() } {
             parent
                 .recently_updated_child
-                .store(self as *mut Node, Ordering::Release);
+                .store(std::ptr::from_mut::<Node>(self), Ordering::Release);
         }
         self.unprotected_completed_items
             .fetch_add(1, Ordering::Relaxed);
@@ -220,7 +220,7 @@ impl Node {
             {
                 let _g = context.update_mutex.lock();
                 let _ = parent.recently_updated_child.compare_exchange(
-                    self as *mut Node,
+                    std::ptr::from_mut::<Node>(self),
                     ptr::null_mut(),
                     Ordering::Relaxed,
                     Ordering::Relaxed,
@@ -230,7 +230,7 @@ impl Node {
         } else {
             // PORT NOTE: reshaped for borrowck — guard borrows context.update_mutex;
             // we capture a raw ptr first so the &mut access goes through *mut.
-            let ctx_ptr = context as *mut Progress;
+            let ctx_ptr = std::ptr::from_mut::<Progress>(context);
             let _g = context.update_mutex.lock();
             // SAFETY: ctx_ptr derived from &mut; guard only references the mutex field.
             unsafe {
@@ -246,7 +246,7 @@ impl Node {
         if let Some(parent) = unsafe { self.parent.as_mut() } {
             parent
                 .recently_updated_child
-                .store(self as *mut Node, Ordering::Release);
+                .store(std::ptr::from_mut::<Node>(self), Ordering::Release);
             // SAFETY: context backref valid while Progress lives.
             unsafe { &mut *self.context }.maybe_refresh();
         }
@@ -256,19 +256,19 @@ impl Node {
     pub fn set_name(&mut self, name: &'static [u8]) {
         // SAFETY: context backref valid while Progress lives.
         let progress = unsafe { &mut *self.context };
-        let ctx_ptr = progress as *mut Progress;
+        let ctx_ptr = std::ptr::from_mut::<Progress>(progress);
         let _g = progress.update_mutex.lock();
         self.name = name;
         // SAFETY: parent backref is valid for the lifetime of this Node.
         if let Some(parent) = unsafe { self.parent.as_mut() } {
             parent
                 .recently_updated_child
-                .store(self as *mut Node, Ordering::Release);
+                .store(std::ptr::from_mut::<Node>(self), Ordering::Release);
             // SAFETY: parent.parent backref is valid for the lifetime of parent.
             if let Some(grand_parent) = unsafe { parent.parent.as_mut() } {
                 grand_parent
                     .recently_updated_child
-                    .store(parent as *mut Node, Ordering::Release);
+                    .store(std::ptr::from_mut::<Node>(parent), Ordering::Release);
             }
             // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
             if let Some(timer) = unsafe { (*ctx_ptr).timer } {
@@ -284,19 +284,19 @@ impl Node {
         // enum type to keep it well-typed; revisit if any caller appears.
         // SAFETY: context backref valid while Progress lives.
         let progress = unsafe { &mut *self.context };
-        let ctx_ptr = progress as *mut Progress;
+        let ctx_ptr = std::ptr::from_mut::<Progress>(progress);
         let _g = progress.update_mutex.lock();
         self.unit = unit;
         // SAFETY: parent backref is valid for the lifetime of this Node.
         if let Some(parent) = unsafe { self.parent.as_mut() } {
             parent
                 .recently_updated_child
-                .store(self as *mut Node, Ordering::Release);
+                .store(std::ptr::from_mut::<Node>(self), Ordering::Release);
             // SAFETY: parent.parent backref is valid for the lifetime of parent.
             if let Some(grand_parent) = unsafe { parent.parent.as_mut() } {
                 grand_parent
                     .recently_updated_child
-                    .store(parent as *mut Node, Ordering::Release);
+                    .store(std::ptr::from_mut::<Node>(parent), Ordering::Release);
             }
             // SAFETY: ctx_ptr from &mut; guard borrows only the mutex field.
             if let Some(timer) = unsafe { (*ctx_ptr).timer } {
@@ -345,7 +345,7 @@ impl Progress {
             }
         }
         self.root = Node {
-            context: self as *mut Progress,
+            context: std::ptr::from_mut::<Progress>(self),
             parent: ptr::null_mut(),
             name,
             unit: Unit::None,
@@ -367,7 +367,7 @@ impl Progress {
         if let Some(timer) = self.timer {
             // PORT NOTE: reshaped for borrowck — capture *mut self before the
             // guard borrows update_mutex.
-            let ctx_ptr = self as *mut Self;
+            let ctx_ptr = std::ptr::from_mut::<Self>(self);
             let Some(_g) = self.update_mutex.try_lock() else { return };
             // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
             unsafe { (*ctx_ptr).maybe_refresh_with_held_lock(timer) };
@@ -393,7 +393,7 @@ impl Progress {
 
     /// Updates the terminal and resets `self.next_refresh_timestamp`. Thread-safe.
     pub fn refresh(&mut self) {
-        let ctx_ptr = self as *mut Self;
+        let ctx_ptr = std::ptr::from_mut::<Self>(self);
         let Some(_g) = self.update_mutex.try_lock() else { return };
         // SAFETY: ctx_ptr from &mut self; guard only references the mutex field.
         unsafe { (*ctx_ptr).refresh_with_held_lock() };
@@ -520,7 +520,7 @@ impl Progress {
 
         if !self.done {
             let mut need_ellipse = false;
-            let mut maybe_node: *mut Node = &mut self.root as *mut Node;
+            let mut maybe_node: *mut Node = &raw mut self.root;
             // SAFETY: walking the recently_updated_child chain under update_mutex;
             // nodes are caller-owned and outlive this call per API contract.
             while let Some(node) = unsafe { maybe_node.as_mut() } {

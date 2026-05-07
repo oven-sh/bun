@@ -12,7 +12,7 @@ use bun_wyhash::Wyhash;
 /// is the Phase-A placeholder for the not-yet-threaded `'bump` lifetime.
 #[inline]
 unsafe fn arena_str(s: &[u8]) -> &'static [u8] {
-    unsafe { &*(s as *const [u8]) }
+    unsafe { &*std::ptr::from_ref::<[u8]>(s) }
 }
 
 // ───────────────────────── DashedIdentReference ──────────────────────────
@@ -151,7 +151,7 @@ impl DashedIdent {
             let ident: &'static [u8] = unsafe { arena_str(ident) };
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
-        Ok(DashedIdent { v: ident as *const [u8] })
+        Ok(DashedIdent { v: std::ptr::from_ref::<[u8]>(ident) })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -191,7 +191,7 @@ pub struct Ident {
 impl Ident {
     pub fn parse(input: &mut Parser) -> CssResult<Ident> {
         let ident = input.expect_ident()?;
-        Ok(Ident { v: ident as *const [u8] })
+        Ok(Ident { v: std::ptr::from_ref::<[u8]>(ident) })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -326,8 +326,8 @@ impl IdentOrRef {
         {
             let (slice, bump) = debug_ident;
             // bun.handleOom(allocator.create(...)) → arena alloc; OOM aborts
-            let heap_ptr: &mut *const [u8] = bump.alloc(slice as *const [u8]);
-            let addr = heap_ptr as *mut *const [u8] as usize as u64;
+            let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
+            let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
             debug_assert!(addr & (1u64 << 63) == 0);
             this = Self::pack(addr, true, len);
         }
@@ -355,7 +355,7 @@ impl IdentOrRef {
             let ptr = self.ptrbits() as usize as *const u8;
             let len = self.len_bits() as usize;
             // SAFETY: ptr/len were packed from a valid arena slice in from_ident
-            let slice = unsafe { core::slice::from_raw_parts(ptr, len) } as *const [u8];
+            let slice = std::ptr::from_ref::<[u8]>(unsafe { core::slice::from_raw_parts(ptr, len) });
             return Some(Ident { v: slice });
         }
         None
@@ -409,7 +409,7 @@ impl IdentOrRef {
             // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
             // TODO(port): verify upstream intent; preserving behavior verbatim.
             let bytes =
-                unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, 2) };
+                unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2) };
             hasher.update(bytes);
         }
     }
@@ -471,7 +471,7 @@ impl CustomIdent {
             let ident: &'static [u8] = unsafe { arena_str(ident) };
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         }
-        Ok(CustomIdent { v: ident as *const [u8] })
+        Ok(CustomIdent { v: std::ptr::from_ref::<[u8]>(ident) })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

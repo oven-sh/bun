@@ -944,14 +944,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             };
             // PERF(port): was assume_capacity
-            env_array.push(pipe_env.as_ptr() as *const c_char);
+            env_array.push(pipe_env.as_ptr().cast::<c_char>());
 
             // PERF(port): was assume_capacity
             env_array.push(match ipc_mode {
                 // PORT NOTE: Zig `inline else => |t| "..." ++ @tagName(t)` — written out per variant.
-                IPC::Mode::Json => b"NODE_CHANNEL_SERIALIZATION_MODE=json\0".as_ptr() as *const c_char,
+                IPC::Mode::Json => b"NODE_CHANNEL_SERIALIZATION_MODE=json\0".as_ptr().cast::<c_char>(),
                 IPC::Mode::Advanced => {
-                    b"NODE_CHANNEL_SERIALIZATION_MODE=advanced\0".as_ptr() as *const c_char
+                    b"NODE_CHANNEL_SERIALIZATION_MODE=advanced\0".as_ptr().cast::<c_char>()
                 }
             });
         }
@@ -1095,7 +1095,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             drop(spawn_options);
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is a NUL-terminated string we built above.
-                unsafe { &*(CStr::from_ptr(argv[0]).to_bytes() as *const [u8] as *const ZStr) }
+                unsafe { &*(std::ptr::from_ref::<[u8]>(CStr::from_ptr(argv[0]).to_bytes()) as *const ZStr) }
             } else {
                 ZStr::EMPTY
             };
@@ -1128,7 +1128,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::ENOTDIR) => {
                         let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is a NUL-terminated string we built above.
-                            unsafe { &*(CStr::from_ptr(argv[0]).to_bytes() as *const [u8] as *const ZStr) }
+                            unsafe { &*(std::ptr::from_ref::<[u8]>(CStr::from_ptr(argv[0]).to_bytes()) as *const ZStr) }
                         } else {
                             ZStr::EMPTY
                         };
@@ -1184,7 +1184,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // the struct once with its final field values instead, then fill in the
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
     let subprocess_ptr = Box::into_raw(Box::new(SubprocessT {
-        global_this: global_this as *const JSGlobalObject,
+        global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
         process,
         pid_rusage: None,
         // stdin/stdout/stderr are assigned immediately after this literal.
@@ -1354,7 +1354,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // SAFETY: see `process_mut` doc.
     unsafe { process_mut(subprocess.process) }
-        .set_exit_handler(subprocess_ptr as *mut (), &Subprocess::PROCESS_EXIT_VTABLE);
+        .set_exit_handler(subprocess_ptr.cast::<()>(), &Subprocess::PROCESS_EXIT_VTABLE);
 
     promise_for_stream.ensure_still_alive();
     subprocess.flags.set(
@@ -1418,7 +1418,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(ctx) = posix_ipc_info.ext::<*mut IPC::SendQueue>() {
                     // SAFETY: `ctx` is the live ext-slot pointer returned by uSockets;
                     // it stays valid for the socket's lifetime.
-                    unsafe { *ctx = ipc_data as *mut _ };
+                    unsafe { *ctx = std::ptr::from_mut(ipc_data) };
                     ipc_data.socket = IPC::SocketUnion::Open(posix_ipc_info);
                 }
             }
@@ -1829,7 +1829,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf;
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
-    SubprocessT::finalize(subprocess as *mut SubprocessT);
+    SubprocessT::finalize(std::ptr::from_mut::<SubprocessT>(subprocess));
 
     let sync_value = JSValue::create_empty_object(global_this, 0);
     sync_value.put(global_this, b"exitCode", exit_code);

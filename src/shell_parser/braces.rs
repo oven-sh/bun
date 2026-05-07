@@ -55,7 +55,7 @@ struct AsciiIndexValue {
 impl SrcAscii {
     #[inline]
     fn init(bytes: &[u8]) -> Self {
-        Self { bytes: bytes as *const [u8], i: 0 }
+        Self { bytes: std::ptr::from_ref::<[u8]>(bytes), i: 0 }
     }
     #[inline]
     fn bytes(&self) -> &[u8] {
@@ -643,7 +643,7 @@ pub fn expand(
     // SAFETY: root_node lives on this stack frame for the duration of expand_nested;
     // all bubble_up backrefs written during recursion point into bump-owned Groups
     // or back at this root.
-    unsafe { expand_nested(&mut root_node as *mut ast::Group, out, 0, &mut out_key_counter, 0) }
+    unsafe { expand_nested(&raw mut root_node, out, 0, &mut out_key_counter, 0) }
 }
 
 // SAFETY contract: `root` must be a valid *mut Group whose `atoms` slices and
@@ -911,7 +911,7 @@ impl<'a> Parser<'a> {
                 atoms: ast::GroupAtoms::Single(single),
             })
         } else {
-            let many = nodes.into_bump_slice_mut() as *mut [ast::Atom];
+            let many = std::ptr::from_mut::<[ast::Atom]>(nodes.into_bump_slice_mut());
             Ok(ast::Group {
                 bubble_up: ptr::null_mut(),
                 bubble_up_next: None,
@@ -963,7 +963,7 @@ impl<'a> Parser<'a> {
                     atoms: ast::GroupAtoms::Single(single),
                 });
             } else {
-                let many = group.into_bump_slice_mut() as *mut [ast::Atom];
+                let many = std::ptr::from_mut::<[ast::Atom]>(group.into_bump_slice_mut());
                 variants.push(ast::Group {
                     bubble_up: ptr::null_mut(),
                     bubble_up_next: None,
@@ -976,7 +976,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(ast::Expansion {
-            variants: variants.into_bump_slice_mut() as *mut [ast::Group],
+            variants: std::ptr::from_mut::<[ast::Group]>(variants.into_bump_slice_mut()),
         })
     }
 

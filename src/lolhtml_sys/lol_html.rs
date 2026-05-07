@@ -215,13 +215,13 @@ impl HTMLRewriterBuilder {
             lol_html_rewriter_builder_add_document_content_handlers(
                 self,
                 doctype_handler_data.map(|_| directive_handler::<DocType, DT> as _),
-                doctype_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                doctype_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
                 comment_handler_data.map(|_| directive_handler::<Comment, CM> as _),
-                comment_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                comment_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
                 text_chunk_handler_data.map(|_| directive_handler::<TextChunk, TX> as _),
-                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
                 end_tag_handler_data.map(|_| directive_handler::<DocEnd, DE> as _),
-                end_tag_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                end_tag_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
             );
         }
     }
@@ -276,11 +276,11 @@ impl HTMLRewriterBuilder {
                 self,
                 selector,
                 element_handler_data.map(|_| directive_handler::<Element, EL> as _),
-                element_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                element_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
                 comment_handler_data.map(|_| directive_handler::<Comment, CM> as _),
-                comment_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                comment_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
                 text_chunk_handler_data.map(|_| directive_handler::<TextChunk, TX> as _),
-                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast::<c_void>()),
             )
         };
         match rc {
@@ -318,7 +318,7 @@ impl HTMLRewriterBuilder {
                 encoding_.len(),
                 memory_settings,
                 Some(output_sink_function::<S>),
-                output_sink as *mut c_void,
+                output_sink.cast::<c_void>(),
                 strict,
             )
         };
@@ -340,7 +340,7 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(ptr: *const u8, len: us
 
     // Zig: @setRuntimeSafety(false)
     // SAFETY: user_data was set to &mut S in build(); ptr[0..len] is valid for the duration of this call
-    let this = unsafe { &mut *(user_data as *mut S) };
+    let this = unsafe { &mut *user_data.cast::<S>() };
     match len {
         0 => this.done(),
         _ => this.write(unsafe { core::slice::from_raw_parts(ptr, len) }),
@@ -513,7 +513,7 @@ impl TextChunk {
     pub unsafe fn set_user_data<T>(this: *mut TextChunk, value: Option<&mut T>) {
         auto_disable();
         // SAFETY: caller guarantees `this` is valid; value ptr or null
-        unsafe { lol_html_text_chunk_user_data_set(this, value.map_or(core::ptr::null_mut(), |v| v as *mut T as *mut c_void)) }
+        unsafe { lol_html_text_chunk_user_data_set(this, value.map_or(core::ptr::null_mut(), |v| std::ptr::from_mut::<T>(v).cast::<c_void>())) }
     }
     /// # Safety
     /// `this` must be a valid `*mut TextChunk` passed to a handler.
@@ -521,7 +521,7 @@ impl TextChunk {
         auto_disable();
         // SAFETY: caller guarantees `this` is valid
         let p = unsafe { lol_html_text_chunk_user_data_get(this) };
-        if p.is_null() { None } else { Some(p as *mut T) }
+        if p.is_null() { None } else { Some(p.cast::<T>()) }
     }
     /// # Safety
     /// `this` must be a valid `*mut TextChunk` passed to a handler.
@@ -733,7 +733,7 @@ impl Element {
         auto_disable();
         // SAFETY: caller guarantees `this` is valid
         let p = unsafe { lol_html_element_user_data_get(this) };
-        if p.is_null() { None } else { Some(p as *mut T) }
+        if p.is_null() { None } else { Some(p.cast::<T>()) }
     }
     /// # Safety
     /// `this` must be a valid `*mut Element` passed to a handler.
@@ -1169,7 +1169,7 @@ pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Conta
 ) -> Directive {
     auto_disable();
     // SAFETY: user_data was set to &mut U when registering; this is valid for the handler call
-    let result = unsafe { (&mut *(user_data as *mut U)).call(&mut *this) };
+    let result = unsafe { (&mut *user_data.cast::<U>()).call(&mut *this) };
     // @enumFromInt(@intFromBool(result))
     // SAFETY: bool as c_uint is 0 or 1, both valid Directive discriminants
     unsafe { core::mem::transmute::<c_uint, Directive>(result as c_uint) }

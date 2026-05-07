@@ -42,7 +42,7 @@ impl<const SSL: bool> SocketHandlerFromDuplex for uws::NewSocketHandler<SSL> {
     fn from_duplex(duplex: &mut UpgradedDuplex) -> Self {
         Self {
             socket: uws::InternalSocket::UpgradedDuplex(
-                duplex as *mut UpgradedDuplex as *mut c_void,
+                std::ptr::from_mut::<UpgradedDuplex>(duplex).cast::<c_void>(),
             ),
         }
     }
@@ -210,7 +210,7 @@ extern "C" fn select_alpn_callback(
         // SAFETY: out/outlen/in are valid per BoringSSL ALPN callback contract.
         let status = unsafe {
             boringssl_sys::SSL_select_next_proto(
-                out as *mut *mut u8,
+                out.cast::<*mut u8>(),
                 outlen,
                 protos.as_ptr(),
                 c_uint::try_from(protos.len()).expect("int cast"),
@@ -326,7 +326,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
         // is sound for that access.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self as *const Self as *mut Self) };
+        unsafe { bun_ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
     // Takes `&mut self` (not `&self`) so the destruction pointer carries
     // write provenance — `&T as *const T as *mut T` followed by a write is
@@ -337,7 +337,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn deref(&mut self) {
         // SAFETY: `self` is live; if count hits 0, `RefCounted::destructor`
         // (→ `deinit_and_destroy`) runs and `self` is not used after.
-        unsafe { bun_ptr::RefCount::<Self>::deref(self as *mut Self) };
+        unsafe { bun_ptr::RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
     }
 
     // ── codegen accessors (Zig: `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`) ──
@@ -346,7 +346,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // split and call the C++ externs directly.
     pub fn to_js(&mut self, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
-        let ptr = self as *mut Self as *mut c_void;
+        let ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         // SAFETY: `self` is a heap-allocated `NewSocket` (every caller goes
         // through `NewSocket::new` → `Box::into_raw`); ownership of `ptr` is
         // adopted by the C++ JSCell wrapper, which calls `finalize` on GC.
@@ -451,7 +451,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // re-entrant connect path. `ScopedRef` stores a raw `*mut Self` (no
         // borrow held across the body) and derefs with write provenance on Drop.
         // SAFETY: `self` is this fn's `&mut self`; live until guard drop.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self as *mut Self) };
+        let _guard = unsafe { bun_ptr::ScopedRef::new(std::ptr::from_mut::<Self>(self)) };
         // Stash the raw `*mut Self` for the uSockets ext slot before any
         // field borrow (NLL drops the `&mut` reborrow at the `;`).
         let self_ptr: *mut Self = self;
@@ -477,7 +477,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             0
         };
         let ssl_ctx: Option<*mut uws::SslCtx> = if SSL {
-            self.owned_ssl_ctx.map(|p| p as *mut uws::SslCtx)
+            self.owned_ssl_ctx.map(|p| p.cast::<uws::SslCtx>())
         } else {
             None
         };
@@ -827,7 +827,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // TODO(port): errdefer — combined `defer markInactive()` + `defer deref()`
         // moved to a guard so all early-returns run them.
-        let cleanup = scopeguard::guard((self as *mut Self, needs_deref), |(p, nd)| {
+        let cleanup = scopeguard::guard((std::ptr::from_mut::<Self>(self), needs_deref), |(p, nd)| {
             // SAFETY: p is &mut self captured for deferred cleanup.
             let this = unsafe { &mut *p };
             // Zig defer order (reverse-declaration): needs_deref → markInactive → deref.
@@ -885,7 +885,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // statement, not end of scope) and run `scope.exit()` before the
         // user's onConnectError callback. Bind to a named `_`-prefixed
         // local so it lives to end of scope like Zig's `defer`.
-        let _scope_guard = scopeguard::guard((self as *mut Self, scope), |(p, mut sc)| {
+        let _scope_guard = scopeguard::guard((std::ptr::from_mut::<Self>(self), scope), |(p, mut sc)| {
             if sc.exit() {
                 // Connection never opened (`is_active == false`), so the
                 // scope's decrement is what brings client handlers to zero
@@ -1054,7 +1054,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!(
             "onOpen {} {:p} {} {}",
             if self.is_server() { "S" } else { "C" },
-            self as *const Self,
+            std::ptr::from_ref::<Self>(self),
             self.socket.is_detached(),
             self.ref_count.get()
         );
@@ -1098,7 +1098,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                                 boringssl_sys::SSL_set_ex_data(
                                     ssl_ptr,
                                     0,
-                                    self as *mut Self as *mut c_void,
+                                    std::ptr::from_mut::<Self>(self).cast::<c_void>(),
                                 );
                                 boringssl_sys::SSL_CTX_set_alpn_select_cb(
                                     boringssl_sys::SSL_get_SSL_CTX(ssl_ptr),
@@ -1123,7 +1123,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if let Some(ctx) = socket.ext::<*mut c_void>() {
             // SAFETY: ext slot is sized for `*mut anyopaque`.
-            unsafe { *ctx = self as *mut Self as *mut c_void };
+            unsafe { *ctx = std::ptr::from_mut::<Self>(self).cast::<c_void>() };
         }
 
         let handlers = self.get_handlers();
@@ -1385,7 +1385,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             unsafe { (*raw).on_close(socket, err, reason).ok() };
         }
         // PORT NOTE: reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
-        let cleanup = scopeguard::guard(self as *mut Self, |p| {
+        let cleanup = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| {
             // SAFETY: p is &mut self captured for deferred cleanup.
             let this = unsafe { &mut *p };
             this.mark_inactive();
@@ -1530,7 +1530,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: server-mode invariant (checked above) guarantees `handlers`
         // addresses `Listener.handlers`.
         let l: &Listener = unsafe {
-            &*(handlers as *const u8)
+            &*handlers.cast::<u8>()
                 .sub(core::mem::offset_of!(Listener, handlers))
                 .cast::<Listener>()
         };
@@ -2644,7 +2644,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 ));
             };
             // SAFETY: `from_js` returns a live `*mut SecureContext`.
-            *owned_ctx = Some(unsafe { (*sc).borrow() } as *mut SSL_CTX);
+            *owned_ctx = Some(unsafe { (*sc).borrow() }.cast::<SSL_CTX>());
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
@@ -2685,7 +2685,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 unsafe { &mut (*state).ssl_ctx_cache }
             };
             *owned_ctx = match cache.get_or_create(cfg, &mut create_err) {
-                Some(c) => Some(c as *mut SSL_CTX),
+                Some(c) => Some(c.cast::<SSL_CTX>()),
                 None => {
                     // us_ssl_ctx_from_options only sets *err for the CA/cipher
                     // cases; bad cert/key/DH return NULL with err==.none and the
@@ -2773,7 +2773,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // separate `#[repr(C)]` mirror of the same C struct, so cast through
             // raw pointer (layout-identical FFI handles).
             (*raw_socket).adopt_tls(
-                &mut *(group as *mut uws::SocketGroup as *mut bun_uws_sys::SocketGroup),
+                &mut *std::ptr::from_mut::<uws::SocketGroup>(group).cast::<bun_uws_sys::SocketGroup>(),
                 bun_uws_sys::SocketKind::BunSocketTls,
                 &mut *((*tls_ptr).owned_ssl_ctx.unwrap()),
                 sni,
@@ -2844,14 +2844,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // below, or we leak one ref on the retired TCP wrapper. Hold a raw
         // pointer so the guard doesn't conflict with the `&mut` uses that
         // follow.
-        let _this_deref = scopeguard::guard(this as *mut Self, |p| {
+        let _this_deref = scopeguard::guard(std::ptr::from_mut::<Self>(this), |p| {
             // SAFETY: `this` is the JS-wrapper-owned allocation; the wrapper's
             // +1 keeps it alive across the whole call regardless of which exit
             // we take. Single JS thread.
             unsafe { (*p).deref() };
         });
         // SAFETY: reborrow of the same allocation root the guard holds.
-        let this = unsafe { &mut *(this as *mut Self) };
+        let this = unsafe { &mut *std::ptr::from_mut::<Self>(this) };
         this.detach_native_callback();
         this.socket.detach();
 
@@ -2956,13 +2956,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         debug_assert!(SSL);
         // SAFETY: only called from the `if SSL` branch; `NewSocket<SSL>` and
         // `NewSocket<true>` are the same monomorphisation when `SSL == true`.
-        unsafe { &mut *(this as *mut Self as *mut TLSSocket) }
+        unsafe { &mut *std::ptr::from_mut::<Self>(this).cast::<TLSSocket>() }
     }
     #[inline(always)]
     fn as_tls(this: &Self) -> &TLSSocket {
         debug_assert!(SSL);
         // SAFETY: see `as_tls_mut`.
-        unsafe { &*(this as *const Self as *const TLSSocket) }
+        unsafe { &*std::ptr::from_ref::<Self>(this).cast::<TLSSocket>() }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3124,16 +3124,16 @@ macro_rules! impl_socket_js_class {
             impl bun_jsc::JsClass for $ty {
                 fn from_js(value: JSValue) -> Option<*mut Self> {
                     // SAFETY: pure FFI downcast; null on type mismatch.
-                    let p = unsafe { __from_js(value) } as *mut Self;
+                    let p = unsafe { __from_js(value) }.cast::<Self>();
                     if p.is_null() { None } else { Some(p) }
                 }
                 fn from_js_direct(value: JSValue) -> Option<*mut Self> {
                     // SAFETY: exact-structure FFI downcast; null on miss.
-                    let p = unsafe { __from_js_direct(value) } as *mut Self;
+                    let p = unsafe { __from_js_direct(value) }.cast::<Self>();
                     if p.is_null() { None } else { Some(p) }
                 }
                 fn to_js(self, global: &JSGlobalObject) -> JSValue {
-                    let ptr = Box::into_raw(Box::new(self)) as *mut c_void;
+                    let ptr = Box::into_raw(Box::new(self)).cast::<c_void>();
                     // SAFETY: ownership of `ptr` transfers to the C++ wrapper
                     // (freed via `${typeName}Class__finalize`).
                     unsafe { __create(global.as_ptr(), ptr) }
@@ -3285,7 +3285,7 @@ impl DuplexUpgradeContext {
     #[inline(always)]
     fn duplex_socket(&mut self) -> SocketHandler<true> {
         SocketHandler::<true>::from_any(uws::InternalSocket::UpgradedDuplex(
-            &mut self.upgrade as *mut UpgradedDuplex as *mut c_void,
+            (&raw mut self.upgrade).cast::<c_void>(),
         ))
     }
 
@@ -3470,13 +3470,13 @@ impl DuplexUpgradeContext {
     fn deinit_in_next_tick(&mut self) {
         self.task_event = EventState::Close;
         // SAFETY: `vm` is the per-thread singleton stored at construction.
-        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&mut self.task)) };
+        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&raw mut self.task)) };
     }
 
     fn start_tls(&mut self) {
         self.task_event = EventState::StartTLS;
         // SAFETY: `vm` is the per-thread singleton stored at construction.
-        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&mut self.task)) };
+        unsafe { (*self.vm).enqueue_task(jsc::Task::init(&raw mut self.task)) };
     }
 
     fn deinit(&mut self) {
@@ -3494,7 +3494,7 @@ impl DuplexUpgradeContext {
         // runs via `Drop` when `Box::from_raw(self)` frees the containing
         // struct below; an explicit call here would double-free.
         // SAFETY: `self` was Box::into_raw'd in `new()`.
-        drop(unsafe { Box::from_raw(self as *mut Self) });
+        drop(unsafe { Box::from_raw(std::ptr::from_mut::<Self>(self)) });
     }
 }
 
@@ -3580,7 +3580,7 @@ pub fn js_upgrade_duplex_to_tls(
             ));
         };
         // SAFETY: `from_js` returns a live `*mut SecureContext`.
-        *owned_ctx = Some(unsafe { (*sc).borrow() } as *mut SSL_CTX);
+        *owned_ctx = Some(unsafe { (*sc).borrow() }.cast::<SSL_CTX>());
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
@@ -3676,10 +3676,10 @@ pub fn js_upgrade_duplex_to_tls(
         // Rust's `AnyTask::New` can't take a comptime callback (see AnyTask.rs
         // PORT NOTE), so hand-write the `*mut c_void → run_event` shim.
         ptr::addr_of_mut!((*duplex_context).task).write(AnyTask {
-            ctx: NonNull::new(duplex_context as *mut c_void),
+            ctx: NonNull::new(duplex_context.cast::<c_void>()),
             callback: |p| {
                 // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in `ctx`.
-                unsafe { (&mut *(p as *mut DuplexUpgradeContext)).run_event() };
+                unsafe { (&mut *p.cast::<DuplexUpgradeContext>()).run_event() };
                 Ok(())
             },
         });
@@ -3704,17 +3704,17 @@ pub fn js_upgrade_duplex_to_tls(
             global,
             duplex,
             UpgradedDuplexHandlers {
-                on_open: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_open() },
-                on_data: |c, d| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_data(d) },
+                on_open: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_open() },
+                on_data: |c, d| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_data(d) },
                 on_handshake: |c, ok, err| unsafe {
-                    (&mut *(c as *mut DuplexUpgradeContext)).on_handshake(ok, err)
+                    (&mut *c.cast::<DuplexUpgradeContext>()).on_handshake(ok, err)
                 },
-                on_close: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_close() },
-                on_end: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_end() },
-                on_writable: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_writable() },
-                on_error: |c, e| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_error(e) },
-                on_timeout: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_timeout() },
-                ctx: duplex_context as *mut (),
+                on_close: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_close() },
+                on_end: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_end() },
+                on_writable: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_writable() },
+                on_error: |c, e| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_error(e) },
+                on_timeout: |c| unsafe { (&mut *c.cast::<DuplexUpgradeContext>()).on_timeout() },
+                ctx: duplex_context.cast::<()>(),
             },
         ));
     }
@@ -3847,7 +3847,7 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
                     file_descriptor.native(),
                     level,
                     opt,
-                    &val as *const _ as *const c_void,
+                    (&raw const val).cast::<c_void>(),
                     core::mem::size_of::<libc::c_int>() as libc::socklen_t,
                 )
             };

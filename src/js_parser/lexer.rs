@@ -2776,7 +2776,7 @@ lexer_impl_header! {
                 // SAFETY: content was created via sliceAsBytes from a [u16] dupe.
                 let utf16: &[u16] = unsafe {
                     core::slice::from_raw_parts(
-                        self.string_literal_raw_content.as_ptr() as *const u16,
+                        self.string_literal_raw_content.as_ptr().cast::<u16>(),
                         self.string_literal_raw_content.len() / 2,
                     )
                 };
@@ -3183,7 +3183,7 @@ lexer_impl_header! {
             // SAFETY: reinterpret &[u16] as &[u8]
             self.string_literal_raw_content = unsafe {
                 core::slice::from_raw_parts(
-                    dup.as_ptr() as *const u8,
+                    dup.as_ptr().cast::<u8>(),
                     dup.len() * 2,
                 )
             };
@@ -3279,7 +3279,7 @@ lexer_impl_header! {
                         // SAFETY: reinterpret arena-owned &[u16] as &[u8]; alignment 1, len*2 bytes
                         self.string_literal_raw_content = unsafe {
                             core::slice::from_raw_parts(
-                                dup.as_ptr() as *const u8,
+                                dup.as_ptr().cast::<u8>(),
                                 dup.len() * 2,
                             )
                         };
@@ -4310,7 +4310,7 @@ impl PragmaArg {
                     .unwrap(),
                 },
             },
-            text: &text[0..i],
+            text: &raw const text[0..i],
             // TODO(port): lifetime — js_ast::Span.text borrows input chunk
         })
     }

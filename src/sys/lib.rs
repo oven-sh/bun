@@ -265,7 +265,7 @@ pub mod dir_iterator {
                 let p = self.buf.0.as_ptr();
                 // SAFETY: kernel guarantees a complete record fits in [base..end_index).
                 let reclen = unsafe {
-                    core::ptr::read_unaligned(p.add(base + 16) as *const u16)
+                    core::ptr::read_unaligned(p.add(base + 16).cast::<u16>())
                 } as usize;
                 let d_type = unsafe { *p.add(base + 18) };
                 self.index = base + reclen;
@@ -766,7 +766,7 @@ pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
     match SystemErrno::init(err as _) {
-        Some(e) => <&'static str>::from(e).as_ptr() as *const core::ffi::c_char,
+        Some(e) => <&'static str>::from(e).as_ptr().cast::<core::ffi::c_char>(),
         None => core::ptr::null(),
     }
 }
@@ -3171,7 +3171,7 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
         // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
         // field on success); `path` is NUL-terminated by `ZStr`.
         let mut st: StatFS = unsafe { core::mem::zeroed() };
-        let rc = unsafe { libc::statfs(path.as_ptr(), &mut st) };
+        let rc = unsafe { libc::statfs(path.as_ptr(), &raw mut st) };
         if rc < 0 {
             let e = last_errno();
             if e == libc::EINTR { continue; }
@@ -3200,7 +3200,7 @@ pub fn self_process_memory_usage() -> Option<usize> {
     }
     let mut rss: usize = 0;
     // SAFETY: FFI call; `rss` is a valid `*mut usize` for the duration of the call.
-    if unsafe { getRSS(&mut rss) } != 0 {
+    if unsafe { getRSS(&raw mut rss) } != 0 {
         return None;
     }
     Some(rss)
@@ -4999,7 +4999,7 @@ pub mod posix {
     pub fn getrlimit(res: RlimitResource) -> core::result::Result<Rlimit, super::Error> {
         let mut r = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
         // SAFETY: r is written on success.
-        let rc = unsafe { libc::getrlimit(res as _, &mut r) };
+        let rc = unsafe { libc::getrlimit(res as _, &raw mut r) };
         if rc < 0 { return Err(super::err_with(super::Tag::getrlimit)); }
         Ok(Rlimit { cur: r.rlim_cur as u64, max: r.rlim_max as u64 })
     }
@@ -5007,7 +5007,7 @@ pub mod posix {
     pub fn setrlimit(res: RlimitResource, lim: Rlimit) -> core::result::Result<(), super::Error> {
         let r = libc::rlimit { rlim_cur: lim.cur as _, rlim_max: lim.max as _ };
         // SAFETY: r is a valid rlimit.
-        let rc = unsafe { libc::setrlimit(res as _, &r) };
+        let rc = unsafe { libc::setrlimit(res as _, &raw const r) };
         if rc < 0 { return Err(super::err_with(super::Tag::setrlimit)); }
         Ok(())
     }
@@ -5051,7 +5051,7 @@ pub mod net {
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     addr.cast::<u8>(),
-                    (&mut storage as *mut libc::sockaddr_storage).cast::<u8>(),
+                    (&raw mut storage).cast::<u8>(),
                     len,
                 );
             }
@@ -5059,7 +5059,7 @@ pub mod net {
         }
         #[inline] pub fn family(&self) -> i32 { self.any.ss_family as i32 }
         #[inline] pub fn as_sockaddr(&self) -> *const libc::sockaddr {
-            (&self.any as *const libc::sockaddr_storage).cast()
+            (&raw const self.any).cast()
         }
         #[inline] pub fn sock_len(&self) -> u32 {
             match self.family() {
@@ -6032,13 +6032,13 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 #[inline]
 unsafe fn qw_fd(qw: *const bun_core::output::QuietWriter) -> Fd {
     // SAFETY: repr(C) [*mut (); 4]; slot 0 carries fd-as-usize-as-ptr.
-    let raw = unsafe { *(qw as *const *mut ()) };
+    let raw = unsafe { *qw.cast::<*mut ()>() };
     Fd::from_native(raw as usize as _)
 }
 #[inline]
 unsafe fn qw_set_fd(qw: *mut bun_core::output::QuietWriter, fd: Fd) {
     // SAFETY: repr(C) [*mut (); 4]; slot 0 carries fd-as-usize-as-ptr.
-    unsafe { *(qw as *mut *mut ()) = fd.native() as usize as *mut (); }
+    unsafe { *qw.cast::<*mut ()>() = fd.native() as usize as *mut (); }
 }
 
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
@@ -6090,7 +6090,7 @@ unsafe fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
     // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
     let mut ws: libc::winsize = unsafe { core::mem::zeroed() };
     // SAFETY: TIOCGWINSZ expects a *mut winsize.
-    let rc = unsafe { libc::ioctl(fd.native(), libc::TIOCGWINSZ, &mut ws as *mut _) };
+    let rc = unsafe { libc::ioctl(fd.native(), libc::TIOCGWINSZ, &raw mut ws) };
     if rc != 0 { return None; }
     Some(bun_core::Winsize {
         row: ws.ws_row,
@@ -6122,12 +6122,12 @@ pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
         quiet_writer_from_fd: |fd| {
             let mut out = bun_core::output::QuietWriter::ZEROED;
             // SAFETY: see qw_set_fd.
-            unsafe { qw_set_fd(&mut out, fd) };
+            unsafe { qw_set_fd(&raw mut out, fd) };
             out
         },
         quiet_writer_adapt: |qw, _buf, _len| {
             // SAFETY: qw came from quiet_writer_from_fd above.
-            let fd = unsafe { qw_fd(&qw) };
+            let fd = unsafe { qw_fd(&raw const qw) };
             let concrete = SysQuietWriterAdapter {
                 writer: bun_core::io::Writer {
                     write_all: adapter_write_all,
@@ -6139,7 +6139,7 @@ pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
             // SAFETY: size/align asserted in const block above; out is repr(C) [u8;64].
             unsafe {
                 core::ptr::write(
-                    &mut out as *mut _ as *mut SysQuietWriterAdapter,
+                    (&raw mut out).cast::<SysQuietWriterAdapter>(),
                     concrete,
                 );
             }

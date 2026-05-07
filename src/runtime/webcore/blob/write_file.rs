@@ -126,18 +126,18 @@ impl FileCloser for WriteFile {
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *((request as *mut io::Request as *mut u8)
+            &mut *(std::ptr::from_mut::<io::Request>(request).cast::<u8>()
                 .sub(offset_of!(WriteFile, io_request))
                 .cast::<WriteFile>())
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut WriteFile` set below.
-            let this = unsafe { &mut *(ctx as *mut WriteFile) };
+            let this = unsafe { &mut *ctx.cast::<WriteFile>() };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
         // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
         // before mutably borrowing `io_poll` so the two borrows do not overlap.
-        let ctx = this as *mut WriteFile as *mut ();
+        let ctx = std::ptr::from_mut::<WriteFile>(this).cast::<()>();
         let fd = this.opened_fd;
         io::Action::Close(io::CloseAction {
             fd,
@@ -151,7 +151,7 @@ impl FileCloser for WriteFile {
     unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: task is &mut self.task (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *((task as *mut u8).sub(offset_of!(WriteFile, task)).cast::<WriteFile>())
+            &mut *(task.cast::<u8>().sub(offset_of!(WriteFile, task)).cast::<WriteFile>())
         };
         this.close_after_io = false;
         WriteFile::update(this);
@@ -167,7 +167,7 @@ impl WriteFile {
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request
         let this: &mut WriteFile = unsafe {
-            &mut *(request as *mut io::Request as *mut u8)
+            &mut *std::ptr::from_mut::<io::Request>(request).cast::<u8>()
                 .sub(offset_of!(WriteFile, io_request))
                 .cast::<WriteFile>()
         };
@@ -177,17 +177,17 @@ impl WriteFile {
     pub fn on_ready(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
         self.task = WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
-        WorkPool::schedule(&mut self.task);
+        WorkPool::schedule(&raw mut self.task);
     }
 
     pub fn on_io_error(this: *mut (), err: sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
-        let this = unsafe { &mut *(this as *mut WriteFile) };
+        let this = unsafe { &mut *this.cast::<WriteFile>() };
         this.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
         this.system_error = Some(err.to_system_error().into());
         this.task = WorkPoolTask { node: Default::default(), callback: Self::do_write_loop_task };
-        WorkPool::schedule(&mut this.task);
+        WorkPool::schedule(&raw mut this.task);
     }
 
     pub fn on_request_writable(request: &mut io::Request) -> io::Action<'_> {
@@ -195,13 +195,13 @@ impl WriteFile {
         request.scheduled = false;
         // SAFETY: request points to WriteFile.io_request (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *(request as *mut io::Request as *mut u8)
+            &mut *std::ptr::from_mut::<io::Request>(request).cast::<u8>()
                 .sub(offset_of!(WriteFile, io_request))
                 .cast::<WriteFile>()
         };
         io::Action::Writable(io::FileAction {
             on_error: Self::on_io_error,
-            ctx: this as *mut WriteFile as *mut (),
+            ctx: std::ptr::from_mut::<WriteFile>(this).cast::<()>(),
             fd: this.opened_fd,
             poll: &mut this.io_poll,
             tag: WriteFile::IO_TAG,
@@ -457,7 +457,7 @@ impl WriteFile {
     unsafe fn do_write_loop_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to WriteFile.task
         let this: &mut WriteFile = unsafe {
-            &mut *(task as *mut u8)
+            &mut *task.cast::<u8>()
                 .sub(offset_of!(WriteFile, task))
                 .cast::<WriteFile>()
         };
@@ -1043,7 +1043,7 @@ impl WriteFilePromise {
         // which stays valid past `drop(Box::from_raw(handler))`.
         let (promise, global_this): (*mut JSPromise, &JSGlobalObject) = unsafe {
             let h = &mut *handler;
-            let promise = h.promise.swap() as *mut JSPromise;
+            let promise = std::ptr::from_mut::<JSPromise>(h.promise.swap());
             let global_this = &*h.global_this;
             drop(Box::from_raw(handler));
             (promise, global_this)

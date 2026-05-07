@@ -378,7 +378,7 @@ impl Task {
         // ctx is always a valid &mut T at call time (see run()).
         Task {
             callback: unsafe { core::mem::transmute::<fn(&mut T), fn(*mut ())>(callback) },
-            ctx: ctx as *mut T as *mut (),
+            ctx: std::ptr::from_mut::<T>(ctx).cast::<()>(),
         }
     }
 }
@@ -400,11 +400,11 @@ unsafe impl bun_threading::unbounded_queue::Node for ConcurrentTask {
     }
     unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
         // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
-        unsafe { (*(ptr::addr_of!((*item).next) as *const AtomicPtr<Self>)).load(ordering) }
+        unsafe { (*ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).load(ordering) }
     }
     unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
         // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
-        unsafe { (*(core::ptr::addr_of!((*item).next) as *const AtomicPtr<Self>)).store(ptr, ordering) }
+        unsafe { (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).store(ptr, ordering) }
     }
 }
 
@@ -444,7 +444,7 @@ impl FSEventsLoop {
             return;
         }
         // SAFETY: arg was set to `this: *mut FSEventsLoop` in init()
-        let this = unsafe { &mut *(arg as *mut FSEventsLoop) };
+        let this = unsafe { &mut *arg.cast::<FSEventsLoop>() };
 
         let mut concurrent = this.tasks.pop_batch();
         let count = concurrent.count;
@@ -463,7 +463,7 @@ impl FSEventsLoop {
             task.task.run();
             if task.auto_delete {
                 // SAFETY: was Box::into_raw'd in enqueue_task_concurrent
-                drop(unsafe { Box::from_raw(task as *mut ConcurrentTask) });
+                drop(unsafe { Box::from_raw(std::ptr::from_mut::<ConcurrentTask>(task)) });
             }
         }
     }
@@ -489,7 +489,7 @@ impl FSEventsLoop {
 
         let mut ctx = CFRunLoopSourceContext {
             version: 0,
-            info: this as *mut c_void,
+            info: this.cast::<c_void>(),
             retain: None,
             release: None,
             copy_description: None,
@@ -501,7 +501,7 @@ impl FSEventsLoop {
         };
 
         // SAFETY: ctx is stack-local and outlives the call; CF copies it
-        let signal_source = unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &mut ctx) };
+        let signal_source = unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
         if signal_source.is_null() {
             return Err(bun_core::err!("FailedToCreateCoreFoudationSourceLoop"));
         }
@@ -553,10 +553,10 @@ impl FSEventsLoop {
         let paths_ptr = event_paths as *const *const c_char;
         let paths = unsafe { core::slice::from_raw_parts(paths_ptr, num_events) };
         // SAFETY: info was set to self in _schedule()
-        let loop_ = unsafe { &mut *(info as *mut FSEventsLoop) };
+        let loop_ = unsafe { &mut *info.cast::<FSEventsLoop>() };
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags =
-            unsafe { core::slice::from_raw_parts(event_flags as *const FSEventStreamEventFlags, num_events) };
+            unsafe { core::slice::from_raw_parts(event_flags.cast_const(), num_events) };
 
         // Hold the mutex for the whole iteration. `unregisterWatcher` on the
         // main thread nulls the entry under this same mutex and then the
@@ -700,7 +700,7 @@ impl FSEventsLoop {
                 count as CFIndex,
                 ptr::null(),
             );
-            let mut ctx = FSEventStreamContext { info: self as *mut _ as *mut c_void, ..Default::default() };
+            let mut ctx = FSEventStreamContext { info: std::ptr::from_mut(self).cast::<c_void>(), ..Default::default() };
 
             let latency: CFAbsoluteTime = 0.05;
             // Explanation of selected flags:
@@ -728,7 +728,7 @@ impl FSEventsLoop {
             let r#ref = (cs.fs_event_stream_create)(
                 ptr::null_mut(),
                 Self::_events_cb,
-                &mut ctx,
+                &raw mut ctx,
                 cf_paths,
                 cs.k_fs_event_stream_event_id_since_now,
                 latency,
@@ -904,7 +904,7 @@ impl FSEventsWatcher {
         ctx: *mut c_void,
     ) -> Box<FSEventsWatcher> {
         let mut this = Box::new(FSEventsWatcher {
-            path: path as *const [u8],
+            path: std::ptr::from_ref::<[u8]>(path),
             callback,
             flush_callback: update_end,
             loop_: NonNull::new(loop_),
@@ -915,7 +915,7 @@ impl FSEventsWatcher {
         // SAFETY: `loop_` is the heap-allocated global default loop (Box::into_raw
         // in FSEventsLoop::init); valid for the program lifetime. Mutable access
         // to its watcher list is serialized by `self.mutex` inside register_watcher.
-        unsafe { (*loop_).register_watcher(&mut *this as *mut _) };
+        unsafe { (*loop_).register_watcher(&raw mut *this) };
         this
     }
 
@@ -938,7 +938,7 @@ impl Drop for FSEventsWatcher {
             // access to the watcher list is serialized by `self.mutex` inside
             // unregister_watcher.
             unsafe {
-                (*loop_.as_ptr()).unregister_watcher(self as *mut _);
+                (*loop_.as_ptr()).unregister_watcher(std::ptr::from_mut(self));
             }
         }
     }

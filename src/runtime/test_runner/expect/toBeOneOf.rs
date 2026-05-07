@@ -19,7 +19,7 @@ extern "C" fn same_value_iterator(
     item: JSValue,
 ) {
     // SAFETY: entry_ is &mut ExpectedEntry passed through forEach's opaque ctx; non-null for the duration of the iteration.
-    let entry = unsafe { &mut *(entry_ as *mut ExpectedEntry<'_>) };
+    let entry = unsafe { &mut *entry_.cast::<ExpectedEntry<'_>>() };
     // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
     let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
         return;
@@ -73,7 +73,7 @@ pub fn to_be_one_of(
         };
         list_value.for_each(
             global_this,
-            &mut expected_entry as *mut ExpectedEntry<'_> as *mut c_void,
+            (&raw mut expected_entry).cast::<c_void>(),
             same_value_iterator,
         )?;
     } else {

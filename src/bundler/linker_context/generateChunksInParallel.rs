@@ -81,7 +81,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // TODO(@paperclover/bake): instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
         // PORT NOTE: Zig `defer debug(...)` is moved to end-of-scope explicitly below.
-        let ctx = GenerateChunkCtx { chunk: &mut chunks[0], c, chunks };
+        let ctx = GenerateChunkCtx { chunk: &raw mut chunks[0], c, chunks };
         // TODO(port): worker_pool.eachPtr signature — allocator param dropped; Rust impl is infallible.
         unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
         debug!("  DONE {} renamers", chunks.len());
@@ -125,12 +125,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             node: ThreadPoolLib::Node::default(),
                             callback: prepare_css_asts_for_chunk,
                         },
-                        chunk: chunk as *mut Chunk,
+                        chunk: std::ptr::from_mut::<Chunk>(chunk),
                         // PORT NOTE: `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
                         // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
-                        linker: (c as *mut LinkerContext).cast(),
+                        linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
                     };
-                    batch.push(ThreadPoolLib::Batch::from(&mut tasks[i].task));
+                    batch.push(ThreadPoolLib::Batch::from(&raw mut tasks[i].task));
                     i += 1;
                 }
             }
@@ -157,10 +157,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // PORT NOTE: `GenerateChunkCtx` fields are raw pointers; capture them
             // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
             // stored in every ctx (Zig stores `[]Chunk` by value).
-            let c_ptr: *mut LinkerContext = c as *mut LinkerContext;
-            let chunks_ptr: *mut [Chunk] = chunks as *mut [Chunk];
+            let c_ptr: *mut LinkerContext = std::ptr::from_mut::<LinkerContext>(c);
+            let chunks_ptr: *mut [Chunk] = std::ptr::from_mut::<[Chunk]>(chunks);
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
-                *chunk_ctx = GenerateChunkCtx { c: c_ptr, chunks: chunks_ptr, chunk: chunk as *mut Chunk };
+                *chunk_ctx = GenerateChunkCtx { c: c_ptr, chunks: chunks_ptr, chunk: std::ptr::from_mut::<Chunk>(chunk) };
                 match &mut chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();
@@ -223,9 +223,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { &*(chunk_ctx as *const GenerateChunkCtx) },
+                            ctx: unsafe { &*std::ptr::from_ref::<GenerateChunkCtx>(chunk_ctx) },
                             };
-                            batch.push(ThreadPoolLib::Batch::from(&mut remaining_part_ranges[0].task));
+                            batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
 
                             // PORT NOTE: reshaped for borrowck — Zig reslices `remaining_part_ranges[1..]`
                             remaining_part_ranges = &mut core::mem::take(&mut remaining_part_ranges)[1..];
@@ -245,9 +245,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { &*(chunk_ctx as *const GenerateChunkCtx) },
+                            ctx: unsafe { &*std::ptr::from_ref::<GenerateChunkCtx>(chunk_ctx) },
                             };
-                            batch.push(ThreadPoolLib::Batch::from(&mut remaining_part_ranges[0].task));
+                            batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
 
                             remaining_part_ranges = &mut core::mem::take(&mut remaining_part_ranges)[1..];
                         }
@@ -265,10 +265,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { &*(chunk_ctx as *const GenerateChunkCtx) },
+                            ctx: unsafe { &*std::ptr::from_ref::<GenerateChunkCtx>(chunk_ctx) },
                         };
 
-                        batch.push(ThreadPoolLib::Batch::from(&mut remaining_part_ranges[0].task));
+                        batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
                         remaining_part_ranges = &mut core::mem::take(&mut remaining_part_ranges)[1..];
                     }
                 }
@@ -354,7 +354,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
                 }
-                dup.value_ptr.sources.push(chunk as *mut Chunk);
+                dup.value_ptr.sources.push(std::ptr::from_mut::<Chunk>(chunk));
                 continue;
             }
 
@@ -446,7 +446,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 = unsafe {
-            &mut *((c as *mut LinkerContext as *mut u8)
+            &mut *(std::ptr::from_mut::<LinkerContext>(c).cast::<u8>()
                 .sub(core::mem::offset_of!(BundleV2, linker))
                 .cast::<BundleV2>())
         };
@@ -555,7 +555,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
     let bundler: &mut BundleV2 = unsafe {
-        &mut *((c as *mut LinkerContext as *mut u8)
+        &mut *(std::ptr::from_mut::<LinkerContext>(c).cast::<u8>()
             .sub(core::mem::offset_of!(BundleV2, linker))
             .cast::<BundleV2>())
     };
@@ -563,7 +563,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this
         // long-lived shared borrow doesn't conflict with `c.log.add_error_fmt(&mut)`
         // inside the chunk loop below. `c` outlives `static_route_visitor`.
-        c: unsafe { &*(c as *const LinkerContext) },
+        c: unsafe { &*std::ptr::from_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };

@@ -191,7 +191,7 @@ pub extern "C" fn Bun__onDidAppendPlugin(jsc_vm: &mut VirtualMachine, global: &J
     // is embedded in `*jsc_vm` and stable for the VM's lifetime, so taking a
     // raw pointer into it for the linker BACKREF is sound.
     jsc_vm.transpiler.linker.plugin_runner = Some(
-        unsafe { jsc_vm.plugin_runner.as_mut().unwrap_unchecked() } as *mut dyn PluginResolver,
+        std::ptr::from_mut::<dyn PluginResolver>(unsafe { jsc_vm.plugin_runner.as_mut().unwrap_unchecked() }),
     );
 }
 

@@ -519,7 +519,7 @@ impl BuildCommand {
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 
                 if log_ref.has_errors() {
-                    log_ref.print(Output::error_writer() as *mut bun_core::io::Writer)?;
+                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()))?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -568,7 +568,7 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        log_ref.print(Output::error_writer() as *mut bun_core::io::Writer)?;
+                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()))?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
                     }
@@ -1086,7 +1086,7 @@ impl BuildCommand {
             Output::flush();
         }
 
-        log_ref.print(Output::error_writer() as *mut bun_core::io::Writer)?;
+        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()))?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,

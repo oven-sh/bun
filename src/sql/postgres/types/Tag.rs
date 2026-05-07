@@ -343,7 +343,7 @@ impl<T: Copy> PostgresBinarySingleDimensionArray<T> {
         // (length-prefix, value) pairs in the wire buffer; caller has validated `len`
         // against the backing buffer.
         unsafe {
-            let head: *mut T = &mut self.first_value as *mut T;
+            let head: *mut T = &raw mut self.first_value;
             let mut current: *mut T = head;
             let len: usize = usize::try_from(self.len).expect("int cast");
             for i in 0..len {
@@ -371,7 +371,7 @@ impl<T: Copy> PostgresBinarySingleDimensionArray<T> {
         // SAFETY: caller guarantees `bytes` is at least `size_of::<Self>()` and suitably
         // aligned for `Self`. Zig used @ptrCast(@alignCast(@constCast(bytes.ptr))).
         unsafe {
-            let this: *mut Self = bytes.as_ptr() as *mut u8 as *mut Self;
+            let this: *mut Self = bytes.as_ptr().cast_mut().cast::<Self>();
             (*this).ndim = i32::swap_bytes((*this).ndim);
             (*this).offset_for_data = i32::swap_bytes((*this).offset_for_data);
             (*this).element_type = i32::swap_bytes((*this).element_type);

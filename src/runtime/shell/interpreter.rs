@@ -711,9 +711,9 @@ impl Interpreter {
         shargs.set_script_ast(script);
 
         // ── init ───────────────────────────────────────────────────────────
-        let evtloop = EventLoopHandle::init_mini(mini as *mut _);
+        let evtloop = EventLoopHandle::init_mini(std::ptr::from_mut(mini));
         let mut interp = match Self::init(
-            ctx as *mut _,
+            std::ptr::from_mut(ctx),
             evtloop,
             shargs,
             Vec::new(),
@@ -743,7 +743,7 @@ impl Interpreter {
         // Zig: `mini.tick(&is_done, IsDone.isDone)` where `isDone` reads
         // `interp.flags.done`. The `is_done` closure captures a raw pointer so
         // borrowck doesn't see an overlap with `tick`'s `&mut self` on `mini`.
-        let interp_ptr: *const Interpreter = &*interp;
+        let interp_ptr: *const Interpreter = &raw const *interp;
         mini.tick(core::ptr::null_mut(), |_ctx| {
             // SAFETY: `interp` lives in this stack frame for the whole tick
             // loop; `flags` is plain data (no interior mutation contention on
@@ -831,12 +831,12 @@ impl Interpreter {
     #[inline]
     pub fn shell_env(&mut self, id: NodeId) -> *mut ShellExecEnv {
         if id == NodeId::INTERPRETER {
-            return &mut self.root_shell as *mut _;
+            return &raw mut self.root_shell;
         }
         self.nodes[id.idx()]
             .base()
             .map(|b| b.shell)
-            .unwrap_or(&mut self.root_shell as *mut _)
+            .unwrap_or(&raw mut self.root_shell)
     }
 
     // ── hoisted dispatch (PORTING.md §Dispatch hot-path) ───────────────────
@@ -924,7 +924,7 @@ impl Interpreter {
             ast::Expr::Binary(b) => Binary::init(self, shell, *b, parent, io),
             ast::Expr::Pipeline(p) => Pipeline::init(self, shell, *p, parent, io),
             ast::Expr::Assign(a) => {
-                Assigns::init(self, shell, *a as *const [ast::Assign], parent, AssignCtx::Shell, io)
+                Assigns::init(self, shell, std::ptr::from_ref::<[ast::Assign]>(*a), parent, AssignCtx::Shell, io)
             }
             ast::Expr::If(i) => If::init(self, shell, *i, parent, io),
             ast::Expr::CondExpr(c) => CondExpr::init(self, shell, *c, parent, io),
@@ -1150,15 +1150,15 @@ impl Interpreter {
     }
 
     pub fn run(&mut self) -> bun_sys::Result<()> {
-        log!("Interpreter(0x{:x}) run", self as *const _ as usize);
+        log!("Interpreter(0x{:x}) run", std::ptr::from_ref(self) as usize);
         if let Err(e) = self.setup_io_before_run() {
             return Err(e);
         }
 
         // PORT NOTE: reshaped for borrowck — capture raw ptrs/clones before
         // taking `&mut self` for `Script::init`.
-        let shell = &mut self.root_shell as *mut _;
-        let ast = &self.args.script_ast as *const _;
+        let shell = &raw mut self.root_shell;
+        let ast = &raw const self.args.script_ast;
         let io = self.root_io.clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
@@ -1170,7 +1170,7 @@ impl Interpreter {
         use crate::jsc::generated::JSShellInterpreter;
         use crate::jsc::JSValue;
 
-        log!("Interpreter(0x{:x}) finish {}", self as *const _ as usize, exit_code);
+        log!("Interpreter(0x{:x}) finish {}", std::ptr::from_ref(self) as usize, exit_code);
         // Spec interpreter.zig:1289 — `defer decrPendingActivityFlag(...)`
         // unconditionally. Paired with the increment in `run_from_js`; harmless
         // wrap on the mini path (flag is only read from the JS GC
@@ -1185,7 +1185,7 @@ impl Interpreter {
                 Interpreter::decr_pending_activity_flag(unsafe { &*self.0 });
             }
         }
-        let _decr = DecrOnDrop(&self.has_pending_activity);
+        let _decr = DecrOnDrop(&raw const self.has_pending_activity);
 
         if matches!(self.event_loop, EventLoopHandle::Js { .. }) {
             self.exit_code = Some(exit_code);
@@ -1231,7 +1231,7 @@ impl Interpreter {
         global_this: &crate::jsc::JSGlobalObject,
         _callframe: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-        log!("Interpreter(0x{:x}) runFromJS", self as *const _ as usize);
+        log!("Interpreter(0x{:x}) runFromJS", std::ptr::from_ref(self) as usize);
 
         if let Err(e) = self.setup_io_before_run() {
             self.deref_root_shell_and_io_if_needed(true);
@@ -1242,8 +1242,8 @@ impl Interpreter {
 
         // PORT NOTE: reshaped for borrowck — capture raw ptrs before taking
         // `&mut self` for `Script::init`.
-        let shell = &mut self.root_shell as *mut _;
-        let ast = &self.args.script_ast as *const _;
+        let shell = &raw mut self.root_shell;
+        let ast = &raw const self.args.script_ast;
         let io = self.root_io.clone();
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
@@ -1298,7 +1298,7 @@ impl Interpreter {
         let mut this = unsafe { Box::from_raw(this) };
         log!(
             "Interpreter(0x{:x}) deinitFromFinalizer (cleanup_state={})",
-            &*this as *const _ as usize,
+            &raw const *this as usize,
             <&'static str>::from(this.cleanup_state),
         );
 
@@ -1327,7 +1327,7 @@ impl Interpreter {
         _: &crate::jsc::JSGlobalObject,
         _: &crate::jsc::CallFrame,
     ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-        log!("Interpreter(0x{:x}) setQuiet()", self as *const _ as usize);
+        log!("Interpreter(0x{:x}) setQuiet()", std::ptr::from_ref(self) as usize);
         self.flags.set_quiet(true);
         Ok(crate::jsc::JSValue::UNDEFINED)
     }
@@ -1606,14 +1606,14 @@ impl ShellExecEnv {
 
     pub fn buffered_stdout(&mut self) -> *mut Vec<u8> {
         match &mut self._buffered_stdout {
-            Bufio::Owned(o) => o as *mut _,
+            Bufio::Owned(o) => std::ptr::from_mut(o),
             Bufio::Borrowed(b) => *b,
         }
     }
 
     pub fn buffered_stderr(&mut self) -> *mut Vec<u8> {
         match &mut self._buffered_stderr {
-            Bufio::Owned(o) => o as *mut _,
+            Bufio::Owned(o) => std::ptr::from_mut(o),
             Bufio::Borrowed(b) => *b,
         }
     }
@@ -1695,7 +1695,7 @@ impl ShellExecEnv {
     /// `destroy_this = false`). The Rust `deinit_impl(this: *mut)` covers the
     /// `destroy_this = true` heap-allocated subshell case.
     pub fn deinit_embedded(&mut self, free_buffered_io: bool) {
-        log!("[ShellExecEnv] deinit 0x{:x}", self as *const _ as usize);
+        log!("[ShellExecEnv] deinit 0x{:x}", std::ptr::from_ref(self) as usize);
         if free_buffered_io {
             if let Bufio::Owned(o) = &mut self._buffered_stdout {
                 o.clear_and_free();
@@ -2278,7 +2278,7 @@ pub enum ParseFlagResult {
 /// PORTING.md §Forbidden) since Rust can't comptime-concat a non-const arg.
 #[inline]
 pub const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
-    name as *const [u8]
+    std::ptr::from_ref::<[u8]>(name)
 }
 
 /// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
@@ -2322,7 +2322,7 @@ fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
         return ParseFlagResult::Done;
     }
     if flag.len() == 1 {
-        return ParseFlagResult::IllegalOption(b"-" as *const [u8]);
+        return ParseFlagResult::IllegalOption(std::ptr::from_ref::<[u8]>(b"-"));
     }
     if flag.len() > 2 && flag[1] == b'-' {
         if let Some(r) = opts.parse_long(flag) {
@@ -2570,7 +2570,7 @@ impl ShellTask {
         // thread may already be touching `*this`, so we must not hold a live
         // `&mut ShellTask` across that call.
         unsafe {
-            let this = (ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask;
+            let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this).task.callback = shell_task_trampoline::<C>;
             (*this)
                 .keep_alive
@@ -2593,7 +2593,7 @@ impl ShellTask {
         use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        let this = unsafe { (ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask };
+        let this = unsafe { ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>() };
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
         // main thread may already be touching `*this`, so no live `&mut`
         // into it may span that call.
@@ -2606,7 +2606,7 @@ impl ShellTask {
                     // Zig: `concurrent_task.js.from(ctx, .manual_deinit)` —
                     // tag resolved via `C: Taskable`.
                     ct.from(ctx, AutoDeinit::ManualDeinit);
-                    EventLoopTaskPtr { js: ct as *mut _ }
+                    EventLoopTaskPtr { js: std::ptr::from_mut(ct) }
                 }
                 EventLoopTask::Mini(at) => {
                     // Zig: `concurrent_task.mini.from(this, "runFromMainThreadMini")`.
@@ -2635,7 +2635,7 @@ impl ShellTask {
         log!("ShellTask runFromJS");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
-            let this = (ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask;
+            let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this)
                 .keep_alive
                 .unref((*this).event_loop.as_event_loop_ctx());
@@ -2650,7 +2650,7 @@ impl ShellTask {
 unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which is
     // embedded in `C` at `TASK_OFFSET` (Zig: two `@fieldParentPtr` hops).
-    let ctx = unsafe { (task as *mut u8).sub(C::TASK_OFFSET) as *mut C };
+    let ctx = unsafe { task.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>() };
     C::run_from_thread_pool(ctx);
     // SAFETY: `ctx` is still the live heap allocation handed to `schedule`.
     unsafe { ShellTask::on_finish::<C>(ctx) };
@@ -2661,7 +2661,7 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
 fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
     // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
     // mini-loop dispatch runs on the main thread.
-    let ctx = unsafe { (this as *mut u8).sub(C::TASK_OFFSET) as *mut C };
+    let ctx = unsafe { this.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>() };
     unsafe { ShellTask::run_from_main_thread::<C>(ctx) };
 }
 
@@ -2735,7 +2735,7 @@ pub fn create_shell_interpreter(
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
     // dereferencing for `event_loop()` is sound on the mutator thread.
-    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop() as *mut ());
+    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
     let interpreter: Box<Interpreter> = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),
@@ -2766,7 +2766,7 @@ pub fn create_shell_interpreter(
     // SAFETY: `interpreter` is a fresh heap allocation.
     unsafe {
         (*interpreter).flags.set_quiet(quiet);
-        (*interpreter).global_this = global as *const crate::jsc::JSGlobalObject as *mut _;
+        (*interpreter).global_this = std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut();
         (*interpreter).estimated_size_for_gc = (*interpreter).compute_estimated_size_for_gc();
     }
 

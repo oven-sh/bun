@@ -171,7 +171,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; vtable consumers treat the pointee as read-only
         // (`*const bun_event_loop::EventLoopHandle`) and never write through it.
-        bun_io::EventLoopHandle(&self.event_loop as *const _ as *mut c_void)
+        bun_io::EventLoopHandle(&raw const self.event_loop as *mut c_void)
     }
 
     pub fn update_ref(&mut self, add: bool) {
@@ -188,7 +188,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) close()",
-            self as *const _ as usize
+            std::ptr::from_ref(self) as usize
         );
         self.writer.close();
     }
@@ -218,7 +218,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             source,
             process: subprocess,
             event_loop,
-            buffer: b"" as *const [u8],
+            buffer: std::ptr::from_ref::<[u8]>(b""),
         }));
         // SAFETY: `this` was just allocated above and is non-null.
         let this_ref = unsafe { &mut *this };
@@ -235,13 +235,13 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) start()",
-            self as *const _ as usize
+            std::ptr::from_ref(self) as usize
         );
         // Zig `this.ref()` — intrusive-refcount increment.
         // SAFETY: `self` is a live `Self` (created via `create()`/`Box::into_raw`).
-        unsafe { RefCount::<Self>::ref_(self as *mut Self) };
+        unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // TODO(port): self-borrow — see `buffer` field note.
-        self.buffer = self.source.slice() as *const [u8];
+        self.buffer = std::ptr::from_ref::<[u8]>(self.source.slice());
         #[cfg(windows)]
         {
             return self.writer.start_with_current_pipe();
@@ -271,7 +271,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onWrite(amount={} {})",
-            self as *const _ as usize,
+            std::ptr::from_ref(self) as usize,
             amount,
             // Local stringify — `WriteStatus` (upstream bun_io) has no `Debug` impl.
             match status {
@@ -283,7 +283,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let len = self.buffer.len();
         // SAFETY: `buffer` points into `self.source`'s storage, alive for `self`'s lifetime.
         // Explicit `&*` avoids the implicit-autoref-on-raw-pointer lint when slicing.
-        self.buffer = unsafe { &(&*self.buffer)[amount.min(len)..] } as *const [u8];
+        self.buffer = std::ptr::from_ref::<[u8]>(unsafe { &(&*self.buffer)[amount.min(len)..] });
         if status == WriteStatus::EndOfFile || self.buffer.len() == 0 {
             self.writer.close();
         }
@@ -293,7 +293,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",
-            self as *const _ as usize,
+            std::ptr::from_ref(self) as usize,
             err
         );
         self.source.detach();
@@ -303,7 +303,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onClose()",
-            self as *const _ as usize
+            std::ptr::from_ref(self) as usize
         );
         self.source.detach();
         // SAFETY: `process` is a backref to the owning process, guaranteed alive

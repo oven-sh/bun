@@ -359,7 +359,7 @@ pub fn enqueue_parse_npm_package(
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
     unsafe {
         task.write(Task::Task {
-            package_manager: this as *const PackageManager,
+            package_manager: std::ptr::from_ref::<PackageManager>(this),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::PackageManifest,
             request: crate::package_manager_task::Request {
@@ -374,7 +374,7 @@ pub fn enqueue_parse_npm_package(
             // TODO(port): `data: undefined` — Task::data left uninitialized in Zig
             ..Task::uninit()
         });
-        &mut (*task).threadpool_task
+        &raw mut (*task).threadpool_task
     }
 }
 
@@ -1649,7 +1649,7 @@ fn init_extract_task(
     // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
         task.write(Task::Task {
-            package_manager: this as *const PackageManager,
+            package_manager: std::ptr::from_ref::<PackageManager>(this),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::Extract,
             request: crate::package_manager_task::Request {
@@ -1680,7 +1680,7 @@ pub fn enqueue_extract_npm_package(
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
     // SAFETY: init_extract_task returns a valid *mut Task
-    unsafe { &mut (*init_extract_task(this, tarball, network_task)).threadpool_task }
+    unsafe { &raw mut (*init_extract_task(this, tarball, network_task)).threadpool_task }
 }
 
 /// Allocate the extract Task up front so the streaming extractor can
@@ -1713,7 +1713,7 @@ fn enqueue_git_clone(
     // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
         task.write(Task::Task {
-            package_manager: this as *const PackageManager,
+            package_manager: std::ptr::from_ref::<PackageManager>(this),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::GitClone,
             request: crate::package_manager_task::Request {
@@ -1764,7 +1764,7 @@ fn enqueue_git_clone(
             // TODO(port): `data: undefined`
             ..Task::uninit()
         });
-        &mut (*task).threadpool_task
+        &raw mut (*task).threadpool_task
     }
 }
 
@@ -1785,7 +1785,7 @@ pub fn enqueue_git_checkout(
     // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
         task.write(Task::Task {
-            package_manager: this as *const PackageManager,
+            package_manager: std::ptr::from_ref::<PackageManager>(this),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::GitCheckout,
             request: crate::package_manager_task::Request {
@@ -1844,7 +1844,7 @@ pub fn enqueue_git_checkout(
             // TODO(port): `data: undefined`
             ..Task::uninit()
         });
-        &mut (*task).threadpool_task
+        &raw mut (*task).threadpool_task
     }
 }
 
@@ -1894,13 +1894,13 @@ fn enqueue_local_tarball(
     // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
         task.write(Task::Task {
-            package_manager: this as *const PackageManager,
+            package_manager: std::ptr::from_ref::<PackageManager>(this),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::LocalTarball,
             request: crate::package_manager_task::Request {
                 local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
                     tarball: ExtractTarball {
-                        package_manager: this as *const PackageManager,
+                        package_manager: std::ptr::from_ref::<PackageManager>(this),
                         name: StringOrTinyString::init_append_if_needed(
                             name,
                             &mut crate::network_task::filename_store_appender(),
@@ -1930,7 +1930,7 @@ fn enqueue_local_tarball(
             // TODO(port): `data: undefined`
             ..Task::uninit()
         });
-        &mut (*task).threadpool_task
+        &raw mut (*task).threadpool_task
     }
 }
 

@@ -97,7 +97,7 @@ impl RefString {
 
             // `allocator.free(this.leak())` — reconstitute the owned byte slice and drop it.
             drop(Box::from_raw(core::slice::from_raw_parts_mut(
-                (*this).ptr as *mut u8,
+                (*this).ptr.cast_mut(),
                 (*this).len,
             )));
             // `allocator.destroy(this)`

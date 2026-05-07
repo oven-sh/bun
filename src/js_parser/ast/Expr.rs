@@ -151,7 +151,7 @@ impl Expr {
             E::Arrow {
                 body: G::FnBody {
                     loc: this.loc,
-                    stmts: stmts as *mut [Stmt],
+                    stmts: std::ptr::from_mut::<[Stmt]>(stmts),
                 },
                 ..Default::default()
             },
@@ -2241,7 +2241,7 @@ impl Data {
                 for prop in src_props.iter() {
                     properties.push(prop.deep_clone(bump)?);
                 }
-                let properties = properties.into_bump_slice_mut() as *mut [G::Property];
+                let properties = std::ptr::from_mut::<[G::Property]>(properties.into_bump_slice_mut());
 
                 let item = bump.alloc(E::Class {
                     class_keyword: el.class_keyword,
@@ -2365,7 +2365,7 @@ impl Data {
                     parts: el.parts,
                     // SAFETY: `TemplateContents` is POD-shaped (no Drop); Zig
                     // copied `el.head` by value. `ptr::read` mirrors that.
-                    head: unsafe { core::ptr::read(&el.get().head) },
+                    head: unsafe { core::ptr::read(&raw const el.get().head) },
                 });
                 Ok(Data::ETemplate(StoreRef::from_bump(item)))
             }

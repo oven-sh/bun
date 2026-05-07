@@ -91,13 +91,13 @@ impl ImportDependency {
         let supports: Option<*const [u8]> = if let Some(supports) = &rule.supports {
             // Zig passed the type `css.css_rules.supports.SupportsCondition` as a comptime
             // param; in Rust the inherent `to_css` is dispatched directly.
-            Some(stringify(&|p| supports.to_css(p), "SupportsCondition") as *const [u8])
+            Some(std::ptr::from_ref::<[u8]>(stringify(&|p| supports.to_css(p), "SupportsCondition")))
         } else {
             None
         };
 
         let media: Option<*const [u8]> = if !rule.media.media_queries.is_empty() {
-            Some(stringify(&|p| rule.media.to_css(p), "MediaList") as *const [u8])
+            Some(std::ptr::from_ref::<[u8]>(stringify(&|p| rule.media.to_css(p), "MediaList")))
         } else {
             None
         };
@@ -115,8 +115,8 @@ impl ImportDependency {
 
         ImportDependency {
             // TODO(zack): should we clone this? lightningcss does that
-            url: rule.url as *const [u8],
-            placeholder: placeholder as *const [u8],
+            url: std::ptr::from_ref::<[u8]>(rule.url),
+            placeholder: std::ptr::from_ref::<[u8]>(placeholder),
             supports,
             media,
             loc: SourceRange::new(
@@ -164,8 +164,8 @@ impl UrlDependency {
             false,
         );
         UrlDependency {
-            url: theurl as *const [u8],
-            placeholder: placeholder as *const [u8],
+            url: std::ptr::from_ref::<[u8]>(theurl),
+            placeholder: std::ptr::from_ref::<[u8]>(placeholder),
             loc: SourceRange::new(filename, url.loc, 4, theurl.len()),
         }
     }
@@ -185,7 +185,7 @@ pub struct SourceRange {
 impl SourceRange {
     pub fn new(filename: &[u8], loc: Location, offset: u32, len: usize) -> SourceRange {
         SourceRange {
-            file_path: filename as *const [u8],
+            file_path: std::ptr::from_ref::<[u8]>(filename),
             start: Location {
                 line: loc.line,
                 column: loc.column + offset,

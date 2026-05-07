@@ -106,7 +106,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // allocator there is no scope to check; the `Box<[T]>` type already
         // proves unique ownership.
         let len = data.len();
-        let ptr = Box::into_raw(data) as *mut T;
+        let ptr = Box::into_raw(data).cast::<T>();
         Self {
             ptr,
             flags: Flags::new(len, true),
@@ -138,7 +138,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     pub const fn init_static(data: &'static [T]) -> Self {
         Self {
             // SAFETY: const semantics are enforced by is_owned flag
-            ptr: data.as_ptr() as *mut T,
+            ptr: data.as_ptr().cast_mut(),
             flags: Flags::new(data.len(), false),
             #[cfg(debug_assertions)]
             debug: None,
@@ -282,7 +282,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // TODO(port): `allocator.dupeZ` for `Z = true` — see `init_dupe`.
         // Sentinel is NOT preserved in this stub.
         let bytes: Box<[T]> = Box::<[T]>::from(self.slice());
-        self.ptr = Box::into_raw(bytes) as *mut T;
+        self.ptr = Box::into_raw(bytes).cast::<T>();
         // flags.len already correct (unchanged)
         self.flags.set_is_owned(true);
 
@@ -307,7 +307,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     pub fn init_unchecked(data: &[T], is_owned: bool) -> Self {
         Self {
             // SAFETY: const semantics are enforced by is_owned flag
-            ptr: data.as_ptr() as *mut T,
+            ptr: data.as_ptr().cast_mut(),
             flags: Flags::new(data.len(), is_owned),
             #[cfg(debug_assertions)]
             debug: None,

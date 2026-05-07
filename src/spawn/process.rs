@@ -194,14 +194,14 @@ impl Process {
     #[inline]
     pub fn ref_(&mut self) {
         // SAFETY: `self` is a live Process.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::ref_(self as *mut _) };
+        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::ref_(std::ptr::from_mut(self)) };
     }
 
     #[inline]
     pub fn deref(&mut self) {
         // SAFETY: `self` is a live Process; destructor frees the Box if this
         // was the last ref.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(self as *mut _) };
+        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(std::ptr::from_mut(self)) };
     }
 
     /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_aio::EventLoopCtx`
@@ -438,7 +438,7 @@ impl Process {
                     bun_aio::file_poll::FlagsSet::default(),
                     bun_aio::Owner::new(
                         bun_aio::posix_event_loop::poll_tag::PROCESS,
-                        (self as *mut Process).cast(),
+                        std::ptr::from_mut::<Process>(self).cast(),
                     ),
                 )
             };
@@ -990,12 +990,12 @@ pub mod waiter_thread_posix {
         }
         unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
             unsafe {
-                (*(core::ptr::addr_of!((*item).next) as *const AtomicPtr<Self>)).load(ordering)
+                (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).load(ordering)
             }
         }
         unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
             unsafe {
-                (*(core::ptr::addr_of!((*item).next) as *const AtomicPtr<Self>))
+                (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>())
                     .store(ptr, ordering)
             };
         }
@@ -1277,15 +1277,15 @@ pub mod waiter_thread_posix {
                 // SAFETY: sigaction with a valid handler.
                 unsafe {
                     let mut current_mask: libc::sigset_t = core::mem::zeroed();
-                    libc::sigemptyset(&mut current_mask);
-                    libc::sigaddset(&mut current_mask, libc::SIGCHLD);
+                    libc::sigemptyset(&raw mut current_mask);
+                    libc::sigaddset(&raw mut current_mask, libc::SIGCHLD);
                     let act = libc::sigaction {
                         sa_sigaction: wakeup as *const () as usize,
                         sa_mask: current_mask,
                         sa_flags: libc::SA_NOCLDSTOP,
                         sa_restorer: None,
                     };
-                    libc::sigaction(libc::SIGCHLD, &act, core::ptr::null_mut());
+                    libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut());
                 }
             }
         }
@@ -2485,7 +2485,7 @@ pub mod sync {
         let mut args: Vec<*const c_char> = Vec::with_capacity(argv.len() + 1);
         for arg in argv {
             // PERF(port): was assume_capacity
-            args.push(string_builder.append_z(arg).as_ptr() as *const c_char);
+            args.push(string_builder.append_z(arg).as_ptr().cast::<c_char>());
         }
         args.push(core::ptr::null());
 
@@ -2617,12 +2617,12 @@ pub mod sync {
             unsafe {
                 let mut set: libc::sigset_t = core::mem::zeroed();
                 let mut old: libc::sigset_t = core::mem::zeroed();
-                libc::sigemptyset(&mut set);
-                libc::sigemptyset(&mut old);
-                libc::sigaddset(&mut set, libc::SIGTTOU);
-                libc::sigprocmask(libc::SIG_BLOCK, &set, &mut old);
+                libc::sigemptyset(&raw mut set);
+                libc::sigemptyset(&raw mut old);
+                libc::sigaddset(&raw mut set, libc::SIGTTOU);
+                libc::sigprocmask(libc::SIG_BLOCK, &raw const set, &raw mut old);
                 let _ = tcsetpgrp(0, pgid);
-                libc::sigprocmask(libc::SIG_SETMASK, &old, core::ptr::null_mut());
+                libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
             }
         }
     }
@@ -3207,12 +3207,12 @@ pub mod sync {
         let (chld_fd, _restore_mask): (Fd, scopeguard::ScopeGuard<libc::sigset_t, _>) = unsafe {
             let mut libc_mask: libc::sigset_t = core::mem::zeroed();
             let mut old_mask: libc::sigset_t = core::mem::zeroed();
-            libc::sigemptyset(&mut libc_mask);
-            libc::sigemptyset(&mut old_mask);
-            libc::sigaddset(&mut libc_mask, libc::SIGCHLD);
-            libc::sigprocmask(libc::SIG_BLOCK, &libc_mask, &mut old_mask);
+            libc::sigemptyset(&raw mut libc_mask);
+            libc::sigemptyset(&raw mut old_mask);
+            libc::sigaddset(&raw mut libc_mask, libc::SIGCHLD);
+            libc::sigprocmask(libc::SIG_BLOCK, &raw const libc_mask, &raw mut old_mask);
             let restore = scopeguard::guard(old_mask, |old| {
-                libc::sigprocmask(libc::SIG_SETMASK, &old, core::ptr::null_mut());
+                libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
             });
             // TODO(port): kernel sigset_t vs libc sigset_t — Zig uses
             // std.os.linux.sigemptyset/sigaddset for the signalfd mask. Phase B:
@@ -3220,9 +3220,9 @@ pub mod sync {
             let fd = {
                 // SAFETY: POD, zero-valid — sigemptyset overwrites it immediately.
                 let mut kmask: libc::sigset_t = core::mem::zeroed();
-                libc::sigemptyset(&mut kmask);
-                libc::sigaddset(&mut kmask, libc::SIGCHLD);
-                let rc = libc::signalfd(-1, &kmask, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK);
+                libc::sigemptyset(&raw mut kmask);
+                libc::sigaddset(&raw mut kmask, libc::SIGCHLD);
+                let rc = libc::signalfd(-1, &raw const kmask, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK);
                 if rc >= 0 {
                     Fd::from_native(rc)
                 } else {
@@ -3369,7 +3369,7 @@ pub mod sync {
                 let mut si: libc::signalfd_siginfo = unsafe { core::mem::zeroed() };
                 let si_bytes = unsafe {
                     core::slice::from_raw_parts_mut(
-                        &mut si as *mut _ as *mut u8,
+                        (&raw mut si).cast::<u8>(),
                         core::mem::size_of::<libc::signalfd_siginfo>(),
                     )
                 };
@@ -3400,7 +3400,7 @@ pub mod sync {
             let spare = bytes.spare_capacity_mut();
             // SAFETY: recvNonBlock writes into uninit bytes; we extend len by bytes_read
             let spare_slice = unsafe {
-                core::slice::from_raw_parts_mut(spare.as_mut_ptr() as *mut u8, spare.len())
+                core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), spare.len())
             };
             match bun_sys::recv_non_block(*fd, spare_slice) {
                 Err(err) => {

@@ -179,12 +179,12 @@ pub fn run_task(
             // SAFETY: §Dispatch — `task.tag` was set together with `task.ptr`
             // by `Taskable::into_task`/`Task::new`; tag uniquely identifies
             // the pointee type and the pointer is live for this dispatch.
-            unsafe { &mut *(task.ptr as *mut $ty) }
+            unsafe { &mut *task.ptr.cast::<$ty>() }
         }};
     }
     /// Raw `*mut T` (for `Box::from_raw`/self-consuming entry points).
     macro_rules! cast_ptr {
-        ($ty:ty) => { task.ptr as *mut $ty };
+        ($ty:ty) => { task.ptr.cast::<$ty>() };
     }
     /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
     /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
@@ -588,7 +588,7 @@ pub fn tick_queue_with_count(
     // SAFETY: `el.global` is set by VM init before the first tick; live for
     // the duration of the drain loop (Zig: `this.global`).
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
-    let global_vm: *mut bun_jsc::VM = global.vm() as *const bun_jsc::VM as *mut bun_jsc::VM;
+    let global_vm: *mut bun_jsc::VM = std::ptr::from_ref::<bun_jsc::VM>(global.vm()).cast_mut();
 
     #[cfg(debug_assertions)]
     if el.debug.js_call_count_outside_tick_queue
@@ -653,7 +653,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     macro_rules! owner_as {
         ($ty:ty) => {{
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            unsafe { &mut *(owner.ptr as *mut $ty) }
+            unsafe { &mut *owner.ptr.cast::<$ty>() }
         }};
     }
 
@@ -904,7 +904,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // SAFETY: §Dispatch — `t.tag` was set together with the container
             // at construction; tag uniquely identifies the embedding type and
             // `$field` is the `EventLoopTimer` slot `t` points into.
-            unsafe { (t as *mut u8).sub(offset_of!($ty, $field)).cast::<$ty>() }
+            unsafe { t.cast::<u8>().sub(offset_of!($ty, $field)).cast::<$ty>() }
         }};
     }
 
@@ -1084,19 +1084,19 @@ pub unsafe fn __bun_js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTi
     // field of the named container (set at construction; never re-tagged).
     match tag {
         EventLoopTimerTag::TimeoutObject => unsafe {
-            let parent = (t as *const u8)
+            let parent = t.cast::<u8>()
                 .sub(offset_of!(TimeoutObject, event_loop_timer))
                 .cast::<TimeoutObject>();
             Some((*parent).internals.flags.epoch())
         },
         EventLoopTimerTag::ImmediateObject => unsafe {
-            let parent = (t as *const u8)
+            let parent = t.cast::<u8>()
                 .sub(offset_of!(ImmediateObject, event_loop_timer))
                 .cast::<ImmediateObject>();
             Some((*parent).internals.flags.epoch())
         },
         EventLoopTimerTag::AbortSignalTimeout => unsafe {
-            let parent = (t as *const u8)
+            let parent = t.cast::<u8>()
                 .sub(offset_of!(AbortSignalTimeout, event_loop_timer))
                 .cast::<AbortSignalTimeout>();
             Some((*parent).flags.epoch())

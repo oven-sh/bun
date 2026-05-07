@@ -341,10 +341,10 @@ pub fn list_objects(
     // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
     // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
     // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { &*(&*task.sign_result.url as *const [u8]) });
-    let headers_buf: &'static [u8] = unsafe { &*(task.headers.buf.as_slice() as *const [u8]) };
+    let url = bun_url::URL::parse(unsafe { &*(&raw const *task.sign_result.url) });
+    let headers_buf: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(unsafe { &*(&*task.proxy_url as *const [u8]) }))
+        Some(bun_url::URL::parse(unsafe { &*(&raw const *task.proxy_url) }))
     } else {
         None
     };
@@ -356,7 +356,7 @@ pub fn list_objects(
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
-        &mut task.response_buffer as *mut MutableString,
+        &raw mut task.response_buffer,
         b"",
         bun_http::HTTPClientResultCallback::new::<S3HttpSimpleTask>(
             task_ptr,
@@ -471,13 +471,13 @@ pub fn writable_stream(
     // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
     fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
-        wrapper_callback(result, unsafe { &mut *(ctx as *mut NetworkSink) })
+        wrapper_callback(result, unsafe { &mut *ctx.cast::<NetworkSink>() })
     }
     fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         // SAFETY: task is the live MultiPartUpload; ctx is the NetworkSink set as callback_context.
         let _ = NetworkSink::on_writable(
             unsafe { &mut *task },
-            unsafe { &mut *(ctx as *mut NetworkSink) },
+            unsafe { &mut *ctx.cast::<NetworkSink>() },
             flushed,
         );
     }
@@ -531,12 +531,12 @@ pub fn writable_stream(
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink = Box::into_raw(NetworkSink::new(NetworkSink {
         task: NonNull::new(task_ptr),
-        global_this: global_this as *const JSGlobalObject,
+        global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
         high_water_mark: part_size as BlobSizeType,
         ..Default::default()
     }));
 
-    task.callback_context = response_stream as *mut c_void;
+    task.callback_context = response_stream.cast::<c_void>();
     task.on_writable = Some(on_writable_thunk);
 
     // SAFETY: freshly Box::into_raw'd; exclusive access here. Ownership transfers to the JS
@@ -628,7 +628,7 @@ impl S3UploadStreamWrapper {
         bun_output::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
         self.detach_sink();
         // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref()`
-        let _deref_guard = scopeguard::guard(self as *mut Self, |s| {
+        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
             // SAFETY: s points to self which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
             unsafe { Self::deref_(s) }
@@ -658,7 +658,7 @@ impl S3UploadStreamWrapper {
     pub fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
         // PORT NOTE: reshaped for borrowck — Zig used `defer self.deref()`
-        let _deref_guard = scopeguard::guard(self_ as *mut Self, |s| {
+        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
             // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
             unsafe { Self::deref_(s) }
@@ -820,13 +820,13 @@ pub fn upload_stream(
     // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
     fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: ctx was set to `*mut S3UploadStreamWrapper` below.
-        S3UploadStreamWrapper::resolve(result, unsafe { &mut *(ctx as *mut S3UploadStreamWrapper) })
+        S3UploadStreamWrapper::resolve(result, unsafe { &mut *ctx.cast::<S3UploadStreamWrapper>() })
     }
     fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         // SAFETY: task is the live MultiPartUpload; ctx is the wrapper set as callback_context.
         S3UploadStreamWrapper::on_writable(
             unsafe { &mut *task },
-            unsafe { &mut *(ctx as *mut S3UploadStreamWrapper) },
+            unsafe { &mut *ctx.cast::<S3UploadStreamWrapper>() },
             flushed,
         );
     }
@@ -881,7 +881,7 @@ pub fn upload_stream(
         sink: None,
         callback,
         callback_context,
-        path: &*task.path as *const [u8],
+        path: &raw const *task.path,
         task: task_ptr,
         end_promise: bun_jsc::JSPromiseStrong::init(global_this),
         global: global_static,
@@ -895,7 +895,7 @@ pub fn upload_stream(
         ctx_ptr,
         2,
     ));
-    task.callback_context = ctx_ptr as *mut c_void;
+    task.callback_context = ctx_ptr.cast::<c_void>();
     task.on_writable = Some(on_writable_thunk);
     task.continue_stream();
     Ok(ctx.end_promise.value())
@@ -988,7 +988,7 @@ pub fn download_stream(
         sign_result: result,
         proxy_url: owned_proxy,
         // SAFETY: callers always pass a non-null context (Box-allocated wrapper).
-        callback_context: unsafe { NonNull::new_unchecked(callback_context as *mut ()) },
+        callback_context: unsafe { NonNull::new_unchecked(callback_context.cast::<()>()) },
         // SAFETY: fn(..., *mut c_void) → fn(..., *mut ()) — same calling convention.
         callback: unsafe {
             core::mem::transmute::<
@@ -1017,10 +1017,10 @@ pub fn download_stream(
 
     // SAFETY (lifetime extension): `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
     // fields of `*task` which the task outlives. See `execute_simple_s3_request`.
-    let url = bun_url::URL::parse(unsafe { &*(&*task.sign_result.url as *const [u8]) });
-    let headers_buf: &'static [u8] = unsafe { &*(task.headers.buf.as_slice() as *const [u8]) };
+    let url = bun_url::URL::parse(unsafe { &*(&raw const *task.sign_result.url) });
+    let headers_buf: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(unsafe { &*(&*task.proxy_url as *const [u8]) }))
+        Some(bun_url::URL::parse(unsafe { &*(&raw const *task.proxy_url) }))
     } else {
         None
     };
@@ -1038,7 +1038,7 @@ pub fn download_stream(
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
-        &mut task.response_buffer as *mut MutableString,
+        &raw mut task.response_buffer,
         b"",
         bun_http::HTTPClientResultCallback::new::<S3HttpDownloadStreamingTask>(
             task_ptr,
@@ -1099,7 +1099,7 @@ pub fn readable_stream(
             self_: &mut Self,
         ) -> JsTerminatedResult<()> {
             // PORT NOTE: reshaped for borrowck — Zig used `defer if (!has_more) self.deinit()`
-            let _guard = scopeguard::guard(self_ as *mut Self, move |s| {
+            let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
                 if !has_more {
                     // SAFETY: s is a live Box-allocated pointer (Box::into_raw in S3DownloadStreamWrapper::new);
                     // reconstituting and dropping the Box runs Drop::drop and frees the allocation
@@ -1152,7 +1152,7 @@ pub fn readable_stream(
 
         fn on_stream_cancelled(ctx: Option<*mut c_void>) {
             // SAFETY: ctx points to a S3DownloadStreamWrapper allocated in readable_stream
-            let self_: &mut Self = unsafe { &mut *(ctx.unwrap() as *mut Self) };
+            let self_: &mut Self = unsafe { &mut *ctx.unwrap().cast::<Self>() };
             // Release the Strong ref so the ReadableStream can be GC'd.
             // The download may still be in progress, but the callback will
             // see readable_stream_ref.get() return null and skip data delivery.
@@ -1168,7 +1168,7 @@ pub fn readable_stream(
             opaque_self: *mut c_void,
         ) {
             // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
-            let self_: &mut Self = unsafe { &mut *(opaque_self as *mut Self) };
+            let self_: &mut Self = unsafe { &mut *opaque_self.cast::<Self>() };
             let _ = Self::callback(chunk, has_more, err, self_); // TODO: properly propagate exception upwards
         }
     }
@@ -1190,7 +1190,7 @@ pub fn readable_stream(
     let reader: *mut crate::webcore::byte_stream::Source = crate::webcore::byte_stream::Source::new(
         crate::webcore::readable_stream::NewSource {
             context: ByteStream::default(),
-            global_this: global_this as *const JSGlobalObject,
+            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
             ..Default::default()
         },
     );
@@ -1203,7 +1203,7 @@ pub fn readable_stream(
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
         readable_stream_ref: ReadableStreamStrong::init(
             ReadableStream {
-                ptr: ReadableStreamPtr::Bytes(&mut reader_mut.context as *mut ByteStream),
+                ptr: ReadableStreamPtr::Bytes(&raw mut reader_mut.context),
                 value: readable_value,
             },
             global_this,
@@ -1213,7 +1213,7 @@ pub fn readable_stream(
     });
 
     reader_mut.cancel_handler = Some(S3DownloadStreamWrapper::on_stream_cancelled);
-    reader_mut.cancel_ctx = Some(wrapper as *mut c_void);
+    reader_mut.cancel_ctx = Some(wrapper.cast::<c_void>());
 
     download_stream(
         this,
@@ -1223,7 +1223,7 @@ pub fn readable_stream(
         proxy_url,
         request_payer,
         S3DownloadStreamWrapper::opaque_callback,
-        wrapper as *mut c_void,
+        wrapper.cast::<c_void>(),
     );
     Ok(readable_value)
 }

@@ -83,9 +83,9 @@ impl Worker {
         // pointers remain valid as long as `self` is not moved (Coordinator
         // holds workers in a stable slice).
         unsafe {
-            let out_ptr: *mut WorkerPipe = &mut self.out;
+            let out_ptr: *mut WorkerPipe = &raw mut self.out;
             (*out_ptr).reader.set_parent(out_ptr.cast::<c_void>());
-            let err_ptr: *mut WorkerPipe = &mut self.err;
+            let err_ptr: *mut WorkerPipe = &raw mut self.err;
             (*err_ptr).reader.set_parent(err_ptr.cast::<c_void>());
         }
 
@@ -108,7 +108,7 @@ impl Worker {
             // cleanup (which can't tell whether start() ran) doesn't deinit on
             // undefined ArrayList memory.
             // PORT NOTE: assignment drops the old value (≡ Zig deinit + reinit).
-            let self_ptr: *const Worker = this as *const Worker;
+            let self_ptr: *const Worker = std::ptr::from_ref::<Worker>(this);
             this.ipc = Channel::default();
             this.out = WorkerPipe::new(PipeRole::Stdout, self_ptr);
             this.err = WorkerPipe::new(PipeRole::Stderr, self_ptr);
@@ -243,7 +243,7 @@ impl Worker {
         // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
         unsafe { (*(coord_ptr as *mut Coordinator<'static>)).live_workers += 1 };
         process.set_exit_handler(
-            (&mut **this as *mut Worker).cast::<()>(),
+            (&raw mut **this).cast::<()>(),
             &WORKER_EXIT_VTABLE,
         );
         match process.watch_or_reap() {
@@ -337,7 +337,7 @@ unsafe fn worker_on_process_exit(
 ) {
     // SAFETY: `owner` is the `*mut Worker` stored in `set_exit_handler`;
     // `process`/`rusage` are non-null per `ProcessExitHandler::call`.
-    unsafe { (*(owner as *mut Worker)).on_process_exit(&*process, status, &*rusage) };
+    unsafe { (*owner.cast::<Worker>()).on_process_exit(&*process, status, &*rusage) };
 }
 
 static WORKER_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
@@ -402,7 +402,7 @@ impl WorkerPipe {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
         // TODO(port): LIFETIMES.tsv says *const Worker but we mutate `captured`;
         // Phase B may need *mut or Cell/UnsafeCell on Worker.captured.
-        unsafe { (*(self.worker as *mut Worker)).captured.extend_from_slice(chunk) };
+        unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }
     pub fn on_reader_done(&mut self) {
@@ -454,7 +454,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
         // by bun_runtime::init) knows how to interpret it.
         // SAFETY: worker/coord backrefs valid for pipe lifetime; `vm.event_loop()`
         // returns a live pointer for the VM lifetime.
-        bun_io::EventLoopHandle(unsafe { (*(*(*this).worker).coord).vm.event_loop() } as *mut c_void)
+        bun_io::EventLoopHandle(unsafe { (*(*(*this).worker).coord).vm.event_loop() }.cast::<c_void>())
     }
 }
 

@@ -109,7 +109,7 @@ pub fn hostent_with_ttls_to_js_response(
                     sa6.sin6_family = libc::AF_INET6 as _;
                     sa6.sin6_addr.s6_addr = bytes;
                     // SAFETY: &sa6 is a valid sockaddr_in6.
-                    unsafe { bun_dns::Address::init_posix((&sa6 as *const libc::sockaddr_in6).cast()) }
+                    unsafe { bun_dns::Address::init_posix((&raw const sa6).cast()) }
                 } else {
                     // SAFETY: addr points to ≥4 bytes for AF_INET.
                     let bytes: [u8; 4] = unsafe { *(addr as *const [u8; 4]) };
@@ -117,7 +117,7 @@ pub fn hostent_with_ttls_to_js_response(
                     sa4.sin_family = libc::AF_INET as _;
                     sa4.sin_addr.s_addr = u32::from_ne_bytes(bytes);
                     // SAFETY: &sa4 is a valid sockaddr_in.
-                    unsafe { bun_dns::Address::init_posix((&sa4 as *const libc::sockaddr_in).cast()) }
+                    unsafe { bun_dns::Address::init_posix((&raw const sa4).cast()) }
                 };
                 match address_to_js(&address, global_this) {
                     Ok(v) => v,
@@ -738,7 +738,7 @@ impl ErrorDeferred {
 
         let context = Box::into_raw(Box::new(Context {
             deferred: self,
-            global_this: global_this as *const _,
+            global_this: std::ptr::from_ref(global_this),
         }));
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
@@ -850,10 +850,10 @@ pub fn bun_canonicalize_ip(
     let mut af: c_int = c_ares::AF::INET;
     // get the binary representation of the IP
     // SAFETY: ip_addr is NUL-terminated; ip_binary is 16 bytes.
-    if unsafe { c_ares::ares_inet_pton(af, ip_addr.as_ptr() as *const c_char, ip_binary.as_mut_ptr().cast()) } != 1 {
+    if unsafe { c_ares::ares_inet_pton(af, ip_addr.as_ptr().cast::<c_char>(), ip_binary.as_mut_ptr().cast()) } != 1 {
         af = c_ares::AF::INET6;
         // SAFETY: same as above.
-        if unsafe { c_ares::ares_inet_pton(af, ip_addr.as_ptr() as *const c_char, ip_binary.as_mut_ptr().cast()) } != 1 {
+        if unsafe { c_ares::ares_inet_pton(af, ip_addr.as_ptr().cast::<c_char>(), ip_binary.as_mut_ptr().cast()) } != 1 {
             return Ok(JSValue::UNDEFINED);
         }
     }

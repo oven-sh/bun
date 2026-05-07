@@ -209,7 +209,7 @@ pub mod caching_sha2_password {
             // borrows the buffer for the lifetime of `bio` and does not take ownership.
             let bio = unsafe {
                 boringssl::c::BIO_new_mem_buf(
-                    public_key.as_ptr() as *const core::ffi::c_void,
+                    public_key.as_ptr().cast::<core::ffi::c_void>(),
                     isize::try_from(public_key.len()).expect("int cast"),
                 )
             };
@@ -241,7 +241,7 @@ pub mod caching_sha2_password {
                         let mut buf = [0u8; 256];
                         let s = boringssl::c::ERR_error_string(
                             boringssl::c::ERR_get_error(),
-                            buf.as_mut_ptr() as *mut c_char,
+                            buf.as_mut_ptr().cast::<c_char>(),
                         );
                         bun_core::scoped_log!(
                             Auth,

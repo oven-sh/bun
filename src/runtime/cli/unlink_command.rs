@@ -211,7 +211,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             // `defer node_modules_path.deinit()` — handled by Drop.
 
             let mut bin_linker = bin::Linker {
-                target_node_modules_path: &target_node_modules_path,
+                target_node_modules_path: &raw const target_node_modules_path,
                 target_package_name: strings::StringOrTinyString::init(name),
                 // `package.bin` is the inline stub `bin::Bin` (struct `Value`);
                 // project to the real union-`Value` shape via the

@@ -119,7 +119,7 @@ impl Stream {
             unacked_bytes: 0,
             data_bytes_received: 0,
             send_window,
-            pending_body: b"" as *const [u8],
+            pending_body: std::ptr::from_ref::<[u8]>(b""),
         })
     }
 

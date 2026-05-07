@@ -415,8 +415,8 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
             ffi::SSL_get_shared_sigalgs(
                 ssl_ptr,
                 c_int::try_from(i).expect("int cast"),
-                &mut sign_nid,
-                &mut hash_nid,
+                &raw mut sign_nid,
+                &raw mut hash_nid,
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
@@ -711,7 +711,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
 
     // SAFETY: ssl_ptr is a live *mut SSL; out-params are valid stack locals.
-    unsafe { ffi::SSL_get0_alpn_selected(ssl_ptr, &mut alpn_proto, &mut alpn_proto_len) };
+    unsafe { ffi::SSL_get0_alpn_selected(ssl_ptr, &raw mut alpn_proto, &raw mut alpn_proto_len) };
     if alpn_proto.is_null() || alpn_proto_len == 0 {
         return Ok(JSValue::FALSE);
     }
@@ -745,7 +745,7 @@ pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
     let mut buffer_ptr: *mut u8 = buffer.as_array_buffer(global).unwrap().ptr;
 
     // SAFETY: session is a non-null *mut SSL_SESSION; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { ffi::i2d_SSL_SESSION(session, &mut buffer_ptr) };
+    let result_size = unsafe { ffi::i2d_SSL_SESSION(session, &raw mut buffer_ptr) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }
@@ -770,7 +770,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
         let mut tmp: *const u8 = session_slice.as_ptr();
         // SAFETY: tmp/session_slice.len() describe a valid readable buffer borrowed from `sb` for the duration of this call.
         let session = unsafe {
-            ffi::d2i_SSL_SESSION(core::ptr::null_mut(), &mut tmp, c_long::try_from(session_slice.len()).expect("int cast"))
+            ffi::d2i_SSL_SESSION(core::ptr::null_mut(), &raw mut tmp, c_long::try_from(session_slice.len()).expect("int cast"))
         };
         if session.is_null() {
             return Ok(JSValue::UNDEFINED);
@@ -800,7 +800,7 @@ pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     let mut length: usize = 0;
     // The pointer is only valid while the connection is in use so we need to copy it
     // SAFETY: session is a non-null *mut SSL_SESSION; out-params are valid stack locals.
-    unsafe { ffi::SSL_SESSION_get0_ticket(session, &mut ticket, &mut length) };
+    unsafe { ffi::SSL_SESSION_get0_ticket(session, &raw mut ticket, &raw mut length) };
 
     if ticket.is_null() || length == 0 {
         return Ok(JSValue::UNDEFINED);

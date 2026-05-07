@@ -91,13 +91,13 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
         // concrete repr the FilePoll vtable (registered by bun_runtime::init)
         // knows how to interpret. Pass the raw `*mut MiniEventLoop` through.
         // SAFETY: backref; see on_read_chunk.
-        bun_io::EventLoopHandle(unsafe { (*this).event_loop_ptr() } as *mut c_void)
+        bun_io::EventLoopHandle(unsafe { (*this).event_loop_ptr() }.cast::<c_void>())
     }
 
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: backref; see on_read_chunk. `MiniEventLoop.loop_` is `*mut bun_uws::Loop`;
         // cast through c_void to the sys-level handle.
-        unsafe { (*(*this).event_loop_ptr()).loop_ as *mut c_void as *mut bun_uws_sys::Loop }
+        unsafe { (*(*this).event_loop_ptr()).loop_.cast::<c_void>().cast::<bun_uws_sys::Loop>() }
     }
 }
 
@@ -140,9 +140,9 @@ impl<'a> ProcessHandle<'a> {
         // TODO(port): argv as null-terminated array of `?[*:0]const u8` — exact ABI for
         // spawnProcess. Using *const c_char placeholders.
         let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr() as *const c_char,
-            if cfg!(unix) { b"-c\0".as_ptr() } else { b"exec\0".as_ptr() } as *const c_char,
-            self.config.command.as_ptr() as *const c_char,
+            state.shell_bin.as_ptr().cast::<c_char>(),
+            (if cfg!(unix) { b"-c\0".as_ptr() } else { b"exec\0".as_ptr() }).cast::<c_char>(),
+            self.config.command.as_ptr().cast::<c_char>(),
             ptr::null(),
         ];
 
@@ -166,7 +166,7 @@ impl<'a> ProcessHandle<'a> {
             spawn::spawn_process(
                 &self.options,
                 argv.as_ptr(),
-                envp.as_ptr() as *const *const c_char,
+                envp.as_ptr().cast::<*const c_char>(),
             )?
             .map_err(|e| Error::from(e))?
         };
@@ -175,13 +175,13 @@ impl<'a> ProcessHandle<'a> {
         let process =
             spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
-        self.stdout_reader.handle = self as *const _;
-        self.stderr_reader.handle = self as *const _;
+        self.stdout_reader.handle = std::ptr::from_ref(self);
+        self.stderr_reader.handle = std::ptr::from_ref(self);
         // PORT NOTE: compute parent ptrs before calling `set_parent` to avoid
         // borrowck seeing two simultaneous &mut borrows of the same field.
-        let stdout_parent = &mut self.stdout_reader as *mut PipeReader as *mut c_void;
+        let stdout_parent = (&raw mut self.stdout_reader).cast::<c_void>();
         self.stdout_reader.reader.set_parent(stdout_parent);
-        let stderr_parent = &mut self.stderr_reader as *mut PipeReader as *mut c_void;
+        let stderr_parent = (&raw mut self.stderr_reader).cast::<c_void>();
         self.stderr_reader.reader.set_parent(stderr_parent);
 
         #[cfg(windows)]
@@ -213,7 +213,7 @@ impl<'a> ProcessHandle<'a> {
         // SAFETY: `process` was just allocated by `to_process` (Box::into_raw);
         // owner backref set before any reap callback can fire.
         let process = unsafe { &mut *process };
-        process.set_exit_handler(self as *mut Self as *mut (), &PROCESS_HANDLE_EXIT_VTABLE);
+        process.set_exit_handler(std::ptr::from_mut::<Self>(self).cast::<()>(), &PROCESS_HANDLE_EXIT_VTABLE);
 
         match process.watch_or_reap() {
             Ok(_) => {}
@@ -242,7 +242,7 @@ unsafe fn process_handle_on_process_exit(
 ) {
     // SAFETY: owner is the `*mut ProcessHandle` registered in `start()`; it
     // lives in `State.handles` for the whole event loop.
-    let this = unsafe { &mut *(owner as *mut ProcessHandle) };
+    let this = unsafe { &mut *owner.cast::<ProcessHandle>() };
     this.process.as_mut().unwrap().status = status;
     this.end_time = Instant::now().into();
     // SAFETY: state backref; see start()
@@ -367,7 +367,7 @@ impl<'a> State<'a> {
         // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
         // through a raw ptr (the State/handle backref pattern is already
         // raw-ptr-based throughout this file).
-        let handle_ptr = handle as *mut ProcessHandle;
+        let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
         // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
         // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
         unsafe {
@@ -541,10 +541,10 @@ impl AbortHandler {
             unsafe {
                 let mut action: bun_sys::posix::Sigaction = core::mem::zeroed();
                 action.sa_sigaction = Self::posix_signal_handler as *const () as usize;
-                libc::sigemptyset(&mut action.sa_mask);
+                libc::sigemptyset(&raw mut action.sa_mask);
                 action.sa_flags =
                     (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
-                bun_sys::posix::sigaction(libc::SIGINT, &action, core::ptr::null_mut());
+                bun_sys::posix::sigaction(libc::SIGINT, &raw const action, core::ptr::null_mut());
             }
         }
         #[cfg(not(unix))]
@@ -1097,7 +1097,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         }
 
         handles.push(ProcessHandle {
-            state: &state as *const _,
+            state: &raw const state,
             config,
             color_idx,
             stdout_reader: PipeReader::new(false),
@@ -1143,7 +1143,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         if group.count > 1 {
             let mut j = group.start;
             while j < group.start + group.count - 1 {
-                let dep = &mut state.handles[j + 1] as *mut ProcessHandle;
+                let dep = &raw mut state.handles[j + 1];
                 state.handles[j].group_dependents.push(dep);
                 // SAFETY: dep points into state.handles; distinct index from j
                 unsafe { (*dep).remaining_dependencies += 1 };
@@ -1161,7 +1161,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             // Last handle of current group -> first handle of next group
             let last_in_current = current_group.start + current_group.count - 1;
             let first_in_next = next_group.start;
-            let dep = &mut state.handles[first_in_next] as *mut ProcessHandle;
+            let dep = &raw mut state.handles[first_in_next];
             state.handles[last_in_current].next_dependents.push(dep);
             // SAFETY: dep points into state.handles; distinct index from last_in_current
             unsafe { (*dep).remaining_dependencies += 1 };
@@ -1187,7 +1187,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             state.abort();
         }
         // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once(&state as *const State as *mut c_void) };
+        unsafe { (*event_loop).tick_once(&raw const state as *mut c_void) };
     }
 
     let status = state.finalize();

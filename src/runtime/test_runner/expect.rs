@@ -247,7 +247,7 @@ impl Expect {
         if let Some(s) = map.get(&(matcher_name, args, not)) {
             // SAFETY: `CACHE` is process-static and entries are never removed
             // or mutated, so the `Box<str>` allocation outlives the program.
-            return unsafe { &*(s.as_ref() as *const str) };
+            return unsafe { &*std::ptr::from_ref::<str>(s.as_ref()) };
         }
         const RECEIVED: &str = "<d>expect(<r><red>received<r><d>).<r>";
         let s: Box<str> = if not {
@@ -256,7 +256,7 @@ impl Expect {
             format!("{RECEIVED}{matcher_name}<d>(<r>{args}<d>)<r>")
         }
         .into_boxed_str();
-        let ptr = s.as_ref() as *const str;
+        let ptr = std::ptr::from_ref::<str>(s.as_ref());
         map.insert((matcher_name, args, not), s);
         // SAFETY: just inserted into process-static `CACHE`; never removed.
         unsafe { &*ptr }
@@ -836,7 +836,7 @@ impl Expect {
 
         let mut scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(&mut return_value as *mut JSValue);
+        vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
@@ -1385,8 +1385,8 @@ impl Expect {
                 let wrapper_fn = unsafe {
                     Bun__JSWrappingFunction__create(
                         global_this,
-                        &matcher_name,
-                        &host_fn_ptr,
+                        &raw const matcher_name,
+                        &raw const host_fn_ptr,
                         matcher_fn,
                         true,
                     )

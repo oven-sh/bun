@@ -137,27 +137,27 @@ fn vt_on_read_chunk<T: BufferedReaderParent>(
 ) -> bool {
     // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
     // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::on_read_chunk(this as *mut T, chunk, has_more) }
+    unsafe { T::on_read_chunk(this.cast::<T>(), chunk, has_more) }
 }
 fn vt_on_reader_done<T: BufferedReaderParent>(this: *mut c_void) {
     // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
     // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::on_reader_done(this as *mut T) }
+    unsafe { T::on_reader_done(this.cast::<T>()) }
 }
 fn vt_on_reader_error<T: BufferedReaderParent>(this: *mut c_void, err: sys::Error) {
     // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
     // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::on_reader_error(this as *mut T, err) }
+    unsafe { T::on_reader_error(this.cast::<T>(), err) }
 }
 fn vt_event_loop<T: BufferedReaderParent>(this: *mut c_void) -> EventLoopHandle {
     // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
     // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::event_loop(this as *mut T) }
+    unsafe { T::event_loop(this.cast::<T>()) }
 }
 fn vt_loop<T: BufferedReaderParent>(this: *mut c_void) -> *mut Loop {
     // SAFETY: parent was set via set_parent with a *mut T; raw-ptr passthrough,
     // no `&mut T` materialized (reader field of T may have a live `&mut`).
-    unsafe { T::loop_(this as *mut T) }
+    unsafe { T::loop_(this.cast::<T>()) }
 }
 
 /// Per-`T` vtable instance in rodata, mirroring Zig's `comptime &Fn{...}`.
@@ -271,7 +271,7 @@ impl PosixBufferedReader {
         other._offset = 0;
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = self as *mut _ as *mut c_void;
+        let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(BUFFERED_READER_POLL_TAG, owner);
 
         // note: the caller is supposed to drain the buffer themselves
@@ -281,7 +281,7 @@ impl PosixBufferedReader {
     pub fn set_parent(&mut self, parent: *mut c_void) {
         self.vtable.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = self as *mut _ as *mut c_void;
+        let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(BUFFERED_READER_POLL_TAG, owner);
     }
 
@@ -326,7 +326,7 @@ impl PosixBufferedReader {
             debug_assert!(!self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING));
             self.flags.insert(PosixFlags::CLOSED_WITHOUT_REPORTING);
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-                let owner = self as *mut _ as *mut c_void;
+                let owner = std::ptr::from_mut(self).cast::<c_void>();
                 self.handle.close(Some(owner), None::<fn(*mut c_void)>);
             }
         }
@@ -417,7 +417,7 @@ impl PosixBufferedReader {
         }
 
         if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-            let owner = self as *mut _ as *mut c_void;
+            let owner = std::ptr::from_mut(self).cast::<c_void>();
             self.handle.close(
                 Some(owner),
                 // SAFETY: ctx == &mut PosixBufferedReader (this fn's `self`).
@@ -450,7 +450,7 @@ impl PosixBufferedReader {
         // so no raw-pointer escape is needed.
         let ev = self.vtable.event_loop();
         let lp = self.vtable.loop_();
-        let owner_ptr = self as *mut _ as *mut c_void;
+        let owner_ptr = std::ptr::from_mut(self).cast::<c_void>();
 
         if let PollOrFd::Fd(fd) = self.handle {
             if !self.flags.contains(PosixFlags::POLLABLE) {

@@ -48,7 +48,7 @@ fn estring_push(lhs: &mut E::EString, other: StoreRef<E::EString>) {
 fn clone_rope_nodes(s: &E::EString) -> E::EString {
     let mut root = s.shallow_clone();
     if root.next.is_some() {
-        let mut current: *mut E::EString = &mut root;
+        let mut current: *mut E::EString = &raw mut root;
         let last: *mut E::EString;
         loop {
             // SAFETY: `current` is either `&mut root` (first iter) or a freshly

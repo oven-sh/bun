@@ -318,7 +318,7 @@ impl FileSink {
         // which may drop the JS wrapper's ref. Hold a local ref so `this`
         // stays valid for the rest of this function (same pattern as `onWrite`).
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
+        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         self.done = true;
         let mut readable_stream = core::mem::take(&mut self.readable_stream);
@@ -358,7 +358,7 @@ impl FileSink {
 
     fn run_pending(&mut self) {
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
+        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         self.run_pending_later.has = false;
 
@@ -379,7 +379,7 @@ impl FileSink {
         // releases the keep-alive ref. Hold a local ref so `this` stays valid
         // for the rest of this function (same pattern as `runPending`/`onAutoFlush`).
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
+        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         self.written += amount;
 
@@ -394,7 +394,7 @@ impl FileSink {
             // PORT NOTE: inline `js_vm()` to avoid holding an immutable borrow of
             // `self` (via the returned `&VirtualMachine`) across the `&mut self`
             // needed by `register_deferred_microtask_with_type`.
-            let vm_ptr = self.event_loop_handle.bun_vm() as *mut bun_jsc::VirtualMachineRef;
+            let vm_ptr = self.event_loop_handle.bun_vm().cast::<bun_jsc::VirtualMachineRef>();
             if !vm_ptr.is_null() {
                 // SAFETY: `bun_vm()` non-null implies the per-thread VM; never aliased here.
                 let vm = unsafe { &*vm_ptr };
@@ -502,7 +502,7 @@ impl FileSink {
             self.must_be_kept_alive_until_eof = false;
             // SAFETY: `&mut self` carries write provenance over the whole
             // allocation; this is the last use of `self` in this fn.
-            unsafe { FileSink::deref(self as *mut Self) };
+            unsafe { FileSink::deref(std::ptr::from_mut::<Self>(self)) };
         }
     }
 
@@ -678,7 +678,7 @@ impl FileSink {
         // (`*const bun_jsc::EventLoopHandle`) to recover the loop pointer and
         // never write through it. The `as *mut` is an erasure cast, not a
         // mutability claim — the field itself is never mutated via this path.
-        bun_io::EventLoopHandle(&self.event_loop_handle as *const _ as *mut c_void)
+        bun_io::EventLoopHandle(&raw const self.event_loop_handle as *mut c_void)
     }
 
     /// `EventLoopHandle::global_object()` returns an erased `*mut ()`; recover
@@ -700,7 +700,7 @@ impl FileSink {
         if p.is_null() { return None; }
         // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
         // Js arm; non-null implies the per-thread VM, never aliased here.
-        Some(unsafe { &mut *(p as *mut bun_jsc::VirtualMachineRef) })
+        Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
     pub fn connect(&mut self, signal: streams::Signal) {
@@ -759,7 +759,7 @@ impl FileSink {
             // `*FlushPendingTask` is `task_tag::FlushPendingFileSinkTask`.
             let task = bun_event_loop::Task::new(
                 bun_event_loop::task_tag::FlushPendingFileSinkTask,
-                &mut self.run_pending_later as *mut FlushPendingTask as *mut (),
+                (&raw mut self.run_pending_later).cast::<()>(),
             );
             // SAFETY: `owner` is the erased live `*mut jsc::EventLoop`.
             unsafe { bun_event_loop::any_event_loop::js::enqueue_task(owner, task) };
@@ -774,7 +774,7 @@ impl FileSink {
         }
 
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
+        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         let amount_buffered = self.writer.outgoing.size();
 
@@ -845,7 +845,7 @@ impl FileSink {
         self.js_sink_ref.deinit();
         // SAFETY: `&mut self` carries write provenance over the whole
         // allocation; this is the last use of `self` in `finalize`.
-        unsafe { FileSink::deref(self as *mut Self) };
+        unsafe { FileSink::deref(std::ptr::from_mut::<Self>(self)) };
     }
 
     /// Protect the JS wrapper object from GC collection while an async operation is pending.
@@ -880,7 +880,7 @@ impl FileSink {
             // that already has a Bun VM; `get()` panics otherwise.
             event_loop_handle: EventLoopHandle::init(unsafe {
                 (*bun_jsc::VirtualMachineRef::get()).event_loop()
-            } as *mut ()),
+            }.cast::<()>()),
             ..FileSink::default_fields()
         };
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -1227,7 +1227,7 @@ impl FileSink {
                 }
                 self.pending.consumed += pending_written as u64; // @truncate
                 self.pending.result = streams::Writable::Owned(pending_written as u64);
-                streams::Writable::Pending(&mut self.pending as *mut _)
+                streams::Writable::Pending(&raw mut self.pending)
             }
         }
     }
@@ -1278,7 +1278,7 @@ impl FlushPendingTask {
         unsafe { (*flush_pending).has = false };
         // SAFETY: `flush_pending` is the `run_pending_later` field of a `FileSink`.
         let this: *mut FileSink = unsafe {
-            (flush_pending as *mut u8)
+            flush_pending.cast::<u8>()
                 .sub(offset_of!(FileSink, run_pending_later))
                 .cast::<FileSink>()
         };
@@ -1350,7 +1350,7 @@ impl FileSink {
         let signal = &mut self.signal;
         *signal = SinkSignal::init(JSValue::ZERO);
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { FileSinkRef::new_ref(self as *mut FileSink) };
+        let _guard = unsafe { FileSinkRef::new_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
@@ -1359,7 +1359,7 @@ impl FileSink {
         self.readable_stream = readable_stream::Strong::init(*stream, global_this);
         // PORT NOTE: reshaped for borrowck — re-borrow `signal` after assigning
         // `readable_stream`.
-        let signal_ptr: *mut *mut c_void = &mut self.signal.ptr as *mut _ as *mut *mut c_void;
+        let signal_ptr: *mut *mut c_void = (&raw mut self.signal.ptr).cast::<*mut c_void>();
         let promise_result =
             JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
 
@@ -1376,7 +1376,7 @@ impl FileSink {
                 // in C++, so the cast is layout-safe).
                 let js_promise: *mut bun_jsc::JSPromise = match promise {
                     bun_jsc::AnyPromise::Normal(p) => p,
-                    bun_jsc::AnyPromise::Internal(p) => p as *mut bun_jsc::JSPromise,
+                    bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
                 };
                 // SAFETY: `as_any_promise` returned non-null.
                 match unsafe { (*js_promise).status() } {
@@ -1389,7 +1389,7 @@ impl FileSink {
                         // shims at the bottom of this file.
                         promise_result.then(
                             global_this,
-                            self as *mut FileSink,
+                            std::ptr::from_mut::<FileSink>(self),
                             on_resolve_stream_shim,
                             on_reject_stream_shim,
                         );

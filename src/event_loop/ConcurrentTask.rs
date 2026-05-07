@@ -306,7 +306,7 @@ impl PackedNextPtr {
     pub fn atomic_load_ptr(&self, ordering: Ordering) -> Option<*mut ConcurrentTask> {
         // SAFETY: PackedNextPtr is #[repr(transparent)] over usize; casting &self to
         // *const AtomicUsize is layout-valid and matches Zig's @atomicLoad on @ptrCast(self).
-        let value = unsafe { (*(self as *const Self as *const AtomicUsize)).load(ordering) };
+        let value = unsafe { (*std::ptr::from_ref::<Self>(self).cast::<AtomicUsize>()).load(ordering) };
         let addr = value & !1usize;
         if addr == 0 {
             None
@@ -324,7 +324,7 @@ impl PackedNextPtr {
         // auto_delete is immutable after construction, so we can safely read it
         // with a relaxed load and preserve it in the new value.
         // SAFETY: PackedNextPtr is #[repr(transparent)] over usize; cast is layout-valid.
-        let self_ptr = unsafe { &*(self as *mut Self as *const AtomicUsize) };
+        let self_ptr = unsafe { &*(std::ptr::from_mut::<Self>(self) as *const AtomicUsize) };
         let auto_del_bit = self_ptr.load(Ordering::Relaxed) & 1;
         self_ptr.store(ptr_bits | auto_del_bit, ordering);
     }

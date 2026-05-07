@@ -118,7 +118,7 @@ impl PropertyRule {
         // the sub-`ParserInput` constructed below. `'static` is the crate-wide
         // erasure (PORTING.md §AST crates).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*(input.allocator() as *const bun_alloc::Arena) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.allocator()) };
 
         // `initial-value` is required unless the syntax is a universal definition.
         let initial_value = match syntax {
@@ -230,7 +230,7 @@ const _: () = {
         type AtRule = ();
 
         fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name as *const [u8])))
+            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<[u8]>(name))))
         }
 
         fn parse_block(

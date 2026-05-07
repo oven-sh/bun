@@ -421,7 +421,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             E::Arrow {
                 body: G::FnBody {
                     loc: logger::Loc::EMPTY,
-                    stmts: inner_slice as *mut [Stmt],
+                    stmts: std::ptr::from_mut::<[Stmt]>(inner_slice),
                 },
                 is_async,
                 ..Default::default()
@@ -448,7 +448,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
         // Update parts
         if !parts.is_empty() {
-            parts[0].stmts = final_slice as *mut [Stmt];
+            parts[0].stmts = std::ptr::from_mut::<[Stmt]>(final_slice);
             parts.truncate(1);
         }
 

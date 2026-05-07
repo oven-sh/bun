@@ -377,7 +377,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                             // path so `Blob::deinit` reclaims it.
                             match entry.value {
                                 std::borrow::Cow::Borrowed(s) => {
-                                    blob.content_type = s as *const [u8];
+                                    blob.content_type = std::ptr::from_ref::<[u8]>(s);
                                 }
                                 std::borrow::Cow::Owned(v) => {
                                     blob.content_type = Box::into_raw(v.into_boxed_slice());
@@ -441,7 +441,7 @@ pub fn construct_s3_file_with_s3_credentials(
                             // path so `Blob::deinit` reclaims it.
                             match entry.value {
                                 std::borrow::Cow::Borrowed(s) => {
-                                    blob.content_type = s as *const [u8];
+                                    blob.content_type = std::ptr::from_ref::<[u8]>(s);
                                 }
                                 std::borrow::Cow::Owned(v) => {
                                     blob.content_type = Box::into_raw(v.into_boxed_slice());
@@ -585,7 +585,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
-            global: global as *const JSGlobalObject,
+            global: std::ptr::from_ref::<JSGlobalObject>(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -612,7 +612,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
-            global: global as *const JSGlobalObject,
+            global: std::ptr::from_ref::<JSGlobalObject>(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
@@ -638,7 +638,7 @@ impl S3BlobStatTask {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
             store: blob.store.as_ref().unwrap().clone(),
-            global: global as *const JSGlobalObject,
+            global: std::ptr::from_ref::<JSGlobalObject>(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };

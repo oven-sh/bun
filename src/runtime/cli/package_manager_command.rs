@@ -117,7 +117,7 @@ impl PackageManagerCommand {
         // cannot alias. `load_from_bytes` reads `manager.options`/`manager.log`
         // only and never re-projects `manager.lockfile`.
         let load_lockfile = unsafe {
-            let lockfile: *mut Lockfile = &mut *(*pm_raw).lockfile;
+            let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             let log: *mut bun_logger::Log = (*pm_raw).log;
             (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
         };
@@ -645,7 +645,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // `manager.options`/`manager.log` only and never re-projects
             // `manager.lockfile`.
             let mut load_lockfile = unsafe {
-                let lockfile: *mut Lockfile = &mut *(*pm_raw).lockfile;
+                let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_logger::Log = (*pm_raw).log;
                 migration::detect_and_load_other_lockfile(
                     &mut *lockfile,
@@ -664,7 +664,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // `LoadResultOk.lockfile` already holds the only `&mut` into the
             // boxed lockfile. Project that field to a raw pointer (no second
             // Box-deref) so both arguments share one Stacked-Borrows lineage.
-            let lf: *mut Lockfile = &mut *load_lockfile.ok_mut().lockfile;
+            let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
             // SAFETY: `load_lockfile` is `Ok` (errors exited above). `lf` is a
             // reborrow of `ok.lockfile`; `save_to_disk` reads `load_result` only
             // for `save_format()` / `loaded_from_binary_lockfile()` (scalar

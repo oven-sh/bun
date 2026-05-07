@@ -43,9 +43,9 @@ impl AuthSwitchRequest {
         if let Some(zero) = strings::index_of_char(remaining_slice, 0) {
             let zero = zero as usize;
             // EOF String
-            self.plugin_name = Data::Temporary(&remaining_slice[0..zero] as *const [u8]);
+            self.plugin_name = Data::Temporary(&raw const remaining_slice[0..zero]);
             // End Of The Packet String
-            self.plugin_data = Data::Temporary(&remaining_slice[zero + 1..] as *const [u8]);
+            self.plugin_data = Data::Temporary(&raw const remaining_slice[zero + 1..]);
             return Ok(());
         }
         Err(bun_core::err!("InvalidAuthSwitchRequest"))

@@ -284,7 +284,7 @@ impl RuntimeTranspilerStore {
         // SAFETY: owned_text was just allocated via Box::into_raw and lives until
         // `reset_for_pool` reconstructs and drops the Box. The unbounded
         // lifetime from raw-ptr deref coerces to `'static` for `logger::fs::Path`.
-        let owned_path = logger::fs::Path::init(unsafe { &*(owned_text as *const [u8]) });
+        let owned_path = logger::fs::Path::init(unsafe { &*owned_text.cast_const() });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
@@ -307,7 +307,7 @@ impl RuntimeTranspilerStore {
             job.write(TranspilerJob {
                 non_threadsafe_input_specifier: input_specifier,
                 path: owned_path,
-                global_this: global_object as *const _ as *mut JSGlobalObject,
+                global_this: std::ptr::from_ref(global_object).cast_mut(),
                 non_threadsafe_referrer: referrer,
                 vm,
                 log: logger::Log::init(),
@@ -434,7 +434,7 @@ impl TranspilerJob {
             // `transpile()`; len matches, and this is the unique owner.
             drop(unsafe {
                 Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
-                    old_path.text.as_ptr() as *mut u8,
+                    old_path.text.as_ptr().cast_mut(),
                     old_path.text.len(),
                 ))
             });
@@ -460,7 +460,7 @@ impl TranspilerJob {
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
-        unsafe { (*transpiler_store).queue.push(self as *mut TranspilerJob) };
+        unsafe { (*transpiler_store).queue.push(std::ptr::from_mut::<TranspilerJob>(self)) };
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
         // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
         unsafe {
@@ -501,7 +501,7 @@ impl TranspilerJob {
         self.reset_for_pool();
 
         // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
-        unsafe { (*vm).transpiler_store.store.put(self as *mut TranspilerJob) };
+        unsafe { (*vm).transpiler_store.store.put(std::ptr::from_mut::<TranspilerJob>(self)) };
 
         AsyncModule::fulfill(
             global_this,
@@ -519,13 +519,13 @@ impl TranspilerJob {
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
-        WorkPool::schedule(&mut self.work_task);
+        WorkPool::schedule(&raw mut self.work_task);
     }
 
     pub unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: work_task points to TranspilerJob.work_task; recover parent via offset_of!
         let this = unsafe {
-            &mut *(work_task as *mut u8)
+            &mut *work_task.cast::<u8>()
                 .sub(offset_of!(TranspilerJob, work_task))
                 .cast::<TranspilerJob>()
         };
@@ -541,7 +541,7 @@ impl TranspilerJob {
         // `ManuallyDrop` copy never drops; every `parse_result`/`printer`
         // borrowing it is consumed before fn return). Erase the lifetime via
         // raw pointer round-trip — Stacked-Borrows-safe (Shared tag).
-        let allocator: &'static Arena = unsafe { &*(&arena as *const Arena) };
+        let allocator: &'static Arena = unsafe { &*(&raw const arena) };
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
@@ -635,10 +635,10 @@ impl TranspilerJob {
         // copy is never dropped (ManuallyDrop), so no borrow tied to the
         // shortened `'a` outlives `arena`.
         let transpiler: &mut Transpiler<'_> = unsafe {
-            &mut *((&mut *transpiler_storage) as *mut Transpiler<'static> as *mut Transpiler<'_>)
+            &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>()
         };
         transpiler.set_allocator(allocator);
-        transpiler.set_log(&mut log);
+        transpiler.set_log(&raw mut log);
         // PORT NOTE: reshaped for borrowck — Zig: transpiler.resolver.opts = transpiler.options
         // (BundleOptions value copy). The Rust resolver already shares opts with the parent
         // Transpiler via raw pointer; set_allocator/set_log keep them in sync.
@@ -800,7 +800,7 @@ impl TranspilerJob {
                 // SAFETY: `fallback_source` outlives `parse_options` (declared
                 // earlier in fn scope); raw-ptr borrow avoids tying
                 // `parse_options`'s `'static` source lifetime to this stack slot.
-                parse_options.virtual_source = Some(unsafe { &*(src as *const logger::Source) });
+                parse_options.virtual_source = Some(unsafe { &*std::ptr::from_ref::<logger::Source>(src) });
             }
         }
 
@@ -923,7 +923,7 @@ impl TranspilerJob {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache: if !bytecode_slice.is_empty() {
-                    bytecode_slice.as_ptr() as *mut u8
+                    bytecode_slice.as_ptr().cast_mut()
                 } else {
                     ptr::null_mut()
                 },
@@ -1017,18 +1017,18 @@ impl TranspilerJob {
         // closure returns; the raw pointer stays valid until `module_info` is
         // moved/touched again (after `print_with_source_map`).
         let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
-            module_info.as_deref_mut().map(|m| m as *mut _);
+            module_info.as_deref_mut().map(|m| std::ptr::from_mut(m));
 
         let print_result = {
             // SAFETY: see `vm` PORT NOTE above — `from_raw` stores `vm` as a raw
             // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
             let mut mapper = unsafe {
-                SourceMapHandlerGetter::from_raw(vm, &mut printer as *mut BufferPrinter)
+                SourceMapHandlerGetter::from_raw(vm, &raw mut printer)
             };
             let _writeback = scopeguard::guard(
                 (
-                    source_code_printer as *mut BufferPrinter,
+                    std::ptr::from_mut::<BufferPrinter>(source_code_printer),
                     ptr::addr_of_mut!(printer),
                 ),
                 |(dst, src)| {

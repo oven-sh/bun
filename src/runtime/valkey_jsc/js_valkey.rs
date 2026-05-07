@@ -131,7 +131,7 @@ impl SubscriptionCtx {
     fn parent(&mut self) -> &mut JSValkeyClient {
         // SAFETY: self points to JSValkeyClient._subscription_ctx (intrusive backref).
         unsafe {
-            &mut *((self as *mut Self as *mut u8)
+            &mut *(std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(offset_of!(JSValkeyClient, _subscription_ctx))
                 .cast::<JSValkeyClient>())
         }
@@ -240,7 +240,7 @@ impl SubscriptionCtx {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<()> {
-        let parent_ptr = self.parent() as *mut JSValkeyClient;
+        let parent_ptr = std::ptr::from_mut::<JSValkeyClient>(self.parent());
         let _guard = scopeguard::guard(parent_ptr, |p| unsafe {
             (*p).on_new_subscription_callback_insert();
         });
@@ -324,7 +324,7 @@ impl SubscriptionCtx {
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        let parent_ptr = self.parent() as *mut JSValkeyClient;
+        let parent_ptr = std::ptr::from_mut::<JSValkeyClient>(self.parent());
         let _update = scopeguard::guard(parent_ptr, |p| unsafe { (*p).update_poll_ref() });
 
         // If callbacks is an array, iterate and call each one
@@ -408,13 +408,13 @@ impl JSValkeyClient {
     #[inline]
     pub fn ref_(&self) {
         // SAFETY: `self` is live; intrusive count is interior-mutable.
-        unsafe { bun_ptr::RefCount::ref_(self as *const Self as *mut Self) };
+        unsafe { bun_ptr::RefCount::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
     #[inline]
     pub fn deref(&self) {
         // SAFETY: `self` is live; may free on last deref (caller must not
         // touch `self` afterwards — same contract as Zig).
-        unsafe { bun_ptr::RefCount::deref(self as *const Self as *mut Self) };
+        unsafe { bun_ptr::RefCount::deref(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
@@ -954,7 +954,7 @@ impl JSValkeyClient {
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client.flags.failed = false;
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         let _update = scopeguard::guard(self_ptr, |p| unsafe { (*p).update_poll_ref() });
 
         if self.client.flags.needs_to_open_socket {
@@ -1077,7 +1077,7 @@ impl JSValkeyClient {
         timer_ref.next = Timer::Timespec { sec: now.sec, nsec: now.nsec };
         // `vm.timer.insert(timer)` — `Timer::All` lives in `bun_runtime`;
         // dispatched through `RuntimeHooks` (see VirtualMachine::timer_insert).
-        let vm = self.client.vm as *const VirtualMachine as *mut VirtualMachine;
+        let vm = std::ptr::from_ref::<VirtualMachine>(self.client.vm).cast_mut();
         // SAFETY: `vm` is the live per-thread VM; `timer` is an unlinked
         // `EventLoopTimer` field of the boxed `JSValkeyClient` (stable address
         // until `remove_timer`/`stop_timers` unlinks it).
@@ -1091,7 +1091,7 @@ impl JSValkeyClient {
         let timer_ref = unsafe { &mut *timer };
         if timer_ref.state == Timer::State::ACTIVE {
             // Remove the timer from the event loop
-            let vm = self.client.vm as *const VirtualMachine as *mut VirtualMachine;
+            let vm = std::ptr::from_ref::<VirtualMachine>(self.client.vm).cast_mut();
             // SAFETY: `vm` is the live per-thread VM; `timer` is currently
             // linked into the heap (state == ACTIVE checked above).
             unsafe { VirtualMachine::timer_remove(vm, timer) };
@@ -1107,20 +1107,20 @@ impl JSValkeyClient {
 
         // First remove existing timer if active
         if self.timer.state == Timer::State::ACTIVE {
-            let t = &mut self.timer as *mut _;
+            let t = &raw mut self.timer;
             self.remove_timer(t);
         }
 
         // Add new timer if interval is non-zero
         if interval > 0 {
-            let t = &mut self.timer as *mut _;
+            let t = &raw mut self.timer;
             self.add_timer(t, interval);
         }
     }
 
     pub fn disable_connection_timeout(&mut self) {
         if self.timer.state == Timer::State::ACTIVE {
-            let t = &mut self.timer as *mut _;
+            let t = &raw mut self.timer;
             self.remove_timer(t);
         }
         self.timer.state = Timer::State::CANCELLED;
@@ -1237,7 +1237,7 @@ impl JSValkeyClient {
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.is_strong());
 
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         let _defer = scopeguard::guard(self_ptr, |p| unsafe {
             (*p).client.on_writable();
             // update again after running the callback
@@ -1364,13 +1364,13 @@ impl JSValkeyClient {
     pub fn on_valkey_reconnect(&mut self) {
         // Schedule reconnection using our safe timer methods
         if self.reconnect_timer.state == Timer::State::ACTIVE {
-            let t = &mut self.reconnect_timer as *mut _;
+            let t = &raw mut self.reconnect_timer;
             self.remove_timer(t);
         }
 
         let delay_ms = self.client.get_reconnect_delay();
         if delay_ms > 0 {
-            let t = &mut self.reconnect_timer as *mut _;
+            let t = &raw mut self.reconnect_timer;
             self.add_timer(t, delay_ms);
         }
     }
@@ -1379,7 +1379,7 @@ impl JSValkeyClient {
     pub fn on_valkey_close(&mut self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
 
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         let _defer = scopeguard::guard(self_ptr, |p| unsafe {
             // Update poll reference to allow garbage collection of disconnected clients
             (*p).update_poll_ref();
@@ -1479,7 +1479,7 @@ impl JSValkeyClient {
             }
         }
         let holder = Box::into_raw(Box::new(Holder {
-            ctx: self as *mut JSValkeyClient,
+            ctx: std::ptr::from_mut::<JSValkeyClient>(self),
             task: jsc::AnyTask::AnyTask::default(), // overwritten below
         }));
         // SAFETY: holder just allocated; closure captures nothing so it coerces
@@ -1496,7 +1496,7 @@ impl JSValkeyClient {
 
         // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
         unsafe {
-            (*self.vm().event_loop()).enqueue_task(jsc::Task::init(&mut (*holder).task));
+            (*self.vm().event_loop()).enqueue_task(jsc::Task::init(&raw mut (*holder).task));
         }
     }
 
@@ -1520,11 +1520,11 @@ impl JSValkeyClient {
     pub fn stop_timers(&mut self) {
         // Use safe timer removal methods to ensure proper reference counting
         if self.timer.state == Timer::State::ACTIVE {
-            let t = &mut self.timer as *mut _;
+            let t = &raw mut self.timer;
             self.remove_timer(t);
         }
         if self.reconnect_timer.state == Timer::State::ACTIVE {
-            let t = &mut self.reconnect_timer as *mut _;
+            let t = &raw mut self.reconnect_timer;
             self.remove_timer(t);
         }
     }
@@ -1542,11 +1542,11 @@ impl JSValkeyClient {
         // on the JS thread, and `valkey_group` only touches the embedded
         // `SocketGroup` field + `vm.uws_loop()` (disjoint from anything we
         // hold). Same pattern as `Bun__RareData__postgresGroup`.
-        let vm_ptr = self.client.vm as *const VirtualMachine as *mut VirtualMachine;
+        let vm_ptr = std::ptr::from_ref::<VirtualMachine>(self.client.vm).cast_mut();
         // SAFETY: per-thread VM, accessed from the JS thread; `rare_data()`
         // lazy-inits the box.
         let group: *mut uws::SocketGroup = unsafe {
-            let rare = (*vm_ptr).rare_data() as *mut jsc::rare_data::RareData;
+            let rare = std::ptr::from_mut::<jsc::rare_data::RareData>((*vm_ptr).rare_data());
             if is_tls {
                 (*rare).valkey_group::<true>(&*vm_ptr)
             } else {
@@ -1597,7 +1597,7 @@ impl JSValkeyClient {
         self.ref_();
         // Balance the ref above if connect() throws — the caller (e.g. send())
         // only knows to clean up its own state, not the keep-alive ref.
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         let errdefer_deref = scopeguard::guard(self_ptr, |p| unsafe { (*p).deref() });
         self.client.status = valkey::Status::Connecting;
         self.update_poll_ref();
@@ -1609,7 +1609,7 @@ impl JSValkeyClient {
         // and `connect` needs `*mut ValkeyClient` as the socket user-data. Go
         // through a raw pointer; `Address::connect` only reads host/path bytes
         // and forwards `client_ptr` opaquely (no overlapping write).
-        let client_ptr: *mut valkey::ValkeyClient = &mut self.client;
+        let client_ptr: *mut valkey::ValkeyClient = &raw mut self.client;
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
         // BoringSSL `SSL_CTX*` (or None) forwarded opaquely to usockets.
@@ -1656,7 +1656,7 @@ impl JSValkeyClient {
             self.reset_connection_timeout();
         }
 
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         let _update = scopeguard::guard(self_ptr, |p| unsafe { (*p).update_poll_ref() });
         self.client.send(global_this, command)
     }
@@ -1697,7 +1697,7 @@ impl JSValkeyClient {
 
         // bun.destroy(this) → reclaim the Box allocated in `new()`.
         // SAFETY: `this` was created via Box::into_raw in `new()`.
-        drop(unsafe { Box::from_raw(this as *mut JSValkeyClient) });
+        drop(unsafe { Box::from_raw(std::ptr::from_mut::<JSValkeyClient>(this)) });
     }
 
     /// Keep the event loop alive, or don't keep it alive
@@ -1841,7 +1841,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         );
         let handshake_success = success == 1;
         this.ref_();
-        let this_ptr = this as *mut JSValkeyClient;
+        let this_ptr = std::ptr::from_mut::<JSValkeyClient>(this);
         let _d = deref_guard(this_ptr);
         let _update = scopeguard::guard(this_ptr, |p| unsafe { (*p).update_poll_ref() });
         let vm = this.client.vm;
@@ -1869,7 +1869,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
                 {
                     // SAFETY: NUL-terminated
-                    unsafe { core::ffi::CStr::from_ptr(servername as *const _ as *const _) }
+                    unsafe { core::ffi::CStr::from_ptr(std::ptr::from_ref(servername).cast()) }
                         .to_bytes()
                 } else {
                     match &this.client.address {
@@ -1951,7 +1951,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         unsafe { (*loop_).enter() };
         let _exit = scopeguard::guard(loop_, |el| unsafe { (*el).exit() });
         this.client.flags.is_manually_closed = true;
-        let this_ptr = this as *mut JSValkeyClient;
+        let this_ptr = std::ptr::from_mut::<JSValkeyClient>(this);
         let _close = scopeguard::guard(this_ptr, |p| unsafe { (*p).client.close() });
         narrow_terminated(this.client.fail_with_js_value(&this.global_object, err_value))
     }
@@ -1978,7 +1978,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.ref_();
         // Ensure the socket pointer is updated.
         this.client.socket = Socket::SocketTcp(uws::SocketTCP::detached());
-        let this_ptr = this as *mut JSValkeyClient;
+        let this_ptr = std::ptr::from_mut::<JSValkeyClient>(this);
         let _defer = scopeguard::guard(this_ptr, |p| unsafe {
             (*p).client.status = valkey::Status::Disconnected;
             (*p).update_poll_ref();
@@ -2005,7 +2005,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Ensure the socket pointer is updated.
         this.client.socket = Socket::SocketTcp(uws::SocketTCP::detached());
         this.ref_();
-        let this_ptr = this as *mut JSValkeyClient;
+        let this_ptr = std::ptr::from_mut::<JSValkeyClient>(this);
         let _defer = scopeguard::guard(this_ptr, |p| unsafe {
             (*p).client.status = valkey::Status::Disconnected;
             (*p).update_poll_ref();

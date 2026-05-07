@@ -54,7 +54,7 @@ impl MarkedArgumentBuffer {
         // pointee types (both params are thin pointers).
         unsafe {
             MarkedArgumentBuffer__run(
-                (ctx as *mut T).cast::<c_void>(),
+                std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
                 core::mem::transmute::<
                     extern "C" fn(*mut T, *mut MarkedArgumentBuffer),
                     extern "C" fn(*mut c_void, *mut c_void),

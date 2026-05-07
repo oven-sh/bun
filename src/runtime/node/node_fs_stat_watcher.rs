@@ -94,16 +94,14 @@ unsafe impl bun_threading::unbounded_queue::Node for StatWatcher {
     #[inline]
     unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
         unsafe {
-            (*(core::ptr::addr_of!((*item).next)
-                as *const core::sync::atomic::AtomicPtr<Self>))
+            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
                 .load(ordering)
         }
     }
     #[inline]
     unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
         unsafe {
-            (*(core::ptr::addr_of!((*item).next)
-                as *const core::sync::atomic::AtomicPtr<Self>))
+            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
                 .store(ptr, ordering)
         }
     }
@@ -325,13 +323,13 @@ impl StatWatcherScheduler {
             return;
         }
 
-        WorkPool::schedule(&mut self.task);
+        WorkPool::schedule(&raw mut self.task);
     }
 
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: `task` points to `StatWatcherScheduler.task`; recover parent via offset_of.
         let this: *mut StatWatcherScheduler = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(core::mem::offset_of!(StatWatcherScheduler, task))
                 .cast::<StatWatcherScheduler>()
         };
@@ -574,7 +572,7 @@ impl StatWatcher {
         if unsafe { (*this_ref.ctx).test_isolation_enabled } {
             // SAFETY: `ctx` is live; called on the JS thread.
             unsafe { (*this_ref.ctx).rare_data() }
-                .remove_stat_watcher_for_isolation(this as *mut c_void);
+                .remove_stat_watcher_for_isolation(this.cast::<c_void>());
         }
         this_ref.persistent = false;
         if cfg!(debug_assertions) {
@@ -865,7 +863,7 @@ impl StatWatcher {
         if unsafe { (*vm).test_isolation_enabled } {
             // SAFETY: `vm` is live; JS thread.
             unsafe { (*vm).rare_data() }.add_stat_watcher_for_isolation(
-                this_ptr as *mut c_void,
+                this_ptr.cast::<c_void>(),
                 // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
                 // (ptr, close-fn) so it can fire close without naming StatWatcher.
                 |p| unsafe { (*p.cast::<StatWatcher>()).close() },
@@ -1007,7 +1005,7 @@ impl InitialStatTask {
         // (see `addr_of_mut!` in `create_and_schedule`), required for both the
         // `.sub(offset_of!)` and the subsequent `Box::from_raw`.
         let initial_stat_task: *mut InitialStatTask = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(core::mem::offset_of!(InitialStatTask, task))
                 .cast::<InitialStatTask>()
         };

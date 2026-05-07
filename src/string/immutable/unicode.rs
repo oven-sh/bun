@@ -607,7 +607,7 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
         unsafe { list.set_len(cur_len + count) };
         // SAFETY: we need a *[4]u8 view starting at cur_len; capacity guarantees ≥4 bytes available.
         let four: &mut [u8; 4] = unsafe {
-            &mut *(list.as_mut_ptr().add(cur_len) as *mut [u8; 4])
+            &mut *list.as_mut_ptr().add(cur_len).cast::<[u8; 4]>()
         };
         let _ = encode_wtf8_rune_t::<u32>(four, replacement.code_point);
     }
@@ -1145,8 +1145,8 @@ pub(super) fn eql_utf16(self_: &[u8], other: &[u16]) -> bool {
     // SAFETY: comparing raw bytes; `other` has `self_.len()` u16s == `self_.len()*2` bytes.
     unsafe {
         libc::memcmp(
-            self_.as_ptr() as *const core::ffi::c_void,
-            other.as_ptr() as *const core::ffi::c_void,
+            self_.as_ptr().cast::<core::ffi::c_void>(),
+            other.as_ptr().cast::<core::ffi::c_void>(),
             self_.len() * core::mem::size_of::<u16>(),
         ) == 0
     }
@@ -1315,7 +1315,7 @@ impl BOM {
                 // SAFETY: trimmed bytes are pairs of u8 forming u16 LE; alignment may be 1 — Zig used @alignCast.
                 let trimmed_bytes_u16: &[u16] = unsafe {
                     core::slice::from_raw_parts(
-                        trimmed_bytes.as_ptr() as *const u16,
+                        trimmed_bytes.as_ptr().cast::<u16>(),
                         trimmed_bytes.len() / 2,
                     )
                 };
@@ -1355,7 +1355,7 @@ impl BOM {
                 // SAFETY: see remove_and_convert_to_utf8_and_free.
                 let trimmed_bytes_u16: &[u16] = unsafe {
                     core::slice::from_raw_parts(
-                        trimmed_bytes.as_ptr() as *const u16,
+                        trimmed_bytes.as_ptr().cast::<u16>(),
                         trimmed_bytes.len() / 2,
                     )
                 };
@@ -2202,7 +2202,7 @@ pub fn element_length_utf8_into_utf16(utf8: &[u8]) -> usize {
         // TODO(port): dead non-simdutf path passes wrong slice type in Zig source
         // SAFETY: dead path (use_simdutf always true); preserved verbatim from Zig which passes wrong slice type
         let replacement = utf16_codepoint(unsafe {
-            core::slice::from_raw_parts(utf8_remaining.as_ptr() as *const u16, utf8_remaining.len() / 2)
+            core::slice::from_raw_parts(utf8_remaining.as_ptr().cast::<u16>(), utf8_remaining.len() / 2)
         });
 
         count += replacement.len as usize;

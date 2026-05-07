@@ -44,7 +44,7 @@ impl LinkerContext<'_> {
         // SAFETY: `self` points to `BundleV2.linker` (caller is the worker-pool
         // dispatch from `scanImportsAndExports`); `@fieldParentPtr` shape.
         let bundle_v2 = unsafe {
-            &mut *((self as *mut LinkerContext as *mut u8)
+            &mut *(std::ptr::from_mut::<LinkerContext>(self).cast::<u8>()
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>())
         };
@@ -63,7 +63,7 @@ impl LinkerContext<'_> {
         // pointers (`*mut`/`*const`) so the multiple SoA columns can be live
         // simultaneously without aliasing &mut.
         let resolved_exports: *mut ResolvedExports =
-            &mut self.graph.meta.items_resolved_exports_mut()[id as usize];
+            &raw mut self.graph.meta.items_resolved_exports_mut()[id as usize];
         let imports_to_bind: *const [RefImportData] = self.graph.meta.items_imports_to_bind();
         let probably_typescript_type: *const [ArrayHashMap<Ref, ()>] =
             self.graph.meta.items_probably_typescript_type();
@@ -165,7 +165,7 @@ impl LinkerContext<'_> {
         // raw-ptr indexing per-iteration.
         let parts_slice: *mut [Part] = self.graph.ast.items_parts_mut()[id as usize].slice_mut();
         let named_imports: *mut bun_js_parser::ast::bundled_ast::NamedImports =
-            &mut self.graph.ast.items_named_imports_mut()[id as usize];
+            &raw mut self.graph.ast.items_named_imports_mut()[id as usize];
 
         // SAFETY: SoA column pointers stay valid for the worker step.
         let our_imports_to_bind: &RefImportData = unsafe { &(*imports_to_bind)[id as usize] };
@@ -355,7 +355,7 @@ impl LinkerContext<'_> {
                 cell.write($value);
                 stmts_head += 1;
                 // SAFETY: just initialized.
-                unsafe { core::slice::from_raw_parts_mut(cell.as_mut_ptr(), 1) as *mut [Stmt] }
+                core::ptr::slice_from_raw_parts_mut(cell.as_mut_ptr(), 1)
             }};
         }
         let loc = Loc::EMPTY;
@@ -420,7 +420,7 @@ impl LinkerContext<'_> {
                     // SAFETY: `alias` borrows the worker arena which outlives the
                     // link pass; `E::String::data: &'static [u8]` is the arena
                     // erasure used throughout the AST.
-                    E::String::init(unsafe { &*(alias as *const [u8]) }),
+                    E::String::init(unsafe { &*std::ptr::from_ref::<[u8]>(alias) }),
                     loc,
                 )),
                 value: Some(Expr::allocate(
@@ -598,13 +598,13 @@ impl LinkerContext<'_> {
                     // of `stmts_slab` is fully initialized above; the worker
                     // arena outlives the link pass.
                     unsafe {
-                        core::slice::from_raw_parts_mut(
+                        std::ptr::from_mut::<[Stmt]>(core::slice::from_raw_parts_mut(
                             (*stmts_slab)[all_export_stmts_base].as_mut_ptr(),
                             all_export_stmts_len,
-                        ) as *mut [Stmt]
+                        ))
                     }
                 } else {
-                    &mut [] as *mut [Stmt]
+                    std::ptr::from_mut::<[Stmt]>(&mut [])
                 },
                 symbol_uses: ns_export_symbol_uses,
                 dependencies: ns_export_dependencies,

@@ -28,7 +28,7 @@ impl URLSearchParams {
         // SAFETY: `as_ptr()` yields a `*mut` with valid write provenance via the
         // `UnsafeCell` interior of `JSGlobalObject` (C++ may mutate VM/heap state);
         // `init` outlives the synchronous FFI call.
-        unsafe { URLSearchParams__create(global_object.as_ptr(), &init) }
+        unsafe { URLSearchParams__create(global_object.as_ptr(), &raw const init) }
     }
 
     // TODO(port): lifetime — opaque handle is owned by the JS GC heap, not by `value`.
@@ -49,7 +49,7 @@ impl URLSearchParams {
         unsafe extern "C" fn cb<Ctx>(c: *mut c_void, str: *const ZigString) {
             // SAFETY: `c` is the &mut Wrap<Ctx> we passed below; `str` is a valid
             // *const ZigString for the duration of this callback (borrowed from C++).
-            let w = unsafe { &mut *(c as *mut Wrap<'_, Ctx>) };
+            let w = unsafe { &mut *c.cast::<Wrap<'_, Ctx>>() };
             let str = unsafe { *str };
             (w.callback)(w.ctx, str);
         }
@@ -58,7 +58,7 @@ impl URLSearchParams {
         // SAFETY: self is a valid *mut URLSearchParams; w lives for the duration of the call
         // (URLSearchParams__toString invokes the callback synchronously, does not retain it).
         unsafe {
-            URLSearchParams__toString(self, &mut w as *mut Wrap<'_, Ctx> as *mut c_void, cb::<Ctx>);
+            URLSearchParams__toString(self, (&raw mut w).cast::<c_void>(), cb::<Ctx>);
         }
     }
 }

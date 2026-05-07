@@ -172,7 +172,7 @@ pub fn view(
         url,
         headers.entries,
         header_buf,
-        &mut response_buf,
+        &raw mut response_buf,
         b"",
         http_proxy,
         None,
@@ -202,7 +202,7 @@ pub fn view(
         }
     };
     if log.errors > 0 {
-        log.print(Output::error_writer() as *mut _)?;
+        log.print(std::ptr::from_mut(Output::error_writer()))?;
         Global::crash();
     }
 

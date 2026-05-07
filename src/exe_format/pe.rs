@@ -213,7 +213,7 @@ fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
         return Err(Error::OutOfBounds);
     }
     // SAFETY: bounds-checked above; pointer remains within `buf`
-    Ok(unsafe { buf.as_ptr().add(off) as *const T })
+    Ok(unsafe { buf.as_ptr().add(off).cast::<T>() })
 }
 
 fn view_at_mut<T>(buf: &mut [u8], off: usize) -> Result<*mut T, Error> {
@@ -221,7 +221,7 @@ fn view_at_mut<T>(buf: &mut [u8], off: usize) -> Result<*mut T, Error> {
         return Err(Error::OutOfBounds);
     }
     // SAFETY: bounds-checked above; pointer remains within `buf`
-    Ok(unsafe { buf.as_mut_ptr().add(off) as *mut T })
+    Ok(unsafe { buf.as_mut_ptr().add(off).cast::<T>() })
 }
 
 fn is_pow2(x: u32) -> bool {
@@ -290,7 +290,7 @@ impl PEFile {
         }
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
         // TODO(port): potentially unaligned — Zig used []align(1) const SectionHeader
-        let ptr = unsafe { self.data.as_ptr().add(start) as *const SectionHeader };
+        let ptr = unsafe { self.data.as_ptr().add(start).cast::<SectionHeader>() };
         Ok(unsafe { slice::from_raw_parts(ptr, self.num_sections as usize) })
     }
 
@@ -302,7 +302,7 @@ impl PEFile {
         }
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
         // TODO(port): potentially unaligned — Zig used []align(1) SectionHeader
-        let ptr = unsafe { self.data.as_mut_ptr().add(start) as *mut SectionHeader };
+        let ptr = unsafe { self.data.as_mut_ptr().add(start).cast::<SectionHeader>() };
         Ok(unsafe { slice::from_raw_parts_mut(ptr, self.num_sections as usize) })
     }
 
@@ -393,7 +393,7 @@ impl PEFile {
         if num_sections > 0 {
             // SAFETY: bounds-checked above
             let sections_ptr =
-                unsafe { data.as_ptr().add(section_headers_offset) as *const SectionHeader };
+                unsafe { data.as_ptr().add(section_headers_offset).cast::<SectionHeader>() };
             let sections = unsafe { slice::from_raw_parts(sections_ptr, num_sections as usize) };
 
             for section in sections {
@@ -673,7 +673,7 @@ impl PEFile {
         // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD
         let sh_bytes = unsafe {
             slice::from_raw_parts(
-                &sh as *const SectionHeader as *const u8,
+                (&raw const sh).cast::<u8>(),
                 size_of::<SectionHeader>(),
             )
         };
@@ -895,7 +895,7 @@ pub mod utils {
 
         // SAFETY: bounds-checked above; DOSHeader is #[repr(C)] POD at offset 0
         // TODO(port): potentially unaligned — Zig used *align(1) const DOSHeader
-        let dos = unsafe { &*(data.as_ptr() as *const DOSHeader) };
+        let dos = unsafe { &*data.as_ptr().cast::<DOSHeader>() };
         if dos.e_magic != DOS_SIGNATURE {
             return false;
         }
@@ -907,7 +907,7 @@ pub mod utils {
 
         // SAFETY: bounds-checked above; PEHeader is #[repr(C)] POD
         // TODO(port): potentially unaligned — Zig used *align(1) const PEHeader
-        let pe = unsafe { &*(data.as_ptr().add(off) as *const PEHeader) };
+        let pe = unsafe { &*data.as_ptr().add(off).cast::<PEHeader>() };
         pe.signature == PE_SIGNATURE
     }
 }

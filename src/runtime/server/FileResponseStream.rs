@@ -134,7 +134,7 @@ impl FileResponseStream {
                 // SAFETY: uWS hands back the userdata pointer set below.
                 unsafe { (*p).on_aborted(r) }
             },
-            this as *mut FileResponseStream,
+            std::ptr::from_mut::<FileResponseStream>(this),
         );
 
         bun_output::scoped_log!(
@@ -167,7 +167,7 @@ impl FileResponseStream {
         if opts.file_type == FileType::Socket {
             this.reader.flags.insert(ReaderFlags::SOCKET);
         }
-        let this_parent = this as *mut FileResponseStream as *mut c_void;
+        let this_parent = std::ptr::from_mut::<FileResponseStream>(this).cast::<c_void>();
         this.reader.set_parent(this_parent);
 
         // SAFETY: `this` reborrows the live Box::into_raw allocation above.
@@ -227,13 +227,13 @@ impl FileResponseStream {
                     // event_loop/AnyTask.rs) since Rust cannot take a fn value as
                     // a const generic.
                     self.eof_task = Some(AnyTask::AnyTask {
-                        ctx: NonNull::new(this as *mut c_void),
+                        ctx: NonNull::new(this.cast::<c_void>()),
                         callback: |ctx| {
                             // SAFETY: `ctx` is the `*mut FileResponseStream`
                             // stored just above; the eof_task lives inside `*ctx`
                             // and the ref taken for the in-flight read keeps the
                             // allocation alive until `on_reader_done` releases it.
-                            unsafe { (*(ctx as *mut FileResponseStream)).on_reader_done() };
+                            unsafe { (*ctx.cast::<FileResponseStream>()).on_reader_done() };
                             Ok(())
                         },
                     });
@@ -243,7 +243,7 @@ impl FileResponseStream {
                     // (refcount held until `on_reader_done`).
                     unsafe {
                         (*(*self.vm).event_loop()).enqueue_task(Task::init(
-                            self.eof_task.as_mut().unwrap() as *mut AnyTask::AnyTask,
+                            std::ptr::from_mut::<AnyTask::AnyTask>(self.eof_task.as_mut().unwrap()),
                         ));
                     }
                     break 'brk (c, ReadState::Eof);
@@ -273,7 +273,7 @@ impl FileResponseStream {
                         // SAFETY: uWS hands back the userdata pointer set below.
                         unsafe { (*p).on_writable(off, r) }
                     },
-                    self as *mut FileResponseStream,
+                    std::ptr::from_mut::<FileResponseStream>(self),
                 );
                 #[cfg(not(unix))]
                 self.reader.pause();
@@ -338,7 +338,7 @@ impl FileResponseStream {
                 sys::linux::sendfile(
                     self.sendfile.socket_fd.native(),
                     self.fd.native(),
-                    &mut off,
+                    &raw mut off,
                     adjusted as usize,
                 )
             };
@@ -423,7 +423,7 @@ impl FileResponseStream {
                     // SAFETY: uWS hands back the userdata pointer set below.
                     unsafe { (*p).on_writable(off, r) }
                 },
-                self as *mut FileResponseStream,
+                std::ptr::from_mut::<FileResponseStream>(self),
             );
         }
         self.resp.mark_needs_more();
@@ -508,7 +508,7 @@ impl FileResponseStream {
     pub fn event_loop(&self) -> EventLoopHandle {
         // SAFETY: `vm` is `&'static VirtualMachine` (LIFETIMES.tsv); event_loop()
         // returns its live `*mut jsc::EventLoop`.
-        EventLoopHandle::init(unsafe { (*self.vm).event_loop() } as *mut ())
+        EventLoopHandle::init(unsafe { (*self.vm).event_loop() }.cast::<()>())
     }
 
     pub fn r#loop(&self) -> *mut bun_aio::Loop {
@@ -615,7 +615,7 @@ impl bun_io::BufferedReaderParent for FileResponseStream {
         // `&'static VirtualMachine` (LIFETIMES.tsv) and disjoint from `reader`.
         let vm = unsafe { *core::ptr::addr_of!((*this).vm) };
         // SAFETY: `vm` is &'static; event_loop() returns its live JS loop.
-        bun_io::EventLoopHandle(unsafe { (*vm).event_loop() } as *mut c_void)
+        bun_io::EventLoopHandle(unsafe { (*vm).event_loop() }.cast::<c_void>())
     }
 }
 

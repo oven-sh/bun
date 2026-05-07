@@ -262,7 +262,7 @@ unsafe fn init_runtime_state(
         // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
         // and hence `vm.transpiler` — is done).
         let allocator: &'static bun_alloc::Arena =
-            unsafe { &*(&*(*state).transpiler_arena as *const bun_alloc::Arena) };
+            unsafe { &*(&raw const *(*state).transpiler_arena) };
         // TODO(b2): `env_loader_` — spec VirtualMachine.zig:1244 passes
         // `opts.env_loader` so a worker VM inherits its parent's
         // `DotEnv.Loader` (set at VirtualMachine.zig:1415/1513). The minimal
@@ -438,7 +438,7 @@ unsafe fn load_preloads_inner(
         // SAFETY: `i < n`; the `Box<[u8]>` allocation is stable across the
         // `resolve_and_auto_install` call below (which only touches
         // `vm.transpiler.resolver`, not `vm.preload`).
-        let preload: *const [u8] = unsafe { &*(&(*vm).preload)[i] };
+        let preload: *const [u8] = unsafe { &raw const *(&(*vm).preload)[i] };
         // Spec VirtualMachine.zig:1865 — `normalizeSource`: strip "file://".
         // SAFETY: `preload` points at a live boxed slice for this iteration.
         let normalized: &[u8] = {
@@ -990,7 +990,7 @@ unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -
     // VM's lifetime (BACKREF contract on `HiveRef::allocator`).
     let value = unsafe { core::ptr::read(body.cast::<Value>()) };
     let allocator: *mut crate::webcore::body::HiveAllocator =
-        unsafe { &mut *(*state).body_value_hive_allocator };
+        unsafe { &raw mut *(*state).body_value_hive_allocator };
     // Spec returns `!*HiveRef` with the only `try` site being the pool
     // allocation; `bun.handleOom`-style crash matches Zig.
     bun_core::handle_oom(unsafe { HiveRef::init(value, allocator) }).cast::<c_void>()
@@ -1088,7 +1088,7 @@ unsafe fn bake_per_thread_source_map(
     // stored opaquely; only this crate knows its layout.
     let pt = unsafe { &*pt.cast::<crate::bake::production::PerThread>() };
     let idx = pt.source_maps.get(source_filename)?;
-    Some(pt.bundled_outputs[idx.0 as usize].value.as_slice() as *const [u8])
+    Some(std::ptr::from_ref::<[u8]>(pt.bundled_outputs[idx.0 as usize].value.as_slice()))
 }
 
 /// `node_cluster_binding.handleInternalMessageChild(global, data)` — Spec
@@ -1154,17 +1154,17 @@ mod vm_loader_vtable {
     }
     unsafe fn loaders(p: *const ()) -> *const StringArrayHashMap<Loader> {
         // SAFETY: see `origin_host`.
-        unsafe { &(*vm(p)).transpiler.options.loaders }
+        unsafe { &raw const (*vm(p)).transpiler.options.loaders }
     }
     unsafe fn eval_source(p: *const ()) -> Option<*const bun_logger::Source> {
         // SAFETY: see `origin_host`.
         unsafe { (*vm(p)).module_loader.eval_source.as_deref() }
-            .map(|s| s as *const bun_logger::Source)
+            .map(|s| std::ptr::from_ref::<bun_logger::Source>(s))
     }
     unsafe fn main(p: *const ()) -> &'static [u8] {
         // SAFETY: see `origin_host`. `main()` borrows VM-lifetime storage; the
         // hook contract erases that to `'static` (caller is the same VM).
-        unsafe { &*((*vm(p)).main() as *const [u8]) }
+        unsafe { &*std::ptr::from_ref::<[u8]>((*vm(p)).main()) }
     }
     unsafe fn read_dir_info_package_json(p: *const (), dir: &[u8]) -> Option<*const PackageJSON> {
         // SAFETY: `p` is the live per-thread VM; `read_dir_info` is re-entrant
@@ -1177,7 +1177,7 @@ mod vm_loader_vtable {
                 dir_info
                     .package_json()
                     .or(dir_info.enclosing_package_json)
-                    .map(|pj| pj as *const PackageJSON)
+                    .map(|pj| std::ptr::from_ref::<PackageJSON>(pj))
             }
             _ => None,
         }
@@ -1290,8 +1290,7 @@ unsafe fn apply_standalone_runtime_flags(
     // shared-ref provenance carries no write permission); the body only reads
     // `graph.runtime_flags`.
     let graph = unsafe {
-        &*(graph as *const dyn bun_resolver::StandaloneModuleGraph
-            as *const bun_standalone_graph::Graph)
+        &*std::ptr::from_ref::<dyn bun_resolver::StandaloneModuleGraph>(graph).cast::<bun_standalone_graph::Graph>()
     };
     // SAFETY: per fn contract.
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
@@ -2015,8 +2014,8 @@ fn transpile_source_code_inner(
             // these raw pointers — taking a fresh `&mut` to either local would
             // invalidate the guard's tag under Stacked Borrows, making the
             // deferred `.close()` (which the parse path always reaches) UB.
-            let should_close_ptr: *mut bool = &mut should_close_input_file_fd;
-            let input_file_fd_ptr: *mut bun_sys::Fd = &mut input_file_fd;
+            let should_close_ptr: *mut bool = &raw mut should_close_input_file_fd;
+            let input_file_fd_ptr: *mut bun_sys::Fd = &raw mut input_file_fd;
             // PORT NOTE: `scopeguard::defer!` would capture the two `*mut`
             // locals by-ref in its non-`move` closure, which borrowck then
             // treats as conflicting with the later `&mut *ptr` reborrows below
@@ -2673,8 +2672,7 @@ fn transpile_source_code_inner(
                         // backref into the resolver's package.json cache.
                         let module_type_ = package_json
                             .map(|pj| unsafe {
-                                (*(pj as *const bun_watcher::PackageJSON
-                                    as *const bun_resolver::package_json::PackageJSON))
+                                (*std::ptr::from_ref::<bun_watcher::PackageJSON>(pj).cast::<bun_resolver::package_json::PackageJSON>())
                                     .module_type
                             })
                             .unwrap_or(module_type);
@@ -2872,7 +2870,7 @@ fn transpile_source_code_inner(
                 // set when `is_watcher_enabled()`; cast recovers the concrete
                 // type.
                 let watcher =
-                    unsafe { &mut *((*jsc_vm).bun_watcher as *mut bun_jsc::ImportWatcher) };
+                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
                 if watcher
                     .add_file::<true>(
                         input_fd,
@@ -2976,7 +2974,7 @@ fn maybe_watch_file(
     *should_close_input_file_fd = false;
     // SAFETY: `bun_watcher` is the type-erased `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *((*jsc_vm).bun_watcher as *mut bun_jsc::ImportWatcher) };
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
     let _ = watcher.add_file::<true>(
         input_file_fd,
         path.text,
@@ -3444,7 +3442,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
             // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
             // outlives the synchronous transpile this borrow feeds into.
             virtual_source =
-                Some(unsafe { &*(eval_source as *const bun_logger::Source) });
+                Some(unsafe { &*std::ptr::from_ref::<bun_logger::Source>(eval_source) });
             loader = Some(Loader::Tsx);
         }
     }
@@ -3864,7 +3862,7 @@ unsafe fn transpile_file(
         module_type,
         source_code_printer: printer_ptr,
         promise_ptr: if allow_promise {
-            &mut promise as *mut *mut JSInternalPromise
+            &raw mut promise
         } else {
             ptr::null_mut()
         },
@@ -3875,14 +3873,14 @@ unsafe fn transpile_file(
         // SAFETY: per fn contract — `*specifier_ptr` is valid for the call;
         // `bun.String` is `Copy` (tagged-pointer pair) so by-value is sound.
         input_specifier: unsafe { *specifier_ptr },
-        log: &mut *log as *mut logger::Log,
+        log: &raw mut *log,
         virtual_source: lr.virtual_source,
         global_object: global,
         flags: FetchFlags::Transpile,
-        extra: (&mut extra as *mut TranspileExtra).cast::<c_void>(),
+        extra: (&raw mut extra).cast::<c_void>(),
     };
 
-    match transpile_source_code_inner(jsc_vm, &args, &mut extra) {
+    match transpile_source_code_inner(jsc_vm, &args, &raw mut extra) {
         Ok(resolved) => {
             // SAFETY: per fn contract — `ret` is a valid out-param.
             unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
@@ -4049,14 +4047,14 @@ unsafe fn transpile_virtual_module(
         // SAFETY: per fn contract — `*specifier_ptr` is valid for the call;
         // `bun.String` is `Copy` (tagged-pointer pair) so by-value is sound.
         input_specifier: unsafe { *specifier_ptr },
-        log: &mut log as *mut bun_logger::Log,
+        log: &raw mut log,
         virtual_source: Some(&virtual_source),
         global_object: global,
         flags: FetchFlags::Transpile,
-        extra: (&mut extra as *mut TranspileExtra).cast::<c_void>(),
+        extra: (&raw mut extra).cast::<c_void>(),
     };
 
-    match transpile_source_code_inner(jsc_vm, &args, &mut extra) {
+    match transpile_source_code_inner(jsc_vm, &args, &raw mut extra) {
         Ok(resolved) => {
             // SAFETY: per fn contract — `ret` is a valid out-param.
             unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
@@ -4580,7 +4578,7 @@ unsafe fn resolve_hook(
         Some(p) => p.as_ptr(),
         None => ptr::null_mut(),
     };
-    let log_ptr: *mut logger::Log = &mut log;
+    let log_ptr: *mut logger::Log = &raw mut log;
     // SAFETY: `vm` is the live per-thread VM; the log fields are raw `*mut`.
     unsafe {
         (*vm).log = core::ptr::NonNull::new(log_ptr);

@@ -131,7 +131,7 @@ impl KeyframesName {
                 {
                     Err(input.new_unexpected_token_error(css::Token::Ident(s)))
                 } else {
-                    Ok(KeyframesName::Ident(CustomIdent { v: s as *const [u8] }))
+                    Ok(KeyframesName::Ident(CustomIdent { v: std::ptr::from_ref::<[u8]>(s) }))
                 }
             }
             css::Token::QuotedString(s) => Ok(KeyframesName::Custom(s)),
@@ -404,7 +404,7 @@ const _: () = {
         type AtRule = Keyframe;
 
         fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name as *const [u8])))
+            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<[u8]>(name))))
         }
 
         fn parse_block(

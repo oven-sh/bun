@@ -43,7 +43,7 @@ static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
 #[inline]
 pub fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
     bun_http::headers::FetchHeadersRef {
-        owner: h as *const FetchHeaders as *const (),
+        owner: std::ptr::from_ref::<FetchHeaders>(h).cast::<()>(),
         vtable: &FETCH_HEADERS_VTABLE,
         _phantom: core::marker::PhantomData,
     }
@@ -53,12 +53,12 @@ pub fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef
 
 unsafe fn ab_has_content_type_from_user(owner: *const ()) -> bool {
     // SAFETY: `owner` is `&AnyBlob` erased.
-    unsafe { (*(owner as *const AnyBlob)).has_content_type_from_user() }
+    unsafe { (*owner.cast::<AnyBlob>()).has_content_type_from_user() }
 }
 unsafe fn ab_content_type(owner: *const ()) -> (*const u8, usize) {
     // SAFETY: `owner` is `&AnyBlob` erased; the returned slice borrows blob
     // storage that outlives the `AnyBlobRef`.
-    let s = unsafe { (*(owner as *const AnyBlob)).content_type() };
+    let s = unsafe { (*owner.cast::<AnyBlob>()).content_type() };
     (s.as_ptr(), s.len())
 }
 
@@ -70,7 +70,7 @@ static ANY_BLOB_VTABLE: bun_http::headers::AnyBlobVTable = bun_http::headers::An
 #[inline]
 pub fn any_blob_ref(b: &AnyBlob) -> bun_http::headers::AnyBlobRef<'_> {
     bun_http::headers::AnyBlobRef {
-        owner: b as *const AnyBlob as *const (),
+        owner: std::ptr::from_ref::<AnyBlob>(b).cast::<()>(),
         vtable: &ANY_BLOB_VTABLE,
         _phantom: core::marker::PhantomData,
     }

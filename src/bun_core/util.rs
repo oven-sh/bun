@@ -301,12 +301,12 @@ impl ZStr {
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
-        unsafe { &*(core::slice::from_raw_parts(ptr, len) as *const [u8] as *const ZStr) }
+        unsafe { &*(std::ptr::from_ref::<[u8]>(core::slice::from_raw_parts(ptr, len)) as *const ZStr) }
     }
     /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u8, len: usize) -> &'a mut ZStr {
-        unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u8] as *mut ZStr) }
+        unsafe { &mut *(std::ptr::from_mut::<[u8]>(core::slice::from_raw_parts_mut(ptr, len)) as *mut ZStr) }
     }
     /// Wrap a `&'static [u8]` literal that already includes the trailing
     /// `\0` (e.g. `b".\0"`). The returned `&ZStr` excludes the NUL from
@@ -503,7 +503,7 @@ impl WStr {
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
-        unsafe { &*(core::slice::from_raw_parts(ptr, len) as *const [u16] as *const WStr) }
+        unsafe { &*(std::ptr::from_ref::<[u16]>(core::slice::from_raw_parts(ptr, len)) as *const WStr) }
     }
     #[inline] pub const fn as_slice(&self) -> &[u16] { &self.0 }
     #[inline] pub const fn len(&self) -> usize { self.0.len() }
@@ -1060,11 +1060,11 @@ pub mod io {
     impl Writer {
         #[inline]
         pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
-            unsafe { (self.write_all)(self as *mut _, bytes) }
+            unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
         }
         #[inline]
         pub fn flush(&mut self) -> Result<(), crate::Error> {
-            unsafe { (self.flush)(self as *mut _) }
+            unsafe { (self.flush)(std::ptr::from_mut(self)) }
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
@@ -1215,7 +1215,7 @@ impl StackCheck {
     pub fn is_safe_to_recurse(&self) -> bool {
         // PORT NOTE: @frameAddress() → intrinsic; approximate with a stack local's addr.
         let probe = 0u8;
-        let probe_addr = &probe as *const u8 as usize;
+        let probe_addr = &raw const probe as usize;
         // Zig uses `-|` (saturating sub): if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
@@ -1504,7 +1504,7 @@ pub mod time {
         {
             let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
             // SAFETY: ts is valid for write.
-            unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+            unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &raw mut ts) };
             (ts.tv_sec as i128) * NS_PER_S + (ts.tv_nsec as i128)
         }
         #[cfg(not(unix))]
@@ -1739,7 +1739,7 @@ macro_rules! as_bytes_pod {
             #[inline] fn as_bytes_for_hash(&self) -> &[u8] {
                 // SAFETY: POD integer; size_of::<Self> readable bytes.
                 unsafe { core::slice::from_raw_parts(
-                    (self as *const Self).cast::<u8>(),
+                    core::ptr::from_ref::<Self>(self).cast::<u8>(),
                     core::mem::size_of::<Self>(),
                 ) }
             }
@@ -2037,7 +2037,7 @@ pub mod base64 {
 pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
     // SAFETY: malloc is the allocator SSLConfig's C side expects to free.
     unsafe {
-        let p = libc::malloc(bytes.len() + 1) as *mut u8;
+        let p = libc::malloc(bytes.len() + 1).cast::<u8>();
         if p.is_null() { crate::out_of_memory(); }
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
@@ -2624,17 +2624,17 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
         let mut pid: libc::pid_t = 0;
         unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
         let rc = libc::posix_spawnp(
-            &mut pid,
+            &raw mut pid,
             ptrs[0],
             core::ptr::null(),
             core::ptr::null(),
-            ptrs.as_ptr() as *const *mut core::ffi::c_char,
-            environ as *const *mut core::ffi::c_char,
+            ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
+            environ.cast::<*mut core::ffi::c_char>(),
         );
         if rc != 0 { return Err(crate::Error::from_errno(rc)); }
         let mut status: i32 = 0;
         loop {
-            let r = libc::waitpid(pid, &mut status, 0);
+            let r = libc::waitpid(pid, &raw mut status, 0);
             if r == -1 {
                 let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
                 if e == libc::EINTR { continue; }
@@ -2741,7 +2741,7 @@ impl Timespec {
         #[cfg(unix)]
         unsafe {
             let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-            libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+            libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts);
             Timespec { sec: ts.tv_sec as i64, nsec: ts.tv_nsec as i64 }
         }
         #[cfg(not(unix))]

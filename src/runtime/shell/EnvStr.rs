@@ -72,7 +72,7 @@ impl EnvStr {
             return Self::pack(0, Tag::Empty, 0);
         }
 
-        Self::pack(to_ptr(str.as_ptr() as *const c_void), Tag::Slice, str.len())
+        Self::pack(to_ptr(str.as_ptr().cast::<c_void>()), Tag::Slice, str.len())
     }
 
     /// Same thing as `init_ref_counted` except it duplicates the passed string

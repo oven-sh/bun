@@ -338,7 +338,7 @@ impl JunitReporter {
                 // NUL-terminated hostname or returns -1.
                 let rc = unsafe {
                     libc::gethostname(
-                        name_buffer.as_mut_ptr() as *mut libc::c_char,
+                        name_buffer.as_mut_ptr().cast::<libc::c_char>(),
                         name_buffer.len(),
                     )
                 };
@@ -838,14 +838,14 @@ impl CommandLineReporter {
         let initial_repeat_count = test_entry.repeat_count;
         let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent.map(|p| p as *const _);
+        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent.map(|p| p.cast_const());
 
         while let Some(scope) = parent_ {
             if scopes_stack.push(scope).is_err() {
                 break;
             }
             // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p as *const _) };
+            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
@@ -988,7 +988,7 @@ impl CommandLineReporter {
         let Some(junit) = cmd_reporter.reporters.junit.as_mut() else { return; };
 
         let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> = BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent.map(|p| p as *const _);
+        let mut parent_: Option<*const bun_test::DescribeScope> = test_entry.base.parent.map(|p| p.cast_const());
         let assertions = sequence.expect_call_count;
         let line_number = test_entry.base.line_no;
 
@@ -1003,7 +1003,7 @@ impl CommandLineReporter {
                 break;
             }
             // SAFETY: scope kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p as *const _) };
+            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
@@ -1837,12 +1837,12 @@ impl TestCommand {
                     // SAFETY: lifetime-erase to `'static`; the backing locals are
                     // declared in this never-returning frame (`exec()` only exits
                     // via process exit), mirroring Zig's stack-address capture.
-                    file_buf: unsafe { &mut *(&mut snapshot_file_buf as *mut _) },
-                    values: unsafe { &mut *(&mut snapshot_values as *mut _) },
-                    counts: unsafe { &mut *(&mut snapshot_counts as *mut _) },
+                    file_buf: unsafe { &mut *(&raw mut snapshot_file_buf) },
+                    values: unsafe { &mut *(&raw mut snapshot_values) },
+                    counts: unsafe { &mut *(&raw mut snapshot_counts) },
                     _current_file: None,
                     snapshot_dir_path: None,
-                    inline_snapshots_to_write: unsafe { &mut *(&mut inline_snapshots_to_write as *mut _) },
+                    inline_snapshots_to_write: unsafe { &mut *(&raw mut inline_snapshots_to_write) },
                     last_error_snapshot_name: None,
                 },
                 bun_test_root: bun_test::BunTestRoot::init(),
@@ -1859,7 +1859,7 @@ impl TestCommand {
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe {
-                    &*(&ctx.test_options as *const bun_options_types::Context::TestOptions)
+                    &*(&raw const ctx.test_options)
                 },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
@@ -1913,7 +1913,7 @@ impl TestCommand {
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(
-                    (&mut *env_loader as *mut DotEnv::Loader<'_>).cast::<DotEnv::Loader<'static>>(),
+                    (&raw mut *env_loader).cast::<DotEnv::Loader<'static>>(),
                 ),
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
@@ -2221,13 +2221,13 @@ impl TestCommand {
             match vm.hot_reload {
                 jsc::virtual_machine::HOT_RELOAD_HOT => {
                     jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                        vm as *mut VirtualMachine,
+                        std::ptr::from_mut::<VirtualMachine>(vm),
                         None,
                     );
                 }
                 jsc::virtual_machine::HOT_RELOAD_WATCH => {
                     jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                        vm as *mut VirtualMachine,
+                        std::ptr::from_mut::<VirtualMachine>(vm),
                         None,
                     );
                 }
@@ -2284,7 +2284,7 @@ impl TestCommand {
             // b2-cycle erasure (see field comment in VirtualMachine.rs); the
             // cast recovers the concrete type.
             let watcher =
-                unsafe { &mut *(vm.bun_watcher as *mut jsc::hot_reloader::ImportWatcher) };
+                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
                 let loader = vm.transpiler.options.loader(bun_path::extension(path));
                 let _ = watcher.add_file_by_path_slow(path, loader);
@@ -2602,7 +2602,7 @@ impl TestCommand {
         vm_.event_loop_ref().ensure_waker();
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
         // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
-        let vm_ptr = vm_ as *mut VirtualMachine;
+        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
         let mut ctx = Context { reporter: reporter_, vm: vm_, files: files_ };
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
@@ -2625,7 +2625,7 @@ impl TestCommand {
                 // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
                 let log = unsafe { &mut *log_ptr.as_ptr() };
                 if log.errors > 0 {
-                    let _ = log.print(err_w() as *mut bun_core::io::Writer);
+                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(err_w()));
                     log.msgs.clear();
                     log.errors = 0;
                 }
@@ -2725,7 +2725,7 @@ impl TestCommand {
                         vm.is_shutting_down = true;
                         // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
                         // runWithAPILock(*VM, vm, globalExit).
-                        let vm_ptr = vm as *mut VirtualMachine;
+                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
                         unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 
@@ -2776,7 +2776,7 @@ impl TestCommand {
 
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(vm as *mut VirtualMachine) };
+                unsafe { (*el).tick_immediate_tasks(std::ptr::from_mut::<VirtualMachine>(vm)) };
                 drop(buntest_strong);
             }
 

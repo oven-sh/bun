@@ -1646,7 +1646,7 @@ impl Dirent {
             DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
         };
         let cached_ptr = match cached_previous_path_jsvalue {
-            Some(p) => p as *mut *mut jsc::JSString,
+            Some(p) => std::ptr::from_mut::<*mut jsc::JSString>(p),
             None => core::ptr::null_mut(),
         };
         // SAFETY: FFI call wrapped via from_js_host_call.
@@ -1654,8 +1654,8 @@ impl Dirent {
             Bun__Dirent__toJS(
                 global_object,
                 kind_int,
-                &mut self.name,
-                &mut self.path,
+                &raw mut self.name,
+                &raw mut self.path,
                 cached_ptr,
             )
         })

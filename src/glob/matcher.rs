@@ -274,8 +274,7 @@ fn glob_match_impl(
                                 // SAFETY: matches Zig `path[idx..].ptr[0..4]` — decode reads only `len` bytes
                                 let c: u32 = strings::decode_wtf8_rune_t::<u32>(
                                     unsafe {
-                                        &*(path.as_ptr().add(state.path_index as usize)
-                                            as *const [u8; 4])
+                                        &*path.as_ptr().add(state.path_index as usize).cast::<[u8; 4]>()
                                     },
                                     len,
                                     0xFFFD,
@@ -611,7 +610,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
                     // SAFETY: matches Zig `glob[idx..].ptr[0..4]` — decode reads only `len` bytes
                     break 'brk strings::decode_wtf8_rune_t::<u32>(
                         unsafe {
-                            &*(glob.as_ptr().add(*glob_index as usize) as *const [u8; 4])
+                            &*glob.as_ptr().add(*glob_index as usize).cast::<[u8; 4]>()
                         },
                         len,
                         0xFFFD,
@@ -626,7 +625,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
 
             // SAFETY: matches Zig `glob[idx..].ptr[0..4]` — decode reads only `len` bytes
             *c = strings::decode_wtf8_rune_t::<u32>(
-                unsafe { &*(glob.as_ptr().add(*glob_index as usize) as *const [u8; 4]) },
+                unsafe { &*glob.as_ptr().add(*glob_index as usize).cast::<[u8; 4]>() },
                 len,
                 0xFFFD,
             );

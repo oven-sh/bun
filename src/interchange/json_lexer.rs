@@ -211,7 +211,7 @@ where
         opts: JSONOptions,
     ) -> Self {
         Self {
-            log: log as *mut logger::Log,
+            log: std::ptr::from_mut::<logger::Log>(log),
             source,
             bump,
             current: 0,

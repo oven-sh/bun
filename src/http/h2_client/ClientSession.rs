@@ -243,7 +243,7 @@ impl ClientSession {
         ssl_config: Option<*const ssl_config::SSLConfig>,
     ) -> bool {
         let mine: Option<*const ssl_config::SSLConfig> =
-            self.ssl_config.as_ref().map(|p| p.get() as *const _);
+            self.ssl_config.as_ref().map(|p| std::ptr::from_ref(p.get()));
         self.port == port
             && mine == ssl_config
             && strings::eql_long(&self.hostname, hostname, true)
@@ -355,7 +355,7 @@ impl ClientSession {
             i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE)).expect("int cast");
         let stream = Box::into_raw(Stream::new(
             self.next_stream_id,
-            self as *mut _,
+            std::ptr::from_mut(self),
             Some(client.as_erased_ptr()),
             send_window,
         ));
@@ -756,7 +756,7 @@ impl ClientSession {
         // failure → fail_all() while connect() still holds `&mut HTTPContext`,
         // so route through the raw-ptr helper instead of forming a second
         // aliased `&mut NewHTTPContext` via autoref.
-        unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self as *const _) };
+        unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, std::ptr::from_ref(self)) };
         for client in core::mem::take(&mut self.pending_attach) {
             // SAFETY: pending_attach entries are live back-refs.
             unsafe { (*client).h2_fail(err) };
@@ -877,7 +877,7 @@ impl ClientSession {
             // Pool stores the live *ClientSession so a later fetch can resume
             // the multiplexed connection. SAFETY: `self` is heap-owned and
             // outlives the pool entry (release_socket takes the strong ref).
-            let self_ptr = unsafe { NonNull::new_unchecked(self as *mut ClientSession) };
+            let self_ptr = unsafe { NonNull::new_unchecked(std::ptr::from_mut::<ClientSession>(self)) };
             // SAFETY: ctx back-ref is valid for the session's lifetime. Unlike
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry

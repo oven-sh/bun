@@ -566,7 +566,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(magic, Magic::Valid);
         w!(allocation_scope, AllocationScope::init_default());
         w!(root, Box::from(options.root.as_bytes()));
-        w!(vm, options.vm as *const VirtualMachine);
+        w!(vm, std::ptr::from_ref::<VirtualMachine>(options.vm));
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
@@ -717,7 +717,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // box (Zig had no lifetime). Widen `'a → 'static` here once.
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
-    let arena: &'static Arena = unsafe { &*(options.arena as *const Arena) };
+    let arena: &'static Arena = unsafe { &*std::ptr::from_ref::<Arena>(options.arena) };
     unsafe {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
@@ -773,7 +773,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: all fields of `*p` were written exactly once above via
     // `addr_of_mut!().write()` / `copy_nonoverlapping`; no field remains uninit.
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
-    let dev_ptr: *mut DevServer = &mut *dev;
+    let dev_ptr: *mut DevServer = &raw mut *dev;
 
     // PORT NOTE: Zig asserted `*.owner() == dev` (intrusive parent-ptr derived
     // via `@fieldParentPtr`). The Rust port stores these by value; `owner()`
@@ -1063,7 +1063,7 @@ impl Drop for DevServer {
         }
 
         if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
-            let timer_ptr: *mut EventLoopTimer = &mut self.memory_visualizer_timer;
+            let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
             self.timer_heap().remove(timer_ptr);
         }
         self.graph_safety_lock.lock();
@@ -1076,7 +1076,7 @@ impl Drop for DevServer {
         }
 
         if self.has_pre_crash_handler {
-            bun_crash_handler::remove_pre_crash_handler(self as *mut _ as *mut c_void);
+            bun_crash_handler::remove_pre_crash_handler(std::ptr::from_mut(self).cast::<c_void>());
         }
 
         // PORT NOTE: Zig looped `failure.deinit()` then `clearAndFree`. The
@@ -1108,7 +1108,7 @@ impl Drop for DevServer {
             // map drops; Zig's explicit `deinit` was the allocator-free.
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
-            let timer_ptr: *mut EventLoopTimer = &mut self.source_maps.weak_ref_sweep_timer;
+            let timer_ptr: *mut EventLoopTimer = &raw mut self.source_maps.weak_ref_sweep_timer;
             self.timer_heap().remove(timer_ptr);
         }
 
@@ -1208,7 +1208,7 @@ impl DevServer {
         // `InsertionContext` while also borrowing `&mut dev.router` and
         // `&mut dev.server_transpiler.resolver`. Reborrow each via the raw
         // self-ptr (the three are disjoint fields of the heap-stable `*self`).
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: `router`, `server_transpiler.resolver`, and the
         // `InsertionHandler` callbacks (touch `server_graph`/`route_lookup`)
         // are disjoint fields of `*self_ptr`.
@@ -1236,7 +1236,7 @@ impl DevServer {
         self.server = Some(AnyServer::from(server));
         // SAFETY: app is set before set_routes is called (server init path)
         let app = unsafe { &mut *server.app.unwrap() };
-        let dev = self as *mut Self as *mut c_void;
+        let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
         // PORT NOTE: Zig's `wrapGenericRequestHandler(fn, is_ssl)` produced a
         // monomorphized `extern fn(*DevServer, *Response, *Request)` per
@@ -1310,12 +1310,12 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 ) {
     // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
     // route; uWS guarantees they are non-null in handler callbacks.
-    let dev = unsafe { &mut *(ud as *mut DevServer) };
-    let req = unsafe { &mut *(req as *mut Request) };
+    let dev = unsafe { &mut *ud.cast::<DevServer>() };
+    let req = unsafe { &mut *req.cast::<Request>() };
     let resp = if SSL {
-        AnyResponse::SSL(res as *mut bun_uws_sys::response::TLSResponse)
+        AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
     } else {
-        AnyResponse::TCP(res as *mut bun_uws_sys::response::TCPResponse)
+        AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
     match ID {
         DevHandlerId::JsRequest => on_js_request(dev, req, resp),
@@ -1377,7 +1377,7 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     }
     #[inline]
     fn on_close(&mut self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
-        HmrSocket::on_close(self as *mut HmrSocket, ws, code, message)
+        HmrSocket::on_close(std::ptr::from_mut::<HmrSocket>(self), ws, code, message)
     }
     fn on_drain(&mut self, _ws: bun_uws_sys::AnyWebSocket) {}
     fn on_ping(&mut self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
@@ -1419,9 +1419,9 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
     }
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
         if SSL {
-            bun_uws::AnyResponse::SSL((self as *mut Self).cast())
+            bun_uws::AnyResponse::SSL(std::ptr::from_mut::<Self>(self).cast())
         } else {
-            bun_uws::AnyResponse::TCP((self as *mut Self).cast())
+            bun_uws::AnyResponse::TCP(std::ptr::from_mut::<Self>(self).cast())
         }
     }
     fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
@@ -1480,10 +1480,10 @@ unsafe fn bake_watcher_add_file(
 ) -> Result<(), bun_core::Error> {
     // SAFETY: `watcher` is the `&mut *dev.bun_watcher` registered by
     // `bake_watcher_handle`; valid for the BundleV2 lifetime.
-    let w = unsafe { &mut *(watcher as *mut Watcher) };
+    let w = unsafe { &mut *watcher.cast::<Watcher>() };
     // SAFETY: `package_json` is an erased `*const PackageJSON` owned by the
     // resolver's package-json cache (process lifetime); Watcher only stores it.
-    let pj = package_json.map(|p| unsafe { &*(p as *const bun_watcher::PackageJSON) });
+    let pj = package_json.map(|p| unsafe { &*p.cast::<bun_watcher::PackageJSON>() });
     // PORT NOTE: `bun_watcher::Loader` is an opaque `#[repr(transparent)] u8`
     // newtype mirroring `bun_options_types::Loader` (#[repr(u8)]). Watcher only
     // stores the discriminant; convert by value.
@@ -1554,7 +1554,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         let Some(entry) = dev.source_maps.entries.get_mut(&source_map_store::Key::init(id)) else {
             return not_found(resp);
         };
-        let entry_ptr: *const source_map_store::Entry = &*entry;
+        let entry_ptr: *const source_map_store::Entry = &raw const *entry;
         // PERF(port): was ArenaAllocator scratch
         // SAFETY: `entry_ptr` points into `dev.source_maps.entries` storage,
         // which is not reallocated by `render_json`.
@@ -1629,7 +1629,7 @@ pub fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
     let decoded = strings::decode_hex_to_bytes(&mut out[..size], slice).ok()?;
     debug_assert!(decoded == size);
     // SAFETY: out[..size] is fully initialized by decode_hex_to_bytes; T: Copy
-    Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr() as *const T) })
+    Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr().cast::<T>()) })
 }
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
@@ -1664,9 +1664,9 @@ where
         // PORT NOTE: `AnyResponse: From<*mut Response<IS_SSL>>` only impl'd for
         // concrete `true`/`false`; branch at runtime on the const generic.
         let any = if IS_SSL {
-            AnyResponse::init(resp as *mut bun_uws_sys::response::Response<true>)
+            AnyResponse::init(resp.cast::<bun_uws_sys::response::Response<true>>())
         } else {
-            AnyResponse::init(resp as *mut bun_uws_sys::response::Response<false>)
+            AnyResponse::init(resp.cast::<bun_uws_sys::response::Response<false>>())
         };
         handler(dev, req, any);
     }
@@ -1739,8 +1739,8 @@ impl RequestEnsureRouteBundledCtx {
         let resp = self.resp;
         let dev = self.dev_mut();
         let requests_array: *mut deferred_request::List = match bundle_field {
-            BundleQueueType::CurrentBundle => &mut dev.current_bundle.as_mut().expect("infallible: bundle active").requests,
-            BundleQueueType::NextBundle => &mut dev.next_bundle.requests,
+            BundleQueueType::CurrentBundle => &raw mut dev.current_bundle.as_mut().expect("infallible: bundle active").requests,
+            BundleQueueType::NextBundle => &raw mut dev.next_bundle.requests,
         };
         // SAFETY: requests_array points into self.dev which is still valid
         self.dev_mut()
@@ -1779,14 +1779,14 @@ impl RequestEnsureRouteBundledCtx {
         // (route_bundle slot + send_serialized_failures). Reborrow via raw
         // pointer so the failure slice and the `&mut DevServer` don't alias.
         let route_bundle_index = self.route_bundle_index;
-        let failure = self
+        let failure = std::ptr::from_ref::<SerializedFailure>(self
             .dev_mut()
             .route_bundle_ptr(route_bundle_index)
             .data
             .framework()
             .evaluate_failure
             .as_ref()
-            .unwrap() as *const SerializedFailure;
+            .unwrap());
         // SAFETY: `failure` points into `route_bundles[i].data` which is not
         // mutated by `send_serialized_failures`.
         let failures = ::core::slice::from_ref(unsafe { &*failure });
@@ -2029,7 +2029,7 @@ impl DevServer {
         let deferred = unsafe { &mut *deferred_ptr };
         // Precompute the data slot pointer (used inside the initializer for
         // abort-callback registration) before borrowing `deferred.data` for `.write()`.
-        let deferred_data_ptr: *mut c_void = deferred.data.as_mut_ptr() as *mut c_void;
+        let deferred_data_ptr: *mut c_void = deferred.data.as_mut_ptr().cast::<c_void>();
         debug_log!("DeferredRequest(0x{:x}).init", deferred_data_ptr as usize);
 
         let method = match &req {
@@ -2041,7 +2041,7 @@ impl DevServer {
 
         deferred.data.write(DeferredRequest {
             route_bundle_index,
-            dev: self as *const _,
+            dev: std::ptr::from_ref(self),
             referenced_by_devserver: true,
             weakly_referenced_by_requestcontext: false,
             handler: match kind {
@@ -2051,7 +2051,7 @@ impl DevServer {
                     resp.on_aborted(
                         |p: *mut c_void, r: AnyResponse| {
                             // SAFETY: p is the &mut deferred.data registered below; lifetime erased
-                            unsafe { &mut *(p as *mut DeferredRequest) }.on_abort(r)
+                            unsafe { &mut *p.cast::<DeferredRequest>() }.on_abort(r)
                         },
                         deferred_data_ptr,
                     );
@@ -2104,7 +2104,7 @@ impl DevServer {
                                 fn deref_fn(ptr: *mut c_void) {
                                     // SAFETY: ptr is &mut DeferredRequest from above
                                     let self_: &mut DeferredRequest =
-                                        unsafe { &mut *(ptr as *mut DeferredRequest) };
+                                        unsafe { &mut *ptr.cast::<DeferredRequest>() };
                                     self_.weak_deref();
                                 }
                                 deref_fn
@@ -2143,13 +2143,13 @@ fn check_route_failures(
     // PORT NOTE: erase to a raw pointer so the deferred cleanup only fires on
     // scope exit when no other borrow of `dev` is live (Zig `defer` had no
     // aliasing check).
-    let dev_ptr = dev as *mut DevServer;
+    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     scopeguard::defer! {
         // SAFETY: see PORT NOTE above.
         unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
     };
     let _lock_guard = dev.graph_safety_lock.guard();
-    let route_bundle = dev.route_bundle_ptr(route_bundle_index) as *mut RouteBundle;
+    let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
     // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
     // mutates `route_bundles`; the raw-pointer reborrow sidesteps the
     // overlapping `&mut self`.
@@ -2548,10 +2548,10 @@ impl DevServer {
         // doesn't conflict with the `&mut self` calls below (Zig held these as
         // plain heap pointers). Per docs/PORTING.md §Global mutable state: hold
         // `*mut T` and deref per-access; do not bind a long-lived `&mut`.
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: `route_bundles` is not reallocated for the duration of this fn.
         let route_bundle: *mut RouteBundle =
-            &mut unsafe { &mut *self_ptr }.route_bundles[route_bundle_index.get() as usize];
+            &raw mut unsafe { &mut *self_ptr }.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(matches!(unsafe { &(*route_bundle).data }, route_bundle::Data::Html(_)));
 
         let blob: *mut StaticRoute = match unsafe { (*route_bundle).data.html().cached_response } {
@@ -2744,7 +2744,7 @@ impl DevServer {
     ) {
         // PORT NOTE: erase `self` to a raw pointer so `route_bundle` borrow
         // doesn't conflict with `generate_client_bundle(&mut self, ..)`.
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: `self_ptr` accesses below touch disjoint fields of `*self`.
         let route_bundle = unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
         let client_bundle: *mut StaticRoute = match route_bundle.client_bundle {
@@ -2870,7 +2870,7 @@ impl DeferredRequest {
 
     fn on_abort_wrapper(this: *mut c_void) {
         // SAFETY: this is &mut DeferredRequest registered in defer_request
-        let self_ = unsafe { &mut *(this as *mut DeferredRequest) };
+        let self_ = unsafe { &mut *this.cast::<DeferredRequest>() };
         if !self_.is_alive() {
             return;
         }
@@ -2882,7 +2882,7 @@ impl DeferredRequest {
     }
 
     fn on_abort_impl(&mut self) {
-        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) onAbort", self as *const _ as usize);
+        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) onAbort", std::ptr::from_ref(self) as usize);
         self.abort();
         debug_assert!(matches!(self.handler, Handler::Aborted));
     }
@@ -2891,18 +2891,17 @@ impl DeferredRequest {
     fn __free(&mut self) {
         // SAFETY: self is the .data field of a Node in deferred_request_pool
         let node = unsafe {
-            &mut *((self as *mut _ as *mut u8).sub(offset_of!(deferred_request::Node, data))
-                as *mut deferred_request::Node)
+            &mut *std::ptr::from_mut(self).cast::<u8>().sub(offset_of!(deferred_request::Node, data)).cast::<deferred_request::Node>()
         };
         // SAFETY: dev backref is valid while the pool entry exists
-        unsafe { &mut *(self.dev as *mut DevServer) }
+        unsafe { &mut *self.dev.cast_mut() }
             .deferred_request_pool
             .put(node);
     }
 
     /// *WARNING*: Do not call this directly, instead call `.deref_()`
     fn __deinit(&mut self) {
-        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) deinitImpl", self as *const _ as usize);
+        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) deinitImpl", std::ptr::from_ref(self) as usize);
         // PORT NOTE: the pool stores `MaybeUninit<DeferredRequest>` (no `Drop`),
         // so the `Handler` payload must be torn down explicitly here. Swap to
         // `Aborted` (zero-payload) and let the moved-out value drop — for
@@ -2920,7 +2919,7 @@ impl DeferredRequest {
 
     /// Deinitializes state by aborting the connection.
     fn abort(&mut self) {
-        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) abort", self as *const _ as usize);
+        deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) abort", std::ptr::from_ref(self) as usize);
         let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
         match handler {
             Handler::ServerHandler(saved) => {
@@ -3023,11 +3022,11 @@ impl DevServer {
         // moved into `this.graph.heap` (same allocation, stable address inside
         // the freshly-`Box::new`'d `BundleV2`). The borrow is scoped to the
         // call; we never reuse `heap_ptr` after `init` returns.
-        let heap_ptr: *const bun_alloc::Arena = &heap;
+        let heap_ptr: *const bun_alloc::Arena = &raw const heap;
         // PORT NOTE: split `&mut self` into disjoint field reborrows so
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
             unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
@@ -3122,7 +3121,7 @@ impl DevServer {
             if cfg!(debug_assertions) {
                 Output::debug_warn("dev.log should not be written into when using DevServer");
             }
-            let _ = self.log.print(Output::error_writer() as *mut _);
+            let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
         }
         Ok(())
     }
@@ -3509,7 +3508,7 @@ impl<'a> HotUpdateContext<'a> {
         let elem: &mut u32 = &mut subslice[i.get() as usize];
         // SAFETY: CachedFileIndex is repr(transparent) over u32; pointer derived
         // from a unique `&mut u32` so the resulting `&mut` is non-aliased.
-        unsafe { &mut *(elem as *mut u32 as *mut CachedFileIndex) }
+        unsafe { &mut *std::ptr::from_mut::<u32>(elem).cast::<CachedFileIndex>() }
     }
 }
 
@@ -3531,8 +3530,8 @@ pub fn finalize_bundle(
     // PORT NOTE: erase `dev`/`bv2` to raw pointers inside the guard so the
     // long-lived closure capture doesn't lock borrowck for the entire fn body
     // (Zig `defer` had no aliasing analysis).
-    let dev_ptr = dev as *mut DevServer;
-    let bv2_ptr = bv2 as *mut BundleV2;
+    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
+    let bv2_ptr = std::ptr::from_mut::<BundleV2>(bv2);
     // PORT NOTE: copy the raw ptrs into closure-only locals so `defer!`'s by-ref
     // capture does not hold `*dev_ptr`/`*bv2_ptr` borrowed for the entire fn body.
     let dev_ptr_outer: *mut DevServer = dev_ptr;
@@ -3935,7 +3934,7 @@ pub fn finalize_bundle(
                 dev.server_graph.take_source_map(&mut source_map_entry)?;
                 // PORT NOTE: erase to raw ptr so `render_json` can borrow the entry
                 // while the cleanup guard is armed (Zig `defer` had no aliasing check).
-                let entry_ptr: *mut source_map_store::Entry = &mut source_map_entry;
+                let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
                 // SAFETY: `source_map_entry` is a stack local that outlives this guard.
                 scopeguard::defer! {
                     unsafe {
@@ -4298,7 +4297,7 @@ pub fn finalize_bundle(
         // through `send_serialized_failures` (which also borrows `dev`) and then
         // re-used below — Zig passed the optional pointer by value.
         let mut inspector_agent_ptr: Option<*mut BunFrontendDevServerAgent> =
-            unsafe { dev.inspector() }.map(|a| a as *mut _);
+            unsafe { dev.inspector() }.map(|a| std::ptr::from_mut(a));
         if current_bundle!().promise.strong.has_value() {
             // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
             // PORT NOTE: copy the raw ptr so `defer!`'s by-ref capture does not
@@ -4333,7 +4332,7 @@ pub fn finalize_bundle(
             // SAFETY: `pop_first` hands back ownership of the intrusive node;
             // `data` was initialized by `defer_request`.
             let req = unsafe { (*node).data.assume_init_mut() };
-            let req_ptr = req as *mut DeferredRequest;
+            let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
             // SAFETY: the node stays alive until `deref_()` releases it below.
             scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
@@ -4509,7 +4508,7 @@ pub fn finalize_bundle(
         // SAFETY: `pop_first` hands back ownership of the intrusive node;
         // `data` was initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
-        let req_ptr = req as *mut DeferredRequest;
+        let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
         // SAFETY: the node stays alive until `deref_()` releases it below.
         scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
@@ -4567,7 +4566,7 @@ impl DevServer {
                         current.process_file_list(unsafe { &mut *self_ptr }, &mut entry_points);
                         let Some(next) = self
                             .watcher_atomics
-                            .recycle_event_from_dev_server(current as *mut HotReloadEvent)
+                            .recycle_event_from_dev_server(std::ptr::from_mut::<HotReloadEvent>(current))
                         else {
                             break;
                         };
@@ -4767,7 +4766,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: dev as *mut DevServer,
+            dev: std::ptr::from_mut::<DevServer>(dev),
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::ServerHandler,
@@ -4807,7 +4806,7 @@ impl DevServer {
                 .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
                 .expect("oom");
             let mut ctx = RequestEnsureRouteBundledCtx {
-                dev: self as *mut DevServer,
+                dev: std::ptr::from_mut::<DevServer>(self),
                 req: ReqOrSaved::Saved(saved_request),
                 resp,
                 kind: deferred_request::HandlerKind::ServerHandler,
@@ -4841,7 +4840,7 @@ impl DevServer {
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: self as *mut DevServer,
+            dev: std::ptr::from_mut::<DevServer>(self),
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
@@ -4864,7 +4863,7 @@ impl DevServer {
     ) -> Result<route_bundle::Index, bun_core::Error> {
         let index_location: *mut route_bundle::IndexOptional = match route {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
-                &mut self.router.route_ptr_mut(route_index).bundle
+                &raw mut self.router.route_ptr_mut(route_index).bundle
             }
             route_bundle::UnresolvedIndex::Html(html) => {
                 // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
@@ -4976,7 +4975,7 @@ impl DevServer {
         let to_write_into = &mut buf.spare_capacity_mut()[..len];
         // SAFETY: to_write_into is valid uninit memory of length `len`
         let written = bun_base64::encode(
-            unsafe { ::core::slice::from_raw_parts_mut(to_write_into.as_mut_ptr() as *mut u8, len) },
+            unsafe { ::core::slice::from_raw_parts_mut(to_write_into.as_mut_ptr().cast::<u8>(), len) },
             &all_failures,
         );
         // SAFETY: `written` bytes of spare_capacity were initialized by encode() above
@@ -5312,9 +5311,8 @@ impl DevServer {
         }
         // SAFETY: timer is the .memory_visualizer_timer field of DevServer
         let dev: &mut DevServer = unsafe {
-            &mut *((timer as *mut _ as *mut u8)
-                .sub(offset_of!(DevServer, memory_visualizer_timer))
-                as *mut DevServer)
+            &mut *std::ptr::from_mut(timer).cast::<u8>()
+                .sub(offset_of!(DevServer, memory_visualizer_timer)).cast::<DevServer>()
         };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
@@ -5380,7 +5378,7 @@ impl DevServer {
         // SAFETY: Fields is repr(C) POD
         payload.extend_from_slice(unsafe {
             ::core::slice::from_raw_parts(
-                &fields as *const _ as *const u8,
+                (&raw const fields).cast::<u8>(),
                 ::core::mem::size_of::<Fields>(),
             )
         });
@@ -5924,7 +5922,7 @@ impl DevServer {
         >(&mut relative_path_buf[..], &self.root, path);
         // SAFETY: `rel` is owned by relative_path_buf, which is mutable
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(unsafe {
-            ::core::slice::from_raw_parts_mut(rel.as_ptr() as *mut u8, rel.len())
+            ::core::slice::from_raw_parts_mut(rel.as_ptr().cast_mut(), rel.len())
         });
         rel
     }
@@ -6182,7 +6180,7 @@ impl UnrefSourceMapRequest {
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
         let ctx = Box::new(UnrefSourceMapRequest {
-            dev: dev as *mut DevServer,
+            dev: std::ptr::from_mut::<DevServer>(dev),
             body: uws::BodyReaderMixin::init(),
         });
         // SAFETY: dev outlives the request
@@ -6302,7 +6300,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         if self.promise.is_none() {
             let strong = jsc::JSPromiseStrong::init(self.global);
             // SAFETY: resolver-style accessor; only stored as raw ptr.
-            self.p = Some(unsafe { strong.get() } as *mut _);
+            self.p = Some(std::ptr::from_mut(unsafe { strong.get() }));
             self.promise = Some(strong);
         }
         // PORT NOTE: Zig returned the `Strong` by bitwise copy (shared
@@ -6379,14 +6377,14 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // PORT NOTE: split the route-bundle borrow off via raw pointer so the
         // failure slice doesn't conflict with the `&mut DevServer` below.
         let route_bundle_index = self.route_bundle_index;
-        let failure = self
+        let failure = std::ptr::from_ref::<SerializedFailure>(self
             .dev_mut()
             .route_bundle_ptr(route_bundle_index)
             .data
             .framework()
             .evaluate_failure
             .as_ref()
-            .unwrap() as *const SerializedFailure;
+            .unwrap());
         // SAFETY: `failure` points into `route_bundles[i].data` which is not
         // mutated by `send_serialized_failures`.
         let failures = ::core::slice::from_ref(unsafe { &*failure });
@@ -6460,7 +6458,7 @@ fn bundle_new_route_js_function_impl(
     let url = url_bunstr.to_utf8();
 
     // SAFETY: request_ptr is a *bun.webcore.Request from C++
-    let request: &mut WebRequest = unsafe { &mut *(request_ptr as *mut WebRequest) };
+    let request: &mut WebRequest = unsafe { &mut *request_ptr.cast::<WebRequest>() };
     let Some(dev) = request.request_context.dev_server() else {
         return Err(global.throw(format_args!("Request context does not belong to dev server")));
     };
@@ -6623,7 +6621,7 @@ fn new_route_params_for_bundle_promise(
     // PORT NOTE: erase `dev` so the `route_bundle` / `framework_bundle`
     // borrows don't conflict with `dev.router` / `dev.compute_arguments_...`
     // (Zig held these as plain heap pointers).
-    let dev_ptr = dev as *mut DevServer;
+    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     // SAFETY: `dev_ptr` accesses below touch disjoint fields of `*dev`.
     let route_bundle = unsafe { &mut *dev_ptr }.route_bundle_ptr(route_bundle_index);
     let framework_bundle = match &mut route_bundle.data {

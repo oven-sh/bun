@@ -343,7 +343,7 @@ impl SavedSourceMap {
         // errdefer: on error, reconstitute and drop the Box.
         match self.put_value(
             source.path.text,
-            Value::init(blob_ptr as *mut u8 as *mut InternalSourceMap),
+            Value::init(blob_ptr.cast::<u8>().cast::<InternalSourceMap>()),
         ) {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -435,8 +435,8 @@ impl SavedSourceMap {
             // SAFETY: pointer was stored by us via `Arc::into_raw` and is live
             // while locked. Bump the strong count for the caller's handle.
             let result = unsafe {
-                Arc::increment_strong_count(parsed as *const ParsedSourceMap);
-                Arc::from_raw(parsed as *const ParsedSourceMap)
+                Arc::increment_strong_count(parsed.cast_const());
+                Arc::from_raw(parsed.cast_const())
             };
             self.unlock();
             return SourceMap::ParseUrl {

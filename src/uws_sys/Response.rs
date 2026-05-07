@@ -75,12 +75,12 @@ impl<const SSL: bool> Response<SSL> {
 
     #[inline]
     pub fn downcast(&mut self) -> *mut c::uws_res {
-        (self as *mut Self).cast::<c::uws_res>()
+        std::ptr::from_mut::<Self>(self).cast::<c::uws_res>()
     }
 
     #[inline]
     pub fn downcast_socket(&mut self) -> *mut us_socket_t {
-        (self as *mut Self).cast::<us_socket_t>()
+        std::ptr::from_mut::<Self>(self).cast::<us_socket_t>()
     }
 
     pub fn end(&mut self, data: &[u8], close_connection: bool) {
@@ -135,7 +135,7 @@ impl<const SSL: bool> Response<SSL> {
         unsafe {
             c::uws_res_state(
                 Self::ssl_flag() as c_int,
-                (self as *const Self).cast::<c::uws_res>(),
+                std::ptr::from_ref::<Self>(self).cast::<c::uws_res>(),
             )
         }
     }
@@ -243,7 +243,7 @@ impl<const SSL: bool> Response<SSL> {
     pub fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        match unsafe { c::uws_res_write(Self::ssl_flag(), self.downcast(), data.as_ptr(), &mut len) }
+        match unsafe { c::uws_res_write(Self::ssl_flag(), self.downcast(), data.as_ptr(), &raw mut len) }
         {
             true => WriteResult::WantMore(len),
             false => WriteResult::Backpressure(len),
@@ -312,7 +312,7 @@ impl<const SSL: bool> Response<SSL> {
         let mut buf: *const u8 = core::ptr::null();
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         let size = unsafe {
-            c::uws_res_get_remote_address_as_text(Self::ssl_flag(), self.downcast(), &mut buf)
+            c::uws_res_get_remote_address_as_text(Self::ssl_flag(), self.downcast(), &raw mut buf)
         };
         if size > 0 {
             // SAFETY: uws populated `buf` with `size` bytes valid while the response lives.
@@ -331,7 +331,7 @@ impl<const SSL: bool> Response<SSL> {
         // return the struct in that case.
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         let ip_len = unsafe {
-            c::uws_res_get_remote_address_info(self.downcast(), &mut ip_ptr, &mut port, &mut is_ipv6)
+            c::uws_res_get_remote_address_info(self.downcast(), &raw mut ip_ptr, &raw mut port, &raw mut is_ipv6)
         };
         if ip_len > 0 {
             // SocketAddress is defined locally (moved down from bun_uws); `ip`
@@ -552,7 +552,7 @@ impl<const SSL: bool> Response<SSL> {
             c::uws_res_cork(
                 Self::ssl_flag(),
                 self.downcast(),
-                (&mut *f as *mut F).cast::<c_void>(),
+                (&raw mut *f).cast::<c_void>(),
                 handle::<F>,
             );
         }
@@ -575,7 +575,7 @@ impl<const SSL: bool> Response<SSL> {
             c::uws_res_cork(
                 Self::ssl_flag(),
                 self.downcast(),
-                (&mut ctx as *mut Ctx<U>).cast::<c_void>(),
+                (&raw mut ctx).cast::<c_void>(),
                 handle::<U>,
             );
         }
@@ -601,7 +601,7 @@ impl<const SSL: bool> Response<SSL> {
                 sec_web_socket_protocol.len(),
                 sec_web_socket_extensions.as_ptr(),
                 sec_web_socket_extensions.len(),
-                ctx.map_or(core::ptr::null_mut(), |c| c as *mut _),
+                ctx.map_or(core::ptr::null_mut(), |c| std::ptr::from_mut(c)),
             )
         }
     }
@@ -769,7 +769,7 @@ impl AnyResponse {
             u: &mut U, _r: &mut H3Response, d: &[u8], l: bool,
         ) {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u as *mut U, d, l)
+            (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), d, l)
         }
         match self {
             // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
@@ -868,19 +868,19 @@ impl AnyResponse {
             u: *mut U, off: u64, r: &mut TLSResponse,
         ) -> bool {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, off, AnyResponse::SSL(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(u, off, AnyResponse::SSL(std::ptr::from_mut(r)))
         }
         fn tcp<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
             u: *mut U, off: u64, r: &mut TCPResponse,
         ) -> bool {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, off, AnyResponse::TCP(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(u, off, AnyResponse::TCP(std::ptr::from_mut(r)))
         }
         fn h3<U, H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static>(
             u: &mut U, off: u64, r: &mut H3Response,
         ) -> bool {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u as *mut U, off, AnyResponse::H3(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), off, AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
             // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
@@ -899,15 +899,15 @@ impl AnyResponse {
         const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         fn ssl<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TLSResponse) {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::SSL(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::SSL(std::ptr::from_mut(r)))
         }
         fn tcp<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TCPResponse) {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::TCP(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::TCP(std::ptr::from_mut(r)))
         }
         fn h3<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: &mut U, r: &mut H3Response) {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u as *mut U, AnyResponse::H3(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
             // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
@@ -926,15 +926,15 @@ impl AnyResponse {
         const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         fn ssl<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TLSResponse) {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::SSL(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::SSL(std::ptr::from_mut(r)))
         }
         fn tcp<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: *mut U, r: &mut TCPResponse) {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::TCP(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(u, AnyResponse::TCP(std::ptr::from_mut(r)))
         }
         fn h3<U, H: Fn(*mut U, AnyResponse) + Copy + 'static>(u: &mut U, r: &mut H3Response) {
             // SAFETY: H is a ZST (compile-time asserted in the enclosing fn).
-            (unsafe { core::mem::zeroed::<H>() })(u as *mut U, AnyResponse::H3(r as *mut _))
+            (unsafe { core::mem::zeroed::<H>() })(std::ptr::from_mut::<U>(u), AnyResponse::H3(std::ptr::from_mut(r)))
         }
         match self {
             // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.

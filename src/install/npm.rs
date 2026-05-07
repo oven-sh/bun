@@ -160,7 +160,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         url,
         headers.entries,
         header_buf,
-        &mut response_buf,
+        &raw mut response_buf,
         b"",
         None,
         None,
@@ -874,7 +874,7 @@ pub mod package_manifest {
             // SAFETY: T is Copy POD; sliceAsBytes equivalent
             let bytes = unsafe {
                 core::slice::from_raw_parts(
-                    array.as_ptr() as *const u8,
+                    array.as_ptr().cast::<u8>(),
                     core::mem::size_of_val(array),
                 )
             };
@@ -910,7 +910,7 @@ pub mod package_manifest {
             // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
             let result = unsafe {
                 core::slice::from_raw_parts(
-                    result_bytes.as_ptr() as *const T,
+                    result_bytes.as_ptr().cast::<T>(),
                     result_bytes.len() / core::mem::size_of::<T>(),
                 )
             };
@@ -939,7 +939,7 @@ pub mod package_manifest {
                 // SAFETY: NpmPackage is #[repr(C)] POD
                 let bytes = unsafe {
                     core::slice::from_raw_parts(
-                        (&this.pkg as *const NpmPackage) as *const u8,
+                        (&raw const this.pkg).cast::<u8>(),
                         core::mem::size_of::<NpmPackage>(),
                     )
                 };
@@ -1166,7 +1166,7 @@ pub mod package_manifest {
 
                     // SAFETY: task points to SaveTask.task
                     let save_task: *mut SaveTask<'_> = unsafe {
-                        (task as *mut u8)
+                        task.cast::<u8>()
                             .sub(core::mem::offset_of!(SaveTask<'_>, task))
                             .cast()
                     };
@@ -2996,7 +2996,7 @@ impl PackageManifest {
                 // SAFETY: both are POD ExternalString slices
                 let src = unsafe {
                     core::slice::from_raw_parts(
-                        all_tarball_url_strings.as_ptr() as *const u8,
+                        all_tarball_url_strings.as_ptr().cast::<u8>(),
                         src_len * core::mem::size_of::<ExternalString>(),
                     )
                 };
@@ -3004,7 +3004,7 @@ impl PackageManifest {
                 // SAFETY: all_extern_strings owns the buffer
                 let dst = unsafe {
                     core::slice::from_raw_parts_mut(
-                        (all_extern_strings.as_mut_ptr() as *mut u8).add(dst_start),
+                        all_extern_strings.as_mut_ptr().cast::<u8>().add(dst_start),
                         all_extern_strings.len() * core::mem::size_of::<ExternalString>() - dst_start,
                     )
                 };

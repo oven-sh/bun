@@ -226,7 +226,7 @@ impl Sha256 {
 #[inline]
 fn as_bytes<T: Copy>(v: &T) -> &[u8] {
     // SAFETY: `T: Copy` (POD), reading `size_of::<T>()` bytes from `&T` is valid.
-    unsafe { core::slice::from_raw_parts((v as *const T).cast::<u8>(), core::mem::size_of::<T>()) }
+    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
 }
 
 pub mod c {

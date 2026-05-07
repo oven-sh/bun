@@ -397,7 +397,7 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
             // passes `.ptr[0..4]` (unchecked 4-byte view) and the decoder only
             // dereferences bytes covered by `len`.
             c = strings::decode_wtf8_rune_t::<i32>(
-                unsafe { &*(slice.as_ptr().add(i) as *const [u8; 4]) },
+                unsafe { &*slice.as_ptr().add(i).cast::<[u8; 4]>() },
                 len,
                 strings::UNICODE_REPLACEMENT as i32,
             );

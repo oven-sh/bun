@@ -209,7 +209,7 @@ impl ModuleInfoDeserialized {
             return Err(ModuleInfoError::BadModuleInfo);
         }
         // SAFETY: bounds checked above; first N bytes form a [u8; N].
-        let res = unsafe { &*(rem.as_ptr() as *const [u8; N]) };
+        let res = unsafe { &*rem.as_ptr().cast::<[u8; N]>() };
         *rem = &rem[N..];
         Ok(res)
     }
@@ -379,11 +379,11 @@ impl ModuleInfoExt for ModuleInfo {
         let (strings_buf, strings_lens, rm_keys, rm_values, buffer, record_kinds, flags);
         {
             let view = self.as_deserialized();
-            strings_buf = view.strings_buf as *const [u8];
-            strings_lens = view.strings_lens as *const [u32];
-            rm_keys = view.requested_modules_keys as *const [StringID];
-            rm_values = view.requested_modules_values as *const [FetchParameters];
-            buffer = view.buffer as *const [StringID];
+            strings_buf = std::ptr::from_ref::<[u8]>(view.strings_buf);
+            strings_lens = std::ptr::from_ref::<[u32]>(view.strings_lens);
+            rm_keys = std::ptr::from_ref::<[StringID]>(view.requested_modules_keys);
+            rm_values = std::ptr::from_ref::<[FetchParameters]>(view.requested_modules_values);
+            buffer = std::ptr::from_ref::<[StringID]>(view.buffer);
             // Printer's `RecordKind` is `#[repr(u8)]` with the same discriminant
             // layout as this crate's transparent-newtype `RecordKind`.
             record_kinds = core::ptr::slice_from_raw_parts(

@@ -1768,7 +1768,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                         // reinterpret with the same element count for
                         // `E::String::init_utf16` (which sets `is_utf16`).
                         let s16 = unsafe {
-                            core::slice::from_raw_parts(s.as_ptr() as *const u16, s.len())
+                            core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len())
                         };
                         E::String::init_utf16(s16)
                     }
@@ -2260,7 +2260,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             docs.push(doc);
         }
 
-        Ok(Stream { docs, input: self.input as *const [Enc::Unit] })
+        Ok(Stream { docs, input: std::ptr::from_ref::<[Enc::Unit]>(self.input) })
     }
 
     // PERF(port): was comptime monomorphization — profile in Phase B
@@ -5432,7 +5432,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
         StringBuilder {
-            parser: self as *mut Parser<'i, Enc>,
+            parser: std::ptr::from_mut::<Parser<'i, Enc>>(self),
             str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
         }
     }
@@ -5442,7 +5442,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // calls that touch `whitespace_buf`/`input`. Used by scan_plain_scalar.
     unsafe fn string_builder_raw(&mut self) -> StringBuilder<'i, Enc> {
         StringBuilder {
-            parser: self as *mut Parser<'i, Enc>,
+            parser: std::ptr::from_mut::<Parser<'i, Enc>>(self),
             str: YamlString::Range(StringRange { off: Pos::ZERO, end: Pos::ZERO }),
         }
     }

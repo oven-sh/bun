@@ -47,7 +47,7 @@ pub mod cli {
         // var panicker = MainPanicHandler.init(log);
         // MainPanicHandler.Singleton = &panicker;
         if let Err(err) = Command::start(log) {
-            let _ = log.print(Output::error_writer() as *mut bun_core::io::Writer);
+            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
             bun_crash_handler::handle_root_error(err, /* @errorReturnTrace() */ None);
         }
     }

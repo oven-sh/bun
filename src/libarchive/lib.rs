@@ -192,7 +192,7 @@ pub mod lib {
             // borrow grants SharedReadWrite provenance and the C side may
             // mutate through the returned pointer. All `&self` here originate
             // from a `*mut Archive` returned by `read_new` / `write_new`.
-            self._p.get() as *mut Archive
+            self._p.get().cast::<Archive>()
         }
 
         pub fn read_new() -> *mut Archive {
@@ -232,7 +232,7 @@ pub mod lib {
         }
         pub fn read_next_header(&self, entry: &mut *mut Entry) -> Result {
             // SAFETY: self valid; entry is a valid out-ptr.
-            unsafe { archive_read_next_header(self.as_mut_ptr(), entry as *mut *mut Entry) }
+            unsafe { archive_read_next_header(self.as_mut_ptr(), std::ptr::from_mut::<*mut Entry>(entry)) }
         }
         pub fn read_data(&self, buf: &mut [u8]) -> isize {
             // SAFETY: self valid; buf writable for buf.len().
@@ -245,7 +245,7 @@ pub mod lib {
             let mut size: usize = 0;
             // SAFETY: self valid; out-ptrs are valid stack locations.
             let r = unsafe {
-                archive_read_data_block(self.as_mut_ptr(), &mut buff, &mut size, offset)
+                archive_read_data_block(self.as_mut_ptr(), &raw mut buff, &raw mut size, offset)
             };
             if r == Result::Eof {
                 return None;
@@ -447,7 +447,7 @@ pub mod lib {
             // SAFETY: `Entry` contains `UnsafeCell` (`!Freeze`), so a shared
             // borrow grants SharedReadWrite provenance and the C side may
             // mutate through the returned pointer.
-            self._p.get() as *mut Entry
+            self._p.get().cast::<Entry>()
         }
 
         pub fn pathname(&self) -> &ZStr {
@@ -825,7 +825,7 @@ pub mod lib {
 
         pub unsafe extern "C" fn open_callback(_a: *mut Archive, client_data: *mut c_void) -> c_int {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { &mut *(client_data as *mut GrowingBuffer) };
+            let this = unsafe { &mut *client_data.cast::<GrowingBuffer>() };
             this.list.clear();
             this.had_error = false;
             0
@@ -838,7 +838,7 @@ pub mod lib {
             length: usize,
         ) -> la_ssize_t {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { &mut *(client_data as *mut GrowingBuffer) };
+            let this = unsafe { &mut *client_data.cast::<GrowingBuffer>() };
             if buff.is_null() || length == 0 {
                 return 0;
             }
@@ -1037,7 +1037,7 @@ impl BufferReadStream {
     pub fn init(buf: &[u8]) -> Self {
         // PORT NOTE: was an out-param constructor (`this.* = ...`)
         Self {
-            buf: buf as *const [u8],
+            buf: std::ptr::from_ref::<[u8]>(buf),
             pos: 0,
             block_size: 16384,
             archive: Archive::read_new(),

@@ -45,7 +45,7 @@ fn out_kind_str(k: OutKind) -> &'static str {
 #[inline]
 unsafe fn arc_mut<T>(a: &Arc<T>) -> &mut T {
     // SAFETY: caller contract.
-    unsafe { &mut *(Arc::as_ptr(a) as *mut T) }
+    unsafe { &mut *Arc::as_ptr(a).cast_mut() }
 }
 
 /// Local helper: `ReadState` → tag-name string for logs.
@@ -179,7 +179,7 @@ unsafe fn shell_on_process_exit_thunk(
     // SAFETY: `owner` was registered as `*mut ShellSubprocess` via
     // `set_exit_handler` and the owning Cmd outlives the Process exit callback.
     // `process`/`rusage` are live for the duration of the callback.
-    let this = unsafe { &mut *(owner as *mut ShellSubprocess) };
+    let this = unsafe { &mut *owner.cast::<ShellSubprocess>() };
     let process_ref: &Process = unsafe { &*process };
     let rusage_ref: &Rusage = unsafe { &*rusage };
     this.on_process_exit(process_ref, status, rusage_ref);
@@ -200,7 +200,7 @@ impl ShellSubprocess {
     pub fn on_static_pipe_writer_done(&mut self) {
         log!(
             "Subproc(0x{:x}) onStaticPipeWriterDone(cmd=0x{:x}))",
-            self as *mut _ as usize,
+            std::ptr::from_mut(self) as usize,
             self.cmd_parent as usize
         );
         // SAFETY: cmd_parent is a backref to the owning Cmd which outlives the subprocess.
@@ -320,7 +320,7 @@ impl ShellSubprocess {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
                     // SAFETY: Arc<FileSink> is single-thread; raw mut access mirrors Zig.
-                    unsafe { (*(Arc::as_ptr(pipe) as *mut FileSink)).signal.clear() };
+                    unsafe { (*Arc::as_ptr(pipe).cast_mut()).signal.clear() };
                     // drop Arc<FileSink>
                     self.stdin = Writable::Ignore;
                 }
@@ -539,7 +539,7 @@ impl ShellSubprocess {
                 debug_assert!(false, "Cmd.args entry missing NUL terminator");
                 arg.push(0);
             }
-            argv.push(arg.as_ptr() as *const c_char);
+            argv.push(arg.as_ptr().cast::<c_char>());
         }
         argv.push(core::ptr::null());
 
@@ -638,7 +638,7 @@ impl ShellSubprocess {
         let _ = Box::into_raw(unsafe { slot.assume_init() });
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
-        subproc.proc().set_exit_handler(subprocess as *mut (), &SHELL_EXIT_VTABLE);
+        subproc.proc().set_exit_handler(subprocess.cast::<()>(), &SHELL_EXIT_VTABLE);
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
         // Spec: `subprocess.stdin.pipe.signal = Signal.init(&subprocess.stdin)`.
@@ -660,7 +660,7 @@ impl ShellSubprocess {
                 // Subprocess owns both and `Writable::on_close` is the only
                 // path that drops the Arc.
                 unsafe {
-                    (*(Arc::as_ptr(pipe) as *mut FileSink)).signal =
+                    (*Arc::as_ptr(pipe).cast_mut()).signal =
                         webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr);
                 }
             }
@@ -731,7 +731,7 @@ impl ShellSubprocess {
     }
 
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
-        log!("onProcessExit({:x})", self as *mut _ as usize);
+        log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
                 break 'brk Some(exited.code);
@@ -793,7 +793,7 @@ impl Writable {
         match self {
             Writable::Pipe(pipe) => {
                 // SAFETY: single-thread; raw mut access mirrors Zig.
-                unsafe { (*(Arc::as_ptr(pipe) as *mut FileSink)).update_ref(true) };
+                unsafe { (*Arc::as_ptr(pipe).cast_mut()).update_ref(true) };
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr data is live.
@@ -807,7 +807,7 @@ impl Writable {
         match self {
             Writable::Pipe(pipe) => {
                 // SAFETY: single-thread; raw mut access mirrors Zig.
-                unsafe { (*(Arc::as_ptr(pipe) as *mut FileSink)).update_ref(false) };
+                unsafe { (*Arc::as_ptr(pipe).cast_mut()).update_ref(false) };
             }
             Writable::Buffer(buffer) => {
                 // SAFETY: RefPtr data is live.
@@ -1038,7 +1038,7 @@ impl Writable {
         match self {
             Writable::Pipe(pipe) => {
                 // SAFETY: single-thread; raw mut access mirrors Zig.
-                let _ = unsafe { (*(Arc::as_ptr(pipe) as *mut FileSink)).end(None) };
+                let _ = unsafe { (*Arc::as_ptr(pipe).cast_mut()).end(None) };
             }
             Writable::Memfd(fd) | Writable::Fd(fd) => {
                 fd.close();
@@ -1417,7 +1417,7 @@ impl<'a> SpawnArgs<'a> {
                 self.path = &line[b"PATH=".len()..len];
             }
 
-            self.env_array.push(line.as_ptr() as *const c_char);
+            self.env_array.push(line.as_ptr().cast::<c_char>());
         }
     }
 }
@@ -1546,7 +1546,7 @@ impl CapturedWriter {
 
         log!(
             "CapturedWriter(0x{:x}, {}) doWrite len={} parent_amount={}",
-            self as *mut _ as usize,
+            std::ptr::from_mut(self) as usize,
             out_kind_str(self.parent().out_type),
             chunk.len(),
             self.parent().buffered_output.len()
@@ -1559,12 +1559,12 @@ impl CapturedWriter {
         // The CapturedWriter lives outside the NodeId arena (embedded in a
         // heap-allocated PipeReader), so dispatch is by raw pointer — see
         // `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
-        let child = io_writer::ChildPtr::subproc_capture(self as *mut _ as *mut c_void);
+        let child = io_writer::ChildPtr::subproc_capture(std::ptr::from_mut(self).cast::<c_void>());
         let y = writer.enqueue(child, None, chunk);
         // SAFETY: `self` borrow ends before `run_yield` reborrows the parent
         // PipeReader; field-parent recovery is sound (single-threaded shell).
         let parent = unsafe {
-            &*(self as *mut _ as *mut u8)
+            &*std::ptr::from_mut(self).cast::<u8>()
                 .sub(offset_of!(PipeReader, captured_writer))
                 .cast::<PipeReader>()
         };
@@ -1593,7 +1593,7 @@ impl CapturedWriter {
     pub fn parent(&self) -> &PipeReader {
         // SAFETY: self points to PipeReader.captured_writer (embedded field).
         unsafe {
-            &*(self as *const _ as *const u8)
+            &*std::ptr::from_ref(self).cast::<u8>()
                 .sub(offset_of!(PipeReader, captured_writer))
                 .cast::<PipeReader>()
         }
@@ -1602,7 +1602,7 @@ impl CapturedWriter {
     fn parent_mut(&mut self) -> &mut PipeReader {
         // SAFETY: self points to PipeReader.captured_writer (embedded field).
         unsafe {
-            &mut *(self as *mut _ as *mut u8)
+            &mut *std::ptr::from_mut(self).cast::<u8>()
                 .sub(offset_of!(PipeReader, captured_writer))
                 .cast::<PipeReader>()
         }
@@ -1615,7 +1615,7 @@ impl CapturedWriter {
     pub fn is_done(&self, just_written: usize) -> bool {
         log!(
             "CapturedWriter(0x{:x}, {}) isDone(has_err={}, parent_state={}, written={}, parent_amount={})",
-            self as *const _ as usize,
+            std::ptr::from_ref(self) as usize,
             out_kind_str(self.parent().out_type),
             self.err.is_some(),
             <&'static str>::from(&self.parent().state),
@@ -1635,7 +1635,7 @@ impl CapturedWriter {
     pub fn on_iowriter_chunk(&mut self, amount: usize, err: Option<SystemError>) -> Yield {
         log!(
             "CapturedWriter({:x}, {}) onWrite({}, has_err={}) total_written={} total_to_write={}",
-            self as *mut _ as usize,
+            std::ptr::from_mut(self) as usize,
             out_kind_str(self.parent().out_type),
             amount,
             err.is_some(),
@@ -1646,7 +1646,7 @@ impl CapturedWriter {
         if let Some(e) = err {
             log!(
                 "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={} errfd={} syscall={}",
-                self as *mut _ as usize,
+                std::ptr::from_mut(self) as usize,
                 out_kind_str(self.parent().out_type),
                 e.errno,
                 e.message,
@@ -1672,7 +1672,7 @@ impl CapturedWriter {
     pub fn on_close(&mut self) {
         log!(
             "CapturedWriter({:x}, {}) onClose()",
-            self as *mut _ as usize,
+            std::ptr::from_mut(self) as usize,
             out_kind_str(self.parent().out_type)
         );
         self.parent_mut().on_captured_writer_done();
@@ -1700,14 +1700,14 @@ impl PipeReader {
         // can't follow it. Arc only yields `&Self`; write through the
         // allocation pointer (single-threaded shell, no live `&`/`&mut` here).
         // SAFETY: see `arc_mut` rationale; field is a plain `Option<*mut _>`.
-        unsafe { (*(Arc::as_ptr(&self) as *mut PipeReader)).process = None };
+        unsafe { (*Arc::as_ptr(&self).cast_mut()).process = None };
         // Dropping `self` releases the strong ref (Zig `this.deref()`).
     }
 
     pub fn is_done(&self) -> bool {
         log!(
             "PipeReader(0x{:x}, {}) isDone() state={} captured_writer_done={}",
-            self as *const _ as usize,
+            std::ptr::from_ref(self) as usize,
             out_kind_str(self.out_type),
             <&'static str>::from(&self.state),
             self.captured_writer.is_done(0)
@@ -1842,7 +1842,7 @@ impl PipeReader {
         this.buffered_output.append(chunk);
         log!(
             "PipeReader(0x{:x}, {}) onReadChunk(chunk_len={}, has_more={})",
-            this as *mut _ as usize,
+            std::ptr::from_mut(this) as usize,
             out_kind_str(this.out_type),
             chunk.len(),
             read_state_str(has_more)
@@ -1900,7 +1900,7 @@ impl PipeReader {
         // SAFETY: `this` points into an `Arc<PipeReader>` allocation per caller
         // contract; bumping/dropping the strong count is the Arc analogue of
         // the intrusive ref/deref pair.
-        unsafe { Arc::increment_strong_count(this as *const Self) };
+        unsafe { Arc::increment_strong_count(this.cast_const()) };
 
         // SAFETY: caller contract; protective ref above keeps `this` live.
         let y = unsafe { (*this).try_signal_done_to_cmd() };
@@ -1920,7 +1920,7 @@ impl PipeReader {
 
         // SAFETY: matches the `increment_strong_count` above. May run `Drop`
         // and free the allocation — `this` must not be touched afterwards.
-        unsafe { Arc::decrement_strong_count(this as *const Self) };
+        unsafe { Arc::decrement_strong_count(this.cast_const()) };
     }
 
     pub fn try_signal_done_to_cmd(&mut self) -> Yield {
@@ -1929,7 +1929,7 @@ impl PipeReader {
         }
         log!(
             "signalDoneToCmd ({:x}: {}) isDone={}",
-            self as *mut _ as usize,
+            std::ptr::from_mut(self) as usize,
             out_kind_str(self.out_type),
             self.is_done()
         );
@@ -1974,13 +1974,13 @@ impl PipeReader {
 
     pub fn kind(&self, process: &ShellSubprocess) -> StdioKind {
         if let Readable::Pipe(p) = &process.stdout {
-            if Arc::as_ptr(p) as *const _ == self as *const _ {
+            if Arc::as_ptr(p).cast() == std::ptr::from_ref(self) {
                 return StdioKind::Stdout;
             }
         }
 
         if let Readable::Pipe(p) = &process.stderr {
-            if Arc::as_ptr(p) as *const _ == self as *const _ {
+            if Arc::as_ptr(p).cast() == std::ptr::from_ref(self) {
                 return StdioKind::Stderr;
             }
         }
@@ -2032,7 +2032,7 @@ impl PipeReader {
 
         match core::mem::replace(&mut self.state, PipeReaderState::Done(Box::default())) {
             PipeReaderState::Pending => {
-                let stream = ReadableStream::from_pipe(global_object, self as *mut Self, &mut self.reader)?;
+                let stream = ReadableStream::from_pipe(global_object, std::ptr::from_mut::<Self>(self), &mut self.reader)?;
                 self.state = PipeReaderState::Done(Box::default());
                 Ok(stream)
             }
@@ -2060,7 +2060,7 @@ impl PipeReader {
                 // `Box::into_raw` — this is an FFI hand-off, not a leak.
                 let owned = core::mem::take(bytes);
                 let len = owned.len();
-                let ptr = Box::into_raw(owned) as *mut u8;
+                let ptr = Box::into_raw(owned).cast::<u8>();
                 // SAFETY: `ptr`/`len` come from `Box::into_raw` of the slice
                 // just taken; ownership moves into the MarkedArrayBuffer.
                 let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
@@ -2090,7 +2090,7 @@ impl PipeReader {
         // we need to ref because the process might be done and deref inside signalDoneToCmd and we wanna to keep it alive to check this.process
         // Spec: `this.ref(); defer this.deref();` — see `on_reader_done`.
         // SAFETY: `this` points into an `Arc<PipeReader>` allocation.
-        unsafe { Arc::increment_strong_count(this as *const Self) };
+        unsafe { Arc::increment_strong_count(this.cast_const()) };
 
         // SAFETY: caller contract; protective ref above keeps `this` live.
         let y = unsafe { (*this).try_signal_done_to_cmd() };
@@ -2107,7 +2107,7 @@ impl PipeReader {
         }
 
         // SAFETY: matches the `increment_strong_count` above. May free `this`.
-        unsafe { Arc::decrement_strong_count(this as *const Self) };
+        unsafe { Arc::decrement_strong_count(this.cast_const()) };
     }
 
     pub fn close(&mut self) {
@@ -2180,7 +2180,7 @@ impl Drop for PipeReader {
     fn drop(&mut self) {
         log!(
             "PipeReader(0x{:x}, {}) deinit()",
-            self as *mut _ as usize,
+            std::ptr::from_mut(self) as usize,
             out_kind_str(self.out_type)
         );
         #[cfg(unix)]

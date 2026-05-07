@@ -82,7 +82,7 @@ impl Handler {
         // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
         // materializing an intermediate `&usize` (invalid_reference_casting lint).
         unsafe {
-            let p = core::ptr::addr_of!(self.active_connections) as *mut usize;
+            let p = core::ptr::addr_of!(self.active_connections).cast_mut();
             *p = (*p).saturating_add(n);
         }
     }
@@ -93,7 +93,7 @@ impl Handler {
         // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
         // materializing an intermediate `&usize` (invalid_reference_casting lint).
         unsafe {
-            let p = core::ptr::addr_of!(self.active_connections) as *mut usize;
+            let p = core::ptr::addr_of!(self.active_connections).cast_mut();
             *p = (*p).saturating_sub(n);
         }
     }
@@ -122,7 +122,7 @@ impl Handler {
         // mutable pointer from the stored raw `self.vm` (== `vm`) rather than casting the
         // shared ref, which rustc's invalid_reference_casting lint rejects.
         let _ = vm;
-        let vm_mut = unsafe { &mut *(self.vm as *mut VirtualMachine) };
+        let vm_mut = unsafe { &mut *self.vm.cast_mut() };
         let _ = vm_mut.uncaught_exception(global_object, error_value, false);
     }
 

@@ -1714,13 +1714,13 @@ pub fn spawn_opts(
         let mut envp_buf: Vec<*const core::ffi::c_char> =
             Vec::with_capacity(ENV_ARR.len() + usize::from(path.is_some()) + 1);
         for s in &ENV_ARR {
-            envp_buf.push(s.as_ptr() as *const core::ffi::c_char);
+            envp_buf.push(s.as_ptr().cast::<core::ffi::c_char>());
         }
         if let Some(p) = path {
             // PORT NOTE: `env_var::PATH.get()` yields a slice into the C env
             // block (NUL byte immediately follows on POSIX — see
             // `bun_core::getenv_z`), matching Zig's `@ptrCast(p.ptr)`.
-            envp_buf.push(p.as_ptr() as *const core::ffi::c_char);
+            envp_buf.push(p.as_ptr().cast::<core::ffi::c_char>());
         }
         envp_buf.push(core::ptr::null()); // sentinel
         envp_buf
@@ -1880,10 +1880,10 @@ pub fn git_diff_internal(
     let mut envp_buf: Vec<*const core::ffi::c_char> =
         Vec::with_capacity(ENV_STATIC.len() + usize::from(path_var.is_some()) + 1);
     if let Some(p) = &path_var {
-        envp_buf.push(p.as_ptr() as *const core::ffi::c_char);
+        envp_buf.push(p.as_ptr().cast::<core::ffi::c_char>());
     }
     for s in ENV_STATIC {
-        envp_buf.push(s.as_ptr() as *const core::ffi::c_char);
+        envp_buf.push(s.as_ptr().cast::<core::ffi::c_char>());
     }
     envp_buf.push(core::ptr::null()); // sentinel
 

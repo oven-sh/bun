@@ -21,7 +21,7 @@ impl Url {
         // SAFETY: `url` borrows the parser source/arena which outlives the
         // `add_import_record` call. Detach the borrow so `input` is reusable
         // (same trick as `css_parser::src_str` — Token payloads are arena-static).
-        let url: &'static [u8] = unsafe { &*(url as *const [u8]) };
+        let url: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
         let import_record_idx =
             input.add_import_record(url, start_pos, bun_options_types::ImportKind::Url)?;
         Ok(Url {
@@ -112,7 +112,7 @@ impl Url {
         // SAFETY: `url` borrows arena-backed `import_info` data valid for the
         // printer's `'a`; detach so `dest` can be re-borrowed mutably below
         // (same pattern as `Url::parse` above).
-        let url: &[u8] = unsafe { &*(url as *const [u8]) };
+        let url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
 
         if dest.minify && !is_internal {
             // PERF(port): was std.Io.Writer.Allocating with dest.allocator — using Vec<u8>; profile in Phase B

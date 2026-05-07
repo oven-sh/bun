@@ -73,7 +73,7 @@ impl RefCountedStr {
         // reconstructing the Box here returns ownership to the global allocator.
         unsafe {
             drop(Box::from_raw(ptr::slice_from_raw_parts_mut(
-                self.ptr as *mut u8,
+                self.ptr.cast_mut(),
                 self.len as usize,
             )));
         }

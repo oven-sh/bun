@@ -205,7 +205,7 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         }
         remaining = &remaining[usize::try_from(w).expect("int cast")..];
     }
-    stream.pending_body = remaining as *const [u8];
+    stream.pending_body = std::ptr::from_ref::<[u8]>(remaining);
     if remaining.is_empty() {
         stream.request_body_done = true;
         qs.shutdown();

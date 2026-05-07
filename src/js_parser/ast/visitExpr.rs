@@ -160,7 +160,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // SAFETY: `p.define: &'a Define` outlives `p`; erase the local borrow
             // so `&mut self` helpers below can be called while iterating.
             let meta: &[crate::defines::DotDefine] =
-                unsafe { &*(meta.as_slice() as *const [crate::defines::DotDefine]) };
+                unsafe { &*std::ptr::from_ref::<[crate::defines::DotDefine]>(meta.as_slice()) };
             for define in meta {
                 if !p.is_dot_define_match(expr, &define.parts) {
                     continue;
@@ -268,7 +268,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if let Some(def) = p.define.for_identifier(name) {
                 // SAFETY: `p.define: &'a Define` outlives `p`; erase the local
                 // borrow so `value_for_define(&mut self, ..)` can be called.
-                let def = unsafe { &*(def as *const crate::defines::DefineData) };
+                let def = unsafe { &*std::ptr::from_ref::<crate::defines::DefineData>(def) };
                 if !def.valueless() {
                     let newvalue: Expr = p.value_for_define(
                         expr.loc,
@@ -481,7 +481,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // --- These must be done in all cases --
                     // PORT NOTE: Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
                     // a spread object's properties via raw arena pointer. Track as a raw ptr here.
-                    let mut props: *mut G::PropertyList = &mut e_.properties;
+                    let mut props: *mut G::PropertyList = &raw mut e_.properties;
 
                     let maybe_key_value: Option<ExprNodeIndex> = if e_.key_prop_index > -1 {
                         // SAFETY: `props` points at the live `e_.properties` (arena-owned).
@@ -549,7 +549,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .data
                             .e_object_mut()
                             .unwrap();
-                        props = &mut inner.properties;
+                        props = &raw mut inner.properties;
                     }
 
                     // Typescript defines static jsx as children.len > 1 or single spread
@@ -847,8 +847,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn e_index(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
-        let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
-        let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&*e_ as *const _, &*dt as *const _));
+        let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
+        let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax {
@@ -1245,14 +1245,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
     fn e_dot(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
-        let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&*e_ as *const _, &*dt as *const _));
-        let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
+        let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
+        let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
 
         if let Some(parts) = p.define.dots.get(e_.name.slice()) {
             // SAFETY: `p.define: &'a Define` outlives `p`; erase the local
             // borrow so `&mut self` helpers below can be called while iterating.
             let parts: &[crate::defines::DotDefine] =
-                unsafe { &*(parts.as_slice() as *const [crate::defines::DotDefine]) };
+                unsafe { &*std::ptr::from_ref::<[crate::defines::DotDefine]>(parts.as_slice()) };
             for define in parts {
                 if p.is_dot_define_match(expr, &define.parts) {
                     if in_.assign_target == js_ast::AssignTarget::None {
@@ -1293,7 +1293,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Track ".then().catch()" chains
         if is_call_target
-            && matches!(p.then_catch_chain.next_target, Data::EDot(nt) if core::ptr::eq(&*e_ as *const _, &*nt as *const _))
+            && matches!(p.then_catch_chain.next_target, Data::EDot(nt) if core::ptr::eq(&raw const *e_, &raw const *nt))
         {
             if e_.name == b"catch" {
                 p.then_catch_chain = ThenCatchChain {
@@ -1360,7 +1360,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn e_if(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
         let mut e_ = expr.data.e_if().expect("infallible: variant checked");
-        let is_call_target = matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
+        let is_call_target = matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1665,12 +1665,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let state = TransposeState {
                 is_await_target: matches!(
                     p.await_target,
-                    Some(Data::EImport(at)) if core::ptr::eq(&*e_ as *const _, &*at as *const _)
+                    Some(Data::EImport(at)) if core::ptr::eq(&raw const *e_, &raw const *at)
                 ),
                 is_then_catch_target: p.then_catch_chain.has_catch
                     && matches!(
                         p.then_catch_chain.next_target,
-                        Data::EImport(nt) if core::ptr::eq(&*e_ as *const _, &*nt as *const _)
+                        Data::EImport(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
                     ),
                 import_options: e_.options,
                 loc: e_.expr.loc,
@@ -1695,7 +1695,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             has_multiple_args: e_.args.len_u32() >= 2,
             has_catch: matches!(
                 p.then_catch_chain.next_target,
-                Data::ECall(nt) if core::ptr::eq(&*e_ as *const _, &*nt as *const _)
+                Data::ECall(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
             ) && p.then_catch_chain.has_catch,
         };
 
@@ -2341,12 +2341,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 unsafe { stmts.as_mut().push(decl) };
 
                 p.handle_react_refresh_post_visit_function_body(&mut stmts_list, hook);
-                e_.body.stmts = stmts_list.into_bump_slice_mut() as *mut [Stmt];
+                e_.body.stmts = std::ptr::from_mut::<[Stmt]>(stmts_list.into_bump_slice_mut());
 
                 return p.get_react_refresh_hook_signal_init(hook, expr);
             }
         }
-        e_.body.stmts = stmts_list.into_bump_slice_mut() as *mut [Stmt];
+        e_.body.stmts = std::ptr::from_mut::<[Stmt]>(stmts_list.into_bump_slice_mut());
         expr
     }
     fn e_function(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {

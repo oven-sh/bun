@@ -321,8 +321,8 @@ impl CompileTarget {
                         url,
                         http_proxy,
                         reject_unauthorized,
-                        progress as *mut bun_core::Progress::Node as *mut (),
-                        &mut *compressed_archive_bytes as *mut _,
+                        std::ptr::from_mut::<bun_core::Progress::Node>(progress).cast::<()>(),
+                        &raw mut *compressed_archive_bytes,
                     )
                 };
                 progress.end();

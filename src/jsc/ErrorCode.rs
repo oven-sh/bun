@@ -35,7 +35,7 @@ pub trait GlobalObjectRef {
 impl GlobalObjectRef for crate::JSGlobalObject {
     #[inline]
     fn as_global_ptr(&self) -> *mut c_void {
-        self as *const Self as *mut c_void
+        std::ptr::from_ref::<Self>(self) as *mut c_void
     }
     #[inline]
     fn throw_js_value(&self, value: JSValue) -> JsError {
@@ -1366,7 +1366,7 @@ impl ErrorCode {
         // SAFETY: `global` is a live `JSC::JSGlobalObject*`; `message` is a
         // valid `bun.String` borrowed for the call. C++ clones the impl into a
         // JSString; Zig wrapper does `defer message.deref()`, mirrored below.
-        let v = unsafe { Bun__createErrorWithCode(global.as_global_ptr(), self, &mut message) };
+        let v = unsafe { Bun__createErrorWithCode(global.as_global_ptr(), self, &raw mut message) };
         message.deref();
         v
     }

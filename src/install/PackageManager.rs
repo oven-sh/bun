@@ -831,7 +831,7 @@ impl PackageManager {
         // `manager.lockfile`. Both raw pointers below are derived from `self`,
         // so the caller's borrow stays on the Stacked-Borrows stack.
         unsafe {
-            let lf: *mut Lockfile = &mut *(*pm).lockfile;
+            let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut logger::Log = (*pm).log;
             (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
         }
@@ -845,7 +845,7 @@ impl PackageManager {
             // logger.zig:1204), so we only need a shared borrow here — the sole invariant is
             // that no `&mut logger::Log` to the pointee is live, which holds on this path.
             // `IntoLogWrite` is impl'd for `*mut io::Writer`, not `&mut`.
-            let _ = self.log_mut().print(Output::error_writer() as *mut _);
+            let _ = self.log_mut().print(std::ptr::from_mut(Output::error_writer()));
         }
         Global::crash();
     }
@@ -955,7 +955,7 @@ impl PackageManager {
                 // `WakeHandler.handler`'s second arg is the erased
                 // `*mut PackageManager` (`bun_install_types` cannot name this
                 // type); cast back to `*mut c_void` here.
-                (on_wake.get_handler())(ctx.as_ptr(), this as *mut c_void);
+                (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }
@@ -1001,7 +1001,7 @@ impl PackageManager {
             is_done(ctx)
         }
         let mut erased = Erased::<C> {
-            ctx: closure as *mut C,
+            ctx: std::ptr::from_mut::<C>(closure),
             is_done: is_done_fn,
         };
         // Derive the event-loop pointer through `this`'s raw provenance (NOT
@@ -1016,7 +1016,7 @@ impl PackageManager {
         unsafe {
             AnyEventLoop::tick_raw(
                 event_loop,
-                &mut erased as *mut _ as *mut c_void,
+                (&raw mut erased).cast::<c_void>(),
                 trampoline::<C>,
             )
         };
@@ -1354,7 +1354,7 @@ pub fn allocate_package_manager() {
     // `core::ptr::write` (no Drop on the uninit bytes).
     unsafe {
         let layout = core::alloc::Layout::new::<PackageManager>();
-        let ptr = std::alloc::alloc(layout) as *mut PackageManager;
+        let ptr = std::alloc::alloc(layout).cast::<PackageManager>();
         if ptr.is_null() {
             bun_alloc::out_of_memory();
         }
@@ -1792,7 +1792,7 @@ pub fn init(
                 // SAFETY: the BSSMap singleton owns `*e` for the process
                 // lifetime, and `init()` runs single-threaded before any other
                 // access — sole `&'static mut` is sound.
-                unsafe { &mut *(*e as *mut fs::DirEntry) }
+                unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
             }
             fs::EntriesOption::Err(e) => return Err(e.canonical_error),
         };
@@ -1803,15 +1803,14 @@ pub fn init(
     // instead of `Box::leak`. Zig: `ctx.allocator.create(dot_env::Map)` + `create(dot_env::Loader)`.
     let env: &mut dot_env::Loader = unsafe {
         let map_ptr =
-            std::alloc::alloc(core::alloc::Layout::new::<dot_env::Map>()) as *mut dot_env::Map;
+            std::alloc::alloc(core::alloc::Layout::new::<dot_env::Map>()).cast::<dot_env::Map>();
         if map_ptr.is_null() {
             bun_alloc::out_of_memory();
         }
         core::ptr::write(map_ptr, dot_env::Map::init());
         holder::ENV_MAP = map_ptr;
 
-        let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>())
-            as *mut dot_env::Loader<'static>;
+        let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>()).cast::<dot_env::Loader<'static>>();
         if loader_ptr.is_null() {
             bun_alloc::out_of_memory();
         }
@@ -1826,7 +1825,7 @@ pub fn init(
     // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
     // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
     env.load(
-        unsafe { &mut *(entries_option as *mut fs::DirEntry) },
+        unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
         &[],
         dot_env::DotEnvFileSuffix::Production,
         false,
@@ -2150,7 +2149,7 @@ pub fn init(
     // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`); pass the
     // `ZBox` C-string pointers. The `ZBox`es are kept alive by `ca` for the
     // duration of `init` (the HTTP thread copies them into BoringSSL).
-    let ca_ptrs: Vec<*const c_void> = ca.iter().map(|z| z.as_ptr() as *const c_void).collect();
+    let ca_ptrs: Vec<*const c_void> = ca.iter().map(|z| z.as_ptr().cast::<c_void>()).collect();
     // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
     // string (Zig: `allocator.dupeZ` into a leaked singleton field). Park it in
     // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden
@@ -2245,7 +2244,7 @@ pub fn init_with_runtime_once(
         match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true).map(|r| &mut *r) {
             // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
             // and runtime init runs once on the main thread before any other access.
-            Ok(fs::EntriesOption::Entries(e)) => unsafe { &mut *(*e as *mut fs::DirEntry) },
+            Ok(fs::EntriesOption::Entries(e)) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
             Ok(fs::EntriesOption::Err(e)) => {
                 Output::err(
                     e.canonical_error,
@@ -2297,7 +2296,7 @@ pub fn init_with_runtime_once(
                     context: crate::lifecycle_script_runner::StartedAtCtx,
                 },
                 network_task_fifo: NetworkQueue::init(),
-                log: log as *mut _,
+                log: std::ptr::from_mut(log),
                 root_dir,
                 ast_arena: bun_alloc::Arena::new(),
                 // PORT NOTE: reborrow `&mut *env` so the local stays usable for

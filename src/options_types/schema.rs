@@ -31,7 +31,7 @@ impl<'a> Writer<'a> {
     pub fn write_int<I: Copy>(&mut self, int: I) {
         let bytes = unsafe {
             core::slice::from_raw_parts(
-                (&int as *const I).cast::<u8>(),
+                (&raw const int).cast::<u8>(),
                 core::mem::size_of::<I>(),
             )
         };

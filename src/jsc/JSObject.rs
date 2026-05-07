@@ -144,7 +144,7 @@ impl JSObject {
     /// This mimics the implementation in JavaScriptCore's C++.
     #[inline]
     pub fn ensure_still_alive(&self) {
-        core::hint::black_box(self as *const Self);
+        core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
     pub fn create_structure(
@@ -186,7 +186,7 @@ impl JSObject {
             JSC__JSObject__create(
                 global.as_ptr(),
                 length,
-                creator as *mut Ctx as *mut c_void,
+                std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
                 initializer_call::<Ctx>,
             )
         }
@@ -300,7 +300,7 @@ extern "C" fn initializer_call<Ctx: ObjectInitializer>(
 ) {
     // SAFETY: `this` was produced from `&mut Ctx` in `create_with_initializer`;
     // `obj` and `global` are live JSC pointers for the duration of the callback.
-    let result = unsafe { Ctx::create(&mut *(this as *mut Ctx), &mut *obj, &*global) };
+    let result = unsafe { Ctx::create(&mut *this.cast::<Ctx>(), &mut *obj, &*global) };
     if let Err(err) = result {
         // Mirrors `host_fn::void_from_js_error` (host_fn.zig) — OOM throws,
         // anything else asserts an exception is already pending.

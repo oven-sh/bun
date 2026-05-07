@@ -145,7 +145,7 @@ impl<'a> AnyEventLoop<'a> {
         match self {
             // SAFETY: owner is the live erased `*mut jsc::EventLoop`.
             AnyEventLoop::Js { owner } => unsafe { js::file_polls(*owner) },
-            AnyEventLoop::Mini(mini) => mini.file_polls() as *mut _,
+            AnyEventLoop::Mini(mini) => std::ptr::from_mut(mini.file_polls()),
         }
     }
 
@@ -165,7 +165,7 @@ impl<'a> AnyEventLoop<'a> {
                 // taking the `&mut Store` borrow; `Store::put` only touches
                 // `mini.after_event_loop_callback{,_ctx}` through the ctx,
                 // which is field-disjoint from `file_polls_`.
-                let ctx = MiniEventLoop::as_event_loop_ctx(mini as *mut _);
+                let ctx = MiniEventLoop::as_event_loop_ctx(std::ptr::from_mut(mini));
                 mini.file_polls().put(poll, ctx, was_ever_registered);
             }
         }
@@ -187,7 +187,7 @@ impl<'a> AnyEventLoop<'a> {
         match self {
             // SAFETY: owner is the live erased `*mut jsc::EventLoop`.
             AnyEventLoop::Js { owner } => unsafe { js::pipe_read_buffer(*owner) },
-            AnyEventLoop::Mini(mini) => mini.pipe_read_buffer() as *mut [u8],
+            AnyEventLoop::Mini(mini) => std::ptr::from_mut::<[u8]>(mini.pipe_read_buffer()),
         }
     }
 
@@ -480,7 +480,7 @@ impl EventLoopHandle {
     pub fn from_any(any: &mut AnyEventLoop<'static>) -> EventLoopHandle {
         match any {
             AnyEventLoop::Js { owner } => EventLoopHandle::Js { owner: *owner },
-            AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(mini as *mut _),
+            AnyEventLoop::Mini(mini) => EventLoopHandle::Mini(std::ptr::from_mut(mini)),
         }
     }
 
@@ -557,7 +557,7 @@ impl EventLoopHandle {
             EventLoopHandle::Js { owner } => unsafe { js::file_polls(owner) },
             // SAFETY: see `stdout`. We hold `*mut MiniEventLoop`; derive a
             // unique borrow at the call site only.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).file_polls() as *mut _ },
+            EventLoopHandle::Mini(mini) => unsafe { std::ptr::from_mut((*mini).file_polls()) },
         }
     }
 
@@ -619,7 +619,7 @@ impl EventLoopHandle {
             // SAFETY: owner is the live erased `*mut jsc::EventLoop`.
             EventLoopHandle::Js { owner } => unsafe { js::pipe_read_buffer(owner) },
             // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).pipe_read_buffer() as *mut [u8] },
+            EventLoopHandle::Mini(mini) => unsafe { std::ptr::from_mut::<[u8]>((*mini).pipe_read_buffer()) },
         }
     }
 

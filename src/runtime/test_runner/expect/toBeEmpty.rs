@@ -40,12 +40,12 @@ pub fn to_be_empty(
                     _: JSValue,
                 ) {
                     // SAFETY: `any_` is the `&mut bool` passed to `for_each` below.
-                    unsafe { *(any_ as *mut bool) = true };
+                    unsafe { *any_.cast::<bool>() = true };
                 }
 
                 value.for_each(
                     global,
-                    &mut any_properties_in_iterator as *mut bool as *mut c_void,
+                    (&raw mut any_properties_in_iterator).cast::<c_void>(),
                     anything_in_iterator,
                 )?;
                 pass = !any_properties_in_iterator;

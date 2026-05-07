@@ -210,7 +210,7 @@ where
         let positioned: [u64; 2] = [real_start_pos, real_end_pos];
         // SAFETY: `[u64; 2]` is POD; viewing as 16 bytes matches `std.mem.asBytes`.
         let positioned_bytes: &[u8; 16] =
-            unsafe { &*(&positioned as *const [u64; 2] as *const [u8; 16]) };
+            unsafe { &*(&raw const positioned).cast::<[u8; 16]>() };
         let mut written: usize = 0;
         while written < 16 {
             written += stream.pwrite(&positioned_bytes[written..], start_pos + written);
@@ -220,7 +220,7 @@ where
         let positioned: [u64; 2] = [real_end_pos, real_end_pos];
         // SAFETY: `[u64; 2]` is POD; viewing as 16 bytes matches `std.mem.asBytes`.
         let positioned_bytes: &[u8; 16] =
-            unsafe { &*(&positioned as *const [u64; 2] as *const [u8; 16]) };
+            unsafe { &*(&raw const positioned).cast::<[u8; 16]>() };
         let mut written: usize = 0;
         while written < 16 {
             written += stream.pwrite(&positioned_bytes[written..], start_pos + written);

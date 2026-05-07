@@ -40,7 +40,7 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         // by `blob`; no other borrow exists yet.
         let store_ptr = store.as_ptr();
         unsafe { (*store_ptr).mime_type = mime };
-        blob.content_type = unsafe { (*store_ptr).mime_type.value.as_ref() } as *const [u8];
+        blob.content_type = std::ptr::from_ref::<[u8]>(unsafe { (*store_ptr).mime_type.value.as_ref() });
     } else {
         // No store ⇒ empty bytes ⇒ JS never reads `content_type`; match Zig
         // by leaving the default `b""`.

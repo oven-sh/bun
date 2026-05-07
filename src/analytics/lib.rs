@@ -448,7 +448,7 @@ pub mod generate_header {
                 // all-zero utsname.
                 let mut name: libc::utsname = unsafe { core::mem::zeroed() };
                 // SAFETY: `name` is a valid, exclusive pointer to a utsname.
-                let _ = unsafe { libc::uname(&mut name) };
+                let _ = unsafe { libc::uname(&raw mut name) };
                 name
             })
         }

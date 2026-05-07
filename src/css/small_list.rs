@@ -662,7 +662,7 @@ impl<T, const N: usize> SmallList<T, N> {
     #[inline]
     fn heap(&mut self) -> (*mut T, *mut u32) {
         // SAFETY: caller ensures spilled
-        unsafe { (self.data.heap.ptr, &mut self.data.heap.len as *mut u32) }
+        unsafe { (self.data.heap.ptr, &raw mut self.data.heap.len) }
     }
 
     fn as_const_ptr(&self) -> *const T {
@@ -753,12 +753,12 @@ impl<T, const N: usize> SmallList<T, N> {
     fn triple_mut(&mut self) -> (*mut T, *mut u32, u32) {
         if self.spilled() {
             // SAFETY: spilled => heap active
-            unsafe { (self.data.heap.ptr, &mut self.data.heap.len as *mut u32, self.capacity) }
+            unsafe { (self.data.heap.ptr, &raw mut self.data.heap.len, self.capacity) }
         } else {
             // SAFETY: !spilled => inlined active
             (
                 unsafe { (*self.data.inlined).as_mut_ptr().cast::<T>() },
-                &mut self.capacity as *mut u32,
+                &raw mut self.capacity,
                 u32::try_from(N).expect("int cast"),
             )
         }
@@ -768,9 +768,9 @@ impl<T, const N: usize> SmallList<T, N> {
     fn len_mut(&mut self) -> *mut u32 {
         if self.spilled() {
             // SAFETY: spilled() => heap variant active
-            unsafe { &mut self.data.heap.len as *mut u32 }
+            unsafe { &raw mut self.data.heap.len }
         } else {
-            &mut self.capacity as *mut u32
+            &raw mut self.capacity
         }
     }
 

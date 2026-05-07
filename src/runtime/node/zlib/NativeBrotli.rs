@@ -376,10 +376,10 @@ impl Context {
                     c::BrotliEncoderCompressStream(
                         self.state_ptr().cast(),
                         self.flush,
-                        &mut self.avail_in,
-                        &mut next_in,
-                        &mut self.avail_out,
-                        &mut self.next_out,
+                        &raw mut self.avail_in,
+                        &raw mut next_in,
+                        &raw mut self.avail_out,
+                        &raw mut self.next_out,
                         ptr::null_mut(),
                     )
                 };
@@ -396,10 +396,10 @@ impl Context {
                 self.last_result.d = unsafe {
                     c::BrotliDecoderDecompressStream(
                         self.state_ptr().cast(),
-                        &mut self.avail_in,
-                        &mut next_in,
-                        &mut self.avail_out,
-                        &mut self.next_out,
+                        &raw mut self.avail_in,
+                        &raw mut next_in,
+                        &raw mut self.avail_out,
+                        &raw mut self.next_out,
                         ptr::null_mut(),
                     )
                 };

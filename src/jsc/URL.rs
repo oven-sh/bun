@@ -59,26 +59,26 @@ impl URL {
     pub fn href_from_string(str: String) -> String {
         let mut input = str;
         // SAFETY: input lives for the duration of the call
-        unsafe { URL__getHref(&mut input) }
+        unsafe { URL__getHref(&raw mut input) }
     }
 
     pub fn join(base: String, relative: String) -> String {
         let mut base_str = base;
         let mut relative_str = relative;
         // SAFETY: locals live for the duration of the call
-        unsafe { URL__getHrefJoin(&mut base_str, &mut relative_str) }
+        unsafe { URL__getHrefJoin(&raw mut base_str, &raw mut relative_str) }
     }
 
     pub fn file_url_from_string(str: String) -> String {
         let mut input = str;
         // SAFETY: input lives for the duration of the call
-        unsafe { URL__getFileURLString(&mut input) }
+        unsafe { URL__getFileURLString(&raw mut input) }
     }
 
     pub fn path_from_file_url(str: String) -> String {
         let mut input = str;
         // SAFETY: input lives for the duration of the call
-        unsafe { URL__pathFromFileURL(&mut input) }
+        unsafe { URL__pathFromFileURL(&raw mut input) }
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
@@ -110,7 +110,7 @@ impl URL {
     pub fn from_string(str: String) -> Option<NonNull<URL>> {
         let mut input = str;
         // SAFETY: input lives for the duration of the call
-        NonNull::new(unsafe { URL__fromString(&mut input) })
+        NonNull::new(unsafe { URL__fromString(&raw mut input) })
     }
     // TODO(port): from_js/from_string/from_utf8 return an owned C++ heap pointer that
     // the caller must destroy(). Consider an RAII wrapper in Phase B instead of NonNull<URL>.

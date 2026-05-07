@@ -791,7 +791,7 @@ impl<'a> Parser<'a> {
                     || strings::has_suffix_comptime(path.name.filename, b".tsx");
                 if cache.get(
                     p.source,
-                    &p.options as *const _ as *const (),
+                    (&raw const p.options).cast::<()>(),
                     p.options.jsx.parse && (!is_node_module || is_jsx_file),
                 ) {
                     return Ok(js_ast::Result::Cached);
@@ -1925,9 +1925,9 @@ impl<'a> Parser<'a> {
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         clauses.push(js_ast::ClauseItem {
                             name: js_ast::LocRef { ref_: Some(r), loc: logger::Loc::EMPTY },
-                            alias: symbol_name.as_bytes() as *const [u8],
+                            alias: std::ptr::from_ref::<[u8]>(symbol_name.as_bytes()),
                             alias_loc: logger::Loc::EMPTY,
-                            original_name: b"" as *const [u8],
+                            original_name: std::ptr::from_ref::<[u8]>(b""),
                         });
                         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
                     }

@@ -88,7 +88,7 @@ impl NativeZstd {
             ref_count: Cell::new(1), // RefCount.init()
             // SAFETY: JSC_BORROW — the JSGlobalObject outlives this payload (the C++ wrapper
             // is owned by that global's heap). Stored as `*const` and only re-borrowed shared.
-            global_this: global as *const JSGlobalObject,
+            global_this: std::ptr::from_ref::<JSGlobalObject>(global),
             stream: Context::default(),
             write_result: None,
             poll_ref: CountedKeepAlive::default(),
@@ -358,15 +358,15 @@ impl Context {
             NodeMode::ZSTD_COMPRESS => unsafe {
                 c::ZSTD_compressStream2(
                     self.state_ptr().cast(),
-                    &mut self.output,
-                    &mut self.input,
+                    &raw mut self.output,
+                    &raw mut self.input,
                     // @intCast c_int → ZSTD_EndDirective (c_uint)
                     self.flush as c_uint,
                 )
             },
             // SAFETY: state is a valid DCtx.
             NodeMode::ZSTD_DECOMPRESS => unsafe {
-                c::ZSTD_decompressStream(self.state_ptr().cast(), &mut self.output, &mut self.input)
+                c::ZSTD_decompressStream(self.state_ptr().cast(), &raw mut self.output, &raw mut self.input)
             },
             _ => unreachable!(),
         } as u64;
@@ -472,7 +472,7 @@ impl bun_event_loop::Taskable for NativeZstd {
 impl CompressionStreamImpl for NativeZstd {
     type Stream = Context;
 
-    #[inline] fn global_this(&self) -> *mut JSGlobalObject { self.global_this as *mut JSGlobalObject }
+    #[inline] fn global_this(&self) -> *mut JSGlobalObject { self.global_this.cast_mut() }
     #[inline] fn stream_mut(&mut self) -> &mut Self::Stream { &mut self.stream }
     #[inline] fn write_result_ptr(&mut self) -> Option<*mut u32> { self.write_result }
     #[inline] fn poll_ref_mut(&mut self) -> &mut CountedKeepAlive { &mut self.poll_ref }

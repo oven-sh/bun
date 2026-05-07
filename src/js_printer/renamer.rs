@@ -25,7 +25,7 @@ type NameStr = *const [u8];
 
 #[inline]
 fn name_str_empty() -> NameStr {
-    b"" as &[u8] as *const [u8]
+    std::ptr::from_ref::<[u8]>(b"" as &[u8])
 }
 
 /// Const array for `inline for (SlotNamespace.values)` translation. Skips
@@ -180,7 +180,7 @@ impl TinyString {
         } else {
             // Zig: `allocator.dupe(u8, input)` — allocate into the renamer arena.
             let duped: &[u8] = arena.alloc_slice_copy(input);
-            Ok(TinyString::String(duped as *const [u8]))
+            Ok(TinyString::String(std::ptr::from_ref::<[u8]>(duped)))
         }
     }
 
@@ -770,7 +770,7 @@ impl NumberRenamer {
                 // SAFETY: `new_child_scope` is a valid pool slot.
                 unsafe {
                     new_child_scope.write(NumberScope {
-                        parent: Some(s as *const NumberScope),
+                        parent: Some(s.cast_const()),
                         name_counts: StringHashMap::default(),
                     });
                 }
@@ -808,7 +808,7 @@ impl NumberRenamer {
     pub fn add_top_level_symbol(&mut self, ref_: Ref) {
         // PORT NOTE: reshaped for borrowck — root is a field of self
         // TODO(port): self.assign_name needs &mut self AND &mut self.root simultaneously
-        let root: *mut NumberScope = &mut self.root;
+        let root: *mut NumberScope = &raw mut self.root;
         // SAFETY: assign_name does not touch self.root through `self`
         self.assign_name(unsafe { &mut *root }, ref_);
     }
@@ -991,7 +991,7 @@ impl NumberScope {
 
         // Zig: `allocator.dupe(u8, name)` — allocate into the renamer arena.
         let duped: &[u8] = arena.alloc_slice_copy(name);
-        let name: NameStr = duped as *const [u8];
+        let name: NameStr = std::ptr::from_ref::<[u8]>(duped);
 
         self.name_counts
             .put_no_clobber(duped, 1)
@@ -1051,7 +1051,7 @@ impl ExportRenamer {
                     let entry = self.used.get_or_put(input).expect("unreachable");
                     *entry.value_ptr = tries;
                     // SAFETY: `to_use` lives in `self.arena`; tie it to `&self`.
-                    return unsafe { &*(to_use as *const [u8]) };
+                    return unsafe { &*std::ptr::from_ref::<[u8]>(to_use) };
                 }
             }
         } else {
@@ -1063,7 +1063,7 @@ impl ExportRenamer {
         // so the returned slice is tied to `&self`.
         let duped: &[u8] = self.arena.alloc_slice_copy(input);
         // SAFETY: `duped` lives in `self.arena`, which outlives the returned `&self` borrow.
-        unsafe { &*(duped as *const [u8]) }
+        unsafe { &*std::ptr::from_ref::<[u8]>(duped) }
     }
 
     pub fn next_minified_name(&mut self) -> Result<Vec<u8>, bun_core::Error> {

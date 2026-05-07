@@ -21,7 +21,7 @@ impl InstallCommand {
                 // startup in `Cli::start()` before any command (including this
                 // one) is dispatched; no other `&mut` to it is live here.
                 let log = unsafe { (*(&raw mut Cli::LOG_)).assume_init_mut() };
-                let _ = log.print(Output::error_writer() as *mut _);
+                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 Global::exit(1);
             }
             Err(e) => Err(e),
@@ -106,7 +106,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
         ) -> Result<(), Error> {
             // SAFETY: `ctx` was set to `&mut analyzer as *mut _ as *mut ()` below
             // and outlives the `BuildCommand::exec` call.
-            let analyzer = unsafe { &mut *(ctx as *mut Analyzer) };
+            let analyzer = unsafe { &mut *ctx.cast::<Analyzer>() };
             Analyzer::on_analyze(analyzer, result)
         }
 

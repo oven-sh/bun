@@ -110,7 +110,7 @@ impl SignalCode {
         // SAFETY: reinterpret `value` as bytes and read the first byte, mirroring
         // Zig `std.mem.asBytes(&value)[0]`. Requires size_of::<T>() >= 1.
         let byte = unsafe {
-            *(&value as *const T as *const u8)
+            *(&raw const value).cast::<u8>()
         };
         SignalCode(byte)
     }

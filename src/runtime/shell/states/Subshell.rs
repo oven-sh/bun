@@ -83,7 +83,7 @@ impl Subshell {
                 };
                 // SAFETY: `node` points into the AST arena which outlives every
                 // state node.
-                let script_node: *const ast::Script = unsafe { &(*node).script };
+                let script_node: *const ast::Script = unsafe { &raw const (*node).script };
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
                 // TODO(b2-blocked): apply `(*node).redirect` / `redirect_flags`
                 // to `io` once IOWriter redirect open is wired.

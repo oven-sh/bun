@@ -990,7 +990,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         next_value: JSValue,
     ) {
         // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { (ctx as *mut Self).as_mut() }) else { return };
+        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -1041,7 +1041,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         next_value: JSValue,
     ) {
         // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { (ctx as *mut Self).as_mut() }) else { return };
+        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -1138,7 +1138,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         }
 
         // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { (ctx_ptr as *mut Self).as_mut() }) else { return };
+        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
         if ctx.formatter.failed {
             return;
         }
@@ -1676,7 +1676,7 @@ impl<'a> Formatter<'a> {
                                 // takes `*mut JSGlobalObject` by convention but never mutates it.
                                 let element = JSValue::c(unsafe {
                                     JSObjectGetPropertyAtIndex(
-                                        self.global_this as *const JSGlobalObject as *mut _,
+                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
                                         r#ref,
                                         0,
                                         core::ptr::null_mut(),
@@ -1724,7 +1724,7 @@ impl<'a> Formatter<'a> {
                                 // takes `*mut JSGlobalObject` by convention but never mutates it.
                                 let element = JSValue::c(unsafe {
                                     JSObjectGetPropertyAtIndex(
-                                        self.global_this as *const JSGlobalObject as *mut _,
+                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
                                         r#ref,
                                         i,
                                         core::ptr::null_mut(),
@@ -2038,7 +2038,7 @@ impl<'a> Formatter<'a> {
                         };
                         let result = value.for_each(
                             global,
-                            &mut iter as *mut _ as *mut c_void,
+                            (&raw mut iter).cast::<c_void>(),
                             MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
                         drop(iter);
@@ -2081,7 +2081,7 @@ impl<'a> Formatter<'a> {
                         };
                         let result = value.for_each(
                             global,
-                            &mut iter as *mut _ as *mut c_void,
+                            (&raw mut iter).cast::<c_void>(),
                             SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
                         drop(iter);
@@ -2628,7 +2628,7 @@ impl<'a> Formatter<'a> {
 
                     let result = value.for_each_property_ordered(
                         global,
-                        &mut iter as *mut _ as *mut c_void,
+                        (&raw mut iter).cast::<c_void>(),
                         PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                     );
 

@@ -261,7 +261,7 @@ impl VM {
         // SAFETY: `_p` is at offset 0 of a `#[repr(C)]` ZST handle, so its
         // address is the address of `self`; `UnsafeCell::get` yields a `*mut`
         // with write provenance from a shared borrow.
-        self._p.get() as *mut VM
+        self._p.get().cast::<VM>()
     }
 }
 

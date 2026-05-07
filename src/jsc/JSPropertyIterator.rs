@@ -90,13 +90,13 @@ impl IntoIterObject for NonNull<JSObject> {
 impl IntoIterObject for &JSObject {
     #[inline]
     fn into_iter_object(self) -> *mut JSObject {
-        (self as *const JSObject).cast_mut()
+        std::ptr::from_ref::<JSObject>(self).cast_mut()
     }
 }
 impl IntoIterObject for &mut JSObject {
     #[inline]
     fn into_iter_object(self) -> *mut JSObject {
-        self as *mut JSObject
+        std::ptr::from_mut::<JSObject>(self)
     }
 }
 
@@ -218,7 +218,7 @@ impl<'a> JSPropertyIterator<'a> {
                 // Exception check is unnecessary here because it won't throw.
                 let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
                 // SAFETY: `iter` is a live FFI handle; `name` is a valid out-param.
-                unsafe { Bun__JSPropertyIterator__getName(iter, &mut name, i) };
+                unsafe { Bun__JSPropertyIterator__getName(iter, &raw mut name, i) };
             }
 
             if name.is_dead() {

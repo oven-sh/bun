@@ -254,7 +254,7 @@ impl<'a> Lexer<'a> {
                 // SAFETY: contents has at least 4 bytes available from `current` when cp_len > 1
                 // (matches Zig `slice.ptr[0..4]` which over-reads up to 4 bytes).
                 // TODO(port): verify bun_str signature; may take &[u8; 4] or *const u8.
-                unsafe { &*(slice.as_ptr() as *const [u8; 4]) },
+                unsafe { &*slice.as_ptr().cast::<[u8; 4]>() },
                 u8::try_from(slice.len()).expect("int cast"), // @intCast to u3
                 strings::UNICODE_REPLACEMENT as CodePoint,
             ),

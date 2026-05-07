@@ -161,7 +161,7 @@ impl PostgresSQLQuery {
     /// removing from its queue.
     pub fn deref(&mut self) {
         // SAFETY: see method-level note; provenance is widened from `&mut self`.
-        unsafe { Self::deref_(self as *mut Self) }
+        unsafe { Self::deref_(std::ptr::from_mut::<Self>(self)) }
     }
 
     pub fn get_target(&self, global_object: &JSGlobalObject, clean_target: bool) -> Option<JSValue> {
@@ -197,7 +197,7 @@ impl PostgresSQLQuery {
         // route *every* field access through `this_ptr` and never touch `self` again, so
         // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
         // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
-        let this_ptr = self as *mut Self;
+        let this_ptr = std::ptr::from_mut::<Self>(self);
         let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
         unsafe { (*this_ptr).status = Status::Fail };
         let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
@@ -224,7 +224,7 @@ impl PostgresSQLQuery {
         // route *every* field access through `this_ptr` and never touch `self` again, so
         // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
         // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
-        let this_ptr = self as *mut Self;
+        let this_ptr = std::ptr::from_mut::<Self>(self);
         let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
         unsafe { (*this_ptr).status = Status::Fail };
         let Some(this_value) = (unsafe { (*this_ptr).this_value.try_get() }) else { return };
@@ -271,7 +271,7 @@ impl PostgresSQLQuery {
         // route *every* field access through `this_ptr` and never touch `self` again, so
         // under Stacked Borrows no parent-`Unique` use pops `this_ptr`'s SharedReadWrite
         // before the guards fire. `ref_()` above keeps the count >0 until `_deref` runs.
-        let this_ptr = self as *mut Self;
+        let this_ptr = std::ptr::from_mut::<Self>(self);
         let _deref = scopeguard::guard(this_ptr, |p| unsafe { Self::deref_(p) });
         unsafe {
             (*this_ptr).status = if is_last { Status::Success } else { Status::PartialResponse };
@@ -579,7 +579,7 @@ impl PostgresSQLQuery {
                         return Err(global_object.throw_error(err.into(), "failed to allocate statement"));
                     }
                 };
-                connection_entry_value = Some(entry.value_ptr as *mut *mut PostgresSQLStatement);
+                connection_entry_value = Some(std::ptr::from_mut::<*mut PostgresSQLStatement>(entry.value_ptr));
                 if entry.found_existing {
                     // SAFETY: entry.value_ptr is valid while connection.statements is not mutated.
                     let stmt: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };

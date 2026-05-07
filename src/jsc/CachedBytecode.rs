@@ -51,9 +51,9 @@ impl CachedBytecode {
                 source_provider_url,
                 input.as_ptr(),
                 input.len(),
-                &mut input_code_ptr,
-                &mut input_code_size,
-                &mut this,
+                &raw mut input_code_ptr,
+                &raw mut input_code_size,
+                &raw mut this,
             )
         };
         if ok {
@@ -81,9 +81,9 @@ impl CachedBytecode {
                 source_provider_url,
                 input.as_ptr(),
                 input.len(),
-                &mut input_code_ptr,
-                &mut input_code_size,
-                &mut this,
+                &raw mut input_code_ptr,
+                &raw mut input_code_size,
+                &raw mut this,
             )
         };
         if ok {

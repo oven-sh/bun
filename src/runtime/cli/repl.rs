@@ -71,7 +71,7 @@ fn global_clear_exception(global: &JSGlobalObject) {
 #[inline]
 fn global_to_js_value(global: &JSGlobalObject) -> JSValue {
     // Spec JSGlobalObject.zig `toJSValue` — `@enumFromInt(@intFromPtr(globalThis))`.
-    JSValue::from_cell(global as *const JSGlobalObject)
+    JSValue::from_cell(std::ptr::from_ref::<JSGlobalObject>(global))
 }
 
 #[inline]
@@ -874,7 +874,7 @@ impl<'a> Repl<'a> {
                 let mut act: bun_sys::posix::Sigaction = core::mem::zeroed();
                 act.sa_sigaction = sigint_handler as *const () as usize;
                 act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &act, core::ptr::null_mut());
+                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
             }
         }
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
@@ -899,7 +899,7 @@ impl<'a> Repl<'a> {
                 let mut act: bun_sys::posix::Sigaction = core::mem::zeroed();
                 act.sa_sigaction = libc::SIG_DFL;
                 act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &act, core::ptr::null_mut());
+                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
             }
         }
     }
@@ -1125,7 +1125,7 @@ impl<'a> Repl<'a> {
                 transformed_code.len(),
                 b"[repl]".as_ptr(),
                 b"[repl]".len(),
-                &mut exception,
+                &raw mut exception,
             )
         };
 
@@ -1273,7 +1273,7 @@ impl<'a> Repl<'a> {
                     code.len(),
                     b"[eval]".as_ptr(),
                     b"[eval]".len(),
-                    &mut exception,
+                    &raw mut exception,
                 );
             }
             if !exception.is_undefined() && !exception.is_null() {
@@ -1292,7 +1292,7 @@ impl<'a> Repl<'a> {
                 transformed_code.len(),
                 b"[eval]".as_ptr(),
                 b"[eval]".len(),
-                &mut exception,
+                &raw mut exception,
             )
         };
 
@@ -1382,7 +1382,7 @@ impl<'a> Repl<'a> {
                 code.len(),
                 b"[repl]".as_ptr(),
                 b"[repl]".len(),
-                &mut exception,
+                &raw mut exception,
             )
         };
 
@@ -1427,7 +1427,7 @@ impl<'a> Repl<'a> {
                 transformed_code.len(),
                 b"[repl]".as_ptr(),
                 b"[repl]".len(),
-                &mut exception,
+                &raw mut exception,
             )
         };
 
@@ -1524,7 +1524,7 @@ impl<'a> Repl<'a> {
         jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &value,
+            &raw const value,
             1,
             &mut array,
             jsc::ConsoleObject::FormatOptions {
@@ -1722,7 +1722,7 @@ impl<'a> Repl<'a> {
         if jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Error,
             global,
-            &error_value,
+            &raw const error_value,
             1,
             &mut buf,
             jsc::ConsoleObject::FormatOptions {
@@ -1755,7 +1755,7 @@ impl<'a> Repl<'a> {
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &value,
+            &raw const value,
             1,
             &mut buf,
             jsc::ConsoleObject::FormatOptions {

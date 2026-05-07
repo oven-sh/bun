@@ -1364,7 +1364,7 @@ pub mod js_bundler {
             bun_output::scoped_log!(
                 BUNDLER_DEFERRED,
                 "JSBundlerPlugin__onDefer(0x{:x}, {})",
-                self as *const _ as usize,
+                std::ptr::from_ref(self) as usize,
                 bstr::BStr::new(&self.path)
             );
 
@@ -1394,7 +1394,7 @@ pub mod js_bundler {
                         // `mini.enqueueTaskConcurrentWithExtraCtx(
                         //    Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
-                            self as *mut Load,
+                            std::ptr::from_mut::<Load>(self),
                             on_notify_defer_mini_wrap,
                             core::mem::offset_of!(Load, task),
                         );
@@ -1751,7 +1751,7 @@ pub mod js_bundler {
         // matches the `Location.file: &'static [u8]` porting convention used
         // throughout `bun_logger` (PORTING.md §Lifetimes: ARENA → `&'bump T`).
         let file: &'static [u8] =
-            unsafe { &*(arena.alloc_slice_copy(file) as *const [u8]) };
+            unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(file)) };
         let global = plugin.global_object();
         match bun_logger_jsc::msg_from_js(global, file, exception) {
             Ok(msg) => msg,
@@ -1792,7 +1792,7 @@ pub mod js_bundler {
         let plugin = unsafe { &mut *plugin };
         match which.as_int32() {
             0 => {
-                let resolve = unsafe { &mut *(ctx as *mut Resolve) };
+                let resolve = unsafe { &mut *ctx.cast::<Resolve>() };
                 // SAFETY: bv2 backref is valid for the duration of the bundle.
                 let arena = unsafe { (*resolve.bv2).allocator() };
                 let msg =
@@ -1802,7 +1802,7 @@ pub mod js_bundler {
                 unsafe { (*resolve.bv2).on_resolve_async(resolve) };
             }
             1 => {
-                let load = unsafe { &mut *(ctx as *mut Load) };
+                let load = unsafe { &mut *ctx.cast::<Load>() };
                 // SAFETY: bv2 backref is valid for the duration of the bundle.
                 let arena = unsafe { (*load.bv2).allocator() };
                 let msg = plugin_msg_from_js(plugin, arena, &load.path, exception);

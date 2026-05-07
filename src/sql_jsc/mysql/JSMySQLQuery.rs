@@ -50,7 +50,7 @@ impl JSMySQLQuery {
         self.ref_count.set(n);
         if n == 0 {
             // SAFETY: self was allocated via Box::into_raw in create_instance; count hit 0.
-            unsafe { Self::deinit(self as *mut Self) };
+            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
         }
     }
 
@@ -176,7 +176,7 @@ impl JSMySQLQuery {
     ) -> JsResult<JSValue> {
         debug!("doRun");
         this.ref_();
-        let mut _guard = scopeguard::guard(this as *mut Self, |p| {
+        let mut _guard = scopeguard::guard(std::ptr::from_mut::<Self>(this), |p| {
             // SAFETY: `p` points to `*this`, which outlives this scope (m_ctx payload).
             unsafe { (*p).deref() };
         });
@@ -281,7 +281,7 @@ impl JSMySQLQuery {
     pub fn resolve(&mut self, queries_array: JSValue, result: MySQLQueryResult) {
         self.ref_();
         let is_last_result = result.is_last_result;
-        let mut _guard = scopeguard::guard(self as *mut Self, move |p| {
+        let mut _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), move |p| {
             // SAFETY: `p` points to `*self`; defer runs at scope exit on the same thread.
             unsafe {
                 if (*p).this_value.is_not_empty() && is_last_result {
@@ -347,7 +347,7 @@ impl JSMySQLQuery {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
         self.ref_();
-        let mut _guard = scopeguard::guard(self as *mut Self, |p| {
+        let mut _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| {
             // SAFETY: `p` aliases `*self` for the duration of this scope only.
             unsafe { (*p).deref() };
         });
@@ -383,7 +383,7 @@ impl JSMySQLQuery {
     pub fn reject_with_js_value(&mut self, queries_array: JSValue, err: JSValue) {
         self.ref_();
 
-        let mut _guard = scopeguard::guard(self as *mut Self, |p| {
+        let mut _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| {
             // SAFETY: `p` aliases `*self` for the duration of this scope only.
             unsafe {
                 if (*p).this_value.is_not_empty() {
@@ -452,7 +452,7 @@ impl JSMySQLQuery {
         // SAFETY: see `Self::global_object()` — same invariant, unbounded 'a.
         let global_object: &JSGlobalObject = unsafe { &*self.global_object.as_ptr() };
         self.this_value.upgrade(global_object);
-        let mut errguard = scopeguard::guard(self as *mut Self, |p| {
+        let mut errguard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| {
             // SAFETY: errdefer rollback; `p` valid for this scope.
             unsafe {
                 (*p).this_value.downgrade();

@@ -98,7 +98,7 @@ impl BOM {
                 // SAFETY: `trimmed` reinterprets [u8] as [u16] LE; alignment may be 1 — Zig used
                 // `@alignCast`. simdutf reads byte-aligned on every supported target.
                 let trimmed_u16: &[u16] = unsafe {
-                    core::slice::from_raw_parts(trimmed.as_ptr() as *const u16, trimmed.len() / 2)
+                    core::slice::from_raw_parts(trimmed.as_ptr().cast::<u16>(), trimmed.len() / 2)
                 };
                 let out = strings::to_utf8_alloc(trimmed_u16);
                 drop(bytes);
@@ -130,7 +130,7 @@ impl BOM {
                 let trimmed = &list[Self::UTF16_LE_BYTES.len()..];
                 // SAFETY: see `remove_and_convert_to_utf8_and_free`.
                 let trimmed_u16: &[u16] = unsafe {
-                    core::slice::from_raw_parts(trimmed.as_ptr() as *const u16, trimmed.len() / 2)
+                    core::slice::from_raw_parts(trimmed.as_ptr().cast::<u16>(), trimmed.len() / 2)
                 };
                 let out = strings::to_utf8_alloc(trimmed_u16);
                 if list.capacity() < out.len() {
@@ -452,7 +452,7 @@ pub(crate) mod dir_entry {
             // the process-lifetime singleton; `append` further serializes via its
             // (now-redundant) internal mutex.
             let r = unsafe { (*Self::instance()).append(value)? };
-            Ok(r as *mut Entry)
+            Ok(std::ptr::from_mut::<Entry>(r))
         }
     }
 
@@ -973,7 +973,7 @@ impl EntriesMap {
     pub unsafe fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
         // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         let r = unsafe { (*self.inner()).get(key)? };
-        Some(r as *mut EntriesOption)
+        Some(std::ptr::from_mut::<EntriesOption>(r))
     }
     /// SAFETY: see [`get`] — mutates the singleton map.
     pub unsafe fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
@@ -984,7 +984,7 @@ impl EntriesMap {
     pub unsafe fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
         // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         let r = unsafe { (*self.inner()).at_index(index)? };
-        Some(r as *mut EntriesOption)
+        Some(std::ptr::from_mut::<EntriesOption>(r))
     }
     /// SAFETY: see [`get`].
     pub unsafe fn put(
@@ -994,7 +994,7 @@ impl EntriesMap {
     ) -> core::result::Result<*mut EntriesOption, AllocError> {
         // SAFETY: caller holds `entries_mutex`; sole `&mut` to the singleton.
         let r = unsafe { (*self.inner()).put(result, value)? };
-        Ok(r as *mut EntriesOption)
+        Ok(std::ptr::from_mut::<EntriesOption>(r))
     }
     /// SAFETY: see [`get`] — mutates the singleton map.
     pub unsafe fn mark_not_found(&self, result: allocators::Result) {
@@ -1150,7 +1150,7 @@ impl RealFS {
                 // PORT NOTE: capture raw ptrs to the in-place `DirEntry` fields, then
                 // drop the short-lived `&mut` before re-borrowing `self` for
                 // `readdir` / `read_directory_error` (Zig used `*DirEntry` directly).
-                let entries_ptr: *mut DirEntry = &mut **entries;
+                let entries_ptr: *mut DirEntry = &raw mut **entries;
                 // SAFETY: derive `prev_map_ptr` FROM `entries_ptr` so both raw ptrs
                 // share one provenance root. Writing `&mut entries.data` here would
                 // call `Box::deref_mut` a second time, which under Stacked Borrows
@@ -1779,7 +1779,7 @@ impl RealFS {
                             return Ok(cached_result);
                         }
                         EntriesOption::Entries(e) => {
-                            in_place = Some(&mut **e as *mut DirEntry);
+                            in_place = Some(&raw mut **e);
                         }
                     }
                 } else if cr.status == allocators::ItemStatus::NotFound && generation == 0 {
@@ -2174,7 +2174,7 @@ impl RealFS {
             // BOTH success and error paths — use scopeguard so close-or-store happens even if
             // stat()/get_fd_path() return early with `?`.
             let need_to_close_files = self.need_to_close_files();
-            let cache_ptr: *mut EntryCache = &mut cache;
+            let cache_ptr: *mut EntryCache = &raw mut cache;
             let _guard = scopeguard::guard(file, move |file| {
                 if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
                     let _ = bun_sys::close(file);
@@ -2343,7 +2343,7 @@ impl RealFS {
                 // BOTH success and error paths — use scopeguard so close-or-store happens even if
                 // stat()/get_fd_path() return early with `?`.
                 let need_to_close_files = self.need_to_close_files();
-                let cache_ptr: *mut EntryCache = &mut cache;
+                let cache_ptr: *mut EntryCache = &raw mut cache;
                 let _guard = scopeguard::guard(file, move |file| {
                     if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
                         let _ = bun_sys::close(file);

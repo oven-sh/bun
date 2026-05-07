@@ -676,10 +676,10 @@ pub fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
             let ret = unsafe {
                 libc::getpwuid_r(
                     libc::geteuid(),
-                    &mut pw,
-                    string_bytes.as_mut_ptr() as *mut c_char,
+                    &raw mut pw,
+                    string_bytes.as_mut_ptr().cast::<c_char>(),
                     string_bytes.len(),
-                    &mut result,
+                    &raw mut result,
                 )
             };
 
@@ -766,7 +766,7 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
         // TODO(port): std.posix.gethostname → bun_sys::posix::gethostname
         // SAFETY: valid buffer
-        let s: &[u8] = if unsafe { libc::gethostname(name_buffer.as_mut_ptr() as *mut c_char, name_buffer.len()) } == 0 {
+        let s: &[u8] = if unsafe { libc::gethostname(name_buffer.as_mut_ptr().cast::<c_char>(), name_buffer.len()) } == 0 {
             bun_str::slice_to_nul(&name_buffer)
         } else {
             b"unknown"
@@ -798,7 +798,7 @@ pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: zeroed POD
         let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
         // SAFETY: valid out-pointer
-        if unsafe { libc::sysinfo(&mut info) } == 0 {
+        if unsafe { libc::sysinfo(&raw mut info) } == 0 {
             break 'loadavg [
                 ((info.loads[0] as f64 / 65536.0) * 100.0).ceil() / 100.0,
                 ((info.loads[1] as f64 / 65536.0) * 100.0).ceil() / 100.0,
@@ -836,7 +836,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
     // getifaddrs sets a pointer to a linked list
     let mut interface_start: *mut libc::ifaddrs = core::ptr::null_mut();
     // SAFETY: valid out-pointer
-    let rc = unsafe { libc::getifaddrs(&mut interface_start) };
+    let rc = unsafe { libc::getifaddrs(&raw mut interface_start) };
     if rc != 0 {
         let _ = rc;
         let errno = bun_sys::posix::errno();
@@ -922,8 +922,8 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
         let interface_name = unsafe { core::ffi::CStr::from_ptr(iface.ifa_name) }.to_bytes();
         // TODO(port): std.net.Address — using bun_sys::net::Address (no std::net)
         // SAFETY: ifa_addr/ifa_netmask are valid sockaddr* (skip() ensures ifa_addr non-null)
-        let addr = unsafe { bun_sys::net::Address::init_posix(iface.ifa_addr as *const libc::sockaddr) };
-        let netmask = unsafe { bun_sys::net::Address::init_posix(iface.ifa_netmask as *const libc::sockaddr) };
+        let addr = unsafe { bun_sys::net::Address::init_posix(iface.ifa_addr.cast_const()) };
+        let netmask = unsafe { bun_sys::net::Address::init_posix(iface.ifa_netmask.cast_const()) };
 
         let interface = JSValue::create_empty_object(global_this, 0);
 
@@ -935,10 +935,10 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
             let maybe_suffix: Option<u8> = match addr.family() as c_int {
                 // SAFETY: family checked; storage is sockaddr_in/sockaddr_in6-sized
                 libc::AF_INET => netmask_to_cidr_suffix(unsafe {
-                    (*(netmask.as_sockaddr() as *const libc::sockaddr_in)).sin_addr.s_addr
+                    (*netmask.as_sockaddr().cast::<libc::sockaddr_in>()).sin_addr.s_addr
                 }),
                 libc::AF_INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
-                    (*(netmask.as_sockaddr() as *const libc::sockaddr_in6)).sin6_addr.s6_addr
+                    (*netmask.as_sockaddr().cast::<libc::sockaddr_in6>()).sin6_addr.s6_addr
                 })),
                 _ => None,
             };
@@ -1027,7 +1027,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                 let mut mac_buf = [0u8; 17];
                 #[cfg(target_os = "linux")]
                 // SAFETY: ll_addr is a sockaddr_ll* per is_link_layer check
-                let addr_data: &[u8] = unsafe { &(*(ll_addr as *const libc::sockaddr_ll)).sll_addr };
+                let addr_data: &[u8] = unsafe { &(*ll_addr.cast::<libc::sockaddr_ll>()).sll_addr };
                 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
                 let addr_data: &[u8] = {
                     // SAFETY: ll_addr is a sockaddr_dl* per is_link_layer check
@@ -1063,7 +1063,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
         // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
         if addr.family() as c_int == libc::AF_INET6 {
             // SAFETY: family checked; storage is sockaddr_in6-sized
-            let scope_id = unsafe { (*(addr.as_sockaddr() as *const libc::sockaddr_in6)).sin6_scope_id };
+            let scope_id = unsafe { (*addr.as_sockaddr().cast::<libc::sockaddr_in6>()).sin6_scope_id };
             interface.put(global_this, b"scopeid", JSValue::js_number(scope_id as f64));
         }
 
@@ -1238,10 +1238,10 @@ pub fn release() -> BunString {
         // TODO(port): std.posix.uname → bun_sys::posix::uname
         // SAFETY: zeroed POD; uname(2) fills the struct on success
         let mut uts: libc::utsname = unsafe { core::mem::zeroed() };
-        unsafe { libc::uname(&mut uts) };
+        unsafe { libc::uname(&raw mut uts) };
         // SAFETY: c_char[] reinterpreted as u8[]
         let release = unsafe {
-            core::slice::from_raw_parts(uts.release.as_ptr() as *const u8, uts.release.len())
+            core::slice::from_raw_parts(uts.release.as_ptr().cast::<u8>(), uts.release.len())
         };
         let result = bun_str::slice_to_nul(release);
         name_buffer[..result.len()].copy_from_slice(result);
@@ -1380,7 +1380,7 @@ pub fn totalmem() -> u64 {
         // SAFETY: zeroed POD
         let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
         // SAFETY: valid out-pointer
-        if unsafe { libc::sysinfo(&mut info) } == 0 {
+        if unsafe { libc::sysinfo(&raw mut info) } == 0 {
             // SAFETY: same-size POD reinterpret
             return unsafe { core::mem::transmute::<_, u64>(info.totalram) }.wrapping_mul(info.mem_unit as c_ulong as u64);
         }
@@ -1439,7 +1439,7 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
         // SAFETY: zeroed POD
         let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
         // SAFETY: valid out-pointer
-        if unsafe { libc::sysinfo(&mut info) } == 0 {
+        if unsafe { libc::sysinfo(&raw mut info) } == 0 {
             return Ok(info.uptime as f64);
         }
         return Ok(0.0);
@@ -1506,10 +1506,10 @@ pub fn version() -> JsResult<BunString> {
     let slice: &[u8] = {
         // SAFETY: zeroed POD; uname(2) fills the struct on success
         let mut uts: libc::utsname = unsafe { core::mem::zeroed() };
-        unsafe { libc::uname(&mut uts) };
+        unsafe { libc::uname(&raw mut uts) };
         // SAFETY: c_char[] reinterpreted as u8[]
         let version = unsafe {
-            core::slice::from_raw_parts(uts.version.as_ptr() as *const u8, uts.version.len())
+            core::slice::from_raw_parts(uts.version.as_ptr().cast::<u8>(), uts.version.len())
         };
         let result = bun_str::slice_to_nul(version);
         name_buffer[..result.len()].copy_from_slice(result);

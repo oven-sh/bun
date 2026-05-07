@@ -345,7 +345,7 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
                 // We deliberately do NOT bind `&VirtualMachine` — the worker
                 // thread may hold a live mutable view of the VM; raw-pointer
                 // field/method access keeps any autoref scoped to the access.
-                unsafe { (*((*vm_ptr).jsc_vm as *const crate::VM)).notify_need_termination() };
+                unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
                 // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
                 unsafe { (*(*vm_ptr).event_loop()).wakeup() };
             }
@@ -463,7 +463,7 @@ impl WebWorker {
         let parent_ref = unsafe { &mut *parent };
         let prev_log = parent_ref.transpiler.log;
         let mut temp_log = bun_logger::Log::default();
-        parent_ref.transpiler.set_log(&mut temp_log);
+        parent_ref.transpiler.set_log(&raw mut temp_log);
         // RAII: Zig's `defer parent.transpiler.setLog(prev_log)` +
         // `defer temp_log.deinit()` — restored on every return path.
         let mut restore = scopeguard::guard((parent_ref, temp_log), |(p, log)| {
@@ -654,7 +654,7 @@ impl WebWorker {
             // documented thread-safe (VMTraps). Cast through the real opaque
             // `crate::VM` (the `crate::VM` stub is layout-only). No
             // `&VirtualMachine` binding — see `terminate_all_and_wait`.
-            unsafe { (*((*vm_ptr).jsc_vm as *const crate::VM)).notify_need_termination() };
+            unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
             // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
             unsafe { (*(*vm_ptr).event_loop()).wakeup() };
         }
@@ -739,7 +739,7 @@ impl WebWorker {
         // and takes `&WebWorker`. The const→mut cast is signature-only; no
         // write ever occurs through this pointer with mut provenance.
         unsafe { &*global }.vm().hold_api_lock(
-            (self as *const WebWorker as *mut WebWorker).cast::<c_void>(),
+            core::ptr::from_ref::<WebWorker>(self).cast_mut().cast::<c_void>(),
             opaque_spin_trampoline,
         );
     }
@@ -852,7 +852,7 @@ impl WebWorker {
             let vm_ref = unsafe { &mut *vm };
             // SAFETY: arena initialised above; worker-thread only field.
             vm_ref.arena =
-                NonNull::new(unsafe { (*self.arena.get()).as_mut().unwrap() } as *mut _);
+                NonNull::new(std::ptr::from_mut(unsafe { (*self.arena.get()).as_mut().unwrap() }));
 
             // Move the pre-cloned proxy storage into the worker VM.
             *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
@@ -1230,7 +1230,7 @@ impl WebWorker {
             // SAFETY: vm_ptr non-null; jsc_vm is a valid JSC::VM*;
             // notify_need_termination is documented thread-safe (VMTraps).
             // Cast through the real opaque `crate::VM`.
-            unsafe { (*((*vm_ptr).jsc_vm as *const crate::VM)).notify_need_termination() };
+            unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
         }
     }
 
@@ -1307,7 +1307,7 @@ fn on_unhandled_rejection(
 
     let mut array: Vec<u8> = Vec::new();
 
-    let worker = vm.worker.expect("Assertion failure: no worker") as *const WebWorker;
+    let worker = vm.worker.expect("Assertion failure: no worker").cast::<WebWorker>();
     // SAFETY: vm.worker is a valid *const WebWorker owned by C++ while vm
     // lives. `&WebWorker` (not `&mut`) — see worker-thread `&self` note.
     let worker = unsafe { &*worker };

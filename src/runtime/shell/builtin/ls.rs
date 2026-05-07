@@ -116,13 +116,13 @@ impl Ls {
                         let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
                             unreachable!()
                         };
-                        &exec.task_count as *const AtomicUsize
+                        &raw const exec.task_count
                     };
 
                     let cwd = Builtin::cwd(interp, cmd);
                     let opts = Self::state_mut(interp, cmd).opts;
                     let evtloop = Builtin::event_loop(interp, cmd);
-                    let interp_ptr = interp as *mut Interpreter;
+                    let interp_ptr = std::ptr::from_mut::<Interpreter>(interp);
                     if let Some(start) = paths_start {
                         let print_directory = task_count > 1;
                         for i in start..argc {

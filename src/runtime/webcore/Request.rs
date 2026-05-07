@@ -323,7 +323,7 @@ impl Request {
 
         if let Some(req) = self.request_context.get_request() {
             // we have a request context, so we can get the headers from it
-            self.headers = Some(HeadersRef::create_from_uws(req as *mut core::ffi::c_void));
+            self.headers = Some(HeadersRef::create_from_uws(req.cast::<core::ffi::c_void>()));
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers = Some(HeadersRef::create_empty());
@@ -340,7 +340,7 @@ impl Request {
                             // for as long as the readable stream exists; we only read
                             // its `content_type` slice and immediately copy below.
                             let ct: &[u8] = unsafe { &(*blob).content_type };
-                            Some(ct as *const [u8])
+                            Some(std::ptr::from_ref::<[u8]>(ct))
                         }
                         _ => None,
                     },
@@ -370,7 +370,7 @@ impl Request {
         if self.headers.is_none() {
             if let Some(req) = self.request_context.get_request() {
                 // we have a request context, so we can get the headers from it
-                self.headers = Some(HeadersRef::create_from_uws(req as *mut core::ffi::c_void));
+                self.headers = Some(HeadersRef::create_from_uws(req.cast::<core::ffi::c_void>()));
             }
         }
 
@@ -394,7 +394,7 @@ impl Request {
         if self.headers.is_none() {
             if let Some(uws_req) = self.request_context.get_request() {
                 self.headers =
-                    Some(HeadersRef::create_from_uws(uws_req as *mut core::ffi::c_void));
+                    Some(HeadersRef::create_from_uws(uws_req.cast::<core::ffi::c_void>()));
             }
         }
 
@@ -454,7 +454,7 @@ pub extern "C" fn Request__setCookiesOnRequestContext(
     // SAFETY: called from C++ with a live Request* (m_ctx payload)
     let this = unsafe { &mut *this };
     this.request_context
-        .set_cookies(cookie_map.map(|c| c as *const CookieMap as *mut CookieMap));
+        .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
 }
 
 #[unsafe(no_mangle)]
@@ -633,7 +633,7 @@ impl Request {
 
     pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
-        let js_value = js::to_js_unchecked(global_object, self as *mut Request as *mut ());
+        let js_value = js::to_js_unchecked(global_object, std::ptr::from_mut::<Request>(self).cast::<()>());
         self.js_ref = JsRef::init_weak(js_value);
 
         self.check_body_stream_ref(global_object);

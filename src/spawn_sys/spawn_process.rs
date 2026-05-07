@@ -399,7 +399,7 @@ impl PosixSpawnResult {
                             let mut status: i32 = 0;
                             // SAFETY: libc wait4
                             let rc = unsafe {
-                                libc::wait4(self.pid, &mut status, 0, core::ptr::null_mut())
+                                libc::wait4(self.pid, &raw mut status, 0, core::ptr::null_mut())
                             };
                             match bun_sys::get_errno(rc as isize) {
                                 bun_sys::E::SUCCESS => {}

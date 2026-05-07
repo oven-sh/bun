@@ -570,7 +570,7 @@ impl HashJob {
     pub fn run(task: *mut ThreadPoolTask) {
         // SAFETY: task points to HashJob.task; recover parent via offset_of.
         let this: *mut HashJob = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(offset_of!(HashJob, task))
                 .cast::<HashJob>()
         };
@@ -735,7 +735,7 @@ impl JSPasswordObject {
             promise,
             // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
             event_loop: global_object.bun_vm().event_loop(),
-            global: global_object as *const _,
+            global: std::ptr::from_ref(global_object),
             r#ref: KeepAlive::default(),
             task: WorkPoolTask {
                 node: ThreadPoolNode::default(),
@@ -787,7 +787,7 @@ impl JSPasswordObject {
             promise,
             // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
             event_loop: global_object.bun_vm().event_loop(),
-            global: global_object as *const _,
+            global: std::ptr::from_ref(global_object),
             r#ref: KeepAlive::default(),
             task: WorkPoolTask {
                 node: ThreadPoolNode::default(),
@@ -930,7 +930,7 @@ impl VerifyJob {
     pub fn run(task: *mut ThreadPoolTask) {
         // SAFETY: task points to VerifyJob.task; recover parent via offset_of.
         let this: *mut VerifyJob = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(offset_of!(VerifyJob, task))
                 .cast::<VerifyJob>()
         };

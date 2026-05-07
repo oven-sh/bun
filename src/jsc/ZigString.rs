@@ -1022,7 +1022,7 @@ impl Slice {
                 let len = self.len as usize;
                 self.allocator = NullableAllocator::null();
                 // SAFETY: ptr/len were produced by Box::into_raw / default allocator.
-                let owned = unsafe { Box::from_raw(slice::from_raw_parts_mut(self.ptr as *mut u8, len)) };
+                let owned = unsafe { Box::from_raw(slice::from_raw_parts_mut(self.ptr.cast_mut(), len)) };
                 self.ptr = b"".as_ptr();
                 self.len = 0;
                 return Ok(owned);
@@ -1031,7 +1031,7 @@ impl Slice {
         let mut owned = self.to_owned()?;
         // self drops here, freeing original
         let len = owned.len as usize;
-        let ptr = owned.ptr as *mut u8;
+        let ptr = owned.ptr.cast_mut();
         // Disarm `owned`'s Drop (ownership moves into the returned Box).
         owned.allocator = NullableAllocator::null();
         owned.ptr = b"".as_ptr();
@@ -1082,7 +1082,7 @@ impl Slice {
     pub fn mut_(&mut self) -> &mut [u8] {
         debug_assert!(!self.allocator.is_null(), "cannot mutate a borrowed ZigString.Slice");
         // SAFETY: when allocated, we own the buffer exclusively.
-        unsafe { slice::from_raw_parts_mut(self.ptr as *mut u8, self.len as usize) }
+        unsafe { slice::from_raw_parts_mut(self.ptr.cast_mut(), self.len as usize) }
     }
 }
 

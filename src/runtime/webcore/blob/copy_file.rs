@@ -314,7 +314,7 @@ impl<'a> CopyFile<'a> {
         let dest_fd = self.destination_fd;
 
         // defer { this.read_len = @truncate(total_written); }
-        let read_len_slot: *mut SizeType = &mut self.read_len;
+        let read_len_slot: *mut SizeType = &raw mut self.read_len;
         let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
         scopeguard::defer! {
             // SAFETY: both raw ptrs point into the enclosing stack frame which

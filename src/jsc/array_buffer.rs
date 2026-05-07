@@ -320,12 +320,12 @@ impl ArrayBuffer {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `ptr_out`
             // is a valid out-param written by callee on success.
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__allocUint8ArrayForCopy(global, len as usize, (&mut ptr_out as *mut *mut u8).cast())
+                Bun__allocUint8ArrayForCopy(global, len as usize, (&raw mut ptr_out).cast())
             })?,
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `ptr_out`
             // is a valid out-param written by callee on success.
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
-                Bun__allocArrayBufferForCopy(global, len as usize, (&mut ptr_out as *mut *mut u8).cast())
+                Bun__allocArrayBufferForCopy(global, len as usize, (&raw mut ptr_out).cast())
             })?,
             _ => panic!("ArrayBuffer::alloc: KIND not implemented"), // Zig: @compileError
         };
@@ -763,7 +763,7 @@ impl BinaryType {
                 // valid `JSObjectRef`.
                 let obj = unsafe {
                     jsc_c::JSObjectMakeTypedArrayWithArrayBuffer(
-                        global as *const JSGlobalObject as *mut JSGlobalObject,
+                        std::ptr::from_ref::<JSGlobalObject>(global).cast_mut(),
                         self.to_typed_array_type().to_c(),
                         buffer.as_object_ref(),
                         ptr::null_mut(),
@@ -879,7 +879,7 @@ impl MarkedArrayBuffer {
         // because the buffer is later freed via mi_free (MarkedArrayBuffer_deallocator).
         let buf: Box<[u8]> = Box::from(str);
         let len = buf.len();
-        let ptr = Box::into_raw(buf) as *mut u8;
+        let ptr = Box::into_raw(buf).cast::<u8>();
         // SAFETY: ptr/len from Box::into_raw; backed by global mimalloc.
         let bytes = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))

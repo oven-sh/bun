@@ -49,7 +49,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 
     pub fn index_of(&self, value: *const T) -> Option<u32> {
         asan::assert_unpoisoned(value.cast::<u8>());
-        let start = self.buffer.as_ptr() as *const T;
+        let start = self.buffer.as_ptr().cast::<T>();
         // SAFETY: one-past-the-end pointer of `buffer`.
         let end = unsafe { start.add(CAPACITY) };
         if !((value as usize) >= (start as usize) && (value as usize) < (end as usize)) {
@@ -59,13 +59,13 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         // aligned to the size of T
         let index = ((value as usize) - (start as usize)) / size_of::<T>();
         debug_assert!(index < CAPACITY);
-        debug_assert!(self.buffer[index].as_ptr() as *const T == value);
+        debug_assert!(self.buffer[index].as_ptr().cast::<T>() == value);
         Some(u32::try_from(index).expect("int cast"))
     }
 
     pub fn r#in(&self, value: *const T) -> bool {
         asan::assert_unpoisoned(value.cast::<u8>());
-        let start = self.buffer.as_ptr() as *const T;
+        let start = self.buffer.as_ptr().cast::<T>();
         // SAFETY: one-past-the-end pointer of `buffer`.
         let end = unsafe { start.add(CAPACITY) };
         (value as usize) >= (start as usize) && (value as usize) < (end as usize)
@@ -77,7 +77,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         };
 
         debug_assert!(self.used.is_set(index as usize));
-        debug_assert!(self.buffer[index as usize].as_ptr() as *const T == value as *const T);
+        debug_assert!(self.buffer[index as usize].as_ptr().cast::<T>() == value.cast_const());
 
         // PORT NOTE: Zig wrote `value.* = undefined;`. T has no destructor in Zig;
         // the slot is simply marked logically uninitialized again.
@@ -235,7 +235,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
             // the slot without running any destructor.
             unsafe {
                 core::ptr::drop_in_place(core::ptr::addr_of_mut!(self.value));
-                (*allocator).put(self as *mut Self);
+                (*allocator).put(std::ptr::from_mut::<Self>(self));
             }
             return None;
         }

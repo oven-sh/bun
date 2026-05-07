@@ -1457,7 +1457,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     pub fn debug_pattern_components(&self) {
         let pattern = &self.pattern;
         let components = &self.pattern_components;
-        let ptr = self as *const _ as usize;
+        let ptr = std::ptr::from_ref(self) as usize;
         log!("GlobWalker(0x{:x}) components:", ptr);
         for cmp in components.iter() {
             match cmp.syntax_hint {
@@ -1536,7 +1536,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // non-overlapping). Zig's `bun.copy` is memmove. Match that:
         // short-circuit identical-range, otherwise use overlap-safe ptr::copy.
         let dst = self.path_buf.as_mut_ptr();
-        if src.as_ptr() != dst as *const u8 {
+        if src.as_ptr() != dst.cast_const() {
             // SAFETY: copy_len ≤ both src and dst capacity; ptr::copy is memmove
             // (overlap-safe) so partial overlap is fine too.
             unsafe { core::ptr::copy(src.as_ptr(), dst, copy_len) };

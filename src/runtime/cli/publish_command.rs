@@ -453,7 +453,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
 
                 if log.has_errors() {
-                    let _ = log.print(Output::error_writer() as *mut _);
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 }
 
                 Global::crash();
@@ -534,7 +534,7 @@ impl PublishCommand {
                         }
                         FromTarballError::InvalidPackageJSON => {
                             // SAFETY: `manager.log` is set once at init.
-                            let _ = unsafe { &mut *(*manager_ptr).log }.print(Output::error_writer() as *mut _);
+                            let _ = unsafe { &mut *(*manager_ptr).log }.print(std::ptr::from_mut(Output::error_writer()));
                             Output::err_generic("failed to parse tarball package.json", ());
                         }
                         FromTarballError::PrivatePackage => {
@@ -753,7 +753,7 @@ impl PublishCommand {
             headers.entries,
             // SAFETY: headers.content was allocated above
             unsafe { core::slice::from_raw_parts(headers.content.ptr.unwrap().as_ptr(), headers.content.len) },
-            &mut response_buf,
+            &raw mut response_buf,
             b"",
             None,
             None,
@@ -874,7 +874,7 @@ impl PublishCommand {
             publish_headers.entries,
             // SAFETY: publish_headers.content was allocated by construct_publish_headers
             unsafe { core::slice::from_raw_parts(publish_headers.content.ptr.unwrap().as_ptr(), publish_headers.content.len) },
-            &mut response_buf,
+            &raw mut response_buf,
             publish_req_body,
             None,
             None,
@@ -961,7 +961,7 @@ impl PublishCommand {
                     otp_headers.entries,
                     // SAFETY: otp_headers.content was allocated by construct_publish_headers
                     unsafe { core::slice::from_raw_parts(otp_headers.content.ptr.unwrap().as_ptr(), otp_headers.content.len) },
-                    &mut response_buf,
+                    &raw mut response_buf,
                     publish_req_body,
                     None,
                     None,

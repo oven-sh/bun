@@ -143,23 +143,23 @@ pub mod whatwg {
     pub fn href_from_string(str: &String) -> String {
         let mut input = *str;
         // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
-        unsafe { URL__getHref(&mut input) }
+        unsafe { URL__getHref(&raw mut input) }
     }
     pub fn join(base: &String, relative: &String) -> String {
         let mut base_str = *base;
         let mut relative_str = *relative;
         // SAFETY: locals are uniquely owned; live for the duration of the call.
-        unsafe { URL__getHrefJoin(&mut base_str, &mut relative_str) }
+        unsafe { URL__getHrefJoin(&raw mut base_str, &raw mut relative_str) }
     }
     pub fn file_url_from_string(str: &String) -> String {
         let mut input = *str;
         // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
-        unsafe { URL__getFileURLString(&mut input) }
+        unsafe { URL__getFileURLString(&raw mut input) }
     }
     pub fn path_from_file_url(str: &String) -> String {
         let mut input = *str;
         // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
-        unsafe { URL__pathFromFileURL(&mut input) }
+        unsafe { URL__pathFromFileURL(&raw mut input) }
     }
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {
         // a valid URL will not have non-ascii in the origin.
@@ -175,7 +175,7 @@ pub mod whatwg {
         pub fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
             let mut input = *str;
             // SAFETY: `input` is a uniquely-owned local; lives for the duration of the call.
-            unsafe { URL__fromString(&mut input) }
+            unsafe { URL__fromString(&raw mut input) }
         }
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
@@ -851,7 +851,7 @@ impl Clone for QueryStringMap {
             && bun_alloc::is_slice_in_buffer(unsafe { &*self.slice }, &self.buffer)
         {
             let len = unsafe { &*self.slice }.len();
-            &buffer[..len] as *const [u8]
+            &raw const buffer[..len]
         } else {
             self.slice
         };
@@ -861,7 +861,7 @@ impl Clone for QueryStringMap {
 
 thread_local! {
     // PORT NOTE: unused in current code (commented-out path in get_name_count)
-    static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([&[] as *const [u8]; 8]) };
+    static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
 }
 
 impl QueryStringMap {
@@ -1051,7 +1051,7 @@ impl QueryStringMap {
 
         // buf.expandToCapacity() — Vec doesn't expose this; not needed since we slice by buf_writer_pos
         let _ = nothing_needs_decoding;
-        let slice_ptr: *const [u8] = &buf[0..buf_writer_pos as usize] as *const [u8];
+        let slice_ptr: *const [u8] = &raw const buf[0..buf_writer_pos as usize];
         Ok(Some(QueryStringMap {
             list,
             buffer: buf,
@@ -1100,7 +1100,7 @@ impl QueryStringMap {
                 list,
                 buffer: Vec::new(),
                 // TODO(port): borrows external query_string; lifetime not tracked in Phase A
-                slice: query_string as *const [u8],
+                slice: std::ptr::from_ref::<[u8]>(query_string),
                 name_count: None,
             }));
         }
@@ -1156,7 +1156,7 @@ impl QueryStringMap {
             list.push(Param { name, value, name_hash });
         }
 
-        let slice_ptr: *const [u8] = &buf[0..buf_writer_pos as usize] as *const [u8];
+        let slice_ptr: *const [u8] = &raw const buf[0..buf_writer_pos as usize];
         Ok(Some(QueryStringMap {
             list,
             buffer: buf,

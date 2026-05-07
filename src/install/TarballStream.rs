@@ -585,7 +585,7 @@ impl TarballStream {
         let rc_raw: c_int = unsafe {
             lib::archive_read_open(
                 archive,
-                this as *mut c_void,
+                this.cast::<c_void>(),
                 None,
                 Some(archive_read_callback),
                 None,
@@ -1127,7 +1127,7 @@ unsafe fn drain_callback(task: *mut thread_pool::Task) {
     // SAFETY: `task` points to `TarballStream.drain_task`; recover the parent
     // via offset_of (Zig: @fieldParentPtr("drain_task", task)).
     let this: *mut TarballStream = unsafe {
-        (task as *mut u8)
+        task.cast::<u8>()
             .sub(offset_of!(TarballStream, drain_task))
             .cast::<TarballStream>()
     };
@@ -1157,7 +1157,7 @@ unsafe extern "C" fn archive_read_callback(
     // `read_pos`, `mutex`, `pending`, `closed`, `hasher`) are drain-side /
     // mutex-guarded and are not accessed by `step()` across the FFI call
     // boundary.
-    let this: *mut TarballStream = ctx as *mut TarballStream;
+    let this: *mut TarballStream = ctx.cast::<TarballStream>();
 
     // SAFETY: `this` is valid (see above); `reading`/`read_pos` are owned by
     // the single active drain task.

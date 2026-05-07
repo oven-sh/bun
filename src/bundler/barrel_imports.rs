@@ -352,9 +352,9 @@ pub fn schedule_barrel_deferred_imports(
     // only during Phase 1/2 (queue seeding), strictly before the BFS takes any
     // `&mut` to the same column.
     let file_import_records: *const import_record::List =
-        &this.graph.ast.items_import_records()[result_source_index as usize];
+        &raw const this.graph.ast.items_import_records()[result_source_index as usize];
     let file_named_imports: *const JSAst::NamedImports =
-        &this.graph.ast.items_named_imports()[result_source_index as usize];
+        &raw const this.graph.ast.items_named_imports()[result_source_index as usize];
 
     // PORT NOTE: `DevServerHandle` copied out so `&mut this.*` field borrows
     // don't conflict with the `&self` accessor.
@@ -381,7 +381,7 @@ pub fn schedule_barrel_deferred_imports(
     // below. SAFETY: the map is not mutated for the duration of this fn.
     let path_to_source_index_map: Option<*const crate::PathToSourceIndexMap::PathToSourceIndexMap> =
         if dev_handle.is_some() {
-            Some(this.path_to_source_index_map(result_ast_target) as *const _)
+            Some(std::ptr::from_ref(this.path_to_source_index_map(result_ast_target)))
         } else {
             None
         };
@@ -616,7 +616,7 @@ pub fn schedule_barrel_deferred_imports(
                     // PORT NOTE: arena-backed key slices live for the bundler
                     // arena lifetime; raw-ptr round-trip to detach from the
                     // `&this.requested_exports` borrow before BFS mutates it.
-                    let alias: &[u8] = unsafe { &*(&**key as *const [u8]) };
+                    let alias: &[u8] = unsafe { &*(&raw const **key) };
                     queue.push(BarrelWorkItem {
                         barrel_source_index: this_source_index,
                         alias,

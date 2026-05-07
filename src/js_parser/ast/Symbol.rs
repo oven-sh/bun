@@ -160,7 +160,7 @@ pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
 impl Default for Symbol {
     fn default() -> Self {
         Self {
-            original_name: &[] as *const [u8],
+            original_name: std::ptr::from_ref::<[u8]>(&[]),
             namespace_alias: None,
             link: Ref::NONE,
             use_count_estimate: 0,
@@ -505,7 +505,7 @@ impl Map {
         // SAFETY: src in-bounds (parser-produced ref); raw-ptr field read — no `&` to the
         // element is created. idx in-bounds of the inner list.
         unsafe {
-            let inner: *mut List = (self.symbols_for_source.as_ptr() as *mut List).add(src);
+            let inner: *mut List = self.symbols_for_source.as_ptr().cast_mut().add(src);
             debug_assert!(idx < (*inner).len());
             Some((*inner).as_mut_ptr().add(idx))
         }
@@ -569,7 +569,7 @@ impl Map {
         // raw NonNull fields directly (NOT via `.slice()`, which would yield read-only
         // provenance).
         let outer_len = self.symbols_for_source.len();
-        let outer = self.symbols_for_source.as_ptr() as *mut List;
+        let outer = self.symbols_for_source.as_ptr().cast_mut();
         for src in 0..outer_len {
             // SAFETY: src in-bounds; raw-ptr field reads — no `&` created.
             let (base, inner_len) = unsafe {

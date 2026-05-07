@@ -99,14 +99,14 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     pub fn slice(&mut self) -> &mut [T] {
         let len = self.len;
         // SAFETY: elements `[0..len]` are initialized by the public API's invariants.
-        unsafe { &mut *(&mut self.buffer[0..len] as *mut [MaybeUninit<T>] as *mut [T]) }
+        unsafe { &mut *(&raw mut self.buffer[0..len] as *mut [T]) }
     }
 
     /// View the internal array as a constant slice whose size was previously set.
     pub fn const_slice(&self) -> &[T] {
         let len = self.len;
         // SAFETY: elements `[0..len]` are initialized by the public API's invariants.
-        unsafe { &*(&self.buffer[0..len] as *const [MaybeUninit<T>] as *const [T]) }
+        unsafe { &*(&raw const self.buffer[0..len] as *const [T]) }
     }
 
     /// Adjust the slice's length to `len`.
@@ -186,7 +186,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         self.resize((self.len as usize) + N)?;
         // SAFETY: `[prev_len .. prev_len+N]` is within capacity after resize; caller must
         // initialize before reading (Zig returns `*[n]T` over undefined storage).
-        let ptr = self.buffer[prev_len..][..N].as_mut_ptr() as *mut [T; N];
+        let ptr = self.buffer[prev_len..][..N].as_mut_ptr().cast::<[T; N]>();
         Ok(unsafe { &mut *ptr })
     }
 
@@ -198,7 +198,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         // SAFETY: `[prev_len .. prev_len+n]` is within capacity after resize; caller must
         // initialize before reading.
         let s = &mut self.buffer[prev_len..][..n];
-        Ok(unsafe { &mut *(s as *mut [MaybeUninit<T>] as *mut [T]) })
+        Ok(unsafe { &mut *(std::ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) })
     }
 
     /// Remove and return the last element from the slice, or return `None` if the slice is empty.

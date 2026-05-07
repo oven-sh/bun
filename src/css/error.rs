@@ -198,7 +198,7 @@ impl ErrorLocation {
         // `source.contents` which outlives the diagnostic. Re-thread once
         // `logger::Location` grows a real lifetime.
         let line_text = bun_string::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| unsafe { &*(lines.as_slice()[0] as *const [u8]) });
+            .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
         Ok(logger::Location {
             file: source.path.text,
             namespace: source.path.namespace,

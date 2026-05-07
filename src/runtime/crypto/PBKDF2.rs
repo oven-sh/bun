@@ -285,7 +285,7 @@ impl Job {
     pub fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: `task` points to the `task` field of a heap-allocated `Job` created in `create()`.
         let job: &mut Job = unsafe {
-            &mut *(task as *mut u8)
+            &mut *task.cast::<u8>()
                 .sub(offset_of!(Job, task))
                 .cast::<Job>()
         };
@@ -390,7 +390,7 @@ impl Job {
         // PORT NOTE: KeepAlive::ref_ now takes an aio EventLoopCtx; the JS-loop ctx is fetched
         // via the global hook (registered by crate::init) — same pattern as s3/simple_request.rs.
         job_ref.poll.ref_(get_vm_ctx(AllocatorType::Js));
-        WorkPool::schedule(&mut job_ref.task);
+        WorkPool::schedule(&raw mut job_ref.task);
 
         job
     }

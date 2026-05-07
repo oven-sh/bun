@@ -1428,7 +1428,7 @@ impl<T> Batcher<T> {
         // TODO(port): bumpalo alloc_slice for uninit T — Zig `allocator.alloc(Type, count)`.
         // PERF(port): Zig left the slice uninitialized; bumpalo requires Default fill.
         let all = bump.alloc_slice_fill_default(count);
-        Ok(Self { head: all as *mut [T] })
+        Ok(Self { head: std::ptr::from_mut::<[T]>(all) })
     }
 
     pub fn done(&mut self) {
@@ -1451,8 +1451,8 @@ impl<T> Batcher<T> {
             let head = &mut *self.head;
             let (prev, rest) = head.split_at_mut(1);
             prev[0] = value;
-            self.head = rest as *mut [T];
-            prev as *mut [T]
+            self.head = std::ptr::from_mut::<[T]>(rest);
+            std::ptr::from_mut::<[T]>(prev)
         }
     }
 
@@ -1464,8 +1464,8 @@ impl<T> Batcher<T> {
             for (dst, src) in prev.iter_mut().zip(values) {
                 *dst = src;
             }
-            self.head = rest as *mut [T];
-            prev as *mut [T]
+            self.head = std::ptr::from_mut::<[T]>(rest);
+            std::ptr::from_mut::<[T]>(prev)
         }
     }
 }
@@ -1605,7 +1605,7 @@ impl RuntimeTranspilerCache {
     ) -> bool {
         match self.vtable {
             // SAFETY: `self` is a valid &mut; vtable contract per §Dispatch.
-            Some(vt) => unsafe { (vt.get)(self as *mut _, source as *const _, parser_options, used_jsx) },
+            Some(vt) => unsafe { (vt.get)(std::ptr::from_mut(self), std::ptr::from_ref(source), parser_options, used_jsx) },
             None => false,
         }
     }

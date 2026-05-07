@@ -643,7 +643,7 @@ impl WindowsNamedPipe {
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> Option<bun_sys::Result<()>> {
         let handlers = ssl_wrapper::Handlers {
-            ctx: self as *mut _,
+            ctx: std::ptr::from_mut(self),
             on_open: Self::ssl_on_open,
             on_handshake: Self::ssl_on_handshake,
             on_data: Self::ssl_on_data,
@@ -697,7 +697,7 @@ impl WindowsNamedPipe {
                 &ssl_options,
                 is_client,
                 ssl_wrapper::Handlers {
-                    ctx: self as *mut _,
+                    ctx: std::ptr::from_mut(self),
                     on_open: Self::ssl_on_open,
                     on_handshake: Self::ssl_on_handshake,
                     on_data: Self::ssl_on_data,
@@ -856,7 +856,7 @@ impl WindowsNamedPipe {
 
     pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&mut self.event_loop_timer);
+            timer_all().remove(&raw mut self.event_loop_timer);
         }
         self.current_timeout = ms;
 
@@ -870,7 +870,7 @@ impl WindowsNamedPipe {
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        timer_all().insert(&mut self.event_loop_timer);
+        timer_all().insert(&raw mut self.event_loop_timer);
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) {
@@ -936,7 +936,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see on_write. Shared-only read of `vm`.
         // CYCLEBREAK: opaque `*mut c_void` round-tripped through io-layer vtable.
-        bun_io::EventLoopHandle(unsafe { (*this).vm.event_loop() } as *mut c_void)
+        bun_io::EventLoopHandle(unsafe { (*this).vm.event_loop() }.cast::<c_void>())
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: see on_write. Shared-only read of `vm`.

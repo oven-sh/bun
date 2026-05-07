@@ -158,7 +158,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let inner_index: RefInt = RefInt::try_from(self.symbols.len()).unwrap();
         self.symbols.push(Symbol {
             kind,
-            original_name: identifier as *const [u8],
+            original_name: std::ptr::from_ref::<[u8]>(identifier),
             ..Default::default()
         });
         let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
@@ -227,7 +227,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             if self.hot_reloading {
                 self.get_symbol(ref_).namespace_alias = Some(G::NamespaceAlias {
                     namespace_ref,
-                    alias: import_id as *const [u8],
+                    alias: std::ptr::from_ref::<[u8]>(import_id),
                     import_record_index: record,
                     ..Default::default()
                 });
@@ -241,8 +241,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     loc: Loc::EMPTY,
                     ref_: Some(ref_),
                 },
-                original_name: import_id as *const [u8],
-                alias: import_id as *const [u8],
+                original_name: std::ptr::from_ref::<[u8]>(import_id),
+                alias: std::ptr::from_ref::<[u8]>(import_id),
                 alias_loc: Loc::EMPTY,
             };
         }
@@ -250,7 +250,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.append_stmt(S::Import {
             namespace_ref,
             import_record_index: record,
-            items: clauses as *mut [ClauseItem],
+            items: std::ptr::from_mut::<[ClauseItem]>(clauses),
             is_single_line: N < 1,
             ..Default::default()
         })?;
@@ -291,7 +291,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         unsafe { parts.set_len((2) as usize) };
         *parts.mut_(0) = Part::default();
         *parts.mut_(1) = Part {
-            stmts: self.stmts.as_mut_slice() as *mut [Stmt],
+            stmts: std::ptr::from_mut::<[Stmt]>(self.stmts.as_mut_slice()),
             can_be_removed_if_unused: false,
 
             // pretend that every symbol was used
@@ -343,13 +343,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             // get a estimate on how many statements there are going to be
             let _prealloc_count = self.stmts.len() + 2;
             // PORT NOTE: HMR transform deferred until ImportScanner accepts AstBuilder.
-            parts.mut_(1).stmts = self.stmts.as_mut_slice() as *mut [Stmt];
+            parts.mut_(1).stmts = std::ptr::from_mut::<[Stmt]>(self.stmts.as_mut_slice());
         } else {
-            parts.mut_(1).stmts = self.stmts.as_mut_slice() as *mut [Stmt];
+            parts.mut_(1).stmts = std::ptr::from_mut::<[Stmt]>(self.stmts.as_mut_slice());
         }
 
         parts.mut_(1).declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts.mut_(1).scopes = self.scopes.as_mut_slice() as *mut [*mut Scope];
+        parts.mut_(1).scopes = std::ptr::from_mut::<[*mut Scope]>(self.scopes.as_mut_slice());
         parts.mut_(1).import_record_indices = Vec::<u32>::move_from_list(
             core::mem::take(&mut self.import_records_for_current_part),
         );

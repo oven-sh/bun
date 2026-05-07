@@ -315,7 +315,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                 // slot `i` of the old layout (and never clobbers slot `i+1`).
                 unsafe {
                     core::ptr::copy_nonoverlapping(
-                        (&*new_elem as *const Child::ZigType).cast::<u8>(),
+                        (&raw const *new_elem).cast::<u8>(),
                         storage_ptr.add(i * size_of::<Child::ZigType>()),
                         size_of::<Child::ZigType>(),
                     );

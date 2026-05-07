@@ -149,7 +149,7 @@ impl Binding {
             // process. `node_fs` is a type-erased `*mut NodeFS` (see
             // `RuntimeHooks::create_node_fs`).
             let vm_node_fs = unsafe { vm.as_ref() }.node_fs;
-            if vm_node_fs == Some((&this_ref.node_fs as *const NodeFS as *mut NodeFS).cast()) {
+            if vm_node_fs == Some((&raw const this_ref.node_fs).cast_mut().cast()) {
                 return;
             }
         }

@@ -505,7 +505,7 @@ impl GridTemplateAreas {
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse.
         if let Some(s) = input
-            .try_parse(|i| i.expect_string().map(|s| s as *const [u8]))
+            .try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
             .ok()
         {
             let s = unsafe { &*s };
@@ -590,7 +590,7 @@ impl GridTemplateAreas {
             let token = &rest[..token_len];
             // TODO(port): arena-owned slice — Zig stores borrowed slice into SmallList; using raw ptr here
             let _ = bump;
-            tokens.append(Some(token as *const [u8]));
+            tokens.append(Some(std::ptr::from_ref::<[u8]>(token)));
             string = &rest[token_len..];
         }
 

@@ -34,7 +34,7 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
 
     let written = bun_string::strings::decode_hex_to_bytes(&mut buf, hex)
         .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-    let ptr = Box::into_raw(buf) as *mut u8;
+    let ptr = Box::into_raw(buf).cast::<u8>();
 
     Ok(SQLDataCell {
         tag: Tag::Bytea,
@@ -796,7 +796,7 @@ fn from_bytes_typed_array<Elem: Copy>(
         tag: Tag::TypedArray,
         value: Value {
             typed_array: TypedArray {
-                head_ptr: if !bytes.is_empty() { bytes.as_ptr() as *mut u8 } else { core::ptr::null_mut() },
+                head_ptr: if !bytes.is_empty() { bytes.as_ptr().cast_mut() } else { core::ptr::null_mut() },
                 ptr: if !elements.is_empty() { elements.as_ptr() as *mut u8 } else { core::ptr::null_mut() },
                 len: elements.len() as u32,
                 byte_len: bytes.len() as u32,
@@ -1443,7 +1443,7 @@ impl<'a> Putter<'a> {
         let mut names_count: u32 = 0;
         if let Some(c) = cached_structure {
             if let Some(f) = c.fields.as_ref() {
-                names = f.as_ptr() as *mut _;
+                names = f.as_ptr().cast_mut();
                 names_count = f.len() as u32;
             }
         }

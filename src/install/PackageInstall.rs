@@ -361,7 +361,7 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.add_one();
         // SAFETY: task is a valid Box-allocated task; .task field is the intrusive node.
         self.thread_pool
-            .schedule(Batch::from(unsafe { (*task).task() as *mut WorkPoolTask }));
+            .schedule(Batch::from(unsafe { std::ptr::from_mut::<WorkPoolTask>((*task).task()) }));
     }
 
     pub fn wait(&self) {
@@ -550,7 +550,7 @@ impl UninstallTask {
     fn run(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of an UninstallTask.
         let uninstall_task: *mut Self = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(core::mem::offset_of!(Self, task))
                 .cast::<Self>()
         };

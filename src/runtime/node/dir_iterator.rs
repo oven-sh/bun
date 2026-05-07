@@ -317,14 +317,14 @@ mod platform {
                 }
                 // SAFETY: index within filled buf; packed dirent64
                 let linux_entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index) as *const libc::dirent64)
+                    &*self.buf.as_ptr().add(self.index).cast::<libc::dirent64>()
                 };
                 let next_index = self.index + linux_entry.d_reclen as usize;
                 self.index = next_index;
 
                 // SAFETY: dirent64.d_name is NUL-terminated within the record
                 let name = unsafe {
-                    let p = linux_entry.d_name.as_ptr() as *const u8;
+                    let p = linux_entry.d_name.as_ptr().cast::<u8>();
                     let mut len = 0usize;
                     while *p.add(len) != 0 {
                         len += 1;

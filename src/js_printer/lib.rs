@@ -1067,7 +1067,7 @@ impl<'a> SourceMapHandler<'a> {
         SourceMapHandler {
             // SAFETY: `ctx` is a live `&mut T` so the pointer is non-null; type-erased to `*mut ()`
             // and cast back to `*mut T` inside the thunk before dereference.
-            ctx: unsafe { NonNull::new_unchecked(ctx as *mut T as *mut ()) },
+            ctx: unsafe { NonNull::new_unchecked(std::ptr::from_mut::<T>(ctx).cast::<()>()) },
             callback: thunk::<T>,
             _marker: core::marker::PhantomData,
         }
@@ -1277,7 +1277,7 @@ impl RequireOrImportMetaCallback {
         Self {
             // SAFETY: `ctx` is `&mut T` so the pointer is non-null; type-erased to `*mut ()`
             // and cast back to `*mut T` inside the thunk before dereference.
-            ctx: Some(unsafe { NonNull::new_unchecked(ctx as *mut T as *mut ()) }),
+            ctx: Some(unsafe { NonNull::new_unchecked(std::ptr::from_mut::<T>(ctx).cast::<()>()) }),
             callback: thunk::<T>,
         }
     }
@@ -2163,14 +2163,14 @@ where
                     let mut b_object = B::Object {
                         // SAFETY: `temp_bindings`' heap buffer is stable until the
                         // matching clear()/drop below; `print_binding` only reads it.
-                        properties: temp_bindings.as_mut_slice() as *mut [B::Property],
+                        properties: std::ptr::from_mut::<[B::Property]>(temp_bindings.as_mut_slice()),
                         is_single_line: true,
                     };
                     // PORT NOTE: `Binding::init(*B.Object, loc)` is gated upstream;
                     // inline its body — it just tags the union and copies `loc`.
                     let binding = Binding {
                         loc: target_e_dot.target.loc,
-                        data: BindingData::BObject(&mut b_object as *mut B::Object),
+                        data: BindingData::BObject(&raw mut b_object),
                     };
                     self.print_binding(binding, tlm);
                     // Zig defer (js_printer.zig:1252): if recursion replaced
@@ -2475,7 +2475,7 @@ where
 
     pub fn print_string_characters_utf16(&mut self, text: &[u16], quote: u8) {
         // SAFETY: reinterpret &[u16] as &[u8] for write_pre_quoted_string's utf16 path
-        let slice = unsafe { core::slice::from_raw_parts(text.as_ptr() as *const u8, text.len() * 2) };
+        let slice = unsafe { core::slice::from_raw_parts(text.as_ptr().cast::<u8>(), text.len() * 2) };
         let mut writer = self.writer.std_writer();
         let _ = match quote {
             b'\'' => write_pre_quoted_string::<_, b'\'', ASCII_ONLY, false, { Encoding::Utf16 }>(slice, &mut writer),
@@ -2511,7 +2511,7 @@ where
     /// // PORT NOTE: reshaped for borrowck — Phase B threads `'bump` through Renamer.
     #[inline]
     fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
-        let p = self.renamer.name_for_symbol(ref_) as *const [u8];
+        let p = std::ptr::from_ref::<[u8]>(self.renamer.name_for_symbol(ref_));
         // SAFETY: arena/source-backed; outlives 'a (see renamer.rs SAFETY notes).
         unsafe { &*p }
     }
@@ -3103,7 +3103,7 @@ where
                 }
                 if let Some(idx) = found {
                     let exports = self.options.commonjs_named_exports.unwrap();
-                    let key: *const [u8] = &exports.keys()[idx][..];
+                    let key: *const [u8] = &raw const exports.keys()[idx][..];
                     let value_loc_ref = exports.values()[idx].loc_ref;
                     let value_needs_decl = exports.values()[idx].needs_decl;
                     struct V { loc_ref: js_ast::LocRef, needs_decl: bool }
@@ -4195,7 +4195,7 @@ where
                             js_ast::InlinedEnumValueDecoded::String(str) => {
                                 // SAFETY: arena-owned `*const EString`; cast through *mut for the
                                 // StoreRef wrapper — the printer only ever reads through it.
-                                let sref = unsafe { js_ast::ast::StoreRef::from_raw(str as *mut E::EString) };
+                                let sref = unsafe { js_ast::ast::StoreRef::from_raw(str.cast_mut()) };
                                 item.key.as_mut().unwrap().data = ExprData::EString(sref);
                                 // Problematic key names must stay computed for correctness
                                 let s = unsafe { &*str };
@@ -4925,7 +4925,7 @@ where
 
                         if !slice_of_const(item.original_name).is_empty() {
                             // PORT NOTE: reshaped for borrowck — detach symbol from self.
-                            let symbol_ptr: Option<*const Symbol> = self.symbols().get_const(item.name.ref_.expect("infallible: ref bound")).map(|s| s as *const _);
+                            let symbol_ptr: Option<*const Symbol> = self.symbols().get_const(item.name.ref_.expect("infallible: ref bound")).map(|s| std::ptr::from_ref(s));
                             // SAFETY: arena-backed; symbol table outlives the print pass.
                             if let Some(symbol) = symbol_ptr.map(|p| unsafe { &*p }) {
                                 if let Some(namespace) = &symbol.namespace_alias {
@@ -5895,7 +5895,7 @@ where
             // TODO: extract printString
             js_ast::InlinedEnumValueDecoded::String(str) => self.print_expr(
                 // SAFETY: arena-owned `*const EString`; the printer only reads through the StoreRef.
-                Expr { data: ExprData::EString(unsafe { js_ast::ast::StoreRef::from_raw(str as *mut E::EString) }), loc: logger::Loc::EMPTY },
+                Expr { data: ExprData::EString(unsafe { js_ast::ast::StoreRef::from_raw(str.cast_mut()) }), loc: logger::Loc::EMPTY },
                 level,
                 ExprFlagSet::empty(),
             ),
@@ -6902,7 +6902,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // on this path it was freshly generated by `get_source_map_builder` (no
     // caller of `print_ast` supplies a borrowed table), so free it explicitly.
     let _line_offset_tables_guard = scopeguard::guard(
-        &mut printer.source_map_builder.line_offset_tables as *mut core::mem::ManuallyDrop<_>,
+        &raw mut printer.source_map_builder.line_offset_tables,
         |p| {
             if GENERATE_SOURCE_MAP {
                 // SAFETY: `p` points into `printer`, which outlives this guard;

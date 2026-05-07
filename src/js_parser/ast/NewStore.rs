@@ -172,7 +172,7 @@ macro_rules! new_store {
                     // SAFETY: `store` is always the `metadata` field of a `PreAlloc`
                     // (see `init()`); recover the parent via offset_of.
                     unsafe {
-                        let prealloc = (store as *mut Store as *mut u8)
+                        let prealloc = core::ptr::from_mut::<Store>(store).cast::<u8>()
                             .sub(offset_of!(PreAlloc, metadata))
                             .cast::<PreAlloc>();
                         &mut (*prealloc).first_block
@@ -224,7 +224,7 @@ macro_rules! new_store {
 
                     // SAFETY: `store` is the `metadata` field of a leaked `Box<PreAlloc>`.
                     let prealloc = unsafe {
-                        (store as *mut u8)
+                        store.cast::<u8>()
                             .sub(offset_of!(PreAlloc, metadata))
                             .cast::<PreAlloc>()
                     };

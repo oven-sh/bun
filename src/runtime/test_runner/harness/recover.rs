@@ -58,12 +58,12 @@ pub fn call_for_test(
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
     let mut ctx: Context = unsafe { core::mem::zeroed::<Context>() };
     // SAFETY: ctx is a valid, writable, properly-aligned Context on this stack.
-    unsafe { get_context(&mut ctx) };
+    unsafe { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
         TOP_CTX.with(|c| c.set(prev_ctx));
         return Err(bun_core::err!("Panic"));
     }
-    TOP_CTX.with(|c| c.set(Some(&ctx as *const Context)));
+    TOP_CTX.with(|c| c.set(Some(&raw const ctx)));
     let _guard = TopCtxRestore { prev: prev_ctx };
     test_func()
 }
@@ -83,12 +83,12 @@ pub fn call<T>(
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
     let mut ctx: Context = unsafe { core::mem::zeroed::<Context>() };
     // SAFETY: ctx is a valid, writable, properly-aligned Context on this stack.
-    unsafe { get_context(&mut ctx) };
+    unsafe { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
         TOP_CTX.with(|c| c.set(prev_ctx));
         return Err(bun_core::err!("Panic"));
     }
-    TOP_CTX.with(|c| c.set(Some(&ctx as *const Context)));
+    TOP_CTX.with(|c| c.set(Some(&raw const ctx)));
     let _guard = TopCtxRestore { prev: prev_ctx };
     func()
 }

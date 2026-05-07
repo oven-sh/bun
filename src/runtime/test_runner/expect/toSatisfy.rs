@@ -11,7 +11,7 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
     // TODO(port): `defer this.postMatch(globalThis)` — scopeguard capturing `&mut *this`
     // conflicts with later `this` uses under borrowck; Phase B reshape (e.g. RAII guard
     // on Expect or raw-ptr scopeguard).
-    let _post_match = scopeguard::guard((this as *mut Expect, global), |(t, g)| {
+    let _post_match = scopeguard::guard((std::ptr::from_mut::<Expect>(this), global), |(t, g)| {
         // SAFETY: `this` outlives this guard (fn scope); no other &mut alias live at drop.
         unsafe { (*t).post_match(g) };
     });

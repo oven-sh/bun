@@ -161,7 +161,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Expr::init(
                     E::Function {
                         func: G::Fn {
-                            args: dup_args as *mut [G::Arg],
+                            args: std::ptr::from_mut::<[G::Arg]>(dup_args),
                             body: G::FnBody {
                                 stmts: inner,
                                 loc: logger::Loc::EMPTY,
@@ -203,11 +203,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
                         // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
                         contents: std::borrow::Cow::Borrowed(unsafe {
-                            &*(source_ref.contents.as_ref() as *const [u8])
+                            &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
                         }),
                         contents_is_recycled: source_ref.contents_is_recycled,
                         identifier_name: std::borrow::Cow::Borrowed(unsafe {
-                            &*(source_ref.identifier_name.as_ref() as *const [u8])
+                            &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
                         }),
                         index: source_ref.index,
                     };
@@ -264,7 +264,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .inside_wrapper_prefix
             .append_non_dependency(Stmt::alloc(
                 S::Directive {
-                    value: b"use strict" as *const [u8],
+                    value: std::ptr::from_ref::<[u8]>(b"use strict"),
                 },
                 logger::Loc::EMPTY,
             ))
@@ -507,7 +507,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_allocator);
     }
 
-    let mut out_stmts: *mut [Stmt] = stmts.all_stmts.as_mut_slice() as *mut [Stmt];
+    let mut out_stmts: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts.all_stmts.as_mut_slice());
 
     // Optionally wrap all statements in a closure
     if needs_wrapper {
@@ -549,7 +549,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 // TODO: variants of the runtime functions
-                let body_stmts: *mut [Stmt] = stmts.all_stmts.as_mut_slice() as *mut [Stmt];
+                let body_stmts: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts.all_stmts.as_mut_slice());
                 let cjs_args = bun_core::handle_oom(Vec::<Expr>::from_slice(&[Expr::init(
                     E::Arrow {
                         args: js_ast::StoreSlice::new(args.into_bump_slice()),
@@ -633,18 +633,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     /// Trampoline matching `ToExprWrapper`'s erased fn-pointer signature.
                     fn wrap_trampoline(ctx: *mut core::ffi::c_void, loc: logger::Loc, ref_: Ref) -> Expr {
                         // SAFETY: `ctx` is `&mut ExportHoist` derived at the call site.
-                        let this = unsafe { &mut *(ctx as *mut ExportHoist) };
+                        let this = unsafe { &mut *ctx.cast::<ExportHoist>() };
                         this.wrap_identifier(loc, ref_)
                     }
                 }
 
                 let mut hoist = ExportHoist {
                     decls: Vec::new(),
-                    allocator: temp_allocator as *const Bump,
+                    allocator: std::ptr::from_ref::<Bump>(temp_allocator),
                 };
                 let hoist_wrapper = ToExprWrapper::new(temp_allocator, ExportHoist::wrap_trampoline);
 
-                let mut inner_stmts: *mut [Stmt] = stmts.all_stmts.as_mut_slice() as *mut [Stmt];
+                let mut inner_stmts: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts.all_stmts.as_mut_slice());
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
@@ -680,7 +680,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                             // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
                                             let binding = Binding::to_expr(
                                                 &decl.binding,
-                                                &mut hoist as *mut _ as *mut core::ffi::c_void,
+                                                (&raw mut hoist).cast::<core::ffi::c_void>(),
                                                 hoist_wrapper,
                                             );
                                             value = value.join_with_comma(
@@ -690,7 +690,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     } else {
                                         let _ = Binding::to_expr(
                                             &decl.binding,
-                                            &mut hoist as *mut _ as *mut core::ffi::c_void,
+                                            (&raw mut hoist).cast::<core::ffi::c_void>(),
                                             hoist_wrapper,
                                         );
                                     }
@@ -745,7 +745,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         end += 1;
                     }
                     // SAFETY: inner_stmts aliases stmts.all_stmts.items which was not resized.
-                    inner_stmts = unsafe { &mut (&mut *inner_stmts)[..end] } as *mut [Stmt];
+                    inner_stmts = std::ptr::from_mut::<[Stmt]>(unsafe { &mut (&mut *inner_stmts)[..end] });
                 }
 
                 if !hoist.decls.is_empty() {
@@ -871,7 +871,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             _ => {}
         }
 
-        out_stmts = stmts.outside_wrapper_prefix.as_mut_slice() as *mut [Stmt];
+        out_stmts = std::ptr::from_mut::<[Stmt]>(stmts.outside_wrapper_prefix.as_mut_slice());
     }
 
     // SAFETY: `out_stmts` aliases either `stmts.all_stmts` or `stmts.outside_wrapper_prefix`,

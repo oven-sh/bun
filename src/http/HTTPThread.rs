@@ -435,7 +435,7 @@ impl HttpThread {
                     // `group.loop_` is null), so reclaiming the Box is safe.
                     // SAFETY: custom_context was just Box::leak'd above and
                     // has refcount 1; reclaim and drop on error.
-                    drop(unsafe { Box::from_raw(custom_context as *mut NewHttpContext<true>) });
+                    drop(unsafe { Box::from_raw(std::ptr::from_mut::<NewHttpContext<true>>(custom_context)) });
 
                     return Err(match err {
                         InitError::FailedToOpenSocket
@@ -447,7 +447,7 @@ impl HttpThread {
 
                 let now = self.timer_read();
                 // SAFETY: custom_context is a live Box::leak'd allocation.
-                let ctx_nn = unsafe { NonNull::new_unchecked(custom_context as *mut _) };
+                let ctx_nn = unsafe { NonNull::new_unchecked(std::ptr::from_mut(custom_context)) };
                 let _ = custom_ssl_context_map().put(
                     requested_config,
                     SslContextCacheEntry {

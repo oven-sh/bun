@@ -75,7 +75,7 @@ impl DirectoryWatchStore {
         // &mut self is live is unsound under stacked borrows; Phase B may need
         // to return *mut DevServer or restructure access.
         unsafe {
-            &mut *(self as *mut Self as *mut u8)
+            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(offset_of!(DevServer, directory_watchers))
                 .cast::<DevServer>()
         }
@@ -491,7 +491,7 @@ impl Default for Dep {
     fn default() -> Self {
         Self {
             next: None,
-            source_file_path: b"" as &[u8] as *const [u8],
+            source_file_path: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
             specifier: Box::default(),
         }
     }

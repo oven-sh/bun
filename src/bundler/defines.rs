@@ -97,7 +97,7 @@ unsafe fn env_string_store_put_string(
     value: &[u8],
 ) -> Result<(), bun_core::Error> {
     // SAFETY: vtable contract — owner is `*mut UserDefinesArray`.
-    let store = unsafe { &mut *(owner as *mut UserDefinesArray) };
+    let store = unsafe { &mut *owner.cast::<UserDefinesArray>() };
     // Mirrors Zig: allocate an `E.String` slab entry, point Expr::Data at it,
     // wrap in DefineData::init({can_be_removed_if_unused: true,
     // call_can_be_unwrapped_if_unused: .if_unused}). Zig (env_loader.zig:476-481)
@@ -145,7 +145,7 @@ unsafe fn env_json_store_put_raw(
     key: &[u8],
     value: &[u8],
 ) -> Result<(), bun_core::Error> {
-    let store = unsafe { &mut *(owner as *mut RawDefines) };
+    let store = unsafe { &mut *owner.cast::<RawDefines>() };
     store.get_or_put_value(key, Box::<[u8]>::from(value))?;
     Ok(())
 }
@@ -153,7 +153,7 @@ unsafe fn env_json_store_put_raw(
 #[inline]
 pub fn env_define_string_store_ref(store: &mut UserDefinesArray) -> bun_dotenv::DefineStoreRef<'_> {
     bun_dotenv::DefineStoreRef::new(
-        store as *mut UserDefinesArray as *mut (),
+        std::ptr::from_mut::<UserDefinesArray>(store).cast::<()>(),
         &ENV_DEFINE_STRING_STORE_VTABLE,
     )
 }
@@ -161,7 +161,7 @@ pub fn env_define_string_store_ref(store: &mut UserDefinesArray) -> bun_dotenv::
 #[inline]
 pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineStoreRef<'_> {
     bun_dotenv::DefineStoreRef::new(
-        store as *mut RawDefines as *mut (),
+        std::ptr::from_mut::<RawDefines>(store).cast::<()>(),
         &ENV_DEFINE_JSON_STORE_VTABLE,
     )
 }

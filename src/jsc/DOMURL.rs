@@ -66,7 +66,7 @@ impl DOMURL {
     pub fn file_system_path(&mut self) -> Result<bstr::String, ToFileSystemPathError> {
         let mut error_code: c_int = 0;
         // SAFETY: self is a valid DOMURL handle; error_code is a valid out-param.
-        let path = unsafe { WebCore__DOMURL__fileSystemPath(self, &mut error_code) };
+        let path = unsafe { WebCore__DOMURL__fileSystemPath(self, &raw mut error_code) };
         match error_code {
             1 => return Err(ToFileSystemPathError::InvalidHost),
             2 => return Err(ToFileSystemPathError::InvalidPath),

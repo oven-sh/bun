@@ -134,7 +134,7 @@ impl ClientContext {
                 );
                 // SAFETY: qctx is live for the process.
                 let l = unsafe { (*self.qctx.as_ptr()).r#loop() };
-                PendingConnect::register(session, pending, l as *mut UwsLoop);
+                PendingConnect::register(session, pending, l.cast::<UwsLoop>());
             }
             ConnectResult::Err => {
                 bun_core::scoped_log!(

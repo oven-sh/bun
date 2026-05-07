@@ -80,7 +80,7 @@ impl JSModuleLoader {
         unsafe {
             JSC__JSModuleLoader__loadAndEvaluateModule(
                 global_object,
-                module_name.map_or(core::ptr::null(), |p| p as *const _),
+                module_name.map_or(core::ptr::null(), |p| std::ptr::from_ref(p)),
             )
             .as_ref()
         }
@@ -98,7 +98,7 @@ impl JSModuleLoader {
         core::ptr::NonNull::new(unsafe {
             JSC__JSModuleLoader__loadAndEvaluateModule(
                 global_object,
-                module_name.map_or(core::ptr::null(), |p| p as *const _),
+                module_name.map_or(core::ptr::null(), |p| std::ptr::from_ref(p)),
             )
         })
     }
@@ -111,7 +111,7 @@ impl JSModuleLoader {
         // `global_object` is an opaque ZST handle passed as `*const` per the FFI
         // convention in `JSGlobalObject.rs`.
         unsafe {
-            JSModuleLoader__import(global_object, module_name as *const _)
+            JSModuleLoader__import(global_object, std::ptr::from_ref(module_name))
                 .as_ref()
         }
         .ok_or(JsError::Thrown)
@@ -128,7 +128,7 @@ impl JSModuleLoader {
     ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
         // SAFETY: C++ side returns null iff an exception was thrown on the VM.
         core::ptr::NonNull::new(unsafe {
-            JSModuleLoader__import(global_object, module_name as *const _)
+            JSModuleLoader__import(global_object, std::ptr::from_ref(module_name))
         })
         .ok_or(JsError::Thrown)
     }

@@ -406,7 +406,7 @@ impl FetchTasklet {
             let global_this = self.global_this;
             self.ref_(); // lets only unref when sink is done
             // +1 because the task refs the sink
-            let sink = ResumableSink::init_exact_refs(&global_this, stream, self as *mut _, 2);
+            let sink = ResumableSink::init_exact_refs(&global_this, stream, std::ptr::from_mut(self), 2);
             self.sink = Some(sink);
         }
     }
@@ -420,7 +420,7 @@ impl FetchTasklet {
         // PORT NOTE: Zig `defer { if (buffer_reset) ...reset() }` runs on `try` failure paths too.
         // Capture a raw ptr so the defer can reset on every exit (incl. `?`) without holding a
         // long-lived &mut borrow of self.
-        let scheduled_buf: *mut MutableString = &mut self.scheduled_response_buffer;
+        let scheduled_buf: *mut MutableString = &raw mut self.scheduled_response_buffer;
         scopeguard::defer! {
             if buffer_reset.get() {
                 // SAFETY: `self` outlives this defer (it's a local in this fn) and no other
@@ -592,7 +592,7 @@ impl FetchTasklet {
         if vm.is_shutting_down() {
             self.mutex.unlock();
             if is_done {
-                FetchTasklet::deref(self as *mut _);
+                FetchTasklet::deref(std::ptr::from_mut(self));
             }
             return Ok(());
         }
@@ -606,7 +606,7 @@ impl FetchTasklet {
                 let mut poll_ref = core::mem::take(&mut this.poll_ref);
                 let _ = vm;
                 poll_ref.unref(vm_ctx());
-                FetchTasklet::deref(this as *mut _);
+                FetchTasklet::deref(std::ptr::from_mut(this));
             }
         };
 
@@ -777,11 +777,11 @@ impl FetchTasklet {
         // (low-tier `ErasedJsError` discriminant); write the type-erased shims by hand and
         // map `JsTerminated` to the `Terminated` tag so the dispatcher unwinds correctly.
         fn resolve_erased(p: *mut c_void) -> ElJsResult<()> {
-            Holder::resolve(p as *mut Holder)
+            Holder::resolve(p.cast::<Holder>())
                 .map_err(|_| bun_event_loop::ErasedJsError::Terminated)
         }
         fn reject_erased(p: *mut c_void) -> ElJsResult<()> {
-            Holder::reject(p as *mut Holder)
+            Holder::reject(p.cast::<Holder>())
                 .map_err(|_| bun_event_loop::ErasedJsError::Terminated)
         }
 
@@ -795,10 +795,10 @@ impl FetchTasklet {
         // SAFETY: holder is valid until consumed by resolve/reject
         unsafe {
             (*holder).task = AnyTask {
-                ctx: core::ptr::NonNull::new(holder as *mut c_void),
+                ctx: core::ptr::NonNull::new(holder.cast::<c_void>()),
                 callback: if success { resolve_erased } else { reject_erased },
             };
-            (*vm.event_loop()).enqueue_task(Task::init(&mut (*holder).task));
+            (*vm.event_loop()).enqueue_task(Task::init(&raw mut (*holder).task));
         }
 
         dispatch_cleanup(self);
@@ -816,7 +816,7 @@ impl FetchTasklet {
                 let x509 = unsafe {
                     d2i_X509(
                         core::ptr::null_mut(),
-                        &mut cert_ptr,
+                        &raw mut cert_ptr,
                         core::ffi::c_long::try_from(cert.len()).expect("int cast"),
                     )
                 };
@@ -943,7 +943,7 @@ impl FetchTasklet {
         // (taken in `fetch.zig` before populating FetchOptions). Order matches Zig
         // `clearAbortSignal`: cleanNativeBindings first, then defer{unref+pendingUnref}.
         unsafe {
-            (*signal).clean_native_bindings(self as *mut _ as *mut c_void);
+            (*signal).clean_native_bindings(std::ptr::from_mut(self).cast::<c_void>());
             (*signal).pending_activity_unref();
             (*signal).unref();
         }
@@ -1095,13 +1095,13 @@ impl FetchTasklet {
 
     pub fn on_readable_stream_available(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream) {
         // SAFETY: ctx is a *mut FetchTasklet stored by the caller
-        let this = unsafe { &mut *(ctx as *mut FetchTasklet) };
+        let this = unsafe { &mut *ctx.cast::<FetchTasklet>() };
         this.readable_stream_ref = ReadableStreamStrong::init(readable, global_this);
     }
 
     pub fn on_start_streaming_http_response_body_callback(ctx: *mut c_void) -> DrainResult {
         // SAFETY: ctx is a *mut FetchTasklet stored by the caller
-        let this = unsafe { &mut *(ctx as *mut FetchTasklet) };
+        let this = unsafe { &mut *ctx.cast::<FetchTasklet>() };
         if this.signal_store.aborted.load(Ordering::Relaxed) {
             return DrainResult::Aborted;
         }
@@ -1160,7 +1160,7 @@ impl FetchTasklet {
 
     fn on_stream_cancelled_callback(ctx: Option<*mut c_void>) {
         // SAFETY: ctx is a *mut FetchTasklet stored by the caller (non-null)
-        let this = unsafe { &mut *(ctx.expect("ctx") as *mut FetchTasklet) };
+        let this = unsafe { &mut *ctx.expect("ctx").cast::<FetchTasklet>() };
         if this.ignore_data {
             return;
         }
@@ -1174,7 +1174,7 @@ impl FetchTasklet {
         if self.is_waiting_body {
             let mut pending = body::PendingValue::new(&self.global_this);
             pending.size_hint = self.get_size_hint();
-            pending.task = Some(self as *mut _ as *mut c_void);
+            pending.task = Some(std::ptr::from_mut(self).cast::<c_void>());
             pending.on_start_streaming = Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
             pending.on_stream_cancelled = Some(FetchTasklet::on_stream_cancelled_callback);
@@ -1355,7 +1355,7 @@ impl FetchTasklet {
                     // tasklet is dropped). Erase the borrow to a raw slice so borrowck
                     // doesn't tie `url`'s lifetime to the `fetch_tasklet` stack binding,
                     // which is moved into `Box::into_raw` below.
-                    let buf_ptr: *const [u8] = &*fetch_tasklet.url_proxy_buffer;
+                    let buf_ptr: *const [u8] = &raw const *fetch_tasklet.url_proxy_buffer;
                     url = ZigURL::parse(unsafe { &(&*buf_ptr)[0..old_url_len] });
                     proxy = Some(ZigURL::parse(unsafe { &(&*buf_ptr)[old_url_len..] }));
                     // TODO(port): self-referential borrow into url_proxy_buffer; Phase B needs raw ptr or owned URL
@@ -1398,7 +1398,7 @@ impl FetchTasklet {
             // SAFETY: see block note above.
             unsafe { &*p }
         });
-        let response_buffer: *mut MutableString = &mut fetch_tasklet.response_buffer;
+        let response_buffer: *mut MutableString = &raw mut fetch_tasklet.response_buffer;
         // PORT NOTE: Zig passed `fetch_options.headers.entries` by value (shallow
         // struct copy → shared backing storage). `MultiArrayList` in Rust owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
@@ -1486,9 +1486,9 @@ impl FetchTasklet {
             unsafe {
                 (*signal).pending_activity_ref();
                 unsafe extern "C" fn cb(ptr: *mut c_void, reason: JSValue) {
-                    FetchTasklet::abort_listener(ptr as *mut FetchTasklet, reason);
+                    FetchTasklet::abort_listener(ptr.cast::<FetchTasklet>(), reason);
                 }
-                (*signal).add_listener(fetch_tasklet_ptr as *mut c_void, cb);
+                (*signal).add_listener(fetch_tasklet_ptr.cast::<c_void>(), cb);
             }
         }
         Ok(fetch_tasklet_ptr)
@@ -1636,7 +1636,7 @@ impl FetchTasklet {
 
     pub fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
-        let this_ptr = self as *mut _;
+        let this_ptr = std::ptr::from_mut(self);
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
                 FetchTasklet::deref(this_ptr);
@@ -1737,7 +1737,7 @@ impl FetchTasklet {
             result
                 .body
                 .as_deref()
-                .map_or(true, |b| core::ptr::eq(b, &task_ref.response_buffer)),
+                .map_or(true, |b| core::ptr::eq(b, &raw const task_ref.response_buffer)),
             "HTTPClientResult.body must alias FetchTasklet.response_buffer",
         );
 

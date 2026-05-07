@@ -49,7 +49,7 @@ fn resolution_to_hooks(r: resolution::Resolution) -> hooks::Resolution {
 #[inline]
 fn resolution_from_hooks(r: &hooks::Resolution) -> &resolution::Resolution {
     // SAFETY: layout-identical per `const _` asserts above.
-    unsafe { &*(r as *const hooks::Resolution as *const resolution::Resolution) }
+    unsafe { &*std::ptr::from_ref::<hooks::Resolution>(r).cast::<resolution::Resolution>() }
 }
 
 // `dependency::Tag` is a re-export of `hooks::DependencyVersionTag`
@@ -273,7 +273,7 @@ impl hooks::AutoInstaller for PackageManager {
         // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
         // (asserted above).
         let path_buf: &mut bun_paths::PathBuffer =
-            unsafe { &mut *(buf.as_mut_ptr() as *mut bun_paths::PathBuffer) };
+            unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         let r = *resolution_from_hooks(resolution);
         let out = directories::path_for_resolution(self, package_id, r, path_buf)?;
         Ok(&*out)

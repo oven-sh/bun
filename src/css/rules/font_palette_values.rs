@@ -294,7 +294,7 @@ const _: () = {
         type AtRule = FontPaletteValuesProperty;
 
         fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name as *const [u8])))
+            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<[u8]>(name))))
         }
 
         fn parse_block(_this: &mut Self, _prelude: Self::Prelude, _start: &ParserState, input: &mut Parser) -> Result<Self::AtRule> {

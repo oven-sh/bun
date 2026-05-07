@@ -607,7 +607,7 @@ impl JSMySQLConnection {
             // owned by RareData (lives for the VM's lifetime). `vm` reborrowed
             // via raw ptr to avoid the `rare_data(&mut vm)` /
             // `mysql_group(.., &vm)` aliasing conflict.
-            let vm_p = vm as *mut VirtualMachine;
+            let vm_p = std::ptr::from_mut::<VirtualMachine>(vm);
             let group = unsafe { (*vm_p).rare_data().mysql_group::<false>(&*vm_p) };
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(group, uws::DispatchKind::Mysql, None, &path[..], ptr, false)
@@ -914,7 +914,7 @@ impl JSMySQLConnection {
             ResultMode::Objects => self.js_value.try_get().map(|value| {
                 let cs = statement.structure(value, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                cs as *const CachedStructure
+                std::ptr::from_ref::<CachedStructure>(cs)
             }),
             // no need to check for duplicate fields or structure
             ResultMode::Raw | ResultMode::Values => None,

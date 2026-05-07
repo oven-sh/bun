@@ -70,8 +70,8 @@ impl GarbageCollectionController {
     pub fn init(&mut self, vm: &mut VirtualMachine) {
         // SAFETY: uws::Loop::get() returns the live process-global loop.
         let actual = unsafe { &mut *uws::Loop::get() };
-        self.gc_timer = Some(uws::Timer::create_fallthrough(actual, self as *mut Self));
-        self.gc_repeating_timer = Some(uws::Timer::create_fallthrough(actual, self as *mut Self));
+        self.gc_timer = Some(uws::Timer::create_fallthrough(actual, std::ptr::from_mut::<Self>(self)));
+        self.gc_repeating_timer = Some(uws::Timer::create_fallthrough(actual, std::ptr::from_mut::<Self>(self)));
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
         #[cfg(debug_assertions)]
@@ -123,7 +123,7 @@ impl GarbageCollectionController {
             // SAFETY: gc_repeating_timer was just created above and is non-null
             unsafe {
                 (*self.gc_repeating_timer.unwrap().as_ptr()).set(
-                    self as *mut Self,
+                    std::ptr::from_mut::<Self>(self),
                     Some(on_gc_repeating_timer),
                     gc_timer_interval,
                     gc_timer_interval,
@@ -137,7 +137,7 @@ impl GarbageCollectionController {
         // SAFETY: gc_timer is non-null after init()
         unsafe {
             (*self.gc_timer.unwrap().as_ptr()).set(
-                self as *mut Self,
+                std::ptr::from_mut::<Self>(self),
                 Some(on_gc_timer),
                 16,
                 0,
@@ -149,7 +149,7 @@ impl GarbageCollectionController {
         // SAFETY: self is the `gc_controller` field embedded in a VirtualMachine
         // (Zig: `@alignCast(@fieldParentPtr("gc_controller", this))`).
         unsafe {
-            &mut *(self as *mut Self as *mut u8)
+            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(offset_of!(VirtualMachine, gc_controller))
                 .cast::<VirtualMachine>()
         }
@@ -189,7 +189,7 @@ impl GarbageCollectionController {
             // SAFETY: gc_repeating_timer is non-null after init()
             unsafe {
                 (*self.gc_repeating_timer.unwrap().as_ptr()).set(
-                    self as *mut Self,
+                    std::ptr::from_mut::<Self>(self),
                     Some(on_gc_repeating_timer),
                     self.gc_timer_interval,
                     self.gc_timer_interval,
@@ -201,7 +201,7 @@ impl GarbageCollectionController {
             // SAFETY: gc_repeating_timer is non-null after init()
             unsafe {
                 (*self.gc_repeating_timer.unwrap().as_ptr()).set(
-                    self as *mut Self,
+                    std::ptr::from_mut::<Self>(self),
                     Some(on_gc_repeating_timer),
                     30_000,
                     30_000,

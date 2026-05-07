@@ -185,7 +185,7 @@ pub(crate) mod sql_hooks {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; `timer` is the
         // embedded `timer::All` with stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).timer) as *mut c_void }
+        unsafe { core::ptr::addr_of_mut!((*state).timer).cast::<c_void>() }
     }
     unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
@@ -193,20 +193,20 @@ pub(crate) mod sql_hooks {
         // `All::insert` (NOT the raw `.timers` field) so the lock is taken and
         // `(*timer).state` / `in_heap` bookkeeping is updated — Zig spec is
         // `vm.timer.insert(&this.timer)`.
-        unsafe { (*(heap as *mut crate::timer::All)).insert(timer) };
+        unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
     }
     unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
         // inserted via `timer_insert`. Route through `All::remove` so
         // `in_heap` is consulted and reset.
-        unsafe { (*(heap as *mut crate::timer::All)).remove(timer) };
+        unsafe { (*heap.cast::<crate::timer::All>()).remove(timer) };
     }
     unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; the embedded
         // `SSLContextCache` has stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) as *mut c_void }
+        unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache).cast::<c_void>() }
     }
     unsafe fn ssl_ctx_get_or_create(
         cache: *mut c_void,
@@ -215,12 +215,12 @@ pub(crate) mod sql_hooks {
     ) -> *mut bun_uws::SslCtx {
         // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
         let cache =
-            unsafe { &mut *(cache as *mut crate::api::SSLContextCache::SSLContextCache) };
+            unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
         cache.get_or_create_opts(*opts, err).unwrap_or(core::ptr::null_mut())
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value) {
-            Ok(Some(cfg)) => Box::into_raw(Box::new(cfg)) as *mut c_void,
+            Ok(Some(cfg)) => Box::into_raw(Box::new(cfg)).cast::<c_void>(),
             Ok(None) => core::ptr::null_mut(),
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();
@@ -232,37 +232,37 @@ pub(crate) mod sql_hooks {
     unsafe fn ssl_config_free(this: *mut c_void) {
         // SAFETY: `this` was produced by `Box::into_raw` in
         // `ssl_config_from_js`; sql_jsc's `SSLConfig::drop` guards null/double.
-        drop(unsafe { Box::from_raw(this as *mut crate::socket::SSLConfig) });
+        drop(unsafe { Box::from_raw(this.cast::<crate::socket::SSLConfig>()) });
     }
     unsafe fn ssl_config_as_usockets_client(
         this: *const c_void,
     ) -> bun_uws::us_bun_socket_context_options_t {
         // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
-        unsafe { &*(this as *const crate::socket::SSLConfig) }
+        unsafe { &*this.cast::<crate::socket::SSLConfig>() }
             .as_usockets_for_client_verification()
     }
     unsafe fn ssl_config_server_name(this: *const c_void) -> *const core::ffi::c_char {
         // SAFETY: `this` is a live boxed `SSLConfig`; returned ptr borrows its
         // `Option<CString>` field, valid until `ssl_config_free`.
-        unsafe { &*(this as *const crate::socket::SSLConfig) }
+        unsafe { &*this.cast::<crate::socket::SSLConfig>() }
             .server_name
             .as_deref()
             .map_or(core::ptr::null(), |s| s.as_ptr())
     }
     unsafe fn ssl_config_reject_unauthorized(this: *const c_void) -> i32 {
         // SAFETY: `this` is a live boxed `SSLConfig`.
-        unsafe { (*(this as *const crate::socket::SSLConfig)).reject_unauthorized }
+        unsafe { (*this.cast::<crate::socket::SSLConfig>()).reject_unauthorized }
     }
     unsafe fn blob_needs_to_read_file(this: *const c_void) -> bool {
         // SAFETY: `this` is a live `Blob` (codegen `m_ctx` payload from
         // `Blob__fromJS`).
-        unsafe { (*(this as *const crate::webcore::Blob)).needs_to_read_file() }
+        unsafe { (*this.cast::<crate::webcore::Blob>()).needs_to_read_file() }
     }
     unsafe fn blob_shared_view(this: *const c_void, out_len: *mut usize) -> *const u8 {
         // SAFETY: `this` is a live `Blob`; `out_len` is a caller stack slot.
         unsafe {
             crate::webcore::blob::Bun__Blob__sharedView(
-                this as *const crate::webcore::Blob,
+                this.cast::<crate::webcore::Blob>(),
                 out_len,
             )
         }
@@ -304,7 +304,7 @@ pub fn on_resolve_entry_point_result(
             bun_jsc::ConsoleObject::MessageType::Log,
             bun_jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &result as *const JSValue,
+            &raw const result,
             1,
         );
     }
@@ -327,7 +327,7 @@ pub fn on_reject_entry_point_result(
             bun_jsc::ConsoleObject::MessageType::Log,
             bun_jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &result as *const JSValue,
+            &raw const result,
             1,
         );
     }
@@ -641,7 +641,7 @@ pub extern "C" fn bindgen_Node_os_dispatchSetPriority1(
     let global = unsafe { &*global };
     bindgen_out(
         global,
-        &mut () as *mut (),
+        std::ptr::from_mut::<()>(&mut ()),
         node_os::set_priority1(global, unsafe { *arg_pid }, unsafe { *arg_priority }),
     )
 }
@@ -655,7 +655,7 @@ pub extern "C" fn bindgen_Node_os_dispatchSetPriority2(
     let global = unsafe { &*global };
     bindgen_out(
         global,
-        &mut () as *mut (),
+        std::ptr::from_mut::<()>(&mut ()),
         node_os::set_priority2(global, unsafe { *arg_priority }),
     )
 }

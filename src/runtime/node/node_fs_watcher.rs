@@ -247,7 +247,7 @@ impl FSWatchTaskPosix {
             // SAFETY: ctx is valid for the lifetime of any task (BACKREF).
             debug_assert!(!core::ptr::eq(
                 unsafe { core::ptr::addr_of!((*this_ref.ctx).current_task) },
-                this as *const FSWatchTask
+                this.cast_const()
             ));
         }
         // SAFETY: paired with `Box::into_raw` in `enqueue()`.
@@ -434,7 +434,7 @@ impl FSWatchTaskWindows {
 impl FSWatcher {
     pub fn on_path_update_posix(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
         // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        let this = unsafe { &mut *(ctx.unwrap() as *mut FSWatcher) };
+        let this = unsafe { &mut *ctx.unwrap().cast::<FSWatcher>() };
 
         if this.verbose {
             match &event {
@@ -465,7 +465,7 @@ impl FSWatcher {
 
     pub fn on_path_update_windows(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
         // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        let this = unsafe { &mut *(ctx.unwrap() as *mut FSWatcher) };
+        let this = unsafe { &mut *ctx.unwrap().cast::<FSWatcher>() };
 
         if this.verbose {
             match &event {
@@ -503,7 +503,7 @@ impl FSWatcher {
 
     pub fn on_update_end(ctx: Option<*mut c_void>) {
         // SAFETY: ctx was registered as `*mut FSWatcher` cast to `*mut c_void` in `init`.
-        let this = unsafe { &mut *(ctx.unwrap() as *mut FSWatcher) };
+        let this = unsafe { &mut *ctx.unwrap().cast::<FSWatcher>() };
         if this.verbose {
             Output::flush();
         }
@@ -904,7 +904,7 @@ impl FSWatcher {
         if self.vm().test_isolation_enabled {
             self.vm()
                 .rare_data()
-                .remove_fs_watcher_for_isolation(self as *mut Self as *mut c_void);
+                .remove_fs_watcher_for_isolation(std::ptr::from_mut::<Self>(self).cast::<c_void>());
         }
 
         if let Some(watcher) = self.path_watcher.take() {
@@ -912,7 +912,7 @@ impl FSWatcher {
             // (it self-destroys via `Box::from_raw` on the last handler, so it cannot
             // soundly take `&mut self`). `watcher` is the live pointer returned by
             // `path_watcher::watch`.
-            path_watcher::PathWatcher::detach(watcher, self as *mut Self as *mut c_void);
+            path_watcher::PathWatcher::detach(watcher, std::ptr::from_mut::<Self>(self).cast::<c_void>());
         }
 
         if self.persistent {
@@ -924,7 +924,7 @@ impl FSWatcher {
             // PORT NOTE: Zig `signal.detach(this)` = `cleanNativeBindings` +
             // `unref`. `AbortSignalRef::Drop` already does the `unref`, so only
             // remove the listener here to avoid a double-unref.
-            signal.clean_native_bindings(self as *mut Self as *mut c_void);
+            signal.clean_native_bindings(std::ptr::from_mut::<Self>(self).cast::<c_void>());
         }
 
         self.js_this = JSValue::ZERO;
@@ -1007,7 +1007,7 @@ impl FSWatcher {
                 args.recursive,
                 FSWatcher::ON_PATH_UPDATE,
                 FSWatcher::on_update_end,
-                ctx as *mut c_void,
+                ctx.cast::<c_void>(),
             );
             match r {
                 Ok(r) => Some(r),
@@ -1036,7 +1036,7 @@ impl FSWatcher {
         // SAFETY: `vm` is the live per-thread VirtualMachine.
         if unsafe { (*vm).test_isolation_enabled } {
             unsafe { &mut *vm }.rare_data().add_fs_watcher_for_isolation(
-                ctx as *mut c_void,
+                ctx.cast::<c_void>(),
                 // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
                 // (ptr, close-fn) so it can fire detach without naming FSWatcher.
                 // SAFETY (callee contract): `p` is the `ctx` registered above;

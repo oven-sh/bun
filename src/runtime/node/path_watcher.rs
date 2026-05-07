@@ -116,7 +116,7 @@ impl PathWatcherManager {
         let m = Box::leak(Box::new(PathWatcherManager::default()));
         if let Err(e) = Platform::init(m) {
             // SAFETY: `m` was just leaked from a Box and not yet published.
-            unsafe { drop(Box::from_raw(m as *mut PathWatcherManager)) };
+            unsafe { drop(Box::from_raw(std::ptr::from_mut::<PathWatcherManager>(m))) };
             return Err(e);
         }
         // SAFETY: holding DEFAULT_MANAGER_MUTEX.
@@ -640,7 +640,7 @@ impl Linux {
         manager.platform.get_mut().fd = Fd::from_native(rc);
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
-        let mgr_ptr = manager as *mut PathWatcherManager as usize;
+        let mgr_ptr = std::ptr::from_mut::<PathWatcherManager>(manager) as usize;
         match std::thread::Builder::new().spawn(move || {
             // SAFETY: manager is process-global (&'static), never freed.
             Linux::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
@@ -715,7 +715,7 @@ impl Linux {
             }
         }
         owners.push(WdOwner {
-            watcher: watcher as *mut PathWatcher,
+            watcher: std::ptr::from_mut::<PathWatcher>(watcher),
             subpath: ZBox::from_bytes(subpath),
         });
         watcher.platform.wds.push(wd);
@@ -827,7 +827,7 @@ impl Linux {
             let mut i: usize = 0;
             while i < n {
                 // SAFETY: inotify guarantees whole events; buf[i..] starts at an event header.
-                let ev: &InotifyEvent = unsafe { &*(buf.0.as_ptr().add(i) as *const InotifyEvent) };
+                let ev: &InotifyEvent = unsafe { &*buf.0.as_ptr().add(i).cast::<InotifyEvent>() };
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;
 
@@ -857,7 +857,7 @@ impl Linux {
                     // SAFETY: i was just advanced past this event's name_len bytes; offset is within buf[0..n].
                     let name_ptr = unsafe { buf.0.as_ptr().add(i - ev.name_len as usize) };
                     // SAFETY: kernel NUL-pads name within name_len bytes.
-                    unsafe { core::ffi::CStr::from_ptr(name_ptr as *const _).to_bytes() }
+                    unsafe { core::ffi::CStr::from_ptr(name_ptr.cast()).to_bytes() }
                 } else {
                     b""
                 };
@@ -899,7 +899,7 @@ impl Linux {
                         // `wd_map` rehashes (only the Vec header does). Launder the slice
                         // through a raw ptr so its provenance is decoupled from the map
                         // borrow that `add_one` will invalidate.
-                        (o.watcher, &*(o.subpath.as_bytes() as *const [u8]))
+                        (o.watcher, &*std::ptr::from_ref::<[u8]>(o.subpath.as_bytes()))
                     };
                     // SAFETY: owner_watcher live under manager.mutex. Read the scalar
                     // fields and the path bytes via the raw pointer *before* forming
@@ -913,7 +913,7 @@ impl Linux {
                         (
                             (*owner_watcher).is_file,
                             (*owner_watcher).recursive,
-                            &*((*owner_watcher).path.as_bytes() as *const [u8]),
+                            &*std::ptr::from_ref::<[u8]>((*owner_watcher).path.as_bytes()),
                         )
                     };
                     let watcher = unsafe { &mut *owner_watcher };

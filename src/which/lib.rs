@@ -274,7 +274,7 @@ pub fn which_win<'a>(
         // PORT NOTE: NLL Polonius limitation — raw-ptr reborrow so the None
         // branch can fall through without `buf` appearing borrowed.
         // SAFETY: bin_path borrow does not escape this block on the None path.
-        let buf_reborrow: &'a mut WPathBuffer = unsafe { &mut *(buf as *mut WPathBuffer) };
+        let buf_reborrow: &'a mut WPathBuffer = unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) = search_bin_in_path(
             buf_reborrow,
             &mut *path_buf,
@@ -294,7 +294,7 @@ pub fn which_win<'a>(
         // PORT NOTE: NLL Polonius limitation — re-borrowing `buf` across loop
         // iterations when returning a reference tied to its lifetime.
         // SAFETY: on None the borrow ends; on Some we return immediately.
-        let buf_reborrow: &'a mut WPathBuffer = unsafe { &mut *(buf as *mut WPathBuffer) };
+        let buf_reborrow: &'a mut WPathBuffer = unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) =
             search_bin_in_path(buf_reborrow, &mut *path_buf, segment_part, bin, check_windows_extensions)
         {

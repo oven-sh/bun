@@ -52,7 +52,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // the `ctx` field — and the `&mut` pointers stored inside it — does not go
     // through a shared reborrow that would strip write provenance.
     let part_range: *const PendingPartRange = unsafe {
-        (task as *mut u8)
+        task.cast::<u8>()
             .sub(offset_of!(PendingPartRange, task))
             .cast::<PendingPartRange>()
     };
@@ -61,17 +61,17 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // `*const T` share layout; this avoids ever materializing `&GenerateChunkCtx`
     // (which would shared-reborrow its `&mut` fields under Stacked Borrows).
     let ctx: *const GenerateChunkCtx = unsafe {
-        *(core::ptr::addr_of!((*part_range).ctx) as *const *const GenerateChunkCtx)
+        *core::ptr::addr_of!((*part_range).ctx).cast::<*const GenerateChunkCtx>()
     };
     // SAFETY: `GenerateChunkCtx.c` is the embedded `LinkerContext` inside
     // `BundleV2`. The link step never mutates `LinkerContext` from this task,
     // so a `*const` (and the derived `&BundleV2` for `Worker::get`) suffices —
     // no const→mut cast needed.
     let c: *const LinkerContext = unsafe {
-        *(core::ptr::addr_of!((*ctx).c) as *const *const LinkerContext)
+        *core::ptr::addr_of!((*ctx).c).cast::<*const LinkerContext>()
     };
     let bv2: &BundleV2 = unsafe {
-        &*(c as *const u8)
+        &*c.cast::<u8>()
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>()
     };
@@ -84,10 +84,10 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // they were created with is preserved — never round-tripping through
     // `*const`. Zig's `*T` aliases freely; this is the raw-pointer equivalent.
     let chunk: *mut Chunk = unsafe {
-        *(core::ptr::addr_of!((*ctx).chunk) as *const *mut Chunk)
+        *core::ptr::addr_of!((*ctx).chunk).cast::<*mut Chunk>()
     };
     let chunks: *mut [Chunk] = unsafe {
-        *(core::ptr::addr_of!((*ctx).chunks) as *const *mut [Chunk])
+        *core::ptr::addr_of!((*ctx).chunks).cast::<*mut [Chunk]>()
     };
     // SAFETY: `chunk` is this task's exclusively-owned HTML chunk for the
     // duration of the compile step; the result slot was pre-allocated.
@@ -242,7 +242,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             lol::Element::on_end_tag(
                 element,
                 Self::end_head_tag_handler,
-                self as *mut Self as *mut c_void,
+                std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             )
         }
         .is_err()
@@ -254,7 +254,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             lol::Element::on_end_tag(
                 element,
                 Self::end_html_tag_handler,
-                self as *mut Self as *mut c_void,
+                std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             )
         }
         .is_err()
@@ -266,7 +266,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             lol::Element::on_end_tag(
                 element,
                 Self::end_body_tag_handler,
-                self as *mut Self as *mut c_void,
+                std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             )
         }
         .is_err()
@@ -366,7 +366,7 @@ impl<'a> HTMLLoader<'a> {
         opaque_this: *mut c_void,
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_head_tag; end is non-null from lol-html callback.
-        let this: &mut Self = unsafe { &mut *(opaque_this as *mut Self) };
+        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
         if this.linker.dev_server.is_none() {
             if this.add_head_tags(end).is_err() {
                 return lol::Directive::Stop;
@@ -382,7 +382,7 @@ impl<'a> HTMLLoader<'a> {
         opaque_this: *mut c_void,
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_body_tag; end is non-null from lol-html callback.
-        let this: &mut Self = unsafe { &mut *(opaque_this as *mut Self) };
+        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
         if this.linker.dev_server.is_none() {
             if this.compile_to_standalone_html {
                 // In standalone mode, insert JS before </body> so DOM is available
@@ -405,7 +405,7 @@ impl<'a> HTMLLoader<'a> {
         opaque_this: *mut c_void,
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_html_tag; end is non-null from lol-html callback.
-        let this: &mut Self = unsafe { &mut *(opaque_this as *mut Self) };
+        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
         if this.linker.dev_server.is_none() {
             if this.compile_to_standalone_html {
                 // Fallback: if no </body> was found, insert both CSS and JS before </html>
@@ -451,7 +451,7 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
     // bits directly (`&mut T` and `*mut T` share layout) so we don't reborrow
     // through `&` and lose mutability. The HTMLLoader.log field is currently
     // dead_code, so no write actually occurs through this pointer today.
-    let log: *mut Log = unsafe { *(core::ptr::addr_of!(c.log) as *const *mut Log) };
+    let log: *mut Log = unsafe { *core::ptr::addr_of!(c.log).cast::<*mut Log>() };
     let minify_whitespace = c.options.minify_whitespace;
     let compile_to_standalone_html = c.options.compile_to_standalone_html;
     let has_dev_server = c.dev_server.is_some();

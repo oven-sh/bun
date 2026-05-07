@@ -740,7 +740,7 @@ impl CompileC {
             options: Some(NonNull::from(compile_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
-                ctx: Some(self as *mut CompileC),
+                ctx: Some(std::ptr::from_mut::<CompileC>(self)),
                 // SAFETY: `Option<&mut T>` / `Option<NonNull<c_char>>` are
                 // ABI-identical to `*mut T` / `*const c_char` (NPO); the
                 // handler is only ever invoked by TinyCC via the C ABI.
@@ -922,7 +922,7 @@ impl CompileC {
                 state
                     .add_symbol(
                         zstr!(b"Bun__thisFFIModuleNapiEnv"),
-                        global_this.make_napi_env_for_ffi() as *const c_void,
+                        global_this.make_napi_env_for_ffi().cast_const(),
                     )
                     .map_err(|_| bun_core::err!("DeferredErrors"))?;
                 break;
@@ -994,7 +994,7 @@ impl CompileC {
                 ));
                 return Err(bun_core::err!("JSError"));
             };
-            entry.value_ptr.symbol_from_dynamic_library = Some(sym.as_ptr() as *mut c_void);
+            entry.value_ptr.symbol_from_dynamic_library = Some(sym.as_ptr().cast::<c_void>());
         }
 
         self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
@@ -1351,7 +1351,7 @@ impl FFI {
                         global_this,
                         &str,
                         u32::try_from(function.arg_types.len()).expect("int cast"),
-                        compiled.ptr as *const c_void,
+                        compiled.ptr.cast_const(),
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1713,7 +1713,7 @@ impl FFI {
                         global,
                         &str,
                         u32::try_from(function.arg_types.len()).expect("int cast"),
-                        compiled.ptr as *const c_void,
+                        compiled.ptr.cast_const(),
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1810,7 +1810,7 @@ impl FFI {
                         global,
                         &name,
                         u32::try_from(function.arg_types.len()).expect("int cast"),
-                        compiled.ptr as *const c_void,
+                        compiled.ptr.cast_const(),
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -2048,7 +2048,7 @@ impl Default for Function {
 }
 
 // TODO(port): mutable static — wrap in OnceLock or similar
-pub static mut LIB_DIR_Z: *const c_char = b"\0".as_ptr() as *const c_char;
+pub static mut LIB_DIR_Z: *const c_char = b"\0".as_ptr().cast::<c_char>();
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
@@ -2147,7 +2147,7 @@ impl Function {
             options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
-                ctx: Some(self as *mut Function),
+                ctx: Some(std::ptr::from_mut::<Function>(self)),
                 // SAFETY: `Option<&mut T>` is ABI-identical to `*mut T` (NPO).
                 handler: unsafe {
                     core::mem::transmute::<
@@ -2162,7 +2162,7 @@ impl Function {
         };
 
         self.state = Some(state);
-        let _guard = scopeguard::guard(self as *mut Function, |this_ptr| {
+        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
             // SAFETY: this_ptr is &mut self for the duration of compile()
             let this = unsafe { &mut *this_ptr };
             if matches!(this.step, Step::Failed { .. }) {
@@ -2177,7 +2177,7 @@ impl Function {
 
         if let Some(env) = napi_env {
             if state
-                .add_symbol(zstr!(b"Bun__thisFFIModuleNapiEnv"), env as *const _ as *const c_void)
+                .add_symbol(zstr!(b"Bun__thisFFIModuleNapiEnv"), std::ptr::from_ref(env).cast::<c_void>())
                 .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
@@ -2220,7 +2220,7 @@ impl Function {
         };
 
         self.step = Step::Compiled(Compiled {
-            ptr: symbol.as_ptr() as *mut c_void,
+            ptr: symbol.as_ptr().cast::<c_void>(),
             ..Default::default()
         });
         Ok(())
@@ -2245,14 +2245,14 @@ impl Function {
             // SAFETY: best-effort debug write; failures are swallowed
             unsafe {
                 let fd = libc::open(
-                    b"/tmp/bun-ffi-callback-source.c\0".as_ptr() as *const c_char,
+                    b"/tmp/bun-ffi-callback-source.c\0".as_ptr().cast::<c_char>(),
                     libc::O_CREAT | libc::O_WRONLY,
                     0o644,
                 );
                 if fd < 0 {
                     break 'debug_write;
                 }
-                let _ = libc::write(fd, source_code.as_ptr() as *const c_void, source_code.len());
+                let _ = libc::write(fd, source_code.as_ptr().cast::<c_void>(), source_code.len());
                 let _ = libc::ftruncate(fd, source_code.len() as libc::off_t);
                 libc::close(fd);
             }
@@ -2270,7 +2270,7 @@ impl Function {
             options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
-                ctx: Some(self as *mut Function),
+                ctx: Some(std::ptr::from_mut::<Function>(self)),
                 // SAFETY: `Option<&mut T>` is ABI-identical to `*mut T` (NPO).
                 handler: unsafe {
                     core::mem::transmute::<
@@ -2291,7 +2291,7 @@ impl Function {
             Err(_) => unreachable!(),
         };
         self.state = Some(state);
-        let _guard = scopeguard::guard(self as *mut Function, |this_ptr| {
+        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
             // SAFETY: this_ptr is &mut self for the duration of compile_callback()
             let this = unsafe { &mut *this_ptr };
             if matches!(this.step, Step::Failed { .. }) {
@@ -2308,7 +2308,7 @@ impl Function {
             if state
                 .add_symbol(
                     zstr!(b"Bun__thisFFIModuleNapiEnv"),
-                    js_context.make_napi_env_for_ffi() as *const c_void,
+                    js_context.make_napi_env_for_ffi().cast_const(),
                 )
                 .is_err()
             {
@@ -2361,7 +2361,7 @@ impl Function {
         };
 
         self.step = Step::Compiled(Compiled {
-            ptr: symbol.as_ptr() as *mut c_void,
+            ptr: symbol.as_ptr().cast::<c_void>(),
             js_function,
             // SAFETY: opaque-handle storage only (Zig: `?*anyopaque`). Never
             // dereferenced or written through on the Rust side; stored as
@@ -2538,7 +2538,7 @@ impl Function {
         // TODO(port): narrow error set
         {
             let ptr = global_object
-                .map(|g| g as *const _ as usize)
+                .map(|g| std::ptr::from_ref(g) as usize)
                 .unwrap_or(0);
             let fmt = bun_fmt::hex_int_upper::<16>(ptr as u64);
             write!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{}ULL\n", fmt)?;

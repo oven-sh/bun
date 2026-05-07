@@ -516,7 +516,7 @@ impl BunTestRoot {
         // projection via `addr_of_mut!` creates no intermediate `&mut TestRunner`.
         let stable_root: *mut BunTestRoot = Jest::runner_ptr()
             .map(|p| unsafe { core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root) })
-            .unwrap_or(self as *mut BunTestRoot);
+            .unwrap_or(std::ptr::from_mut::<BunTestRoot>(self));
 
         // Zig: active_file = .new(undefined); active_file.get().?.init(...)
         // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
@@ -995,14 +995,14 @@ impl BunTest {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
             if self.timer.next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                vm_timer().remove(&mut self.timer);
+                vm_timer().remove(&raw mut self.timer);
             }
             // PORT NOTE: `EventLoopTimer.next` uses the event-loop crate's local
             // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
             self.timer.next = ElTimespec { sec: min_timeout.sec, nsec: min_timeout.nsec };
             if self.timer.next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                vm_timer().insert(&mut self.timer);
+                vm_timer().insert(&raw mut self.timer);
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -1018,7 +1018,7 @@ impl BunTest {
         // PORT NOTE: capture `self.phase` by raw ptr so the deferred log doesn't
         // hold a `&self` borrow across the `self.phase = …` writes below
         // (Zig `defer` closes over `*BunTest` by pointer, not by borrow).
-        let phase_ptr: *const Phase = &self.phase;
+        let phase_ptr: *const Phase = &raw const self.phase;
         scopeguard::defer! {
             // SAFETY: `self` outlives this guard (drops at end of this fn body).
             bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(unsafe { *phase_ptr }));
@@ -1320,7 +1320,7 @@ impl Drop for BunTest {
 
         if self.timer.state == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
-            vm_timer().remove(&mut self.timer);
+            vm_timer().remove(&raw mut self.timer);
         }
 
         for entry in self.extra_execution_entries.drain(..) {
@@ -1706,7 +1706,7 @@ impl DescribeScope {
     // destroy → Drop on Box<DescribeScope>; all fields own their contents.
 
     fn mark_contains_only(&mut self) {
-        let mut target: Option<*mut DescribeScope> = Some(self as *mut _);
+        let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));
         while let Some(scope_ptr) = target {
             // SAFETY: walking parent backrefs; tree is single-threaded
             let scope = unsafe { &mut *scope_ptr };
@@ -1720,7 +1720,7 @@ impl DescribeScope {
     }
 
     fn mark_has_callback(&mut self) {
-        let mut target: Option<*mut DescribeScope> = Some(self as *mut _);
+        let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));
         while let Some(scope_ptr) = target {
             // SAFETY: walking parent backrefs; tree is single-threaded
             let scope = unsafe { &mut *scope_ptr };
@@ -1737,7 +1737,7 @@ impl DescribeScope {
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
     ) -> JsResult<&mut DescribeScope> {
-        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(self as *mut _), false));
+        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
         child.base.propagate(false);
         self.entries.push(TestScheduleEntry::Describe(child));
         // TODO(port): narrow error set
@@ -1755,7 +1755,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(self as *mut _), base, phase);
+        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
         let has_cb = entry.callback.is_some();
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
@@ -1782,7 +1782,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let entry = ExecutionEntry::create(None, callback, cfg, Some(self as *mut _), base, phase);
+        let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
         let list = self.get_hook_entries(tag);
         list.push(entry);
         Ok(&mut **list.last_mut().unwrap())

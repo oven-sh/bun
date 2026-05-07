@@ -217,18 +217,18 @@ impl FileCloser for ReadFile {
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
         let this: &mut ReadFile = unsafe {
-            &mut *((request as *mut io::Request as *mut u8)
+            &mut *(std::ptr::from_mut::<io::Request>(request).cast::<u8>()
                 .sub(offset_of!(ReadFile, io_request))
                 .cast::<ReadFile>())
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut ReadFile` set below.
-            let this = unsafe { &mut *(ctx as *mut ReadFile) };
+            let this = unsafe { &mut *ctx.cast::<ReadFile>() };
             <ReadFile as FileCloser>::on_io_request_closed(this);
         }
         // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
         // before mutably borrowing `io_poll` so the two borrows do not overlap.
-        let ctx = this as *mut ReadFile as *mut ();
+        let ctx = std::ptr::from_mut::<ReadFile>(this).cast::<()>();
         let fd = this.opened_fd;
         io::Action::Close(io::CloseAction {
             fd,
@@ -242,7 +242,7 @@ impl FileCloser for ReadFile {
     unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: task is &mut self.task (intrusive); recover parent.
         let this: &mut ReadFile = unsafe {
-            &mut *((task as *mut u8).sub(offset_of!(ReadFile, task)).cast::<ReadFile>())
+            &mut *(task.cast::<u8>().sub(offset_of!(ReadFile, task)).cast::<ReadFile>())
         };
         this.close_after_io = false;
         ReadFile::update(this);
@@ -325,11 +325,11 @@ impl ReadFile {
         // Zig layout (no extra heap box, nothing to leak on the `Err` path).
         fn handler_run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
             // TODO(port): properly propagate exception upwards (matches Zig TODO).
-            let _ = C::run(ctx as *mut C, bytes);
+            let _ = C::run(ctx.cast::<C>(), bytes);
         }
         ReadFile::create_with_ctx(
             store,
-            context as *mut c_void,
+            context.cast::<c_void>(),
             handler_run::<C>,
             off,
             max_len,
@@ -341,7 +341,7 @@ impl ReadFile {
     pub fn on_readable(request: *mut io::Request) {
         // SAFETY: request points to ReadFile.io_request (intrusive field).
         let this: &mut ReadFile = unsafe {
-            &mut *((request as *mut u8)
+            &mut *(request.cast::<u8>()
                 .sub(offset_of!(ReadFile, io_request))
                 .cast::<ReadFile>())
         };
@@ -360,7 +360,7 @@ impl ReadFile {
             self.close_after_io = self.io_request.scheduled;
         }
 
-        WorkPool::schedule(&mut self.task as *mut WorkPoolTask);
+        WorkPool::schedule(&raw mut self.task);
     }
 
     pub fn on_io_error(&mut self, err: bun_sys::Error) {
@@ -376,13 +376,13 @@ impl ReadFile {
             // unless pending IO has been scheduled in-between.
             self.close_after_io = self.io_request.scheduled;
         }
-        WorkPool::schedule(&mut self.task as *mut WorkPoolTask);
+        WorkPool::schedule(&raw mut self.task);
     }
 
     /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), sys::Error)` shape.
     fn on_io_error_thunk(ctx: *mut (), err: bun_sys::Error) {
         // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
-        unsafe { (*(ctx as *mut ReadFile)).on_io_error(err) }
+        unsafe { (*ctx.cast::<ReadFile>()).on_io_error(err) }
     }
 
     pub fn on_request_readable(request: &mut io::Request) -> io::Action<'_> {
@@ -390,13 +390,13 @@ impl ReadFile {
         request.scheduled = false;
         // SAFETY: request points to ReadFile.io_request (intrusive field); recover parent via offset_of.
         let this: &mut ReadFile = unsafe {
-            &mut *((request as *mut io::Request as *mut u8)
+            &mut *(std::ptr::from_mut::<io::Request>(request).cast::<u8>()
                 .sub(offset_of!(ReadFile, io_request))
                 .cast::<ReadFile>())
         };
         io::Action::Readable(FileAction {
             on_error: Self::on_io_error_thunk,
-            ctx: this as *mut ReadFile as *mut (),
+            ctx: std::ptr::from_mut::<ReadFile>(this).cast::<()>(),
             fd: this.opened_fd,
             poll: &mut this.io_poll,
             tag: ReadFile::IO_TAG,
@@ -715,7 +715,7 @@ impl ReadFile {
     unsafe fn do_read_loop_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to ReadFile.task (intrusive field).
         let this: &mut ReadFile = unsafe {
-            &mut *((task as *mut u8)
+            &mut *(task.cast::<u8>()
                 .sub(offset_of!(ReadFile, task))
                 .cast::<ReadFile>())
         };
@@ -745,7 +745,7 @@ impl ReadFile {
             // SAFETY: u8 is POD; treating uninit bytes as &mut [u8] for read(2) target is fine.
             let stack_buffer: &mut [u8] = unsafe {
                 core::slice::from_raw_parts_mut(
-                    stack_buffer.as_mut_ptr() as *mut u8,
+                    stack_buffer.as_mut_ptr().cast::<u8>(),
                     stack_buffer.len(),
                 )
             };
@@ -1284,7 +1284,7 @@ pub trait ReadFileUvHandler {
 /// `Handler.run` is `void`-returning by contract).
 impl<C: ReadFileCompletion> ReadFileUvHandler for C {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType) {
-        let _ = <C as ReadFileCompletion>::run(ctx as *mut C, bytes);
+        let _ = <C as ReadFileCompletion>::run(ctx.cast::<C>(), bytes);
     }
 }
 

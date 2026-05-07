@@ -291,7 +291,7 @@ impl ImageSet {
         let location = input.current_source_location();
         // SAFETY: borrow detached (Phase-A `'static` placeholder, see
         // `css_parser::src_str`) so `input` is reusable below.
-        let f: &'static [u8] = unsafe { &*(input.expect_function()? as *const [u8]) };
+        let f: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_function()?) };
         let vendor_prefix = 'vendor_prefix: {
             // todo_stuff.match_ignore_ascii_case
             if strings::eql_case_insensitive_ascii_check_length(b"image-set", f) {
@@ -394,7 +394,7 @@ impl ImageSetOption {
         // `R` may not borrow the closure arg). Erase the borrow via `*const`
         // — token slices are arena-static (see `css_parser::src_str`).
         let image = if let Some(url) = input
-            .try_parse(|p| p.expect_url_or_string().map(|s| s as *const [u8]))
+            .try_parse(|p| p.expect_url_or_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
             .ok()
         {
             // SAFETY: see above — `url` borrows the parser's source/arena.
@@ -463,7 +463,7 @@ impl ImageSetOption {
                 let record_url = dest.get_import_record_url(url.import_record_idx)?;
                 // SAFETY: `record_url` borrows arena-backed `import_info` data
                 // valid for the printer's `'a`; detach so `dest` is reusable.
-                let record_url: &[u8] = unsafe { &*(record_url as *const [u8]) };
+                let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };
                 if let Err(_) = css::serializer::serialize_string(record_url, dest) {
                     return Err(dest.add_fmt_error());
                 }
@@ -529,7 +529,7 @@ fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
     input.expect_function_matching(b"type")?;
     input.parse_nested_block(|i: &mut css::Parser| {
         // TODO(port): expect_string returns arena-borrowed &[u8]; coerced to raw ptr to avoid struct lifetime
-        i.expect_string().map(|s| s as *const [u8])
+        i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))
     })
 }
 

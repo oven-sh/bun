@@ -140,7 +140,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         // Phase B may change VM fields to borrow from ctx.
         vm.preload = ctx.preloads.clone();
         vm.argv = ctx.passthrough.clone();
-        vm.arena = NonNull::new(&mut arena as *mut Arena);
+        vm.arena = NonNull::new(&raw mut arena);
         // vm.allocator = arena.allocator() — dropped per §Allocators
         // Spec production.zig:50: `b.options.install = ctx.install` (raw
         // `?*const Api.BunInstall` copy). `BundleOptions.install` is now
@@ -261,7 +261,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
 fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     // SAFETY: vm.log is the process-lifetime ctx.log set in build_command.
     if let Some(log) = vm.log {
-        let _ = unsafe { log.as_ref() }.print(Output::error_writer() as *mut _);
+        let _ = unsafe { log.as_ref() }.print(std::ptr::from_mut(Output::error_writer()));
     }
     Global::exit(1);
 }
@@ -451,7 +451,7 @@ pub fn build_with_vm(
         (*backing.loader.get()).assume_init_mut()
     };
     loader.map.put(b"NODE_ENV", b"production")?;
-    dotenv::set_instance(loader as *mut dotenv::Loader<'static>);
+    dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader<'static>>(loader));
 
     // TODO(port): Zig used `var x: Transpiler = undefined;` + out-param init.
     // PORTING.md §Exception — out-param constructors: reshape to a returned
@@ -550,7 +550,7 @@ pub fn build_with_vm(
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
             // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-            let _ = unsafe { &*server_transpiler.log }.print(Output::error_writer() as *mut _);
+            let _ = unsafe { &*server_transpiler.log }.print(std::ptr::from_mut(Output::error_writer()));
             Global::crash();
         }
     };
@@ -645,8 +645,8 @@ pub fn build_with_vm(
         // `&'a mut Transpiler<'a>` invariant lifetime on the bundler API.
         // SAFETY: the three transpilers live in this stack frame and outlive
         // the bundle call; `BundleV2` does not retain them past return.
-        let server_ptr: *mut Transpiler = &mut *server_transpiler;
-        let client_ptr: *mut Transpiler = &mut *client_transpiler;
+        let server_ptr: *mut Transpiler = &raw mut *server_transpiler;
+        let client_ptr: *mut Transpiler = &raw mut *client_transpiler;
         let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
             // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
             core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
@@ -1544,7 +1544,7 @@ impl PerThread {
         // SAFETY: self.vm is the live per-thread VM (raw ptr from init_bake);
         // PerThread outlives the attached lifetime; detached in Drop.
         unsafe {
-            BakeGlobalObject__attachPerThreadData((*self.vm).global, self as *mut PerThread);
+            BakeGlobalObject__attachPerThreadData((*self.vm).global, std::ptr::from_mut::<PerThread>(self));
         }
         self.attached = true;
     }

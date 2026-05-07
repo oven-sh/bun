@@ -43,13 +43,13 @@ pub fn is_safe_alt_name(name: &[u8], utf8: bool) -> bool {
 
 pub fn to_js(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::from_js_host_call(global_object, || unsafe {
-        Bun__X509__toJSLegacyEncoding(cert as *mut X509, global_object)
+        Bun__X509__toJSLegacyEncoding(std::ptr::from_mut::<X509>(cert), global_object)
     })
 }
 
 pub fn to_js_object(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: cert is a valid X509* owned by the caller; global_object is a live JSC global
-    Ok(unsafe { Bun__X509__toJS(cert as *mut X509, global_object) })
+    Ok(unsafe { Bun__X509__toJS(std::ptr::from_mut::<X509>(cert), global_object) })
 }
 
 // TODO(port): move to runtime_sys (or bun_boringssl_sys)

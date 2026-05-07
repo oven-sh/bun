@@ -308,7 +308,7 @@ impl Rm {
                         let (sig, out_count): (*const AtomicBool, *const AtomicUsize) =
                             match &Self::state_mut(interp, cmd).state {
                                 RmState::Exec(e) => {
-                                    (&e.error_signal as *const _, &e.output_count as *const _)
+                                    (&raw const e.error_signal, &raw const e.output_count)
                                 }
                                 _ => unreachable!(),
                             };
@@ -759,9 +759,8 @@ impl ShellRmTask {
         // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
         // is embedded in `ShellRmTask` at `TASK_OFFSET` (Zig: `@fieldParentPtr`).
         let this = unsafe {
-            (task as *mut u8)
-                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET)
-                as *mut ShellRmTask
+            task.cast::<u8>()
+                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET).cast::<ShellRmTask>()
         };
         // SAFETY: `this` is a live Box::into_raw'd task; the worker thread has
         // exclusive access to `root_task` until it spawns subtasks.
@@ -1229,7 +1228,7 @@ impl DirTask {
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: `work_task` is at a fixed offset within DirTask.
         let this = unsafe {
-            (task as *mut u8).sub(core::mem::offset_of!(DirTask, work_task)) as *mut DirTask
+            task.cast::<u8>().sub(core::mem::offset_of!(DirTask, work_task)).cast::<DirTask>()
         };
         // SAFETY: `this` is a live DirTask; this worker thread owns it.
         unsafe { Self::run_from_thread_pool_impl(this) };
@@ -1422,7 +1421,7 @@ impl DirTask {
         let task_ptr = match &mut me.concurrent_task {
             EventLoopTask::Js(ct) => {
                 ct.from(this, AutoDeinit::ManualDeinit);
-                EventLoopTaskPtr { js: ct as *mut _ }
+                EventLoopTaskPtr { js: std::ptr::from_mut(ct) }
             }
             EventLoopTask::Mini(at) => EventLoopTaskPtr {
                 mini: at.from(this, dir_task_run_from_main_thread_mini),

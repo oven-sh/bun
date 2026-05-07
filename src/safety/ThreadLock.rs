@@ -48,7 +48,7 @@ impl ThreadLock {
     #[inline]
     pub fn guard(&mut self) -> ThreadLockGuard {
         self.lock();
-        ThreadLockGuard(self as *mut Self)
+        ThreadLockGuard(std::ptr::from_mut::<Self>(self))
     }
 
     pub fn lock(&mut self) {

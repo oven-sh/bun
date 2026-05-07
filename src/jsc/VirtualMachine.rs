@@ -774,7 +774,7 @@ impl VirtualMachine {
         if let Some(worker) = self.worker {
             // SAFETY: `worker` is a `*const c_void` pointing at a heap `WebWorker`
             // owned by C++ that outlives this VM (BACKREF — see field decl).
-            let worker = unsafe { &*(worker as *const crate::web_worker::WebWorker) };
+            let worker = unsafe { &*worker.cast::<crate::web_worker::WebWorker>() };
             if worker.has_requested_terminate() {
                 return crate::ScriptExecutionStatus::Stopped;
             }
@@ -902,7 +902,7 @@ impl VirtualMachine {
         if !self.has_enabled_macro_mode {
             self.has_enabled_macro_mode = true;
             self.macro_event_loop = EventLoop::default();
-            self.macro_event_loop.virtual_machine = NonNull::new(self as *mut _);
+            self.macro_event_loop.virtual_machine = NonNull::new(std::ptr::from_mut(self));
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
             ensure_source_code_printer();
@@ -910,7 +910,7 @@ impl VirtualMachine {
         self.transpiler.options.target = bun_bundler::options::Target::BunMacro;
         self.transpiler.resolver.caches.fs.use_alternate_source_cache = true;
         self.macro_mode = true;
-        self.event_loop = &mut self.macro_event_loop;
+        self.event_loop = &raw mut self.macro_event_loop;
         bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.transpiler_store.enabled = false;
     }
@@ -919,7 +919,7 @@ impl VirtualMachine {
         self.transpiler.options.target = bun_bundler::options::Target::Bun;
         self.transpiler.resolver.caches.fs.use_alternate_source_cache = false;
         self.macro_mode = false;
-        self.event_loop = &mut self.regular_event_loop;
+        self.event_loop = &raw mut self.regular_event_loop;
         self.transpiler_store.enabled = true;
     }
 
@@ -1209,7 +1209,7 @@ impl VirtualMachine {
     }
 
     pub fn on_before_exit(&mut self) {
-        let vm = self as *mut VirtualMachine;
+        let vm = std::ptr::from_mut::<VirtualMachine>(self);
         // SAFETY: `vm` is the live per-thread VM (we just took its address).
         unsafe { ExitHandler::dispatch_on_before_exit(vm) };
         let mut dispatch = false;
@@ -1263,7 +1263,7 @@ impl VirtualMachine {
             }
         }
 
-        let vm = self as *mut VirtualMachine;
+        let vm = std::ptr::from_mut::<VirtualMachine>(self);
         // SAFETY: `vm` is the live per-thread VM (we just took its address).
         unsafe { ExitHandler::dispatch_on_exit(vm) };
         self.is_shutting_down = true;
@@ -1581,7 +1581,7 @@ pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::Even
             // boxes the per-VM `RareData` and `file_polls_` lazily boxes the
             // hive store (spec RareData.zig:441 `vm.rareData().filePolls(vm)`).
             let rare = unsafe { (*owner.cast::<VirtualMachine>()).rare_data() };
-            &mut **rare
+            &raw mut **rare
                 .file_polls_
                 .get_or_insert_with(|| Box::new(bun_aio::Store::init()))
         }
@@ -1805,7 +1805,7 @@ impl VirtualMachine {
             bun_core::Output::raw_error_writer(),
             bun_core::Output::raw_writer(),
         );
-        let console = Box::into_raw(console_box) as *mut crate::console_object::ConsoleObject;
+        let console = Box::into_raw(console_box).cast::<crate::console_object::ConsoleObject>();
 
         let context_id = opts
             .context_id
@@ -1822,7 +1822,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).console).write(console);
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
-            addr_of_mut!((*vm).main).write(b"" as &[u8] as *const [u8]);
+            addr_of_mut!((*vm).main).write(std::ptr::from_ref::<[u8]>(b"" as &[u8]));
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_resolved_path).write(bun_string::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -1992,7 +1992,7 @@ impl VirtualMachine {
     /// this VM (BACKREF — see `main` field doc).
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
-        self.main = path as *const [u8];
+        self.main = std::ptr::from_ref::<[u8]>(path);
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -3086,7 +3086,7 @@ impl VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
         // `is_watcher_enabled()`; the cast recovers the concrete type.
         unsafe {
-            let watcher = &mut *(self.bun_watcher as *mut crate::hot_reloader::ImportWatcher);
+            let watcher = &mut *self.bun_watcher.cast::<crate::hot_reloader::ImportWatcher>();
             let _ = watcher.add_file_by_path_slow(main, loader);
         }
     }
@@ -3105,7 +3105,7 @@ impl VirtualMachine {
         // forward-decl of `bun_install::PackageManager`; the pointer was
         // produced by `PackageManager::init_with_runtime` (the install crate)
         // and only ever names that one type.
-        unsafe { &mut *(pm as *mut _ as *mut bun_install::PackageManager) }
+        unsafe { &mut *pm.cast::<bun_install::PackageManager>() }
     }
 
     /// Spec VirtualMachine.zig:769 `reload`.
@@ -3304,7 +3304,7 @@ impl VirtualMachine {
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
-        vm_ref.worker = Some((worker as *const crate::web_worker::WebWorker).cast());
+        vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
         // SAFETY: `parent_vm()` is non-null and outlives this worker while
         // `parent_poll_ref` is held (see web_worker.rs file header).
         let parent = unsafe { &*worker.parent_vm() };
@@ -3433,7 +3433,7 @@ impl VirtualMachine {
         let _unlock = self.ref_strings_mutex.lock_guard();
         // PORT NOTE: reshaped for borrowck — capture the back-pointer before
         // `ref_strings.entry()` takes its unique borrow on `self`.
-        let self_ctx = NonNull::new((self as *mut VirtualMachine).cast::<c_void>());
+        let self_ctx = NonNull::new(std::ptr::from_mut::<VirtualMachine>(self).cast::<c_void>());
 
         match self.ref_strings.entry(hash) {
             Entry::Occupied(o) => {
@@ -3506,7 +3506,7 @@ impl VirtualMachine {
     ) -> Result<ResolvedSource, bun_core::Error> {
         debug_assert!(VirtualMachine::is_loaded());
 
-        let global_ptr = global_object as *const JSGlobalObject as *mut JSGlobalObject;
+        let global_ptr = std::ptr::from_ref::<JSGlobalObject>(global_object).cast_mut();
         let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
         match ModuleLoader::fetch_builtin_module(
             jsc_vm, global_ptr, &specifier, &referrer, &mut ret,
@@ -3543,7 +3543,7 @@ impl VirtualMachine {
         // `ObjectURLRegistry` (`bun_runtime::webcore`), so the high tier
         // supplies it via [`RuntimeHooks::vm_loader_vtable`].
         let loader_ctx = bun_bundler::options::VmLoaderCtx {
-            vm: (jsc_vm as *const VirtualMachine).cast::<()>(),
+            vm: std::ptr::from_ref::<VirtualMachine>(jsc_vm).cast::<()>(),
             vtable: runtime_hooks()
                 .expect("fetch_without_on_load_plugins: bun_runtime hooks not installed")
                 .vm_loader_vtable,
@@ -3572,7 +3572,7 @@ impl VirtualMachine {
         impl Drop for ArenaReset<'_> {
             fn drop(&mut self) {
                 if self.1 {
-                    let vm = self.0 as *mut VirtualMachine;
+                    let vm = std::ptr::from_mut::<VirtualMachine>(self.0);
                     // SAFETY: `vm` is the live per-thread VM.
                     unsafe { ModuleLoader::ModuleLoader::reset_arena(&mut *vm) };
                 }
@@ -3614,11 +3614,11 @@ impl VirtualMachine {
             specifier: lr.specifier,
             referrer: referrer_clone.slice(),
             input_specifier: specifier,
-            log: log as *mut logger::Log,
+            log: std::ptr::from_mut::<logger::Log>(log),
             virtual_source: lr.virtual_source,
-            global_object: global_object as *const JSGlobalObject as *mut JSGlobalObject,
+            global_object: std::ptr::from_ref::<JSGlobalObject>(global_object).cast_mut(),
             flags,
-            extra: (&mut extra as *mut ModuleLoader::TranspileExtra).cast::<c_void>(),
+            extra: (&raw mut extra).cast::<c_void>(),
         };
         let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
         let ok = ModuleLoader::transpile_source_code(guard.0, &args, &mut ret);
@@ -3660,7 +3660,7 @@ impl VirtualMachine {
         // bytes that outlive `ResolveFunctionResult` (`'static` per the
         // struct's TODO(port) lifetime note). Erase to `'static` to seat the
         // result paths without threading a lifetime parameter through the VM.
-        let specifier: &'static [u8] = unsafe { &*(specifier as *const [u8]) };
+        let specifier: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(specifier) };
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
@@ -3729,12 +3729,11 @@ impl VirtualMachine {
                 // the resolve call (and the resolver only borrows it for the
                 // synchronous `resolve_and_auto_install`).
                 unsafe {
-                    &*(bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
-                        as *const [u8])
+                    &*std::ptr::from_ref::<[u8]>(bun_resolver::fs::PathName::init(source).dir_with_trailing_slash())
                 }
             } else {
                 // SAFETY: see `specifier` lifetime erasure note above.
-                unsafe { &*(source as *const [u8]) }
+                unsafe { &*std::ptr::from_ref::<[u8]>(source) }
             }
         } else {
             top_level_dir
@@ -3827,13 +3826,13 @@ impl VirtualMachine {
         }
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
-        ret.query_string = unsafe { &*(query_string as *const [u8]) };
+        ret.query_string = unsafe { &*std::ptr::from_ref::<[u8]>(query_string) };
         let result_path = result
             .path_const()
             .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see field TODO(port) lifetime).
-        ret.path = unsafe { &*(result_path.text as *const [u8]) };
+        ret.path = unsafe { &*std::ptr::from_ref::<[u8]>(result_path.text) };
         ret.result = Some(result);
         self.resolved_count += 1;
 
@@ -3947,8 +3946,8 @@ impl VirtualMachine {
         // zeroed-init nicety; the `expect` is infallible.
         let old_log: NonNull<logger::Log> = jsc_vm.log.expect("vm.log set in init");
         let mut log = logger::Log::default();
-        jsc_vm.log = NonNull::new(&mut log);
-        jsc_vm.transpiler.resolver.log = &mut log;
+        jsc_vm.log = NonNull::new(&raw mut log);
+        jsc_vm.transpiler.resolver.log = &raw mut log;
         // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
         // — gated bundler fields.
         // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
@@ -3966,7 +3965,7 @@ impl VirtualMachine {
                 // thread); `old_log` outlives the VM (Box::leak in `init`).
                 let jsc_vm = unsafe { &mut *self.vm };
                 jsc_vm.log = Some(self.old_log);
-                jsc_vm.transpiler.resolver.log = unsafe { &mut *self.old_log.as_ptr() };
+                jsc_vm.transpiler.resolver.log = unsafe { &raw mut *self.old_log.as_ptr() };
             }
         }
         let _restore = RestoreLog { vm: jsc_vm_ptr, old_log };
@@ -4062,7 +4061,7 @@ impl VirtualMachine {
         if let Some(rare) = self.rare_data.take() {
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract — `self` is the live per-thread VM.
-                unsafe { (hooks.cron_clear_all_teardown)(self as *mut _) };
+                unsafe { (hooks.cron_clear_all_teardown)(std::ptr::from_mut(self)) };
             }
             // Paired with `rare_data()`'s register_root_region. Without this,
             // every terminated Worker leaves a stale LSAN root entry pointing
@@ -4087,7 +4086,7 @@ impl VirtualMachine {
             // SAFETY: hook contract — `state` is exactly the pointer
             // `init_runtime_state` returned for this VM (or null), handed back
             // once on the same thread; `self` is the live per-thread VM.
-            unsafe { (hooks.deinit_runtime_state)(self as *mut _, state) };
+            unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
         }
         self.has_terminated = true;
     }
@@ -4192,7 +4191,7 @@ impl VirtualMachine {
             .wait_for_promise_with_termination(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker {
             // SAFETY: `worker` is a heap `WebWorker` owned by C++ (BACKREF).
-            let worker = unsafe { &*(worker as *const crate::web_worker::WebWorker) };
+            let worker = unsafe { &*worker.cast::<crate::web_worker::WebWorker>() };
             if worker.has_requested_terminate() {
                 return Err(bun_core::err!("WorkerTerminated"));
             }
@@ -4422,7 +4421,7 @@ impl VirtualMachine {
                 next_value: JSValue,
             ) {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { &mut *(ctx as *mut AggCtx<'_>) };
+                let ctx = unsafe { &mut *ctx.cast::<AggCtx<'_>>() };
                 // SAFETY: per-thread VM.
                 let vm = VirtualMachine::get().as_mut();
                 // SAFETY: `formatter`/`writer`/`exception_list` borrow the
@@ -4445,10 +4444,10 @@ impl VirtualMachine {
                 );
             }
             let mut ctx = AggCtx {
-                formatter: formatter as *mut _,
-                writer: writer as *mut _,
+                formatter: std::ptr::from_mut(formatter),
+                writer: std::ptr::from_mut(writer),
                 exception_list: exception_list
-                    .map(|l| l as *mut ExceptionList)
+                    .map(|l| std::ptr::from_mut::<ExceptionList>(l))
                     .unwrap_or(core::ptr::null_mut()),
                 allow_ansi_color,
                 allow_side_effects,
@@ -4459,7 +4458,7 @@ impl VirtualMachine {
             let errors = value.get_errors_property(global_ref);
             let _ = errors.for_each(
                 global_ref,
-                (&mut ctx as *mut AggCtx<'_>).cast(),
+                (&raw mut ctx).cast(),
                 agg_iter,
             );
             return;
@@ -4833,14 +4832,14 @@ impl VirtualMachine {
             this: self,
             exception,
             exception_list,
-            enable_source_code_preview: &enable_source_code_preview,
+            enable_source_code_preview: &raw const enable_source_code_preview,
             source_code_slice,
         };
         // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
         // touch them until Drop, so no aliasing during the body.
         let exception: &mut ZigException = unsafe { &mut *_tail.exception };
         let source_code_slice: &mut Option<bun_string::ZigStringSlice> =
-            unsafe { &mut *(_tail.source_code_slice as *mut _) };
+            unsafe { &mut *_tail.source_code_slice.cast_mut() };
 
         /// Spec VirtualMachine.zig:3058 `NoisyBuiltinFunctionMap`.
         fn is_noisy_builtin(name: &bun_string::String) -> bool {
@@ -5217,7 +5216,7 @@ impl VirtualMachine {
                 unsafe { (*self.vm).had_errors = self.prev };
             }
         }
-        let _restore_had_errors = RestoreHadErrors { vm: self as *mut _, prev: prev_had_errors };
+        let _restore_had_errors = RestoreHadErrors { vm: std::ptr::from_mut(self), prev: prev_had_errors };
 
         if allow_side_effects {
             if let Some(debugger) = self.debugger.as_deref_mut() {
@@ -5242,7 +5241,7 @@ impl VirtualMachine {
         }
         let _defer_gh = DeferGhAnnotation {
             run: allow_side_effects && bun_core::Output::is_github_action(),
-            exception: exception as *mut _,
+            exception: std::ptr::from_mut(exception),
         };
 
         // Runtime dispatch over `comptime allow_ansi_color` — `pretty_fmt!` is
@@ -5525,7 +5524,7 @@ impl VirtualMachine {
                 }
             }
         }
-        let _unprotect_guard = UnprotectAll(&mut errors_to_append as *mut _);
+        let _unprotect_guard = UnprotectAll(&raw mut errors_to_append);
 
         if is_error_instance {
             let mut saw_cause = false;
@@ -6033,7 +6032,7 @@ impl VirtualMachine {
             // SAFETY: disjoint borrow — `spawn_ipc_group` only touches the
             // embedded `SocketGroup` field + `vm.uws_loop()`.
             let group: *mut uws::SocketGroup = unsafe {
-                let rare = (*this).rare_data() as *mut RareData;
+                let rare = std::ptr::from_mut::<RareData>((*this).rare_data());
                 (*rare).spawn_ipc_group(&mut *this)
             };
 

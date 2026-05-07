@@ -79,7 +79,7 @@ impl NullableAllocator {
                 // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
                 // WTF deallocator treats it as opaque (Zig passes `[]u8`).
                 let buf = unsafe {
-                    core::slice::from_raw_parts_mut(bytes.as_ptr() as *mut u8, bytes.len())
+                    core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len())
                 };
                 allocator.raw_free(buf, Alignment::from_byte_units(1), 0);
                 return;

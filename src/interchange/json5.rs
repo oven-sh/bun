@@ -1077,7 +1077,7 @@ impl<'a> JSON5Parser<'a> {
         // read past end-of-buffer when seq_len < 4 and remaining < 4; preserve that contract.
         let decoded = unsafe {
             strings::decode_wtf8_rune_t(
-                &*(self.source.as_ptr().add(self.pos) as *const [u8; 4]),
+                &*self.source.as_ptr().add(self.pos).cast::<[u8; 4]>(),
                 seq_len,
                 -1i32,
             )

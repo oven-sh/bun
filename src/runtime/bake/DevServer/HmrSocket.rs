@@ -161,7 +161,7 @@ impl HmrSocket {
                                         unsafe {
                                             (*state)
                                                 .timer
-                                                .update(&mut dev.memory_visualizer_timer, &next);
+                                                .update(&raw mut dev.memory_visualizer_timer, &next);
                                         }
                                     }
                                 }
@@ -341,7 +341,7 @@ impl HmrSocket {
                     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
                     // JS-thread only, sole `&mut` to `timer` in this scope.
                     unsafe {
-                        (*state).timer.remove(&mut dev.memory_visualizer_timer);
+                        (*state).timer.remove(&raw mut dev.memory_visualizer_timer);
                     }
                 }
             }

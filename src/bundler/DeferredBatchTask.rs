@@ -43,7 +43,7 @@ impl DeferredBatchTask {
         // this struct is never instantiated standalone. Lifetime erased to 'static
         // (mirrors Zig raw `*BundleV2`); callers must not outlive the owning bundle.
         unsafe {
-            &mut *(self as *mut Self)
+            &mut *std::ptr::from_mut::<Self>(self)
                 .cast::<u8>()
                 .sub(offset_of!(BundleV2<'static>, drain_defer_task))
                 .cast::<BundleV2<'static>>()
@@ -60,7 +60,7 @@ impl DeferredBatchTask {
         // `bun_event_loop::task_tag::BundleV2DeferredBatchTask`.
         let task = ConcurrentTask::create(Task::new(
             task_tag::BundleV2DeferredBatchTask,
-            self as *mut Self as *mut (),
+            std::ptr::from_mut::<Self>(self).cast::<()>(),
         ));
 
         // Zig: `getBundleV2().jsLoopForPlugins().enqueueTaskConcurrent(task)`.

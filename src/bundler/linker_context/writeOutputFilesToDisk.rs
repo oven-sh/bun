@@ -93,7 +93,7 @@ pub fn write_output_files_to_disk(
     let mut pathbuf = PathBuffer::uninit();
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
     let bv2: &mut BundleV2 = unsafe {
-        &mut *((c as *mut LinkerContext as *mut u8)
+        &mut *(std::ptr::from_mut::<LinkerContext>(c).cast::<u8>()
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>())
     };

@@ -159,7 +159,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // for the body. Dropped before the guards reborrow the same pointers.
     let manager = unsafe { &mut *manager_ptr };
     let extract_ctx = unsafe { &mut *extract_ctx_ptr };
-    let has_updated_ptr: *mut bool = &mut has_updated_this_run;
+    let has_updated_ptr: *mut bool = &raw mut has_updated_this_run;
     // SAFETY: same shadow-reborrow as `manager`/`extract_ctx` above — every body
     // write goes through this `&mut` so `has_updated_ptr` keeps provenance for
     // the guard's read.
@@ -953,7 +953,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             // not `&mut Writer` (the underlying `Writer` is the FFI shape).
             // Zig: `try task.log.print(Output.errorWriter())` — propagate the
             // write error (WriteFailed) out of `runTasks`.
-            task.log.print(Output::error_writer() as *mut _)?;
+            task.log.print(std::ptr::from_mut(Output::error_writer()))?;
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }
@@ -970,7 +970,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // SAFETY: `task.tag == PackageManifest` — active union arm.
                 let net_ptr: *mut NetworkTask = {
                     let req = unsafe { &mut *task.request.package_manifest };
-                    &mut *req.network
+                    &raw mut *req.network
                 };
                 scopeguard::defer! {
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
@@ -1042,7 +1042,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
                     // SAFETY: `task.tag == Extract` — active union arm.
                     let req = unsafe { &mut *task.request.extract };
-                    &mut *req.network
+                    &raw mut *req.network
                 } else {
                     core::ptr::null_mut()
                 };
@@ -1188,7 +1188,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
                         // `dependency_list` is a Drop type (frees on every path); only the
                         // `on_resolve` side-effect needs the guard so it fires on `?` too.
-                        let any_root_ptr: *mut bool = &mut any_root;
+                        let any_root_ptr: *mut bool = &raw mut any_root;
                         // SAFETY: shadow-reborrow so the loop body's `&mut` is a child
                         // of `any_root_ptr` and the guard's read keeps provenance.
                         let any_root = unsafe { &mut *any_root_ptr };
@@ -1533,7 +1533,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         // Zig: `defer { dependency_list.deinit(); if (any_root) callbacks.onResolve(extract_ctx); }`
-                        let any_root_ptr: *mut bool = &mut any_root;
+                        let any_root_ptr: *mut bool = &raw mut any_root;
                         // SAFETY: shadow-reborrow so the loop body's `&mut` is a child
                         // of `any_root_ptr` and the guard's read keeps provenance.
                         let any_root = unsafe { &mut *any_root_ptr };

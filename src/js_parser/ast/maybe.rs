@@ -46,7 +46,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
         // SAFETY: when is_utf16, `data.ptr` was originally a `*const u16` and
         // `data.len()` is the u16 element count.
         let s16 =
-            unsafe { core::slice::from_raw_parts(s.data.as_ptr() as *const u16, s.data.len()) };
+            unsafe { core::slice::from_raw_parts(s.data.as_ptr().cast::<u16>(), s.data.len()) };
         s16.len() == other.len() && s16.iter().zip(other).all(|(&c, &b)| c == b as u16)
     }
 }
@@ -85,7 +85,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Derive `*mut P` from the live `&mut Self` so the trampoline's
             // `&mut *ctx` reborrows under the active Unique tag (see Binding.rs).
             let wrapper = p.to_expr_wrapper_hoisted;
-            let ctx = core::ptr::addr_of_mut!(*p) as *mut core::ffi::c_void;
+            let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
             let binding = Binding::to_expr(&decl.binding, ctx, wrapper);
             if let Some(decl_value) = decl.value {
                 value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
@@ -769,7 +769,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     p.ts_namespace = crate::ast::p::RecentlyVisitedTSNamespace {
                         expr: expr.data,
-                        map: Some(namespace as *const _),
+                        map: Some(namespace.cast_const()),
                     };
 
                     return Some(expr);

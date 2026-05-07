@@ -32,7 +32,7 @@ impl Signature {
         // Zig `std.mem.sliceAsBytes`).
         let fields_bytes = unsafe {
             core::slice::from_raw_parts(
-                self.fields.as_ptr() as *const u8,
+                self.fields.as_ptr().cast::<u8>(),
                 self.fields.len() * core::mem::size_of::<Int4>(),
             )
         };

@@ -230,7 +230,7 @@ impl SocketAddress {
                 scope_id,
                 ..inet::sockaddr_in6::ZEROED
             };
-            if !pton_noerr(inet::AF_INET6, inner, (&mut sin6.addr) as *mut _ as *mut c_void) {
+            if !pton_noerr(inet::AF_INET6, inner, (&raw mut sin6.addr).cast::<c_void>()) {
                 return Ok(JSValue::UNDEFINED);
             }
             SocketAddress { _addr: sockaddr { sin6 }, _presentation: BunString::dead() }
@@ -241,7 +241,7 @@ impl SocketAddress {
                 addr: 0,
                 ..inet::sockaddr_in::ZEROED
             };
-            if !pton_noerr(inet::AF_INET, paddr, (&mut sin.addr) as *mut _ as *mut c_void) {
+            if !pton_noerr(inet::AF_INET, paddr, (&raw mut sin.addr).cast::<c_void>()) {
                 return Ok(JSValue::UNDEFINED);
             }
             SocketAddress { _addr: sockaddr { sin }, _presentation: BunString::dead() }
@@ -346,7 +346,7 @@ impl SocketAddress {
                     presentation = address_str;
                     let slice = presentation.to_owned_slice_z();
                     // `defer alloc.free(slice)` → Box<ZStr> drops at scope exit
-                    pton(global, inet::AF_INET, &slice, (&mut sin.addr) as *mut _ as *mut c_void)?;
+                    pton(global, inet::AF_INET, &slice, (&raw mut sin.addr).cast::<c_void>())?;
                 } else {
                     // SAFETY: LOOPBACK_V4 is initialized as .sin
                     sin.addr = unsafe { sockaddr::LOOPBACK_V4.sin.addr };
@@ -365,7 +365,7 @@ impl SocketAddress {
                 if let Some(address_str) = options.address {
                     presentation = address_str;
                     let slice = presentation.to_owned_slice_z();
-                    pton(global, inet::AF_INET6, &slice, (&mut sin6.addr) as *mut _ as *mut c_void)?;
+                    pton(global, inet::AF_INET6, &slice, (&raw mut sin6.addr).cast::<c_void>())?;
                 } else {
                     sin6.addr = inet::IN6ADDR_ANY_INIT;
                 }
@@ -838,9 +838,9 @@ impl sockaddr {
     pub fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
         // SAFETY: family() guarantees correct variant; pointer is to valid in_addr/in6_addr
         let addr_src: *const c_void = if self.family() == AF::INET {
-            unsafe { (&self.sin.addr) as *const _ as *const c_void }
+            unsafe { (&raw const self.sin.addr).cast::<c_void>() }
         } else {
-            unsafe { (&self.sin6.addr) as *const _ as *const c_void }
+            unsafe { (&raw const self.sin6.addr).cast::<c_void>() }
         };
         // SAFETY: buf is INET6_ADDRSTRLEN bytes; ares_inet_ntop writes NUL-terminated string
         let result = unsafe { ares::ares_inet_ntop(self.family().int() as c_int, addr_src, buf.as_mut_ptr(), buf.len() as ares::socklen_t) };

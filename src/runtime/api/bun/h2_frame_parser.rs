@@ -428,7 +428,7 @@ impl StreamPriority {
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
         // SAFETY: #[repr(C, packed)] POD, BYTE_SIZE bytes
         let bytes = unsafe {
-            core::slice::from_raw_parts(&swap as *const _ as *const u8, Self::BYTE_SIZE)
+            core::slice::from_raw_parts((&raw const swap).cast::<u8>(), Self::BYTE_SIZE)
         };
         writer.write(bytes).unwrap_or(0) != 0
     }
@@ -438,7 +438,7 @@ impl StreamPriority {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 src.as_ptr(),
-                dst as *mut _ as *mut u8,
+                std::ptr::from_mut(dst).cast::<u8>(),
                 Self::BYTE_SIZE,
             );
         }
@@ -512,7 +512,7 @@ impl SettingsPayloadUnit {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 src.as_ptr(),
-                (dst as *mut _ as *mut u8).add(offset),
+                std::ptr::from_mut(dst).cast::<u8>().add(offset),
                 src.len(),
             );
         }
@@ -619,7 +619,7 @@ impl FullSettingsPayload {
         swap.enable_connect_protocol = swap.enable_connect_protocol.swap_bytes();
         // SAFETY: #[repr(C, packed)] POD
         let bytes = unsafe {
-            core::slice::from_raw_parts(&swap as *const _ as *const u8, Self::BYTE_SIZE)
+            core::slice::from_raw_parts((&raw const swap).cast::<u8>(), Self::BYTE_SIZE)
         };
         writer.write(bytes).unwrap_or(0) != 0
     }
@@ -1215,7 +1215,7 @@ impl H2FrameParser {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
         // is sound for that single field access.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self as *const Self as *mut Self) };
+        unsafe { bun_ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
     // Takes `&mut self` so the destructor pointer carries write provenance —
     // `&T as *const T as *mut T` followed by a write is UB under Stacked
@@ -1224,7 +1224,7 @@ impl H2FrameParser {
         // SAFETY: `self` is live; `deref` decrements the intrusive count and,
         // on zero, calls `destructor(this)` which frees via `Box::from_raw`.
         // The caller must not touch `self` after this returns when count was 1.
-        unsafe { bun_ptr::RefCount::<Self>::deref(self as *mut Self) };
+        unsafe { bun_ptr::RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
     }
 }
 
@@ -1366,7 +1366,7 @@ impl Drop for SignalRef {
     fn drop(&mut self) {
         // SAFETY: signal/parser are valid until detach
         unsafe {
-            (*self.signal).detach(self as *mut _ as *mut c_void);
+            (*self.signal).detach(std::ptr::from_mut(self).cast::<c_void>());
             (*self.parser).deref();
         }
         // bun.destroy(this) handled by Box drop
@@ -1829,15 +1829,15 @@ impl Stream {
     pub fn attach_signal(&mut self, parser: &mut H2FrameParser, signal: &mut AbortSignal) {
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
-            signal: signal as *mut _,
-            parser: parser as *mut _,
+            signal: std::ptr::from_mut(signal),
+            parser: std::ptr::from_mut(parser),
             stream_id: self.id,
         });
         // SAFETY: ref_() bumps the C++ intrusive refcount and returns the same live
         // pointer; signal_ref is heap-allocated and outlives the listener registration
         // (cleared via `detach` in `Drop for SignalRef`).
         let refed = signal.ref_();
-        unsafe { (*refed).listen(&mut *signal_ref as *mut SignalRef) };
+        unsafe { (*refed).listen(&raw mut *signal_ref) };
         signal_ref.signal = refed;
         // TODO: We should not need this ref counting here, since Parser owns Stream
         parser.ref_();
@@ -1892,7 +1892,7 @@ impl Stream {
 // fn pointer; `bun_jsc::abort_signal::listen` instead expects `*mut C: AbortListener`.
 impl AbortListener for SignalRef {
     fn on_abort(&mut self, reason: JSValue) {
-        SignalRef::abort_listener(self as *mut SignalRef, reason);
+        SignalRef::abort_listener(std::ptr::from_mut::<SignalRef>(self), reason);
     }
 }
 
@@ -2322,7 +2322,7 @@ impl H2FrameParser {
 
     fn cork(&mut self) {
         if let Some(corked) = CORKED_H2.with(|c| c.get()) {
-            if corked as usize == self as *mut _ as usize {
+            if corked as usize == std::ptr::from_mut(self) as usize {
                 // already corked
                 return;
             }
@@ -2331,7 +2331,7 @@ impl H2FrameParser {
             unsafe { (*corked).uncork() };
         }
         // cork
-        CORKED_H2.with(|c| c.set(Some(self as *mut _)));
+        CORKED_H2.with(|c| c.set(Some(std::ptr::from_mut(self))));
         self.ref_();
         self.register_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "cork {:p}", self);
@@ -2433,7 +2433,7 @@ impl H2FrameParser {
         while self.outbound_queue_size > 0 && something_was_flushed {
             // PORT NOTE: StreamResumableIterator stores a raw *mut and only borrows self briefly
             // inside next(), so passing the raw pointer here avoids holding a long-lived &mut.
-            let self_ptr = self as *mut Self;
+            let self_ptr = std::ptr::from_mut::<Self>(self);
             let mut it = StreamResumableIterator::init(self_ptr);
             something_was_flushed = false;
             while let Some(stream) = it.next() {
@@ -2463,7 +2463,7 @@ impl H2FrameParser {
         // not borrow `self`.
         // SAFETY: `self` is live; `&mut self` provenance lets the guard's drop
         // write the refcount and (if it hits zero) run `deinit`.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(self as *mut Self) };
+        let _keepalive = unsafe { bun_ptr::ScopedRef::new(std::ptr::from_mut::<Self>(self)) };
 
         self.uncork();
         let mut written = match self.native_socket {
@@ -3665,7 +3665,7 @@ impl H2FrameParser {
     }
 
     fn to_writer(&mut self) -> DirectWriterStruct {
-        DirectWriterStruct { writer: self as *mut Self }
+        DirectWriterStruct { writer: std::ptr::from_mut::<Self>(self) }
     }
 }
 
@@ -4913,7 +4913,7 @@ impl H2FrameParser {
         let this_value: JSValue = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
         let mut _count: u32 = 0;
         // PORT NOTE: iterator stores a raw *mut so the loop body can keep using `this` exclusively.
-        let mut it = StreamResumableIterator::init(this as *mut Self);
+        let mut it = StreamResumableIterator::init(std::ptr::from_mut::<Self>(this));
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let Some(value) = (unsafe { (*stream).js_context.get() }) else { continue };
@@ -4929,7 +4929,7 @@ impl H2FrameParser {
         // inside next(). Under Stacked Borrows, writing through the original `this` between next()
         // calls would pop the iterator's raw-ptr tag, so route every in-loop parser access through
         // the same raw pointer the iterator holds (mirrors flush_stream_queue).
-        let this_ptr = this as *mut Self;
+        let this_ptr = std::ptr::from_mut::<Self>(this);
         let mut it = StreamResumableIterator::init(this_ptr);
         while let Some(stream_ptr) = it.next() {
             // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for
@@ -4970,7 +4970,7 @@ impl H2FrameParser {
         // inside next(). Under Stacked Borrows, writing through the original `this` between next()
         // calls would pop the iterator's raw-ptr tag, so route every in-loop parser access through
         // the same raw pointer the iterator holds (mirrors flush_stream_queue).
-        let this_ptr = this as *mut Self;
+        let this_ptr = std::ptr::from_mut::<Self>(this);
         let mut it = StreamResumableIterator::init(this_ptr);
         while let Some(stream_ptr) = it.next() {
             // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for
@@ -5585,17 +5585,17 @@ impl H2FrameParser {
     ) -> BunSocket {
         // SAFETY: `self` is a live heap allocation (HiveArray slot or boxed); `init_ref`
         // increments the intrusive refcount and wraps the pointer.
-        let h2 = unsafe { IntrusiveRc::init_ref(self as *mut Self) };
+        let h2 = unsafe { IntrusiveRc::init_ref(std::ptr::from_mut::<Self>(self)) };
         // SAFETY: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by the
         // caller's `socket_js`; `attach_native_callback` only writes the `native_callback`
         // field.
         if unsafe { (*socket).attach_native_callback(NativeCallbacks::H2(h2)) } {
-            if SSL { BunSocket::Tls(socket as *mut TLSSocket) } else { BunSocket::Tcp(socket as *mut TCPSocket) }
+            if SSL { BunSocket::Tls(socket.cast::<TLSSocket>()) } else { BunSocket::Tcp(socket.cast::<TCPSocket>()) }
         } else {
             // SAFETY: `socket` is live (see above); `ref_` only touches the
             // interior-mutable `ref_count`.
             unsafe { (*socket).ref_() };
-            if SSL { BunSocket::TlsWriteonly(socket as *mut TLSSocket) } else { BunSocket::TcpWriteonly(socket as *mut TCPSocket) }
+            if SSL { BunSocket::TlsWriteonly(socket.cast::<TLSSocket>()) } else { BunSocket::TcpWriteonly(socket.cast::<TCPSocket>()) }
         }
     }
 
@@ -5796,7 +5796,7 @@ impl H2FrameParser {
         // inside next(). Under Stacked Borrows, writing through the original `this` between next()
         // calls would pop the iterator's raw-ptr tag, so route in-loop parser access through the
         // same raw pointer the iterator holds (mirrors flush_stream_queue).
-        let this_ptr = this as *mut Self;
+        let this_ptr = std::ptr::from_mut::<Self>(this);
         let mut it = StreamResumableIterator::init(this_ptr);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid until freed below / map
@@ -5854,7 +5854,7 @@ impl H2FrameParser {
         // owes Drop on the remaining fields (`handlers`, `auto_flusher`, the now-
         // empty `streams`/`read_buffer`/`write_buffer`/`strong_this`, …); run them
         // in-place so the slot returned to the pool is truly uninitialised.
-        let this = self as *mut Self;
+        let this = std::ptr::from_mut::<Self>(self);
         // SAFETY: `this` is a live, fully-initialised allocation we exclusively own
         // (refcount hit zero / errdefer path). After `drop_in_place` the storage is
         // uninitialised and must not be accessed again — the branches below only

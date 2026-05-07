@@ -202,14 +202,14 @@ impl Loop {
                 let mut epoll: linux::epoll_event = unsafe { core::mem::zeroed() };
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
-                epoll.u64 = loop_ as *mut Loop as usize as u64;
+                epoll.u64 = std::ptr::from_mut::<Loop>(loop_) as usize as u64;
                 // SAFETY: valid epoll fd + waker fd just created.
                 let rc = unsafe {
                     libc::epoll_ctl(
                         loop_.epoll_fd.native(),
                         linux::EPOLL_CTL_ADD,
                         loop_.waker.get_fd().native(),
-                        &mut epoll,
+                        &raw mut epoll,
                     )
                 };
                 match sys::get_errno(rc) {
@@ -621,7 +621,7 @@ impl Request {
     pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
         // SAFETY: `callback` is a plain pointer-sized field on `self`;
         // volatile write prevents the compiler from reordering or eliding it.
-        unsafe { core::ptr::write_volatile(&mut self.callback, cb) };
+        unsafe { core::ptr::write_volatile(&raw mut self.callback, cb) };
         core::sync::atomic::fence(Ordering::SeqCst);
     }
 }
@@ -1094,7 +1094,7 @@ impl Poll {
 
         let mut event = linux::epoll_event {
             events: flags,
-            u64: Pollable::init(tag, self as *mut Poll).ptr(),
+            u64: Pollable::init(tag, std::ptr::from_mut::<Poll>(self)).ptr(),
         };
 
         let op: i32 = if self.flags.contains(Flags::WasEverRegistered)
@@ -1107,7 +1107,7 @@ impl Poll {
 
         // SAFETY: valid fds + event pointer.
         let ctl = unsafe {
-            libc::epoll_ctl(watcher_fd.native(), op as c_int, fd.native(), &mut event)
+            libc::epoll_ctl(watcher_fd.native(), op as c_int, fd.native(), &raw mut event)
         };
 
         let errno = sys::get_errno(ctl);
@@ -1570,7 +1570,7 @@ pub mod closer {
             // via Box::into_raw; recover the parent pointer with offset_of.
             let closer = unsafe {
                 Box::from_raw(
-                    (task as *mut u8)
+                    task.cast::<u8>()
                         .sub(core::mem::offset_of!(Closer, task))
                         .cast::<Closer>(),
                 )

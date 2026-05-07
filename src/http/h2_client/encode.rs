@@ -187,7 +187,7 @@ pub fn write_request(
     }
     session.encode_scratch = encoded;
     if has_inline_body {
-        stream.pending_body = body as *const [u8];
+        stream.pending_body = std::ptr::from_ref::<[u8]>(body);
         drain_send_body(session, stream, usize::MAX);
     } else if !is_streaming {
         stream.sent_end_stream();
@@ -301,7 +301,7 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
             let pending = stream.pending_body();
             let sent = write_data_windowed(session, stream, pending, true, cap);
             // SAFETY: pending_body[sent..] is a suffix of the original slice.
-            stream.pending_body = &pending[sent..] as *const [u8];
+            stream.pending_body = &raw const pending[sent..];
             if stream.pending_body().is_empty() {
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;

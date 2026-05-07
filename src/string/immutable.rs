@@ -445,7 +445,7 @@ pub fn contains_char_t<T: Copy + Eq + Into<u32>>(self_: &[T], char: u8) -> bool 
     // TODO(port): Zig dispatched on T at comptime; in Rust we branch on size_of.
     if core::mem::size_of::<T>() == 1 {
         // SAFETY: T is u8-sized; reinterpret as &[u8].
-        let bytes = unsafe { core::slice::from_raw_parts(self_.as_ptr() as *const u8, self_.len()) };
+        let bytes = unsafe { core::slice::from_raw_parts(self_.as_ptr().cast::<u8>(), self_.len()) };
         contains_char(bytes, char)
     } else {
         self_.iter().any(|c| (*c).into() == char as u32)
@@ -1392,11 +1392,11 @@ pub fn eql_comptime_t<T: Copy + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
     // TODO(port): Zig dispatched on T at comptime (u16 → eql_comptime_utf16).
     if core::mem::size_of::<T>() == 2 {
         // SAFETY: T is u16-sized; reinterpret as &[u16].
-        let s16 = unsafe { core::slice::from_raw_parts(self_.as_ptr() as *const u16, self_.len()) };
+        let s16 = unsafe { core::slice::from_raw_parts(self_.as_ptr().cast::<u16>(), self_.len()) };
         return eql_comptime_utf16(s16, alt);
     }
     // SAFETY: T is u8-sized in remaining branch.
-    let s8 = unsafe { core::slice::from_raw_parts(self_.as_ptr() as *const u8, self_.len()) };
+    let s8 = unsafe { core::slice::from_raw_parts(self_.as_ptr().cast::<u8>(), self_.len()) };
     eql_comptime(s8, alt)
 }
 
@@ -1477,8 +1477,8 @@ fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(
         );
     }
     // SAFETY: T is u8-sized.
-    let a8 = unsafe { core::slice::from_raw_parts(a.as_ptr() as *const u8, a.len()) };
-    let b8 = unsafe { core::slice::from_raw_parts(b.as_ptr() as *const u8, b.len()) };
+    let a8 = unsafe { core::slice::from_raw_parts(a.as_ptr().cast::<u8>(), a.len()) };
+    let b8 = unsafe { core::slice::from_raw_parts(b.as_ptr().cast::<u8>(), b.len()) };
     eql_comptime_check_len_u8(a8, b8, CHECK_LEN)
 }
 
@@ -1541,7 +1541,7 @@ pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {
     }
     if core::mem::size_of::<T>() == 1 {
         // SAFETY: T is u8-sized.
-        let a8 = unsafe { core::slice::from_raw_parts(a.as_ptr() as *const u8, a.len()) };
+        let a8 = unsafe { core::slice::from_raw_parts(a.as_ptr().cast::<u8>(), a.len()) };
         return eql_case_insensitive_ascii_ignore_length(a8, b);
     }
 
@@ -1621,7 +1621,7 @@ pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
         {
             let mut dword_length = len >> 3;
             while dword_length > 0 {
-                if (a as *const usize).read_unaligned() != (b as *const usize).read_unaligned() {
+                if a.cast::<usize>().read_unaligned() != b.cast::<usize>().read_unaligned() {
                     return false;
                 }
                 b = b.add(core::mem::size_of::<usize>());
@@ -1635,7 +1635,7 @@ pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
 
         if core::mem::size_of::<usize>() == 8 {
             if (len & 4) != 0 {
-                if (a as *const u32).read_unaligned() != (b as *const u32).read_unaligned() {
+                if a.cast::<u32>().read_unaligned() != b.cast::<u32>().read_unaligned() {
                     return false;
                 }
                 b = b.add(core::mem::size_of::<u32>());
@@ -1647,7 +1647,7 @@ pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
         }
 
         if (len & 2) != 0 {
-            if (a as *const u16).read_unaligned() != (b as *const u16).read_unaligned() {
+            if a.cast::<u16>().read_unaligned() != b.cast::<u16>().read_unaligned() {
                 return false;
             }
             b = b.add(core::mem::size_of::<u16>());
@@ -2935,8 +2935,8 @@ pub fn index_of_scalar<T: Copy + Eq>(input: &[T], scalar: T) -> Option<usize> {
     // TODO(port): Zig specialized T==u8 → index_of_char_usize (highway).
     if core::mem::size_of::<T>() == 1 {
         // SAFETY: T is u8-sized.
-        let bytes = unsafe { core::slice::from_raw_parts(input.as_ptr() as *const u8, input.len()) };
-        let scalar_u8 = unsafe { *(&scalar as *const T as *const u8) };
+        let bytes = unsafe { core::slice::from_raw_parts(input.as_ptr().cast::<u8>(), input.len()) };
+        let scalar_u8 = unsafe { *(&raw const scalar).cast::<u8>() };
         return index_of_char_usize(bytes, scalar_u8);
     }
     input.iter().position(|c| *c == scalar)

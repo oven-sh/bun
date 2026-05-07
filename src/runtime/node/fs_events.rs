@@ -137,7 +137,7 @@ pub const K_FS_EVENTS_SYSTEM: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_USER_DROPPED
     | K_FS_EVENT_STREAM_EVENT_FLAG_UNMOUNT
     | K_FS_EVENT_STREAM_EVENT_FLAG_ROOT_CHANGED;
 
-// TODO(port): static mut globals — Phase B may want OnceLock / parking_lot statics
+// TODO(port): mutable globals — Phase B may want OnceLock / parking_lot statics
 static FSEVENTS_MUTEX: Mutex = Mutex::new();
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 // PORTING.md §Global mutable state: written under FSEVENTS_DEFAULT_LOOP_MUTEX,

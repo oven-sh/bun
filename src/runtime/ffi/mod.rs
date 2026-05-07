@@ -184,8 +184,11 @@ pub(crate) struct Offsets {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
+    // Populated once by C++ via `Bun__FFI__ensureOffsetsAreLoaded`; Rust only
+    // reads after the `Once` below fires. `Offsets` is four `u32`s, so it is
+    // auto-`Sync` and can appear as a non-`mut` extern static.
     #[link_name = "Bun__FFI__offsets"]
-    static mut BUN_FFI_OFFSETS: Offsets;
+    static BUN_FFI_OFFSETS: Offsets;
     #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
     fn bun_ffi_ensure_offsets_are_loaded();
 }

@@ -256,7 +256,7 @@ impl UpgradeCommand {
         // `AsyncHTTP::init_sync` wants `URL<'static>` / `&'static [u8]`, so the
         // backing buffers are leaked (matches the Zig original which used
         // module-level static buffers).
-        let url_buf: &'static mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        let url_buf: &mut Vec<u8> = Box::leak(Box::new(Vec::new()));
         write!(
             url_buf,
             "https://{}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
@@ -300,8 +300,7 @@ impl UpgradeCommand {
 
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
 
-        let metadata_body: &'static mut MutableString =
-            Box::leak(Box::new(MutableString::init(2048)?));
+        let metadata_body = Box::leak(Box::new(MutableString::init(2048)?));
         let headers_buf: &'static [u8] = Box::leak(headers_buf.into_boxed_slice());
 
         // ensure very stable memory address

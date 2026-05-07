@@ -247,7 +247,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         // command's duration (mirrors Zig's `*PackageManager`).
         let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
 
-        // PORT NOTE: reshaped for borrowck — `pm: &'static mut PackageManager`;
+        // PORT NOTE: reshaped for borrowck — `pm: &mut PackageManager`;
         // many Zig call sites alias `pm` and `pm.lockfile` simultaneously. Hold a
         // raw pointer for those re-entry points (Zig's `*PackageManager` is raw).
         let pm_ptr: *mut PackageManager = pm;

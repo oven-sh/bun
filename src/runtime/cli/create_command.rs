@@ -2307,7 +2307,7 @@ impl Example {
             let written = cap - cursor.len();
             &url_buf[..written]
         });
-        // SAFETY: `api_url` borrows from the `static mut NPM_REGISTRY_URL_BUF`;
+        // SAFETY: `api_url` borrows from the process-global `NPM_REGISTRY_URL_BUF`;
         // erase the local reborrow lifetime for storage in `URL_` /
         // `AsyncHTTP::init_sync` (single-threaded CLI; same as
         // `fetch_from_github`).

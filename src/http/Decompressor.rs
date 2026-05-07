@@ -36,15 +36,16 @@ unsafe fn erase<'a>(s: &'a [u8]) -> &'static [u8] {
     unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(s) }
 }
 
-/// Erase the lifetime of a mutable Vec borrow to `'static`.
+/// Erase the lifetime of a mutable Vec borrow.
 ///
 /// # Safety
 /// See [`erase`]. Additionally the caller must ensure no other `&mut` to the
-/// same `Vec` is live for the duration of the returned reference.
+/// same `Vec` is live for the duration of the returned reference, and that the
+/// pointee outlives `'b`.
 #[inline(always)]
-unsafe fn erase_mut<'a>(v: &'a mut Vec<u8>) -> &'static mut Vec<u8> {
+unsafe fn erase_mut<'a, 'b>(v: &'a mut Vec<u8>) -> &'b mut Vec<u8> {
     // SAFETY: caller upholds the invariant documented above.
-    unsafe { core::mem::transmute::<&'a mut Vec<u8>, &'static mut Vec<u8>>(v) }
+    unsafe { &mut *(v as *mut Vec<u8>) }
 }
 
 impl Decompressor {

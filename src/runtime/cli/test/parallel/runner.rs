@@ -785,5 +785,5 @@ pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
 //   source:     src/cli/test/parallel/runner.zig (457 lines)
 //   confidence: medium
 //   todos:      17
-//   notes:      argv/envp C-string ownership was arena-backed (now leaks); Worker self-ref backptrs + Coordinator field shapes need verification; static mut globals for worker frame/cmds.
+//   notes:      argv/envp C-string ownership was arena-backed (now leaks); Worker self-ref backptrs + Coordinator field shapes need verification; RacyCell globals for worker frame/cmds.
 // ──────────────────────────────────────────────────────────────────────────

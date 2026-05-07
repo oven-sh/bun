@@ -864,7 +864,7 @@ impl RunCommand {
 /// Process-lifetime arena for the install-tier `Transpiler` constructed in
 /// `RunCommand::configure_env_for_run`. Mirrors `runner_arena()` in
 /// `runtime/cli/run_command.rs` — `bun_alloc::Arena` is `!Sync`, so guard a
-/// `static mut MaybeUninit` with `Once` (PORTING.md §Forbidden bars
+/// a raw `MaybeUninit` global with `Once` (PORTING.md §Forbidden bars
 /// `Box::leak`).
 fn install_runner_arena() -> &'static bun_alloc::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();

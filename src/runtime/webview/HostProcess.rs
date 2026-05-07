@@ -241,5 +241,5 @@ unsafe extern "C" {
 // PORT STATUS
 //   source:     src/runtime/webview/HostProcess.zig (150 lines)
 //   confidence: high
-//   notes:      arena dropped (non-AST); static mut INSTANCE needs Phase-B sync wrapper
+//   notes:      arena dropped (non-AST); RacyCell INSTANCE needs Phase-B sync wrapper
 // ──────────────────────────────────────────────────────────────────────────

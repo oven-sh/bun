@@ -1930,7 +1930,7 @@ fn transpile_source_code_inner(
             let old_log = unsafe { (*jsc_vm).transpiler.log };
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
-                // TODO(port): lifetime — `Resolver.log` is `&'static mut Log`
+                // TODO(port): lifetime — `Resolver.log` is an unbounded `&mut Log`
                 // (Transpiler<'static>); `args.log` is `*mut Log`. Spec aliases
                 // freely; Rust would need `Resolver.log: *mut Log` first.
                 

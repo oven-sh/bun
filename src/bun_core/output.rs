@@ -687,7 +687,8 @@ pub mod stdio {
 
     // TODO(port): move to bun_core_sys
     unsafe extern "C" {
-        pub static mut bun_is_stdio_null: [i32; 3];
+        // Written once by C at process startup before threads; Rust only reads.
+        pub static bun_is_stdio_null: [i32; 3];
         pub fn bun_initialize_process();
         pub fn bun_restore_stdio();
     }

@@ -1153,7 +1153,7 @@ impl<'a> Transpiler<'a> {
                     // PORTING.md §Forbidden bars `Box::leak` even for
                     // process-lifetime singletons. `bun_dotenv::INSTANCE` is an
                     // `AtomicPtr<Loader<'static>>` and `Loader` borrows
-                    // `&'static mut Map`, so a `OnceLock<Loader>` here can't
+                    // an unbounded `&mut Map`, so a `OnceLock<Loader>` here can't
                     // be expressed without changing `bun_dotenv`'s API.
                     // Transfer ownership of both allocations into the global
                     // singleton via `Box::into_raw` (the AtomicPtr becomes the

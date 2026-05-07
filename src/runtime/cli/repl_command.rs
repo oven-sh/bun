@@ -192,7 +192,7 @@ impl ReplCommand {
         if let Some(log) = vm.log {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
             // `Log::print` accepts `*mut io::Writer` (IntoLogWrite is impl'd for the raw ptr,
-            // not the &mut), so coerce the `&'static mut Writer` from `error_writer_buffered`.
+            // not the &mut), so coerce the `&mut Writer` from `error_writer_buffered`.
             let _ = unsafe { (*log.as_ptr()).print(writer as *mut bun_core::io::Writer) };
         }
     }

@@ -1019,7 +1019,7 @@ pub mod allocators {
 //
 //   bss_string_list! { pub dirname_store: 4096, 129 }
 //   // → static STORAGE: SyncUnsafeCell<MaybeUninit<BSSStringList<4096,129>>>
-//   //   pub fn dirname_store() -> &'static mut BSSStringList<4096,129>
+//   //   pub fn dirname_store() -> *mut BSSStringList<4096,129>
 //
 // The accessor lazily field-initializes via `init_at` under `std::sync::Once`.
 // Returning `&'static mut` is the same aliasing contract as Zig's global
@@ -1488,7 +1488,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 /// taking space in the object file. We don't want to spend 1-2 MB on these structs.
 ///
 /// TODO(port): const-generic arithmetic (`COUNT = _COUNT * 2`) and per-monomorphization
-/// `static mut INSTANCE` are not expressible on stable Rust. Phase B: instantiate per use-site
+/// a raw mutable INSTANCE static are not expressible on stable Rust. Phase B: instantiate per use-site
 /// via `macro_rules!` or pin concrete `COUNT` constants.
 pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     pub mutex: Mutex,
@@ -2229,7 +2229,7 @@ pub struct BSSMap<
     // TODO(port): len = COUNT * ESTIMATED_KEY_LENGTH (generic_const_exprs).
     pub key_list_buffer: Box<[u8]>,
     pub key_list_buffer_used: usize,
-    // TODO(port): len = COUNT (generic_const_exprs); element type is `&'static mut [u8]`-ish.
+    // TODO(port): len = COUNT (generic_const_exprs); element type is a raw `*mut [u8]`-ish slice.
     pub key_list_slices: Box<[&'static [u8]]>,
     // TODO(port): Zig declares this as `OverflowList([]u8, count / 4)` but then calls
     // `.items[...]` and `.append(allocator, slice)` on it — those are `std.ArrayListUnmanaged`

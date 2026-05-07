@@ -191,7 +191,7 @@ impl Listener {
         }
 
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
-        let vm: &'static mut VirtualMachine = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get().as_mut();
 
         let mut socket_config = SocketConfig::from_js(vm, opts, global, true)?;
         // PORT NOTE: `defer socket_config.deinitExcludingHandlers()` — handled by Drop on SocketConfig
@@ -912,7 +912,7 @@ impl Listener {
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
         }
-        let vm: &'static mut VirtualMachine = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get().as_mut();
 
         // is_server=false: this is the client connect path. Handlers.mode must be
         // .client so markInactive() takes the allocator.destroy branch — the

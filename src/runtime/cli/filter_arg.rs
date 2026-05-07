@@ -335,7 +335,7 @@ impl PackageFilterIterator {
         // if `PackageFilterIterator` moves after `init_walker`. Phase B: Pin<Box<Self>> or fold
         // walker+iter into a single bun_glob type. Erase the lifetime to `'static` for now.
         // SAFETY: `init_with_cwd` just initialized `self.walker` above; lifetime erased per TODO.
-        let walker_ref: &'static mut GlobWalker =
+        let walker_ref =
             unsafe { &mut *(self.walker.assume_init_mut() as *mut GlobWalker) };
         self.iter.write(glob::walk::Iterator::new(walker_ref));
         // SAFETY: just wrote `iter`.

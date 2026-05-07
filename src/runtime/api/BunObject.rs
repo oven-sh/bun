@@ -1756,7 +1756,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             }
         }
 
-        let map: &'static mut [u8] = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
+        let map = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
             Ok(map) => map,
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;

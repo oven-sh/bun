@@ -652,5 +652,5 @@ pub extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> u
 // PORT STATUS
 //   source:     src/runtime/webview/ChromeProcess.zig (477 lines)
 //   confidence: medium
-//   notes:      arena dropped (non-AST); owned [:0]u8 via bun_core::ZBox; static mut INSTANCE needs Phase B sync wrapper
+//   notes:      arena dropped (non-AST); owned [:0]u8 via bun_core::ZBox; RacyCell INSTANCE needs Phase B sync wrapper
 // ──────────────────────────────────────────────────────────────────────────

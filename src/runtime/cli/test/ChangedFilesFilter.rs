@@ -128,9 +128,9 @@ pub fn filter<'a>(
     // the comment after the call about intentionally leaving the
     // ThreadLocalArena and worker pool alive.
     let arena: &'static Arena = Box::leak(Box::new(Arena::new()));
-    let log: &'static mut logger::Log = Box::leak(Box::new(logger::Log::new()));
+    let log = Box::leak(Box::new(logger::Log::new()));
 
-    let scan_transpiler: &'static mut Transpiler<'static> = Box::leak(Box::new(
+    let scan_transpiler = Box::leak(Box::new(
         match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
             Ok(t) => t,
             Err(err) => {
@@ -384,7 +384,7 @@ pub fn init_watch_trigger() {
             fresh
         };
 
-        let set: &'static mut StringSet = Box::leak(Box::new(StringSet::new()));
+        let set = Box::leak(Box::new(StringSet::new()));
         // Written once on the main thread before the watcher thread starts;
         // after that only the watcher thread touches these. See doc on
         // `hot_reloader::WATCH_CHANGED_PATHS`.

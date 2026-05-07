@@ -232,7 +232,7 @@ impl<'a> Snapshots<'a> {
         let arena = bun_alloc::Arena::new();
         let mut temp_log = logger::Log::init();
 
-        // PORT NOTE: do NOT call `Jest::runner()` here — it returns `&'static mut TestRunner`,
+        // PORT NOTE: do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
         // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
         // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
         // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.

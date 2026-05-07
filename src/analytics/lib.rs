@@ -434,7 +434,7 @@ pub mod generate_header {
         // PORT NOTE: Zig's `Environment.isLinux` is true on Android (it checks
         // the kernel, not the libc target), so all Linux-gated items below are
         // `any(linux, android)` — `for_linux()` itself branches on Android.
-        // PORT NOTE: §Concurrency — `static mut + std.once` becomes `OnceLock`.
+        // PORT NOTE: §Concurrency — Zig `var` + `std.once` becomes `OnceLock`.
         // The Zig source calls `std.c.uname` directly; the Rust port uses
         // `libc::uname` for the same reason (`bun_sys` exposes no wrapper).
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -637,5 +637,5 @@ pub use schema::{BufReader, Reader, SchemaInt, Writer};
 //   source:     src/analytics/analytics.zig (380 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      Zig @typeInfo decl-reflection replaced by define_features! macro (uses nightly macro_metavar_expr for bit indices); @export of feature counters done via #[export_name] on the canonical statics; Linux cfgs include Android (Environment.isLinux is kernel-based); static mut globals guarded by Once mirror Zig's undefined+std.once pattern.
+//   notes:      Zig @typeInfo decl-reflection replaced by define_features! macro (uses nightly macro_metavar_expr for bit indices); @export of feature counters done via #[export_name] on the canonical statics; Linux cfgs include Android (Environment.isLinux is kernel-based); OnceLock-guarded globals mirror Zig's undefined+std.once pattern.
 // ──────────────────────────────────────────────────────────────────────────

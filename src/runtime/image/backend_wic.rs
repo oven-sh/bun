@@ -911,5 +911,5 @@ fn dup_global<const PREFIX: usize>(h: *mut c_void) -> Result<Option<Vec<u8>>, bu
 //   source:     src/runtime/image/backend_wic.zig (514 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      Heavy COM FFI; defer→scopeguard for Release; static mut globals guarded by Once; BackendError flattened from codecs::Error union (Phase B reconcile); bun_str::w! used for UTF-16 literals; bun_sys::windows::{LoadLibraryA,GetProcAddressA} signatures assumed Option-returning.
+//   notes:      Heavy COM FFI; defer→scopeguard for Release; OnceLock-guarded globals; BackendError flattened from codecs::Error union (Phase B reconcile); bun_str::w! used for UTF-16 literals; bun_sys::windows::{LoadLibraryA,GetProcAddressA} signatures assumed Option-returning.
 // ──────────────────────────────────────────────────────────────────────────

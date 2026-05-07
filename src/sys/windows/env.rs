@@ -88,9 +88,9 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     }
     envp.push(core::ptr::null_mut());
 
-    let envp_slice: &'static mut [*mut c_char] = Box::leak(envp.into_boxed_slice());
+    let envp_slice = Box::leak(envp.into_boxed_slice());
     let envp_nonnull_len = envp_slice.len() - 1;
-    let envp_nonnull_slice: &'static mut [*mut c_char] = &mut envp_slice[0..envp_nonnull_len];
+    let envp_nonnull_slice = &mut envp_slice[0..envp_nonnull_len];
     // SAFETY: single-threaded startup; statics are written exactly once here.
     unsafe {
         WTF8_ENV_BUF.write(Some(Box::leak(wtf8_buf)));

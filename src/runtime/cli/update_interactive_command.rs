@@ -88,7 +88,7 @@ struct OutdatedPackage {
     ///
     /// PORT NOTE: Zig stores `*PackageManager` here and reads
     /// `pkg.manager.options.scope` / `scopeForPackageName(pkg.name)` at render
-    /// time. In Rust the caller's `&'static mut PackageManager` in
+    /// time. In Rust the caller's exclusive `&mut PackageManager` in
     /// `update_interactive` is live across the prompt loop, so any
     /// `&PackageManager` derived from a stored back-pointer would alias an
     /// outstanding `&mut` (Stacked-Borrows UB). Both reads are pure

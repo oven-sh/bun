@@ -23,7 +23,7 @@ use crate::install::{self as Install, ExtractData, PackageManager};
 // storage so callers can return slices that outlive the access. Rust thread_local!
 // closures cannot express this without unsafe. Phase B should either (a) make
 // try_ssh/try_https take an out-buffer, or (b) wrap in a type that hands out
-// `&'static mut PathBuffer` via UnsafeCell with documented single-use invariant.
+// a raw `*mut PathBuffer` via UnsafeCell with documented single-use invariant.
 struct TlBufs {
     final_path_buf: PathBuffer,
     ssh_path_buf: PathBuffer,
@@ -58,7 +58,7 @@ fn tl_bufs() -> *mut TlBufs {
     //   The invariant is therefore disjoint-FIELD access, not whole-struct uniqueness.
     // - The raw pointer is valid for the lifetime of the current thread (thread-local
     //   outlives all in-thread borrows; `TlBufs` has no `Drop`). Callers reborrow into
-    //   `&'static mut PathBuffer` per field as a deliberate escape hatch so
+    //   a raw `*mut PathBuffer` per field as a deliberate escape hatch so
     //   `try_ssh`/`try_https` can return slices into the buffer, mirroring the Zig API.
     //   Callers must not retain a slice into a given field across a subsequent reborrow
     //   of that SAME field.

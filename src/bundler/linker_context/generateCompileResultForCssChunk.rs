@@ -59,7 +59,7 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
             .cast::<crate::BundleV2>()
     };
     let worker = Worker::get(bv2);
-    // `defer worker.unget()` — explicit; Worker::get returns `&'static mut Worker`.
+    // `defer worker.unget()` — explicit; Worker::get returns the thread-local worker.
     let mut worker = scopeguard::guard(worker, |w| w.unget());
 
     #[cfg(feature = "show_crash_trace")]

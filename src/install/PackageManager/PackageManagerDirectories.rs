@@ -1259,5 +1259,5 @@ fn buf_print(buf: &mut [u8], args: fmt::Arguments<'_>) -> Result<usize, fmt::Err
 //   source:     src/install/PackageManager/PackageManagerDirectories.zig (783 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      bun.once → std::sync::OnceLock; bufPrintZ helper inlined locally; threadlocal cached_package_folder_name_buf returns &'static mut — Phase B must verify lifetimes; std.fs.Dir mapped to bun_sys::Dir
+//   notes:      bun.once → std::sync::OnceLock; bufPrintZ helper inlined locally; threadlocal cached_package_folder_name_buf returns an unbounded `&mut` — Phase B must verify lifetimes; std.fs.Dir mapped to bun_sys::Dir
 // ──────────────────────────────────────────────────────────────────────────

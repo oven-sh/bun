@@ -443,7 +443,7 @@ pub fn build_with_vm(
         loader: UnsafeCell::new(MaybeUninit::uninit()),
     });
     // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time setup
-    // and `backing` is never moved (static storage), so the `&'static mut Map`
+    // and `backing` is never moved (static storage), so the exclusive map borrow
     // self-borrow stored in `Loader` stays valid for process lifetime.
     let loader = unsafe {
         let map = &mut *backing.map.get();

@@ -241,7 +241,7 @@ impl AnyWebSocket {
     pub unsafe fn as_<T>(self) -> Option<&'static mut T> {
         // SAFETY: see NewWebSocket::as_. Lifetime is tied to the C-owned socket
         // (effectively 'static from Rust's view; uWS frees on close).
-        // TODO(port): lifetime — returning &'static mut is a placeholder; Phase
+        // TODO(port): lifetime — returning an unbounded `&mut` is a placeholder; Phase
         // B should scope this to the callback frame or return *mut T.
         unsafe {
             match self {

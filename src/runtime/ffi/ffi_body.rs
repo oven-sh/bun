@@ -214,8 +214,10 @@ struct Offsets {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
+    // `Offsets` is four `u32`s (auto-`Sync`); written once by C++ before any
+    // Rust read.
     #[link_name = "Bun__FFI__offsets"]
-    static mut BUN_FFI_OFFSETS: Offsets;
+    static BUN_FFI_OFFSETS: Offsets;
     #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
     fn bun_ffi_ensure_offsets_are_loaded();
 }
@@ -460,13 +462,17 @@ mod stdarg {
     #[cfg(target_os = "macos")]
     mod mac {
         use super::*;
+        use core::sync::atomic::{AtomicPtr, Ordering};
+        // libc declares these as `FILE *__stdinp;` — `AtomicPtr<c_void>` is
+        // `#[repr(C)]` over a single `*mut c_void`, so the extern layout is
+        // identical and we only ever do a Relaxed word load.
         unsafe extern "C" {
             #[link_name = "__stdinp"]
-            static mut FFI_STDINP: *mut c_void;
+            static FFI_STDINP: AtomicPtr<c_void>;
             #[link_name = "__stdoutp"]
-            static mut FFI_STDOUTP: *mut c_void;
+            static FFI_STDOUTP: AtomicPtr<c_void>;
             #[link_name = "__stderrp"]
-            static mut FFI_STDERRP: *mut c_void;
+            static FFI_STDERRP: AtomicPtr<c_void>;
         }
 
         pub fn inject(state: &mut TCC::State) {
@@ -474,9 +480,9 @@ mod stdarg {
             unsafe {
                 state
                     .add_symbols(&[
-                        ("__stdinp", FFI_STDINP),
-                        ("__stdoutp", FFI_STDOUTP),
-                        ("__stderrp", FFI_STDERRP),
+                        ("__stdinp", FFI_STDINP.load(Ordering::Relaxed)),
+                        ("__stdoutp", FFI_STDOUTP.load(Ordering::Relaxed)),
+                        ("__stderrp", FFI_STDERRP.load(Ordering::Relaxed)),
                     ])
                     .expect("Failed to add macos symbols");
             }

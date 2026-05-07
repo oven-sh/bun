@@ -1345,8 +1345,9 @@ pub fn load_npmrc(
     // SAFETY: `parser` does not outlive `env`/`source.contents`.
     let contents: &'static [u8] =
         unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&source.contents) };
-    let env: &'static mut DotEnvLoader<'static> =
-        unsafe { core::mem::transmute::<&mut DotEnvLoader<'_>, &'static mut DotEnvLoader<'static>>(env) };
+    // Round-trip through a raw pointer to erase both the borrow and the inner
+    // lifetime; identical bit-pattern to the prior `transmute` form.
+    let env = unsafe { &mut *(env as *mut DotEnvLoader<'_> as *mut DotEnvLoader<'static>) };
     let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
     // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
     // SAFETY: arena outlives all bump-allocated slices used below; Phase B should

@@ -321,7 +321,7 @@ pub mod Jest {
     }
 
     /// Raw-pointer accessor for callers that must not materialise
-    /// `&'static mut TestRunner` because a sub-borrow of it (e.g.
+    /// an exclusive `&mut TestRunner` because a sub-borrow of it (e.g.
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
@@ -800,5 +800,5 @@ pub fn error_in_ci(global_object: &JSGlobalObject, message: &[u8]) -> JsResult<(
 //   source:     src/test_runner/jest.zig (519 lines)
 //   confidence: medium
 //   todos:      12
-//   notes:      TestRunner<'a> from LIFETIMES.tsv; Jest as module w/ static mut RUNNER; extern JSMock__* fns need jsc.conv ABI; bun_test sibling-module API names guessed (ScopeFunctions/HookKind/StateData).
+//   notes:      TestRunner<'a> from LIFETIMES.tsv; Jest as module w/ RacyCell RUNNER; extern JSMock__* fns need jsc.conv ABI; bun_test sibling-module API names guessed (ScopeFunctions/HookKind/StateData).
 // ──────────────────────────────────────────────────────────────────────────

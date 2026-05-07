@@ -72,9 +72,8 @@ macro_rules! path_literal {
 /// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
 /// `&'static Arena` per PORTING.md §AST crates. `bun_alloc::Arena` (=
 /// `bumpalo::Bump`) is `!Sync`, so `OnceLock`/`LazyLock` cannot hold it
-/// directly — guard a `static mut MaybeUninit` with `Once` instead so the
-/// allocation happens exactly once (PORTING.md §Forbidden bars `Box::leak`
-/// per call).
+/// directly — guard a `RacyCell<MaybeUninit>` with `Once` so the allocation
+/// happens exactly once (PORTING.md §Forbidden bars `Box::leak` per call).
 fn runner_arena() -> &'static bun_alloc::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();
     // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
@@ -1580,7 +1579,7 @@ impl RunCommand {
             
             // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
             // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
-            // returns `&'static mut io::Writer`; cast to the raw pointer the
+            // returns the process-global writer; cast to the raw pointer the
             // trait expects.
             let _ = unsafe { ctx.log() }.print(Output::error_writer() as *mut bun_core::io::Writer);
 

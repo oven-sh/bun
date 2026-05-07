@@ -2082,7 +2082,7 @@ mod posix_impl {
     }
 
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
-    /// Returns a process-lifetime `&'static mut [u8]`; caller is responsible for
+    /// Returns a process-lifetime mmap slice; caller is responsible for
     /// `munmap`. Mirrors Zig `mmapFile` (sys.zig).
     pub fn mmap_file(
         path: &ZStr,
@@ -4772,11 +4772,14 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
 /// mutate the environment concurrently.
 pub fn environ() -> &'static [*const c_char] {
     #[cfg(unix)] {
-        unsafe extern "C" { static mut environ: *const *const c_char; }
+        // `AtomicPtr<T>` is `#[repr(C)]` over `*mut T`, so this has the same
+        // layout as libc's `char **environ`; we only do a Relaxed word load.
+        unsafe extern "C" { static environ: core::sync::atomic::AtomicPtr<*const c_char>; }
         // SAFETY: `environ` is a process-global NULL-terminated array.
         unsafe {
             let mut n = 0usize;
-            let base = environ;
+            let base: *const *const c_char =
+                environ.load(core::sync::atomic::Ordering::Relaxed);
             if base.is_null() { return &[]; }
             while !(*base.add(n)).is_null() { n += 1; }
             core::slice::from_raw_parts(base, n)
@@ -4791,9 +4794,9 @@ pub fn environ() -> &'static [*const c_char] {
 /// borrowed slice, so it is suitable to pass directly as `envp`.
 pub fn environ_ptr() -> *const *const c_char {
     #[cfg(unix)] {
-        unsafe extern "C" { static mut environ: *const *const c_char; }
+        unsafe extern "C" { static environ: core::sync::atomic::AtomicPtr<*const c_char>; }
         // SAFETY: `environ` is a process-global; we only read the pointer.
-        unsafe { environ }
+        unsafe { environ.load(core::sync::atomic::Ordering::Relaxed) }
     }
     #[cfg(windows)] { core::ptr::null() }
 }

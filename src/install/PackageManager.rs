@@ -1799,12 +1799,12 @@ pub fn init(
     // Zig: `try fs.fs.readDirectory(fs.top_level_dir, null, 0, true)`
     // (PackageManager.zig:779). Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option: &'static mut fs::DirEntry =
+    let entries_option =
         match fs.read_directory(fs.top_level_dir(), 0, true)? {
             fs::EntriesOption::Entries(e) => {
                 // SAFETY: the BSSMap singleton owns `*e` for the process
                 // lifetime, and `init()` runs single-threaded before any other
-                // access — sole `&'static mut` is sound.
+                // access — sole exclusive borrow is sound.
                 unsafe { &mut *(*e as *mut fs::DirEntry) }
             }
             fs::EntriesOption::Err(e) => return Err(e.canonical_error),
@@ -2255,7 +2255,7 @@ pub fn init_with_runtime_once(
     // where the resolver already opened `top_level_dir`, so failure is a
     // programmer-error / fs-disappeared edge.
     let fs_instance = FileSystem::instance();
-    let root_dir: &'static mut fs::DirEntry =
+    let root_dir =
         match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true).map(|r| &mut *r) {
             // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
             // and runtime init runs once on the main thread before any other access.
@@ -2466,7 +2466,7 @@ pub fn init_with_runtime_once(
     // temporarily moving the boxed lockfile out so the `&mut PackageManager`
     // passed in does not alias the `&mut Lockfile` receiver.
     // PORT NOTE: `root_dir` was moved into `*manager` above (the field is
-    // `&'static mut DirEntry`, so the local reborrow is for `'static` and the
+    // an unbounded `&mut DirEntry`, so the local reborrow is for `'static` and the
     // original binding is dead). Read it back through `manager.root_dir`.
     if manager.root_dir.has_comptime_query(b"bun.lockb") {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));

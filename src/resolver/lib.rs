@@ -1132,7 +1132,7 @@ pub mod fs {
             slot.write(value);
             // SAFETY: just wrote; threadlocal storage outlives caller (matches Zig
             // `&temp_entries_option`). Re-erase to 'static for the BSSMap-shaped
-            // `&'static mut EntriesOption` return type.
+            // unbounded `&mut EntriesOption` return type.
             unsafe { &mut *slot.as_mut_ptr() }
         })
     }
@@ -1502,7 +1502,7 @@ pub mod fs {
 
     /// Port of `FileSystem.RealFS.EntriesOption` in `fs.zig`.
     // PORT NOTE: Zig stores `*DirEntry` (raw, BSSMap-owned). Modeled as
-    // `&'static mut DirEntry` so resolver match arms (`Entries(entries) =>
+    // an unbounded `&mut DirEntry` so resolver match arms (`Entries(entries) =>
     // entries.dir`) auto-deref. The backing storage is the BSSMap singleton;
     // `'static` is the ARENA lifetime.
     pub enum EntriesOption {
@@ -1531,7 +1531,7 @@ pub mod fs {
     /// `RealFS::read_directory` `ReadDirResult`; the Zig type is `EntriesOption`.
     pub type ReadDirResult = EntriesOption;
 
-    // SAFETY: ARENA — `EntriesOption` holds `&'static mut DirEntry` (whose `data`
+    // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
     // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
     // through `RealFS.entries_mutex`; Zig used a `threadlocal var instance`. The
     // raw-pointer fields are the only thing blocking auto-Sync.
@@ -1865,7 +1865,7 @@ pub mod fs {
 
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 // PORT NOTE: Zig `entries_ptr = in_place orelse allocator.create(DirEntry)`.
-                // `EntriesOption::Entries` here holds `&'static mut DirEntry` (raw, BSSMap-stored
+                // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
                 // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
                 // `entries_option_map()` singleton (process-static).
                 let entries_ptr: *mut DirEntry = match in_place {
@@ -2518,7 +2518,7 @@ pub mod dir_entry_accessor {
             let res = FS::instance().fs.read_directory(path, None, 0, false)?;
             match res {
                 EntriesOption::Entries(entry) => {
-                    // SAFETY: ARENA — `entry: &'static mut DirEntry` borrows the BSSMap
+                    // SAFETY: ARENA — `entry` (unbounded `&mut DirEntry`) borrows the BSSMap
                     // singleton; reborrow as shared 'static for the Copy handle.
                     let p: *const DirEntry = &**entry;
                     Ok(Ok(DirEntryHandle { value: Some(unsafe { &*p }) }))

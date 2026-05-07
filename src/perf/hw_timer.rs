@@ -292,5 +292,5 @@ unsafe extern "C" {
 //   source:     src/perf/hw_timer.zig (171 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      static mut CALIBRATION guarded by Once; bun_sys::CLOCK_* / bun_core::Timespec / windows QPC wrappers assumed; cpuid uses core intrinsic (rbx reserved in Rust asm)
+//   notes:      OnceLock CALIBRATION; bun_sys::CLOCK_* / bun_core::Timespec / windows QPC wrappers assumed; cpuid uses core intrinsic (rbx reserved in Rust asm)
 // ──────────────────────────────────────────────────────────────────────────

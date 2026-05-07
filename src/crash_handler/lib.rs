@@ -311,7 +311,7 @@ thread_local! {
     pub static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
 }
 
-// PORTING.md §Concurrency: parking_lot::Mutex<Vec<..>> instead of bare Mutex + static mut Vec.
+// PORTING.md §Concurrency: parking_lot::Mutex<Vec<..>> instead of bare Mutex + global Vec.
 // Stores a boxed type-erased closure (not a bare fn pointer) so that
 // `append_pre_crash_handler` can monomorphize a wrapper that actually invokes the
 // caller's typed handler — mirroring Zig's `comptime handler` trampoline.
@@ -1103,7 +1103,7 @@ fn panic_builtin(msg: &[u8], error_return_trace: Option<&StackTrace>, begin_addr
 pub const PANIC: fn(&[u8], Option<&StackTrace>, Option<usize>) -> ! = if ENABLE { panic_impl } else { panic_builtin };
 
 pub fn report_base_url() -> &'static [u8] {
-    // PORTING.md §Concurrency: OnceLock for lazy global init (was static mut Option).
+    // PORTING.md §Concurrency: OnceLock for lazy global init (was a raw mutable global Option).
     static BASE_URL: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
     *BASE_URL.get_or_init(|| {
         if let Some(url) = env_var::BUN_CRASH_REPORT_URL::get() {

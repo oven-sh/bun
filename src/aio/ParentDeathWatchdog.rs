@@ -774,5 +774,5 @@ fn parse_pid(s: &[u8]) -> Option<libc::pid_t> {
 //   source:     src/aio/ParentDeathWatchdog.zig (501 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      static mut globals mirror Zig vars (racy by design); FilePoll::init/register + bun_sys::Result/Fd-Drop API shapes need Phase-B verification; added buf_print_z/parse_pid helpers for std.fmt.bufPrintZ/parseInt
+//   notes:      RacyCell globals mirror Zig vars (racy by design); FilePoll::init/register + bun_sys::Result/Fd-Drop API shapes need Phase-B verification; added buf_print_z/parse_pid helpers for std.fmt.bufPrintZ/parseInt
 // ──────────────────────────────────────────────────────────────────────────

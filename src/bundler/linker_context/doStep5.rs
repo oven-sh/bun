@@ -49,7 +49,7 @@ impl LinkerContext<'_> {
                 .cast::<BundleV2>())
         };
         let worker = ThreadPool::Worker::get(bundle_v2);
-        // Zig: `defer worker.unget()`. `Worker::get` returns `&'static mut Worker`
+        // Zig: `defer worker.unget()`. `Worker::get` returns the thread-local worker
         // (not RAII), so balance explicitly via scopeguard.
         let worker = scopeguard::guard(worker, |w| w.unget());
 

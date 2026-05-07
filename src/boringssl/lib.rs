@@ -484,5 +484,5 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
 //   source:     src/boringssl/boringssl.zig (272 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      static mut globals match Zig (non-atomic); AF_INET/GEN_* constant paths need Phase B verification; scopeguard used for sk_GENERAL_NAME_pop_free defer
+//   notes:      RacyCell globals match Zig (non-atomic); AF_INET/GEN_* constant paths need Phase B verification; scopeguard used for sk_GENERAL_NAME_pop_free defer
 // ──────────────────────────────────────────────────────────────────────────

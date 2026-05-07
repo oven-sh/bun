@@ -1034,7 +1034,10 @@ impl Response {
         let headers_ref = response.get_or_create_headers(global_this)?;
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(HTTPHeaderName::ContentType, json_mime.value.as_ref(), global_this)?;
-        Ok(Box::leak(Box::new(response)).to_js(global_this))
+        // Ownership transfers to the JSC wrapper (freed via `finalize`).
+        let ptr = Box::into_raw(Box::new(response));
+        // SAFETY: `ptr` is freshly boxed and uniquely owned here.
+        Ok(unsafe { (*ptr).to_js(global_this) })
     }
 
     fn validate_redirect_status_code(global_this: &JSGlobalObject, status_code: i32) -> JsResult<u16> {
@@ -1052,9 +1055,10 @@ impl Response {
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_redirect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let response = Self::construct_redirect_impl(global_this, callframe)?;
-        let ptr = Box::leak(Box::new(response));
-        let response_js = ptr.to_js(global_this);
-        Ok(response_js)
+        // Ownership transfers to the JSC wrapper (freed via `finalize`).
+        let ptr = Box::into_raw(Box::new(response));
+        // SAFETY: `ptr` is freshly boxed and uniquely owned here.
+        Ok(unsafe { (*ptr).to_js(global_this) })
     }
 
     pub fn construct_redirect_impl(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Response> {
@@ -1114,14 +1118,17 @@ impl Response {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_error(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        let response = Box::leak(Box::new(Response {
+        // Ownership transfers to the JSC wrapper (freed via `finalize`).
+        let response = Box::into_raw(Box::new(Response {
             init: Init { status_code: 0, ..Default::default() },
             body: Body { value: BodyValue::Empty },
             ..Default::default()
         }));
 
-        let js_value = response.to_js(global_this);
-        response.js_ref = JsRef::init_weak(js_value);
+        // SAFETY: `response` is freshly boxed and uniquely owned here.
+        let js_value = unsafe { (*response).to_js(global_this) };
+        // SAFETY: `to_js` does not free the payload; still uniquely owned.
+        unsafe { (*response).js_ref = JsRef::init_weak(js_value) };
         Ok(js_value)
     }
 
@@ -1221,12 +1228,18 @@ impl Response {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        let response = Box::leak(Box::new(Response {
+        // Ownership transfers to the JSC wrapper (freed via `finalize`). The
+        // codegen constructor thunk receives this `*mut Response` and binds it
+        // to `js_this`.
+        let response = Box::into_raw(Box::new(Response {
             body: scopeguard::ScopeGuard::into_inner(body),
             init,
             js_ref: JsRef::init_weak(js_this),
             ..Default::default()
         }));
+        // SAFETY: `response` is freshly boxed and uniquely owned by this fn
+        // until returned; reborrow for the trailing setup.
+        let response = unsafe { &mut *response };
 
         if let BodyValue::Blob(blob) = &response.body.value {
             if let Some(headers) = &mut response.init.headers {

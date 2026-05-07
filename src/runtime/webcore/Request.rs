@@ -1303,12 +1303,12 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        match &*request.body {
+                        match request.body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.body.clone(global_this) {
+                                match request.body_value_mut().clone(global_this) {
                                     Ok(v) => {
-                                        *req.body = v;
+                                        *req.body_value_mut() = v;
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
@@ -1363,7 +1363,7 @@ impl Request {
                             _ => {
                                 match body_value.clone(global_this) {
                                     Ok(v) => {
-                                        *req.body = v;
+                                        *req.body_value_mut() = v;
                                     }
                                     Err(e) => bail!(Err(e)),
                                 }
@@ -1384,7 +1384,7 @@ impl Request {
                         fields.insert(Fields::Body);
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
-                                *req.body = v;
+                                *req.body_value_mut() = v;
                             }
                             Err(e) => bail!(Err(e)),
                         }
@@ -1593,8 +1593,8 @@ impl Request {
 
         req.url = href;
 
-        if matches!(&*req.body, BodyValue::Blob(_)) && req.headers.is_some() {
-            if let BodyValue::Blob(blob) = &*req.body {
+        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.is_some() {
+            if let BodyValue::Blob(blob) = req.body_value() {
                 // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
                 let ct: &[u8] = unsafe { &*blob.content_type };
                 if !ct.is_empty()
@@ -1665,7 +1665,7 @@ impl Request {
         // Update the original request's body cache with the new teed stream.
         // At this point, this.#body.value.Locked.readable still holds the teed stream
         // because checkBodyStreamRef hasn't been called on the original request yet.
-        if let BodyValue::Locked(locked) = &*self.body {
+        if let BodyValue::Locked(locked) = self.body_value() {
             if let Some(readable) = locked.readable.get(global_this) {
                 js_gen::body_set_cached(this_value, global_this, readable.value);
             }

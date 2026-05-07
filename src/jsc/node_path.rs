@@ -30,7 +30,8 @@ impl Default for PathLike {
 
 impl Clone for PathLike {
     /// Zig `PathLike` is bitwise-copy; the Rust port bumps any owning ref so
-    /// the clone is independently droppable.
+    /// the clone is independently droppable *and* `clone().slice()` returns
+    /// the same bytes as the original.
     fn clone(&self) -> Self {
         match self {
             Self::String(s) => Self::String(*s),
@@ -40,11 +41,25 @@ impl Clone for PathLike {
                 // original (if any) owns the allocation.
                 owns_buffer: false,
             }),
-            Self::SliceWithUnderlyingString(s) => Self::SliceWithUnderlyingString(s.dupe_ref()),
-            Self::ThreadsafeString(s) => Self::ThreadsafeString(s.dupe_ref()),
-            Self::EncodedSlice(s) => {
-                Self::EncodedSlice(ZigStringSlice::init_owned(s.slice().to_vec()))
+            Self::SliceWithUnderlyingString(s) => {
+                // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a
+                // cloned PathLike would then return b"" from `slice()`. Clone
+                // the utf8 view explicitly (bumps a WTF ref / copies an owned
+                // buffer) alongside the bumped `underlying` ref.
+                Self::SliceWithUnderlyingString(SliceWithUnderlyingString {
+                    utf8: s.utf8.clone_ref(),
+                    underlying: s.underlying.dupe_ref(),
+                    #[cfg(debug_assertions)]
+                    did_report_extra_memory_debug: s.did_report_extra_memory_debug,
+                })
             }
+            Self::ThreadsafeString(s) => Self::ThreadsafeString(SliceWithUnderlyingString {
+                utf8: s.utf8.clone_ref(),
+                underlying: s.underlying.dupe_ref(),
+                #[cfg(debug_assertions)]
+                did_report_extra_memory_debug: s.did_report_extra_memory_debug,
+            }),
+            Self::EncodedSlice(s) => Self::EncodedSlice(s.clone_ref()),
         }
     }
 }
@@ -91,8 +106,11 @@ impl PathLike {
         }
     }
 
-    /// `PathLike.toThreadSafe()` (types.zig:599) — promote any borrowed-JS
-    /// payload to an owned, thread-safe representation.
+    /// `PathLike.toThreadSafe()` (types.zig:557) — promote any borrowed-JS
+    /// payload to a thread-safe representation. For `Buffer` the variant is
+    /// kept and the backing JS value is `protect()`ed (paired with
+    /// [`Self::deinit_and_unprotect`]); the discriminant is preserved so
+    /// callers matching on `Buffer` after this call see the same shape as Zig.
     pub fn to_thread_safe(&mut self) {
         match self {
             Self::SliceWithUnderlyingString(s) => {
@@ -101,10 +119,25 @@ impl PathLike {
                 *self = Self::ThreadsafeString(owned);
             }
             Self::Buffer(b) => {
-                let bytes = b.slice().to_vec();
-                *self = Self::EncodedSlice(ZigStringSlice::init_owned(bytes));
+                b.buffer.value.protect();
             }
             Self::String(_) | Self::ThreadsafeString(_) | Self::EncodedSlice(_) => {}
+        }
+    }
+
+    /// `PathLike.deinitAndUnprotect()` (types.zig:571) — release owned
+    /// payloads and undo the `protect()` taken by [`Self::to_thread_safe`] /
+    /// `ArgumentsSlice::protect_eat`. Leaves `self` in the default state so
+    /// the subsequent `Drop` is a no-op.
+    pub fn deinit_and_unprotect(&mut self) {
+        match core::mem::take(self) {
+            Self::String(_) => {}
+            Self::Buffer(b) => b.buffer.value.unprotect(),
+            Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => s.deinit(),
+            Self::EncodedSlice(_s) => {
+                // `ZigStringSlice` releases in its own Drop when `_s` goes out
+                // of scope.
+            }
         }
     }
 }
@@ -152,6 +185,14 @@ impl PathOrFileDescriptor {
     pub fn to_thread_safe(&mut self) {
         if let Self::Path(p) = self {
             p.to_thread_safe();
+        }
+    }
+
+    /// `PathOrFileDescriptor.deinitAndUnprotect()` (types.zig:934).
+    #[inline]
+    pub fn deinit_and_unprotect(&mut self) {
+        if let Self::Path(p) = self {
+            p.deinit_and_unprotect();
         }
     }
 

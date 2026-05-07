@@ -75,7 +75,8 @@ impl JSMySQLQuery {
         global_this: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<*mut Self> {
-        Err(global_this.throw_invalid_arguments("MySQLQuery cannot be constructed directly"))
+        Err(global_this
+            .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
     unsafe fn deinit(this: *mut Self) {
@@ -130,10 +131,12 @@ impl JSMySQLQuery {
         if simple {
             if values.get_length(global_this)? > 0 {
                 return Err(global_this
-                    .throw_invalid_arguments("simple query cannot have parameters"));
+                    .throw_invalid_arguments(format_args!("simple query cannot have parameters")));
             }
             if query.get_length(global_this)? >= i32::MAX as u64 {
-                return Err(global_this.throw_invalid_arguments("query is too long"));
+                return Err(
+                    global_this.throw_invalid_arguments(format_args!("query is too long"))
+                );
             }
         }
         if !pending_value.js_type().is_array_like() {
@@ -186,9 +189,9 @@ impl JSMySQLQuery {
 
         let arguments = callframe.arguments();
         if arguments.len() < 2 {
-            return Err(global_object.throw_invalid_arguments(
-                "run must be called with 2 arguments connection and target",
-            ));
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "run must be called with 2 arguments connection and target"
+            )));
         }
         let Some(connection) = js_mysql_connection::from_js(arguments[0]) else {
             return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
@@ -256,7 +259,7 @@ impl JSMySQLQuery {
             2 => SQLQueryResultMode::Raw,
             _ => {
                 return Err(global_object.throw_invalid_argument_type_value(
-                    "mode", "Number", js_mode,
+                    b"mode", b"Number", js_mode,
                 ));
             }
         };

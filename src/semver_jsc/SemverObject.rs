@@ -85,7 +85,7 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();
     if arguments.len() < 2 {
-        return Err(global.throw("Expected two arguments", format_args!("")));
+        return Err(global.throw(format_args!("Expected two arguments")));
     }
 
     let left_string = arguments[0].to_js_string(global)?;

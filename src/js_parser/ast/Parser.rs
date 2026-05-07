@@ -127,6 +127,90 @@ impl<'a> Default for Options<'a> {
 }
 
 impl<'a> Options<'a> {
+    /// Field-by-field clone for the bundler's empty-file fallback
+    /// (ParseTask.zig:335-342: `getEmptyAST(..., opts, ...)` after
+    /// `caches.js.parse(..., opts, ...)` returned null). Zig passed `opts` by
+    /// value (bitwise copy) to *both* calls; in Rust `parse()` consumes `opts`,
+    /// and `Options` is not `Clone` because `macro_context` is `&'a mut`.
+    ///
+    /// Co-located with the struct so adding a field is a hard error here —
+    /// the struct-literal below has no `..Default::default()` tail. Callers
+    /// take this snapshot *before* moving `opts` into `parse()`.
+    ///
+    /// Intentionally NOT carried over (lazy-export / `to_lazy_export_ast` does
+    /// not consult them; carrying them would alias or double-own):
+    /// - `macro_context` (`&'a mut`) — macro evaluation runs only on the full
+    ///   parse path.
+    /// - `features.replace_exports` — visit-pass-only; the lazy stub has no
+    ///   user statements to rewrite.
+    /// - `features.bundler_feature_flags` — `import { feature } from
+    ///   "bun:bundle"` cannot appear in a synthetic single-expr AST.
+    /// - `features.runtime_transpiler_cache` — full-parse cache hook only.
+    pub fn clone_for_lazy_export(&self) -> Options<'a> {
+        let f = &self.features;
+        Options {
+            jsx: self.jsx.clone(),
+            ts: self.ts,
+            keep_names: self.keep_names,
+            ignore_dce_annotations: self.ignore_dce_annotations,
+            preserve_unused_imports_ts: self.preserve_unused_imports_ts,
+            use_define_for_class_fields: self.use_define_for_class_fields,
+            suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
+            filepath_hash_for_hmr: self.filepath_hash_for_hmr,
+            features: RuntimeFeatures {
+                react_fast_refresh: f.react_fast_refresh,
+                hot_module_reloading: f.hot_module_reloading,
+                server_components: f.server_components,
+                is_macro_runtime: f.is_macro_runtime,
+                top_level_await: f.top_level_await,
+                auto_import_jsx: f.auto_import_jsx,
+                allow_runtime: f.allow_runtime,
+                inlining: f.inlining,
+                inject_jest_globals: f.inject_jest_globals,
+                no_macros: f.no_macros,
+                commonjs_named_exports: f.commonjs_named_exports,
+                minify_syntax: f.minify_syntax,
+                minify_identifiers: f.minify_identifiers,
+                minify_keep_names: f.minify_keep_names,
+                minify_whitespace: f.minify_whitespace,
+                dead_code_elimination: f.dead_code_elimination,
+                set_breakpoint_on_first_line: f.set_breakpoint_on_first_line,
+                trim_unused_imports: f.trim_unused_imports,
+                auto_polyfill_require: f.auto_polyfill_require,
+                replace_exports: Default::default(),
+                dont_bundle_twice: f.dont_bundle_twice,
+                unwrap_commonjs_packages: f.unwrap_commonjs_packages,
+                commonjs_at_runtime: f.commonjs_at_runtime,
+                unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
+                emit_decorator_metadata: f.emit_decorator_metadata,
+                standard_decorators: f.standard_decorators,
+                remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
+                runtime_transpiler_cache: None,
+                lower_using: f.lower_using,
+                bundler_feature_flags: None,
+                repl_mode: f.repl_mode,
+                jsx_optimization_inline: f.jsx_optimization_inline,
+                dynamic_require: f.dynamic_require,
+                remove_whitespace: f.remove_whitespace,
+                use_import_meta_require: f.use_import_meta_require,
+            },
+            tree_shaking: self.tree_shaking,
+            bundle: self.bundle,
+            code_splitting: self.code_splitting,
+            package_version: self.package_version,
+            macro_context: None,
+            warn_about_unbundled_modules: self.warn_about_unbundled_modules,
+            allow_unresolved: self.allow_unresolved,
+            module_type: self.module_type,
+            output_format: self.output_format,
+            transform_only: self.transform_only,
+            import_meta_main_value: self.import_meta_main_value,
+            lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            framework: self.framework,
+            repl_mode: self.repl_mode,
+        }
+    }
+
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash, did_use_jsx: bool) {
         debug_assert!(!self.bundle);
 

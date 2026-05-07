@@ -108,7 +108,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     // SAFETY: see on_close.
     let this: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
     let Some(this_value) = this.this_value.try_get() else { return };
-    let Some(callback) = UDPSocket::js().gc.on_drain.get(this_value) else { return };
+    let Some(callback) = js::on_drain_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
         return;
     }
@@ -460,12 +460,6 @@ pub struct UDPSocket {
 }
 
 impl UDPSocket {
-    // TODO(port): Codegen.JSUDPSocket — `js`, `to_js`, `from_js`, `from_js_direct` provided by
-    // #[bun_jsc::JsClass] derive in Phase B. The `js()` accessor below is a placeholder.
-    pub fn js() -> &'static codegen_stub::JSUDPSocket {
-        todo!("blocked_on: bun_jsc::codegen::JSUDPSocket")
-    }
-
     pub fn new(init: Self) -> *mut Self {
         Box::into_raw(Box::new(init))
     }

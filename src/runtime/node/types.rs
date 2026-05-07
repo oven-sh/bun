@@ -1029,8 +1029,7 @@ impl PathLikeExt for PathLike {
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
-                let mut str = arg.to_bun_string(ctx)?;
-                scopeguard::defer! { str.deref(); }
+                let mut str = bun_str::OwnedString::new(arg.to_bun_string(ctx)?);
 
                 arguments.eat();
 
@@ -1039,7 +1038,7 @@ impl PathLikeExt for PathLike {
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
                     use jsc::dom_url::ToFileSystemPathError;
-                    let str: bun_str::String = match domurl.file_system_path() {
+                    let mut str = bun_str::OwnedString::new(match domurl.file_system_path() {
                         Ok(s) => s,
                         Err(ToFileSystemPathError::NotFileUrl) => {
                             return Err(ctx
@@ -1065,8 +1064,7 @@ impl PathLikeExt for PathLike {
                                 )
                                 .throw());
                         }
-                    };
-                    // str.deref() on Drop
+                    });
                     if str.is_empty() {
                         return Err(ctx
                             .err(
@@ -1077,7 +1075,6 @@ impl PathLikeExt for PathLike {
                     }
                     arguments.eat();
 
-                    let mut str = str;
                     return Ok(Some(Self::from_bun_string(ctx, &mut str, arguments.will_be_async)?));
                 }
 
@@ -1171,7 +1168,7 @@ impl Valid {
     pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
         let slice = buffer.slice();
         match slice.len() {
-            0 => Err(ctx.throw_invalid_arguments("Invalid path buffer: can't be empty")),
+            0 => Err(ctx.throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty"))),
             1..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
@@ -1217,7 +1214,7 @@ impl VectorArrayBuffer {
 impl VectorArrayBuffer {
     pub fn from_js(global_object: &JSGlobalObject, val: JSValue) -> JsResult<VectorArrayBuffer> {
         if !val.js_type().is_array_like() {
-            return Err(global_object.throw_invalid_arguments("Expected ArrayBufferView[]"));
+            return Err(global_object.throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
         }
 
         let mut bufferlist: Vec<PlatformIoVec> = Vec::new();
@@ -1229,11 +1226,11 @@ impl VectorArrayBuffer {
             let element = val.get_index(global_object, i as u32)?;
 
             if !element.is_cell() {
-                return Err(global_object.throw_invalid_arguments("Expected ArrayBufferView[]"));
+                return Err(global_object.throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
             }
 
             let Some(mut array_buffer) = element.as_array_buffer(global_object) else {
-                return Err(global_object.throw_invalid_arguments("Expected ArrayBufferView[]"));
+                return Err(global_object.throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
             };
 
             let buf = array_buffer.byte_slice_mut();
@@ -1260,7 +1257,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         }
 
         if !value.is_string() {
-            return Err(ctx.throw_invalid_argument_type_value("mode", "number", value));
+            return Err(ctx.throw_invalid_argument_type_value(b"mode", b"number", value));
         }
 
         // An easier method of constructing the mode is to use a sequence of
@@ -1418,9 +1415,9 @@ impl FileSystemFlags {
         if js_type.is_string_like() {
             let str = val.get_zig_string(ctx)?;
             if str.len == 0 {
-                return Err(ctx.throw_invalid_arguments(
+                return Err(ctx.throw_invalid_arguments(format_args!(
                     "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                ));
+                )));
             }
             // it's definitely wrong when the string is super long
             else if str.len > 12 {

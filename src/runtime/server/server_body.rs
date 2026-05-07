@@ -1872,7 +1872,7 @@ where
     // `mod.rs` (alongside `set_routes`/`js_gc_route_list_set`); the duplicate
     // copy that was here caused E0034 at `Bun.serve` call sites.
 
-(&mut self) -> Result<bool, bun_core::Error> {
+    pub fn reload_static_routes(&mut self) -> Result<bool, bun_core::Error> {
         // TODO(port): narrow error set
         if self.app.is_none() {
             // Static routes will get cleaned up when the server is stopped

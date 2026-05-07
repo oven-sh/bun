@@ -853,35 +853,6 @@ use crate::node::util::validators;
 use crate::crypto::pbkdf2::{PBKDF2, Job as PBKDF2Job};
 use crate::crypto::create_crypto_error;
 
-/// Local shims for `JSGlobalObject.ERR(.CODE, ..)` helpers not yet surfaced on
-/// `bun_jsc::JSGlobalObject`. Routes through the generic `err(ErrorCode, fmt)` builder.
-trait NodeCryptoGlobalExt {
-    fn throw_incompatible_option_pair<T>(&self, a: &str, b: &str) -> JsResult<T>;
-    fn throw_invalid_scrypt_params(&self) -> JsResult<()>;
-}
-impl NodeCryptoGlobalExt for JSGlobalObject {
-    #[inline]
-    fn throw_incompatible_option_pair<T>(&self, a: &str, b: &str) -> JsResult<T> {
-        Err(self
-            .err(
-                ErrorCode::INCOMPATIBLE_OPTION_PAIR,
-                format_args!(
-                    "Option \"{a}\" cannot be used in combination with option \"{b}\""
-                ),
-            )
-            .throw())
-    }
-    #[inline]
-    fn throw_invalid_scrypt_params(&self) -> JsResult<()> {
-        Err(self
-            .err(
-                ErrorCode::CRYPTO_INVALID_SCRYPT_PARAMS,
-                format_args!("Invalid scrypt params"),
-            )
-            .throw())
-    }
-}
-
 impl Scrypt {
     /// Zig: `fromJS(..., comptime is_async: bool) JSError!if (is_async) struct{@This(),JSValue} else @This()`.
     /// Rust cannot vary the return type on a const-generic bool, so this always returns

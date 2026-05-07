@@ -3,6 +3,8 @@ use bstr::BStr;
 use bun_core::output;
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 use crate::node::PathLike;
+use crate::node::types::PathLikeExt as _;
+use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, StorageClass, S3Credentials};
 

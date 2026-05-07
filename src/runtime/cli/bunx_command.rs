@@ -66,7 +66,9 @@ fn bunx_bump() -> &'static bun_alloc::Arena {
 // TODO(port): lifetime — these borrow argv, not true 'static.
 pub struct Options {
     /// CLI arguments to pass to the command being run.
-    pub passthrough_list: Vec<&'static [u8]>,
+    // PORT NOTE: `Box<[u8]>` to match `ContextData::passthrough` /
+    // `Run::run_binary`'s `&[Box<[u8]>]` param. Zig was `[]const string`.
+    pub passthrough_list: Vec<Box<[u8]>>,
     /// `bunx <package_name>`
     pub package_name: &'static [u8],
     /// The binary name to run (when using --package)
@@ -120,7 +122,7 @@ impl Options {
             let positional: &[u8] = argv[i].as_bytes();
 
             if maybe_package_name.is_some() {
-                opts.passthrough_list.push(positional);
+                opts.passthrough_list.push(Box::<[u8]>::from(positional));
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
                 i += 1;
                 continue;
@@ -584,7 +586,7 @@ impl BunxCommand {
             b"claude"
         } else if update_request.version.tag == VersionTag::Github {
             // SAFETY: tag == Github guarantees the `github` union arm is active.
-            unsafe { update_request.version.value.github.repo.slice(&update_request.version_buf) }
+            unsafe { update_request.version.value.github.repo.slice(update_request.version_buf()) }
         } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
             &update_request.name[usize::try_from(index + 1).unwrap()..]
@@ -662,7 +664,7 @@ impl BunxCommand {
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
         } else {
-            update_request.version.literal.slice(&update_request.version_buf)
+            update_request.version.literal.slice(update_request.version_buf())
         };
 
         // package_fmt is used for the path to install in.
@@ -957,7 +959,7 @@ impl BunxCommand {
                     bun_output::scoped_log!(bunx, "running existing binary: {}", BStr::new(destination.as_bytes()));
                     let stored = fs.dirname_store.append_slice(out)?;
                     Run::run_binary(
-                        &ctx,
+                        ctx,
                         stored,
                         destination,
                         top_level_dir,
@@ -1022,7 +1024,7 @@ impl BunxCommand {
                                     let out: &[u8] = destination.as_bytes();
                                     let stored = fs.dirname_store.append_slice(out)?;
                                     Run::run_binary(
-                                        &ctx,
+                                        ctx,
                                         stored,
                                         destination,
                                         top_level_dir,

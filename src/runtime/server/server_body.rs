@@ -1313,8 +1313,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     &debugger.http_server_agent,
                     self.as_any_server(),
                 );
+                // Spec: only clear the id once the agent has been notified, so a
+                // call that races a not-yet-attached debugger leaves the id set
+                // for a later retry (server.zig:1738-1749).
+                self.inspector_server_id = DebuggerId::new(0);
             }
-            self.inspector_server_id = DebuggerId::new(0);
         }
     }
 }

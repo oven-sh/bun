@@ -1683,23 +1683,24 @@ impl Request {
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let _ = global_this.bun_vm();
+        let vm = global_this.bun_vm();
         let body_ = 'brk: {
             if let Some(js_ref) = self.js_ref.try_get() {
                 if let Some(stream) = js_gen::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js(stream, global_this)?;
                     if let Some(r) = readable.as_mut() {
-                        break 'brk self.body.clone_with_readable_stream(global_this, Some(r))?;
+                        break 'brk self
+                            .body_value_mut()
+                            .clone_with_readable_stream(global_this, Some(r))?;
                     }
                 }
             }
 
-            break 'brk self.body.clone(global_this)?;
+            break 'brk self.body_value_mut().clone(global_this)?;
         };
         // errdefer body_.deinit() → deleted; BodyValue: Drop frees on `?` error path
-        // PERF(port): see construct_into — `Request.body: Box<BodyValue>` until the
-        // HiveRef field-type refactor lands (server/mod.rs tracks the same).
-        let body: Box<BodyValue> = Box::new(body_);
+        // SAFETY: vm is the live per-thread singleton.
+        let body = body::hive_alloc(unsafe { &mut *vm }, body_);
         // Last fallible call. Zig hoists `url` above this with an
         // `errdefer if (!preserve_url) url.deref()`; we instead sink the url
         // computation below it so no guard is needed at all — `BunString` is

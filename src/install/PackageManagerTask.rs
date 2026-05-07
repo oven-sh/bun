@@ -360,7 +360,7 @@ impl<'a> Task<'a> {
                     let dir = 'brk: {
                         if let Some(https) = Repository::try_https(url) {
                             match Repository::download(
-                                &req.env,
+                                req.env,
                                 &mut this.log,
                                 manager.get_cache_directory(),
                                 this.id,
@@ -399,7 +399,7 @@ impl<'a> Task<'a> {
                         None => {
                             if let Some(ssh) = Repository::try_ssh(url) {
                                 match Repository::download(
-                                    &req.env,
+                                    req.env,
                                     &mut this.log,
                                     manager.get_cache_directory(),
                                     this.id,
@@ -433,7 +433,7 @@ impl<'a> Task<'a> {
                     // SAFETY: tag == GitCheckout discriminates the union
                     let git_checkout = unsafe { &mut *this.request.git_checkout };
                     let data = match Repository::checkout(
-                        &git_checkout.env,
+                        git_checkout.env,
                         &mut this.log,
                         manager.get_cache_directory(),
                         bun_sys::Dir::from_fd(git_checkout.repo_dir),
@@ -596,7 +596,10 @@ pub struct ExtractRequest<'a> {
 pub struct GitCloneRequest {
     pub name: StringOrTinyString,
     pub url: StringOrTinyString,
-    pub env: dot_env::Map,
+    // PORT NOTE: Zig stores `DotEnv.Map` by value (handle copy of the global
+    // `Repository.shared_env`). Rust's `Map` owns its storage; store a
+    // `&'static` into the global instead — see `SharedEnv::get`.
+    pub env: &'static dot_env::Map,
     pub dep_id: DependencyID,
     pub res: Resolution,
 }
@@ -608,7 +611,8 @@ pub struct GitCheckoutRequest {
     pub url: StringOrTinyString,
     pub resolved: StringOrTinyString,
     pub resolution: Resolution,
-    pub env: dot_env::Map,
+    // See PORT NOTE on `GitCloneRequest.env`.
+    pub env: &'static dot_env::Map,
 }
 
 pub struct LocalTarballRequest {

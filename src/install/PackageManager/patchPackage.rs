@@ -26,7 +26,7 @@ use crate::package_manager_real::package_manager_directories::{
 };
 use bun_logger as logger;
 use crate::bun_fs::FileSystem;
-use crate::bun_json::{self as JSON, ExprAccessors as _};
+use crate::bun_json::{self as JSON, ExprAccessors};
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
@@ -173,7 +173,7 @@ pub fn do_patch_commit(
 
             let version: &[u8] = 'version: {
                 if let Some(v) = json.get(b"version") {
-                    if let Some(s) = v.as_string() {
+                    if let Some(s) = ExprAccessors::as_string(&v) {
                         break 'version s;
                     }
                 }
@@ -713,7 +713,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
             let version: &[u8] = 'version: {
                 if let Some(v) = json.get(b"version") {
-                    if let Some(s) = v.as_string() {
+                    if let Some(s) = ExprAccessors::as_string(&v) {
                         break 'version s;
                     }
                 }
@@ -778,11 +778,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 break 'existing_patchfile_hash None;
             };
 
-            let resolution_clone = actual_package.resolution.clone();
             let cache_result = compute_cache_dir_and_subpath(
                 manager,
                 &name,
-                &resolution_clone,
+                &actual_package.resolution,
                 &mut folder_path_buf,
                 existing_patchfile_hash,
             );

@@ -143,6 +143,14 @@ impl From<ZigString> for bun_string::ZigString {
         unsafe { core::mem::transmute::<ZigString, bun_string::ZigString>(z) }
     }
 }
+impl From<bun_string::ZigString> for ZigString {
+    #[inline]
+    fn from(z: bun_string::ZigString) -> Self {
+        // SAFETY: both are `#[repr(C)] struct { *const u8, usize }` with identical
+        // pointer-tag encoding (see `bun_string::ZigString` and the struct above).
+        unsafe { core::mem::transmute::<bun_string::ZigString, ZigString>(z) }
+    }
+}
 impl From<ZigString> for bun_string::String {
     #[inline]
     fn from(z: ZigString) -> Self {

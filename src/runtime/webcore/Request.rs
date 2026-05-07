@@ -159,6 +159,76 @@ impl crate::webcore::body::BodyOwnerJs for Request {
 // returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
 // paths in Body.zig are silently dead.
 //
+// The codegen'd prototype shims (`RequestPrototype__getText` etc.) call these
+// via UFCS (`Request::get_text(...)`) without the trait in scope, so re-expose
+// the defaulted trait methods as inherent forwarders — same effect as Zig's
+// `usingnamespace BodyMixin(@This())`.
+impl Request {
+    #[inline]
+    pub fn get_text(
+        &mut self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        <Self as BodyMixin>::get_text(self, global_object, callframe)
+    }
+    #[inline]
+    pub fn get_body(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        <Self as BodyMixin>::get_body(self, global_this)
+    }
+    #[inline]
+    pub fn get_body_used(&mut self, global_object: &JSGlobalObject) -> JSValue {
+        <Self as BodyMixin>::get_body_used(self, global_object)
+    }
+    #[inline]
+    pub fn get_json(
+        &mut self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        <Self as BodyMixin>::get_json(self, global_object, callframe)
+    }
+    #[inline]
+    pub fn get_array_buffer(
+        &mut self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        <Self as BodyMixin>::get_array_buffer(self, global_object, callframe)
+    }
+    #[inline]
+    pub fn get_bytes(
+        &mut self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        <Self as BodyMixin>::get_bytes(self, global_object, callframe)
+    }
+    #[inline]
+    pub fn get_form_data(
+        &mut self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        <Self as BodyMixin>::get_form_data(self, global_object, callframe)
+    }
+    #[inline]
+    pub fn get_blob(
+        &mut self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        <Self as BodyMixin>::get_blob(self, global_object, callframe)
+    }
+    #[inline]
+    pub fn get_blob_without_call_frame(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        <Self as BodyMixin>::get_blob_without_call_frame(self, global_object)
+    }
+}
+
 impl BodyMixin for Request {
     #[inline]
     fn get_body_value(&mut self) -> &mut BodyValue {

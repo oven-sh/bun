@@ -1,12 +1,5 @@
 //! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`/`timingSafeEqual`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
-//!
-//! ─── B-2 un-gate (compat layer): type defs are real ───────────────────────
-//! Struct/trait surface (`CryptoJob<Ctx>`, `CryptoJobCtx`, `Scrypt`,
-//! `random::JobCtx`, the per-name `Ctx`/`Job` pairs from `extern_crypto_job!`)
-//! compiles against the current `bun_jsc` stub surface. Method bodies that
-//! call JSC accessors / BoringSSL FFI not yet exported / `crate::crypto::PBKDF2`
-//! (still gated in `crypto/mod.rs`) stay `` *inside* this file.
 
 use core::ffi::{c_char, c_void};
 use core::mem::offset_of;
@@ -126,10 +119,6 @@ macro_rules! extern_crypto_job {
                 ctx: *mut Ctx,
             }
 
-            // TODO(b2-blocked): `#[link_name = concat!(..)]` / `#[export_name = concat!(..)]`
-            // are rejected in attribute position — switch to `paste!` or a small proc-macro.
-            // Bodies also need `bun_jsc` method surface (`.bun_vm()`, `.enqueue_task_concurrent()`).
-            
             const _: () = {
                 unsafe extern "C" {
                     #[link_name = concat!("Bun__", $name_str, "Ctx__runTask")]
@@ -324,10 +313,6 @@ pub struct CryptoJob<Ctx> {
     ctx: Ctx,
 }
 
-// TODO(b2-blocked): bodies need `bun_jsc` method surface (`.bun_vm()`,
-// `.with_async_context_if_needed()`, `AnyTask::new`, `ConcurrentTask::create`,
-// `KeepAlive::{ref,unref}` over `&VirtualMachine`).
-
 impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub fn init(global: &JSGlobalObject, callback: JSValue, ctx: Ctx) -> JsResult<*mut Self> {
         // PORT NOTE: Zig copies `ctx.*` by value into the heap allocation; Rust takes
@@ -460,9 +445,6 @@ pub mod random {
     };
     pub const MAX_RANGE: i64 = 0xffff_ffff_ffff;
 
-    // TODO(b2-blocked): `JSValue::{protect,unprotect}` + `EventLoop::run_callback`
-    // not yet on the stub surface.
-    
     impl CryptoJobCtx for JobCtx {
         fn init(&mut self, _: &JSGlobalObject) -> JsResult<()> {
             self.value.protect();
@@ -833,15 +815,6 @@ pub struct Scrypt {
 }
 
 pub type ScryptJob = CryptoJob<Scrypt>;
-
-// ─── gated impls / host fns ───────────────────────────────────────────────
-// Bodies need: `bun_jsc` method surface (`.throw_*`, `.get()`, `.as_array_buffer()`,
-// `ArrayBuffer::alloc`, `JSFunction::create`, `JSValue::create_*`),
-// `bun_boringssl::{EVP_PBE_scrypt,EVP_PBE_validate_scrypt_params,EVP_MD_do_all_sorted,
-// ERR_get_error,ERR_peek_last_error}` (not yet in boringssl_sys),
-// `crate::crypto::pbkdf2::{PBKDF2,Job}` (still `` in crypto/mod.rs),
-// `StringOrBuffer::{from_js_maybe_async,deinit_and_unprotect}` (gated in types.rs).
-// TODO(b2-blocked): un-gate piecewise as the lower-tier surface lands.
 
 mod _impl {
 use super::*;

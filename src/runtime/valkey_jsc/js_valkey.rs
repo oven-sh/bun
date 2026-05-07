@@ -538,14 +538,17 @@ impl JSValkeyClient {
             let url_byte_slice = url_slice.slice();
 
             if url_byte_slice.is_empty() {
-                return Err(global_object.throw_invalid_arguments("Invalid URL format"));
+                return Err(
+                    global_object.throw_invalid_arguments(format_args!("Invalid URL format")),
+                );
             }
 
             if strings::strings::contains(url_byte_slice, b"://") {
                 break 'get_url match URL::from_utf8(url_byte_slice) {
                     Some(u) => u,
                     None => {
-                        return Err(global_object.throw_invalid_arguments("Invalid URL format"))
+                        return Err(global_object
+                            .throw_invalid_arguments(format_args!("Invalid URL format")))
                     }
                 };
             }
@@ -559,7 +562,9 @@ impl JSValkeyClient {
                 if write!(&mut cursor, "valkey://").is_err()
                     || cursor.write_all(url_byte_slice).is_err()
                 {
-                    return Err(global_object.throw_invalid_arguments("URL is too long."));
+                    return Err(
+                        global_object.throw_invalid_arguments(format_args!("URL is too long.")),
+                    );
                 }
                 let written = start_len - cursor.len();
                 break 'get_url_slice &fallback_url_buf[..written];
@@ -567,13 +572,18 @@ impl JSValkeyClient {
 
             match URL::from_utf8(corrected_url) {
                 Some(u) => u,
-                None => return Err(global_object.throw_invalid_arguments("Invalid URL format")),
+                None => {
+                    return Err(
+                        global_object.throw_invalid_arguments(format_args!("Invalid URL format")),
+                    )
+                }
             }
         };
         // SAFETY: `from_string`/`from_utf8` returns a heap-allocated URL we own.
         let parsed_url_ref = unsafe { parsed_url.as_ref() };
         // SAFETY: `from_utf8` heap-allocates; release on scope exit (Zig: `defer parsed_url.deinit()`).
-        let _parsed_url_drop = scopeguard::guard(parsed_url, |p| unsafe { URL::deinit(p) });
+        let _parsed_url_drop =
+            scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
         let parsed_url = parsed_url_ref;
 
         // Extract protocol string
@@ -590,9 +600,9 @@ impl JSValkeyClient {
         let uri: valkey::Protocol = if !protocol_slice.is_empty() {
             match valkey::Protocol::MAP.get(protocol_slice) {
                 Some(v) => *v,
-                None => return Err(global_object.throw(
+                None => return Err(global_object.throw(format_args!(
                     "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix",
-                )),
+                ))),
             }
         } else {
             valkey::Protocol::Standalone
@@ -619,9 +629,9 @@ impl JSValkeyClient {
             valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => {
                 // For unix sockets, the path is in the pathname
                 if pathname_utf8.slice().is_empty() {
-                    return Err(global_object.throw_invalid_arguments(
+                    return Err(global_object.throw_invalid_arguments(format_args!(
                         "Expected unix socket path after valkey+unix:// or valkey+tls+unix://",
-                    ));
+                    )));
                 }
                 pathname_utf8.slice()
             }
@@ -639,14 +649,14 @@ impl JSValkeyClient {
                     // Port was explicitly specified
                     if port_value == 0 {
                         // Port 0 is invalid for TCP connections (though it's allowed for unix sockets)
-                        return Err(global_object.throw_invalid_arguments(
+                        return Err(global_object.throw_invalid_arguments(format_args!(
                             "Port 0 is not valid for TCP connections",
-                        ));
+                        )));
                     }
                     if port_value > 65535 {
-                        return Err(global_object.throw_invalid_arguments(
+                        return Err(global_object.throw_invalid_arguments(format_args!(
                             "Invalid port number in URL. Port must be a number between 0 and 65535",
-                        ));
+                        )));
                     }
                     break 'brk u16::try_from(port_value).unwrap();
                 }

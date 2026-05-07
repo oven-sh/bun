@@ -17,7 +17,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_str::String as BunString;
 use bun_uws::Loop as UwsLoop;
 
-use crate::jsc::generated::{JSImmediate, JSTimeout};
+use crate::jsc::generated::JSImmediate;
 use crate::jsc::{Debugger, EnsureStillAlive};
 
 use super::{

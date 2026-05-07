@@ -226,8 +226,7 @@ impl PackageManifestMap {
             Entry::Vacant(vac) => {
                 // SAFETY: `options` is disjoint from `self` (= `pm.manifests`);
                 // both derive from `pm`'s provenance per the fn contract.
-                let options = unsafe { &(*pm).options };
-                if options.enable.manifest_cache() {
+                if unsafe { (*pm).options.enable.manifest_cache() } {
                     // SAFETY: `get_cache_directory_raw` projects only
                     // `cache_directory_*` / `options` / `env`, all disjoint
                     // from `self`; see its safety doc.

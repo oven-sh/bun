@@ -1563,9 +1563,6 @@ pub fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
     Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr() as *const T) })
 }
 
-// Free-fn adapter for the route!() macro (the `impl DevServer` method takes a
-// generic `R: ResponseLike`, which doesn't fit the `Fn(&mut DevServer, &mut
-// Request, AnyResponse)` shape `wrap_generic_request_handler` expects).
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {
         resp.write_status(b"501 Not Implemented");
@@ -1575,6 +1572,9 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         );
         return;
     }
+
+    // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
+    // This is already done in Next.js. we have to port this to Zig so we can use.
     resp.write_status(b"501 Not Implemented");
     resp.end(b"TODO", false);
 }
@@ -2644,24 +2644,6 @@ impl DevServer {
         let _ = route_bundle.source_map_id();
         // SAFETY: client_bundle is a live boxed StaticRoute owned by route_bundle.client_bundle
         unsafe { StaticRoute::on_with_method(client_bundle, method, resp) };
-    }
-
-    // TODO(port): resp: anytype — wrap_generic_request_handler always passes AnyResponse
-    pub fn on_src_request(&mut self, req: &mut Request, resp: AnyResponse) {
-        if req.header(b"open-in-editor").is_none() {
-            resp.write_status(b"501 Not Implemented");
-            resp.end(
-                b"Viewing source without opening in editor is not implemented yet!",
-                false,
-            );
-            return;
-        }
-
-        // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
-        // This is already done in Next.js. we have to port this to Zig so we can use.
-        resp.write_status(b"501 Not Implemented");
-        resp.end(b"TODO", false);
-        let _ = self;
     }
 }
 

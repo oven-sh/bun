@@ -60,25 +60,11 @@ impl LazyBool<fn(&PackageManager) -> bool> {
     }
 }
 
-/// `bun.spawn.process.WaiterThread` shim — the real type lives in
-/// `bun_runtime::api::bun::process` (tier-6). Install only flips the
-/// "force waiter thread" flag during init; expose just that hook here and
-/// let bun_runtime register the backing storage at startup.
-// MOVE_DOWN(b0): bun_runtime::api::bun::process::WaiterThread → bun_spawn
-pub struct WaiterThread;
-/// Hook (GENUINE b0): set by `bun_runtime::init()` to point at
-/// `process::WaiterThreadPosix::set_should_use_waiter_thread`.
-pub static WAITER_THREAD_SET_SHOULD_USE: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-impl WaiterThread {
-    pub fn set_should_use_waiter_thread() {
-        let hook = WAITER_THREAD_SET_SHOULD_USE.load(Ordering::Relaxed);
-        if !hook.is_null() {
-            // SAFETY: hook was registered by bun_runtime as `fn()`.
-            unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };
-        }
-    }
-}
+// `bun.spawn.process.WaiterThread` — the force-waiter-thread flag was moved
+// down into `bun_spawn::process` (MOVE_DOWN b0); install just flips it during
+// init. The full waiter-thread machinery (queue, signalfd, loop) lives in
+// `bun_runtime::api::bun::process` and *reads* the same flag.
+use bun_spawn::process::WaiterThread;
 
 // TODO(b0): RunCommand arrives from move-in (bun_runtime::cli::RunCommand → install).
 use crate::RunCommand;
@@ -225,12 +211,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
     }
 }
 
-// FORWARD_DECL(b0): bun_resolver::DirInfo — only stored as raw pointer in
-// ScriptRunEnvironment.root_dir_info; never dereferenced in this crate.
-#[repr(C)]
-pub struct DirInfo {
-    _opaque: [u8; 0],
-}
+// `bun.resolver.DirInfo` — only stored as a raw pointer in
+// `ScriptRunEnvironment.root_dir_info`. `bun_resolver` is a lower tier than
+// `bun_install` (already a transitive dep via `bun_transpiler` → `bun_bundler`),
+// so import the real type directly instead of an opaque ZST stub.
+use bun_resolver::dir_info::DirInfo;
 
 use bun_install::{
     initialize_store, ArrayIdentityContext, Dependency, DependencyID, Features,
@@ -719,24 +704,10 @@ impl PackageManager {
     }
 }
 
-/// Hook (GENUINE b0): `bun.cli.Arguments.loadConfig(_, cli.config, ctx, .InstallCommand)`
-/// (PackageManager.zig:801). The bunfig loader lives in tier-6 `bun_cli`;
-/// install can't depend on it without a cycle. bun_cli registers this once at
-/// startup with the `.InstallCommand` overload baked in.
-pub static LOAD_CONFIG_HOOK: std::sync::OnceLock<
-    fn(Option<&[u8]>, Command::Context) -> Result<(), Error>,
-> = std::sync::OnceLock::new();
-
-struct TimePasser;
-impl TimePasser {
-    // TODO(port): Zig `pub var last_time: u64 = 0` — needs interior mutability
-    thread_local! {
-        static LAST_TIME: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
-    }
-}
-// PORT NOTE: Zig used a plain `pub var`; in Rust this would need `static mut` or atomic.
-// Since `hasEnoughTimePassedBetweenWaitingMessages` is only called from the main thread,
-// a plain static mut is closest. Using a module-level static for fidelity:
+// Zig: `const TimePasser = struct { pub var last_time: u64 = 0; };` — a one-field
+// namespace whose only consumer is `hasEnoughTimePassedBetweenWaitingMessages`.
+// The wrapper struct adds nothing in Rust; keep just the `static mut` (main-thread
+// only, see SAFETY note at the read site).
 static mut TIME_PASSER_LAST_TIME: u64 = 0;
 
 thread_local! {

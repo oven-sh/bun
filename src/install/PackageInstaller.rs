@@ -2013,7 +2013,7 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                         &mut folder_path,
                         package_id,
-                        dep.behavior.optional,
+                        dep.behavior.is_optional(),
                         resolution,
                     ) {
                         if is_trusted_through_update_request {
@@ -2088,14 +2088,18 @@ impl<'a> PackageInstaller<'a> {
             Ok(v) => v,
             Err(err) => {
                 if log_level != Options::LogLevel::Silent {
-                    let fmt = "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{}<r>: {}\n";
-                    // TODO(port): comptime Output.prettyFmt — see run_available_scripts.
                     if log_level.show_progress() {
-                        if Output::enable_ansi_colors_stderr() {
-                            self.progress.log(Output::pretty_fmt::<true>(fmt), format_args!("{} {}", bstr::BStr::new(folder_name), err.name()));
-                        } else {
-                            self.progress.log(Output::pretty_fmt::<false>(fmt), format_args!("{} {}", bstr::BStr::new(folder_name), err.name()));
-                        }
+                        self.progress.log(format_args!(
+                            "{}",
+                            Output::pretty_fmt_rt(
+                                format_args!(
+                                    "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{}<r>: {}\n",
+                                    bstr::BStr::new(folder_name),
+                                    err.name(),
+                                ),
+                                Output::enable_ansi_colors_stderr(),
+                            ),
+                        ));
                     } else {
                         Output::pretty_errorln(format_args!(
                             "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{}<r>: {}\n",
@@ -2105,7 +2109,7 @@ impl<'a> PackageInstaller<'a> {
                     }
                 }
 
-                if self.manager.options.enable.fail_early {
+                if self.manager.options.enable.fail_early() {
                     Global::exit(1);
                 }
 
@@ -2119,17 +2123,19 @@ impl<'a> PackageInstaller<'a> {
             return false;
         };
 
-        if self.manager.options.do_.run_scripts {
-            self.manager.total_scripts += scripts_list.total;
-            if let Some(scripts_node) = self.manager.scripts_node.as_mut() {
-                self.manager.set_node_name(
-                    scripts_node,
-                    scripts_list.package_name,
-                    PackageManager::ProgressStrings::SCRIPT_EMOJI,
-                    true,
+        if self.manager.options.do_.contains(Options::Do::RUN_SCRIPTS) {
+            self.manager.total_scripts += scripts_list.total as usize;
+            if let Some(scripts_node) = self.manager.scripts_node {
+                self.manager.set_node_name::<true>(
+                    scripts_node.as_ptr(),
+                    &scripts_list.package_name,
+                    ProgressStrings::SCRIPT_EMOJI.as_bytes(),
                 );
-                scripts_node.set_estimated_total_items(
-                    scripts_node.unprotected_estimated_total_items + scripts_list.total,
+                // SAFETY: `scripts_node` is a caller stack-local that outlives the install pass.
+                let node = unsafe { scripts_node.as_ref() };
+                node.set_estimated_total_items(
+                    node.unprotected_estimated_total_items.load(Ordering::Relaxed)
+                        + scripts_list.total as usize,
                 );
             }
             self.pending_lifecycle_scripts.push(PendingLifecycleScript {

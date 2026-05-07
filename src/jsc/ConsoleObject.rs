@@ -432,15 +432,9 @@ fn message_with_type_and_level_(
 
     let mut print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default.
-    // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — `CLI`
-    // (`bun_runtime::cli::Command`) is a high-tier cycle dep. Until the CLI
-    // context is plumbed through `VirtualMachine`, fall back to the default.
-    let console_depth = CLI::get()
-        .runtime_options
-        .console_depth
+    let console_depth = bun_options_types::Context::try_get()
+        .and_then(|ctx| ctx.runtime_options.console_depth)
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
-    #[cfg(not(any()))]
-    let console_depth = DEFAULT_CONSOLE_LOG_DEPTH;
 
     let mut print_options = FormatOptions {
         enable_colors,
@@ -575,9 +569,7 @@ impl<'a> TablePrinter<'a> {
             global_object,
             tabular_data,
             properties,
-            // TODO(phase-c): `JSValue::is_iterable` not yet ported; treat as
-            // non-iterable so the property-iterator path is taken.
-            is_iterable: { let _ = global_object; false },
+            is_iterable: tabular_data.is_iterable(global_object)?,
             jstype: tabular_data.js_type(),
             value_formatter: {
                 // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update

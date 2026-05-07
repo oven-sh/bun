@@ -1039,12 +1039,11 @@ impl PublishCommand {
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
         let bump = bun_alloc::Arena::new();
-        // TODO(port): blocked_on bun_install::PackageManager::log — use a throwaway Log
-        // until the upstream stub grows the field (matches Zig `ctx.manager.log`).
-        let mut throwaway_log = logger::Log::init();
+        // SAFETY: `manager.log` is set once at `PackageManager::init`.
+        let manager_log: &mut logger::Log = unsafe { &mut *ctx.manager.log };
         let res_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
 
-        let res_json = match json_mod::parse_utf8(&res_source, &mut throwaway_log, &bump) {
+        let res_json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
             Ok(j) => Some(j),
             Err(e) => {
                 if e == err!(OutOfMemory) {
@@ -1188,7 +1187,7 @@ impl PublishCommand {
                             // login successful
                             let done_bump = bun_alloc::Arena::new();
                             let otp_done_source = logger::Source::init_path_string(b"???", response_buf.list.as_slice());
-                            let otp_done_json = match json_mod::parse_utf8(&otp_done_source, &mut throwaway_log, &done_bump) {
+                            let otp_done_json = match json_mod::parse_utf8(&otp_done_source, manager_log, &done_bump) {
                                 Ok(j) => j,
                                 Err(e) => {
                                     if e == err!(OutOfMemory) {

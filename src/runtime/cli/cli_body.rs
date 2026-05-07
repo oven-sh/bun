@@ -783,6 +783,7 @@ pub mod command {
                             ..Default::default()
                         });
                         GLOBAL_CLI_CTX = (*(&raw mut CONTEXT_DATA)).assume_init_mut();
+                        bun_options_types::Context::set_global(GLOBAL_CLI_CTX);
                     }
 
                     // If no compile_exec_argv, skip executable name if present

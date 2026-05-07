@@ -75,7 +75,7 @@ pub struct uv_stat_t {
     pub blksize: u64,
     pub blocks: u64,
     pub flags: u64,
-    pub gen: u64,
+    pub r#gen: u64,
     pub atim: uv_timespec_t,
     pub mtim: uv_timespec_t,
     pub ctim: uv_timespec_t,

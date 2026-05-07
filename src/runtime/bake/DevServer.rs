@@ -1616,11 +1616,9 @@ fn on_memory_visualizer_corked(resp: AnyResponse) {
     resp.end(code, false);
 }
 
-struct RequestEnsureRouteBundledCtx<'a> {
-    // PORT NOTE: erased to raw pointer — the inner `DevServer<'_>` lifetime is
-    // invariant, and stacking `&'a mut DevServer<'a>` collapses every borrow at
-    // the call site into `'a`, wedging borrowck. The Zig code freely re-borrowed
-    // `dev` across the ctx.
+struct RequestEnsureRouteBundledCtx {
+    // PORT NOTE: erased to raw pointer — the Zig code freely re-borrowed `dev`
+    // across the ctx; a `&mut DevServer` field would alias the caller's borrow.
     dev: *mut DevServer,
     req: ReqOrSaved,
     resp: AnyResponse,
@@ -1628,13 +1626,13 @@ struct RequestEnsureRouteBundledCtx<'a> {
     route_bundle_index: route_bundle::Index,
 }
 
-impl<'a> RequestEnsureRouteBundledCtx<'a> {
+impl RequestEnsureRouteBundledCtx {
     /// Reborrow the erased `dev` pointer.
     /// # Safety
     /// `self.dev` is set from a live `&mut DevServer` at ctx construction and
     /// outlives the ctx (the ctx is stack-local in the request handler scope).
     #[inline]
-    fn dev_mut(&mut self) -> &mut DevServer<'a> {
+    fn dev_mut(&mut self) -> &mut DevServer {
         unsafe { &mut *self.dev }
     }
 
@@ -1721,9 +1719,9 @@ impl<'a> EnsureRouteCtx for RequestEnsureRouteBundledCtx<'a> {
     fn to_dev_response(&mut self) -> DevResponse<'_> { Self::to_dev_response(self) }
     // SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
     // construction and outlives the ctx (the ctx is stack-local in the request
-    // handler scope). Lifetime erased to satisfy the trait's invariant signature.
-    fn dev(&mut self) -> &mut DevServer<'_> {
-        unsafe { ::core::mem::transmute::<&mut DevServer<'a>, &mut DevServer<'_>>(&mut *self.dev) }
+    // handler scope).
+    fn dev(&mut self) -> &mut DevServer {
+        unsafe { &mut *self.dev }
     }
     fn route_bundle_index(&self) -> route_bundle::Index { self.route_bundle_index }
 }
@@ -1742,7 +1740,7 @@ trait EnsureRouteCtx {
     fn on_failure(&mut self) -> JsResult<()>;
     fn on_plugin_error(&mut self) -> JsResult<()>;
     fn to_dev_response(&mut self) -> DevResponse<'_>;
-    fn dev(&mut self) -> &mut DevServer<'_>;
+    fn dev(&mut self) -> &mut DevServer;
     fn route_bundle_index(&self) -> route_bundle::Index;
 }
 

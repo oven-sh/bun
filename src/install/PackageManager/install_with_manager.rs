@@ -171,7 +171,7 @@ pub fn install_with_manager(
                 let lockfile: &Lockfile = unsafe { &(*mgr).lockfile };
                 let packages = lockfile.packages.slice();
                 let resolutions = packages.items_resolution();
-                let workspace_package_id = unsafe { &(*mgr).root_package_id }
+                let workspace_package_id = unsafe { &mut (*mgr).root_package_id }
                     .get(lockfile, unsafe { (*mgr).workspace_name_hash });
                 let workspace_dep_list = packages.items_dependencies()[workspace_package_id as usize];
                 let workspace_res_list = packages.items_resolutions()[workspace_package_id as usize];
@@ -198,15 +198,16 @@ pub fn install_with_manager(
                             continue;
                         }
 
-                        let mut original = original_resolution.value.npm.version;
+                        // SAFETY: `original_resolution.tag == ResolutionTag::Npm` was checked
+                        // immediately above, so the `.npm` arm of the value union is active.
+                        let mut original = unsafe { original_resolution.value.npm }.version;
                         let tag_total = original.tag.pre.len() + original.tag.build.len();
                         if tag_total > 0 {
                             // clone because don't know if lockfile buffer will reallocate
                             let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
                             let mut ptr = &mut tag_buf[..];
-                            original.tag = original_resolution
-                                .value
-                                .npm
+                            // SAFETY: same `.npm` active-arm guarantee as above.
+                            original.tag = unsafe { original_resolution.value.npm }
                                 .version
                                 .tag
                                 .clone_into(&lockfile.buffers.string_bytes, &mut ptr);
@@ -265,7 +266,10 @@ pub fn install_with_manager(
                     }
                 };
 
-                let source_copy = root_package_json_entry.source;
+                // PORT NOTE: Zig copies `Source` by value; in Rust it's not `Copy`, so
+                // clone it (cheap — `Source` is a few `Box<[u8]>` handles) so the
+                // `&mut *mgr` reborrow below doesn't conflict with the cache borrow.
+                let source_copy = root_package_json_entry.source.clone();
 
                 let mut resolver: () = ();
                 // PORT NOTE: Zig passes `manager`, `manager.log` and a fresh
@@ -302,7 +306,7 @@ pub fn install_with_manager(
                     let log = unsafe { (*mgr).log };
                     let from_lockfile: *mut Lockfile = unsafe { &mut *(*mgr).lockfile };
                     let update_requests = if unsafe { (*mgr).to_update } {
-                        Some(unsafe { &(*mgr).update_requests[..] })
+                        Some(unsafe { &(&(*mgr).update_requests)[..] })
                     } else {
                         None
                     };
@@ -367,15 +371,18 @@ pub fn install_with_manager(
 
                     // PORT NOTE: reshaped for borrowck — Zig passes `&lockfile`
                     // while also borrowing `lockfile.overrides` / `.catalogs`.
-                    // `count` only reads `lockfile.buffers.string_bytes`, so
-                    // route through a raw ptr derived first (Zig `*T` semantics).
+                    // Both `count` and the field accesses are shared reads, but
+                    // `new_dependencies` already holds `&lockfile.buffers.
+                    // dependencies`; a `&mut lockfile` would conflict. Route the
+                    // whole-struct ref through a `*const` derived from a shared
+                    // borrow so all reads share one provenance root.
                     {
-                        let lockfile_ptr: *mut Lockfile = &mut lockfile;
+                        let lockfile_ptr: *const Lockfile = &lockfile;
                         // SAFETY: `count` only reads `(*lockfile_ptr).buffers.
-                        // string_bytes`; no overlap with the disjoint
-                        // `.overrides`/`.catalogs` field reborrows.
-                        unsafe { (*lockfile_ptr).overrides.count(&mut *lockfile_ptr, builder) };
-                        unsafe { (*lockfile_ptr).catalogs.count(&mut *lockfile_ptr, builder) };
+                        // string_bytes`; the `.overrides`/`.catalogs` reborrows
+                        // are also shared, so all accesses stay SharedReadOnly.
+                        unsafe { (*lockfile_ptr).overrides.count(&*lockfile_ptr, builder) };
+                        unsafe { (*lockfile_ptr).catalogs.count(&*lockfile_ptr, builder) };
                     }
                     maybe_root.scripts.count(&lockfile.buffers.string_bytes, builder);
 
@@ -416,13 +423,15 @@ pub fn install_with_manager(
                     // PORT NOTE: reshaped for borrowck — Zig: `lockfile.overrides
                     // .clone(manager, &lockfile, manager.lockfile, builder)`
                     // borrows `manager` + `manager.lockfile` + the local
-                    // `lockfile` + a field of `lockfile`. Route through the raw
-                    // provenance roots derived above (`mgr`, `to_lockfile`).
+                    // `lockfile` + a field of `lockfile`. `new_dependencies`
+                    // already holds `&lockfile.buffers.dependencies`, so derive
+                    // a `*const` for the whole-struct read instead of `&mut`.
                     {
-                        let from_lockfile: *mut Lockfile = &mut lockfile;
+                        let from_lockfile: *const Lockfile = &lockfile;
                         // SAFETY: `clone` reads `*from_lockfile` (string_bytes)
                         // and appends into `*to_lockfile` via `builder`; the
-                        // four reborrows touch disjoint storage.
+                        // four reborrows touch disjoint storage and the
+                        // `from_lockfile` side is SharedReadOnly.
                         unsafe {
                             (*to_lockfile).overrides = (*from_lockfile).overrides.clone(
                                 &mut *mgr,
@@ -488,10 +497,10 @@ pub fn install_with_manager(
                         // `buffers.dependencies`/`resolutions` slots we write here.
                         let cloned =
                             new_dep.clone_in(unsafe { &mut *mgr }, &lockfile.buffers.string_bytes, builder)?;
-                        unsafe { (*to_lockfile).buffers.dependencies[off as usize + i] = cloned };
+                        unsafe { (&mut (*to_lockfile).buffers.dependencies)[off as usize + i] = cloned };
                         if mapping[i] != invalid_package_id {
                             unsafe {
-                                (*to_lockfile).buffers.resolutions[off as usize + i] =
+                                (&mut (*to_lockfile).buffers.resolutions)[off as usize + i] =
                                     old_resolutions[mapping[i] as usize];
                             }
                         }
@@ -540,12 +549,13 @@ pub fn install_with_manager(
                             // PORT NOTE: ArrayHashMap getOrPut semantics → entry API approximation
                             match gop {
                                 bun_collections::array_hash_map::MapEntry::Vacant(v) => {
-                                    let mut new = crate::lockfile_real::PatchedDep {
-                                        path: builder.append::<SemverString>(
-                                            value.path.slice(&lockfile.buffers.string_bytes),
-                                        ),
-                                        ..Default::default()
-                                    };
+                                    // PORT NOTE: `PatchedDep` has private padding/hash fields,
+                                    // so the `..Default::default()` struct-update form is rejected
+                                    // outside its module. Build via `default()` + field stores.
+                                    let mut new = crate::lockfile_real::PatchedDep::default();
+                                    new.path = builder.append::<SemverString>(
+                                        value.path.slice(&lockfile.buffers.string_bytes),
+                                    );
                                     new.set_patchfile_hash(None);
                                     v.insert(new);
                                     // gop.value_ptr.path = gop.value_ptr.path;
@@ -598,7 +608,7 @@ pub fn install_with_manager(
                     if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for dependency_i in 0..dependencies_len {
-                            let dependency = manager.lockfile.buffers.dependencies[dependency_i];
+                            let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
                             if all_name_hashes.contains(&dependency.name_hash) {
                                 manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
                                 if let Err(err) = enqueue_dependency_with_main(
@@ -618,7 +628,7 @@ pub fn install_with_manager(
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
                             let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
-                            let dep = manager.lockfile.buffers.dependencies[dep_id as usize];
+                            let dep = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
                             if dep.version.tag != DependencyVersionTag::Catalog {
                                 continue;
                             }
@@ -647,7 +657,7 @@ pub fn install_with_manager(
                         while counter_i < changes {
                             if mapping[counter_i as usize] == invalid_package_id {
                                 let dependency_i = counter_i + off;
-                                let dependency = manager.lockfile.buffers.dependencies[dependency_i as usize];
+                                let dependency = manager.lockfile.buffers.dependencies[dependency_i as usize].clone();
                                 let resolution = manager.lockfile.buffers.resolutions[dependency_i as usize];
                                 if let Err(err) = enqueue_dependency_with_main(
                                     manager,
@@ -710,7 +720,7 @@ pub fn install_with_manager(
             }
         };
 
-        let source_copy = root_package_json_entry.source;
+        let source_copy = root_package_json_entry.source.clone();
 
         let mut resolver: () = ();
         {

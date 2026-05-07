@@ -563,7 +563,7 @@ impl PatchTask {
                 return log.add_error_fmt_opts(
                     format_args!(
                         "{} while executing step: {}",
-                        reason.err,
+                        reason.err.name(),
                         BStr::new(reason.step.name())
                     ),
                     Default::default(),

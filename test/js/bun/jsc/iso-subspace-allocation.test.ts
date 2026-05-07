@@ -10,7 +10,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("IsoSubspace lazy init survives GC across all HeapCellType branches", async () => {
+test.concurrent("IsoSubspace lazy init survives GC across all HeapCellType branches", async () => {
   // Run in a subprocess so every class hits the cold subspaceForImpl path
   // (the test runner has already warmed most of them in this VM).
   await using proc = Bun.spawn({
@@ -95,10 +95,13 @@ test("IsoSubspace lazy init survives GC across all HeapCellType branches", async
   expect(exitCode).toBe(0);
 });
 
-test("IsoSubspace lazy init across Worker VMs (shared server slot, per-VM client slot)", async () => {
-  // Workers share the JSHeapData (server subspaces) under useGlobalGC but get
-  // their own clientSubspaces; the locked double-check in subspaceForImplSlow
-  // is what keeps that safe.
+test.concurrent("IsoSubspace lazy init across Worker VMs (per-VM cold init)", async () => {
+  // Each Worker gets its own VM and (without useGlobalGC) its own JSHeapData,
+  // so every Worker independently takes the cold path through
+  // subspaceForImplSlow for each class it allocates. This guards the slow
+  // path running on several heaps at once and the cleanup on Worker
+  // termination; the cross-VM shared-server-slot branch only applies when
+  // JSC::Options::useGlobalGC() is enabled, which Bun does not set.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -126,7 +126,7 @@ impl SSLContextCache {
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
         {
-            let _guard = self.mutex.lock();
+            let _guard = self.mutex.lock_guard();
             if let Some(entry) = self.map.get(&d) {
                 // SAFETY: map values are live heap Entries (Box::into_raw below); freed only
                 // via compact_locked / Drop, both of which hold this mutex.
@@ -146,7 +146,7 @@ impl SSLContextCache {
         // across an SSL_CTX_free that *did* tombstone would self-deadlock.
         let ctx = opts.create_ssl_context(err)?;
 
-        let _guard = self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
 
         // Capture raw self pointer before the mutable borrow of `self.map` so the
         // borrow checker doesn't see an overlapping immutable borrow at the
@@ -259,7 +259,7 @@ pub extern "C" fn bun_ssl_ctx_cache_on_free(
     // owning cache outlives every SSL_CTX it hands out (Drop clears ex_data first).
     let entry: &mut Entry = unsafe { &mut *ptr.cast::<Entry>() };
     let owner = unsafe { &*entry.owner };
-    let _guard = owner.mutex.lock();
+    let _guard = owner.mutex.lock_guard();
     entry.ctx = ptr::null_mut();
 }
 
@@ -269,7 +269,7 @@ impl Drop for SSLContextCache {
     /// dereference the freed `Entry`/map. Map itself holds no refs, so no
     /// `SSL_CTX_free` here.
     fn drop(&mut self) {
-        let _guard = self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
         for &entry in self.map.values() {
             // SAFETY: map values are live heap Entries; we hold the mutex.
             let e = unsafe { &*entry };

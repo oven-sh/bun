@@ -3096,12 +3096,10 @@ impl DevServer {
         debug_assert!(route_bundle.client_bundle.is_none());
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
-        self.graph_safety_lock.lock();
+        let _lock = self.graph_safety_lock.guard();
         // PORT NOTE: scopeguard closures capture `self` by ref, wedging borrowck for
         // the rest of the fn. Erase to a raw pointer (Zig `defer` had no aliasing check).
         let self_ptr: *mut Self = self;
-        // SAFETY: `self_ptr` is live for the entire fn body; the guard runs at scope exit.
-        let _lock = scopeguard::guard((), move |_| unsafe { (*self_ptr).graph_safety_lock.unlock() });
 
         // Prepare bitsets
         // PERF(port): was stack-fallback (65536)
@@ -3112,7 +3110,7 @@ impl DevServer {
         // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
         // the HMR pipeline. We must leave them cleared on every exit path.
         // SAFETY: see `self_ptr` SAFETY above.
-        let _reset = scopeguard::guard((), move |_| unsafe { (*self_ptr).client_graph.reset() });
+        scopeguard::defer! { unsafe { (*self_ptr).client_graph.reset() } };
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindClientModules)?;
 
         let mut react_fast_refresh_id: &[u8] = b"";
@@ -3146,7 +3144,8 @@ impl DevServer {
         match self.source_maps.put_or_increment_ref_count(script_id, 1)? {
             source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
                 // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
-                let guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).source_maps.unref(script_id) });
+                // errdefer: unref on early-`?`; disarmed via `into_inner` on success.
+                let guard = scopeguard::guard(script_id, move |id| unsafe { (*self_ptr).source_maps.unref(id) });
                 gts.clear_and_free();
                 // PERF(port): was ArenaAllocator scratch — `take_source_map`
                 // allocates internally with the global allocator in the port.
@@ -3211,8 +3210,7 @@ impl DevServer {
                 let written = buf_len - cursor.len();
                 &buf[..written]
             };
-            let s = BunString::clone_utf8(path);
-            let _deref = scopeguard::guard((), |_| s.deref());
+            let s = OwnedString::new(BunString::clone_utf8(path));
             arr.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
         }
         Ok(arr)
@@ -3287,8 +3285,7 @@ impl DevServer {
         let names = self.server_graph.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
             let mut buf = paths::path_buffer_pool::get();
-            let s = BunString::clone_utf8(self.relative_path(&mut *buf, &names[item.get() as usize]));
-            let _deref = scopeguard::guard((), |_| s.deref());
+            let s = OwnedString::new(BunString::clone_utf8(self.relative_path(&mut *buf, &names[item.get() as usize])));
             arr.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
         }
         Ok(arr)
@@ -3383,7 +3380,7 @@ pub fn finalize_bundle(
     // (Zig `defer` had no aliasing analysis).
     let dev_ptr = dev as *mut DevServer;
     let bv2_ptr = bv2 as *mut BundleV2;
-    let _outer_defer = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         // SAFETY: `dev`/`bv2` are `&mut` params; both outlive this fn-scoped guard.
         let dev = unsafe { &mut *dev_ptr };
         let bv2 = unsafe { &mut *bv2_ptr };
@@ -3424,7 +3421,7 @@ pub fn finalize_bundle(
         if let Some(server) = dev.server.as_mut() {
             server.on_static_request_complete();
         }
-    });
+    };
 
     // PORT NOTE: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
@@ -3440,8 +3437,8 @@ pub fn finalize_bundle(
             unsafe { &mut *current_bundle_ptr }
         };
     }
-    let _requests_defer = scopeguard::guard((), move |_| {
-        // SAFETY: see `current_bundle!` SAFETY above; `_requests_defer` runs
+    scopeguard::defer! {
+        // SAFETY: see `current_bundle!` SAFETY above; this `defer!` runs
         // before `_outer_defer` (LIFO), so `current_bundle_ptr` is still live.
         let current_bundle = unsafe { &mut *current_bundle_ptr };
         if !current_bundle.requests.first.is_null() {
@@ -3457,11 +3454,9 @@ pub fn finalize_bundle(
             req.abort();
             req.deref_();
         }
-    });
+    };
 
-    dev.graph_safety_lock.lock();
-    // SAFETY: `dev_ptr` is live for the entire fn body; the guard runs at scope exit.
-    let _lock = scopeguard::guard((), move |_| unsafe { (*dev_ptr).graph_safety_lock.unlock() });
+    let _lock = dev.graph_safety_lock.guard();
 
     // PORT NOTE: `js_pseudo_chunk()`/`css_chunks()`/`html_chunks()` each take
     // `&mut DevServerOutput`, so calling more than one wedges borrowck. Split
@@ -3768,10 +3763,12 @@ pub fn finalize_bundle(
                 // while the cleanup guard is armed (Zig `defer` had no aliasing check).
                 let entry_ptr: *mut source_map_store::Entry = &mut source_map_entry;
                 // SAFETY: `source_map_entry` is a stack local that outlives this guard.
-                let _cleanup = scopeguard::guard((), move |_| unsafe {
-                    (*entry_ptr).ref_count = 0;
-                    (*entry_ptr).deinit();
-                });
+                scopeguard::defer! {
+                    unsafe {
+                        (*entry_ptr).ref_count = 0;
+                        (*entry_ptr).deinit();
+                    }
+                };
 
                 let json_data = source_map_entry.render_json(
                     dev,
@@ -4122,7 +4119,7 @@ pub fn finalize_bundle(
             unsafe { dev.inspector() }.map(|a| a as *mut _);
         if current_bundle!().promise.strong.has_value() {
             // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
-            let _reset = scopeguard::guard((), move |_| unsafe { (*current_bundle_ptr).promise.reset() });
+            scopeguard::defer! { unsafe { (*current_bundle_ptr).promise.reset() } };
             current_bundle!()
                 .promise
                 .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
@@ -4153,7 +4150,7 @@ pub fn finalize_bundle(
             let req = unsafe { (*node).data.assume_init_mut() };
             let req_ptr = req as *mut DeferredRequest;
             // SAFETY: the node stays alive until `deref_()` releases it below.
-            let _deref = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref_() });
+            scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
@@ -4295,7 +4292,7 @@ pub fn finalize_bundle(
     dev.graph_safety_lock.unlock();
     // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
     // so the outer unlock guard sees a locked state again.
-    let _relock = scopeguard::guard((), move |_| unsafe { (*dev_ptr).graph_safety_lock.lock() });
+    scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
     // Set all the deferred routes to the .loaded state up front
     {
@@ -4312,13 +4309,12 @@ pub fn finalize_bundle(
 
     if current_bundle!().promise.strong.has_value() {
         // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
-        let _deinit = scopeguard::guard((), move |_| unsafe { (*current_bundle_ptr).promise.deinit_idempotently() });
+        scopeguard::defer! { unsafe { (*current_bundle_ptr).promise.deinit_idempotently() } };
         current_bundle!().promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
         // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
         let vm = unsafe { &*dev.vm };
         // SAFETY: vm.event_loop() returns a valid `*mut EventLoop` for the VM lifetime.
-        unsafe { &mut *vm.event_loop() }.enter();
-        let _exit = scopeguard::guard((), |_| unsafe { &mut *vm.event_loop() }.exit());
+        let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
         current_bundle!().promise.strong.resolve(unsafe { &*vm.global }, JSValue::TRUE)?;
     }
 
@@ -4328,7 +4324,7 @@ pub fn finalize_bundle(
         let req = unsafe { (*node).data.assume_init_mut() };
         let req_ptr = req as *mut DeferredRequest;
         // SAFETY: the node stays alive until `deref_()` releases it below.
-        let _deref = scopeguard::guard((), move |_| unsafe { (*req_ptr).deref_() });
+        scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
         rb.server_state = route_bundle::State::Loaded;
@@ -4805,8 +4801,7 @@ impl DevServer {
             let failures_encoded = &buf[failures_start_buf_pos..];
             // base64 output is pure ASCII so a UTF-8 borrow is byte-identical to
             // Zig's `BunString.initLatin1OrASCIIView`.
-            let s = BunString::borrow_utf8(failures_encoded);
-            let _deref = scopeguard::guard((), |_| s.deref());
+            let s = OwnedString::new(BunString::borrow_utf8(failures_encoded));
             agent.notify_bundle_failed(self.inspector_server_id, &s);
         }
         Ok(())
@@ -4912,8 +4907,7 @@ impl DevServer {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
                 let vm = unsafe { &*self.vm };
                 // SAFETY: event_loop() returns *mut EventLoop owned by vm; valid for vm lifetime
-                unsafe { (*vm.event_loop()).enter() };
-                let _exit = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
+                let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
                 r.promise.reject(global, Ok(response.to_js(global)))?;
             }
         }
@@ -5084,7 +5078,11 @@ impl DevServer {
     pub fn emit_visualizer_message_if_needed(&mut self) {
         #[cfg(not(feature = "bake_debugging_features"))]
         return;
-        let _emit_mem = scopeguard::guard((), |_| self.emit_memory_visualizer_message_if_needed());
+        // PORT NOTE: erase `self` to a raw ptr so the `defer!` doesn't pin a
+        // unique borrow for the rest of the fn (Zig `defer` had no aliasing).
+        let self_ptr: *mut Self = self;
+        // SAFETY: `self_ptr` points to `*self`, live for the fn body.
+        scopeguard::defer! { unsafe { (*self_ptr).emit_memory_visualizer_message_if_needed() } };
         if self.emit_incremental_visualizer_events == 0 {
             return;
         }
@@ -5463,7 +5461,7 @@ impl DevServer {
     ) {
         debug_assert!(self.magic == Magic::Valid);
         debug_log!("onFileUpdate start");
-        let _end = scopeguard::guard((), |_| debug_log!("onFileUpdate end"));
+        scopeguard::defer! { debug_log!("onFileUpdate end") };
 
         let mut slice = watchlist.slice();
         // PORT NOTE: SoA columns are disjoint, but `items_mut` borrows the whole
@@ -5489,11 +5487,12 @@ impl DevServer {
         // aliasing check).
         let self_ptr: *mut Self = self;
         // SAFETY: `self_ptr` is live for the entire fn body; guards run at scope exit.
-        let _release =
-            scopeguard::guard((), move |_| unsafe { (*self_ptr).watcher_atomics.watcher_release_and_submit_event(ev_ptr) });
+        scopeguard::defer! {
+            unsafe { (*self_ptr).watcher_atomics.watcher_release_and_submit_event(ev_ptr) }
+        };
 
         // SAFETY: see `self_ptr` SAFETY above.
-        let _flush = scopeguard::guard((), move |_| unsafe { (*self_ptr).bun_watcher.flush_evictions() });
+        scopeguard::defer! { unsafe { (*self_ptr).bun_watcher.flush_evictions() } };
 
         for event in events {
             // TODO: why does this out of bounds when you delete every file in the directory?
@@ -6288,8 +6287,7 @@ fn bundle_new_route_js_function_impl(
     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
     let vm = unsafe { &*dev.vm };
     // SAFETY: `event_loop()` returns a stable raw pointer; deref for &mut.
-    unsafe { (*vm.event_loop()).enter() };
-    let _exit = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
+    let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
     let _ = dev;
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
@@ -6414,8 +6412,7 @@ fn new_route_params_for_bundle_promise_for_js(
     let route_bundle_index =
         route_bundle::Index::init(u32::try_from(route_bundle_index_js.to_int32()).unwrap());
 
-    let url = url_js.to_bun_string(global)?;
-    let _deref = scopeguard::guard((), |_| url.deref());
+    let url = OwnedString::new(url_js.to_bun_string(global)?);
     let url_utf8 = url.to_utf8();
 
     new_route_params_for_bundle_promise(dev, route_bundle_index, url_utf8.slice())

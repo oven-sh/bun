@@ -1286,9 +1286,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 if res.tag != bun_install::ResolutionTag::Git {
                                     continue;
                                 }
+                                // SAFETY: `res.tag == Git` checked just above —
+                                // `value.git` is the active union arm.
+                                let res_git = unsafe { &res.value.git };
                                 let checkout_id = Task::Id::for_git_checkout(
-                                    manager.lockfile.str(&res.value.git.repo),
-                                    manager.lockfile.str(&res.value.git.resolved),
+                                    manager.lockfile.str(&res_git.repo),
+                                    manager.lockfile.str(&res_git.resolved),
                                 );
                                 drained_any = true;
                                 C::on_package_download_error(
@@ -1306,9 +1309,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // above) — fall back to the clone task's own
                             // resolution so the originating entry is still
                             // released.
+                            // SAFETY: `clone.res.tag == Git` — git-clone tasks are
+                            // only enqueued for git resolutions; `value.git` is
+                            // the active union arm.
+                            let resolved =
+                                unsafe { &clone.res.value.git.resolved };
                             let checkout_id = Task::Id::for_git_checkout(
                                 url,
-                                manager.lockfile.str(&clone.res.value.git.resolved),
+                                manager.lockfile.str(resolved),
                             );
                             C::on_package_download_error(
                                 extract_ctx,
@@ -1341,7 +1349,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(&manager.lockfile.buffers.string_bytes);
 
-                    let git = &clone.res.value.git;
+                    // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
+                    // enqueued for git resolutions; `value.git` is the active arm.
+                    let git = unsafe { &clone.res.value.git };
                     let committish = git.committish.slice(&manager.lockfile.buffers.string_bytes);
                     let repo = git.repo.slice(&manager.lockfile.buffers.string_bytes);
 
@@ -1410,13 +1420,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task.err.unwrap_or(bun_core::err!("Failed"));
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
+                        // SAFETY: `resolution.tag == Git` — git-checkout tasks are
+                        // only enqueued for git resolutions; `value.git` is the
+                        // active union arm.
+                        let repo = unsafe { &resolution.value.git.repo };
                         C::on_package_download_error(
                             extract_ctx,
                             task.id,
                             alias.slice(),
                             resolution,
                             err,
-                            manager.lockfile.str(&resolution.value.git.repo),
+                            manager.lockfile.str(repo),
                         );
                     } else {
                         let _ = unsafe { &mut *manager.log }.add_error_fmt(

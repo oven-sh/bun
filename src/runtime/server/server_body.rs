@@ -651,7 +651,7 @@ impl AnyRoute {
         let Some(index) = argument.get_optional_slice(init_ctx.global, b"index")? else {
             return Ok(None);
         };
-        let _index_guard = scopeguard::guard((), |_| index.deinit());
+        // `ZigStringSlice` impls `Drop` — freed at scope end.
 
         let Some(files) = argument.get_array(init_ctx.global, b"files")? else { return Ok(None); };
         let mut iter = files.array_iterator(init_ctx.global)?;
@@ -3441,11 +3441,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         let ctx = prepared.ctx;
         let request_object_ptr: *mut Request = prepared.request_object;
-        let _detach_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             // uWS request will not live longer than this function
             // SAFETY: request_object outlives this stack frame (boxed on the request).
             unsafe { (*request_object_ptr).request_context.detach_request() };
-        });
+        }
 
         RequestCtxOps::on_response(ctx, self, prepared.js_request, response_value);
         // Reference in the stack here in case it is not for whatever reason
@@ -3575,13 +3575,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
 
         let is_stack = matches!(req, SavedRequestUnion::Stack(_));
-        let _detach_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             if is_stack {
                 // uWS request will not live longer than this function
                 // SAFETY: see request_object_ptr above.
                 unsafe { (*request_object_ptr).request_context.detach_request() };
             }
-        });
+        }
 
         // SAFETY: ctx_ptr/self_ptr are live for the request's duration; the
         // borrows held by `prepared` were dropped above.
@@ -3677,12 +3677,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         self.on_pending_request();
 
-        #[cfg(debug_assertions)]
-        unsafe { (*self.vm.event_loop()).debug.enter() };
-        let _dbg_guard = scopeguard::guard((), |_| {
-            #[cfg(debug_assertions)]
-            unsafe { (*self.vm.event_loop()).debug.exit() };
-        });
+        // SAFETY: vm.event_loop() returns the live VM-owned `*mut EventLoop`.
+        let _dbg_guard = unsafe {
+            jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!((*self.vm.event_loop()).debug))
+        };
         ReqLike::set_yield(req, false);
         RespLike::timeout(resp, self.config.idle_timeout);
 
@@ -3962,11 +3960,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Err(err) => global.take_exception(err),
         };
         let request_object_ptr: *mut Request = request_object;
-        let _detach_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             // uWS request will not live longer than this function
             // SAFETY: see request_object above.
             unsafe { (*request_object_ptr).request_context.detach_request() };
-        });
+        }
 
         // SAFETY: self_ptr is live for the request's duration; the &mut held
         // by ctx.create's BACKREF aliases disjoint fields.
@@ -4758,9 +4756,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Err(_) => return, // TODO: properly propagate exception upwards
             };
             // SAFETY: bun_vm()/event_loop() return live raw pointers tied to the global.
-            let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
-            event_loop.enter();
-            let _exit_guard = scopeguard::guard((), |_| event_loop.exit());
+            let _scope = unsafe { jsc::event_loop::EventLoop::enter_scope((*global.bun_vm()).event_loop()) };
             if let Err(err) = callback.call(
                 global,
                 JSValue::UNDEFINED,
@@ -4869,9 +4865,7 @@ impl ServerAllConnectionsClosedTask {
         // SAFETY: ptr was Box::into_raw'd in schedule()
         let this = unsafe { Box::from_raw(this) };
         let global_object = this.global_object;
-        let tracker = this.tracker;
-        tracker.will_dispatch(global_object);
-        let _guard = scopeguard::guard((), |_| tracker.did_dispatch(global_object));
+        let _scope = this.tracker.dispatch(global_object);
 
         let mut promise = this.promise;
         // promise drops at scope end

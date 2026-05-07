@@ -98,7 +98,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         print_buf.clear();
 
         headers.count("Connection", "keep-alive");
-        headers.count("Host", &registry.url.host);
+        headers.count("Host", registry_url.host);
     }
 
     headers.allocate()?;
@@ -129,26 +129,27 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         print_buf.clear();
 
         headers.append("Connection", "keep-alive");
-        headers.append("Host", &registry.url.host);
+        headers.append("Host", registry_url.host);
     }
 
     write!(
         &mut print_buf,
         "{}/-/whoami",
-        bstr::BStr::new(strings::without_trailing_slash(&registry.url.href)),
+        bstr::BStr::new(strings::without_trailing_slash(registry_url.href)),
     )
     .unwrap();
 
     let mut response_buf = MutableString::init(1024)?;
 
-    // PORT NOTE: Zig used `allocPrint` with `default_allocator` and never freed
-    // (Scope/AsyncHTTP store `URL<'static>`); leak to obtain `'static`.
-    let url_buf: &'static [u8] = Box::leak(core::mem::take(&mut print_buf).into_boxed_slice());
-    let url = URL::parse(url_buf);
+    // `print_buf` stays live on this frame until after `req.send_sync()`
+    // returns (Zig: `defer print_buf.deinit()`, npm.zig:25). `init_sync`
+    // borrows the URL/header buffers for the duration of the synchronous
+    // request only.
+    let url = URL::parse(&print_buf);
 
     // SAFETY: `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
-    // allocation owned for the rest of the process (never `deinit()`-ed in Zig).
-    let header_buf: &'static [u8] = match headers.content.ptr {
+    // allocation; `headers` outlives `req`.
+    let header_buf: &[u8] = match headers.content.ptr {
         Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
         None => b"",
     };
@@ -291,9 +292,7 @@ pub mod registry {
         //  :username
         //  :_password
         //  :_auth
-        // TODO(b2): switch to OwnedURL once bun_url exposes owned variant; 'static
-        // is sound here because Scope owns its href via leaked allocation in Zig.
-        pub url: URL<'static>,
+        pub url: OwnedURL,
         pub url_hash: u64,
         pub token: Box<[u8]>,
 

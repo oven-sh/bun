@@ -3726,8 +3726,12 @@ impl Blob {
         blob.content_type_allocated = content_type_was_allocated;
         blob.content_type_was_set = self.content_type_was_set || content_type_was_allocated;
 
-        // PORT NOTE: `JsClass::to_js` heap-promotes via `Blob::new` internally.
-        blob.to_js(global_this)
+        let ptr = Blob::new(blob);
+        // SAFETY: `ptr` just came from `Box::into_raw` in `Blob::new`. Explicit
+        // `&mut *` forces the inherent `Blob::to_js(&mut self)` (which calls
+        // `calculate_estimated_byte_size` and routes S3 blobs to
+        // `S3File.toJSUnchecked`) over the by-value `JsClass::to_js`.
+        unsafe { (&mut *ptr).to_js(global_this) }
     }
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
@@ -3742,8 +3746,10 @@ impl Blob {
         let args = &mut arguments_.ptr[..];
 
         if self.size == 0 {
-            // PORT NOTE: `JsClass::to_js` heap-promotes via `Blob::new` internally.
-            return Ok(Blob::init_empty(global_this).to_js(global_this));
+            let ptr = Blob::new(Blob::init_empty(global_this));
+            // SAFETY: `ptr` just came from `Box::into_raw` in `Blob::new`; force
+            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
+            return Ok(unsafe { (&mut *ptr).to_js(global_this) });
         }
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.

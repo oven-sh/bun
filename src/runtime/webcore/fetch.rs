@@ -1844,17 +1844,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let _ = S3StreamWrapper::resolve(result, ctx as *mut S3StreamWrapper<'static>);
             }
             // Zig: `credentialsWithOptions.credentials.dupe()` — heap-allocate a
-            // fresh intrusive-refcounted copy. `upload_stream` calls
-            // `IntrusiveRc::init_ref(this)` and stores it in the long-lived
-            // `MultiPartUpload`, so passing our stack-local `credentials_with_options.credentials`
-            // would dangle once this block returns.
-            let creds_heap: *mut bun_s3_signing::S3Credentials =
-                credentials_with_options.credentials.dupe().into_raw();
+            // fresh intrusive-refcounted copy. `upload_stream` adopts the ref by
+            // value (no extra bump) and the MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
-                // SAFETY: `creds_heap` is a fresh `Box::into_raw`'d S3Credentials
-                // (ref=1); `upload_stream` bumps the refcount and the
-                // MultiPartUpload derefs on completion.
-                unsafe { &mut *creds_heap },
+                credentials_with_options.credentials.dupe(),
                 s3_path,
                 readable_stream.get(global_this).unwrap(),
                 global_this,

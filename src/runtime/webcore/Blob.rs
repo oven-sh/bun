@@ -4261,11 +4261,8 @@ pub fn write_file_with_source_destination(
                         ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as crate::webcore::blob::SizeType)?,
                         ctx,
                     )? {
-                        // SAFETY: heap-dupe (ref=1); `upload_stream` bumps via
-                        // `IntrusiveRc::init_ref` and the MultiPartUpload derefs.
-                        let creds_heap = aws_options.credentials.dupe().into_raw();
                         return Ok(s3_client::upload_stream(
-                            unsafe { &mut *creds_heap },
+                            aws_options.credentials.dupe(),
                             s3.path(),
                             stream,
                             ctx,
@@ -4347,11 +4344,8 @@ pub fn write_file_with_source_destination(
                     ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as crate::webcore::blob::SizeType)?,
                     ctx,
                 )? {
-                    // SAFETY: heap-dupe (ref=1); `upload_stream` bumps via
-                    // `IntrusiveRc::init_ref` and the MultiPartUpload derefs.
-                    let creds_heap = aws_options.credentials.dupe().into_raw();
                     return Ok(s3_client::upload_stream(
-                        unsafe { &mut *creds_heap },
+                        aws_options.credentials.dupe(),
                         s3.path(),
                         stream,
                         ctx,
@@ -4557,11 +4551,8 @@ pub fn write_file_internal(
                             }
                             let proxy_owned = http_proxy_href(global_this);
                             let proxy_url = proxy_owned.as_deref();
-                            // SAFETY: heap-dupe (ref=1); `upload_stream` bumps via
-                            // `IntrusiveRc::init_ref` and the MultiPartUpload derefs.
-                            let creds_heap = aws_options.credentials.dupe().into_raw();
                             return Ok(ControlFlow::Break(s3_client::upload_stream(
-                                unsafe { &mut *creds_heap },
+                                aws_options.credentials.dupe(),
                                 s3.path(),
                                 readable,
                                 global_this,

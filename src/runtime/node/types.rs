@@ -111,7 +111,7 @@ impl BlobOrStringOrBuffer {
                 // SAFETY: `as_::<Blob>` returns a live JSC-owned `*mut Blob`.
                 let blob = unsafe { &mut *blob_ptr };
                 if allow_file && blob.needs_to_read_file() {
-                    return Err(global.throw_invalid_arguments("File blob cannot be used here"));
+                    return Err(global.throw_invalid_arguments(format_args!("File blob cannot be used here")));
                 }
 
                 if is_async {
@@ -182,9 +182,9 @@ impl BlobOrStringOrBuffer {
                             return Ok(Some(Self::Blob(blob)));
                         }
 
-                        return Err(global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "Only buffered Request/Response bodies are supported for now.",
-                        ));
+                        )));
                     }
 
                     if let Some(response_ptr) = value.as_::<Response>() {
@@ -199,9 +199,9 @@ impl BlobOrStringOrBuffer {
                             return Ok(Some(Self::Blob(blob)));
                         }
 
-                        return Err(global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "Only buffered Request/Response bodies are supported for now.",
-                        ));
+                        )));
                     }
                 }
             }
@@ -365,10 +365,14 @@ impl StringOrBuffer {
                 if !allow_string_object && str_type != JSType::String {
                     return Ok(None);
                 }
-                let mut str = bun_str::String::from_js(value, global)?;
-                scopeguard::defer! { str.deref(); }
+                // PORT NOTE: reshaped for borrowck — `scopeguard::defer!` would borrow
+                // `str` immutably for the whole scope, blocking `to_slice(&mut self)`.
+                let mut str = scopeguard::guard(
+                    bun_str::String::from_js(value, global)?,
+                    |s| s.deref(),
+                );
                 if is_async {
-                    let mut possible_clone = str;
+                    let mut possible_clone = *str;
                     let mut sliced = possible_clone.to_thread_safe_slice();
                     sliced.report_extra_memory(global.vm());
 

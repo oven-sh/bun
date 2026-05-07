@@ -2152,6 +2152,7 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_perf",
+ "bun_resolver",
  "bun_sourcemap",
  "bun_string",
  "bun_sys",

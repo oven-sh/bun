@@ -116,7 +116,7 @@ const BANS = `${LAYERING}
 - Use docs/PORTING.md conventions.
 `;
 
-const HARD = `**HARD RULES:**${BANS}\nNever git reset/checkout/stash/rebase/pull. Never edit .zig. Commit only: \`git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-e(port): <file>"\`. NO push.`;
+const HARD = `**HARD RULES:**${BANS}\n**NEVER run cargo yourself** — read /tmp/cargo-check.log (daemon). Never git reset/checkout/stash/rebase/pull. Never edit .zig. Commit only: \`git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-e(port): <file>"\`. NO push.`;
 
 let history = [];
 for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -125,7 +125,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     `Survey: find ALL files with slop OR compile errors. Repo /root/bun-5. Shard ${SHARD}/${NSHARDS} round ${round}.
 
 1. Slop scan: \`grep -rln 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|#!\\[cfg(any())\\]\\|mod phase_a_draft\\|mod _phase_a_draft\\|mod _jsc_gated\\|mod _gated\\|opaque_default!\\|stub_ty!' src/ --include='*.rs'\` → for each file count each pattern.
-2. Compile errors: \`cargo check --workspace --keep-going > /tmp/pp-s${SHARD}-r${round}.log 2>&1\`; per-file: \`grep -oP '\\-\\-> \\Ksrc/[^:]+\\.rs' | sort | uniq -c\`
+2. Compile errors: **DO NOT run cargo** — a daemon writes \`/tmp/cargo-check.log\` continuously. Read it: \`cat /tmp/cargo-check.log\`. Per-file: \`grep -oP '\\-\\-> \\Ksrc/[^:]+\\.rs' /tmp/cargo-check.log | sort | uniq -c\`. (If log missing or stale (\`/tmp/cargo-check.mtime\` > 120s old), fall back to \`cargo check --workspace --keep-going\` once.)
 3. total_slop = sum(todos+unimpls+gates+has_draft). total_errs = grep -c '^error'.
 
 Return {files:[{file,todos,unimpls,gates,has_draft,compile_errs}], total_slop, total_errs}. DO NOT edit src/.`,
@@ -169,7 +169,7 @@ State: ${f.compile_errs || 0} compile errors, ${f.todos || 0} todo!(), ${f.unimp
 4. Missing upstream symbol (no cycle) → port it in its .rs file from its .zig. Transitively.
 5. Fix compile errors with REAL fixes. Never opaque-stub a type — MOVE it.
 6. After: \`grep -c 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|phase_a_draft\\|opaque_default!\\|stub_ty!' ${f.file}\` → MUST be 0.
-7. \`cargo check -p <crate>\` → 0 errors in your file.
+7. **DO NOT run cargo** — read \`/tmp/cargo-check.log\` (daemon-maintained). \`grep -A8 '\\-\\-> ${f.file}:' /tmp/cargo-check.log\` → if errors in YOUR file, fix them. The daemon refreshes every ~5-30s.
 8. Commit.
 
 ${HARD}

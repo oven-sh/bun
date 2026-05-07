@@ -81,7 +81,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         // PORT NOTE: `Strong::swap()` ties the returned `&mut JSPromise` to
         // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
         // Decay to a raw pointer so `handler` can be dropped before resolution.
-        let promise: *mut JSPromise = handler.promise.swap();
+        let promise: *mut jsc::JSPromise = handler.promise.swap();
         let mut blob = core::mem::take(&mut handler.context);
         // `context` was populated via `this.dupe()` in doReadFile(), so it
         // owns a store ref, a name ref, and possibly a content_type copy.

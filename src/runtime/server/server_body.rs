@@ -18,7 +18,7 @@ use bun_jsc::{
     VirtualMachine,
 };
 use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Body, CookieMap, FetchHeaders, Request, Response};
-use crate::webcore::BlobExt as _;
+use crate::webcore::BlobExt;
 use crate::webcore::fetch as Fetch;
 use bun_jsc::Debugger::{AsyncTaskTracker, DebuggerId};
 use bun_jsc::{StringJsc as _, ZigStringJsc as _};
@@ -39,7 +39,6 @@ use crate::bake::dev_server::{self as dev_server_mod, DevServer};
 use crate::bake::framework_router as FrameworkRouter;
 use bun_resolver::fs::FileSystem;
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::BlobExt as _;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_jsc::uuid::UUID;
 use bun_wyhash::hash;
@@ -1811,7 +1810,8 @@ where
 
         let cookies_to_write = upgrader.cookies.take();
         scopeguard::defer! {
-            if let Some(c) = &cookies_to_write { c.deref() }
+            // SAFETY: `cookies` is a +1-ref C++ CookieMap; release it.
+            if let Some(c) = cookies_to_write { unsafe { (*c).deref() } }
         };
 
         // Write status, custom headers, and cookies in one place
@@ -1821,8 +1821,9 @@ where
                 // SAFETY: h is a live FetchHeaders (see above).
                 unsafe { (*h).to_uws_response(ResponseKind::from(SSL, false), resp.socket() as *mut c_void) };
             }
-            if let Some(c) = &cookies_to_write {
-                c.write(global, ResponseKind::from(SSL, false), resp.socket() as *mut c_void)?;
+            if let Some(c) = cookies_to_write {
+                // SAFETY: c is a live +1-ref CookieMap (taken from upgrader).
+                unsafe { (*c).write(global, ResponseKind::from(SSL, false), resp.socket() as *mut c_void)? };
             }
         }
 
@@ -1858,7 +1859,10 @@ where
             sec_websocket_key_str.slice(),
             proto_str.slice(),
             ext_str.slice(),
-            upgrade_ctx,
+            // SAFETY: `upgrade_ctx` was checked non-null / non-sentinel above
+            // (server.zig:899); the uWS HttpContext owns it for the request's
+            // duration.
+            Some(unsafe { &mut *upgrade_ctx }),
         );
 
         Ok(JSValue::TRUE)
@@ -2168,7 +2172,7 @@ where
                     port = u16::try_from(listener.get_local_port()).unwrap();
 
                     let mut buf = [0u8; 64];
-                    let Some(address_bytes) = listener.socket::<SSL>().local_address(&mut buf) else {
+                    let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
                         return Ok(JSValue::NULL);
                     };
                     let mut addr = match SocketAddress::init(address_bytes, port) {
@@ -2229,7 +2233,7 @@ where
             if let Some(listener) = self.listener {
                 let mut buf = [0u8; 1024];
                 // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-                if let Some(addr) = unsafe { &mut *listener }.socket::<SSL>().remote_address(&mut buf[..1024]) {
+                if let Some(addr) = unsafe { &mut *listener }.socket().remote_address(&mut buf[..1024]) {
                     if !addr.is_empty() {
                         return jsc::bun_string_jsc::create_utf8_for_js(global, addr);
                     }

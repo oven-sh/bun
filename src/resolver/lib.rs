@@ -314,6 +314,10 @@ pub mod fs {
 
     /// Port of `PathName` in `fs.zig`. Lifetime-generic over the input path
     /// (Zig used implicit borrow; Phase-A draft transmuted to `'static`).
+    // `#[repr(C)]`: field-identical mirror of `bun_logger::fs::PathName` /
+    // `bun_paths::fs::PathName`; `bun_bundler::bundle_v2` bit-casts between
+    // them pending unification, so layout must be pinned.
+    #[repr(C)]
     #[derive(Clone, Copy, Default)]
     pub struct PathName<'a> {
         pub base: &'a [u8],

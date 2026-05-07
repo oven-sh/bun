@@ -944,7 +944,7 @@ impl Package<u64> {
             package.bin = package_version.bin.clone_with_buffers(
                 &manifest.string_buf,
                 &manifest.extern_strings_bin_entries,
-                extern_strings_list.as_slice(),
+                extern_old_len as u32,
                 extern_strings_slice,
                 &mut string_builder,
             );

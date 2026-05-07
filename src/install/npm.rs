@@ -760,14 +760,17 @@ impl PackageVersion {
     }
 }
 
-// TODO(b2): re-enable once Bin is the real #[repr(C)] layout (currently stub)
-
-// PORT NOTE(phase-d): the Zig layout is 240 bytes; the Rust `Bin` stub is not
-// yet `#[repr(C)]`-faithful, so the size differs. The on-disk serialiser
-// encodes the *actual* `size_of::<PackageVersion>()`, so reads/writes stay
-// self-consistent — only cross-runtime cache compatibility is affected.
-// Tracked in `padding_checker`.
-const _: usize = core::mem::size_of::<PackageVersion>();
+// Layout pin (mirrors Zig `comptime { if (@sizeOf(Npm.PackageVersion) != 240) @compileError(...) }`).
+// `PackageVersion` is `std.mem.sliceAsBytes`-serialised into the on-disk
+// `.npm` manifest cache, so its size and field offsets are an ABI contract
+// with every Zig-built Bun that wrote a cache entry. A mismatch here means a
+// cross-runtime cache read will mis-slice — fail loudly at compile time
+// instead. (Full per-type asserts live in `padding_checker::layout_asserts`.)
+const _: () = assert!(
+    core::mem::size_of::<PackageVersion>() == 240,
+    "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
+     bump PackageManifest::Serializer::VERSION if intentional",
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 

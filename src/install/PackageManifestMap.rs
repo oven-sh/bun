@@ -3,9 +3,9 @@ use bun_collections::HashMap;
 // .entry() returns the std Entry, not bun_collections::hash_map::Entry.
 use std::collections::hash_map::Entry;
 use bun_semver::string::Builder as StringBuilder;
+use bun_sys::Fd;
 
 use crate::npm;
-use crate::PackageManager;
 use crate::PackageNameHash;
 
 #[derive(Default)]
@@ -53,27 +53,56 @@ pub enum CacheBehavior {
     LoadFromMemoryFallbackToDisk,
 }
 
+/// By-value snapshot of the `PackageManager` fields the disk-fallback path of
+/// [`PackageManifestMap::by_name_hash_allow_expired`] reads.
+///
+/// Zig threads `pm: *PackageManager` and reads these directly. In Rust every
+/// caller is `pm.manifests.by_name…(pm, …)`, so accepting `&mut PackageManager`
+/// (or `&mut *raw`) would alias the `&mut self` receiver — Stacked-Borrows UB
+/// regardless of which fields the body touches. Capturing the four scalars by
+/// value lets callers split `&mut pm.manifests` from `&pm.lockfile` /
+/// `&pm.options` with safe disjoint-field borrows and keeps this map free of a
+/// `PackageManager` dependency.
+///
+/// Construct via `PackageManager::manifest_disk_cache_ctx`.
+#[derive(Clone, Copy)]
+pub struct DiskCacheCtx {
+    pub enable_manifest_cache: bool,
+    pub enable_manifest_cache_control: bool,
+    /// `pm.getCacheDirectory()` — pre-opened so the lookup never needs `&mut
+    /// PackageManager`. `None` iff `enable_manifest_cache` is false (the only
+    /// branch that reads it is gated on that flag).
+    pub cache_directory: Option<Fd>,
+    pub timestamp_for_manifest_cache_control: u32,
+}
+
+impl DiskCacheCtx {
+    /// Context for the [`CacheBehavior::LoadFromMemory`] path, which never
+    /// reads any of these fields.
+    pub const MEMORY_ONLY: Self = Self {
+        enable_manifest_cache: false,
+        enable_manifest_cache_control: false,
+        cache_directory: None,
+        timestamp_for_manifest_cache_control: 0,
+    };
+}
+
 impl PackageManifestMap {
-    /// # Safety
-    /// See [`by_name_hash_allow_expired`](Self::by_name_hash_allow_expired).
-    pub unsafe fn by_name(
+    pub fn by_name(
         &mut self,
-        pm: *mut PackageManager,
+        ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
         name: &[u8],
         cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        // SAFETY: forwarded to caller.
-        unsafe {
-            self.by_name_hash(
-                pm,
-                scope,
-                StringBuilder::string_hash(name),
-                cache_behavior,
-                needs_extended_manifest,
-            )
-        }
+        self.by_name_hash(
+            ctx,
+            scope,
+            StringBuilder::string_hash(name),
+            cache_behavior,
+            needs_extended_manifest,
+        )
     }
 
     pub fn insert(
@@ -87,36 +116,30 @@ impl PackageManifestMap {
         Ok(())
     }
 
-    /// # Safety
-    /// See [`by_name_hash_allow_expired`](Self::by_name_hash_allow_expired).
-    pub unsafe fn by_name_hash(
+    pub fn by_name_hash(
         &mut self,
-        pm: *mut PackageManager,
+        ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
         name_hash: PackageNameHash,
         cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        // SAFETY: forwarded to caller.
-        unsafe {
-            self.by_name_hash_allow_expired(
-                pm,
-                scope,
-                name_hash,
-                None,
-                cache_behavior,
-                needs_extended_manifest,
-            )
-        }
+        self.by_name_hash_allow_expired(
+            ctx,
+            scope,
+            name_hash,
+            None,
+            cache_behavior,
+            needs_extended_manifest,
+        )
     }
 
     /// Memory-only lookup — equivalent to Zig
     /// `byNameHash(this, pm, scope, hash, .load_from_memory, _)` with
-    /// `is_expired = null`, but without the `pm`/`scope` parameters: the
+    /// `is_expired = null`, but without the `ctx`/`scope` parameters: the
     /// `.load_from_memory` arm never reads them. Exposed separately so callers
     /// holding `&mut PackageManager` can borrow only the disjoint
-    /// `pm.manifests` field instead of constructing an aliased
-    /// `(&mut pm.manifests, &mut pm)` pair.
+    /// `pm.manifests` field.
     pub fn by_name_hash_in_memory(
         &mut self,
         name_hash: PackageNameHash,
@@ -127,46 +150,35 @@ impl PackageManifestMap {
         }
     }
 
-    /// # Safety
-    /// See [`by_name_hash_allow_expired`](Self::by_name_hash_allow_expired).
-    pub unsafe fn by_name_allow_expired(
+    pub fn by_name_allow_expired(
         &mut self,
-        pm: *mut PackageManager,
+        ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
         name: &[u8],
         is_expired: Option<&mut bool>,
         cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        // SAFETY: forwarded to caller.
-        unsafe {
-            self.by_name_hash_allow_expired(
-                pm,
-                scope,
-                StringBuilder::string_hash(name),
-                is_expired,
-                cache_behavior,
-                needs_extended_manifest,
-            )
-        }
+        self.by_name_hash_allow_expired(
+            ctx,
+            scope,
+            StringBuilder::string_hash(name),
+            is_expired,
+            cache_behavior,
+            needs_extended_manifest,
+        )
     }
 
     /// Zig: `byNameHashAllowExpired(this, pm: *PackageManager, ...)`.
     ///
-    /// # Safety
-    /// `self` is `pm.manifests` for every caller in the tree, so accepting
-    /// `pm: &mut PackageManager` would alias the `&mut self` receiver
-    /// (Stacked-Borrows UB regardless of which fields are touched). `pm` is
-    /// therefore routed as a raw pointer and only dereferenced for fields
-    /// disjoint from `manifests`: `options`, `cache_directory_*`, `env`, and
-    /// `timestamp_for_manifest_cache_control`.
-    ///
-    /// The caller must ensure `pm` is valid for the call's duration and that
-    /// `self` and the projected fields above all derive from `pm`'s provenance
-    /// (i.e. `self == &mut (*pm).manifests`).
-    pub unsafe fn by_name_hash_allow_expired(
+    /// PORT NOTE: reshaped for borrowck — Zig passes `pm` and reads
+    /// `pm.options.enable.*`, `pm.getCacheDirectory()`, and
+    /// `pm.timestamp_for_manifest_cache_control` on the disk-fallback arm.
+    /// Those scalars are hoisted into [`DiskCacheCtx`] so callers never hold
+    /// `&mut pm.manifests` and a `PackageManager` borrow simultaneously.
+    pub fn by_name_hash_allow_expired(
         &mut self,
-        pm: *mut PackageManager,
+        ctx: DiskCacheCtx,
         scope: &npm::registry::Scope,
         name_hash: PackageNameHash,
         is_expired: Option<&mut bool>,
@@ -224,15 +236,10 @@ impl PackageManifestMap {
                 None
             }
             Entry::Vacant(vac) => {
-                // SAFETY: `options` is disjoint from `self` (= `pm.manifests`);
-                // both derive from `pm`'s provenance per the fn contract.
-                if unsafe { (*pm).options.enable.manifest_cache() } {
-                    // SAFETY: `get_cache_directory_raw` projects only
-                    // `cache_directory_*` / `options` / `env`, all disjoint
-                    // from `self`; see its safety doc.
-                    let cache_fd =
-                        unsafe { crate::package_manager_real::directories::get_cache_directory_raw(pm) }
-                            .fd();
+                if ctx.enable_manifest_cache {
+                    // `ctx.cache_directory` is `Some` iff `enable_manifest_cache`
+                    // (see `manifest_disk_cache_ctx`).
+                    let cache_fd = ctx.cache_directory.expect("cache_directory");
                     if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
                         scope,
                         cache_fd,
@@ -253,12 +260,9 @@ impl PackageManifestMap {
                             return None;
                         }
 
-                        // SAFETY: scalar reads of fields disjoint from `self`.
-                        // Re-project `options` (`get_cache_directory_raw` may
-                        // have flipped `enable.CACHE` on the cold path).
-                        let timestamp = unsafe { (*pm).timestamp_for_manifest_cache_control };
-                        if unsafe { (*pm).options.enable.manifest_cache_control() }
-                            && manifest.pkg.public_max_age > timestamp
+                        if ctx.enable_manifest_cache_control
+                            && manifest.pkg.public_max_age
+                                > ctx.timestamp_for_manifest_cache_control
                         {
                             let value_ptr = vac.insert(Value::Manifest(manifest));
                             let Value::Manifest(m) = value_ptr else {
@@ -292,6 +296,7 @@ impl PackageManifestMap {
 // PORT STATUS
 //   source:     src/install/PackageManifestMap.zig (124 lines)
 //   confidence: high
-//   notes:      getOrPut reshaped to Entry API; callers split `&mut pm` /
-//               `&mut pm.manifests` through a raw root (disjoint fields).
+//   notes:      getOrPut reshaped to Entry API; `pm` parameter hoisted into
+//               by-value `DiskCacheCtx` so callers can split `&mut pm.manifests`
+//               from sibling field borrows in safe Rust.
 // ──────────────────────────────────────────────────────────────────────────

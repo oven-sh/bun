@@ -5,7 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
 use bun_str::String as BunString;
 
 use crate::api::bun::subprocess::Subprocess;

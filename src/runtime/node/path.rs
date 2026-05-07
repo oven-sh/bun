@@ -75,7 +75,6 @@ const STACK_FALLBACK_SIZE_SMALL: usize = MAX_PATH_BYTES;
 
 /// Trait bound for path character types (`u8` or `u16`).
 /// Mirrors Zig's `comptime T: type` constraint via `validatePathT`.
-// TODO(port): finalize trait surface in Phase B (needs From<u8>, Eq, Copy, Default).
 pub trait PathChar: Copy + Eq + Ord + Default + 'static {
     const IS_U16: bool;
     fn from_u8(c: u8) -> Self;

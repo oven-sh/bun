@@ -1306,7 +1306,9 @@ impl FFI {
 
         let obj = JSValue::create_empty_object(global_this, compile_c.symbols.map.len());
         for function in compile_c.symbols.map.values_mut() {
-            let function_name = function.base_name.as_ref().unwrap();
+            let function_name =
+                ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
+            // PORT NOTE: reshaped for borrowck — clone base_name to drop &function borrow
 
             if let Err(err) = function.compile(napi_env) {
                 if !global_this.has_exception() {
@@ -3250,7 +3252,10 @@ pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
 fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,
     global_this: &JSGlobalObject,
-) -> Option<&'a napi::NapiEnv> {
+) -> Option<&'static napi::NapiEnv> {
+    // PORT NOTE: return lifetime is decoupled from the `functions` iterator borrow —
+    // the env is VM-owned, not borrowed from the scanned symbols. Tying it to `'a`
+    // would (incorrectly) keep `symbols` borrowed across the subsequent mut loop.
     for function in functions {
         if function.needs_napi_env() {
             // TODO(port): lifetime — makeNapiEnvForFFI returns a heap-allocated env owned by VM

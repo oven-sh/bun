@@ -521,6 +521,20 @@ impl ValueRef {
         ValueRef::Hive(value)
     }
 
+    /// Allocate a fresh hive slot via the per-VM pool (Zig
+    /// `vm.initRequestBodyValue(value)`) and adopt the returned `+1` ref.
+    #[inline]
+    pub fn hive_init(vm: &mut bun_jsc::VirtualMachine, value: Value) -> Self {
+        let hive = hive_alloc(vm, value);
+        // SAFETY: `hive_alloc` returns a live slot with `ref_count = 1`; the
+        // `.value` field address is the canonical `*mut Value` we adopt.
+        unsafe {
+            Self::adopt_hive(NonNull::new_unchecked(core::ptr::addr_of_mut!(
+                (*hive.as_ptr()).value
+            )))
+        }
+    }
+
     /// Stable raw pointer to the payload (for identity checks across moves).
     #[inline]
     pub fn as_ptr(&self) -> *const Value {

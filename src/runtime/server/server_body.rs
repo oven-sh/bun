@@ -2894,17 +2894,14 @@ where
         // SAFETY: `jsc_vm` is the live JSC VM owned by the per-thread VirtualMachine.
         unsafe { &*self.vm_ref().jsc_vm }.deprecated_report_extra_memory(mem::size_of::<Ctx>());
 
-        // `vm.initRequestBodyValue(.{ .Null = {} })` — type-erased through the
-        // RuntimeHooks vtable. The hook returns `*mut Body::Value::HiveRef`;
-        // the `BodyValue` payload lives at `&(*hive).value`.
-        let mut body_init = BodyValue::Null;
-        let body_hive: *mut crate::webcore::body::HiveRef = self
-            .vm_mut()
-            .init_request_body_value(&mut body_init as *mut BodyValue as *mut c_void)
-            .cast();
-        // SAFETY: `init_request_body_value` returns a freshly-initialized hive
-        // slot (`ref_count = 1`); never null on success.
-        let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive).value) };
+        // `vm.initRequestBodyValue(.{ .Null = {} })` — typed wrapper over the
+        // type-erased RuntimeHooks vtable. Returns `NonNull<HiveRef>` with
+        // `ref_count = 1` (held by `ctx.request_body`).
+        let body_hive = crate::webcore::body::hive_alloc(self.vm_mut(), BodyValue::Null);
+        // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
+        // its refcount drops to zero (released in `RequestContext::deinit` and
+        // `Request::finalize`).
+        let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.set_request_body(NonNull::new(body_ptr));
 
         let signal = AbortSignal::new(unsafe { &*self.global_this });
@@ -2916,22 +2913,19 @@ where
         // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
-        // PORT NOTE: in Zig the +1 from `body.ref()` is moved into
-        // `Request.init(..., body.ref())` so the JS Request and the
-        // RequestContext share one hive slot. `webcore::Request.body` is still
-        // `Box<BodyValue>` (Request.rs:99) and cannot adopt the hive ref yet,
-        // so we deliberately do NOT bump `(*body_hive).ref_()` here — doing so
-        // without an owner would leak the slot on every request. The hive
-        // slot's initial `ref_count = 1` is held by `ctx.request_body` and
-        // released in `RequestContext::deinit`. See the matching note in
-        // `mod.rs::prepare_js_request_context`.
-        let _ = body_hive;
+        // Zig: `.body = body.ref()` — bump once so the JS Request shares the
+        // same hive slot as `ctx.request_body` (streamed bytes buffered into
+        // the ctx surface on `request.body`/`request.json()`). Paired with
+        // `HiveRef::unref` in `Request::finalize`.
+        // SAFETY: `body_hive` is live (ref_count >= 1).
+        let body_for_req: NonNull<crate::webcore::body::HiveRef> =
+            unsafe { NonNull::from((*body_hive.as_ptr()).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(ctx as *const Ctx),
             SSL,
             Some(signal_for_req),
-            Box::new(BodyValue::Null),
+            body_for_req,
         ));
         let request_object: &mut Request =
             // SAFETY: leak so the ctx (which outlives this stack frame) can

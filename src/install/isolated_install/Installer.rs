@@ -1198,7 +1198,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to hardlink package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
+                                                bun_core::fmt::fmt_os_path(hardlinker.dest.slice(), bun_core::fmt::PathFormatOptions { path_sep: bun_core::fmt::PathSep::Auto, escape_backslashes: false }),
                                             ));
                                             Output::flush();
                                         }

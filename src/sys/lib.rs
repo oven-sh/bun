@@ -2634,6 +2634,19 @@ impl File {
         self.read_to_end_with_array_list(&mut v, SizeHint::UnknownSize)?;
         Ok(v)
     }
+    /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
+    /// closing the handle around the rename. On Windows the file must be
+    /// closed *before* `MoveFileEx`; on POSIX, close after `rename` so the
+    /// fd stays valid for `move_file_z_with_handle`'s `fcopyfile` fallback.
+    pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> Result<(), bun_core::Error> {
+        #[cfg(windows)]
+        self.close();
+        let cwd = Fd::cwd();
+        let result = move_file_z_with_handle(self.handle, cwd, src, cwd, dest);
+        #[cfg(unix)]
+        self.close();
+        result
+    }
     /// `File.getEndPos()` — file size via fstat.
     pub fn get_end_pos(&self) -> Maybe<usize> {
         Ok(fstat(self.handle)?.st_size as usize)

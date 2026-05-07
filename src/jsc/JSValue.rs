@@ -94,6 +94,13 @@ impl JSValue {
         self.as_number() as usize
     }
 
+    /// `JSValue.asPromisePtr` (JSValue.zig) — decode a `*mut T` smuggled
+    /// through [`from_ptr_address`] as the trailing `.then` reaction argument.
+    #[inline]
+    pub fn as_promise_ptr<T>(self) -> *mut T {
+        self.as_ptr_address() as *mut T
+    }
+
     /// Attach `(resolve, reject)` reactions to this Promise, passing `ctx` as
     /// the trailing argument to each. Thin wrapper over `JSC__JSValue___then`.
     ///

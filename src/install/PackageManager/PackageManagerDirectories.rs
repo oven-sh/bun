@@ -746,7 +746,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
         }
         ResolutionTag::Folder => {
             // SAFETY: tag == Folder guarantees `value.folder` is the active union arm.
-            let folder = unsafe { resolution.value.folder }.slice(buf);
+            let folder = unsafe { &resolution.value.folder }.slice(buf);
             // Handle when a package depends on itself via file:
             // example:
             //   "mineflayer": "file:."

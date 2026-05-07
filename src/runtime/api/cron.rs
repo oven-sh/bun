@@ -1853,15 +1853,16 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     /// `process.setExitHandler(this)` anytype dispatch.
     const EXIT_VTABLE: &'static spawn::ProcessExitVTable;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);
-    fn finish(this: *mut Self);
+    /// Consumes and frees `this`.
+    unsafe fn finish(this: *mut Self);
     fn process_slot(&mut self) -> &mut Option<*mut Process>;
     fn stdout_reader(&mut self) -> &mut OutputReader;
     fn stderr_reader(&mut self) -> &mut OutputReader;
     fn remaining_fds(&mut self) -> &mut i8;
 }
 
-/// `ProcessExitVTable` thunk: recover `&mut T` from the type-erased owner ptr
-/// and forward to [`CronJobBase::on_process_exit`].
+/// `ProcessExitVTable` thunk: forward the type-erased owner ptr (raw) to
+/// [`CronJobBase::on_process_exit`], which may free it.
 unsafe fn cron_on_process_exit_thunk<T: CronJobBase>(
     owner: *mut (),
     process: *mut Process,
@@ -1872,10 +1873,11 @@ unsafe fn cron_on_process_exit_thunk<T: CronJobBase>(
     // `spawn_cmd_generic`; the owning Box<T> outlives the Process exit
     // callback (it is only freed in `T::finish`, gated on
     // `has_called_process_exit`). `process`/`rusage` are live for the call.
-    let this = unsafe { &mut *(owner as *mut T) };
+    // Forward as raw ptr — `on_process_exit` → `maybe_finished` may free it.
+    let this = owner as *mut T;
     let process_ref: &Process = unsafe { &*process };
     let rusage_ref: &Rusage = unsafe { &*rusage };
-    this.on_process_exit(process_ref, status, rusage_ref);
+    unsafe { T::on_process_exit(this, process_ref, status, rusage_ref) };
 }
 
 static CRON_REGISTER_EXIT_VTABLE: spawn::ProcessExitVTable = spawn::ProcessExitVTable {
@@ -1888,7 +1890,7 @@ static CRON_REMOVE_EXIT_VTABLE: spawn::ProcessExitVTable = spawn::ProcessExitVTa
 impl SpawnCmdTarget for CronRegisterJob {
     const EXIT_VTABLE: &'static spawn::ProcessExitVTable = &CRON_REGISTER_EXIT_VTABLE;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRegisterJob::set_err(self, args) }
-    fn finish(this: *mut Self) { CronRegisterJob::finish(this) }
+    unsafe fn finish(this: *mut Self) { unsafe { CronRegisterJob::finish(this) } }
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
@@ -1897,7 +1899,7 @@ impl SpawnCmdTarget for CronRegisterJob {
 impl SpawnCmdTarget for CronRemoveJob {
     const EXIT_VTABLE: &'static spawn::ProcessExitVTable = &CRON_REMOVE_EXIT_VTABLE;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRemoveJob::set_err(self, args) }
-    fn finish(this: *mut Self) { CronRemoveJob::finish(this) }
+    unsafe fn finish(this: *mut Self) { unsafe { CronRemoveJob::finish(this) } }
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }

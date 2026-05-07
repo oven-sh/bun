@@ -1762,20 +1762,8 @@ impl UpdateInteractiveCommand {
                     let display_name =
                         Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
 
-                    // SAFETY: `pkg.manager` points at the process-singleton
-                    // `PackageManager` (set in `get_outdated_packages`). No
-                    // `&mut PackageManager` is live during the interactive
-                    // prompt loop — `prompt_for_updates` is called between the
-                    // last and next exclusive use of `manager` in
-                    // `update_interactive` — so a transient shared deref for
-                    // these read-only `options.scope` projections is sound.
-                    let pkg_manager: &PackageManager = unsafe { &*pkg.manager };
-                    let uses_default_registry = pkg_manager.options.scope.url_hash
-                        == *bun_install::npm::Registry::DEFAULT_URL_HASH
-                        && pkg_manager.scope_for_package_name(&pkg.name).url_hash
-                            == *bun_install::npm::Registry::DEFAULT_URL_HASH;
                     let package_url: Box<[u8]> = if Output::enable_ansi_colors_stdout()
-                        && uses_default_registry
+                        && pkg.uses_default_registry
                     {
                         let ver: &[u8] = 'brk: {
                             if selected {

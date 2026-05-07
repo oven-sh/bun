@@ -6,6 +6,9 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;
 
+use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::{task_tag, EventLoopTask, EventLoopTaskPtr, TaskTag, Taskable};
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum State {
     #[default]
@@ -23,7 +26,8 @@ pub struct Yes {
     /// out to ~BUFSIZ.
     pub buffer: Vec<u8>,
     pub buffer_used: usize,
-    pub task: YesTask,
+    /// Zig: `task: YesTask = undefined` — populated in `start()`.
+    pub task: Option<YesTask>,
 }
 
 impl Yes {
@@ -62,11 +66,17 @@ impl Yes {
         }
 
         let evtloop = Builtin::event_loop(interp, cmd);
+        let interp_ptr: *mut Interpreter = interp;
         {
             let me = Self::state_mut(interp, cmd);
             me.buffer = buf;
             me.buffer_used = filled;
-            me.task = YesTask { cmd, evtloop };
+            me.task = Some(YesTask {
+                interp: interp_ptr,
+                cmd,
+                evtloop,
+                concurrent_task: EventLoopTask::from_event_loop(evtloop),
+            });
         }
 
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
@@ -87,14 +97,25 @@ impl Yes {
                 let me = Self::state_mut(interp, cmd);
                 me.buffer[..me.buffer_used].to_vec()
             };
-            // Builtin::write_no_io is infallible in the current port (Zig
-            // returned Maybe(usize); the error arm is TODO once arraybuf
-            // outputs are wired).
+            // PORT NOTE: Zig `writeOnceNoIO` matched on `Maybe(usize)` and
+            // routed `.err` through `writeFailingError`. The Rust port's
+            // `Builtin::write_no_io` is infallible (only `Pipe`/`Ignore`
+            // outputs reach this path; `Fd` is `unreachable!`), so the error
+            // arm is dead until arraybuf outputs are wired.
             Builtin::write_no_io(interp, cmd, IoKind::Stdout, &chunk);
         }
-        // TODO(b2-blocked): YesTask::enqueue — bounce back via the event loop.
-        // Until EventLoopTask is real, suspend (the JS side never observes
-        // `yes` without IO anyway — captured/ignored stdout has no consumer).
+        // Bounce back via the event loop so we don't block the main thread.
+        // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
+        // the interpreter arena, so the address is stable across the enqueue
+        // and the later main-thread callback.
+        let task: *mut YesTask = Self::state_mut(interp, cmd)
+            .task
+            .as_mut()
+            .expect("YesTask set in start()");
+        // PORT NOTE: `enqueue` ticks the event loop (Zig spec), which may
+        // re-enter shell dispatch. We hold no `&mut` derived from `interp`
+        // across the call; the parameter borrow itself is not re-used after.
+        unsafe { YesTask::enqueue(task) };
         Yield::suspended()
     }
 
@@ -149,34 +170,88 @@ impl Yes {
     }
 }
 
+// PORT NOTE: Zig `deinit` freed `buffer` and ended the alloc scope. In the
+// Rust port `buffer: Vec<u8>` drops with the owning `Box<Yes>`; no explicit
+// `Drop` impl needed (PORTING.md §Allocators).
+
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever. Spec: yes.zig `YesTask`.
+#[repr(C)]
 pub struct YesTask {
+    /// Back-ref to the owning [`Interpreter`] (NodeId-arena port replaces
+    /// Zig's `@fieldParentPtr` chain).
+    pub interp: *mut Interpreter,
     pub cmd: NodeId,
     pub evtloop: EventLoopHandle,
-    // TODO(b2-blocked): bun_jsc::EventLoopTask — concurrent_task field.
+    pub concurrent_task: EventLoopTask,
 }
 
-impl Default for YesTask {
-    fn default() -> Self {
-        YesTask { cmd: NodeId::NONE, evtloop: EventLoopHandle::default() }
-    }
+impl Taskable for YesTask {
+    const TAG: TaskTag = task_tag::ShellYesTask;
 }
 
 impl YesTask {
-    pub fn enqueue(&mut self) {
-        // TODO(b2-blocked): EventLoopHandle is opaque until bun_jsc compiles.
-        // Zig: tick the loop, then enqueueTaskConcurrent(self).
+    /// Spec: yes.zig `YesTask.enqueue`.
+    ///
+    /// # Safety
+    /// `this` must point to a live `YesTask` whose storage is stable until the
+    /// enqueued task fires (it lives inside `Box<Yes>` in the interpreter
+    /// arena).
+    pub unsafe fn enqueue(this: *mut Self) {
+        // SAFETY: caller contract.
+        let evtloop = unsafe { (*this).evtloop };
+        match evtloop {
+            EventLoopHandle::Js { owner, vtable } => {
+                // SAFETY: vtable contract — `owner` is the live `*mut jsc::EventLoop`.
+                unsafe { (vtable.tick)(owner) };
+                // SAFETY: caller contract; `concurrent_task` was initialised
+                // as `Js` via `EventLoopTask::from_event_loop`.
+                let ct: *mut ConcurrentTask = match unsafe { &mut (*this).concurrent_task } {
+                    EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
+                    EventLoopTask::Mini(_) => unreachable!(),
+                };
+                // SAFETY: vtable contract.
+                unsafe { (vtable.enqueue_task_concurrent)(owner, ct) };
+            }
+            EventLoopHandle::Mini(mini) => {
+                // SAFETY: `mini` is a live backref; `loop_` is the live uws loop.
+                unsafe { (*(*mini).loop_).tick() };
+                // SAFETY: caller contract; `concurrent_task` was initialised
+                // as `Mini` via `EventLoopTask::from_event_loop`.
+                let at = match unsafe { &mut (*this).concurrent_task } {
+                    EventLoopTask::Mini(at) => at.from(this, Self::run_from_main_thread_mini),
+                    EventLoopTask::Js(_) => unreachable!(),
+                };
+                // SAFETY: `mini` is a live backref.
+                unsafe { (*mini).enqueue_task_concurrent(at) };
+            }
+        }
     }
 
-    pub fn run_from_main_thread(&mut self, interp: &mut Interpreter) {
-        Yes::write_no_io_loop(interp, self.cmd).run(interp);
+    /// Spec: yes.zig `YesTask.runFromMainThread`.
+    ///
+    /// # Safety
+    /// `this` is the live task previously passed to [`enqueue`](Self::enqueue);
+    /// `interp` outlives the builtin.
+    pub unsafe fn run_from_main_thread(this: *mut Self) {
+        // SAFETY: caller contract — `interp` set in `Yes::start`, outlives the builtin.
+        let interp = unsafe { &mut *(*this).interp };
+        let cmd = unsafe { (*this).cmd };
+        Yes::write_no_io_loop(interp, cmd).run(interp);
+    }
+
+    /// Spec: yes.zig `YesTask.runFromMainThreadMini`. Signature matches
+    /// [`AnyTaskWithExtraContext::from`](bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from)'s
+    /// callback shape (`fn(*mut T, *mut ())`).
+    fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
+        // SAFETY: `this` is the live task passed to `enqueue`.
+        unsafe { Self::run_from_main_thread(this) }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/yes.zig (181 lines)
-//   confidence: medium (NodeId style; YesTask enqueue stubbed)
-//   blocked_on: bun_jsc::EventLoopTask, IOWriter::enqueue body
+//   confidence: medium — NodeId-arena style; JS-loop dispatch arm for
+//               `ShellYesTask` panics in Zig (Task.zig else-arm), preserved.
 // ──────────────────────────────────────────────────────────────────────────

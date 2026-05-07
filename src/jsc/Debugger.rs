@@ -114,7 +114,7 @@ mod ffi {
         pub fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
             agent: *mut core::ffi::c_void,
             dev_server_id: i32,
-            build_errors_payload_base64: *mut crate::String,
+            build_errors_payload_base64: *mut bun_string::String,
         );
     }
 }

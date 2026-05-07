@@ -813,19 +813,37 @@ impl DynamicBitSetUnmanaged {
     // Rust can't const-init a static-mut-derived pointer; callers should use
     // `DynamicBitSetUnmanaged::default()`.
 
+    /// Borrow the mask words as a shared slice of length `num_masks(bit_length)`.
     #[inline(always)]
-    fn masks_slice(&self) -> &[usize] {
+    pub fn masks_slice(&self) -> &[usize] {
         let n = Self::num_masks(self.bit_length);
-        // SAFETY: `masks` points to at least `n` valid usize words, maintained
-        // by `resize`.
+        // SAFETY: `masks` is never null (defaults to `empty_masks_ptr()`) and
+        // points to at least `n` valid, initialized usize words, maintained by
+        // `resize` / `List::at`. Padding bits in the last word are zeroed.
         unsafe { slice::from_raw_parts(self.masks, n) }
     }
 
+    /// Borrow the mask words as an exclusive slice of length `num_masks(bit_length)`.
+    ///
+    /// Note: two `DynamicBitSetUnmanaged` values may share storage (see
+    /// `DynamicBitSetList::at`). Callers must not hold a `masks_slice_mut()`
+    /// borrow on one view while another aliasing view is read or written.
     #[inline(always)]
-    fn masks_slice_mut(&mut self) -> &mut [usize] {
+    pub fn masks_slice_mut(&mut self) -> &mut [usize] {
         let n = Self::num_masks(self.bit_length);
-        // SAFETY: see `masks_slice`.
+        // SAFETY: see `masks_slice`. `&mut self` gives us exclusive access to
+        // *this* struct; the caller is responsible for not aliasing the
+        // underlying storage via another view.
         unsafe { slice::from_raw_parts_mut(self.masks, n) }
+    }
+
+    /// Raw pointer to the mask words. Use this (not `masks_slice{,_mut}`) when
+    /// `self` and another `DynamicBitSetUnmanaged` may point at the same
+    /// storage and both are accessed in the same operation — forming
+    /// overlapping `&mut [usize]` / `&[usize]` would be UB.
+    #[inline(always)]
+    pub fn masks_ptr(&self) -> *mut usize {
+        self.masks
     }
 
     /// Creates a bit set with no elements present.
@@ -945,13 +963,9 @@ impl DynamicBitSetUnmanaged {
 
     /// Creates a duplicate of this bit set, using the new allocator.
     pub fn clone(&self) -> Result<Self, AllocError> {
-        let num_masks = Self::num_masks(self.bit_length);
         let mut copy = Self::default();
         copy.resize(self.bit_length, false)?;
-        // SAFETY: both regions are at least `num_masks` words and don't overlap.
-        unsafe {
-            ptr::copy_nonoverlapping(self.masks, copy.masks, num_masks);
-        }
+        copy.masks_slice_mut().copy_from_slice(self.masks_slice());
         Ok(copy)
     }
 
@@ -965,21 +979,20 @@ impl DynamicBitSetUnmanaged {
     /// is present in the set, false otherwise.
     pub fn is_set(&self, index: usize) -> bool {
         debug_assert!(index < self.bit_length);
-        // SAFETY: mask_index(index) < num_masks(bit_length) given the assert.
-        unsafe { (*self.masks.add(Self::mask_index(index)) & Self::mask_bit(index)) != 0 }
+        (self.masks_slice()[Self::mask_index(index)] & Self::mask_bit(index)) != 0
     }
 
     pub fn is_set_allow_out_of_bound(&self, index: usize, out_of_bounds: bool) -> bool {
         if index >= self.bit_length {
             return out_of_bounds;
         }
-        // SAFETY: index < bit_length.
-        unsafe { (*self.masks.add(Self::mask_index(index)) & Self::mask_bit(index)) != 0 }
+        (self.masks_slice()[Self::mask_index(index)] & Self::mask_bit(index)) != 0
     }
 
     pub fn bytes(&self) -> &[u8] {
         let n = Self::num_masks(self.bit_length);
-        // SAFETY: `masks` points to `n` initialized usize words.
+        // SAFETY: `masks` points to `n` initialized usize words; reinterpreting
+        // `[usize; n]` as `[u8; n * size_of::<usize>()]` is always valid.
         unsafe { slice::from_raw_parts(self.masks.cast::<u8>(), n * mem::size_of::<usize>()) }
     }
 
@@ -994,14 +1007,13 @@ impl DynamicBitSetUnmanaged {
     }
 
     pub fn has_intersection(&self, other: &Self) -> bool {
-        let n = Self::num_masks(self.bit_length);
-        debug_assert_eq!(n, Self::num_masks(other.bit_length));
-        for i in 0..n {
-            // SAFETY: i < num_masks for both.
-            unsafe {
-                if (*self.masks.add(i) & *other.masks.add(i)) != 0 {
-                    return true;
-                }
+        debug_assert_eq!(
+            Self::num_masks(self.bit_length),
+            Self::num_masks(other.bit_length)
+        );
+        for (a, b) in self.masks_slice().iter().zip(other.masks_slice()) {
+            if (a & b) != 0 {
+                return true;
             }
         }
         false
@@ -1014,17 +1026,14 @@ impl DynamicBitSetUnmanaged {
         let bit = Self::mask_bit(index);
         let mask_index = Self::mask_index(index);
         let new_bit = bit & bool_mask_usize(value);
-        // SAFETY: mask_index < num_masks.
-        unsafe {
-            *self.masks.add(mask_index) = (*self.masks.add(mask_index) & !bit) | new_bit;
-        }
+        let mask = &mut self.masks_slice_mut()[mask_index];
+        *mask = (*mask & !bit) | new_bit;
     }
 
     /// Adds a specific bit to the bit set
     pub fn set(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
-        // SAFETY: mask_index < num_masks.
-        unsafe { *self.masks.add(Self::mask_index(index)) |= Self::mask_bit(index) };
+        self.masks_slice_mut()[Self::mask_index(index)] |= Self::mask_bit(index);
     }
 
     /// Changes the value of all bits in the specified range to
@@ -1078,15 +1087,13 @@ impl DynamicBitSetUnmanaged {
     /// Removes a specific bit from the bit set
     pub fn unset(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
-        // SAFETY: mask_index < num_masks.
-        unsafe { *self.masks.add(Self::mask_index(index)) &= !Self::mask_bit(index) };
+        self.masks_slice_mut()[Self::mask_index(index)] &= !Self::mask_bit(index);
     }
 
     /// Flips a specific bit in the bit set
     pub fn toggle(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
-        // SAFETY: mask_index < num_masks.
-        unsafe { *self.masks.add(Self::mask_index(index)) ^= Self::mask_bit(index) };
+        self.masks_slice_mut()[Self::mask_index(index)] ^= Self::mask_bit(index);
     }
 
     /// Flips all bits in this bit set which are present
@@ -1100,15 +1107,16 @@ impl DynamicBitSetUnmanaged {
         }
         let num_masks = Self::num_masks(self.bit_length);
         for i in 0..num_masks {
-            // SAFETY: i < num_masks for both.
-            unsafe { *self.masks.add(i) ^= *toggles.masks.add(i) };
+            // SAFETY: i < num_masks for both. Raw-pointer access (not
+            // `masks_slice_mut`) because `toggles.masks` may alias `self.masks`
+            // when both are views from the same `DynamicBitSetList`.
+            unsafe { *self.masks_ptr().add(i) ^= *toggles.masks_ptr().add(i) };
         }
 
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
-        // SAFETY: num_masks > 0.
-        unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
+        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
     pub fn set_all(&mut self, value: bool) {
@@ -1124,8 +1132,7 @@ impl DynamicBitSetUnmanaged {
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
-        // SAFETY: num_masks > 0.
-        unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
+        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
     /// Flips every bit in the bit set.
@@ -1144,8 +1151,7 @@ impl DynamicBitSetUnmanaged {
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
-        // SAFETY: num_masks > 0.
-        unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
+        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
     pub fn copy_into(&mut self, other: &Self) {
@@ -1158,14 +1164,15 @@ impl DynamicBitSetUnmanaged {
         let num_masks = Self::num_masks(self.bit_length);
         for i in 0..num_masks {
             // SAFETY: i < num_masks for both (Zig zips with other.masks).
-            unsafe { *self.masks.add(i) = *other.masks.add(i) };
+            // Raw-pointer access because `other.masks` may alias `self.masks`
+            // when both are views from the same `DynamicBitSetList`.
+            unsafe { *self.masks_ptr().add(i) = *other.masks_ptr().add(i) };
         }
 
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
-        // SAFETY: num_masks > 0.
-        unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
+        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
     /// Performs a union of two bit sets, and stores the
@@ -1176,8 +1183,9 @@ impl DynamicBitSetUnmanaged {
         debug_assert!(other.bit_length == self.bit_length);
         let num_masks = Self::num_masks(self.bit_length);
         for i in 0..num_masks {
-            // SAFETY: i < num_masks for both.
-            unsafe { *self.masks.add(i) |= *other.masks.add(i) };
+            // SAFETY: i < num_masks for both. Raw-pointer access because
+            // `other.masks` may alias `self.masks` (see `DynamicBitSetList`).
+            unsafe { *self.masks_ptr().add(i) |= *other.masks_ptr().add(i) };
         }
     }
 
@@ -1189,8 +1197,9 @@ impl DynamicBitSetUnmanaged {
         debug_assert!(other.bit_length == self.bit_length);
         let num_masks = Self::num_masks(self.bit_length);
         for i in 0..num_masks {
-            // SAFETY: i < num_masks for both.
-            unsafe { *self.masks.add(i) &= *other.masks.add(i) };
+            // SAFETY: i < num_masks for both. Raw-pointer access because
+            // `other.masks` may alias `self.masks` (see `DynamicBitSetList`).
+            unsafe { *self.masks_ptr().add(i) &= *other.masks_ptr().add(i) };
         }
     }
 
@@ -1198,10 +1207,11 @@ impl DynamicBitSetUnmanaged {
         debug_assert!(other.bit_length == self.bit_length);
         let num_masks = Self::num_masks(self.bit_length);
         for i in 0..num_masks {
-            // SAFETY: i < num_masks for all three.
+            // SAFETY: i < num_masks for all three. Raw-pointer access because
+            // `other`/`third` may alias `self` (see `DynamicBitSetList`).
             unsafe {
-                *self.masks.add(i) &= !*other.masks.add(i);
-                *self.masks.add(i) &= !*third.masks.add(i);
+                *self.masks_ptr().add(i) &= !*other.masks_ptr().add(i);
+                *self.masks_ptr().add(i) &= !*third.masks_ptr().add(i);
             }
         }
     }
@@ -1210,8 +1220,9 @@ impl DynamicBitSetUnmanaged {
         debug_assert!(other.bit_length == self.bit_length);
         let num_masks = Self::num_masks(self.bit_length);
         for i in 0..num_masks {
-            // SAFETY: i < num_masks for both.
-            unsafe { *self.masks.add(i) &= !*other.masks.add(i) };
+            // SAFETY: i < num_masks for both. Raw-pointer access because
+            // `other.masks` may alias `self.masks` (see `DynamicBitSetList`).
+            unsafe { *self.masks_ptr().add(i) &= !*other.masks_ptr().add(i) };
         }
     }
 
@@ -1219,44 +1230,29 @@ impl DynamicBitSetUnmanaged {
     /// If no bits are set, returns null.
     pub fn find_first_set(&self) -> Option<usize> {
         let mut offset: usize = 0;
-        let mut mask = self.masks;
-        loop {
-            if offset >= self.bit_length {
-                return None;
+        for &mask in self.masks_slice() {
+            if mask != 0 {
+                return Some(offset + mask.trailing_zeros() as usize);
             }
-            // SAFETY: offset < bit_length ⇒ mask is in-bounds.
-            if unsafe { *mask } != 0 {
-                break;
-            }
-            // SAFETY: stepping within the allocation.
-            mask = unsafe { mask.add(1) };
             offset += DYN_MASK_BITS as usize;
         }
-        // SAFETY: loop broke with mask pointing at a nonzero in-bounds word.
-        Some(offset + unsafe { *mask }.trailing_zeros() as usize)
+        None
     }
 
     /// Finds the index of the first set bit, and unsets it.
     /// If no bits are set, returns null.
     pub fn toggle_first_set(&mut self) -> Option<usize> {
         let mut offset: usize = 0;
-        let mut mask = self.masks;
-        loop {
-            if offset >= self.bit_length {
-                return None;
+        for mask in self.masks_slice_mut() {
+            let m = *mask;
+            if m != 0 {
+                let index = m.trailing_zeros() as usize;
+                *mask = m & (m - 1);
+                return Some(offset + index);
             }
-            // SAFETY: see `find_first_set`.
-            if unsafe { *mask } != 0 {
-                break;
-            }
-            mask = unsafe { mask.add(1) };
             offset += DYN_MASK_BITS as usize;
         }
-        // SAFETY: mask is in-bounds and *mask != 0.
-        let m = unsafe { *mask };
-        let index = m.trailing_zeros() as usize;
-        unsafe { *mask = m & (m - 1) };
-        Some(offset + index)
+        None
     }
 
     /// Returns true iff every corresponding bit in both
@@ -1265,16 +1261,7 @@ impl DynamicBitSetUnmanaged {
         if self.bit_length != other.bit_length {
             return false;
         }
-        let num_masks = Self::num_masks(self.bit_length);
-        let mut i: usize = 0;
-        while i < num_masks {
-            // SAFETY: i < num_masks for both.
-            if unsafe { *self.masks.add(i) != *other.masks.add(i) } {
-                return false;
-            }
-            i += 1;
-        }
-        true
+        self.masks_slice() == other.masks_slice()
     }
 
     /// Returns true iff the first bit set is the subset
@@ -1283,16 +1270,10 @@ impl DynamicBitSetUnmanaged {
         if self.bit_length != other.bit_length {
             return false;
         }
-        let num_masks = Self::num_masks(self.bit_length);
-        let mut i: usize = 0;
-        while i < num_masks {
-            // SAFETY: i < num_masks for both.
-            unsafe {
-                if *self.masks.add(i) & *other.masks.add(i) != *self.masks.add(i) {
-                    return false;
-                }
+        for (&a, &b) in self.masks_slice().iter().zip(other.masks_slice()) {
+            if a & b != a {
+                return false;
             }
-            i += 1;
         }
         true
     }
@@ -1303,16 +1284,10 @@ impl DynamicBitSetUnmanaged {
         if self.bit_length != other.bit_length {
             return false;
         }
-        let num_masks = Self::num_masks(self.bit_length);
-        let mut i: usize = 0;
-        while i < num_masks {
-            // SAFETY: i < num_masks for both.
-            unsafe {
-                if *self.masks.add(i) & *other.masks.add(i) != *other.masks.add(i) {
-                    return false;
-                }
+        for (&a, &b) in self.masks_slice().iter().zip(other.masks_slice()) {
+            if a & b != b {
+                return false;
             }
-            i += 1;
         }
         true
     }

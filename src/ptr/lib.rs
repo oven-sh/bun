@@ -44,7 +44,8 @@ pub use tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion as TaggedPoi
 
 pub mod ref_count;
 pub use ref_count::{
-    RefCounted, ThreadSafeRefCounted, AnyRefCounted, RefCount, ThreadSafeRefCount, RefPtr, ScopedRef,
+    RefCounted, ThreadSafeRefCounted, AnyRefCounted, CellRefCounted, RefCount, ThreadSafeRefCount,
+    RefPtr, ScopedRef,
 };
 // Compat aliases for Phase-A drafts that used pointer-typedef stubs.
 pub type IntrusiveRc<T> = RefPtr<T>;

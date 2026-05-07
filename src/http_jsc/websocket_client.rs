@@ -122,32 +122,13 @@ pub struct WebSocket<const SSL: bool> {
 // IntrusiveRc wiring: ref/deref forward to ref_count; final deref calls deinit()
 // TODO(port): bun.ptr.RefCount → bun_ptr::IntrusiveRc<WebSocket<SSL>>; the
 // destructor callback is `deinit` (drops self + bun.destroy).
-impl<const SSL: bool> WebSocket<SSL> {
-    #[inline]
-    pub fn r#ref(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-    /// Decrement the intrusive refcount; frees the allocation when it hits zero.
-    ///
-    /// # Safety
-    /// `this` must point to a live `WebSocket<SSL>` allocated via
-    /// `Box::into_raw` (see `init` / `init_with_tunnel`). Takes a raw `*mut`
-    /// rather than `&self` because the final `deinit` writes through the
-    /// pointer; deriving a `*mut` from a shared `&self` borrow would discard
-    /// write provenance (UB under Stacked Borrows when written through).
-    #[inline]
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: `this` is live per fn contract; `ref_count` is a `Cell`, so
-        // forming a shared borrow for the decrement is sound regardless of
-        // other outstanding shared references to `*this`.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: refcount hit zero; caller held the last owner of the
-            // `Box::into_raw` allocation and `this` carries write provenance.
-            unsafe { Self::deinit(this) };
-        }
+// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
+bun_ptr::impl_cell_ref_counted! {
+    impl[const SSL: bool] WebSocket<SSL> {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: refcount hit zero; caller held the last owner of the
+        // `Box::into_raw` allocation and `this` carries write provenance.
+        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
 }
 
@@ -256,7 +237,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("cancel");
         // clear_data() may drop the tunnel's I/O-layer ref; keep `this`
         // alive until we've finished closing the socket below.
-        this.r#ref();
+        this.ref_();
         // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
         // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
@@ -619,7 +600,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
         // SAFETY: caller contract — `this_ptr` is live; `r#ref` takes `&self`.
-        unsafe { (&*this_ptr).r#ref() };
+        unsafe { (&*this_ptr).ref_() };
         // PORT NOTE: capture the parent raw `this_ptr` so the guard's
         // `deref(p)` runs after every `&mut *this_ptr` reborrow has ended.
         let _guard = scopeguard::guard(this_ptr, |p| {
@@ -1455,7 +1436,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before the catch block in enqueue_encoded_bytes/send_buffer runs.
-        this.r#ref();
+        this.ref_();
         // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
         // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
@@ -1499,7 +1480,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer
         let this = unsafe { &mut *this_ptr };
         // See write_binary_data() — tunnel.write() can re-enter fail().
-        this.r#ref();
+        this.ref_();
         // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
         // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
@@ -1557,7 +1538,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer
         let this = unsafe { &mut *this_ptr };
         // See write_binary_data() — tunnel.write() can re-enter fail().
-        this.r#ref();
+        this.ref_();
         // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
         // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
@@ -1647,7 +1628,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
         // before send_close_with_body's own clear_data/dispatch_close run.
-        this.r#ref();
+        this.ref_();
         // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
         // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
@@ -1839,7 +1820,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         // And lastly, ref the new websocket since C++ has a reference to it
-        ws_ref.r#ref();
+        ws_ref.ref_();
 
         ws as *mut c_void
     }
@@ -1947,7 +1928,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             );
         }
 
-        ws_ref.r#ref();
+        ws_ref.ref_();
 
         ws as *mut c_void
     }
@@ -1982,7 +1963,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // (see write_binary_data). The tunnel ref-guards itself in
         // on_writable() but not this struct.
         // SAFETY: caller contract — `this_ptr` is live; `r#ref` takes `&self`.
-        unsafe { (&*this_ptr).r#ref() };
+        unsafe { (&*this_ptr).ref_() };
         // PORT NOTE: capture the parent raw `this_ptr` so the guard's
         // `deref(p)` runs after every `&mut *this_ptr` reborrow has ended.
         let _guard = scopeguard::guard(this_ptr, |p| {
@@ -2007,7 +1988,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // clear_data() may drop the tunnel's I/O-layer ref and the block
         // below drops the C++ ref; keep `this` alive until we've finished
         // the tcp close check.
-        this.r#ref();
+        this.ref_();
         // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
         // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`

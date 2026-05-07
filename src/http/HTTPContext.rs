@@ -58,6 +58,15 @@ pub struct HTTPContext<const SSL: bool> {
 // Intrusive refcount: Zig `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
 // `*T` crosses FFI (group.ext) and is recovered from socket ext, so per
 // PORTING.md this stays intrusive rather than `Rc<T>`.
+bun_ptr::impl_cell_ref_counted! {
+    impl[const SSL: bool] HTTPContext<SSL> {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: refcount hit zero; this struct was Box-allocated for
+        // custom-SSL entries (statics never reach 0). `this` originated from
+        // `Box::into_raw` so it carries unique ownership provenance.
+        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+    }
+}
 pub type HTTPContextRc<const SSL: bool> = bun_ptr::IntrusiveRc<HTTPContext<SSL>>;
 
 pub type PooledSocketHiveAllocator<const SSL: bool> = HiveArray<PooledSocket<SSL>, POOL_SIZE>;
@@ -162,32 +171,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         uws::SocketKind::HttpClient
     };
 
-    pub fn ref_(&self) {
-        // TODO(port): IntrusiveRc::ref — increments self.ref_count
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    pub fn deref(this: *mut Self) {
-        // TODO(port): IntrusiveRc::deref — decrements; runs Drop at 0.
-        // Takes a raw `*mut Self` (not `&self`) so the pointer retains the
-        // full write provenance from `Box::into_raw`; routing through `&self`
-        // and casting back to `*mut` would be UB under Stacked Borrows when
-        // `Box::from_raw` reclaims the allocation.
-        // SAFETY: `this` is a live HTTPContext (Box-allocated for custom-SSL
-        // entries, or a static which never reaches 0). `ref_count` is a
-        // `Cell<u32>`, so the field access creates only a SharedReadWrite
-        // borrow over those bytes and does not invalidate `this`.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: refcount hit zero; this struct was Box-allocated for
-            // custom-SSL entries (statics never reach 0). `this` originated
-            // from `Box::into_raw` so it carries unique ownership provenance.
-            unsafe { drop(Box::from_raw(this)) };
-        }
-    }
-
     pub fn mark_tagged_socket_as_dead(socket: HTTPSocket<SSL>, tagged: ActiveSocket<SSL>) {
         if tagged.is::<PooledSocket<SSL>>() {
             // SAFETY: tag check above guarantees the pointer is a PooledSocket<SSL>.
@@ -264,7 +247,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // PORT NOTE: `session.ref()` — intrusive refcount bump.
         // SAFETY: session is a live ClientSession owned elsewhere.
-        unsafe { (*session).r#ref() };
+        unsafe { (*session).ref_() };
         // SAFETY: same as above.
         unsafe {
             (*session).set_registry_index(u32::try_from(self.active_h2_sessions.len()).unwrap())
@@ -323,7 +306,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // Releases the strong ref taken in register_h2.
         // SAFETY: `session` carries write provenance from the original Box.
-        unsafe { h2::ClientSession::deref(session) };
+        unsafe { h2::ClientSession::deref(session as *mut _) };
     }
 
     /// Raw-pointer variant of [`Self::unregister_h2`] for re-entrant call
@@ -368,7 +351,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // Releases the strong ref taken in register_h2.
         // SAFETY: `session` carries write provenance from the original Box.
-        unsafe { h2::ClientSession::deref(session) };
+        unsafe { h2::ClientSession::deref(session as *mut _) };
     }
 
     pub fn tag_as_h2(socket: HTTPSocket<SSL>, session: *const h2::ClientSession) {

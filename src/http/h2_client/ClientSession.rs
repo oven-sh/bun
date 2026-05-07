@@ -118,55 +118,20 @@ pub struct ClientSession {
     pub registry_index: Cell<u32>,
 }
 
-/// RAII owner for a scoped [`ClientSession`] refcount bump. Constructed via
-/// [`ClientSession::ref_scope`]; releases the ref on Drop. The guard runs last
-/// among locals declared after it, so no access follows the final deref.
-#[must_use = "dropping immediately releases the scoped ref"]
-struct SessionRefGuard(*const ClientSession);
+/// RAII guard alias — bumps on construction, derefs on Drop.
+type SessionRefGuard = bun_ptr::ScopedRef<ClientSession>;
 
-impl Drop for SessionRefGuard {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `ref_scope` took a ref on a live heap-allocated ClientSession,
-        // so `self.0` is still live here. Pointer was derived from `&mut self`
-        // (write provenance) and the guard drops after all later locals.
-        unsafe { ClientSession::deref(self.0) };
+// Intrusive refcount (single-thread). `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
+bun_ptr::impl_cell_ref_counted! {
+    impl ClientSession {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: ref_count reached zero; no other holders. Allocated via
+        // `Box::into_raw` in `create`.
+        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
     }
 }
 
-// Intrusive refcount (single-thread). `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-// → manual ref()/deref() pair; the last deref drops the Box.
 impl ClientSession {
-    #[inline]
-    pub fn r#ref(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// Release one strong reference; frees the allocation when the count
-    /// reaches zero.
-    ///
-    /// # Safety
-    /// `this` must point to a live `ClientSession` allocated via `create`
-    /// (Box::into_raw), and the pointer's provenance must permit writes
-    /// (i.e. derived from the original `*mut` / a `&mut`, never from a `&`).
-    /// After the final deref the allocation is freed; callers must not touch
-    /// `this` again.
-    #[inline]
-    pub unsafe fn deref(this: *const Self) {
-        // SAFETY: caller contract — `this` is live. ref_count is a Cell so
-        // read/write through a shared raw pointer is sound.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: ref_count reached zero; no other holders. Allocated via
-            // Box::into_raw in `create`. Taking a raw pointer (not `&self`)
-            // means no live shared borrow exists while Box asserts unique
-            // ownership and runs Drop — avoids the &T → *mut T provenance UB.
-            unsafe { drop(Box::from_raw(this as *mut Self)) };
-        }
-    }
-
     /// Bump the refcount and return a guard that releases it on Drop, so
     /// reentrant callbacks (delivering bodies, failing clients) cannot free
     /// `*self` mid-call. Zig: `this.ref(); defer this.deref();`.
@@ -177,8 +142,8 @@ impl ClientSession {
     /// final `Box::from_raw` in `deref`.
     #[inline]
     fn ref_scope(&mut self) -> SessionRefGuard {
-        self.r#ref();
-        SessionRefGuard(self as *const Self)
+        // SAFETY: `self` is a live heap-allocated ClientSession.
+        unsafe { SessionRefGuard::new(self) }
     }
 
     #[inline]

@@ -103,40 +103,17 @@ impl Drop for DerefOnDrop {
 
 // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
 // → intrusive Cell<u32> refcount; destroy callback = `deinit`.
-// TODO(port): switch to `bun_ptr::RefCounted`/`RefCount<Self>` once the
-// embedded-field shape is settled (the trait expects `*mut RefCount<Self>`,
-// not `&Cell<u32>`). For now hand-roll ref/deref to keep callers compiling.
-impl JSMySQLConnection {
-    #[inline]
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+bun_ptr::impl_cell_ref_counted! {
+    impl JSMySQLConnection {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: count hit 0; `this` came from `Box::into_raw` in
+        // `create_instance`, so we are the unique owner here. `deinit` takes
+        // ownership back via `Box::from_raw` (mirrors Zig `bun.destroy(this)`).
+        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
-    /// Decrement the intrusive refcount; frees `*this` when it reaches 0.
-    ///
-    /// SAFETY: `this` must be the pointer originally produced by
-    /// `Box::into_raw` in `create_instance` (or an alias of it) and must be
-    /// valid for reads/writes. After this call returns the pointee may have
-    /// been freed — the caller must not hold any live `&`/`&mut Self` across
-    /// the call (Rust references must remain valid for their entire lifetime
-    /// even if never dereferenced; a dangling `&mut` is UB). All call sites
-    /// therefore go through a raw `*mut Self`, mirroring Zig's `*@This()`
-    /// which carries no aliasing/validity invariant.
-    #[inline]
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: see fn-level contract — `this` is a live `Box::into_raw` ptr.
-        unsafe {
-            let n = (*this).ref_count.get() - 1;
-            (*this).ref_count.set(n);
-            if n == 0 {
-                // Count hit 0; `this` came from `Box::into_raw` in
-                // `create_instance`, so we are the unique owner here. `deinit`
-                // takes ownership back via `Box::from_raw` (mirrors Zig
-                // `bun.destroy(this)`).
-                Self::deinit(this);
-            }
-        }
-    }
+}
 
+impl JSMySQLConnection {
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
     /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
     /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust

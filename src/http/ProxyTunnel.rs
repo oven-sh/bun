@@ -95,30 +95,12 @@ impl Drop for ProxyTunnel {
 }
 
 // ─── intrusive refcount (bun.ptr.RefCount) ───────────────────────────────────
-impl ProxyTunnel {
-    #[inline]
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-    /// # Safety
-    /// `this` must point to a live `ProxyTunnel` allocated by `start`/`adopt`
-    /// (i.e. originated from `Box::into_raw`). Takes a raw `*mut` so the
-    /// `Box::from_raw` on the zero-count path inherits write provenance from
-    /// the original allocation — a `&self` receiver here would force a
-    /// `*const → *mut` cast, which is UB to deallocate through.
-    #[inline]
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; `ref_count` is a `Cell`
-        // so the shared borrow taken by `.get()/.set()` is sound even if other
-        // raw aliases exist on this single thread.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: every live ProxyTunnel was created by `start` (Box::into_raw);
-            // ref_count hitting 0 means no other alias remains.
-            drop(unsafe { Box::from_raw(this) });
-        }
+bun_ptr::impl_cell_ref_counted! {
+    impl ProxyTunnel {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: every live ProxyTunnel was created by `start`/`adopt`
+        // (`Box::into_raw`); ref_count hitting 0 means no other alias remains.
+        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
     }
 }
 

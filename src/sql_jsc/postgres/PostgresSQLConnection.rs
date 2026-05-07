@@ -157,28 +157,17 @@ pub struct PostgresSQLConnection {
     pub auto_flusher: AutoFlusher,
 }
 
-impl PostgresSQLConnection {
-    // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
-    // TODO(port): intrusive refcount methods provided by bun_ptr::IntrusiveRc derive.
-    pub fn r#ref(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+// pub const ref = RefCount.ref; pub const deref = RefCount.deref;
+bun_ptr::impl_cell_ref_counted! {
+    impl PostgresSQLConnection {
+        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
+        // SAFETY: ref_count hit zero; we are the last owner of this
+        // Box-allocated struct.
+        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
-    /// Raw-pointer receiver: when the count hits zero this path ends in
-    /// `Box::from_raw(this)`, and a `&mut self` argument would hold a Stacked
-    /// Borrows protector across that dealloc (Miri: "deallocating while item is
-    /// protected"). Mirrors Zig's `*@This()` receiver.
-    pub fn deref(this: *mut Self) {
-        // SAFETY: `this` points at a live Box-allocated connection; ref_count is
-        // only touched on the JS thread.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // ref_count hit zero; we are the last owner of this Box-allocated struct.
-            Self::deinit(this);
-        }
-    }
+}
 
+impl PostgresSQLConnection {
     #[inline]
     fn global(&self) -> &JSGlobalObject {
         // SAFETY: JSC_BORROW — global_object outlives this connection (owned by VM).
@@ -264,7 +253,7 @@ impl PostgresSQLConnection {
             // if we have backpressure, wait for onWritable
             return false;
         }
-        self.r#ref();
+        self.ref_();
         debug!("onAutoFlush: draining");
         // drain as much as we can
         self.drain_internal();
@@ -273,7 +262,8 @@ impl PostgresSQLConnection {
         let keep_flusher_registered = !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) && self.write_buffer.len() > 0;
         debug!("onAutoFlush: keep_flusher_registered: {}", keep_flusher_registered);
         self.auto_flusher.registered = keep_flusher_registered;
-        Self::deref(self as *mut Self);
+        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
+        unsafe { Self::deref(self as *mut Self) };
         keep_flusher_registered
     }
 
@@ -599,7 +589,8 @@ impl PostgresSQLConnection {
             (*this).stop_timers();
             (*this).js_value.finalize();
         }
-        Self::deref(this);
+        // SAFETY: `this` is a live Box-allocated connection.
+        unsafe { Self::deref(this) };
     }
 
     pub fn flush_data_and_reset_timeout(&mut self) {
@@ -641,7 +632,7 @@ impl PostgresSQLConnection {
 
         self.status = Status::Failed;
 
-        self.r#ref();
+        self.ref_();
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
@@ -659,7 +650,8 @@ impl PostgresSQLConnection {
             event_loop.exit();
         }
         self.ref_and_close(Some(value));
-        Self::deref(self as *mut Self);
+        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
+        unsafe { Self::deref(self as *mut Self) };
         self.update_has_pending_activity();
     }
 
@@ -844,7 +836,7 @@ impl PostgresSQLConnection {
     }
 
     pub fn on_data(&mut self, data: &[u8]) {
-        self.r#ref();
+        self.ref_();
         self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
         // PORT NOTE: reshaped for borrowck — see `drain_internal`.
         let vm: *mut VirtualMachine = self.vm;
@@ -932,7 +924,8 @@ impl PostgresSQLConnection {
 
         // reset the connection timeout after we're done processing the data
         self.reset_connection_timeout();
-        Self::deref(self as *mut Self);
+        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
+        unsafe { Self::deref(self as *mut Self) };
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr

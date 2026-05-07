@@ -1653,6 +1653,15 @@ impl<'a> Printer<'a> {
         let mut lockfile_path_buf2 = PathBuffer::uninit();
 
         let mut lockfile_path: &ZStr = ZStr::EMPTY;
+        // Track which buffer backs `lockfile_path` so the chdir NUL-terminate
+        // step below can write into the *other* buffer. `resolve_path::z` does
+        // `output[..n].copy_from_slice(input)` (→ `ptr::copy_nonoverlapping`);
+        // passing a slice of `bufN` as `input` while taking `&mut bufN` as
+        // `output` is UB on overlapping ranges and would also corrupt
+        // `lockfile_path` (printed in the NotFound arm). Zig's
+        // `bun.sys.chdir("", dirname)` accepts a non-sentinel slice directly,
+        // so it never re-buffers — the hazard is Rust-port-specific.
+        let mut path_in_buf2 = false;
 
         if !bun_paths::is_absolute(path) {
             // Zig `bun.getcwd` returns the slice; the Rust `bun_sys::getcwd`
@@ -1668,6 +1677,7 @@ impl<'a> Printer<'a> {
             // SAFETY: NUL written at [len] above.
             lockfile_path =
                 unsafe { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__len) };
+            path_in_buf2 = true;
         } else if !path.is_empty() {
             lockfile_path_buf1[..path.len()].copy_from_slice(path);
             lockfile_path_buf1[path.len()] = 0;
@@ -1680,7 +1690,14 @@ impl<'a> Printer<'a> {
             // Zig `bun.sys.chdir("", dirname)` — first arg is error-context
             // path; the Rust `bun_sys::chdir` takes the destination only.
             let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
-            let dir_z = resolve_path::z(dir, &mut lockfile_path_buf2);
+            // NUL-terminate into the buffer that does NOT back `lockfile_path`
+            // (see `path_in_buf2` note above). `buf1`'s cwd contents are dead
+            // after the join, so it is free for reuse here.
+            let dir_z = if path_in_buf2 {
+                resolve_path::z(dir, &mut lockfile_path_buf1)
+            } else {
+                resolve_path::z(dir, &mut lockfile_path_buf2)
+            };
             let _ = sys::chdir(dir_z);
         }
 

@@ -210,9 +210,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         manager.decrement_pending_tasks();
         // Zig: `defer ptask.deinit();` — reclaim the Box at end of iteration.
         let _ptask_guard = scopeguard::guard((), move |()| {
-            // SAFETY: `ptask_real_ptr` was produced by `Box::into_raw` in
+            // SAFETY: `ptask_ptr` was produced by `Box::into_raw` in
             // `PatchTask::new_*`; ownership returned exactly once here.
-            unsafe { PatchTask::destroy(ptask_real_ptr) };
+            unsafe { PatchTask::destroy(ptask_ptr) };
         });
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {

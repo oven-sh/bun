@@ -120,11 +120,9 @@ fn framework_as_bundler_view(f: &bake::Framework) -> bundler::bake_types::Framew
 }
 
 impl DevServer {
-    /// `DevServer.memoryCost` — see `DevServer/memory_cost.rs` for the
-    /// keystone-typed version. Ported inline here against the body
-    /// `DevServer<'_>` so the field set matches; both will collapse when the
-    /// two `DevServer` shapes unify.
-    fn memory_cost(&self) -> usize {
+    /// `DevServer.memoryCost` — sums the per-category breakdown from
+    /// `memory_cost_detailed`.
+    pub fn memory_cost(&self) -> usize {
         let cost = self.memory_cost_detailed();
         cost.incremental_graph_client
             + cost.incremental_graph_server

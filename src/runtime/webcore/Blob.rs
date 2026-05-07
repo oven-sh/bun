@@ -6289,11 +6289,18 @@ pub trait FileOpener: Sized {
                     break;
                 }
                 bun_sys::Result::Err(err) => {
-                    // TODO(port): @hasField(This, "mkdirp_if_not_exists") — optional
-                    // mkdir-retry hook via MkdirpTarget. Phase B: add a default-noop method.
+                    // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...)) { ... }`.
                     if err.get_errno() == bun_sys::E::ENOENT {
-                        // mkdir_if_not_exists(self, err, path, path_string.slice()) → Retry
-                        // (only if Self: MkdirpTarget)
+                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                            Retry::Continue => continue,
+                            Retry::Fail => {
+                                // `mkdir_if_not_exists` already populated
+                                // `errno`/`system_error` on the impl.
+                                self.set_opened_fd(Fd::INVALID);
+                                break;
+                            }
+                            Retry::No => {}
+                        }
                     }
                     self.set_errno(bun_core::errno_to_zig_err(err.errno as i32));
                     self.set_system_error(jsc::SysErrorJsc::to_system_error(

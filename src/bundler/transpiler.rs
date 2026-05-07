@@ -592,14 +592,16 @@ impl<'a> Transpiler<'a> {
                 let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
                     return Ok(());
                 };
-                // SAFETY/CYCLEBREAK: `get_entries` returns
-                // `*mut bun_resolver::fs::DirEntry`; `dot_env::Loader::load`
-                // takes `&mut bun_sys::fs::DirEntry`, the `#[repr(C)]` opaque
-                // FORWARD_DECL of the same type (sys/lib.rs:2784, MOVE_DOWN
-                // pending). The dotenv side only calls `has_comptime_query`
-                // through it; cast across the seam.
+                // `get_entries` returns `*mut bun_resolver::fs::DirEntry`
+                // (BSSMap-owned). `dot_env::Loader::load` accepts the
+                // `bun_sys::fs::DirEntry` seam type because `bun_dotenv` sits
+                // below `bun_resolver` in the crate graph; go through the
+                // resolver-provided typed adapter rather than open-coding the
+                // `as *mut ZST` reinterpret here.
+                // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
+                // sole `&mut` for the call.
                 let dir: &mut bun_sys::fs::DirEntry =
-                    unsafe { &mut *(dir as *mut bun_sys::fs::DirEntry) };
+                    unsafe { &mut *dir }.as_sys_seam_mut();
 
                 // PORT NOTE: `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit

@@ -996,19 +996,28 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     this.options.minimum_release_age_ms.is_some();
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
-                                    // PORT NOTE: reshaped for borrowck — `this.manifests`
-                                    // borrows `*this`; pass `*mut PackageManager` for the
-                                    // disk-load callback (Zig passes the aliased `*this`).
-                                    let scope = this.scope_for_package_name(name_str);
+                                    // PORT NOTE: reshaped for borrowck — Zig passes the
+                                    // aliased `*this` while also holding `this.manifests`.
+                                    // Split through a raw root so the disjoint fields
+                                    // (`manifests` vs. `options`/`cache_directory_`/
+                                    // `timestamp_for_manifest_cache_control`) can be
+                                    // borrowed separately.
                                     let this_ptr: *mut PackageManager = this;
-                                    if let Some(manifest) = this.manifests.by_name_hash_allow_expired(
-                                        this_ptr,
-                                        scope,
-                                        name_hash,
-                                        &mut expired,
-                                        ManifestLoad::LoadFromMemoryFallbackToDisk,
-                                        needs_extended_manifest,
-                                    ) {
+                                    // SAFETY: `this_ptr` is the live exclusive borrow's
+                                    // address; `by_name_hash_allow_expired` only reads
+                                    // `pm` fields disjoint from `pm.manifests`.
+                                    let scope: *const crate::npm::registry::Scope =
+                                        unsafe { &*this_ptr }.scope_for_package_name(name_str);
+                                    if let Some(manifest) = unsafe { &mut (*this_ptr).manifests }
+                                        .by_name_hash_allow_expired(
+                                            unsafe { &mut *this_ptr },
+                                            unsafe { &*scope },
+                                            name_hash,
+                                            Some(&mut expired),
+                                            ManifestLoad::LoadFromMemoryFallbackToDisk,
+                                            needs_extended_manifest,
+                                        )
+                                    {
                                         loaded_manifest = Some(*manifest);
 
                                         // If it's an exact package version already living in the cache

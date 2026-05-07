@@ -160,9 +160,6 @@ impl RunCommand {
 
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    const BUN_BIN_NAME: &'static str = if cfg!(debug_assertions) { "bun-debug" } else { "bun" };
-    const BUN_RUN: &'static str = const_format::concatcp!(RunCommand::BUN_BIN_NAME, " run");
-
     /// `findShell` — locate a POSIX shell on `$PATH`, falling back to a
     /// hardcoded list. Returns a NUL-terminated path borrowed from the
     /// process-lifetime cache populated by `find_shell`.

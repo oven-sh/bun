@@ -1574,7 +1574,7 @@ impl FetchTasklet {
         // SAFETY: sink alive while self.sink is Some (guaranteed by the
         // `ReadableStream` request-body path that reaches here).
         let high_water_mark: usize = match self.sink {
-            Some(sink) => unsafe { (*sink).high_water_mark() } as usize,
+            Some(sink) => (unsafe { (*sink).high_water_mark() }) as usize,
             None => 16384,
         };
 

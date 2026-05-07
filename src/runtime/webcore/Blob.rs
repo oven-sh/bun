@@ -4576,7 +4576,7 @@ pub fn write_file_internal(
                         let _ = body_value_ref.to_readable_stream(global_this)?;
                         let readable_opt = get_stream(global_this).or_else(|| {
                             // SAFETY: re-borrow after `to_readable_stream`.
-                            let BodyValue::Locked(locked) = unsafe { &mut *body_value } else {
+                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                                 return None;
                             };
                             locked.readable.get(global_this)
@@ -4621,7 +4621,7 @@ pub fn write_file_internal(
                         mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
                     }));
                     // SAFETY: re-borrow after the early-return paths.
-                    let BodyValue::Locked(locked) = unsafe { &mut *body_value } else {
+                    let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                         unreachable!()
                     };
                     locked.task = Some(task.cast::<c_void>());

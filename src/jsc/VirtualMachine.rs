@@ -4290,9 +4290,13 @@ impl VirtualMachine {
             // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
             // `extern "C"` callbacks. `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
+            // The C trampoline erases lifetimes via `*mut c_void`; round-trip
+            // the caller's `&mut ExceptionList` as a raw pointer so child
+            // errors append to the same list (spec VirtualMachine.zig:2715).
             struct AggCtx<'a> {
                 formatter: *mut crate::console_object::Formatter<'a>,
                 writer: *mut bun_core::io::Writer,
+                exception_list: *mut ExceptionList,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
             }
@@ -4306,34 +4310,38 @@ impl VirtualMachine {
                 let ctx = unsafe { &mut *(ctx as *mut AggCtx<'_>) };
                 // SAFETY: per-thread VM.
                 let vm = unsafe { &mut *VirtualMachine::get() };
-                // SAFETY: `formatter`/`writer` borrow the caller's stack
-                // locals, live across the synchronous `for_each` call.
+                // SAFETY: `formatter`/`writer`/`exception_list` borrow the
+                // caller's stack locals, live across the synchronous
+                // `for_each` call; reborrow the raw pointers for the
+                // recursive call.
+                let exception_list = if ctx.exception_list.is_null() {
+                    None
+                } else {
+                    Some(unsafe { &mut *ctx.exception_list })
+                };
                 vm.print_errorlike_object(
                     next_value,
                     None,
-                    // PORT NOTE: reshaped for borrowck — Zig threaded
-                    // `exception_list` through the iterator ctx; the C
-                    // trampoline can't reborrow `&mut Option<&mut _>`, so
-                    // child errors don't append (matches observed behaviour:
-                    // only the top-level frame is added).
-                    None,
+                    exception_list,
                     unsafe { &mut *ctx.formatter },
                     unsafe { &mut *ctx.writer },
                     ctx.allow_ansi_color,
                     ctx.allow_side_effects,
                 );
             }
-            let errors = value
-                .get(global_ref, "errors")
-                .ok()
-                .flatten()
-                .unwrap_or(JSValue::UNDEFINED);
             let mut ctx = AggCtx {
                 formatter: formatter as *mut _,
                 writer: writer as *mut _,
+                exception_list: exception_list
+                    .map(|l| l as *mut ExceptionList)
+                    .unwrap_or(core::ptr::null_mut()),
                 allow_ansi_color,
                 allow_side_effects,
             };
+            // Spec VirtualMachine.zig:2717 — `getErrorsProperty` is
+            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
+            // which case the spec `catch return` swallows it.
+            let errors = value.get_errors_property(global_ref);
             let _ = errors.for_each(
                 global_ref,
                 (&mut ctx as *mut AggCtx<'_>).cast(),

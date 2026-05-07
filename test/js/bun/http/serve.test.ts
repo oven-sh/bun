@@ -1588,23 +1588,24 @@ it("should support promise returned from error", async () => {
 });
 
 // #7187: EACCES must be reported correctly when binding to a privileged port
-// as a non-root user. Linux and macOS both return EACCES for unprivileged
-// binds below ip_unprivileged_port_start (default 1024). Pick the highest
-// privileged port we're allowed to compute — start - 1 — rather than a
-// well-known one like 80/443 which may legitimately be in use on the host
-// and would mask the bug with a real EADDRINUSE.
+// as a non-root user. On Linux, ports below ip_unprivileged_port_start
+// (default 1024) require CAP_NET_BIND_SERVICE. macOS is skipped: since
+// Mojave (10.14, 2018) non-root processes can bind any port, so this
+// assertion would hard-fail on a macOS CI runner — see nodejs/node#21679
+// and Bun's own vendored node test-cluster-bind-privileged-port.js:42-44.
+// Pick the highest still-privileged port (start - 1) rather than a
+// well-known one like 80/443 which may legitimately be in use and would
+// mask the bug with a real EADDRINUSE.
 const privilegedBindEACCES: { port: number } | null = (() => {
-  if (process.platform === "win32") return null;
+  if (process.platform !== "linux") return null;
   // @ts-ignore geteuid exists on posix at runtime
   const isRoot = typeof process.geteuid === "function" && process.geteuid() === 0;
   if (isRoot) return null;
   let unprivilegedStart = 1024;
-  if (process.platform === "linux") {
-    try {
-      const start = Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8").trim());
-      if (Number.isFinite(start)) unprivilegedStart = start;
-    } catch {}
-  }
+  try {
+    const start = Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8").trim());
+    if (Number.isFinite(start)) unprivilegedStart = start;
+  } catch {}
   if (unprivilegedStart <= 1) return null;
   return { port: unprivilegedStart - 1 };
 })();
@@ -1648,6 +1649,9 @@ it.skipIf(process.platform === "win32")(
       expect(e.syscall).toBe("listen");
       expect(typeof e.errno).toBe("number");
       expect(e.errno).not.toBe(0);
+      // Matches Node: TCP listen errors expose address + port, not path.
+      expect(e.address).toBe("192.0.2.1");
+      expect(typeof e.port).toBe("number");
     }
   },
 );

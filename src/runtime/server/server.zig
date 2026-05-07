@@ -1910,12 +1910,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // the uSockets listen callback. On Windows it's a Winsock code
                 // (WSAEADDRINUSE=10048, …) which isn't a tag of the exhaustive
                 // `bun.sys.E` enum, so go through `SystemErrno.init` which
-                // translates WSA → POSIX. On POSIX it's a straight pass-through.
-                // errno may be 0 when uSockets failed without a syscall (e.g.
-                // getaddrinfo) — keep the historical EADDRINUSE message for that.
-                // `SystemErrno.init` translates WSA codes on Windows and is a
-                // pass-through on POSIX. The integer values of `SystemErrno` and
-                // `E` are 1:1 on both platforms (see Listener.zig for prior art).
+                // translates WSA→POSIX. On POSIX it's a straight pass-through.
+                // The integer values of `SystemErrno` and `E` are 1:1 on both
+                // platforms (see Listener.zig for prior art). errno may be 0
+                // when uSockets failed without a syscall (e.g. getaddrinfo) —
+                // keep the historical EADDRINUSE message for that.
                 const e: bun.sys.E = if (errno != 0) blk: {
                     const se = bun.sys.SystemErrno.init(errno) orelse bun.sys.SystemErrno.EINVAL;
                     break :blk @enumFromInt(@intFromEnum(se));
@@ -1925,6 +1924,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 const js_errno: c_int = -@as(c_int, @intCast(@intFromEnum(e)));
                 switch (this.config.address) {
                     .tcp => |tcp| {
+                        const hostname: []const u8 = if (tcp.hostname) |h| bun.span(h) else "0.0.0.0";
                         switch (e) {
                             .SUCCESS, .ADDRINUSE => {
                                 error_instance = (jsc.SystemError{
@@ -1937,15 +1937,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             .ACCES => {
                                 error_instance = (jsc.SystemError{
                                     .errno = js_errno,
-                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ hostname, tcp.port }) catch "Failed to start server"),
                                     .code = bun.String.static("EACCES"),
                                     .syscall = bun.String.static("listen"),
                                 }).toErrorInstance(globalThis);
                             },
                             else => {
-                                var sys_err = bun.sys.Error.fromCode(e, .listen);
-                                sys_err.path = if (tcp.hostname) |h| bun.span(h) else "0.0.0.0";
+                                // `bun.sys.Error.path` is the unix-socket / filesystem
+                                // field; for TCP, Node sets `.address` and `.port`
+                                // directly on the JS error instead. Match that.
+                                const sys_err = bun.sys.Error.fromCode(e, .listen);
                                 error_instance = sys_err.toJS(globalThis) catch return;
+                                error_instance.put(globalThis, jsc.ZigString.static("address"), jsc.ZigString.initUTF8(hostname).toJS(globalThis));
+                                error_instance.put(globalThis, jsc.ZigString.static("port"), .jsNumber(tcp.port));
                             },
                         }
                     },

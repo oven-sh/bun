@@ -283,6 +283,16 @@ impl JSValue {
         // SAFETY: pure FFI predicate; `global` is live.
         unsafe { JSC__JSValue__isAggregateError(self, global) }
     }
+    /// `JSValue.getErrorsProperty(globalObject)` (JSValue.zig:552). Returns the
+    /// own `errors` data property via `JSObject::getDirect` — no prototype
+    /// walk, no getters invoked, nothrow. Used for `AggregateError.errors`.
+    #[inline] pub fn get_errors_property(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn JSC__JSValue__getErrorsProperty(this: JSValue, global: *const JSGlobalObject) -> JSValue;
+        }
+        // SAFETY: `global` is live; FFI is `getDirect`, nothrow.
+        unsafe { JSC__JSValue__getErrorsProperty(self, global) }
+    }
     /// `JSValue.isTerminationException()` (JSValue.zig:1182) — true if this
     /// value is the VM's termination-exception sentinel.
     #[inline] pub fn is_termination_exception(self) -> bool {

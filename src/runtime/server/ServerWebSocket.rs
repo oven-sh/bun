@@ -10,7 +10,6 @@ use crate::server::jsc::{
     JSString, JSType, JSUint8Array, JSValue, JsRef, JsResult, ZigStringSlice,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
-use crate::server::WebSocketServerContext as WebSocketServer;
 use crate::server::WebSocketServerHandler;
 
 bun_core::declare_scope!(WebSocketServer, visible);

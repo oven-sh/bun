@@ -1251,6 +1251,7 @@ unsafe extern "C" {
     fn ZigString__toErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toTypeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toValueGC(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toAtomicValue(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toExternalValue(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toJSONObject(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__external(
@@ -1744,6 +1745,9 @@ pub trait ZigStringJsc: Sized {
     /// `ZigString.toJS` — copies into a GC-managed `JSString` (or hands an
     /// external value if globally allocated).
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+    /// `ZigString.toAtomicValue` — interns the string as a `JSC::Identifier`
+    /// (atom). Prefer for short strings that will be compared by identity.
+    fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue;
     /// `ZigString.toExternalValue` — transfers ownership of a globally-allocated
     /// buffer to JSC's external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
@@ -1778,6 +1782,11 @@ impl ZigStringJsc for bun_string::ZigString {
         }
         // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
         unsafe { ZigString__toValueGC(self, global) }
+    }
+    #[inline]
+    fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+        unsafe { ZigString__toAtomicValue(self, global) }
     }
     #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {

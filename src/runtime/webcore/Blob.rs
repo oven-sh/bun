@@ -6176,6 +6176,20 @@ pub trait FileOpener: Sized {
     fn set_system_error(&mut self, e: jsc::SystemError);
     /// Either `self.file_store.pathlike` or `self.file_blob.store.data.file.pathlike`.
     fn pathlike(&self) -> &PathOrFileDescriptor;
+    /// Zig: `if (@hasField(This, "mkdirp_if_not_exists")) ... mkdirIfNotExists(...)`.
+    /// Implementors that have a `mkdirp_if_not_exists` field (`WriteFile`,
+    /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
+    /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
+    /// straight through to the error branch as in the Zig spec.
+    #[allow(unused_variables)]
+    fn try_mkdirp(
+        &mut self,
+        err: bun_sys::Error,
+        path: &bun_str::ZStr,
+        display_path: &[u8],
+    ) -> Retry {
+        Retry::No
+    }
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t;
     #[cfg(windows)]

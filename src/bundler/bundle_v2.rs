@@ -2007,7 +2007,7 @@ impl<'a> BundleV2<'a> {
 
         // Check the FileMap first for in-memory files
         if let Some(file_map) = self.file_map {
-            if let Some(_file_map_result) = file_map.resolve(&import_record.source_file, &import_record.specifier) {
+            if let Some(_file_map_result) = file_map.resolve(self.allocator(), &import_record.source_file, &import_record.specifier) {
                 let mut file_map_result = _file_map_result;
                 let mut path_primary = file_map_result.path_pair.primary.clone();
                 // PORT NOTE: reshaped for borrowck — `get_or_put` borrows `*self` mutably via
@@ -2572,7 +2572,7 @@ impl<'a> BundleV2<'a> {
 
             // Check FileMap first for in-memory entry points
             if let Some(file_map) = self.file_map {
-                if let Some(file_map_result) = file_map.resolve(b"", entry_point) {
+                if let Some(file_map_result) = file_map.resolve(self.allocator(), b"", entry_point) {
                     let _ = self.enqueue_entry_item(&mut {file_map_result}, true, self.transpiler.options.target)?;
                     continue;
                 }
@@ -4906,7 +4906,7 @@ impl<'a> BundleV2<'a> {
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) = file_map.resolve(&source.path.text, &import_record.path.text) {
+                if let Some(_file_map_result) = file_map.resolve(self.allocator(), &source.path.text, &import_record.path.text) {
                     let mut file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary.clone();
                     let import_record_loader = import_record.loader.unwrap_or_else(|| {

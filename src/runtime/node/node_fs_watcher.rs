@@ -546,6 +546,13 @@ impl<'a> Arguments<'a> {
 }
 
 impl FSWatcher {
+    /// Read access to the JS wrapper value. Exposed for `NodeFS::watch`, which
+    /// in Zig reads the `js_this` field directly off the by-value `*FSWatcher`.
+    #[inline]
+    pub fn js_this(&self) -> JSValue {
+        self.js_this
+    }
+
     pub fn init_js(&mut self, listener: JSValue) {
         if self.persistent {
             self.poll_ref.ref_(self.ctx);

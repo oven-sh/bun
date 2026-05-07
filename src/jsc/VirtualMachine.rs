@@ -1337,7 +1337,11 @@ impl VirtualMachine {
     pub fn init(opts: InitOptions) -> Result<*mut VirtualMachine, bun_core::Error> {
         jsc::mark_binding();
 
-        let log: *mut logger::Log = Box::into_raw(Box::new(logger::Log::default()));
+        // Spec VirtualMachine.zig:1234 — `opts.log orelse allocator.create(Log)`.
+        let log: *mut logger::Log = match opts.log {
+            Some(l) => l.as_ptr(),
+            None => Box::into_raw(Box::new(logger::Log::default())),
+        };
 
         // SAFETY: VM is large + self-referential; allocate zeroed and fill in
         // place (mirrors Zig's `allocator.create` + struct-init). The

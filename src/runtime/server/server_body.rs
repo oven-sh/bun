@@ -1185,7 +1185,7 @@ pub fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
     let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
-    let _guard = scopeguard::guard((), move |_| unsafe { ServePlugins::deref_(plugins) });
+    let _guard = unsafe { ServePluginsRef::adopt(plugins) };
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);
 
@@ -1835,12 +1835,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut sec_websocket_extensions = ZigString::EMPTY;
 
         // Owned backing storage for sec_websocket_* — see server.zig:910 comment.
+        // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
         let mut sec_websocket_key_owned = bun_str::ZigStringSlice::empty();
-        let _k = scopeguard::guard((), |_| sec_websocket_key_owned.deinit());
         let mut sec_websocket_protocol_owned = bun_str::ZigStringSlice::empty();
-        let _p = scopeguard::guard((), |_| sec_websocket_protocol_owned.deinit());
         let mut sec_websocket_extensions_owned = bun_str::ZigStringSlice::empty();
-        let _e = scopeguard::guard((), |_| sec_websocket_extensions_owned.deinit());
 
         if let Some(head) = request.get_fetch_headers() {
             use jsc::HTTPHeaderName;
@@ -1881,10 +1879,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if sec_websocket_extensions.len > 0 { sec_websocket_extensions.mark_utf8(); }
 
         let mut data_value = JSValue::ZERO;
-        let mut fetch_headers_to_deref: Option<*mut FetchHeaders> = None;
-        let _fh_guard = scopeguard::guard((), |_| {
-            if let Some(fh) = fetch_headers_to_deref { unsafe { (*fh).deref() } }
-        });
+        // Non-unit guard state: holds the temporarily-created FetchHeaders (if
+        // any) and derefs it on scope exit. Populated below via DerefMut.
+        let mut fetch_headers_to_deref =
+            scopeguard::guard(None::<*mut FetchHeaders>, |fh| {
+                if let Some(h) = fh { unsafe { (*h).deref() } }
+            });
         let mut fetch_headers_to_use: Option<*mut FetchHeaders> = None;
 
         if let Some(opts) = optional {
@@ -1904,7 +1904,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         None => {
                             if headers_value.is_object() {
                                 if let Some(created) = FetchHeaders::create_from_js(global, headers_value)? {
-                                    fetch_headers_to_deref = Some(created);
+                                    *fetch_headers_to_deref = Some(created);
                                     created
                                 } else if !global.has_exception() {
                                     return Err(global.throw_invalid_arguments(format_args!(

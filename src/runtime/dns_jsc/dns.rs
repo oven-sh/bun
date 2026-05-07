@@ -3483,7 +3483,7 @@ impl Resolver {
 
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         let this: *mut Self = self;
-        let _g = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             // SAFETY: `this` is the heap allocation from `init`. This releases the
             // ref taken by `add_timer`; all callers of `request_completed` (the only
             // path here) hold an `IntrusiveRc<Resolver>`, so the timer ref is never
@@ -3494,7 +3494,7 @@ impl Resolver {
                 (*state).timer.increment_timer_ref(-1, uws_loop);
                 Self::deref(this);
             }
-        });
+        }
 
         let state = crate::jsc_hooks::runtime_state();
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
@@ -3606,10 +3606,9 @@ impl Resolver {
         result: Option<*mut T>,
     ) {
         // cache_name = format!("pending_{}_cache_cares", T::TYPE_NAME)
-        self.ref_();
         let this: *mut Self = self;
-        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
-        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
+        // SAFETY: `this` derived from `&mut self`; ref_scope keeps count > 0 across re-entrant callbacks.
+        let _g = unsafe { Self::ref_scope(this) };
 
         // TODO(port): generic getKey over T::CACHE_FIELD
         let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
@@ -3640,7 +3639,7 @@ impl Resolver {
             let mut prev_global = (*key.lookup).head.global_this;
             let mut array = (*addr).to_js_response(&*prev_global, T::TYPE_NAME).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated reply; freed once after all consumers run.
-            let _free_addr = scopeguard::guard((), |_| T::destroy(addr));
+            let _free_addr = scopeguard::guard(addr, |a| T::destroy(a));
             array.ensure_still_alive();
             CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
@@ -3671,10 +3670,9 @@ impl Resolver {
     ) {
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheCares);
 
-        self.ref_();
         let this: *mut Self = self;
-        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
-        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
+        // SAFETY: `this` derived from `&mut self`; ref_scope keeps count > 0 across re-entrant callbacks.
+        let _g = unsafe { Self::ref_scope(this) };
 
         let Some(addr) = result else {
             unsafe {
@@ -3729,10 +3727,9 @@ impl Resolver {
         bun_output::scoped_log!(DNSResolver, "drainPendingHostNative");
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheNative);
 
-        self.ref_();
         let this: *mut Self = self;
-        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
-        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
+        // SAFETY: `this` derived from `&mut self`; ref_scope keeps count > 0 across re-entrant callbacks.
+        let _g = unsafe { Self::ref_scope(this) };
 
         let mut array: JSValue = match super::options_jsc::result_any_to_js(&result, global_object).unwrap_or(None) { // TODO: properly propagate exception upwards
             Some(a) => a,
@@ -3790,10 +3787,9 @@ impl Resolver {
     ) {
         let key = self.get_key_addr(index);
 
-        self.ref_();
         let this: *mut Self = self;
-        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
-        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
+        // SAFETY: `this` derived from `&mut self`; ref_scope keeps count > 0 across re-entrant callbacks.
+        let _g = unsafe { Self::ref_scope(this) };
 
         let Some(addr) = result else {
             unsafe {
@@ -3846,10 +3842,9 @@ impl Resolver {
     ) {
         let key = self.get_key_nameinfo(index);
 
-        self.ref_();
         let this: *mut Self = self;
-        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
-        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
+        // SAFETY: `this` derived from `&mut self`; ref_scope keeps count > 0 across re-entrant callbacks.
+        let _g = unsafe { Self::ref_scope(this) };
 
         let Some(mut name_info) = result else {
             unsafe {

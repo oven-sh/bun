@@ -2244,6 +2244,38 @@ pub fn spawn_process(
     }
 }
 
+/// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
+/// Replaces the Zig `defer if (fd != .invalid) fd.close()` pattern; [`Fd`]
+/// itself is `Copy` (a thin handle) and so cannot impl `Drop`.
+#[cfg(unix)]
+struct AutoCloseFd(Fd);
+
+#[cfg(unix)]
+impl AutoCloseFd {
+    #[inline]
+    const fn new(fd: Fd) -> Self {
+        Self(fd)
+    }
+    #[inline]
+    const fn invalid() -> Self {
+        Self(Fd::INVALID)
+    }
+    /// Borrow the inner handle (`Fd` is `Copy`).
+    #[inline]
+    fn fd(&self) -> Fd {
+        self.0
+    }
+}
+
+#[cfg(unix)]
+impl Drop for AutoCloseFd {
+    fn drop(&mut self) {
+        if self.0 != Fd::INVALID {
+            self.0.close();
+        }
+    }
+}
+
 /// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
 /// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
 /// runs on *every* exit (set CLOEXEC on `to_set_cloexec`, then close

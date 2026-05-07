@@ -267,6 +267,7 @@ impl<'a> Default for URL<'a> {
 /// Zig returned a `URL` borrowing from a fresh allocation the caller had to
 /// `allocator.free(url.href)`; in Rust, `OwnedURL` owns that buffer and
 /// `Drop` frees it.
+#[derive(Default, Clone)]
 pub struct OwnedURL {
     href: Box<[u8]>,
 }

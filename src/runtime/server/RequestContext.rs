@@ -3481,10 +3481,8 @@ where
                 this.request_body_buf = Vec::new();
 
                 if matches!(old, Body::Value::Locked(_)) {
-                    let loop_ = vm.event_loop();
                     // SAFETY: event_loop() returns a live raw ptr.
-                    unsafe { (*loop_).enter() };
-                    let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+                    let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
                     let _ = Body::Value::resolve(&mut old, body, global_this, None); // TODO: properly propagate exception upwards
                 }

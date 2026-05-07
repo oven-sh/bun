@@ -4,8 +4,13 @@ use bun_alloc::AllocError;
 use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::{Dependency, Lockfile, PackageManager};
-use bun_install::lockfile::StringBuilder;
-use bun_js_parser::{E, Expr, ExprData};
+use bun_install::lockfile::{Buffers, StringBuilder};
+// PORT NOTE (layering): Zig `bun.ast.Expr` resolves to the full T4 parser AST,
+// but every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML into
+// the lower-tier `bun_logger::js_ast` shape (re-exported via `crate::bun_json`).
+// Importing `bun_js_parser` here forced a higher-tier dep and produced
+// distinct-`Expr`-type errors at every call site, so use the T2 type directly.
+use crate::bun_json::{E, Expr, ExprData};
 use bun_logger::{Log, Source};
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
@@ -58,16 +63,20 @@ impl CatalogMap {
         group.get_adapted(&dep_name, ctx(buf)).cloned()
     }
 
+    /// PORT NOTE: Zig took `lockfile: *Lockfile` but only reads its string
+    /// buffer for the hash context. Narrow to `buf: &[u8]` so callers can hold
+    /// `&mut lockfile.catalogs` while only borrowing `buffers.string_bytes`
+    /// (disjoint field), instead of forcing a whole-`Lockfile` borrow that
+    /// conflicts with the `&mut self` receiver.
     pub fn get_or_put_group(
         &mut self,
-        lockfile: &Lockfile,
+        buf: &[u8],
         catalog_name: String,
     ) -> Result<&mut Map, AllocError> {
         if catalog_name.is_empty() {
             return Ok(&mut self.default);
         }
 
-        let buf = lockfile.buffers.string_bytes.as_slice();
         let entry = self.groups.get_or_put_adapted(catalog_name, ctx(buf))?;
         if !entry.found_existing {
             *entry.key_ptr = catalog_name;
@@ -93,12 +102,10 @@ impl CatalogMap {
         )
     }
 
-    pub fn parse_count(
-        &mut self,
-        _lockfile: &mut Lockfile,
-        expr: Expr,
-        builder: &mut StringBuilder,
-    ) {
+    // PORT NOTE: Zig took `lockfile: *Lockfile` only for `.allocator` (dropped
+    // per global-mimalloc rule). Removing it lets `lockfile.catalogs.parse_count`
+    // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
+    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
@@ -132,10 +139,14 @@ impl CatalogMap {
         }
     }
 
+    /// PORT NOTE: Zig threaded `lockfile: *Lockfile` for `.allocator` and
+    /// `.buffers.string_bytes`. The allocator is dropped (global mimalloc) and
+    /// `builder` already holds `&mut string_bytes`, so read the buffer through
+    /// `builder` and drop the `lockfile` param — otherwise call sites would
+    /// alias `&mut lockfile.catalogs` against `&mut lockfile`.
     pub fn parse_append(
         &mut self,
         pm: &mut PackageManager,
-        lockfile: &mut Lockfile,
         log: &mut Log,
         source: &Source,
         expr: Expr,
@@ -143,7 +154,7 @@ impl CatalogMap {
     ) -> Result<bool, AllocError> {
         let mut found_any = false;
         if let Some(default_catalog) = expr.get(b"catalog") {
-            let group = self.get_or_put_group(lockfile, String::EMPTY)?;
+            let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
@@ -157,7 +168,7 @@ impl CatalogMap {
                     if let ExprData::EString(version_str) = &value.data {
                         let version_literal = builder.append::<String>(version_str.data);
 
-                        let buf = lockfile.buffers.string_bytes.as_slice();
+                        let buf = builder.string_bytes.as_slice();
                         let version_sliced = version_literal.sliced(buf);
 
                         let Some(version) = Dependency::parse(
@@ -176,7 +187,7 @@ impl CatalogMap {
                             continue;
                         };
 
-                        let buf = lockfile.buffers.string_bytes.as_slice();
+                        let buf = builder.string_bytes.as_slice();
                         let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
 
                         if entry.found_existing {
@@ -204,7 +215,8 @@ impl CatalogMap {
                     let catalog_name_str = catalog_key.as_utf8_string_literal().unwrap();
                     let catalog_name = builder.append::<String>(catalog_name_str);
 
-                    let group = self.get_or_put_group(lockfile, catalog_name)?;
+                    let group =
+                        self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
 
                     if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
                         for item in obj.properties.slice() {
@@ -217,7 +229,7 @@ impl CatalogMap {
                             if let ExprData::EString(version_str) = &value.data {
                                 let version_literal =
                                     builder.append::<String>(version_str.data);
-                                let buf = lockfile.buffers.string_bytes.as_slice();
+                                let buf = builder.string_bytes.as_slice();
                                 let version_sliced = version_literal.sliced(buf);
 
                                 let Some(version) = Dependency::parse(
@@ -236,7 +248,7 @@ impl CatalogMap {
                                     continue;
                                 };
 
-                                let buf = lockfile.buffers.string_bytes.as_slice();
+                                let buf = builder.string_bytes.as_slice();
                                 let entry = group.get_or_put_adapted(dep_name, ctx(buf))?;
 
                                 if entry.found_existing {
@@ -295,18 +307,9 @@ impl CatalogMap {
                 )?;
             } else {
                 let group_name = string_buf.append(group_name_str)?;
-                let group = {
-                    let buf = string_buf.bytes.as_slice();
-                    let entry = lockfile
-                        .catalogs
-                        .groups
-                        .get_or_put_adapted(group_name, ctx(buf))?;
-                    if !entry.found_existing {
-                        *entry.key_ptr = group_name;
-                        *entry.value_ptr = Map::default();
-                    }
-                    entry.value_ptr
-                };
+                let group = lockfile
+                    .catalogs
+                    .get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
                 put_entries_from_pnpm_lockfile(group, log, entries_obj, string_buf)?;
             }
         }
@@ -314,20 +317,20 @@ impl CatalogMap {
     }
 
     // PORT NOTE: Zig took `lockfile: *const Lockfile` but only reads its
-    // string buffer. Narrow to `buf: &[u8]` so the call site can hold
-    // `&mut lockfile.catalogs` while only borrowing `buffers.string_bytes`
+    // string buffer. Narrow to `buffers: &Buffers` so the call site can hold
+    // `&mut lockfile.catalogs` while only borrowing `lockfile.buffers`
     // immutably (disjoint fields), instead of forcing a whole-`Lockfile`
     // shared borrow that conflicts with the `&mut self` receiver.
-    pub fn sort(&mut self, buf: &[u8]) {
+    pub fn sort(&mut self, buffers: &Buffers) {
+        let buf = buffers.string_bytes.as_slice();
         let dep_less_than = |_: &[String], deps: &[Dependency], l: usize, r: usize| -> bool {
             deps[l].name.order(&deps[r].name, buf, buf) == Ordering::Less
         };
 
         self.default.sort(dep_less_than);
 
-        let mut iter = self.groups.iterator();
-        while let Some(catalog) = iter.next() {
-            catalog.value_ptr.sort(dep_less_than);
+        for catalog in self.groups.values_mut() {
+            catalog.sort(dep_less_than);
         }
 
         self.groups.sort(|names: &[String], _: &[Map], l: usize, r: usize| -> bool {
@@ -340,27 +343,26 @@ impl CatalogMap {
 
     pub fn count(&self, lockfile: &Lockfile, builder: &mut StringBuilder) {
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let mut deps_iter = self.default.iterator();
-        while let Some(entry) = deps_iter.next() {
-            builder.count(entry.key_ptr.slice(buf));
-            entry.value_ptr.count(buf, builder);
+        // PORT NOTE: `ArrayHashMap::iterator()` requires `&mut`; iterate the
+        // `keys()`/`values()` slices instead so `count` can stay `&self`.
+        for (dep_name, dep) in self.default.keys().iter().zip(self.default.values()) {
+            builder.count(dep_name.slice(buf));
+            dep.count(buf, builder);
         }
 
-        let mut groups_iter = self.groups.iterator();
-        while let Some(catalog) = groups_iter.next() {
-            builder.count(catalog.key_ptr.slice(buf));
+        for (catalog_name, deps) in self.groups.keys().iter().zip(self.groups.values()) {
+            builder.count(catalog_name.slice(buf));
 
-            let mut deps_iter = catalog.value_ptr.iterator();
-            while let Some(entry) = deps_iter.next() {
-                builder.count(entry.key_ptr.slice(buf));
-                entry.value_ptr.count(buf, builder);
+            for (dep_name, dep) in deps.keys().iter().zip(deps.values()) {
+                builder.count(dep_name.slice(buf));
+                dep.count(buf, builder);
             }
         }
     }
 
-    /// PORT NOTE: Zig also passed `*Lockfile new`, but `builder.lockfile`
-    /// already is `new` — read `new.buffers.string_bytes` through it instead
-    /// so the call site doesn't alias `&mut new` twice.
+    /// PORT NOTE: Zig also passed `*Lockfile new`, but `builder` already
+    /// borrows `new.buffers.string_bytes` — read the new-side buffer through
+    /// it instead so the call site doesn't alias `&mut new` twice.
     pub fn clone(
         &self,
         pm: &mut PackageManager,
@@ -382,11 +384,10 @@ impl CatalogMap {
         let new_buf: &[u8] = unsafe { &*new_buf_ptr };
         let new_ctx = ctx(new_buf);
 
-        let mut deps_iter = self.default.iterator();
-        while let Some(entry) = deps_iter.next() {
+        for (dep_name, dep) in self.default.keys().iter().zip(self.default.values()) {
             new_catalog.default.put_assume_capacity_context(
-                builder.append::<String>(entry.key_ptr.slice(old_buf)),
-                entry.value_ptr.clone_in(pm, old_buf, builder)?,
+                builder.append::<String>(dep_name.slice(old_buf)),
+                dep.clone_in(pm, old_buf, builder)?,
                 |k| ArrayHashAdapter::hash(&new_ctx, k),
                 |a, b, i| ArrayHashAdapter::eql(&new_ctx, a, b, i),
             );
@@ -394,21 +395,16 @@ impl CatalogMap {
 
         new_catalog.groups.ensure_total_capacity(self.groups.count())?;
 
-        let mut groups_iter = self.groups.iterator();
-        while let Some(group) = groups_iter.next() {
-            let catalog_name = group.key_ptr;
-            let deps = group.value_ptr;
-
+        for (catalog_name, deps) in self.groups.keys().iter().zip(self.groups.values()) {
             let mut new_group = Map::default();
             new_group.ensure_total_capacity(deps.count())?;
 
-            let mut deps_iter = deps.iterator();
-            while let Some(entry) = deps_iter.next() {
+            for (dep_name, dep) in deps.keys().iter().zip(deps.values()) {
                 new_group.put_assume_capacity_context(
-                    builder.append::<String>(entry.key_ptr.slice(old_buf)),
-                    entry.value_ptr.clone_in(pm, old_buf, builder)?,
-                    |k| new_ctx.hash(k),
-                    |a, b, i| new_ctx.eql(a, b, i),
+                    builder.append::<String>(dep_name.slice(old_buf)),
+                    dep.clone_in(pm, old_buf, builder)?,
+                    |k| ArrayHashAdapter::hash(&new_ctx, k),
+                    |a, b, i| ArrayHashAdapter::eql(&new_ctx, a, b, i),
                 );
             }
 
@@ -509,8 +505,9 @@ fn put_entries_from_pnpm_lockfile(
 //   confidence: high
 //   notes:      ArrayHashMap *_context calls routed via *_adapted (ArrayHashAdapter
 //               impl added on bun_semver::string::ArrayHashContext); allocator
-//               params dropped per global-mimalloc rule; from_pnpm_lockfile
-//               reshaped to thread the catalog map directly so `string_buf`
-//               (which already borrows the lockfile's string buffer) supplies
-//               the hash-context bytes.
+//               params dropped per global-mimalloc rule; `*Lockfile` params
+//               narrowed to the disjoint field actually read so callers can
+//               hold `&mut lockfile.catalogs` simultaneously; `Expr` resolved
+//               to the lower-tier `bun_logger::js_ast::Expr` (install JSON
+//               shape) to avoid a `bun_js_parser` dep cycle.
 // ──────────────────────────────────────────────────────────────────────────

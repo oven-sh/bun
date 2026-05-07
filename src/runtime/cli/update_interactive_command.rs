@@ -901,23 +901,25 @@ impl UpdateInteractiveCommand {
         Ok(result)
     }
 
-    fn get_outdated_packages<'a>(
-        manager: &'a mut PackageManager,
+    fn get_outdated_packages(
+        manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
-    ) -> Result<Vec<OutdatedPackage<'a>>, bun_core::Error> {
+    ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
         // PORT NOTE: reshaped for borrowck — `manifests.by_name_allow_expired`
         // needs `&mut manager.manifests` while we hold shared field-path
         // borrows on `manager.lockfile.*` / `manager.options.*`. Route the
         // `pm` argument as a raw pointer (Zig passes `*PackageManager` freely)
         // and clone the per-package `Scope` so the only mutable borrow is the
-        // disjoint `manager.manifests` field.
+        // disjoint `manager.manifests` field. The returned `OutdatedPackage`s
+        // do *not* borrow from `manager` (they carry the singleton's raw
+        // address only), so the caller may keep using `manager` afterwards.
         let pm_ptr: *mut PackageManager = manager;
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes.as_deref();
         let update_to_latest = manager.options.do_.update_to_latest();
 
-        let mut outdated_packages: Vec<OutdatedPackage<'a>> = Vec::new();
+        let mut outdated_packages: Vec<OutdatedPackage> = Vec::new();
 
         let mut version_buf: String = String::new();
 
@@ -1080,11 +1082,7 @@ impl UpdateInteractiveCommand {
                     dependency_type: dep_type,
                     workspace_name: Box::from(workspace_name),
                     behavior: dep.behavior,
-                    // SAFETY: `pm_ptr` is the live `&'a mut PackageManager`
-                    // address; `OutdatedPackage<'a>` only takes shared
-                    // projections (`manager.options.scope` /
-                    // `scope_for_package_name`) at render time.
-                    manager: unsafe { &*pm_ptr },
+                    manager: pm_ptr,
                     is_catalog,
                     catalog_name,
                     use_latest: update_to_latest, // default to --latest flag value
@@ -1266,8 +1264,8 @@ impl UpdateInteractiveCommand {
     }
 
     #[allow(dead_code)]
-    fn prompt_for_updates<'a>(
-        packages: &mut [OutdatedPackage<'a>],
+    fn prompt_for_updates(
+        packages: &mut [OutdatedPackage],
     ) -> Result<Box<[bool]>, bun_core::Error> {
         if packages.is_empty() {
             Output::prettyln(format_args!("<r><green>✓<r> All packages are up to date!"));

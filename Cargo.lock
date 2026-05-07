@@ -965,6 +965,7 @@ dependencies = [
  "bun_paths",
  "bun_perf",
  "bun_picohttp",
+ "bun_ptr",
  "bun_resolver",
  "bun_semver",
  "bun_sha_hmac",

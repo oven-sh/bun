@@ -937,7 +937,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if !task.log.msgs.is_empty() {
             // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
             // not `&mut Writer` (the underlying `Writer` is the FFI shape).
-            let _ = task.log.print(Output::error_writer() as *mut _);
+            // Zig: `try task.log.print(Output.errorWriter())` — propagate the
+            // write error (WriteFailed) out of `runTasks`.
+            task.log.print(Output::error_writer() as *mut _)?;
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }

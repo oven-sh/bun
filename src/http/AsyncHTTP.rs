@@ -580,30 +580,50 @@ impl AsyncHTTP {
         this
     }
 
+    /// Construct an `AsyncHTTP` for a synchronous request driven via
+    /// [`send_sync`].
+    ///
+    /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`,
+    /// `hostname`) must remain valid until `send_sync` returns. This matches
+    /// Zig's `AsyncHTTP.initSync`, which borrows stack-allocated buffers
+    /// (`var print_buf … defer print_buf.deinit()`, npm.zig:24-86) and
+    /// completes the request before they fall out of scope.
+    ///
+    /// `AsyncHTTP` is internally lifetime-erased (raw pointers /
+    /// `URL<'static>` fields, see PORT NOTE on the struct); the erasure here
+    /// is the same as the existing `request_header_buf: *const [u8]` and
+    /// [`erase`] paths used by `init`.
     pub fn init_sync(
         method: Method,
-        url: URL<'static>,
+        url: URL<'_>,
         headers: headers::EntryList,
-        headers_buf: &'static [u8],
+        headers_buf: &[u8],
         response_buffer: *mut MutableString,
-        request_body: &'static [u8],
-        http_proxy: Option<URL<'static>>,
-        hostname: Option<&'static [u8]>,
+        request_body: &[u8],
+        http_proxy: Option<URL<'_>>,
+        hostname: Option<&[u8]>,
         redirect_type: FetchRedirect,
     ) -> AsyncHTTP {
+        // SAFETY: caller guarantees all borrowed inputs outlive the returned
+        // `AsyncHTTP` (they are kept on the calling stack frame and the request
+        // is driven to completion via `send_sync` before the frame returns).
+        // `AsyncHTTP` stores them as raw pointers / `'static` (port-erased).
+        let url: URL<'static> = unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(url) };
+        let http_proxy: Option<URL<'static>> = http_proxy
+            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
         Self::init(
             method,
             url,
             headers,
-            headers_buf,
+            unsafe { erase(headers_buf) },
             response_buffer,
-            request_body,
+            unsafe { erase(request_body) },
             // PORT NOTE: Zig passed `undefined` for callback in sync mode.
             noop_callback(),
             redirect_type,
             Options {
                 http_proxy,
-                hostname,
+                hostname: hostname.map(|h| unsafe { erase(h) }),
                 ..Options::default()
             },
         )

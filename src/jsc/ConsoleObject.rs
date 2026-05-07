@@ -347,6 +347,26 @@ impl Drop for ConsoleStreamLock {
     }
 }
 
+/// RAII flush of a borrowed `bun_io::Write` at scope exit when `enabled`
+/// (Zig: `defer if (options.flush) writer.flush()`). Holds a raw fat pointer
+/// so the body of the scope can keep its own `&mut *writer` borrow; the guard
+/// only dereferences at scope exit when no other borrow is live.
+struct FlushOnDrop {
+    writer: *mut dyn bun_io::Write,
+    enabled: bool,
+}
+
+impl Drop for FlushOnDrop {
+    #[inline]
+    fn drop(&mut self) {
+        if self.enabled {
+            // SAFETY: constructed from a `&mut dyn bun_io::Write` that outlives
+            // this guard; no other borrow is live at the guard's drop point.
+            let _ = unsafe { (*self.writer).flush() };
+        }
+    }
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(

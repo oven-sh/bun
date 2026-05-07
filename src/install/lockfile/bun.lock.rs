@@ -1774,7 +1774,11 @@ pub fn parse_into_binary_lockfile(
     };
 
     {
-        let maybe_name = if let Some(name) = root_pkg_exr.get(b"name") {
+        // `Expr::get` returns by value and `as_utf8_string_literal` borrows
+        // from it, so keep the expr alive for the rest of the block instead
+        // of letting it drop at the end of the `if let` arm.
+        let name_expr = root_pkg_exr.get(b"name");
+        let maybe_name = if let Some(name) = &name_expr {
             match name.as_utf8_string_literal() {
                 Some(s) => Some(s),
                 None => {

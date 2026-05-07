@@ -100,7 +100,7 @@ phase("Isolate");
 const iso = await agent(
   `Set up isolated shard ${SHARD}.
 
-1. **Worktree:** \`test -d ${WT} || git -C /root/bun-5 worktree add -b claude/phase-g-tswarm-s${SHARD} ${WT} claude/phase-a-port\`. **Full isolation** — \`bun bd\` generates own \`build/debug/\` (ninja + rust-target). NO symlinks.
+1. **Worktree:** \`if test -d ${WT}; then git -C ${WT} fetch origin claude/phase-a-port && git -C ${WT} reset --hard origin/claude/phase-a-port; else git -C /root/bun-5 worktree add -b claude/phase-g-tswarm-s${SHARD} ${WT} origin/claude/phase-a-port; fi\` — always start from current HEAD. **Full isolation** — \`bun bd\` generates own \`build/debug/\`. NO symlinks.
 2. **Build once:** \`cd ${WT} && ${RUN_IN_CG} bun bd --version 2>&1 | tail -3\` → must show version.
 3. **cgroup test:** \`${RUN_IN_CG} true && echo cgroup_ok\`
 

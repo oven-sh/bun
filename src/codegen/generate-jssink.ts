@@ -1122,6 +1122,11 @@ pub unsafe extern "C" fn ${name}__close(global: *mut JSGlobalObject, this: *mut 
 `;
 
     // ZIG_DECL JSC::EncodedJSValue SYSV_ABI ${name}__endWithSink(void* sinkPtr, JSC::JSGlobalObject*)
+    // headers.h declares this with `callconv(jsc.conv)` (SYSV_ABI). On every
+    // target except Windows-x64 that is identical to `extern "C"`; the win-x64
+    // path is deferred to the host_call proc-macro layer (see file-header note
+    // and generate-classes.ts::generateRust()).
+    // TODO(win-x64): route through #[bun_jsc::host_call] once it lands.
     symbols.push(`${name}__endWithSink`);
     templ += `#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${name}__endWithSink(this: *mut c_void, global: *mut JSGlobalObject) -> JSValue {

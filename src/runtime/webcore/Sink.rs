@@ -1001,6 +1001,13 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 // mark_binding, from_js_host_call_generic, ErrorCode, SystemError,
 // EnsureStillAlive, VirtualMachine::get}` and `streams::Start::from_js` — gated
 // until those land.
+//
+// NOTE: the `${abi_name}__{memoryCost,finalize,close,endWithSink,updateRef,
+// getInternalFd,construct,write,end,flush,start}` C symbols are now owned by
+// `generate-jssink.ts → generated_jssink.rs`, which thunks into
+// `JSSink::<T>::js_*` above. The bodies below are kept as the Phase-B port
+// reference but are NOT exported (no `#[export_name]`) — instantiating this
+// macro alongside the codegen would otherwise produce duplicate symbols.
 
 #[macro_export]
 macro_rules! js_sink {
@@ -1050,8 +1057,7 @@ macro_rules! js_sink {
                 pub fn start(_this: *mut Self) {}
             }
 
-            #[unsafe(no_mangle)]
-            #[export_name = concat!($abi_name, "__memoryCost")]
+            // Symbol owned by generated_jssink.rs (`${abi_name}__memoryCost`).
             pub extern "C" fn memory_cost(this: *mut ThisSink) -> usize {
                 // SAFETY: called from C++ with a valid ThisSink*.
                 let this = unsafe { &*this };
@@ -1178,8 +1184,7 @@ macro_rules! js_sink {
                 Ok(create_object(global, Box::into_raw(this).cast(), 0))
             }
 
-            #[unsafe(no_mangle)]
-            #[export_name = concat!($abi_name, "__finalize")]
+            // Symbol owned by generated_jssink.rs (`${abi_name}__finalize`).
             pub extern "C" fn finalize(ptr: *mut c_void) {
                 // SAFETY: ptr is a ThisSink* allocated by us (create_object).
                 let this = unsafe { &mut *ptr.cast::<ThisSink>() };
@@ -1388,8 +1393,7 @@ macro_rules! js_sink {
                     .to_js(global)
             }
 
-            #[unsafe(no_mangle)]
-            #[export_name = concat!($abi_name, "__close")]
+            // Symbol owned by generated_jssink.rs (`${abi_name}__close`).
             pub extern "C" fn close(global: *mut JSGlobalObject, sink_ptr: *mut c_void) -> JSValue {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
                 let Some(sink_ptr) = ::core::ptr::NonNull::new(sink_ptr) else {
@@ -1401,7 +1405,10 @@ macro_rules! js_sink {
                 let global = unsafe { &*global };
 
                 if let Some(err) = this.sink.get_pending_error() {
-                    return global.vm().throw_error(global, err).unwrap_or(JSValue::ZERO);
+                    // VM::throw_error returns JsError (no payload); set pending
+                    // exception and return ZERO so the caller exception-checks.
+                    let _ = global.vm().throw_error(global, err);
+                    return JSValue::ZERO;
                 }
 
                 // TODO: properly propagate exception upwards
@@ -1494,9 +1501,9 @@ macro_rules! js_sink {
                 result
             }
 
+            // Symbol owned by generated_jssink.rs (`${abi_name}__endWithSink`).
             // TODO(port): callconv(jsc.conv) — #[bun_jsc::host_call] emits the right ABI.
             #[bun_jsc::host_call]
-            #[export_name = concat!($abi_name, "__endWithSink")]
             pub extern fn end_with_sink(ptr: *mut c_void, global: *mut JSGlobalObject) -> JSValue {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
 
@@ -1515,8 +1522,7 @@ macro_rules! js_sink {
                 this.sink.end_from_js(global).to_js(global).unwrap_or(JSValue::ZERO)
             }
 
-            #[unsafe(no_mangle)]
-            #[export_name = concat!($abi_name, "__updateRef")]
+            // Symbol owned by generated_jssink.rs (`${abi_name}__updateRef`).
             pub extern "C" fn update_ref(ptr: *mut c_void, value: bool) {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
                 // SAFETY: ptr is a ThisSink*.
@@ -1534,8 +1540,7 @@ macro_rules! js_sink {
             // TODO(port): proc-macro — host_fn attribute must accept
             // `#[export_name = concat!($abi_name, "__write")]` for js_write/js_flush/js_start/js_end/js_construct.
 
-            #[unsafe(no_mangle)]
-            #[export_name = concat!($abi_name, "__getInternalFd")]
+            // Symbol owned by generated_jssink.rs (`${abi_name}__getInternalFd`).
             extern "C" fn js_get_internal_fd(ptr: *mut c_void) -> JSValue {
                 // SAFETY: ptr is a ThisSink*.
                 let this = unsafe { &mut *ptr.cast::<ThisSink>() };

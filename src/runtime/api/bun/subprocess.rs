@@ -374,10 +374,17 @@ impl Subprocess<'_> {
     }
 }
 
-/// Module-level re-export so callers in `js_bun_spawn_bindings` (which alias the
-/// module as `Subprocess`) keep their existing `Subprocess::on_abort_signal` path.
-pub const on_abort_signal: unsafe extern "C" fn(*mut c_void, JSValue) =
-    Subprocess::on_abort_signal_c;
+/// Module-level wrapper so callers in `js_bun_spawn_bindings` (which alias the
+/// module as `Subprocess`) keep their existing `Subprocess::on_abort_signal`
+/// path *and* the original safe-`extern "C" fn` item kind. The macro-emitted
+/// thunk is `unsafe extern "C" fn`; this thin shim re-asserts the invariant
+/// (`ctx` is the `*mut Subprocess` registered with the abort listener) so the
+/// public symbol stays a safe fn-item rather than an `unsafe` fn-pointer const.
+pub extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
+    // SAFETY: ctx was registered as `*mut Subprocess` when the listener was
+    // attached; AbortSignal guarantees it is live for the callback.
+    unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
+}
 
 /// Static vtable wired into `Process.set_exit_handler` so the low-tier
 /// `Process` can call back into this JSC-aware owner without a direct upward

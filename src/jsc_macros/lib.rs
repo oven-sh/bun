@@ -651,9 +651,14 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 //   - takes `*mut c_void` (or `*const c_void` for `&self`) as the receiver
 //     position and casts it back to `Self`;
 //   - lowers each `&[T]` / `&mut [T]` parameter to a `(ptr, len)` pair and
-//     reconstructs the slice via `slice::from_raw_parts{,_mut}`;
+//     reconstructs the slice via `slice::from_raw_parts{,_mut}`. A `&mut [T]`
+//     argument **must not alias any memory reachable through `*self`** — the
+//     macro cannot check this and the thunk holds both borrows live;
 //   - passes every other parameter through verbatim (so FFI-safe scalars,
-//     raw pointers, and `#[repr(C)]` structs are forwarded unchanged);
+//     raw pointers, and `#[repr(C)]` structs are forwarded unchanged).
+//     `&T` / `Option<&T>` are intentionally passed straight across the ABI
+//     boundary as thin pointers — the *caller* upholds non-null/aligned/live,
+//     same as the hand-written thunks this macro replaces;
 //   - wraps the call in `catch_unwind` and aborts on panic, because unwinding
 //     across the C++ uWS frame is UB. `no_catch` opts out (e.g. for thunks
 //     where the body is itself a panic barrier, or where aborting is
@@ -767,21 +772,37 @@ fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<Token
                 };
                 thunk_params.push(quote! { #p: #ptr_ty });
                 thunk_params.push(quote! { #l: usize });
-                let ctor = if mutable {
-                    quote! { ::core::slice::from_raw_parts_mut }
-                } else {
-                    quote! { ::core::slice::from_raw_parts }
-                };
                 // Tolerate (null, 0) — uWS passes this for empty buffers, and
                 // `from_raw_parts(null, 0)` is UB. Zig's `[]const u8` also
-                // permits `(undefined, 0)`.
-                prelude.push(quote! {
-                    let #name = if #l == 0 {
-                        (&mut [][..]) as _
-                    } else {
-                        // SAFETY: caller guarantees `#p[..#l]` valid for the call.
-                        unsafe { #ctor(#p, #l) }
-                    };
+                // permits `(undefined, 0)`. Use an explicit, obviously-sound
+                // construction per mutability instead of `(&mut [][..]) as _`,
+                // which borrows a temporary and relies on a non-existent
+                // `&mut [T] -> &[T]` `as`-cast.
+                prelude.push(if mutable {
+                    quote! {
+                        // SAFETY: caller guarantees `#p[..#l]` valid for the call;
+                        // for #l == 0 a dangling well-aligned pointer is the
+                        // canonical empty `&mut [T]`.
+                        let #name: &mut [#elem] = unsafe {
+                            ::core::slice::from_raw_parts_mut(
+                                if #l == 0 {
+                                    ::core::ptr::NonNull::<#elem>::dangling().as_ptr()
+                                } else {
+                                    #p
+                                },
+                                #l,
+                            )
+                        };
+                    }
+                } else {
+                    quote! {
+                        let #name: &[#elem] = if #l == 0 {
+                            &[]
+                        } else {
+                            // SAFETY: caller guarantees `#p[..#l]` valid for the call.
+                            unsafe { ::core::slice::from_raw_parts(#p, #l) }
+                        };
+                    }
                 });
                 call_args.push(quote! { #name });
             }
@@ -806,12 +827,15 @@ fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<Token
     });
 
     let inner_call = quote! {
+        // Slice args are reconstructed from (ptr, len) pairs the caller
+        // guarantees valid for the call. Do this *before* borrowing `__this`
+        // so a future `&mut [T]` arg that (incorrectly) aliased `*self` would
+        // at least not be lexically interleaved with the receiver borrow.
+        #(#prelude)*
         // SAFETY: `__ctx` is the `*Self` registered with the C side; uWS / the
         // caller guarantees it is live and exclusively accessed for the
-        // duration of the callback. Slice args are reconstructed above from
-        // (ptr, len) pairs the caller guarantees valid for the call.
+        // duration of the callback.
         let __this = unsafe { #recv_expr };
-        #(#prelude)*
         Self::#fn_name(__this, #(#call_args),*)
     };
 

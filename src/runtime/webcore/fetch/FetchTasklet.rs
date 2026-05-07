@@ -1849,34 +1849,34 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
         let this = self;
         if let Some(response) = this.native_response {
-        // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
-        let body = unsafe { (*response).get_body_value() };
-        // Three scenarios:
-        //
-        // 1. We are streaming, in which case we should not ignore the body.
-        // 2. We were buffering, in which case
-        //    2a. if we have no promise, we should ignore the body.
-        //    2b. if we have a promise, we should keep loading the body.
-        // 3. We never started buffering, in which case we should ignore the body.
-        //
-        // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-        if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
-            // Scenario 1 or 3.
-            return;
-        }
+            // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
+            let body = unsafe { (*response).get_body_value() };
+            // Three scenarios:
+            //
+            // 1. We are streaming, in which case we should not ignore the body.
+            // 2. We were buffering, in which case
+            //    2a. if we have no promise, we should ignore the body.
+            //    2b. if we have a promise, we should keep loading the body.
+            // 3. We never started buffering, in which case we should ignore the body.
+            //
+            // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
+            if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
+                // Scenario 1 or 3.
+                return;
+            }
 
-        if let BodyValue::Locked(locked) = body {
-            if let Some(promise) = locked.promise {
-                if promise.is_empty_or_undefined_or_null() {
-                    // Scenario 2b.
+            if let BodyValue::Locked(locked) = body {
+                if let Some(promise) = locked.promise {
+                    if promise.is_empty_or_undefined_or_null() {
+                        // Scenario 2b.
+                        this.ignore_remaining_response_body();
+                    }
+                } else {
+                    // Scenario 3.
                     this.ignore_remaining_response_body();
                 }
-            } else {
-                // Scenario 3.
-                this.ignore_remaining_response_body();
             }
         }
-    }
     }
 }
 

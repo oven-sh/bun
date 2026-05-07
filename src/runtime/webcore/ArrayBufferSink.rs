@@ -1,18 +1,24 @@
-use crate::webcore::sink::{self, Sink};
+use crate::webcore::sink::{self, Sink, SinkHandler};
 use crate::webcore::streams::{self, Signal};
 use bun_collections::ByteList;
-use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue};
+use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
 
 pub type JSSink = sink::JSSink<ArrayBufferSink>;
-// TODO(port): Zig passes the literal "ArrayBufferSink" as a 2nd comptime arg to JSSink(); encode via associated const on the JSSink trait/impl.
+// PORT NOTE: Zig passes the literal "ArrayBufferSink" as a 2nd comptime arg to
+// `Sink.JSSink()`; in Rust the symbol-name concatenation lives in the
+// `JsSinkAbi` impl in `Sink.rs` (see `array_buffer_sink_abi`).
 
 pub struct ArrayBufferSink {
     pub bytes: ByteList,
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub done: bool,
     pub signal: Signal,
-    pub next: Option<Sink>,
+    // PORT NOTE: Zig `?Sink` stores a `*anyopaque` (raw, manually-managed
+    // lifetime). The Rust `Sink<'a>` was ported with a borrow; using `'static`
+    // here recovers the Zig semantics (caller is responsible for the pointee
+    // outliving every dispatch). No call site sets `next` to non-`None` today.
+    pub next: Option<Sink<'static>>,
     pub streaming: bool,
     pub as_uint8array: bool,
 }
@@ -32,30 +38,32 @@ impl Default for ArrayBufferSink {
 
 impl ArrayBufferSink {
     pub fn connect(&mut self, signal: Signal) {
-        // TODO(port): Zig asserts `this.reader == null` but there is no `reader` field on this struct — preserve intent once upstream clarifies.
-        // debug_assert!(self.reader.is_none());
+        // PORT NOTE: Zig asserts `this.reader == null` but there is no `reader`
+        // field on this struct (dead Zig assert; lazy compilation never reaches it).
         self.signal = signal;
     }
 
     pub fn start(&mut self, stream_start: streams::Start) -> bun_sys::Result<()> {
-        self.bytes.clear();
+        self.bytes.clear_retaining_capacity();
 
-        match stream_start {
-            streams::Start::ArrayBufferSink(config) => {
-                if config.chunk_size > 0 {
-                    if self
-                        .bytes
-                        .ensure_total_capacity_precise(config.chunk_size)
-                        .is_err()
-                    {
-                        return Err(syscall::Error::oom());
-                    }
+        if let streams::Start::ArrayBufferSink {
+            chunk_size,
+            as_uint8array,
+            stream,
+        } = stream_start
+        {
+            if chunk_size > 0 {
+                if self
+                    .bytes
+                    .ensure_total_capacity_precise(chunk_size as usize)
+                    .is_err()
+                {
+                    return Err(syscall::Error::oom());
                 }
-
-                self.as_uint8array = config.as_uint8array;
-                self.streaming = config.stream;
             }
-            _ => {}
+
+            self.as_uint8array = as_uint8array;
+            self.streaming = stream;
         }
 
         self.done = false;
@@ -74,26 +82,29 @@ impl ArrayBufferSink {
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         if self.streaming {
-            let value: JSValue = match self.as_uint8array {
-                true => ArrayBuffer::create(global_this, self.bytes.slice(), ArrayBuffer::Kind::Uint8Array)
-                    .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
-                false => ArrayBuffer::create(global_this, self.bytes.slice(), ArrayBuffer::Kind::ArrayBuffer)
-                    .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
+            // TODO: properly propagate exception upwards (matches Zig `catch .zero`).
+            let value: JSValue = if self.as_uint8array {
+                ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, self.bytes.slice())
+                    .unwrap_or(JSValue::ZERO)
+            } else {
+                ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, self.bytes.slice())
+                    .unwrap_or(JSValue::ZERO)
             };
             self.bytes.len = 0;
             if wait {}
             return Ok(value);
         }
 
-        Ok(JSValue::js_number(0))
+        Ok(JSValue::js_number(0.0))
     }
 
     pub fn finalize(this: *mut Self) {
-        // SAFETY: called from JSC lazy sweep on the mutator thread; `this` is the m_ctx payload allocated via Box::into_raw in init/JSSink.
+        // SAFETY: called from JSC lazy sweep on the mutator thread; `this` is
+        // the m_ctx payload allocated via Box::into_raw in init/JSSink.
         unsafe { Self::destroy(this) };
     }
 
-    pub fn init(next: Option<Sink>) -> Result<Box<ArrayBufferSink>, bun_alloc::AllocError> {
+    pub fn init(next: Option<Sink<'static>>) -> Result<Box<ArrayBufferSink>, bun_alloc::AllocError> {
         Ok(Box::new(ArrayBufferSink {
             bytes: ByteList::default(),
             done: false,
@@ -104,7 +115,8 @@ impl ArrayBufferSink {
         }))
     }
 
-    // TODO(port): in-place init (JSSink m_ctx slot) — codegen calls this on a pre-allocated slot.
+    // PORT NOTE: in-place init (JSSink m_ctx slot) — codegen calls this on a
+    // pre-allocated slot.
     pub fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         this.write(ArrayBufferSink {
             bytes: ByteList::default(),
@@ -126,7 +138,7 @@ impl ArrayBufferSink {
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
         self.signal.ready(None, None);
-        streams::result::Writable::Owned(len)
+        streams::result::Writable::Owned(len as u64)
     }
 
     #[inline]
@@ -143,7 +155,7 @@ impl ArrayBufferSink {
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
         self.signal.ready(None, None);
-        streams::result::Writable::Owned(len)
+        streams::result::Writable::Owned(len as u64)
     }
 
     pub fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
@@ -151,17 +163,17 @@ impl ArrayBufferSink {
             return next.write_utf16(data);
         }
         let bytes = data.slice();
-        // SAFETY: mirrors Zig `@ptrCast(@alignCast(data.slice().ptr))` — caller guarantees the
-        // byte slice is u16-aligned and has even length when the stream encoding is UTF-16.
-        let utf16: &[u16] = unsafe {
-            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-        };
+        // SAFETY: mirrors Zig `@ptrCast(@alignCast(data.slice().ptr))` — caller
+        // guarantees the byte slice is u16-aligned and has even length when the
+        // stream encoding is UTF-16.
+        let utf16: &[u16] =
+            unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) };
         let len = match self.bytes.write_utf16(utf16) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
         self.signal.ready(None, None);
-        streams::result::Writable::Owned(len)
+        streams::result::Writable::Owned(len as u64)
     }
 
     pub fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
@@ -172,77 +184,111 @@ impl ArrayBufferSink {
         Ok(())
     }
 
+    /// # Safety
+    /// `this` must have been allocated via `Box::into_raw` (i.e. by
+    /// [`ArrayBufferSink::init`] or the JSSink codegen path) and not yet freed.
     pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: `this` was allocated via Box::into_raw (bun.new → Box::new); reclaiming ownership
-        // here drops `bytes` (ByteList impls Drop) and frees the box, matching `bun.destroy(this)`.
+        // SAFETY: reclaiming ownership drops `bytes` (ByteList impls Drop) and
+        // frees the box, matching Zig `this.bytes.deinit(...); bun.destroy(this)`.
         drop(unsafe { Box::from_raw(this) });
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject, as_uint8array: bool) -> JSValue {
+    pub fn to_js(&mut self, global_this: &JSGlobalObject, as_uint8array: bool) -> JsResult<JSValue> {
         if self.streaming {
-            // TODO(port): Zig calls ArrayBuffer.create() here WITHOUT `catch`, unlike flush_from_js — verify whether this path is infallible upstream.
-            let value: JSValue = match as_uint8array {
-                true => ArrayBuffer::create(global_this, self.bytes.slice(), ArrayBuffer::Kind::Uint8Array)
-                    .unwrap_or(JSValue::ZERO),
-                false => ArrayBuffer::create(global_this, self.bytes.slice(), ArrayBuffer::Kind::ArrayBuffer)
-                    .unwrap_or(JSValue::ZERO),
+            // PORT NOTE: Zig calls `ArrayBuffer.create()` here without `catch`
+            // (dead path under Zig's lazy compilation). Propagate the JS
+            // exception explicitly in Rust.
+            let value: JSValue = if as_uint8array {
+                ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, self.bytes.slice())?
+            } else {
+                ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, self.bytes.slice())?
             };
             self.bytes.len = 0;
-            return value;
+            return Ok(value);
         }
 
-        // `defer this.bytes = bun.ByteList.empty` + `try toOwnedSlice` → take ownership, leave empty in place.
-        let bytes = core::mem::take(&mut self.bytes);
-        // TODO(port): Zig has `try` here but fn returns bare JSValue (no error union) — handleOom semantics assumed.
-        let owned = bytes.to_owned_slice().expect("unreachable");
+        // `defer this.bytes = bun.ByteList.empty` + `try toOwnedSlice` →
+        // take ownership, leave empty in place.
+        let mut bytes = core::mem::take(&mut self.bytes);
+        // PORT NOTE: ownership transfers to JSC — `to_js` installs
+        // `MarkedArrayBuffer_deallocator` which `mi_free`s the buffer when the
+        // JS object is collected. Bun's global allocator is mimalloc, so the
+        // `mi_is_in_heap_region` check in `to_js` succeeds.
+        let owned: &'static mut [u8] = Box::leak(bun_core::handle_oom(bytes.to_owned_slice()));
         ArrayBuffer::from_bytes(
             owned,
             if as_uint8array {
-                ArrayBuffer::Kind::Uint8Array
+                JSType::Uint8Array
             } else {
-                ArrayBuffer::Kind::ArrayBuffer
+                JSType::ArrayBuffer
             },
         )
-        .to_js(global_this, None)
+        .to_js(global_this)
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<ArrayBuffer> {
         if self.done {
-            return Ok(ArrayBuffer::from_bytes(
-                Box::<[u8]>::default(),
-                ArrayBuffer::Kind::ArrayBuffer,
-            ));
+            return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
         }
 
         debug_assert!(self.next.is_none());
         self.done = true;
         self.signal.close(None);
-        // `defer this.bytes = bun.ByteList.empty` → take ownership, leave empty in place.
-        let bytes = core::mem::take(&mut self.bytes);
+        // `defer this.bytes = bun.ByteList.empty` → take ownership, leave empty.
+        let mut bytes = core::mem::take(&mut self.bytes);
+        // PORT NOTE: ownership transfers to JSC; the caller wraps the returned
+        // `ArrayBuffer` in `.to_js()` which installs `MarkedArrayBuffer_deallocator`
+        // (frees via `mi_free` on GC). See `to_js` above.
+        let owned: &'static mut [u8] = Box::leak(bun_core::handle_oom(bytes.to_owned_slice()));
         Ok(ArrayBuffer::from_bytes(
-            bytes.to_owned_slice().expect("unreachable"), // bun.handleOom
+            owned,
             if self.as_uint8array {
-                ArrayBuffer::Kind::Uint8Array
+                JSType::Uint8Array
             } else {
-                ArrayBuffer::Kind::ArrayBuffer
+                JSType::ArrayBuffer
             },
         ))
     }
 
-    pub fn sink(&mut self) -> Sink {
+    pub fn sink(&mut self) -> Sink<'_> {
         Sink::init(self)
     }
 
     pub fn memory_cost(&self) -> usize {
-        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink)
+        // which includes @sizeOf(ArrayBufferSink).
         self.bytes.cap as usize
+    }
+}
+
+// `SinkHandler` impl: bridges `Sink::init(self)` (vtable-erased writer). The
+// inherent `connect` returns `()`; trait wants `sys::Result<()>` to unify with
+// other sink types' fallible connect.
+impl SinkHandler for ArrayBufferSink {
+    fn write(&mut self, data: streams::Result) -> streams::result::Writable {
+        ArrayBufferSink::write(self, data)
+    }
+    fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
+        ArrayBufferSink::write_latin1(self, data)
+    }
+    fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
+        ArrayBufferSink::write_utf16(self, data)
+    }
+    fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
+        ArrayBufferSink::end(self, err)
+    }
+    fn connect(&mut self, signal: Signal) -> bun_sys::Result<()> {
+        ArrayBufferSink::connect(self, signal);
+        Ok(())
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/ArrayBufferSink.zig (186 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      JSSink<T> generic shape, ArrayBuffer::Kind enum path, and streams::result::Writable variant names are guesses; allocator field dropped (global mimalloc); construct() kept as in-place MaybeUninit init (JSSink m_ctx slot).
+//   confidence: high
+//   todos:      0
+//   notes:      allocator field dropped (global mimalloc); `next` field uses
+//               `Sink<'static>` to mirror Zig's raw `*anyopaque`; `to_js`
+//               returns `JsResult<JSValue>` (Zig path was lazily-uncompiled).
 // ──────────────────────────────────────────────────────────────────────────

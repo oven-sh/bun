@@ -481,6 +481,52 @@ impl Builtin {
     }
 
     /// Error messages formatted to match bash. Spec: Builtin.zig
+    /// `taskErrorToString` (the `bun.shell.ShellErr` arm — dispatches on the
+    /// variant; `.sys` recurses into the `jsc.SystemError` formatter).
+    pub fn shell_err_to_string<'a>(
+        interp: &'a mut Interpreter,
+        cmd: NodeId,
+        kind: Kind,
+        err: &crate::shell::ShellErr,
+    ) -> &'a [u8] {
+        use crate::shell::ShellErr;
+        match err {
+            ShellErr::Sys(sys) => {
+                // Spec: Builtin.zig `taskErrorToString` (the `jsc.SystemError`
+                // arm) — `"{message}\n"` or `"{message}: {path}\n"`.
+                if sys.path.is_empty() {
+                    Self::fmt_error_arena(
+                        interp,
+                        cmd,
+                        Some(kind),
+                        format_args!("{}\n", bstr::BStr::new(sys.message.byte_slice())),
+                    )
+                } else {
+                    Self::fmt_error_arena(
+                        interp,
+                        cmd,
+                        Some(kind),
+                        format_args!(
+                            "{}: {}\n",
+                            bstr::BStr::new(sys.message.byte_slice()),
+                            sys.path,
+                        ),
+                    )
+                }
+            }
+            ShellErr::Custom(s) => Self::fmt_error_arena(
+                interp, cmd, Some(kind), format_args!("{}\n", bstr::BStr::new(s)),
+            ),
+            ShellErr::InvalidArguments { val } => Self::fmt_error_arena(
+                interp, cmd, Some(kind), format_args!("{}\n", bstr::BStr::new(val)),
+            ),
+            ShellErr::Todo(s) => Self::fmt_error_arena(
+                interp, cmd, Some(kind), format_args!("{}\n", bstr::BStr::new(s)),
+            ),
+        }
+    }
+
+    /// Error messages formatted to match bash. Spec: Builtin.zig
     /// `taskErrorToString` (the `Syscall.Error` arm).
     pub fn task_error_to_string<'a>(
         interp: &'a mut Interpreter,

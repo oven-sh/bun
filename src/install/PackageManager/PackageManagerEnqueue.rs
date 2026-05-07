@@ -1005,6 +1005,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // branch through a raw root so the slice and the
                         // `&mut PackageManager` calls below can coexist (Zig
                         // passes the aliased `*PackageManager` freely).
+                        // Snapshot the manifest disk-cache scalars while we
+                        // still hold `&mut this` exclusively — taking it via
+                        // `&mut *this_ptr` after `name_str`/`scope` exist
+                        // would pop their borrow-stack tags under SB.
+                        let cache_ctx = this.manifest_disk_cache_ctx();
                         let this_ptr: *mut PackageManager = this;
                         // SAFETY: `string_bytes` is not resized in the
                         // manifest-lookup path; every call below either copies
@@ -1035,15 +1040,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     this.options.minimum_release_age_ms.is_some();
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
-                                    // SAFETY: `this_ptr` is the live exclusive borrow's
-                                    // address; `cache_ctx` snapshots the four
-                                    // `pm.options` / cache-dir / timestamp scalars
-                                    // before `&mut manifests` is taken, so the
-                                    // lookup holds only that disjoint field borrow.
-                                    let cache_ctx =
-                                        unsafe { &mut *this_ptr }.manifest_disk_cache_ctx();
+                                    // SAFETY: `this_ptr` is the live exclusive
+                                    // borrow's address; `options` is disjoint
+                                    // from `manifests`.
                                     let scope: *const crate::npm::registry::Scope =
                                         unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
+                                    // SAFETY: `manifests` projected from
+                                    // `this_ptr`; `cache_ctx` was snapshotted
+                                    // before `this_ptr` so the lookup holds
+                                    // only this disjoint field borrow.
                                     if let Some(manifest) = unsafe {
                                         (*this_ptr).manifests.by_name_hash_allow_expired(
                                             cache_ctx,

@@ -5568,25 +5568,48 @@ impl H2FrameParser {
 
         let socket_js = args_list.ptr[0];
         this.detach_native_socket();
-        if let Some(socket) = JSTLSSocket::from_js(socket_js) {
+        if let Some(socket) = TLSSocket::from_js(socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-            // TODO(port): `NativeCallbacks::H2` carries `IntrusiveRc<api::bun::h2_frame_parser::H2FrameParser>`
-            // (the gated stub type), not this body's `H2FrameParser`. Until the two are unified,
-            // fall back to write-only mode (matches the `attach_native_callback() == false` branch).
-            // SAFETY: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by `socket_js`.
-            unsafe { (*socket).ref_() };
-            this.native_socket = BunSocket::TlsWriteonly(socket);
+            this.native_socket = this.attach_to_native_socket::<true>(socket);
+            // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure = false;
             let _ = this.flush();
-        } else if let Some(socket) = JSTCPSocket::from_js(socket_js) {
+        } else if let Some(socket) = TCPSocket::from_js(socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-            // SAFETY: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by `socket_js`.
-            unsafe { (*socket).ref_() };
-            this.native_socket = BunSocket::TcpWriteonly(socket);
+            this.native_socket = this.attach_to_native_socket::<false>(socket);
+            // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure = false;
             let _ = this.flush();
         }
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Zig: `if (socket.attachNativeCallback(.{ .h2 = this })) … else { socket.ref(); writeonly }`.
+    ///
+    /// `attach_native_callback` stores an `IntrusiveRc<H2FrameParser>` (the
+    /// `init_ref` bumps `ref_count`, mirroring Zig's `h2.ref()` inside
+    /// `attachNativeCallback`); the matching `deref` happens in
+    /// `NewSocket::detach_native_callback`. When the socket already has a
+    /// native callback attached we fall back to write-only mode and take a
+    /// manual `ref()` on the socket itself, balanced by `detach_native_socket`.
+    fn attach_to_native_socket<const SSL: bool>(
+        &mut self,
+        socket: *mut crate::socket::NewSocket<SSL>,
+    ) -> BunSocket {
+        // SAFETY: `self` is a live heap allocation (HiveArray slot or boxed); `init_ref`
+        // increments the intrusive refcount and wraps the pointer.
+        let h2 = unsafe { IntrusiveRc::init_ref(self as *mut Self) };
+        // SAFETY: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by the
+        // caller's `socket_js`; `attach_native_callback` only writes the `native_callback`
+        // field.
+        if unsafe { (*socket).attach_native_callback(NativeCallbacks::H2(h2)) } {
+            if SSL { BunSocket::Tls(socket as *mut TLSSocket) } else { BunSocket::Tcp(socket as *mut TCPSocket) }
+        } else {
+            // SAFETY: `socket` is live (see above); `ref_` only touches the
+            // interior-mutable `ref_count`.
+            unsafe { (*socket).ref_() };
+            if SSL { BunSocket::TlsWriteonly(socket as *mut TLSSocket) } else { BunSocket::TcpWriteonly(socket as *mut TCPSocket) }
+        }
     }
 
     pub fn detach_native_socket(&mut self) {
@@ -5629,9 +5652,7 @@ impl H2FrameParser {
         }
         let handlers = Handlers::from_js(global_object, handler_js, this_value)?;
 
-        // PERF(port): was HiveArray pool — profile in Phase B
-        // TODO(port): ENABLE_ALLOCATOR_POOL path uses thread-local HiveArray; for now Box::new
-        let this: *mut H2FrameParser = Box::into_raw(Box::new(H2FrameParser {
+        let init = H2FrameParser {
             ref_count: bun_ptr::RefCount::init(),
             handlers,
             global_this: global_object as *const _,
@@ -5667,27 +5688,41 @@ impl H2FrameParser {
             has_nonnative_backpressure: false,
             auto_flusher: AutoFlusher::default(),
             padding_strategy: PaddingStrategy::None,
-        }));
-        // SAFETY: `this` was just allocated via Box::into_raw above; unique ownership, non-null
+        };
+        let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
+            POOL.with_borrow_mut(|pool| {
+                let pool =
+                    pool.get_or_insert_with(|| Box::new(H2FrameParserHiveAllocator::init()));
+                let slot = bun_core::handle_oom(pool.try_get());
+                // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
+                // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves
+                // `init` in without dropping prior contents.
+                unsafe { slot.write(init) };
+                slot
+            })
+        } else {
+            Box::into_raw(Box::new(init))
+        };
+        // Zig: `errdefer this.deinit()`. The remaining `?` sites below may throw a JS
+        // exception; the guard returns the slot to the pool / frees the Box on that
+        // path. Defused on success.
+        let guard = scopeguard::guard(this, |this| {
+            // SAFETY: `this` is the freshly-allocated parser above; on the error path
+            // it has refcount 1 and no other owners, so `deinit` is the sole release.
+            unsafe { (*this).deinit() };
+        });
+        // SAFETY: `this` was just allocated above; unique ownership, non-null.
         let this_ref = unsafe { &mut *this };
-        // TODO(port): errdefer this.deinit() — use scopeguard in Phase B
 
         // check if socket is provided, and if it is a valid native socket
         if let Some(socket_js) = options.get(global_object, "native")? {
-            if let Some(socket) = JSTLSSocket::from_js(socket_js) {
+            if let Some(socket) = TLSSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-                // TODO(port): `NativeCallbacks::H2` carries `IntrusiveRc<api::bun::h2_frame_parser::H2FrameParser>`
-                // (the gated stub type), not this body's `H2FrameParser`. Until the two are unified,
-                // fall back to write-only mode (matches the `attach_native_callback() == false` branch).
-                // SAFETY: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by `socket_js`.
-                unsafe { (*socket).ref_() };
-                this_ref.native_socket = BunSocket::TlsWriteonly(socket);
+                this_ref.native_socket = this_ref.attach_to_native_socket::<true>(socket);
                 let _ = this_ref.flush();
-            } else if let Some(socket) = JSTCPSocket::from_js(socket_js) {
+            } else if let Some(socket) = TCPSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-                // SAFETY: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by `socket_js`.
-                unsafe { (*socket).ref_() };
-                this_ref.native_socket = BunSocket::TcpWriteonly(socket);
+                this_ref.native_socket = this_ref.attach_to_native_socket::<false>(socket);
                 let _ = this_ref.flush();
             }
         }

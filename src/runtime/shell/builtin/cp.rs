@@ -54,8 +54,11 @@ pub struct EbusyState {
     pub tasks: Vec<*mut ShellCpTask>,
     pub idx: usize,
     pub main_exit_code: ExitCode,
-    // TODO(b2-blocked): bun_collections::StringArrayHashMap for absolute_targets
-    // / absolute_srcs once that crate compiles.
+    /// Absolute target paths that some task copied successfully — used to
+    /// suppress a sibling task's EBUSY on the same target. Spec: cp.zig
+    /// `EbusyState.absolute_targets` (`StringArrayHashMapUnmanaged(void)`).
+    pub absolute_targets: std::collections::HashSet<Vec<u8>>,
+    pub absolute_srcs: std::collections::HashSet<Vec<u8>>,
 }
 
 impl Cp {
@@ -160,15 +163,9 @@ impl Cp {
                 }
                 State::Ebusy(_) => {
                     #[cfg(windows)]
-                    {
-                        // TODO(b2-blocked): ignore_ebusy_error_if_possible —
-                        // needs StringArrayHashMap. For now, drain and finish.
-                    }
-                    let code = match &Self::state_mut(interp, cmd).state {
-                        State::Ebusy(e) => e.main_exit_code,
-                        _ => unreachable!(),
-                    };
-                    Action::Done(code)
+                    { return Self::ignore_ebusy_error_if_possible(interp, cmd); }
+                    #[cfg(not(windows))]
+                    panic!("Should only be called on Windows");
                 }
                 State::WaitingWriteErr => return Yield::failed(),
                 State::Done => return Builtin::done(interp, cmd, 0),

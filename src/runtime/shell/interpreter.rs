@@ -1472,24 +1472,22 @@ fn io_to_js_value(global_this: &crate::jsc::JSGlobalObject, buf: *mut ByteList) 
 }
 
 /// Spec: interpreter.zig `throwShellErr(e, event_loop)`. On the mini event
-/// loop this prints to stderr and `exit(1)`s; on the JS event loop it raises a
-/// JS exception via [`ShellErr::throw_js`]. Always returns `JsError::Thrown`
-/// (the JS arm) — the mini arm diverges.
+/// loop this prints to stderr and `exit(1)`s (diverges); on the JS event loop
+/// it raises a JS exception via [`ShellErr::throw_js`] and returns
+/// `JsError::Thrown`.
+// PORT NOTE: takes ownership (Zig passed `*const ShellErr` because both arms
+// consume; Rust expresses that as by-value). `global` is `Option` because the
+// mini arm has no global; on the JS arm callers always pass `Some`.
 pub fn throw_shell_err(
-    e: &ShellErr,
+    e: ShellErr,
     event_loop: EventLoopHandle,
-    global: &crate::jsc::JSGlobalObject,
+    global: Option<&crate::jsc::JSGlobalObject>,
 ) -> crate::jsc::JsError {
     match event_loop {
-        EventLoopHandle::Mini(_) => {
-            // PORT NOTE: `throw_mini` consumes by value; the spec passes
-            // `*const ShellErr`, so we re-own via clone-of-variant. All
-            // payloads are `Box<[u8]>`/`SystemError` (cheap to clone for the
-            // about-to-exit path).
-            // The mini arm never returns — `Global::exit(1)`.
-            unreachable!("mini-loop throw routed via Interpreter::throw")
+        EventLoopHandle::Mini(_) => e.throw_mini(),
+        EventLoopHandle::Js { .. } => {
+            e.throw_js(global.expect("JS event loop requires a JSGlobalObject"))
         }
-        EventLoopHandle::Js { .. } => e.throw_js(global),
     }
 }
 
@@ -1670,6 +1668,31 @@ impl ShellExecEnv {
         drop(boxed);
     }
 
+    /// Spec: interpreter.zig `ShellExecEnv.deinitImpl(false, free_buffered_io)`
+    /// — teardown for the *embedded* root env (held by value in `Interpreter`;
+    /// `destroy_this = false`). The Rust `deinit_impl(this: *mut)` covers the
+    /// `destroy_this = true` heap-allocated subshell case.
+    pub fn deinit_embedded(&mut self, free_buffered_io: bool) {
+        log!("[ShellExecEnv] deinit 0x{:x}", self as *const _ as usize);
+        if free_buffered_io {
+            if let Bufio::Owned(o) = &mut self._buffered_stdout {
+                o.clear_and_free();
+            }
+            if let Bufio::Owned(o) = &mut self._buffered_stderr {
+                o.clear_and_free();
+            }
+        }
+        // EnvMap has a Drop impl; replace with fresh to free now and leave
+        // valid state for any later `Drop` of the outer `Interpreter` box.
+        self.shell_env = EnvMap::init();
+        self.cmd_local_env = EnvMap::init();
+        self.export_env = EnvMap::init();
+        self.__cwd = Vec::new();
+        self.__prev_cwd = Vec::new();
+        closefd(self.cwd_fd);
+        self.cwd_fd = bun_sys::Fd::INVALID;
+    }
+
     /// Spec: interpreter.zig `ShellExecEnv.changePrevCwd` — `cd -`.
     #[inline]
     pub fn change_prev_cwd(&mut self) -> bun_sys::Result<()> {
@@ -1835,9 +1858,47 @@ pub struct CowFd {
 
 impl CowFd {
     pub fn init(fd: Fd) -> *mut CowFd {
-        Box::into_raw(Box::new(CowFd { __fd: fd, refcount: 1, being_used: false }))
+        let new = Box::into_raw(Box::new(CowFd { __fd: fd, refcount: 1, being_used: false }));
+        bun_core::scoped_log!(CowFd, "init {:x} fd={}", new as usize, fd);
+        new
     }
+
+    /// Spec: `CowFd.dup` — fresh `CowFd` wrapping a `dup()`'d fd. Errors
+    /// surface the syscall error (the freshly-allocated box is dropped).
+    pub fn dup(&self) -> bun_sys::Result<*mut CowFd> {
+        let fd = bun_sys::dup(self.__fd)?;
+        Ok(Self::init(fd))
+    }
+
+    /// Spec: `CowFd.use` — copy-on-write borrow. If nobody is currently
+    /// writing through this fd, mark it in-use and return it (refcount +1);
+    /// otherwise hand out a fresh `dup()`.
+    pub fn use_(this: *mut CowFd) -> bun_sys::Result<*mut CowFd> {
+        // SAFETY: caller holds a live `CowFd` (refcount ≥ 1).
+        unsafe {
+            if !(*this).being_used {
+                (*this).being_used = true;
+                (*this).ref_();
+                return Ok(this);
+            }
+            (*this).dup()
+        }
+    }
+
+    /// Spec: `CowFd.doneUsing` — paired with [`use_`].
+    pub fn done_using(&mut self) {
+        self.being_used = false;
+    }
+
     pub fn ref_(&mut self) { self.refcount += 1; }
+
+    /// Spec: `CowFd.dupeRef` — bump refcount and return the same pointer.
+    pub fn dupe_ref(this: *mut CowFd) -> *mut CowFd {
+        // SAFETY: caller holds a live `CowFd`.
+        unsafe { (*this).ref_() };
+        this
+    }
+
     pub fn deref(this: *mut CowFd) {
         // SAFETY: caller holds a valid CowFd
         unsafe {
@@ -1917,6 +1978,31 @@ fn is_pollable(fd: Fd) -> bool {
             }
         }
         fmt == libc::S_IFIFO || fmt == libc::S_IFSOCK || bun_sys::isatty(fd)
+    }
+}
+
+/// Spec: interpreter.zig `isPollableFromMode` (interpreter.zig:2126-2134).
+/// Same test as [`is_pollable`] minus the `isatty()` check — used when the
+/// caller already has a cached `st_mode` (e.g. from `Builtin` stdio setup) and
+/// no fd is at hand.
+pub fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = mode;
+        false
+    }
+    #[cfg(unix)]
+    {
+        let fmt = mode & libc::S_IFMT;
+        #[cfg(target_os = "macos")]
+        {
+            // macOS allows polling regular files, but our IOWriter has a
+            // better dedicated path for them — exclude S_ISREG explicitly.
+            if fmt == libc::S_IFREG {
+                return false;
+            }
+        }
+        fmt == libc::S_IFIFO || fmt == libc::S_IFSOCK
     }
 }
 

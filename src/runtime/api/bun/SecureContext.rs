@@ -86,6 +86,50 @@ impl SecureContext {
         SecureContext::create(global, &config)
     }
 
+    /// `tls.createSecureContext(opts)` entry point. WeakGCMap-memoised by config
+    /// digest so identical configs return the same `JSSecureContext` cell while
+    /// it's alive; falls through to `create()` (which itself hits the native
+    /// `SSLContextCache`) on miss. Returning the same cell is what makes
+    /// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
+    /// pointer-compare without a JS-side WeakRef map.
+    // PORT NOTE: codegen (`generated_classes.rs::SecureContextClass__intern`)
+    // wraps this in `host_fn_result` and exports the C-ABI shim, so no
+    // `#[bun_jsc::host_fn]` here — that macro's Free shim calls by bare name
+    // and cannot resolve an associated fn.
+    pub fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments();
+        let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
+
+        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
+        let vm = unsafe { &mut *global.bun_vm() };
+        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // `defer config.deinit()` — handled by Drop.
+
+        let ctx_opts = config.as_usockets();
+        let d = ctx_opts.digest();
+        let key = u64::from_le_bytes(d[0..8].try_into().unwrap());
+
+        // SAFETY: FFI; `global` is a valid &JSGlobalObject for the duration of the call.
+        let cached = unsafe { cpp::Bun__SecureContextCache__get(global, key) };
+        if !cached.is_empty() {
+            if let Some(existing) = Self::from_js(cached) {
+                // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
+                // cert to a connection. Full-digest compare is 32 bytes; cheap.
+                // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper.
+                if strings::eql_long(unsafe { &(*existing).digest }, &d, false) {
+                    return Ok(cached);
+                }
+            }
+        }
+
+        let sc = Self::create_with_digest(global, ctx_opts, d)?;
+        // SAFETY: `sc` is a fresh Box from `create_with_digest`; ownership transfers to the GC wrapper.
+        let value = unsafe { Self::to_js_ptr(Box::into_raw(sc), global) };
+        // SAFETY: FFI; `global` is valid, `value` is a live JSValue rooted on the stack.
+        unsafe { cpp::Bun__SecureContextCache__set(global, key, value) };
+        Ok(value)
+    }
+
     /// Mode-neutral: Node lets one `SecureContext` back both `tls.connect()` and
     /// `tls.createServer({secureContext})`, so we cannot bake client-vs-server
     /// into the `SSL_CTX`. CTX-level verify mode is whatever `config` asked for

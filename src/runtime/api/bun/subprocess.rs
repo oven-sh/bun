@@ -386,11 +386,13 @@ unsafe fn on_process_exit_thunk(
     rusage: *const Rusage,
 ) {
     // SAFETY: owner was registered as `*mut Subprocess` in spawn_maybe_sync;
-    // process/rusage are live for the duration of the callback.
+    // process/rusage are live for the duration of the callback. `process` is
+    // forwarded as the raw `*mut Process` (not a `&Process` reborrow) so
+    // `on_process_exit` can hand it to `VirtualMachine::on_subprocess_exit`
+    // without a const→mut provenance cast.
     let this: &mut Subprocess = unsafe { &mut *(owner as *mut Subprocess) };
-    let process_ref: &Process = unsafe { &*process };
     let rusage_ref: &Rusage = unsafe { &*rusage };
-    this.on_process_exit(process_ref, status, rusage_ref);
+    this.on_process_exit(process, status, rusage_ref);
 }
 
 impl Subprocess<'_> {
@@ -941,7 +943,7 @@ impl Subprocess<'_> {
         None
     }
 
-    pub fn on_process_exit(&mut self, process: &Process, status: Status, rusage: &Rusage) {
+    pub fn on_process_exit(&mut self, process: *mut Process, status: Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.try_get().unwrap_or(JSValue::ZERO);
         let global_this = self.global_this();

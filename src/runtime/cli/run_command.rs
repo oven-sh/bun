@@ -1027,17 +1027,15 @@ impl RunCommand {
         // capture the defines result, drop `b`, then branch.
         let defines_ok = {
             let b = &mut vm.transpiler;
-            // PORT NOTE: `BundleOptions::install` is a raw `NonNull` backref
-            // into the CLI's `Box<BunInstall>` (process-lifetime).
-            b.options.install = ctx.install.as_deref().map(::core::ptr::NonNull::from);
-            b.resolver.opts.global_cache = ctx.debug.global_cache;
-            b.options.global_cache = ctx.debug.global_cache;
-            b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-            b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-            b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-            // TODO(port): `serve_plugins` / `bunfig_path` / `macros` map shapes
-            // still differ between `ContextData` and `BundleOptions`; wire once
-            // the field-shape drift is resolved (same as `boot()` above).
+            Self::wire_transpiler_from_ctx(b, ctx);
+
+            // `serve_plugins` / `bunfig_path` (standalone-only; bun.js.zig:80).
+            b.options.serve_plugins = ctx
+                .args
+                .serve_plugins
+                .take()
+                .map(Vec::into_boxed_slice);
+            b.options.bunfig_path = ::core::mem::take(&mut ctx.args.bunfig_path);
 
             crate::run_main::apply_standalone_runtime_flags(b, graph);
 
@@ -1048,17 +1046,27 @@ impl RunCommand {
         }
 
         // Zig: `AsyncHTTP.loadEnv(allocator, vm.log, b.env)`.
-        // TODO(port): `bun_http::AsyncHTTP::load_env` types against the
-        // resolver's env loader (`&DotEnvLoader`); `Transpiler::env` is still
-        // `Option<NonNull<..>>` here. Wire once the env-loader handle unifies.
+        // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
+        // `DotEnv::Loader` allocated/retained for the VM (never null after
+        // `Transpiler::init`).
+        bun_http::async_http::load_env(
+            unsafe { vm.log.unwrap().as_mut() },
+            unsafe { &*vm.transpiler.env },
+        );
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
 
-        // TODO(port): `bun.http.experimental_http{2,3}_client_from_cli` and
-        // `doPreconnect(ctx.runtime_options.preconnect)` — the http-client
-        // experimental flags live in `bun_http` statics not yet surfaced here.
+        // SAFETY: set once at startup before the HTTP thread spawns; only read
+        // on that thread.
+        unsafe {
+            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI =
+                ctx.runtime_options.experimental_http2_fetch;
+            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI =
+                ctx.runtime_options.experimental_http3_fetch;
+        }
+        Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
         // written exactly once here on the main thread before the API-lock

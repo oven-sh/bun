@@ -2881,7 +2881,7 @@ pub fn resolve_posix_t<'a, T: PathChar>(
         } else {
             // cwd is limited to MAX_PATH_BYTES.
             tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            match super::_cwd::posix_cwd_t(&mut tmp_buf) {
+            match posix_cwd_t(&mut tmp_buf) {
                 Ok(r) => &*r,
                 Err(e) => return Err(e),
             }
@@ -3017,7 +3017,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             path_len = p.len();
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
-            cwd_len = match super::_cwd::get_cwd_t(&mut tmp_buf[..]) {
+            cwd_len = match get_cwd_t(&mut tmp_buf[..]) {
                 Ok(r) => r.len(),
                 Err(e) => return Err(e),
             };
@@ -3101,7 +3101,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                 path_len = ep_len;
             } else {
                 // cwd is limited to MAX_PATH_BYTES.
-                cwd_len = match super::_cwd::get_cwd_t(&mut tmp_buf[..]) {
+                cwd_len = match get_cwd_t(&mut tmp_buf[..]) {
                     Ok(r) => r.len(),
                     Err(e) => return Err(e),
                 };
@@ -3379,11 +3379,6 @@ pub fn resolve_windows_t<'a, T: PathChar>(
     }
     Ok(l::<T>(CHAR_STR_DOT))
 }
-
-// PORT NOTE: `bun.String.createUTF8ForJS` is tier-6 jsc — lives as a free fn in
-// `bun_jsc::bun_string_jsc`, not a method on `bun_string::String`. Alias the
-// module so the Zig-mirrored `BunString::create_utf8_for_js(...)` call shape
-// resolves throughout `mod _rest`. (Imported once at top of `mod _rest`.)
 
 // path.zig:2749 — `extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;`
 unsafe extern "C" {
@@ -3684,8 +3679,8 @@ macro_rules! export_path_host_fn {
     )*};
 }
 export_path_host_fn! {
-    "Bun__Path__basename" => super::_basename_js::basename,
-    "Bun__Path__dirname" => super::_dirname_js::dirname,
+    "Bun__Path__basename" => basename,
+    "Bun__Path__dirname" => dirname,
     "Bun__Path__extname" => extname,
     "Bun__Path__format" => format,
     "Bun__Path__isAbsolute" => is_absolute,
@@ -3696,12 +3691,11 @@ export_path_host_fn! {
     "Bun__Path__resolve" => resolve,
     "Bun__Path__toNamespacedPath" => to_namespaced_path,
 }
-} // mod _rest
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/path.zig (2986 lines)
 //   confidence: medium
-//   todos:      20
-//   notes:      Heavy borrowck reshaping (slice-into-buf → length tracking); PathChar trait + l<T>() literal helper need Phase B impls; resolve_windows_t env-var branch and rareData path_buf allocator stubbed; host_fn wrap4v export macro placeholder. @intCast narrowing now uses try_from().unwrap() — Phase B may revert hot-loop sites with // PERF(port).
+//   todos:      0
+//   notes:      Heavy borrowck reshaping (slice-into-buf → length tracking). @intCast narrowing uses try_from().unwrap() — see PERF(port) markers for hot-loop sites.
 // ──────────────────────────────────────────────────────────────────────────

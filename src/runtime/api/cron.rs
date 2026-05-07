@@ -550,43 +550,46 @@ impl CronRegisterJob {
         )
         .is_err()
         {
-            self.set_err(format_args!("Out of memory"));
-            return Self::finish(self);
+            s.set_err(format_args!("Out of memory"));
+            return unsafe { Self::finish(this) };
         }
 
         let file = match File::openat(
             Fd::cwd(),
-            self.tmp_path.as_ref().unwrap(),
+            s.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
             0o644,
         ) {
             Ok(f) => f,
             Err(_) => {
-                self.set_err(format_args!("Failed to create plist file"));
-                return Self::finish(self);
+                s.set_err(format_args!("Failed to create plist file"));
+                return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&plist).is_err() {
             file.close();
-            self.set_err(format_args!("Failed to write plist"));
-            return Self::finish(self);
+            s.set_err(format_args!("Failed to write plist"));
+            return unsafe { Self::finish(this) };
         }
         file.close();
 
-        self.spawn_bootout();
+        unsafe { Self::spawn_bootout(this) };
     }
 
-    fn spawn_bootout(&mut self) {
-        self.state = RegisterState::BootingOut;
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn spawn_bootout(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        s.state = RegisterState::BootingOut;
         let uid_str = match alloc_print_z(format_args!(
             "gui/{}/bun.cron.{}",
             get_uid(),
-            bstr::BStr::new(self.title.as_bytes())
+            bstr::BStr::new(s.title.as_bytes())
         )) {
-            Ok(s) => s,
+            Ok(v) => v,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
         let mut argv: [*const c_char; 4] = [
@@ -595,21 +598,24 @@ impl CronRegisterJob {
             uid_str.as_ptr().cast(),
             core::ptr::null(),
         ];
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
     }
 
-    fn spawn_bootstrap(&mut self) {
-        self.state = RegisterState::Bootstrapping;
-        let Some(plist_path) = self.tmp_path.take() else {
-            self.set_err(format_args!("No plist path"));
-            return Self::finish(self);
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn spawn_bootstrap(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        s.state = RegisterState::Bootstrapping;
+        let Some(plist_path) = s.tmp_path.take() else {
+            s.set_err(format_args!("No plist path"));
+            return unsafe { Self::finish(this) };
         };
         let uid_str = match alloc_print_z(format_args!("gui/{}", get_uid())) {
-            Ok(s) => s,
+            Ok(v) => v,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
         let mut argv: [*const c_char; 5] = [
@@ -619,8 +625,8 @@ impl CronRegisterJob {
             plist_path.as_ptr().cast(),
             core::ptr::null(),
         ];
-        // self.tmp_path already cleared via take() — don't delete the installed plist
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
+        // tmp_path already cleared via take() — don't delete the installed plist
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
         drop(uid_str);
         drop(plist_path);
     }

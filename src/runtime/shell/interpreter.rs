@@ -2160,17 +2160,21 @@ impl ShellTask {
 /// Spec: interpreter.zig `runFromThreadPool` — recover `*Ctx` from the
 /// intrusive `*WorkPoolTask`, run the user body, then post back to main.
 unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
-    // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`.
-    let shell_task = task as *mut ShellTask;
-    // SAFETY: `ShellTask` is embedded in `C` at `TASK_OFFSET` (Zig:
-    // `@fieldParentPtr("task", this)` for the outer hop).
-    let ctx = unsafe { (shell_task as *mut u8).sub(C::TASK_OFFSET) as *mut C };
+    // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which is
+    // embedded in `C` at `TASK_OFFSET` (Zig: two `@fieldParentPtr` hops).
+    let ctx = unsafe { (task as *mut u8).sub(C::TASK_OFFSET) as *mut C };
     C::run_from_thread_pool(ctx);
-    // PORT NOTE: Zig calls `this.onFinish()` here; the Rust per-builtin
-    // `run_from_thread_pool` bodies currently call `task.on_finish()`
-    // themselves (pre-WorkPool stub legacy). Leave that as-is until
-    // `on_finish` is un-stubbed to avoid a double enqueue.
-    let _ = shell_task;
+    // SAFETY: `ctx` is still the live heap allocation handed to `schedule`.
+    unsafe { ShellTask::on_finish::<C>(ctx) };
+}
+
+/// Spec: interpreter.zig `InnerShellTask.runFromMainThreadMini` — mini-loop
+/// `AnyTaskWithExtraContext` callback shape (`fn(*mut T, *mut ())`).
+fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
+    // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
+    // mini-loop dispatch runs on the main thread.
+    let ctx = unsafe { (this as *mut u8).sub(C::TASK_OFFSET) as *mut C };
+    unsafe { ShellTask::run_from_main_thread::<C>(ctx) };
 }
 
 #[cold]

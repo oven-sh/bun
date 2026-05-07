@@ -1238,6 +1238,11 @@ pub struct FilePollVTable {
     pub set_flag: unsafe fn(FilePollPtr, FilePollFlag),
     pub file_type: unsafe fn(FilePollPtr) -> crate::pipes::FileType,
     pub is_registered: unsafe fn(FilePollPtr) -> bool,
+    /// `poll.isWatching()` — `is_registered() && !flags.NeedsRearm`. Distinct
+    /// from `is_registered`: after a one-shot poll fires, `PollWritable` stays
+    /// set but `NeedsRearm` is set, so `is_registered() == true` while
+    /// `is_watching() == false` until re-armed.
+    pub is_watching: unsafe fn(FilePollPtr) -> bool,
     pub is_active: unsafe fn(FilePollPtr) -> bool,
     pub can_enable_keeping_process_alive: unsafe fn(FilePollPtr) -> bool,
     pub enable_keeping_process_alive: unsafe fn(FilePollPtr, ev: EventLoopHandle),
@@ -1309,6 +1314,10 @@ impl FilePoll {
     #[inline]
     pub fn is_registered(self) -> bool {
         unsafe { (file_poll_vtable().is_registered)(self.0) }
+    }
+    #[inline]
+    pub fn is_watching(self) -> bool {
+        unsafe { (file_poll_vtable().is_watching)(self.0) }
     }
     #[inline]
     pub fn is_active(self) -> bool {

@@ -118,30 +118,44 @@ impl<'a> Writable<'a> {
         promise_for_stream: &mut JSValue,
     ) -> Result<Writable<'a>, bun_core::Error> {
         // TODO(port): narrow error set
-        super::assert_stdio_result(result);
+        Subprocess::assert_stdio_result(&result);
 
         // SAFETY: `event_loop.global` is set before any subprocess work.
         let global = unsafe { event_loop.global.unwrap().as_ref() };
+
+        // CYCLEBREAK: `FileSink::create` / `StaticPipeWriter::create` take
+        // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
+        // the vtable-backed handle once and reuse for all arms (both platforms).
+        let evtloop = bun_event_loop::EventLoopHandle::init(
+            event_loop as *const EventLoop as *mut (),
+        );
 
         #[cfg(windows)]
         {
             match stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if let StdioResult::Buffer(buffer) = &result {
-                        let pipe = FileSink::create_with_pipe(event_loop, buffer);
+                    if let StdioResult::Buffer(buffer) = result {
+                        // Ownership of the `Box<uv::Pipe>` transfers to the
+                        // FileSink's writer (mirrors Zig where `result.buffer`
+                        // is a heap pointer the sink takes over).
+                        let uv_pipe: *mut _ = Box::into_raw(buffer);
+                        let pipe_ptr = FileSink::create_with_pipe(evtloop, uv_pipe);
+                        // SAFETY: `create_with_pipe` returns a freshly-boxed non-null pointer.
+                        let pipe = unsafe { &mut *pipe_ptr };
 
                         match pipe.writer.start_with_current_pipe() {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
-                                drop(pipe);
+                                // SAFETY: pipe was just created with refcount 1.
+                                unsafe { FileSink::deref(pipe_ptr) };
                                 if let Stdio::ReadableStream(rs) = stdio {
                                     rs.cancel(global);
                                 }
                                 return Err(err!("UnexpectedCreatingStdin"));
                             }
                         }
-                        pipe.writer.set_parent(&pipe);
-                        subprocess.weak_file_sink_stdin_ptr = Some(NonNull::from(&*pipe));
+                        pipe.writer.set_parent(pipe_ptr);
+                        subprocess.weak_file_sink_stdin_ptr = NonNull::new(pipe_ptr);
                         subprocess.ref_();
                         subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
                         subprocess.flags.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
@@ -151,14 +165,17 @@ impl<'a> Writable<'a> {
                             if let Some(err_val) = assign_result.to_error() {
                                 subprocess.weak_file_sink_stdin_ptr = None;
                                 subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, false);
-                                drop(pipe);
+                                // SAFETY: pipe is live; deref may free it.
+                                unsafe { FileSink::deref(pipe_ptr) };
                                 subprocess.deref();
-                                return Err(global.throw_value(err_val).into());
+                                let _ = global.throw_value(err_val);
+                                return Err(err!(JSError));
                             }
                             *promise_for_stream = assign_result;
                         }
 
-                        return Ok(Writable::Pipe(pipe));
+                        // SAFETY: `create_with_pipe` returns non-null.
+                        return Ok(Writable::Pipe(unsafe { NonNull::new_unchecked(pipe_ptr) }));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -174,16 +191,16 @@ impl<'a> Writable<'a> {
                         _ => unreachable!(),
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
+                        evtloop,
+                        subprocess as *mut Subprocess<'a>,
                         result,
                         super::Source::Blob(blob),
                     )));
                 }
                 Stdio::ArrayBuffer(array_buffer) => {
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
+                        evtloop,
+                        subprocess as *mut Subprocess<'a>,
                         result,
                         super::Source::ArrayBuffer(core::mem::take(array_buffer)),
                     )));
@@ -212,14 +229,6 @@ impl<'a> Writable<'a> {
                 let _ = bun_sys::set_nonblocking(result.unwrap());
             }
         }
-
-        // CYCLEBREAK: `FileSink::create` / `StaticPipeWriter::create` take
-        // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
-        // the vtable-backed handle once and reuse for all arms.
-        #[cfg(not(windows))]
-        let evtloop = bun_event_loop::EventLoopHandle::init(
-            event_loop as *const EventLoop as *mut (),
-        );
 
         #[cfg(not(windows))]
         match stdio {

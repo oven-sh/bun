@@ -50,8 +50,26 @@ pub fn to_be_empty(
                 )?;
                 pass = !any_properties_in_iterator;
             } else {
-                // TODO(port): bind `JSPropertyIterator` once API stabilizes.
-                pass = value.is_object_empty(global)?;
+                let Some(cell) = value.to_cell() else {
+                    return Err(global.throw_type_error(format_args!(
+                        "Expected value to be a string, object, or iterable"
+                    )));
+                };
+                // SAFETY: `to_cell` returned `Some`; the cell is GC-rooted by `value`
+                // (a `JSValue` on the stack) for the duration of this borrow.
+                let object = unsafe { &*cell }.to_object(global);
+                let props_iter = JSPropertyIterator::init(
+                    global,
+                    object,
+                    JSPropertyIteratorOptions {
+                        skip_empty_name: false,
+                        own_properties_only: false,
+                        include_value: true,
+                        ..Default::default()
+                    },
+                )?;
+                // `defer props_iter.deinit()` — handled by Drop.
+                pass = props_iter.len == 0;
             }
         } else {
             let signature = Expect::get_signature("toBeEmpty", "", false);

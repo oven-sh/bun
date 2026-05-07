@@ -349,13 +349,14 @@ impl WhyCommand {
         // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read
         // up front so we never need `pm` again once `lockfile` is borrowed.
         let depth_opt = pm.options.depth;
+        let log_level = pm.options.log_level;
         // SAFETY: `ctx.log` is set by `Command::create` for every subcommand and
         // is non-null for the command's lifetime; no other `&mut Log` is live here.
         let log = unsafe { &mut *ctx.log };
 
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
         let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
-        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
+        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         // After error handling, `load_lockfile` is `Ok` and only borrows
         // `lockfile_box` (the `pm`/`log` borrows ended at the call boundary).
         // Drop the result and work against `lockfile_box` directly.

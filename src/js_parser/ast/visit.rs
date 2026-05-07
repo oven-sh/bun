@@ -40,8 +40,6 @@ type ListManaged<'bump, T> = BumpVec<'bump, T>;
 // a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
-    // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
-    // `pushScopeForVisitPass`/`popScope` keep it non-dangling. Aliasing: scopes
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn vis_scope(&mut self) -> &mut js_ast::Scope {

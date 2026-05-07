@@ -190,10 +190,34 @@ impl Drop for ApplyArgs {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// C-ABI host-fn shims
+//
+// `#[bun_jsc::host_fn]` (Free kind) emits an unqualified `fn_name(g, f)` call
+// in its generated shim body, so it can't wrap an associated fn directly.
+// These module-scope thunks forward to `TestingAPIs::*` so the proc-macro can
+// generate the JSC-calling-convention `__jsc_host_*` exports the codegen side
+// links against (Zig: `jsc.host_fn.wrap(TestingAPIs.makeDiff)` etc.).
+// ──────────────────────────────────────────────────────────────────────────
+
+#[bun_jsc::host_fn]
+pub fn patch_make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    TestingAPIs::make_diff(global, frame)
+}
+
+#[bun_jsc::host_fn]
+pub fn patch_apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    TestingAPIs::apply(global, frame)
+}
+
+#[bun_jsc::host_fn]
+pub fn patch_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    TestingAPIs::parse(global, frame)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/patch_jsc/testing.zig (147 lines)
 //   confidence: medium (all bodies un-gated and compiling)
-//   todos:      bun_jsc::host_fn proc-macro
 //   notes:      ApplyArgs reshaped to own Vec<u8> + reparse (avoids
 //               self-reference forbidden by PORTING.md §Pointers/§Forbidden).
 // ──────────────────────────────────────────────────────────────────────────

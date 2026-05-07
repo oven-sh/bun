@@ -528,53 +528,101 @@ impl AutoFlusher {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// api::ServerConfig::SSLConfig — TLS option bag (mirrors
-// `src/runtime/socket/SSLConfig.rs`).
+// api::ServerConfig::SSLConfig — opaque handle to a boxed
+// `bun_runtime::socket::SSLConfig`.
+//
+// The full `SSLConfig` (~18 fields incl. `Vec`/`CString`) is high-tier (it
+// pulls in `node::fs`/`webcore::Blob`). The previous 3-field local mirror was
+// passed as `*mut c_void` storage to `Bun__SSLConfig__fromJS`, which `.write()`
+// the full struct into the 16-byte stack slot — stack overflow / UB. Storage
+// now lives in `bun_runtime`; this side holds only an owning pointer and
+// reaches the two fields SQL actually reads (`server_name`,
+// `reject_unauthorized`) via [`SqlRuntimeHooks`].
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod api {
     use super::*;
     pub mod server_config {
         use super::*;
+
+        /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` =
+        /// the default-constructed config (Zig: `.{}`) — callers that pass
+        /// `tls: true` get an SSLConfig with no overrides.
         #[derive(Default)]
-        pub struct SSLConfig {
-            pub server_name: *const c_char,
-            pub reject_unauthorized: c_int,
-            pub request_cert: c_int,
+        pub struct SSLConfig(Option<NonNull<c_void>>);
+
+        // SAFETY: the boxed `bun_runtime::socket::SSLConfig` is `Send` (only
+        // `CString`/`Vec`/`AtomicU64` fields); the handle moves between
+        // construction and the connection struct on the same JS thread anyway.
+        unsafe impl Send for SSLConfig {}
+
+        impl Drop for SSLConfig {
+            fn drop(&mut self) {
+                if let Some(p) = self.0.take() {
+                    // SAFETY: `p` was returned by `ssl_config_from_js` and not
+                    // yet freed (Option::take guarantees single drop).
+                    unsafe { (hooks().ssl_config_free)(p.as_ptr()) }
+                }
+            }
         }
+
         impl SSLConfig {
-            pub fn server_name(&self) -> *const c_char { self.server_name }
-            /// Generic over the VM handle so it accepts both the local
-            /// [`VirtualMachine`] and `bun_jsc`'s (callers pass
-            /// `global.bun_vm()`, which yields `&mut bun_jsc::VirtualMachine`).
-            /// The VM is not dereferenced — it's carried only for API parity
-            /// with the Zig `SSLConfig.fromJS(vm, global, value)` signature.
+            /// `SSLConfig.server_name` — the SNI hostname C string, or null
+            /// when unset / default.
+            #[inline]
+            pub fn server_name(&self) -> *const c_char {
+                match self.0 {
+                    None => core::ptr::null(),
+                    // SAFETY: live boxed SSLConfig; hook returns a borrow into
+                    // its `Option<CString>` field, valid for `self`'s lifetime.
+                    Some(p) => unsafe { (hooks().ssl_config_server_name)(p.as_ptr()) },
+                }
+            }
+
+            /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
+            #[inline]
+            pub fn reject_unauthorized(&self) -> i32 {
+                match self.0 {
+                    None => 0,
+                    // SAFETY: live boxed SSLConfig.
+                    Some(p) => unsafe { (hooks().ssl_config_reject_unauthorized)(p.as_ptr()) },
+                }
+            }
+
+            /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted for API
+            /// parity with the Zig signature but unused (the hook recovers it
+            /// from `global`).
             pub fn from_js<V>(
                 _vm: V,
                 global: &JSGlobalObject,
                 value: JSValue,
             ) -> JsResult<Option<Self>> {
-                let mut out = Self::default();
-                // SAFETY: `out` is a valid out-param; `global` borrowed for call.
-                // TODO(port): export from Zig — `Bun__SSLConfig__fromJS`.
-                let rc = unsafe {
-                    Bun__SSLConfig__fromJS(global.as_mut_ptr(), value, &mut out as *mut SSLConfig as *mut c_void)
-                };
-                if global.has_exception() { return Err(JsError::Thrown); }
-                Ok(if rc { Some(out) } else { None })
-            }
-            pub fn as_usockets_for_client_verification(&self) -> bun_uws::us_bun_socket_context_options_t {
-                let mut opts = bun_uws::us_bun_socket_context_options_t::default();
-                // SAFETY: `self` is the lite mirror; the Zig side fills the
-                // full uSockets options struct from its own `SSLConfig` state.
-                // TODO(port): export from Zig — `Bun__SSLConfig__asUSocketsClient`.
-                unsafe {
-                    Bun__SSLConfig__asUSocketsClient(
-                        self as *const SSLConfig as *const c_void,
-                        &mut opts as *mut _,
-                    );
+                // SAFETY: hook contract — may run JS getters / throw.
+                let p = unsafe { (hooks().ssl_config_from_js)(global, value) };
+                if global.has_exception() {
+                    debug_assert!(p.is_null());
+                    return Err(JsError::Thrown);
                 }
-                opts
+                Ok(NonNull::new(p).map(|p| Self(Some(p))))
+            }
+
+            /// `SSLConfig.asUSocketsForClientVerification` — projects to the
+            /// `#[repr(C)]` `us_bun_socket_context_options_t` for client mode
+            /// (request_cert=1, reject_unauthorized=0; SQL re-verifies hostname
+            /// itself). Returns `Default` for the empty/`tls:true` config.
+            pub fn as_usockets_for_client_verification(
+                &self,
+            ) -> bun_uws::us_bun_socket_context_options_t {
+                match self.0 {
+                    None => {
+                        let mut opts = bun_uws::us_bun_socket_context_options_t::default();
+                        opts.request_cert = 1;
+                        opts.reject_unauthorized = 0;
+                        opts
+                    }
+                    // SAFETY: live boxed SSLConfig.
+                    Some(p) => unsafe { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
+                }
             }
         }
         // Zig-style PascalCase alias.

@@ -1505,12 +1505,38 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
+        // Ownership transfer: `overflow` is allocated via the default
+        // (mimalloc) allocator and HANDED OFF to C++ — `WebSocket__didConnect`
+        // → `Bun__WebSocketClient__init`/`_initWithTunnel` adopts the raw
+        // `(ptr, len)` into an `InitialDataHandler` queued as a microtask,
+        // which frees it via `Box::from_raw` (same allocator) when the
+        // microtask runs. Do NOT wrap this in a `Vec`/`Box` here — that would
+        // drop at scope exit and leave the queued microtask with a dangling
+        // pointer (UAF on read in `handle_data`, then double-free on drop).
         let overflow_len = remain_buf.len();
-        let mut overflow: Vec<u8> = Vec::new();
-        if overflow_len > 0 {
-            // TODO(port): Zig terminates on alloc failure here; Rust Vec aborts on OOM.
-            overflow = remain_buf.to_vec();
-        }
+        let overflow_ptr: *mut u8 = if overflow_len > 0 {
+            match bun_alloc::basic::C_ALLOCATOR.raw_alloc(
+                overflow_len,
+                bun_alloc::Alignment::from_byte_units(1),
+                0,
+            ) {
+                Some(p) => {
+                    // SAFETY: `p` is a fresh `overflow_len`-byte allocation,
+                    // non-overlapping with `remain_buf`.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(remain_buf.as_ptr(), p, overflow_len);
+                    }
+                    p
+                }
+                None => {
+                    // SAFETY: no `&mut Self` is live across this call.
+                    unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                    return;
+                }
+            }
+        } else {
+            core::ptr::null_mut()
+        };
 
         // Check if we're using a proxy tunnel (wss:// through HTTP proxy)
         // SAFETY: short-lived `&mut` for the proxy borrow.
@@ -1541,8 +1567,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     unsafe {
                         (*ws).did_connect_with_tunnel(
                             tunnel.as_ptr().cast::<c_void>(),
-                            overflow.as_ptr().cast_mut(),
-                            overflow.len(),
+                            overflow_ptr,
+                            overflow_len,
                             if deflate_result.enabled {
                                 Some(&deflate_result.params)
                             } else {
@@ -1597,8 +1623,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 unsafe {
                     (*ws).did_connect(
                         &mut *native_socket,
-                        overflow.as_ptr().cast_mut(),
-                        overflow.len(),
+                        overflow_ptr,
+                        overflow_len,
                         if deflate_result.enabled {
                             Some(&deflate_result.params)
                         } else {

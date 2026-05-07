@@ -927,21 +927,24 @@ pub fn install_with_manager(
         // `manager.lockfile.scripts`. Iterate by index and copy each row to
         // the stack so the `&mut manager.lockfile.scripts` write doesn't
         // overlap a live `&manager.lockfile.packages` borrow.
-        let packages_len = manager.lockfile.packages.len();
+        let lockfile: *mut Lockfile = &mut *manager.lockfile;
+        // SAFETY: `packages` (read-only column slices) and `scripts` (the
+        // `Vec` push targets) are disjoint fields of `*lockfile`.
+        let packages_len = unsafe { &(*lockfile).packages }.len();
         for pkg_i in 0..packages_len {
-            let resolution = manager.lockfile.packages.items_resolution()[pkg_i];
+            let resolution = unsafe { &(*lockfile).packages }.items_resolution()[pkg_i];
             if resolution.tag != ResolutionTag::Workspace {
                 continue;
             }
-            let meta = manager.lockfile.packages.items_meta()[pkg_i];
+            let meta = unsafe { &(*lockfile).packages }.items_meta()[pkg_i];
             if !meta.has_install_script() {
                 continue;
             }
-            let scripts = manager.lockfile.packages.items_scripts()[pkg_i];
+            let scripts = unsafe { &(*lockfile).packages }.items_scripts()[pkg_i];
             let add_node_gyp = !scripts.has_any();
             let (first_index, _, entries) = scripts.get_script_entries(
-                &manager.lockfile,
-                &manager.lockfile.buffers.string_bytes,
+                unsafe { &*lockfile },
+                unsafe { &(*lockfile).buffers.string_bytes },
                 ResolutionTag::Workspace,
                 add_node_gyp,
             );
@@ -958,7 +961,7 @@ pub fn install_with_manager(
                 // PERF(port): was `inline for` over comptime entries — profile in Phase B
                 for (i, maybe_entry) in entries.into_iter().enumerate() {
                     if let Some(entry) = maybe_entry {
-                        manager.lockfile.scripts.hook_mut(i).push(entry);
+                        unsafe { &mut (*lockfile).scripts }.hook_mut(i).push(entry);
                     }
                 }
             }
@@ -966,22 +969,26 @@ pub fn install_with_manager(
     }
 
     if manager.options.global {
-        manager.setup_global_dir(ctx)?;
+        setup_global_dir(manager, &ctx)?;
     }
 
     let packages_len_before_install = manager.lockfile.packages.len();
 
-    if manager.options.enable.frozen_lockfile && !matches!(load_result, lockfile::LoadResult::NotFound) {
+    if manager.options.enable.frozen_lockfile() && !matches!(load_result, lockfile::LoadResult::NotFound) {
         'frozen_lockfile: {
             if load_result.loaded_from_text_lockfile() {
-                if manager.lockfile.eql(&lockfile_before_clean, packages_len_before_install)? {
+                if bun_core::handle_oom(Lockfile::eql(
+                    &manager.lockfile,
+                    &lockfile_before_clean,
+                    packages_len_before_install,
+                )) {
                     break 'frozen_lockfile;
                 }
             } else {
                 if !(manager
                     .lockfile
                     .has_meta_hash_changed(
-                        PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string,
+                        PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
                         packages_len_before_install,
                     )
                     .unwrap_or(false))
@@ -998,7 +1005,7 @@ pub fn install_with_manager(
         }
     }
 
-    let lockfile_before_install: *const Lockfile = &manager.lockfile;
+    let lockfile_before_install: *const Lockfile = &*manager.lockfile;
 
     let save_format = load_result.save_format(&manager.options);
 
@@ -1006,20 +1013,24 @@ pub fn install_with_manager(
         // save the lockfile and exit. make sure metahash is generated for binary lockfile
 
         manager.lockfile.meta_hash = manager.lockfile.generate_meta_hash(
-            PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string,
+            PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
             packages_len_before_install,
         )?;
 
-        manager.save_lockfile(
+        // SAFETY: `lockfile_before_install` was derived from `manager.lockfile`
+        // above and the box hasn't been replaced; it points at the same
+        // allocation `save_lockfile` will read against itself.
+        save_lockfile(
+            manager,
             &load_result,
             save_format,
             had_any_diffs,
-            lockfile_before_install,
+            unsafe { &*lockfile_before_install },
             packages_len_before_install,
             log_level,
         )?;
 
-        if manager.options.do_.summary {
+        if manager.options.do_.summary() {
             // TODO(dylan-conway): packages aren't installed but we can still print
             // added/removed/updated direct dependencies.
             Output::pretty(format_args!(
@@ -1043,7 +1054,7 @@ pub fn install_with_manager(
     // `workspace_filters` drops at end of scope (Zig had `defer manager.allocator.free(workspace_filters)`)
 
     let install_summary: PackageInstallSummary = 'install_summary: {
-        if !manager.options.do_.install_packages {
+        if !manager.options.do_.install_packages() {
             break 'install_summary PackageInstallSummary::default();
         }
 
@@ -1052,13 +1063,11 @@ pub fn install_with_manager(
         loop {
             match linker {
                 NodeLinker::Auto => match config_version {
-                    // `None` only when no lockfile loaded; treat as v0 (Zig
-                    // `chooseConfigVersion` always returns a concrete enum).
-                    None | Some(ConfigVersion::V0) => {
+                    ConfigVersion::V0 => {
                         linker = NodeLinker::Hoisted;
                         continue;
                     }
-                    Some(ConfigVersion::V1) => {
+                    ConfigVersion::V1 => {
                         if !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0 {
                             linker = NodeLinker::Isolated;
                             continue;

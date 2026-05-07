@@ -1054,7 +1054,7 @@ pub fn parse_json(
     source: &[u8],
     hint: ParseUrlResultHint,
 ) -> Result<ParseUrl, bun_core::Error> {
-    use bun_logger::js_ast::{Expr as AstExpr, Stmt as AstStmt};
+    use bun_logger::js_ast::DataStoreScope;
     use crate::mapping::SourceMap as SourceMapLog;
     use std::sync::Arc;
 
@@ -1064,15 +1064,9 @@ pub fn parse_json(
     // `defer log.deinit()` → Drop
 
     // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store
-    AstExpr::data_store_reset();
-    AstStmt::data_store_reset();
-    let _store_reset = scopeguard::guard((), |_| {
-        // the allocator given to the JS parser is not respected for all parts
-        // of the parse, so we need to remember to reset the ast store
-        AstExpr::data_store_reset();
-        AstStmt::data_store_reset();
-    });
+    // of the parse, so we need to remember to reset the ast store on entry
+    // and on every exit path.
+    let _store_scope = DataStoreScope::new();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
     let json = match bun_interchange::json::parse::<false>(&json_src, &mut log, arena) {
         Ok(j) => j,

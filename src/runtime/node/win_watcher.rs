@@ -53,15 +53,6 @@ impl PathWatcherManager {
 
     /// unregister is always called from main thread
     fn unregister_watcher(&mut self, watcher: *mut PathWatcher, path: &ZStr) {
-        let _guard = scopeguard::guard((), |_| {
-            if self.deinit_on_last_watcher && self.watchers.len() == 0 {
-                // SAFETY: self was Box::into_raw'd in `init`; no other live borrows after this point.
-                unsafe { Self::deinit(self as *mut Self) };
-            }
-        });
-        // TODO(port): errdefer — the closure above captures `&mut self`; Phase B may need to
-        // restructure to avoid the overlapping borrow with the body below.
-
         if let Some(index) = self
             .watchers
             .values()
@@ -77,6 +68,14 @@ impl PathWatcherManager {
 
             // Key is `Box<[u8]>`; swap_remove drops it (replaces `allocator.free(keys[index])`).
             self.watchers.swap_remove_at(index);
+        }
+
+        // Zig: `defer { if (deinit_on_last_watcher and count == 0) this.deinit(); }`.
+        // No early returns above, so this runs in the same place a defer would — and avoids the
+        // overlapping `&mut self` borrow a closure-based guard would require.
+        if self.deinit_on_last_watcher && self.watchers.len() == 0 {
+            // SAFETY: self was Box::into_raw'd in `init`; no other live borrows after this point.
+            unsafe { Self::deinit(self as *mut Self) };
         }
     }
 

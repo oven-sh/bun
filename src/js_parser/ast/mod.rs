@@ -84,7 +84,7 @@ impl<T> DebugOnlyDisabler<T> {
     }
     /// RAII scope: `disable()` now, `enable()` on drop. Replaces the Zig idiom
     /// `Disabler.disable(); defer Disabler.enable();` so callers don't
-    /// hand-roll a `scopeguard::guard((), |_| ...)` per PORTING.md.
+    /// hand-roll a unit-state `scopeguard` defer (banned per PORTING.md).
     #[inline]
     pub fn scope() -> DebugOnlyDisablerScope<T> {
         Self::disable();
@@ -105,7 +105,7 @@ impl<T> Drop for DebugOnlyDisablerScope<T> {
 /// RAII guard that resets the thread-local `Stmt.Data.Store` and
 /// `Expr.Data.Store` slabs on scope exit. Replaces the Zig idiom
 /// `defer { Stmt.Data.Store.reset(); Expr.Data.Store.reset(); }` so callers
-/// don't hand-roll a `scopeguard::guard((), |_| ...)` per PORTING.md.
+/// don't hand-roll a unit-state `scopeguard` defer (banned per PORTING.md).
 #[must_use = "store reset runs on drop; bind to a named local"]
 pub struct StoreResetGuard(());
 impl StoreResetGuard {

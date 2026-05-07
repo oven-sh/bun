@@ -594,11 +594,8 @@ impl FSWatcher {
         }
         self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
         // PORT NOTE: Zig has `defer this.close(); defer this.unrefTask();` — defers run LIFO,
-        // so unref_task() executes before close().
-        let guard = scopeguard::guard((), |()| {
-            // TODO(port): errdefer — captures &mut self twice; Phase B may inline at fn end.
-        });
-        let _ = guard;
+        // so unref_task() executes before close(). No early returns below, so both calls are
+        // inlined at the end of this function.
 
         err.ensure_still_alive();
         if !self.js_this.is_empty() {

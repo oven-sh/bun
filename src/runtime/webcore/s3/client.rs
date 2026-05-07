@@ -436,9 +436,8 @@ pub fn writable_stream(
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
             let event_loop = unsafe { (*global.bun_vm()).event_loop() };
             // SAFETY: event_loop is initialised for the lifetime of the VM.
-            unsafe { (*event_loop).enter() };
-            // PORT NOTE: reshaped for borrowck — Zig used `defer event_loop.exit()`
-            let _exit_guard = scopeguard::guard((), move |_| unsafe { (*event_loop).exit() });
+            // RAII: `enter()` now, `exit()` on drop (Zig: `defer event_loop.exit()`).
+            let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
                     if sink.flush_promise.has_value() {

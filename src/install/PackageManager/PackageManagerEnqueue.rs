@@ -1780,7 +1780,7 @@ fn enqueue_git_clone(
             },
             // TODO(port): `data: undefined`
             ..Task::uninit()
-        };
+        });
         &mut (*task).threadpool_task
     }
 }
@@ -1863,7 +1863,7 @@ pub fn enqueue_git_checkout(
             id: task_id,
             // TODO(port): `data: undefined`
             ..Task::uninit()
-        };
+        });
         &mut (*task).threadpool_task
     }
 }
@@ -1910,16 +1910,18 @@ fn enqueue_local_tarball(
     };
 
     let task = this.preallocated_resolve_tasks.get();
-    // SAFETY: task is a freshly acquired slot from the preallocated pool
+    // SAFETY: task is a freshly acquired uninitialized slot from the preallocated
+    // pool; we own the write. `ptr::write` (no drop of prior value) matches Zig's
+    // `task.* = Task{...}` semantics on uninit memory.
     unsafe {
-        *task = Task::Task {
-            package_manager: pm_stub(),
+        task.write(Task::Task {
+            package_manager: this as *const PackageManager,
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::LocalTarball,
             request: crate::package_manager_task::Request {
                 local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
                     tarball: ExtractTarball {
-                        package_manager: pm_stub(),
+                        package_manager: this as *const PackageManager,
                         name: StringOrTinyString::init_append_if_needed(
                             name,
                             &mut crate::network_task::filename_store_appender(),
@@ -1948,7 +1950,7 @@ fn enqueue_local_tarball(
             id: task_id,
             // TODO(port): `data: undefined`
             ..Task::uninit()
-        };
+        });
         &mut (*task).threadpool_task
     }
 }
@@ -2697,7 +2699,9 @@ fn get_or_put_resolved_package(
             // SAFETY: `get_or_put` copies the slice into the lockfile string
             // buffer before any other mutation; `version.tag == Symlink`.
             let res = FolderResolution::get_or_put(
-                GlobalOrRelative::Global(unsafe { &(*this_ptr).global_link_dir_path }),
+                GlobalOrRelative::Global(package_manager_real::global_link_dir_path(unsafe {
+                    &mut *this_ptr
+                })),
                 version.clone(),
                 unsafe { &*this_ptr }.lockfile.str(unsafe { &version.value.symlink }),
                 unsafe { &mut *this_ptr },

@@ -11,13 +11,10 @@ pub fn to_be_empty(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — reshaped via scopeguard over a raw
-    // pointer so `this` remains usable below without a borrowck conflict.
-    let this_ptr: *mut Expect = this;
-    let _post_match = scopeguard::guard((), move |_| {
-        // SAFETY: `this` is the host-fn receiver and outlives this guard (drops at fn exit).
-        unsafe { (*this_ptr).post_match(global) };
-    });
+    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — the guard owns the &mut Expect and
+    // runs post_match on drop; the body re-borrows `this` through the guard's DerefMut so
+    // post_match runs at every exit without a raw-pointer alias.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeEmpty", "")?;
@@ -119,5 +116,5 @@ pub fn to_be_empty(
 //   source:     src/test_runner/expect/toBeEmpty.zig (88 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      defer postMatch reshaped via scopeguard+raw ptr; JSPropertyIterator path replaced with is_object_empty shim
+//   notes:      defer postMatch via scopeguard owning &mut Expect; JSPropertyIterator path replaced with is_object_empty shim
 // ──────────────────────────────────────────────────────────────────────────

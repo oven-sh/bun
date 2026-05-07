@@ -2237,7 +2237,7 @@ impl PostgresSQLConnection {
                 // tripping borrowck.
                 let cells_ptr: *mut DataCell::SQLDataCell = putter.list.as_mut_ptr();
                 let count_ptr: *const usize = core::ptr::addr_of!(putter.count);
-                let _cells_guard = scopeguard::guard((), move |_| {
+                scopeguard::defer! {
                     // SAFETY: cells_ptr points into stack_buf/heap_cells and count_ptr into putter,
                     // both declared earlier in this block and outlive this guard.
                     let count = unsafe { *count_ptr };
@@ -2245,7 +2245,7 @@ impl PostgresSQLConnection {
                         unsafe { (*cells_ptr.add(i)).deinit() };
                     }
                     // `if free_cells free(cells)`: heap_cells Vec drops at scope end.
-                });
+                };
                 decode_result?;
 
                 let Some(this_value) = request.this_value.try_get() else {
@@ -2269,7 +2269,7 @@ impl PostgresSQLConnection {
                     postgres_sql_query::js::pending_value_set_cached(this_value, self.global(), result);
                 }
 
-                let _ = free_cells; // heap_cells dropped at scope end; _cells_guard runs cell.deinit()
+                let _ = free_cells; // heap_cells dropped at scope end; defer! above runs cell.deinit()
             }
             MessageType::CopyData => {
                 let copy_data = protocol::CopyData::decode_internal(reader.reborrow()).map_err(pg_err)?;

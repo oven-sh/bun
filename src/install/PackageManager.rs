@@ -646,35 +646,11 @@ pub struct ScriptRunEnvironment {
     pub transpiler: Transpiler<'static>,
 }
 
-#[derive(Default)]
-pub struct WakeHandler {
-    // handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,
-    // onDependencyError: fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void = undefined,
-    // PORT NOTE: `*mut PackageManager`, not `&mut`, to mirror Zig's `*PackageManager`
-    // exactly — `wake()` is called concurrently from task threads (see
-    // `isolated_install::Installer::Task::callback`) and forming `&mut PackageManager`
-    // there would be aliased-&mut UB.
-    pub handler: Option<fn(*mut c_void, *mut PackageManager)>, // STATIC fn ptr (cast at get_handler)
-    pub on_dependency_error: Option<fn(*mut c_void, Dependency, DependencyID, Error)>, // STATIC fn ptr
-    pub context: Option<NonNull<c_void>>, // BORROW_PARAM — caller-owned opaque ctx
-}
-
-impl WakeHandler {
-    #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut PackageManager) {
-        // SAFETY: handler is always set before context per VirtualMachine.zig:1162
-        self.handler.unwrap()
-    }
-
-    #[inline]
-    pub fn geton_dependency_error(&self) -> fn(*mut c_void, Dependency, DependencyID, Error) {
-        // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
-        // a Zig bug. The port intentionally fixes it by reading `on_dependency_error` instead;
-        // preserving the bug would require an unsound transmute between fn-pointer signatures.
-        // TODO(port): upstream fix to PackageManager.zig
-        self.on_dependency_error.unwrap()
-    }
-}
+// MOVE_DOWN: data struct + accessors live in `bun_install_types::WakeHandler`
+// (single definition the resolver also stores). The `handler` second arg is
+// erased to `*mut c_void` there because that crate cannot name
+// `PackageManager`; `wake_raw()` casts it back at the call site.
+pub use bun_install_types::resolver_hooks::WakeHandler;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Globals / statics

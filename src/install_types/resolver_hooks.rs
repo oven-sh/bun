@@ -4,26 +4,128 @@
 //! without an upward dep edge (resolver→install would cycle through
 //! install→resolver). The behaviourful `PackageManager` itself stays in
 //! `bun_install`; the resolver talks to it through the [`AutoInstaller`]
-//! trait below, which `bun_install::PackageManager` implements.
+//! trait below, which `bun_install::PackageManager` implements
+//! (`bun_install::auto_installer`).
 //!
-//! Nothing here carries a stubbed/panicking default body — the trait is pure,
-//! and the value types are the canonical on-disk shapes (re-exported by
-//! `bun_install`).
+//! Every value type here is the SINGLE canonical definition — `bun_install`
+//! re-exports them (`pub use bun_install_types::…`); there is exactly one
+//! nominal type per name.
 
-use core::cmp::Ordering;
-use core::mem::ManuallyDrop;
+use core::ffi::c_void;
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 
-use bun_semver::String as SemverString;
-use bun_semver::version::VersionInt;
-use bun_semver::{self as semver, StringBuilder};
-use bun_string::strings;
+use bun_semver::{ExternalString, String as SemverString, Version as SemverVersion};
 
 // ─── Identity / sentinel ──────────────────────────────────────────────────
 
 pub type PackageID = u32;
 pub type DependencyID = u32;
+pub type PackageNameHash = u64;
+pub type TruncatedPackageNameHash = u32;
 pub const INVALID_PACKAGE_ID: PackageID = PackageID::MAX;
 pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::MAX;
+
+// ─── ExternalSlice ────────────────────────────────────────────────────────
+// MOVE_DOWN of `install/ExternalSlice.zig` — `(off, len)` index pair into a
+// flat backing buffer (lockfile string-bytes / dependencies / resolutions).
+// Generic over element type; storage is two u32s with a phantom marker.
+
+#[repr(C)]
+pub struct ExternalSlice<T> {
+    pub off: u32,
+    pub len: u32,
+    _marker: PhantomData<T>,
+}
+
+// Manual impls: the Zig `extern struct { off: u32, len: u32 }` is unconditionally
+// copyable/comparable regardless of `Type`. `#[derive]` would add spurious
+// `T: Copy/Clone/Default/PartialEq` bounds via `PhantomData<T>`, breaking
+// by-value `self` methods for non-`Copy` element types (e.g. `Dependency`).
+impl<T> Copy for ExternalSlice<T> {}
+impl<T> Clone for ExternalSlice<T> {
+    #[inline]
+    fn clone(&self) -> Self { *self }
+}
+impl<T> Default for ExternalSlice<T> {
+    #[inline]
+    fn default() -> Self { Self { off: 0, len: 0, _marker: PhantomData } }
+}
+impl<T> PartialEq for ExternalSlice<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool { self.off == other.off && self.len == other.len }
+}
+impl<T> Eq for ExternalSlice<T> {}
+impl<T> core::fmt::Debug for ExternalSlice<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ExternalSlice").field("off", &self.off).field("len", &self.len).finish()
+    }
+}
+
+impl<T> ExternalSlice<T> {
+    #[inline]
+    pub const fn new(off: u32, len: u32) -> Self {
+        Self { off, len, _marker: PhantomData }
+    }
+
+    pub const INVALID: Self = Self { off: u32::MAX, len: u32::MAX, _marker: PhantomData };
+
+    #[inline]
+    pub fn is_invalid(self) -> bool {
+        self.off == u32::MAX && self.len == u32::MAX
+    }
+
+    #[inline]
+    pub fn contains(self, id: u32) -> bool {
+        id >= self.off && id < (self.len + self.off)
+    }
+
+    #[inline]
+    pub fn get(self, in_: &[T]) -> &[T] {
+        debug_assert!((self.off + self.len) as usize <= in_.len());
+        // it should be impossible to address this out of bounds due to the minimum here
+        // (Zig: `@min(in.len, this.off + this.len)` — release-mode clamp).
+        &in_[self.off as usize..in_.len().min((self.off + self.len) as usize)]
+    }
+
+    #[inline]
+    pub fn mut_(self, in_: &mut [T]) -> &mut [T] {
+        debug_assert!((self.off + self.len) as usize <= in_.len());
+        let end = in_.len().min((self.off + self.len) as usize);
+        &mut in_[self.off as usize..end]
+    }
+
+    #[inline]
+    pub fn begin(self) -> u32 { self.off }
+
+    #[inline]
+    pub fn end(self) -> u32 { self.off + self.len }
+
+    pub fn init(buf: &[T], in_: &[T]) -> Self {
+        // if cfg!(debug_assertions) {
+        //     debug_assert!(buf.as_ptr() as usize <= in_.as_ptr() as usize);
+        //     debug_assert!((in_.as_ptr() as usize + in_.len()) <= (buf.as_ptr() as usize + buf.len()));
+        // }
+        Self {
+            off: ((in_.as_ptr() as usize - buf.as_ptr() as usize) / core::mem::size_of::<T>()) as u32,
+            len: in_.len() as u32,
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default, Debug)]
+pub struct ExternalStringMap {
+    pub name: ExternalStringList,
+    pub value: ExternalStringList,
+}
+
+pub type ExternalStringList = ExternalSlice<ExternalString>;
+pub type ExternalPackageNameHashList = ExternalSlice<PackageNameHash>;
+pub type VersionSlice = ExternalSlice<SemverVersion>;
+pub type DependencySlice = ExternalSlice<Dependency>;
+pub type ResolutionSlice = ExternalSlice<PackageID>;
 
 // ─── Dependency / Behavior ────────────────────────────────────────────────
 
@@ -32,7 +134,8 @@ pub mod behavior {
         /// Port of `install/dependency.zig` `Behavior` (packed u8). Bit 0 and
         /// bit 7 are reserved (`_unused_1`/`_unused_2` in Zig) so the on-disk
         /// lockfile encoding stays byte-compatible.
-        #[derive(Default, Clone, Copy, PartialEq, Eq)]
+        #[repr(transparent)]
+        #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct Behavior: u8 {
             const PROD      = 1 << 1;
             const OPTIONAL  = 1 << 2;
@@ -47,6 +150,18 @@ pub mod behavior {
 pub use behavior::Behavior;
 
 impl Behavior {
+    /// (name, getter) table mirroring Zig's `@typeInfo(Behavior).@"struct".fields`
+    /// iteration (skipping the leading `_unused_1` and trailing `_unused_2` padding
+    /// bits). Used by debug JSON serialization in place of comptime field reflection.
+    pub const NAMED_FLAGS: &'static [(&'static str, fn(&Behavior) -> bool)] = &[
+        ("prod", |b| b.contains(Behavior::PROD)),
+        ("optional", |b| b.contains(Behavior::OPTIONAL)),
+        ("dev", |b| b.contains(Behavior::DEV)),
+        ("peer", |b| b.contains(Behavior::PEER)),
+        ("workspace", |b| b.contains(Behavior::WORKSPACE)),
+        ("bundled", |b| b.contains(Behavior::BUNDLED)),
+    ];
+
     #[inline] pub fn is_prod(self) -> bool { self.contains(Self::PROD) }
     /// Zig: `optional and !peer` — peer-optionals are reported separately.
     #[inline] pub fn is_optional(self) -> bool {
@@ -61,6 +176,27 @@ impl Behavior {
     #[inline] pub fn is_bundled(self) -> bool { self.contains(Self::BUNDLED) }
     #[inline] pub fn includes(self, rhs: Self) -> bool { self.intersects(rhs) }
     #[inline] pub fn is_required(self) -> bool { !self.is_optional() }
+
+    #[inline]
+    pub fn eq(lhs: Behavior, rhs: Behavior) -> bool { lhs.bits() == rhs.bits() }
+
+    /// Zig: `add(this, kind)` — Zig took `@Type(.enum_literal)`; callers pass `Behavior::FLAG`.
+    #[inline]
+    pub fn add(self, kind: Behavior) -> Behavior { self | kind }
+
+    /// Renamed from Zig `set` (collides with `bitflags::Flags::set`).
+    #[inline]
+    pub fn with(self, kind: Behavior, value: bool) -> Behavior {
+        let mut new = self;
+        new.set(kind, value);
+        new
+    }
+
+    /// Zig: `Behavior.setOptional(this, value)` — toggles the OPTIONAL bit in place.
+    #[inline]
+    pub fn set_optional(&mut self, value: bool) {
+        self.set(Behavior::OPTIONAL, value);
+    }
 
     pub fn is_enabled(self, features: Features) -> bool {
         self.is_prod()
@@ -93,6 +229,12 @@ impl Behavior {
     }
 }
 
+const _: () = assert!(Behavior::PROD.bits() == (1 << 1));
+const _: () = assert!(Behavior::OPTIONAL.bits() == (1 << 2));
+const _: () = assert!(Behavior::DEV.bits() == (1 << 3));
+const _: () = assert!(Behavior::PEER.bits() == (1 << 4));
+const _: () = assert!(Behavior::WORKSPACE.bits() == (1 << 5));
+
 /// Port of `install/dependency.zig` `Version.Tag`.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -118,299 +260,37 @@ pub enum DependencyVersionTag {
     Catalog = 9,
 }
 
-// ─── Repository (data) ────────────────────────────────────────────────────
-// MOVE_DOWN from `bun_install::repository` — the on-disk lockfile shape
-// (`extern struct` of five `Semver.String` handles). All fields are
-// arena-backed `(off,len)` handles into the lockfile string buffer, so the
-// struct is plain `Copy`. Install-tier behaviour (git CLI exec, tarball
-// download/checkout, store-path formatting) stays in `bun_install::repository`
-// as an extension trait — only the data + buffer-relative comparisons live
-// here so [`ResolutionValue`] / [`DependencyVersionValue`] can name a real
-// type instead of an opaque blob.
-
+/// Resolver-visible projection of `install::dependency::Version`. The resolver
+/// only reads `.tag` and round-trips the whole value through [`AutoInstaller`]
+/// methods; the parsed `Version.Value` union is install-internal and is stored
+/// here as an opaque inline buffer so the struct stays `Send`/`Clone`.
+///
+/// `#[repr(C)]` + identical field order make this layout-compatible with
+/// `bun_install::dependency::Version`; `bun_install::auto_installer` asserts
+/// `size_of`/`align_of` equality at compile time so the lockfile dependency
+/// buffer can be reinterpreted without copying.
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct Repository {
-    pub owner: SemverString,
-    pub repo: SemverString,
-    pub committish: SemverString,
-    pub resolved: SemverString,
-    pub package_name: SemverString,
-}
-
-impl Repository {
-    pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
-        if owner_order != Ordering::Equal {
-            return owner_order;
-        }
-        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
-        if repo_order != Ordering::Equal {
-            return repo_order;
-        }
-        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
-    }
-
-    pub fn count<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) {
-        builder.count(self.owner.slice(buf));
-        builder.count(self.repo.slice(buf));
-        builder.count(self.committish.slice(buf));
-        builder.count(self.resolved.slice(buf));
-        builder.count(self.package_name.slice(buf));
-    }
-
-    pub fn clone<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Repository {
-        Repository {
-            owner: builder.append::<SemverString>(self.owner.slice(buf)),
-            repo: builder.append::<SemverString>(self.repo.slice(buf)),
-            committish: builder.append::<SemverString>(self.committish.slice(buf)),
-            resolved: builder.append::<SemverString>(self.resolved.slice(buf)),
-            package_name: builder.append::<SemverString>(self.package_name.slice(buf)),
-        }
-    }
-
-    pub fn eql(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-        if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) {
-            return false;
-        }
-        if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
-            return false;
-        }
-        if self.resolved.is_empty() || rhs.resolved.is_empty() {
-            return self.committish.eql(rhs.committish, lhs_buf, rhs_buf);
-        }
-        self.resolved.eql(rhs.resolved, lhs_buf, rhs_buf)
-    }
-}
-
-// ─── VersionedURL (data) ──────────────────────────────────────────────────
-// MOVE_DOWN from `bun_install::versioned_url` — `{ url, version }` pair
-// carried in [`ResolutionValue::npm`]. Generic over the semver int width so
-// `Resolution` and `OldV2Resolution` share one definition.
-
-pub type VersionedURL = VersionedURLType<u64>;
-pub type OldV2VersionedURL = VersionedURLType<u32>;
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct VersionedURLType<I: VersionInt> {
-    pub url: SemverString,
-    pub version: semver::VersionType<I>,
-}
-
-impl<I: VersionInt> VersionedURLType<I> {
-    pub fn eql(&self, other: &Self) -> bool {
-        self.version.eql(other.version)
-    }
-
-    pub fn order(&self, other: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        self.version.order(other.version, lhs_buf, rhs_buf)
-    }
-
-    pub fn count<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) {
-        self.version.count(buf, builder);
-        builder.count(self.url.slice(buf));
-    }
-
-    pub fn clone<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Self {
-        Self {
-            version: self.version.append(buf, builder),
-            url: builder.append::<SemverString>(self.url.slice(buf)),
-        }
-    }
-}
-
-impl VersionedURLType<u32> {
-    // Zig: `if (comptime SemverIntType != u32) @compileError("unexpected SemverIntType")`
-    pub fn migrate(&self) -> VersionedURLType<u64> {
-        VersionedURLType { url: self.url, version: self.version.migrate() }
-    }
-}
-
-// ─── Dependency.Version.Value payload types ───────────────────────────────
-// MOVE_DOWN from `bun_install::dependency` — every variant is either a
-// `Semver.String` handle, a `Repository`, or a `Semver.Query.Group` (all
-// lower-tier `bun_semver` data), so the full union is spellable here. Putting
-// the real union in this crate lets the resolver inspect
-// `value.npm.version.is_exact()` directly (Zig: `package_json.zig:926`) and
-// round-trip the parsed value through [`AutoInstaller`] without type erasure.
-
-#[derive(Clone, Copy)]
-pub enum URI {
-    Local(SemverString),
-    Remote(SemverString),
-}
-
-impl URI {
-    pub fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-        match (lhs, rhs) {
-            (URI::Local(l), URI::Local(r)) | (URI::Remote(l), URI::Remote(r)) => {
-                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
-            }
-            _ => false,
-        }
-    }
-}
-
-pub struct NpmInfo {
-    pub name: SemverString,
-    pub version: semver::query::Group,
-    pub is_alias: bool,
-}
-
-impl NpmInfo {
-    pub fn eql(&self, that: &NpmInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
-        self.name.eql(that.name, this_buf, that_buf) && self.version.eql(&that.version)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct TagInfo {
-    pub name: SemverString,
-    pub tag: SemverString,
-}
-
-impl TagInfo {
-    pub fn eql(&self, that: &TagInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
-        self.name.eql(that.name, this_buf, that_buf) && self.tag.eql(that.tag, this_buf, that_buf)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct TarballInfo {
-    pub uri: URI,
-    pub package_name: SemverString,
-}
-
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo { uri: URI::Local(SemverString::default()), package_name: SemverString::default() }
-    }
-}
-
-impl TarballInfo {
-    pub fn eql(&self, that: &TarballInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
-        URI::eql(self.uri, that.uri, this_buf, that_buf)
-    }
-}
-
-/// Port of `install/dependency.zig` `Version.Value` — untagged; discriminant
-/// lives in [`DependencyVersion::tag`]. `npm`/`git`/`github` are
-/// `ManuallyDrop` because [`NpmInfo`] embeds a `Semver.Query.Group` (owned
-/// linked list); cleanup is the constructing crate's responsibility (Zig has
-/// no destructors here either — arena-freed).
-#[repr(C)]
-pub union DependencyVersionValue {
-    pub uninitialized: (),
-
-    pub npm: ManuallyDrop<NpmInfo>,
-    pub dist_tag: TagInfo,
-    pub tarball: TarballInfo,
-    pub folder: SemverString,
-
-    /// Equivalent to npm link
-    pub symlink: SemverString,
-
-    pub workspace: SemverString,
-    pub git: ManuallyDrop<Repository>,
-    pub github: ManuallyDrop<Repository>,
-
-    /// dep version without 'catalog:' protocol — empty string == default catalog
-    pub catalog: SemverString,
-}
-
-impl Default for DependencyVersionValue {
-    #[inline]
-    fn default() -> Self {
-        DependencyVersionValue { uninitialized: () }
-    }
-}
-
-impl Clone for DependencyVersionValue {
-    #[inline]
-    fn clone(&self) -> Self {
-        // SAFETY: `repr(C)` union of POD-ish payloads with no `Drop` glue;
-        // every active variant is either `Copy` or `ManuallyDrop<_>` over
-        // arena-backed data. Zig copies these by value; replicate with a
-        // bitwise read.
-        unsafe { core::ptr::read(self) }
-    }
-}
-
-/// Port of `install/dependency.zig` `Version`. The resolver reads `.tag` and
-/// `.value.npm.version.is_exact()`; `bun_install` constructs and consumes the
-/// full union via [`AutoInstaller`].
+#[derive(Default, Clone)]
 pub struct DependencyVersion {
     pub tag: DependencyVersionTag,
     pub literal: SemverString,
-    pub value: DependencyVersionValue,
+    /// Opaque inline storage for `bun_install::dependency::Version.Value`
+    /// (largest variant is `Repository` = 5×SemverString = 40 B). The install
+    /// impl transmutes into/out of this; the resolver never inspects it.
+    pub value: [u64; 5],
 }
 
-impl Default for DependencyVersion {
-    fn default() -> Self {
-        DependencyVersion {
-            tag: DependencyVersionTag::Uninitialized,
-            literal: SemverString::default(),
-            value: DependencyVersionValue { uninitialized: () },
-        }
-    }
-}
-
-impl Clone for DependencyVersion {
-    #[inline]
-    fn clone(&self) -> Self {
-        DependencyVersion { tag: self.tag, literal: self.literal, value: self.value.clone() }
-    }
-}
-
-impl DependencyVersion {
-    /// Zig: `version.value.npm` guarded by `version.tag == .npm`.
-    #[inline]
-    pub fn npm(&self) -> Option<&NpmInfo> {
-        if self.tag == DependencyVersionTag::Npm {
-            // SAFETY: tag-guarded union read.
-            Some(unsafe { &*self.value.npm })
-        } else {
-            None
-        }
-    }
-
-    /// Port of `dependency_version.value.npm.version.isExact()`
-    /// (resolver/package_json.zig:926). Returns false for non-npm tags.
-    #[inline]
-    pub fn is_exact_npm(&self) -> bool {
-        self.npm().is_some_and(|n| n.version.is_exact())
-    }
-}
-
+/// Field order mirrors `bun_install::dependency::Dependency` (`name_hash`,
+/// `name`, `version`, `behavior`) and both are `#[repr(C)]` so the lockfile's
+/// `&[bun_install::Dependency]` is reinterpretable as `&[Self]` (asserted in
+/// `bun_install::auto_installer`).
+#[repr(C)]
+#[derive(Default, Clone)]
 pub struct Dependency {
-    pub name_hash: u64,
+    pub name_hash: PackageNameHash,
     pub name: SemverString,
     pub version: DependencyVersion,
     pub behavior: Behavior,
-}
-
-impl Default for Dependency {
-    fn default() -> Self {
-        Dependency {
-            name_hash: 0,
-            name: SemverString::default(),
-            version: DependencyVersion::default(),
-            behavior: Behavior::default(),
-        }
-    }
-}
-
-impl Clone for Dependency {
-    #[inline]
-    fn clone(&self) -> Self {
-        Dependency {
-            name_hash: self.name_hash,
-            name: self.name,
-            version: self.version.clone(),
-            behavior: self.behavior,
-        }
-    }
 }
 
 // ─── npm::{Negatable, OperatingSystem, Libc, Architecture} ────────────────
@@ -523,10 +403,22 @@ impl<T: NegatableEnum> Negatable<T> {
             return;
         };
 
+        // Zig spec (src/install/npm.zig:551-555): `this.* = .{ .added = …, .removed = … }`
+        // resets `had_wildcard` / `had_unrecognized_values` to their defaults whenever a
+        // recognised token is applied. Match the spec literally so `["any","linux"]`
+        // collapses to LINUX (wildcard cleared).
         if is_not {
-            self.removed = T::from_raw(self.removed.to_raw() | field);
+            *self = Self {
+                added: self.added,
+                removed: T::from_raw(self.removed.to_raw() | field),
+                ..Default::default()
+            };
         } else {
-            self.added = T::from_raw(self.added.to_raw() | field);
+            *self = Self {
+                added: T::from_raw(self.added.to_raw() | field),
+                removed: self.removed,
+                ..Default::default()
+            };
         }
     }
 
@@ -851,20 +743,27 @@ pub enum ResolutionTag {
 /// Resolver-visible projection of `install::resolution::Resolution`. The full
 /// `Value` union is install-internal; the resolver only reads `.tag` and
 /// round-trips the whole value through [`AutoInstaller`] methods.
-#[derive(Clone, Default)]
+///
+/// `#[repr(C)]` + 7-byte padding + 40-byte opaque value mirror
+/// `bun_install::resolution::ResolutionType<u64>` exactly (largest `Value` arm
+/// is `git/github: Repository` = 5×SemverString = 40 B). Layout equality is
+/// statically asserted in `bun_install::auto_installer`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct Resolution {
     pub tag: ResolutionTag,
+    pub _padding: [u8; 7],
     /// Opaque install-owned payload (the `Resolution.Value` union).
-    pub value: [u64; 4],
+    pub value: [u64; 5],
 }
 
 impl Resolution {
-    pub const ROOT: Self = Self { tag: ResolutionTag::Root, value: [0; 4] };
+    pub const ROOT: Self = Self { tag: ResolutionTag::Root, _padding: [0; 7], value: [0; 5] };
 }
 
 // ─── PreinstallState / Features / misc ────────────────────────────────────
 
-#[repr(u8)]
+#[repr(u8)] // Zig: enum(u4); u8 is the smallest repr Rust allows
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PreinstallState {
     Unknown = 0,
@@ -906,6 +805,19 @@ impl Default for Features {
 }
 
 impl Features {
+    /// Zig: `Features.main` decl-literal (src/install/install.zig).
+    #[inline] pub const fn main() -> Self { Self::MAIN }
+    /// Zig: `Features.npm` decl-literal.
+    #[inline] pub const fn npm() -> Self { Self::NPM }
+    /// Zig: `Features.folder` decl-literal.
+    #[inline] pub const fn folder() -> Self { Self::FOLDER }
+    /// Zig: `Features.workspace` decl-literal.
+    #[inline] pub const fn workspace() -> Self { Self::WORKSPACE }
+    /// Zig: `Features.link` decl-literal.
+    #[inline] pub const fn link() -> Self { Self::LINK }
+    /// Zig: `Features.tarball` decl-literal.
+    #[inline] pub const fn tarball() -> Self { Self::TARBALL }
+
     pub fn behavior(self) -> Behavior {
         let mut out: u8 = 0;
         out |= (self.dependencies as u8) << 1;
@@ -978,37 +890,41 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Port of `install/PackageManager.zig` `WakeHandler` — (ctx-ptr + 2 fn-ptrs)
-/// the runtime installs so the JS event loop is nudged when a network task
-/// completes. Zig stores both fns as `*const anyopaque` and casts at the
-/// accessor (`getHandler` → `fn(*anyopaque, *PackageManager)`); this crate
-/// cannot name `PackageManager`, so `handler`'s second arg is the erased
-/// `*mut c_void` and `bun_install` casts it back at the call site. The
-/// resolver only stores and forwards this struct.
+/// Port of `install.zig` `PackageManager.WakeHandler` — opaque
+/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
+/// loop when a network task completes. The resolver only stores and forwards
+/// it; the fields are `Option` so `Default` is all-None (Zig: `.{ }`).
+///
+/// Both callback signatures are erased to `*mut c_void` for the
+/// `*PackageManager` / `Dependency` parameters because those concrete types
+/// live in `bun_install` (a higher tier). `bun_install::PackageManager` casts
+/// at the call site (see `PackageManager::wake` / `report_dependency_error`).
 #[derive(Default, Clone)]
 pub struct WakeHandler {
-    pub context: Option<core::ptr::NonNull<core::ffi::c_void>>,
-    /// `fn(ctx, *mut PackageManager)` — second arg is the erased manager ptr.
-    pub handler: Option<fn(*mut core::ffi::c_void, *mut core::ffi::c_void)>,
-    pub on_dependency_error:
-        Option<fn(*mut core::ffi::c_void, &Dependency, DependencyID, bun_core::Error)>,
+    pub context: Option<NonNull<c_void>>,
+    /// Zig: `fn(ctx: *anyopaque, pm: *PackageManager) void`.
+    pub handler: Option<fn(*mut c_void, *mut c_void)>,
+    /// Zig: `fn(ctx: *anyopaque, dep: Dependency, dep_id: DependencyID, err: anyerror) void`.
+    /// `dep` is passed as `*const c_void` (caller borrows the install-side
+    /// `Dependency` for the duration of the call).
+    pub on_dependency_error: Option<fn(*mut c_void, *const c_void, DependencyID, bun_core::Error)>,
 }
 
 impl WakeHandler {
-    /// Zig: `getHandler` — caller must have set `handler` before `context`.
     #[inline]
-    pub fn get_handler(&self) -> fn(*mut core::ffi::c_void, *mut core::ffi::c_void) {
+    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
+        // SAFETY: handler is always set before context per VirtualMachine.zig:1162
         self.handler.unwrap()
     }
 
-    /// Zig: `getonDependencyError`. PORT NOTE: the Zig spec casts `t.handler`
-    /// (the wrong field) to the dep-error fn type — that is a Zig bug; this
-    /// reads `on_dependency_error` instead. Preserving the bug would require an
-    /// unsound transmute between fn-pointer signatures.
     #[inline]
-    pub fn geton_dependency_error(
+    pub fn get_on_dependency_error(
         &self,
-    ) -> fn(*mut core::ffi::c_void, &Dependency, DependencyID, bun_core::Error) {
+    ) -> fn(*mut c_void, *const c_void, DependencyID, bun_core::Error) {
+        // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
+        // a Zig bug. The port reads `on_dependency_error` instead; preserving the bug would
+        // require an unsound transmute between fn-pointer signatures.
+        // TODO(port): upstream fix to PackageManager.zig
         self.on_dependency_error.unwrap()
     }
 }
@@ -1047,33 +963,13 @@ pub enum EnqueueResult {
     Failure(bun_core::Error),
 }
 
-// ─── Lockfile slice handles ───────────────────────────────────────────────
-// Port of `install/lockfile.zig` `ExternalSlice` — `(off, len)` into a flat
-// backing buffer. Generic over element type so the same shape serves
-// `dependencies`/`resolutions`.
-
-#[derive(Clone, Copy, Default)]
-pub struct ExternalSlice<T> {
-    pub off: u32,
-    pub len: u32,
-    _marker: core::marker::PhantomData<T>,
-}
-impl<T> ExternalSlice<T> {
-    #[inline]
-    pub fn get<'a>(&self, buf: &'a [T]) -> &'a [T] {
-        &buf[self.off as usize..(self.off + self.len) as usize]
-    }
-}
-
-pub type DependencySlice = ExternalSlice<Dependency>;
-pub type ResolutionSlice = ExternalSlice<PackageID>;
-
 // ─── AutoInstaller trait ──────────────────────────────────────────────────
 
 /// Everything `bun_resolver`'s auto-install path needs from
 /// `bun_install::PackageManager` + its `Lockfile`. `bun_install` implements
-/// this for `PackageManager`; the resolver holds `Option<NonNull<dyn
-/// AutoInstaller>>` and only enters the auto-install path when it is set.
+/// this for `PackageManager` (see `bun_install::auto_installer`); the
+/// resolver holds `Option<NonNull<dyn AutoInstaller>>` and only enters the
+/// auto-install path when it is set.
 ///
 /// No method has a default body — this is a pure capability interface, not a
 /// stub. Calling through an unset `Option` is statically prevented by
@@ -1180,8 +1076,8 @@ pub trait PackageJsonView {
 pub type InitAutoInstaller = fn(
     log: *mut bun_logger::Log,
     install_opts: *const (),
-    env_loader: core::ptr::NonNull<core::ffi::c_void>,
-) -> core::ptr::NonNull<dyn AutoInstaller>;
+    env_loader: NonNull<c_void>,
+) -> NonNull<dyn AutoInstaller>;
 
 pub static INIT_AUTO_INSTALLER: parking_lot::RwLock<Option<InitAutoInstaller>> =
     parking_lot::RwLock::new(None);

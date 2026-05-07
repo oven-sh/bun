@@ -285,23 +285,9 @@ pub mod prompt {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         #[cfg(windows)]
-        let original_mode: Option<bun_sys::windows::DWORD> = bun_sys::windows::update_stdio_mode_flags(
-            bun_sys::Stdio::StdIn,
-            bun_sys::windows::UpdateStdioModeFlagsOpts {
-                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
-            },
-        )
-        .ok();
-
-        #[cfg(windows)]
-        let _restore = scopeguard::guard((), move |_| {
-            if let Some(mode) = original_mode {
-                // SAFETY: FFI call; handle is the process's stdin console handle.
-                unsafe {
-                    let _ = bun_sys::windows::SetConsoleMode(bun_sys::Fd::stdin().native(), mode);
-                }
-            }
+        let _restore = bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+            unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+            ..Default::default()
         });
 
         // 7. Pause while waiting for the user's response.

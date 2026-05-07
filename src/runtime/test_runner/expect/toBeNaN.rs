@@ -7,16 +7,10 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_nan(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // `defer this.postMatch(globalThis)` — must run on every exit path including the `?` below.
-    // scopeguard cannot hold `&mut Expect` across the body without a borrowck conflict, so we
-    // capture a raw pointer.
-    // SAFETY: `this` outlives this function frame; post_match runs before return while `this` is
-    // still exclusively borrowed by us.
-    let this_ptr: *mut Expect = this;
-    let _post_match = scopeguard::guard((), move |_| unsafe {
-        (*this_ptr).post_match(global);
-    });
-    // TODO(port): revisit raw-pointer scopeguard once Expect::post_match signature is settled.
+    // Zig: `defer this.postMatch(globalThis);` — guard owns the `&mut Expect` borrow and
+    // DerefMut's back to it, so post_match runs on every exit path (including the `?` below)
+    // without a raw-pointer alias.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeNaN", "")?;
@@ -55,6 +49,6 @@ pub fn to_be_nan(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) 
 // PORT STATUS
 //   source:     src/test_runner/expect/toBeNaN.zig (42 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      defer post_match via raw-ptr scopeguard (borrowck); Expect::throw assumed to take format_args!; get_signature assumed const fn
+//   todos:      0
+//   notes:      Expect::throw assumed to take format_args!; get_signature assumed const fn
 // ──────────────────────────────────────────────────────────────────────────

@@ -168,8 +168,10 @@ pub trait ResolverContext {
     fn resolution(&self) -> &ResolutionType<u64> {
         debug_assert!(false, "ResolverContext::resolution called on non-git resolver");
         // SAFETY: unreachable in practice; never dereferenced when the
-        // `IS_GIT_RESOLVER` gate is false.
-        const EMPTY: ResolutionType<u64> = ResolutionType::<u64>::ZEROED;
+        // `IS_GIT_RESOLVER` gate is false. `ZEROED` is an associated const on a
+        // trait-bounded generic impl, which Rust refuses to evaluate in `const`
+        // position; a `static` (with `Sync` POD payload) sidesteps that.
+        static EMPTY: ResolutionType<u64> = ResolutionType::<u64>::ZEROED;
         &EMPTY
     }
     fn dep_id(&self) -> install::DependencyID {
@@ -483,7 +485,11 @@ impl Package<u64> {
         let package_id_mapping = &mut *cloner.mapping;
         let old_string_buf = old.buffers.string_bytes.as_slice();
         let old_extern_string_buf = old.buffers.extern_strings.as_slice();
-        let mut builder_ = new.string_builder();
+        // PORT NOTE: `string_builder!` split-borrows only `new.buffers
+        // .string_bytes` + `new.string_pool`, leaving sibling buffer fields
+        // (`dependencies`, `resolutions`, `extern_strings`, `packages`) free
+        // for the disjoint borrows below.
+        let mut builder_ = crate::string_builder!(new);
         let builder = &mut builder_;
         bun_output::scoped_log!(
             Lockfile,
@@ -541,36 +547,50 @@ impl Package<u64> {
         // offset for `ExternalStringList::init`. In Rust those two views would alias, so
         // `Bin::clone_with_buffers` takes the precomputed offset directly.
         let new_extern_strings_start = new.buffers.extern_strings.len() - new_extern_string_count;
-        let new_extern_strings = &mut new.buffers.extern_strings[new_extern_strings_start..];
-
-        let dependencies: &mut [Dependency] =
-            &mut new.buffers.dependencies[prev_len as usize..end as usize];
-        let resolutions: &mut [PackageID] =
-            &mut new.buffers.resolutions[prev_len as usize..end as usize];
 
         let id = new.packages.len() as PackageID;
-        let new_package = new.append_package_with_id(
-            Package {
-                name: builder.append_with_hash::<String>(
-                    self.name.slice(old_string_buf),
-                    self.name_hash,
-                ),
-                bin: self.bin.clone_with_buffers(
-                    old_string_buf,
-                    old_extern_string_buf,
-                    new_extern_strings_start as u32,
-                    new_extern_strings,
-                    &mut *builder,
-                ),
-                name_hash: self.name_hash,
-                meta: Meta::clone_into(&self.meta, id, old_string_buf, &mut *builder),
-                resolution: self.resolution.clone_into(old_string_buf, &mut *builder),
-                scripts: self.scripts.clone_into(old_string_buf, &mut *builder),
-                dependencies: DependencySlice::new(prev_len, end - prev_len),
-                resolutions: PackageIDSlice::new(prev_len, end - prev_len),
-            },
-            id,
-        )?;
+
+        // PORT NOTE: Zig calls `appendPackageWithID` mid-body while still
+        // holding live slices into `new.buffers` and the `builder`. Rust can't
+        // express that (the method borrows `&mut Lockfile` whole), so build the
+        // `Package` value and clone the dependency strings *first* (only needs
+        // disjoint buffer fields), drop the builder, then append, then write
+        // resolutions. `appendPackageWithID` touches `packages` /
+        // `package_index` / `string_bytes` only — none of which the dependency
+        // pass mutates — so the reorder is observationally identical.
+        let pkg_value = Package {
+            name: builder.append_with_hash::<String>(
+                self.name.slice(old_string_buf),
+                self.name_hash,
+            ),
+            bin: self.bin.clone_with_buffers(
+                old_string_buf,
+                old_extern_string_buf,
+                new_extern_strings_start as u32,
+                &mut new.buffers.extern_strings[new_extern_strings_start..],
+                &mut *builder,
+            ),
+            name_hash: self.name_hash,
+            meta: Meta::clone_into(&self.meta, id, old_string_buf, &mut *builder),
+            resolution: self.resolution.clone_into(old_string_buf, &mut *builder),
+            scripts: self.scripts.clone_into(old_string_buf, &mut *builder),
+            dependencies: DependencySlice::new(prev_len, end - prev_len),
+            resolutions: PackageIDSlice::new(prev_len, end - prev_len),
+        };
+
+        {
+            let dependencies: &mut [Dependency] =
+                &mut new.buffers.dependencies[prev_len as usize..end as usize];
+            debug_assert_eq!(old_dependencies.len(), dependencies.len());
+            for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
+                *new_dep = old_dep.clone_in(cloner.manager, old_string_buf, &mut *builder)?;
+            }
+        }
+
+        builder.clamp();
+        drop(builder_); // release `&mut new.buffers.string_bytes` / `string_pool`
+
+        let new_package = new.append_package_with_id(pkg_value, id)?;
 
         package_id_mapping[self.meta.id as usize] = new_package.meta.id;
 
@@ -579,15 +599,10 @@ impl Package<u64> {
                 cloner.old_preinstall_state[self.meta.id as usize];
         }
 
-        debug_assert_eq!(old_dependencies.len(), dependencies.len());
-        for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
-            *new_dep = old_dep.clone_in(cloner.manager, old_string_buf, &mut *builder)?;
-        }
-
-        builder.clamp();
-
         cloner.trees_count += (old_resolutions.len() > 0) as u32;
 
+        let resolutions: &mut [PackageID] =
+            &mut new.buffers.resolutions[prev_len as usize..end as usize];
         debug_assert_eq!(old_resolutions.len(), resolutions.len());
         for (i, (old_resolution, resolution)) in
             old_resolutions.iter().zip(resolutions.iter_mut()).enumerate()
@@ -626,7 +641,9 @@ impl Package<u64> {
 
         // var string_buf = package_json;
 
-        let mut string_builder = lockfile.string_builder();
+        // PORT NOTE: split-borrow `string_bytes`/`string_pool` so the disjoint
+        // `lockfile.buffers.dependencies/resolutions` borrows below pass.
+        let mut string_builder = crate::string_builder!(lockfile);
 
         let mut total_dependencies_count: u32 = 0;
         // var bin_extern_strings_count: u32 = 0;
@@ -757,7 +774,9 @@ impl Package<u64> {
             out
         };
 
-        let mut string_builder = lockfile.string_builder();
+        // PORT NOTE: split-borrow so `lockfile.buffers.dependencies/resolutions
+        // /extern_strings` below are disjoint from the builder's `string_bytes`.
+        let mut string_builder = crate::string_builder!(lockfile);
 
         let mut total_dependencies_count: u32 = 0;
         let mut bin_extern_strings_count: u32 = 0;

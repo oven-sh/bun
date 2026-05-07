@@ -29,7 +29,9 @@ comptime {
 /// `error.Timeout`. 0 disables the timer (matching `disable_timeout = true`).
 /// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
 /// previous hard-coded value — so unchanged environments see identical
-/// behaviour except that the handshake phase is now also covered.
+/// behaviour except that the handshake phase is now also covered. Values
+/// above 240s are served by uSockets' minute-granularity long timer (see
+/// `socket.setTimeout`), so they round up to the next whole minute.
 pub var idle_timeout_seconds: c_uint = 300;
 
 pub var overridden_default_user_agent: []const u8 = "";
@@ -191,7 +193,7 @@ pub fn onOpen(
     // blocked in epoll_wait forever. Previously the first `setTimeout` call
     // was inside `onWritable`, which only runs *after* the handshake
     // completes. See https://github.com/oven-sh/bun/issues/30325.
-    client.setTimeout(socket, 5);
+    client.setTimeout(socket);
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
@@ -1622,7 +1624,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
     switch (this.state.request_stage) {
         .pending, .headers, .opened => {
             log("sendInitialRequestPayload", .{});
-            this.setTimeout(socket, 5);
+            this.setTimeout(socket);
             const result = sendInitialRequestPayload(this, is_first_call, is_ssl, socket) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
@@ -1670,7 +1672,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
         },
         .body => {
             log("send body", .{});
-            this.setTimeout(socket, 5);
+            this.setTimeout(socket);
 
             switch (this.state.original_request_body) {
                 .bytes => {
@@ -1720,7 +1722,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             if (this.proxy_tunnel) |proxy| {
                 switch (this.state.original_request_body) {
                     .bytes => {
-                        this.setTimeout(socket, 5);
+                        this.setTimeout(socket);
 
                         const to_send = this.state.request_body;
                         const sent = proxy.write(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
@@ -1745,7 +1747,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
         .proxy_headers => {
             log("send proxy headers", .{});
             if (this.proxy_tunnel) |proxy| {
-                this.setTimeout(socket, 5);
+                this.setTimeout(socket);
                 var stack_buffer = std.heap.stackFallback(1024 * 16, bun.default_allocator);
                 const allocator = stack_buffer.get();
                 var temporary_send_buffer = std.array_list.Managed(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
@@ -1852,7 +1854,7 @@ inline fn handleShortRead(
         }
     }
 
-    this.setTimeout(socket, 5);
+    this.setTimeout(socket);
 }
 
 pub fn handleOnDataHeaders(
@@ -2002,7 +2004,7 @@ pub fn handleOnDataHeaders(
             }
         }
     } else if (this.state.response_stage == .body_chunk) {
-        this.setTimeout(socket, 5);
+        this.setTimeout(socket);
         {
             const report_progress = this.handleResponseBodyChunkedEncoding(to_read) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
@@ -2037,7 +2039,7 @@ pub fn onData(
 
     if (this.proxy_tunnel) |proxy| {
         // if we have a tunnel we dont care about the other stages, we will just tunnel the data
-        this.setTimeout(socket, 5);
+        this.setTimeout(socket);
         proxy.receive(incoming_data);
         return;
     }
@@ -2047,7 +2049,7 @@ pub fn onData(
             this.handleOnDataHeaders(is_ssl, incoming_data, ctx, socket);
         },
         .body => {
-            this.setTimeout(socket, 5);
+            this.setTimeout(socket);
 
             const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
@@ -2061,7 +2063,7 @@ pub fn onData(
         },
 
         .body_chunk => {
-            this.setTimeout(socket, 5);
+            this.setTimeout(socket);
 
             const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
@@ -2211,19 +2213,18 @@ pub fn cloneMetadata(this: *HTTPClient) void {
     }
 }
 
-pub fn setTimeout(this: *HTTPClient, socket: anytype, _: c_uint) void {
-    // The `minutes` parameter is retained for call-site compatibility but is
-    // no longer used; every caller passed the same hard-coded `5`. The actual
-    // duration now comes from `idle_timeout_seconds` so it can be tuned via
-    // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` (and set low in tests). `socket.setTimeout`
+pub fn setTimeout(this: *HTTPClient, socket: anytype) void {
+    // Duration comes from `idle_timeout_seconds` (tunable via
+    // `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, set low in tests). `socket.setTimeout`
     // picks the short-tick timer for values ≤ 240s and the minute-granularity
-    // long timer above that, so the default (300s → 5 min long timer) is
-    // exactly the previous behaviour.
+    // long timer above that (rounded up), so the default — 300s → 5-minute
+    // long timer — matches the previous hard-coded behaviour exactly.
     if (this.flags.disable_timeout or idle_timeout_seconds == 0) {
         socket.setTimeout(0);
         return;
     }
-    socket.setTimeout(idle_timeout_seconds);
+    const secs = idle_timeout_seconds;
+    socket.setTimeout(if (secs > 240) ((secs + 59) / 60) * 60 else secs);
 }
 
 pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {

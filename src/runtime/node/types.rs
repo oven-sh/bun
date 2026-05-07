@@ -462,7 +462,7 @@ impl StringOrBuffer {
 
             use crate::webcore::encoding::BunStringEncode as _;
             let out = str.encode(encoding);
-            global.vm().deprecated_report_extra_memory(out.len());
+            global.vm().report_extra_memory(out.len());
 
             return Ok(Some(Self::EncodedSlice(ZigStringSlice::init_owned(out))));
         }

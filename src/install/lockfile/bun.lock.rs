@@ -2002,7 +2002,7 @@ pub fn parse_into_binary_lockfile(
 
             if lockfile_version != Version::V0 {
                 if res.tag == ResolutionTag::Workspace {
-                    let entry = pkg_map.get_or_put(pkg_path);
+                    let entry = pkg_map.get_or_put(pkg_path)?;
                     if entry.found_existing {
                         // this workspace package is already in the package map, because
                         // it was added as a workspaceOnly package earlier
@@ -2207,7 +2207,7 @@ pub fn parse_into_binary_lockfile(
 
             let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-            let entry = pkg_map.get_or_put(pkg_path);
+            let entry = pkg_map.get_or_put(pkg_path)?;
             if entry.found_existing {
                 log.add_error(Some(source), key.loc, b"Duplicate package path")?;
                 return Err(ParseError::InvalidPackageKey);

@@ -903,13 +903,18 @@ impl Repository {
             }
         };
 
+        // Zig defers `json_file.close()` / `package_dir.close()` across the
+        // `try ...append(json_path)` below. `json_path` lives in the thread-local
+        // `json_path_buf` (not in `json_file`), and `json_buf` is an owned alloc,
+        // so both fds are dead here — close before the fallible append so the
+        // `?`-propagation path doesn't leak them.
+        json_file.close();
+        package_dir.close();
+
         // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
         let ret_json_path = bun_sys::fs::FileSystem::instance()
             .dirname_store()
             .append(json_path)?;
-
-        json_file.close();
-        package_dir.close();
 
         Ok(ExtractData {
             url: url.into(),

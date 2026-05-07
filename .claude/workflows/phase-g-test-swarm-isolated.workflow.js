@@ -115,7 +115,8 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     `Survey test files in **isolated worktree ${WT}** (cgroup ${CG}). Shard ${SHARD}/${NSHARDS} round ${round}.
 
 1. \`cd ${WT}\`. List: \`ls ${TEST_GLOB}\`. Take every ${NSHARDS}th starting at ${SHARD}.
-2. For each (in cgroup, timeout 30s): \`${RUN_IN_CG} timeout 30 bun bd test <file> 2>&1\` AND \`USE_SYSTEM_BUN=1 timeout 30 bun test <file> 2>&1\` (baseline).
+2. **Baseline (once, cache to /tmp/baseline-s${SHARD}/):** \`USE_SYSTEM_BUN=1 timeout 15 bun test <file> 2>&1 | grep -E '^\\s*[0-9]+ (pass|fail)' > /tmp/baseline-s${SHARD}/<slug>.txt\` — skip if cache exists.
+3. **Probe (parallel, 8 at a time):** \`printf '%s\\n' "\${files[@]}" | xargs -P 8 -I{} sh -c '${RUN_IN_CG} timeout 15 bun bd test {} > /tmp/tswarm-s${SHARD}-out/\$(echo {}|tr / _).log 2>&1; echo "{}|\$?"' \` — collect exit codes + logs.
 3. Categorize:
    - **completing** = exit 0/1 AND pass/fail counts match system-bun baseline
    - **crashing** = SIGSEGV/panic/ASAN/ASSERT (extract signature: file:line + msg)

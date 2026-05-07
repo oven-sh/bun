@@ -2222,6 +2222,8 @@ impl Log {
         self.clone_to_with_recycled(other, recycled)?;
         self.msgs.clear();
         self.msgs.shrink_to_fit();
+        // See `append_to` — keep `owned_strings` backing alive for the moved msgs.
+        other.owned_strings.append(&mut self.owned_strings);
         Ok(())
     }
 

@@ -684,6 +684,104 @@ impl RunCommand {
             .copied()
     }
 
+    /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
+    /// [`boot_standalone`] (bun.js.zig:64-98 / :247-275 — the two bodies are
+    /// byte-identical in Zig).
+    fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
+        use bun_options_types::Context::MacroOptions;
+        use bun_options_types::OfflineMode::OfflineMode;
+
+        // PORT NOTE: `BundleOptions::install` is a raw `NonNull` backref into
+        // the CLI's `Box<BunInstall>` (process-lifetime — Zig stored the raw
+        // `?*BunInstall`). `as_deref` yields `&BunInstall`, which
+        // `NonNull::from` converts without the lifetime tie.
+        let install_ptr = ctx.install.as_deref().map(::core::ptr::NonNull::from);
+        b.options.install = install_ptr;
+        // resolver's `BundleOptions.install` is the FORWARD_DECL `*const ()`
+        // (breaks the bun_install dep cycle) — erase the type.
+        b.resolver.opts.install =
+            install_ptr.map_or(::core::ptr::null(), |p| p.as_ptr() as *const ());
+        b.resolver.opts.global_cache = ctx.debug.global_cache;
+        let offline = ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online);
+        b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
+        // PORT NOTE: resolver's forward-decl `BundleOptions` lacks
+        // `prefer_latest_install`; only the bundler-side mirror carries it.
+        b.options.global_cache = ctx.debug.global_cache;
+        b.options.prefer_offline_install = offline == OfflineMode::Offline;
+        b.options.prefer_latest_install = offline == OfflineMode::Latest;
+        b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
+
+        b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+        b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        // PORT NOTE: resolver's forward-decl `BundleOptions` does not project
+        // `minify_*` (resolver never reads them); Zig assigned both because the
+        // resolver carried the full struct.
+
+        match &mut ctx.debug.macros {
+            MacroOptions::Disable => b.options.no_macros = true,
+            MacroOptions::Map(macros) => {
+                // PORT NOTE: `ContextData::MacroMap` and
+                // `BundleOptions::macro_remap` are both
+                // `ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
+                // but with different hasher contexts (`Auto` vs
+                // `BoxedSliceContext`), so re-seat by draining instead of move.
+                for (k, mut v) in ::core::mem::take(macros).into_iter() {
+                    let mut inner =
+                        bun_resolver::package_json::MacroImportReplacementMap::default();
+                    for (ik, iv) in ::core::mem::take(&mut v).into_iter() {
+                        inner.put(ik, iv).unwrap_or_oom();
+                    }
+                    b.options.macro_remap.put(k, inner).unwrap_or_oom();
+                }
+            }
+            MacroOptions::Unspecified => {}
+        }
+    }
+
+    /// `Run.doPreconnect` (bun.js.zig:114) — kick off TCP preconnects for
+    /// `--preconnect <url>` before the entry module loads.
+    fn do_preconnect(preconnect: &[Box<[u8]>]) {
+        if preconnect.is_empty() {
+            return;
+        }
+        bun_http::http_thread::init(&Default::default());
+
+        for url_str in preconnect {
+            // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
+            // (CLI argv-derived, never freed); erase the borrow lifetime so
+            // `URL<'static>` (which `AsyncHTTP::preconnect` requires) can hold
+            // a backref into it.
+            let url_str: &'static [u8] =
+                unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
+            let url = bun_url::URL::parse(url_str);
+
+            if !url.is_http() && !url.is_https() {
+                bun_core::err_generic!(
+                    "preconnect URL must be HTTP or HTTPS: {}",
+                    bun_core::fmt::quote(url_str),
+                );
+                Global::exit(1);
+            }
+            if url.hostname.is_empty() {
+                bun_core::err_generic!(
+                    "preconnect URL must have a hostname: {}",
+                    bun_core::fmt::quote(url_str),
+                );
+                Global::exit(1);
+            }
+            if !url.has_valid_port() {
+                bun_core::err_generic!(
+                    "preconnect URL must have a valid port: {}",
+                    bun_core::fmt::quote(url_str),
+                );
+                Global::exit(1);
+            }
+
+            bun_http::async_http::preconnect(url, false);
+        }
+    }
+
     /// Port of `bun_js.Run.boot` (src/bun.js.zig) — `VirtualMachine::init`,
     /// hand off CLI state, then enter `Run::start` under the JSC API lock.
     pub(crate) fn boot(
@@ -691,6 +789,15 @@ impl RunCommand {
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
     ) -> Result<(), bun_core::Error> {
+        if !ctx.debug.loaded_bunfig {
+            arguments::load_config_path(
+                CommandTag::RunCommand,
+                true,
+                bun_core::zstr!("bunfig.toml"),
+                ctx,
+            )?;
+        }
+
         // PORT NOTE: `jsc::initialize(false)` + `Expr/Stmt::Store::create()` +
         // `MimallocArena::init()` precede VM init in Zig. `bun_jsc::initialize`
         // is now real (calls `JSCInitialize` over `bun_sys::environ()`); the
@@ -702,7 +809,11 @@ impl RunCommand {
         bun_js_parser::Stmt::data_store_create();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
+            transform_options: ctx.args.clone(),
+            log: ::core::ptr::NonNull::new(ctx.log),
+            debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             smol: ctx.runtime_options.smol,
+            mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,
             is_main_thread: true,
             ..Default::default()
@@ -714,8 +825,15 @@ impl RunCommand {
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
-        vm.is_main_thread = true;
-        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
+        // Zig passes `store_fd = ctx.debug.hot_reload != .none` to `init`;
+        // `InitOptions` lacks the field so set it on the resolver directly.
+        vm.transpiler.resolver.store_fd =
+            ctx.debug.hot_reload != cli::command::HotReload::None;
+        // PORT NOTE: `vm.dns_result_order` is a `u8` until the b2-cycle widens
+        // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is the
+        // exact `@intFromEnum` Zig would have done.
+        vm.dns_result_order =
+            bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
         // `vm.main` is a BACKREF into these bytes; convert the `Box` to a raw
         // heap pointer now (Zig: `allocator.dupe` + never-free) so the address
         // is stable for both `set_main` and the `RUN` write below. The runner
@@ -725,29 +843,75 @@ impl RunCommand {
         let entry: &[u8] = unsafe { &*entry_ptr };
         vm.set_main(entry);
 
+        if !ctx.runtime_options.eval.script.is_empty() {
+            // PORT NOTE: `ctx.runtime_options.eval.script` is process-lifetime
+            // (CLI argv); erase the borrow lifetime so the `Source` (stored in
+            // the VM for the process duration) can backref into it.
+            let script: &'static [u8] = unsafe {
+                ::core::slice::from_raw_parts(
+                    ctx.runtime_options.eval.script.as_ptr(),
+                    ctx.runtime_options.eval.script.len(),
+                )
+            };
+            vm.module_loader.eval_source =
+                Some(Box::new(bun_logger::Source::init_path_string(entry, script)));
+            if ctx.runtime_options.eval.eval_and_print {
+                vm.transpiler.options.dead_code_elimination = false;
+            }
+        }
+
+        // ctx → transpiler/resolver option mapping (bun.js.zig:247-275).
+        // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
+        // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
+        // capture the defines result, drop `b`, then branch.
+        let defines_ok = {
+            let b = &mut vm.transpiler;
+            Self::wire_transpiler_from_ctx(b, ctx);
+            b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
+            b.configure_defines().is_ok()
+        };
+        if !defines_ok {
+            crate::run_main::fail_with_build_error(vm);
+        }
+
+        // Zig: `AsyncHTTP.loadEnv(allocator, vm.log, b.env)`.
+        // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
+        // `DotEnv::Loader` allocated/retained for the VM (never null after
+        // `Transpiler::init`).
+        bun_http::async_http::load_env(
+            unsafe { vm.log.unwrap().as_mut() },
+            unsafe { &*vm.transpiler.env },
+        );
+
+        vm.load_extra_env_and_source_code_printer();
+        vm.is_main_thread = true;
+        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
+
+        // Allow setting a custom timezone.
+        // SAFETY: `b.env` is non-null (see above).
+        if let Some(tz) = unsafe { &*vm.transpiler.env }.get(b"TZ") {
+            if !tz.is_empty() {
+                let _ = vm.global().set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
+            }
+        }
+        // SAFETY: `b.env` is non-null (see above).
+        unsafe { &*vm.transpiler.env }.load_tracy();
+
+        // SAFETY: set once at startup before the HTTP thread spawns; only read
+        // on that thread.
+        unsafe {
+            bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI =
+                ctx.runtime_options.experimental_http2_fetch;
+            bun_http::EXPERIMENTAL_HTTP3_CLIENT_FROM_CLI =
+                ctx.runtime_options.experimental_http3_fetch;
+        }
+        Self::do_preconnect(&ctx.runtime_options.preconnect);
+
         // Zig: `vm.main_is_html_entrypoint = (loader orelse
         //   vm.transpiler.options.loader(ext)) == .html`.
         vm.main_is_html_entrypoint = loader
             .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
             == Loader::Html;
-
-        // ctx → transpiler/resolver option mapping (bun.js.zig:110-170).
-        // TODO(port): `serve_plugins`/`bunfig_path`/`macros` map shapes still
-        // differ between `ContextData` and `BundleOptions`; wire those once the
-        // field-shape drift is resolved.
-        {
-            let b = &mut vm.transpiler;
-            // PORT NOTE: `BundleOptions::install` is a raw `NonNull` backref
-            // into the CLI's `Box<BunInstall>` (process-lifetime — Zig stored
-            // the raw `?*BunInstall`). `as_deref` yields `&BunInstall`, which
-            // `NonNull::from` converts without the lifetime tie.
-            b.options.install = ctx.install.as_deref().map(::core::ptr::NonNull::from);
-            b.resolver.opts.global_cache = ctx.debug.global_cache;
-            b.options.global_cache = ctx.debug.global_cache;
-            b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
-            b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-            b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        }
 
         // ── enter `Run::start` under the JSC API lock ──────────────────────
         // Zig: `vm.global.vm().holdAPILock(&run, OpaqueWrap(Run, Run.start))`.

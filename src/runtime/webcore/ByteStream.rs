@@ -206,9 +206,10 @@ impl ByteStream {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData appendSlice and action.fulfill()");
 
                 self.buffer.extend_from_slice(stream.slice());
-                // Zig `defer { if owned* allocator.free(stream.slice()) }` — owned ByteList freed
-                // by `release` (StreamResult has no Drop).
-                stream.release();
+                // Zig `defer { if owned* allocator.free(stream.slice()) }` — owned `ByteList`
+                // payload of `stream` is freed by its Drop glue at the explicit `drop` below
+                // (Temporary* variants are `ManuallyDrop` and so are left alone, matching Zig).
+                drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
                 return action.fulfill(self.parent().global_this, &mut blob);
             } else {

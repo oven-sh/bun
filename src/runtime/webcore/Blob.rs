@@ -4013,8 +4013,6 @@ fn write_file_with_empty_source_to_destination(
                 }
             };
 
-            // TODO(port): local Wrapper struct { promise, store: StoreRef, global }
-            // with `resolve(result, opaque_this)` callback. See Zig lines 1098-1146.
             struct Wrapper {
                 promise: jsc::JSPromiseStrong,
                 store: StoreRef,

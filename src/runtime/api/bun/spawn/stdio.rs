@@ -713,7 +713,10 @@ fn create_zeroed_pipe() -> *mut uv::Pipe {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/bun/spawn/stdio.zig (507 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Nested Stdio.* types hoisted to module scope; cross-crate paths (Subprocess.StdioKind, SpawnOptions, webcore::body::Value, Fd::Stdio, PathOrFd) are best-guess and need Phase B fixup; use_memfd Drop semantics differ slightly (see PORT NOTE); create_zeroed_pipe returns Box<uv::Pipe> per LIFETIMES.tsv (OWNED).
+//   confidence: high
+//   todos:      0
+//   notes:      Nested Stdio.* types hoisted to module scope; use_memfd Drop
+//               semantics differ slightly from Zig (see PORT NOTE — assigning
+//               *self drops prior variant, closing prior .memfd which Zig left
+//               open); create_zeroed_pipe returns *mut uv::Pipe (OWNED).
 // ──────────────────────────────────────────────────────────────────────────

@@ -2023,7 +2023,11 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 /// `@fieldParentPtr("task", task)` chain (WorkPoolTask → InnerShellTask → Ctx)
 /// is reproduced via `core::mem::offset_of!` in [`ShellTaskCtx::TASK_OFFSET`]
 /// + the `#[repr(C)]` first-field guarantee on [`ShellTask::task`].
-pub trait ShellTaskCtx: Sized {
+///
+/// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
+/// JS-side `ConcurrentTask` (Zig: `concurrent_task.js.from(ctx, .manual_deinit)`
+/// resolved the tag via comptime `@typeName(Ctx)`).
+pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     /// Byte offset of the embedded `task: ShellTask` field within `Self`.
     /// Implementors define this as `core::mem::offset_of!(Self, task)`.
     const TASK_OFFSET: usize;

@@ -1096,22 +1096,6 @@ pub fn is_absolute_windows_t<T: PathChar>(path: &[T]) -> bool {
             && is_sep_windows_t(path[2]))
 }
 
-// ─── gated: remaining path ops (format/join/normalize/parse/relative/      ──
-//     resolve/to_namespaced) and their JSC bindings.                         ──
-// Blocked on:
-//   - bun_jsc method surface (`BunString::create_utf8_for_js`, validators)
-//   - cwd helpers (`_cwd` mod above; bun_fs::FileSystem)
-// `<const PLATFORM: Platform>` is no longer a blocker — `bun_paths::Platform`
-// now derives `ConstParamTy` (nightly `adt_const_params`), and
-// `normalize_string_t` below uses the const-generic form directly.
-// is_sep_*_t / is_absolute_*_t / is_windows_device_root_t hoisted above.
-// TODO(b2-blocked): un-gate once bun_jsc + bun_fs land.
-
-mod _rest {
-use super::*;
-#[allow(unused_imports)]
-use crate::jsc::{bun_string_jsc as BunString, SysErrorJsc as _};
-use crate::node::validators::{validate_object, validate_string};
 pub fn extname_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],

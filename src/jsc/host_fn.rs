@@ -418,6 +418,20 @@ pub unsafe fn host_fn_static<R: IntoHostFnReturn>(
     host_fn_result(global, || f(global, callframe))
 }
 
+/// Lazy property creator / free getter: `fn(&JSGlobalObject) -> R`. Used by
+/// `generate-host-exports.ts` for the `BunObject__createX` / `Process__getX`
+/// shape (no `CallFrame`, no `this`).
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_lazy<R: IntoHostFnReturn>(
+    global: *mut JSGlobalObject,
+    f: impl FnOnce(&JSGlobalObject) -> R,
+) -> JSValue {
+    // SAFETY: see block comment above.
+    let global = unsafe { &*global };
+    host_fn_result(global, || f(global))
+}
+
 /// Static getter: `fn(&JSGlobalObject, JSValue, PropertyName) -> R`.
 #[track_caller]
 #[inline]

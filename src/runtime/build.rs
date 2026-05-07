@@ -46,9 +46,19 @@ fn main() {
         );
     }
 
+    let gen_host_exports_rs = codegen_dir.join("generated_host_exports.rs");
+    if !gen_host_exports_rs.exists() {
+        panic!(
+            "generated_host_exports.rs not found at {} — run `bun src/codegen/generate-host-exports.ts {}` (or `bun bd`) first",
+            gen_host_exports_rs.display(),
+            codegen_dir.display(),
+        );
+    }
+
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-changed={}", gen_rs.display());
     println!("cargo:rerun-if-changed={}", gen_js2native_rs.display());
     println!("cargo:rerun-if-changed={}", gen_jssink_rs.display());
+    println!("cargo:rerun-if-changed={}", gen_host_exports_rs.display());
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
 }

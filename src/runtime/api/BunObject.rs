@@ -731,10 +731,8 @@ pub fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     Ok(ret)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__inspect(global_this: *mut JSGlobalObject, value: JSValue) -> BunString {
-    // SAFETY: caller is C++ passing a live global.
-    let global_this = unsafe { &*global_this };
+// HOST_EXPORT(Bun__inspect, c)
+pub fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     // very stable memory address
     let mut array: Vec<u8> = Vec::new();
 
@@ -745,13 +743,8 @@ pub extern "C" fn Bun__inspect(global_this: *mut JSGlobalObject, value: JSValue)
     BunString::clone_utf8(&array)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__inspect_singleline(
-    global_this: *mut JSGlobalObject,
-    value: JSValue,
-) -> BunString {
-    // SAFETY: caller is C++ passing a live global.
-    let global_this = unsafe { &*global_this };
+// HOST_EXPORT(Bun__inspect_singleline, c)
+pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
@@ -1100,11 +1093,9 @@ pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     Ok(JSValue::UNDEFINED)
 }
 
-pub use Bun__gc as gc;
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
-    // SAFETY: caller is C++ passing a live VM.
-    unsafe { (*vm).garbage_collect(sync) }
+// HOST_EXPORT(Bun__gc, c)
+pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
+    vm.garbage_collect(sync)
 }
 
 #[bun_jsc::host_fn]
@@ -3206,22 +3197,19 @@ mod stdio_stores {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn BunObject__createBunStdin(global_this: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: caller is C++ with a live global.
-    stdio_stores::stdin(unsafe { &*global_this })
+// HOST_EXPORT(BunObject__createBunStdin)
+pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
+    stdio_stores::stdin(global_this)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn BunObject__createBunStderr(global_this: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: caller is C++ with a live global.
-    stdio_stores::stderr(unsafe { &*global_this })
+// HOST_EXPORT(BunObject__createBunStderr)
+pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
+    stdio_stores::stderr(global_this)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn BunObject__createBunStdout(global_this: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: caller is C++ with a live global.
-    stdio_stores::stdout(unsafe { &*global_this })
+// HOST_EXPORT(BunObject__createBunStdout)
+pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
+    stdio_stores::stdout(global_this)
 }
 
 

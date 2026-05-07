@@ -292,6 +292,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   emitNodeFallbacks(ctx);
   emitErrorCode(ctx);
   emitGeneratedClasses(ctx);
+  emitHostExports(ctx);
   emitCppBind(ctx);
   emitCiInfo(ctx);
   emitJsModules(ctx);
@@ -595,6 +596,39 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.cppSources.push(outputs[1]!); // .cpp
   o.cppHeaders.push(outputs[0]!, outputs[2]!, outputs[3]!, outputs[4]!, outputs[5]!); // .h files
   // .lut.txt is consumed by emitObjectLuts below
+}
+
+function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
+  const output = resolve(cfg.codegenDir, "generated_host_exports.rs");
+
+  // Inputs: every .rs under src/runtime + src/jsc (the scrape scope). The
+  // `sources.rust` glob already covers these plus Cargo manifests; filter to
+  // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
+  // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
+  // produces identical output and the cargo step is pruned.
+  const rsInputs = sources.rust.filter(
+    p =>
+      p.endsWith(".rs") &&
+      (p.includes(`${cfg.cwd}/src/runtime/`.replace(/\//g, "/")) ||
+        p.includes(`${cfg.cwd}/src/jsc/`.replace(/\//g, "/"))) &&
+      !p.endsWith("generated_host_exports.rs"),
+  );
+
+  n.build({
+    outputs: [output],
+    rule: "codegen",
+    inputs: [script],
+    implicitInputs: rsInputs,
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "generated_host_exports.rs",
+      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+    },
+  });
+
+  o.all.push(output);
 }
 
 function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {

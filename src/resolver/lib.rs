@@ -6493,33 +6493,27 @@ impl<'a> Resolver<'a> {
         let input_package_id = *input_package_id_;
         // PORT NOTE: see `manager_ptr` note in `load_node_modules` — split the
         // `&mut self` borrow by holding the PackageManager via raw pointer.
-        let pm_ptr: *mut PackageManager = self.get_package_manager();
+        let pm_ptr: *mut dyn AutoInstaller = self.get_package_manager();
         // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
         macro_rules! pm { () => { unsafe { &mut *pm_ptr } } }
-        let pm = pm!();
-        if cfg!(debug_assertions) {
-            // we should never be trying to resolve a dependency that is already resolved
-            debug_assert!(pm.lockfile.resolve_package_from_name_and_version(esm.name, &version).is_none());
-        }
+        // we should never be trying to resolve a dependency that is already resolved
+        debug_assert!(pm!().lockfile_resolve(esm.name, &version).is_none());
 
         // Add the containing package to the lockfile
 
-        let is_main = pm.lockfile.packages.len() == 0 && input_package_id == Install::INVALID_PACKAGE_ID;
+        let is_main = pm!().lockfile_packages_len() == 0 && input_package_id == Install::INVALID_PACKAGE_ID;
         if is_main {
-            let mut package: Package;
             if let Some(mut package_json) = package_json_ {
                 // SAFETY: BACKREF — `package_json` is an interned arena slot
                 // (see `intern_package_json`); `NonNull` carries mut-provenance
                 // from `NonNull::from(&mut **last)` and no other live borrow
                 // exists here.
                 let package_json: &mut PackageJSON = unsafe { package_json.as_mut() };
-                // PORT NOTE: Zig passed both `&pm.lockfile` and `pm` to
-                // `fromPackageJSON`; in Rust that yields two overlapping `&mut`
-                // (`lockfile` is an inline field of `PackageManager`). The
-                // forward-decl drops the separate lockfile arg and reaches it
-                // via `pm.lockfile` internally — see `Package::from_package_json`.
-                package = match Package::from_package_json(
-                    pm,
+                // PORT NOTE: Zig called `Package.fromPackageJSON(lockfile, pm,
+                // log, package_json, features)` then `setHasInstallScript` then
+                // `lockfile.appendPackage`. The `Package` type is bun_install-
+                // internal; the `AutoInstaller` impl performs all three steps.
+                let id = match pm!().lockfile_append_from_package_json(
                     package_json,
                     Install::Features {
                         dev_dependencies: true,
@@ -6529,47 +6523,33 @@ impl<'a> Resolver<'a> {
                         ..Default::default()
                     },
                 ) {
-                    Ok(p) => p,
+                    Ok(id) => id,
                     Err(err) => return DependencyToResolve::Failure(err),
                 };
-                package.meta.set_has_install_script(package.scripts.has_any());
-                package = match pm.lockfile.append_package(package) {
-                    Ok(p) => p,
-                    Err(err) => return DependencyToResolve::Failure(err),
-                };
-                package_json.package_manager_package_id = package.meta.id;
+                package_json.package_manager_package_id = id;
             } else {
                 // we're resolving an unknown package
                 // the unknown package is the root package
-                package = Package {
-                    name: Semver::String::from(b""),
-                    resolution: Resolution {
-                        tag: Install::resolution::Tag::Root,
-                        value: Install::resolution::Value::Root,
-                    },
-                    ..Default::default()
-                };
-                package.meta.set_has_install_script(package.scripts.has_any());
-                if let Err(err) = pm.lockfile.append_package(package) {
+                if let Err(err) = pm!().lockfile_append_root_stub() {
                     return DependencyToResolve::Failure(err);
                 }
             }
         }
 
         if self.opts.prefer_offline_install {
-            if let Some(package_id) = pm.resolve_from_disk_cache(esm.name, &version) {
+            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
                 *input_package_id_ = package_id;
-                return DependencyToResolve::Resolution(pm.lockfile.packages.items_resolution()[package_id as usize].clone());
+                return DependencyToResolve::Resolution(pm!().lockfile_package_resolution(package_id));
             }
         }
 
         if input_package_id == Install::INVALID_PACKAGE_ID || input_package_id == 0 {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            match pm.enqueue_dependency_to_root(esm.name, &version, version_buf, behavior) {
-                Install::EnqueueResult::Resolution(result) => {
-                    *input_package_id_ = result.package_id;
-                    return DependencyToResolve::Resolution(result.resolution);
+            match pm!().enqueue_dependency_to_root(esm.name, &version, version_buf, behavior) {
+                Install::EnqueueResult::Resolution { package_id, resolution } => {
+                    *input_package_id_ = package_id;
+                    return DependencyToResolve::Resolution(resolution);
                 }
                 Install::EnqueueResult::Pending(id) => {
                     let (cloned, string_buf) = esm.copy().expect("unreachable");

@@ -6,7 +6,7 @@
 //! `bun_install`; the resolver talks to it through the [`AutoInstaller`]
 //! trait below, which `bun_install::PackageManager` implements.
 //!
-//! Nothing here carries an `unimplemented!()` default — the trait is pure,
+//! Nothing here carries a stubbed/panicking default body — the trait is pure,
 //! and the value types are the canonical on-disk shapes (re-exported by
 //! `bun_install`).
 

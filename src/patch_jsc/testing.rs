@@ -22,12 +22,13 @@ impl TestingAPIs {
         let Some(old_folder_jsval) = arguments.next_eat() else {
             return Err(global.throw(format_args!("expected 2 strings")));
         };
-        let old_folder_bunstr = old_folder_jsval.to_bun_string(global)?;
+        // `to_bun_string` returns +1 ref; `OwnedString` derefs on drop (Zig: `defer .deref()`).
+        let old_folder_bunstr = OwnedString::new(old_folder_jsval.to_bun_string(global)?);
 
         let Some(new_folder_jsval) = arguments.next_eat() else {
             return Err(global.throw(format_args!("expected 2 strings")));
         };
-        let new_folder_bunstr = new_folder_jsval.to_bun_string(global)?;
+        let new_folder_bunstr = OwnedString::new(new_folder_jsval.to_bun_string(global)?);
 
         let old_folder = old_folder_bunstr.to_utf8();
         let new_folder = new_folder_bunstr.to_utf8();
@@ -38,7 +39,8 @@ impl TestingAPIs {
         };
         match diff {
             Ok(s) => {
-                let result = BunString::clone_utf8(s.as_slice()).to_js(global);
+                // Zig: `bun.String.fromBytes(s.items).toJS(...)` — borrow, no +1 WTF ref.
+                let result = BunString::from_bytes(s.as_slice()).to_js(global);
                 drop(s);
                 result
             }

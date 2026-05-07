@@ -850,16 +850,16 @@ impl JSMySQLConnection {
     }
 
     fn fail_with_js_value(&mut self, value: JSValue) {
-        self.ref_();
-
-        // Zig `defer { ...; updateReferenceType(); deref(); }` — runs on every
-        // exit path. Re-enter through a raw pointer so the closure holds no
-        // `&mut` alias of `self` and no reference is live across the potential
-        // free in `deref()`. LIFO order matches Zig: deref last.
+        // Zig `this.ref(); defer { ...; updateReferenceType(); deref(); }` —
+        // runs on every exit path. Re-enter through a raw pointer so no `&mut`
+        // alias is captured and no reference is live across the potential free
+        // in `deref()`. LIFO drop order: the `defer!` body runs first, then
+        // `_ref` releases the count — matches Zig.
         let p: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: `p` from live `&mut self`; the matching `ref_()` above
-            // guarantees `*p` survives until this `deref()`.
+        // SAFETY: `p` is derived from a live `&mut self`.
+        let _ref = unsafe { Self::ref_guard(p) };
+        scopeguard::defer! {
+            // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
             unsafe {
                 if (*p).vm().is_shutting_down() {
                     (*p).connection.close();
@@ -868,9 +868,8 @@ impl JSMySQLConnection {
                     (*p).connection.clean_queue_and_close(Some(value), queries);
                 }
                 (*p).update_reference_type();
-                Self::deref(p);
             }
-        });
+        }
         self.stop_timers();
 
         if self.connection.status == my_sql_connection::Status::Failed {

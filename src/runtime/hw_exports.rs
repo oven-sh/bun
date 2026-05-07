@@ -192,13 +192,17 @@ pub(crate) mod sql_hooks {
     }
     unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
-        // is a live intrusive heap node owned by the caller.
-        unsafe { (*(heap as *mut crate::timer::All)).timers.insert(timer) };
+        // is a live intrusive heap node owned by the caller. Route through
+        // `All::insert` (NOT the raw `.timers` field) so the lock is taken and
+        // `(*timer).state` / `in_heap` bookkeeping is updated — Zig spec is
+        // `vm.timer.insert(&this.timer)`.
+        unsafe { (*(heap as *mut crate::timer::All)).insert(timer) };
     }
     unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
-        // inserted by the caller.
-        unsafe { (*(heap as *mut crate::timer::All)).timers.remove(timer) };
+        // inserted via `timer_insert`. Route through `All::remove` so
+        // `in_heap` is consulted and reset.
+        unsafe { (*(heap as *mut crate::timer::All)).remove(timer) };
     }
     unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
         let state = crate::jsc_hooks::runtime_state();

@@ -4,7 +4,38 @@
 // for the streaming parser, so these tests verify that short-flag
 // resolution stays subcommand-specific.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+
+// `CommandLineArguments.parse` used to be instantiated once per Subcommand
+// (16×) because `subcommand` was a comptime parameter and each variant fed a
+// different comptime params table into `clap.parse`. It now takes `subcommand`
+// at runtime and should compile to a single instance. This guards against it
+// silently fanning back out (e.g. someone reintroducing `inline else`).
+//
+// Debug-only: release binaries are stripped. Linux/macOS-only: uses `nm`.
+test.skipIf(isWindows || !isDebug)(
+  "CommandLineArguments.parse is instantiated once",
+  async () => {
+    // Zig mangles as `install.PackageManager.CommandLineArguments.parse__<hash>`
+    // (and `parse__anon_<n>__<hash>` for each comptime-specialized copy). The
+    // debug binary is large, so filter inside the pipeline rather than pulling
+    // the whole symbol table into JS.
+    const needle = "install.PackageManager.CommandLineArguments.parse__";
+    const { stdout, exitCode } = await Bun.$`nm --defined-only ${bunExe()} | grep -F ${needle}`
+      .nothrow()
+      .quiet();
+    const text = stdout.toString("utf8");
+    const matches = text.split("\n").filter(line => line.includes(needle));
+    // If the toolchain ever stops emitting this symbol name the test becomes a
+    // no-op, so require at least one match.
+    expect(matches.length).toBeGreaterThanOrEqual(1);
+    // Previously 16 copies (one per Subcommand). Keep it at one.
+    expect(matches.length).toBe(1);
+    // grep exits 0 when it finds matches.
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
 async function run(cwd: string, args: string[]) {
   await using proc = Bun.spawn({

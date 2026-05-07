@@ -892,15 +892,212 @@ impl UpdateInteractiveCommand {
     }
 
     fn get_outdated_packages<'a>(
-        manager: &'a PackageManager,
+        manager: &'a mut PackageManager,
         workspace_pkg_ids: &[PackageID],
     ) -> Result<Vec<OutdatedPackage<'a>>, bun_core::Error> {
-        let _ = (manager, workspace_pkg_ids);
-        // Needs `manager.lockfile`, `manager.manifests`,
-        // `manager.options.minimum_release_age_ms`, `Lockfile::resolve_catalog_dependency`,
-        // `manifest.find_by_dist_tag_with_filter` — all gated behind
-        // preserved verbatim in update_interactive_command.zig.
-        todo!("blocked_on: bun_install::PackageManager::lockfile / manifests (package_manager_real un-gate)")
+        // PORT NOTE: reshaped for borrowck — `manifests.by_name_allow_expired`
+        // needs `&mut manager.manifests` while we hold shared field-path
+        // borrows on `manager.lockfile.*` / `manager.options.*`. Route the
+        // `pm` argument as a raw pointer (Zig passes `*PackageManager` freely)
+        // and clone the per-package `Scope` so the only mutable borrow is the
+        // disjoint `manager.manifests` field.
+        let pm_ptr: *mut PackageManager = manager;
+        let min_age_ms = manager.options.minimum_release_age_ms;
+        let needs_extended = min_age_ms.is_some();
+        let excludes = manager.options.minimum_release_age_excludes.as_deref();
+        let update_to_latest = manager.options.do_.update_to_latest();
+
+        let mut outdated_packages: Vec<OutdatedPackage<'a>> = Vec::new();
+
+        let mut version_buf: String = String::new();
+
+        for &workspace_pkg_id in workspace_pkg_ids {
+            let pkg_deps =
+                manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
+            for dep_id in pkg_deps.begin()..pkg_deps.end() {
+                let package_id = manager.lockfile.buffers.resolutions[dep_id as usize];
+                if package_id == INVALID_PACKAGE_ID {
+                    continue;
+                }
+                let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
+                else {
+                    continue;
+                };
+                if resolved_version.tag != dependency::Tag::Npm
+                    && resolved_version.tag != dependency::Tag::DistTag
+                {
+                    continue;
+                }
+                let resolution =
+                    manager.lockfile.packages.items_resolution()[package_id as usize];
+                if resolution.tag != resolution::Tag::Npm {
+                    continue;
+                }
+
+                let name_slice = dep.name.slice(string_buf);
+                let package_name =
+                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
+
+                let scope = manager.scope_for_package_name(package_name).clone();
+                let mut expired = false;
+                let Some(manifest) = manager.manifests.by_name_allow_expired(
+                    pm_ptr,
+                    &scope,
+                    package_name,
+                    Some(&mut expired),
+                    ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    needs_extended,
+                ) else {
+                    continue;
+                };
+
+                let Some(latest) = manifest
+                    .find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes)
+                    .unwrap()
+                else {
+                    continue;
+                };
+
+                // In interactive mode, show the constrained update version as "Target"
+                // but always include packages (don't filter out breaking changes)
+                let update_version = if resolved_version.tag == dependency::Tag::Npm {
+                    // SAFETY: tag == Npm ⇒ `value.npm` active.
+                    manifest
+                        .find_best_version_with_filter(
+                            unsafe { &resolved_version.value.npm.version },
+                            string_buf,
+                            min_age_ms,
+                            excludes,
+                        )
+                        .unwrap()
+                        .unwrap_or(latest)
+                } else {
+                    // SAFETY: tag == DistTag ⇒ `value.dist_tag` active.
+                    manifest
+                        .find_by_dist_tag_with_filter(
+                            unsafe { resolved_version.value.dist_tag }
+                                .tag
+                                .slice(string_buf),
+                            min_age_ms,
+                            excludes,
+                        )
+                        .unwrap()
+                        .unwrap_or(latest)
+                };
+
+                // Skip only if both the constrained update AND the latest version are the same as current
+                // This ensures we show packages where latest is newer even if constrained update isn't
+                // SAFETY: resolution.tag == Npm ⇒ `value.npm` active.
+                let current_ver = unsafe { resolution.value.npm }.version;
+                let update_ver = update_version.version;
+                let latest_ver = latest.version;
+
+                let update_is_same = current_ver.major == update_ver.major
+                    && current_ver.minor == update_ver.minor
+                    && current_ver.patch == update_ver.patch
+                    && current_ver.tag.eql(update_ver.tag);
+
+                let latest_is_same = current_ver.major == latest_ver.major
+                    && current_ver.minor == latest_ver.minor
+                    && current_ver.patch == latest_ver.patch
+                    && current_ver.tag.eql(latest_ver.tag);
+
+                if update_is_same && latest_is_same {
+                    continue;
+                }
+
+                version_buf.clear();
+                write!(version_buf, "{}", current_ver.fmt(string_buf)).expect("OOM");
+                let current_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
+
+                version_buf.clear();
+                write!(version_buf, "{}", update_version.version.fmt(&manifest.string_buf))
+                    .expect("OOM");
+                let update_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
+
+                version_buf.clear();
+                write!(version_buf, "{}", latest.version.fmt(&manifest.string_buf)).expect("OOM");
+                let latest_version_buf: Box<[u8]> = Box::from(version_buf.as_bytes());
+
+                // Already filtered by version.order check above
+
+                version_buf.clear();
+                let dep_type: &'static [u8] = if dep.behavior.is_dev() {
+                    b"devDependencies"
+                } else if dep.behavior.is_optional() {
+                    b"optionalDependencies"
+                } else if dep.behavior.is_peer() {
+                    b"peerDependencies"
+                } else {
+                    b"dependencies"
+                };
+
+                // Get workspace name but only show if it's actually a workspace
+                let workspace_resolution =
+                    manager.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
+                let workspace_name: &[u8] =
+                    if workspace_resolution.tag == resolution::Tag::Workspace {
+                        manager.lockfile.packages.items_name()[workspace_pkg_id as usize]
+                            .slice(string_buf)
+                    } else {
+                        b""
+                    };
+
+                let is_catalog = dep.version.tag == dependency::Tag::Catalog;
+                let catalog_name_str: &[u8] = if is_catalog {
+                    // SAFETY: tag == Catalog ⇒ `value.catalog` active.
+                    unsafe { dep.version.value.catalog }.slice(string_buf)
+                } else {
+                    b""
+                };
+
+                let catalog_name: Option<Box<[u8]>> = if !catalog_name_str.is_empty() {
+                    Some(Box::from(catalog_name_str))
+                } else {
+                    None
+                };
+
+                outdated_packages.push(OutdatedPackage {
+                    name: Box::from(name_slice),
+                    current_version: current_version_buf,
+                    latest_version: latest_version_buf,
+                    update_version: update_version_buf,
+                    package_id,
+                    dep_id: dep_id as DependencyID,
+                    workspace_pkg_id,
+                    dependency_type: dep_type,
+                    workspace_name: Box::from(workspace_name),
+                    behavior: dep.behavior,
+                    // SAFETY: `pm_ptr` is the live `&'a mut PackageManager`
+                    // address; `OutdatedPackage<'a>` only takes shared
+                    // projections (`manager.options.scope` /
+                    // `scope_for_package_name`) at render time.
+                    manager: unsafe { &*pm_ptr },
+                    is_catalog,
+                    catalog_name,
+                    use_latest: update_to_latest, // default to --latest flag value
+                });
+            }
+        }
+
+        // Group catalog dependencies
+        let mut grouped_result = Self::group_catalog_dependencies(outdated_packages)?;
+
+        // Sort packages: dependencies first, then devDependencies, etc.
+        grouped_result.sort_by(|a, b| {
+            // First sort by dependency type
+            let a_priority = dep_type_priority(a.dependency_type);
+            let b_priority = dep_type_priority(b.dependency_type);
+            if a_priority != b_priority {
+                return a_priority.cmp(&b_priority);
+            }
+            // Then by name
+            strings::order(&a.name, &b.name)
+        });
+
+        Ok(grouped_result)
     }
 
     fn calculate_column_widths(packages: &[OutdatedPackage<'_>]) -> ColumnWidths {

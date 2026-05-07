@@ -2193,8 +2193,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             existing_request = Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
-                // TODO(port): blocked_on: bun_jsc::VirtualMachine::init_request_body_value
-                // Upstream returns *mut c_void; Request::init2 expects Arc<BodyValue>. Wrap directly here.
+                // PERF(port): Zig routes through `vm.initRequestBodyValue` (HiveRef pool);
+                // Box matches the `Request::init2` signature until that hook is type-erased.
                 Box::new(body),
                 method,
             );

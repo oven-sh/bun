@@ -280,9 +280,13 @@ pub enum FileSystemError {
 static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
 // PORTING.md §Global mutable state: highest-fd watermark, mutated only on the
-// resolver thread. The Windows path early-returns before touching it (see
-// `set_max_fd`), so the `= 0` initializer matching POSIX `i32` is fine.
+// resolver thread. POSIX-only fd ceiling tracking (Windows handles aren't
+// ordered ints) — `set_max_fd` early-returns on Windows; the static is still
+// declared so the cross-platform `MAX_FD` symbol resolves.
+#[cfg(not(windows))]
 pub(crate) static MAX_FD: bun_core::RacyCell<bun_sys::RawFd> = bun_core::RacyCell::new(0);
+#[cfg(windows)]
+pub(crate) static MAX_FD: bun_core::RacyCell<i32> = bun_core::RacyCell::new(0);
 pub(crate) static INSTANCE_LOADED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 // TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
@@ -347,16 +351,19 @@ impl FileSystem {
     pub(crate) fn set_max_fd(fd: bun_sys::RawFd) {
         #[cfg(windows)]
         {
+            let _ = fd;
             return;
         }
+        #[cfg(not(windows))]
+        {
+            if !FeatureFlags::STORE_FILE_DESCRIPTORS {
+                return;
+            }
 
-        if !FeatureFlags::STORE_FILE_DESCRIPTORS {
-            return;
-        }
-
-        // SAFETY: single-threaded mutation in resolver context (matches Zig global)
-        unsafe {
-            *MAX_FD.get() = fd.max(*MAX_FD.get());
+            // SAFETY: single-threaded mutation in resolver context (matches Zig global)
+            unsafe {
+                *MAX_FD.get() = fd.max(*MAX_FD.get());
+            }
         }
     }
 
@@ -488,7 +495,10 @@ impl DirEntry {
         iterator: I,
     ) -> Result<(), bun_core::Error> {
         use bun_sys::FileKind as DK;
-        let name_slice = entry.name.slice();
+        // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
+        // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
+        // transcoded `slice_u8()` (mirrors Zig's `.u8` `NewWrappedIterator`).
+        let name_slice = entry.name.slice_u8();
         let found_kind: Option<EntryKind> = match entry.kind {
             DK::Directory => Some(EntryKind::Dir),
             DK::File => Some(EntryKind::File),
@@ -1392,7 +1402,9 @@ impl ModKey {
         #[cfg(target_os = "macos")]
         let mtime: i128 =
             (stat.st_mtime as i128) * NS_PER_S + stat.st_mtime_nsec as i128;
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(windows)]
+        let mtime: i128 = (stat.mtim.sec as i128) * NS_PER_S + stat.mtim.nsec as i128;
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         let mtime: i128 = (stat.st_mtime as i128) * NS_PER_S;
         let seconds = mtime / NS_PER_S;
 
@@ -1592,23 +1604,27 @@ impl TmpfileWindows {
         let mut existing_buf = WPathBuffer::uninit();
         let mut new_buf = WPathBuffer::uninit();
         self.close();
-        let existing = strings::to_extended_path_normalized(&mut new_buf, &self.existing_path);
+        let existing = strings::paths::to_extended_path_normalized(&mut new_buf, &self.existing_path);
         let new = if bun_paths::is_absolute_windows(name.as_bytes()) {
-            strings::to_extended_path_normalized(&mut existing_buf, name.as_bytes())
+            strings::paths::to_extended_path_normalized(&mut existing_buf, name.as_bytes())
         } else {
-            strings::to_w_path_normalized(&mut existing_buf, name.as_bytes())
+            strings::paths::to_w_path_normalized(&mut existing_buf, name.as_bytes())
         };
         if cfg!(debug_assertions) {
             debug!("moveFileExW({}, {})", bun_fmt::utf16(existing), bun_fmt::utf16(new));
         }
 
-        if bun_sys::windows::kernel32::MoveFileExW(
-            existing.as_ptr(),
-            new.as_ptr(),
-            bun_sys::windows::MOVEFILE_COPY_ALLOWED
-                | bun_sys::windows::MOVEFILE_REPLACE_EXISTING
-                | bun_sys::windows::MOVEFILE_WRITE_THROUGH,
-        ) == bun_sys::windows::FALSE
+        // SAFETY: `existing`/`new` are NUL-terminated WTF-16 paths backed by
+        // stack `WPathBuffer`s alive for this frame.
+        if unsafe {
+            bun_sys::windows::kernel32::MoveFileExW(
+                existing.as_ptr(),
+                new.as_ptr(),
+                bun_sys::windows::MOVEFILE_COPY_ALLOWED
+                    | bun_sys::windows::MOVEFILE_REPLACE_EXISTING
+                    | bun_sys::windows::MOVEFILE_WRITE_THROUGH,
+            )
+        } == bun_sys::windows::FALSE
         {
             bun_sys::windows::Win32Error::get().unwrap()?;
         }
@@ -1658,7 +1674,7 @@ impl RealFS {
         }
 
         while let Some(entry_) = iter.next()? {
-            debug!("readdir entry {}", BStr::new(entry_.name.slice()));
+            debug!("readdir entry {}", BStr::new(entry_.name.slice_u8()));
 
             dir.add_entry(prev_map.as_deref_mut(), &entry_, &iterator)?;
         }
@@ -2271,20 +2287,25 @@ impl RealFS {
             // was permanently misclassified as `.file` — surfacing as
             // EISDIR at module load time.
             use bun_sys::windows as w;
-            let wbuf = bun_paths::w_path_buffer_pool().get();
-            let wpath = strings::to_kernel32_path(&mut *wbuf, absolute_path_c.as_bytes());
-            let handle = w::kernel32::CreateFileW(
-                wpath.as_ptr(),
-                0,
-                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
-                core::ptr::null_mut(),
-                w::OPEN_EXISTING,
-                // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
-                // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
-                // follow the full reparse chain to the final target.
-                w::FILE_FLAG_BACKUP_SEMANTICS,
-                core::ptr::null_mut(),
-            );
+            let mut wbuf = bun_paths::w_path_buffer_pool::get();
+            let wpath = strings::paths::to_kernel32_path(&mut *wbuf, absolute_path_c.as_bytes());
+            // SAFETY: `wpath` is NUL-terminated WTF-16 backed by the pooled
+            // `WPathBuffer`; null SECURITY_ATTRIBUTES / template handle are
+            // documented-valid for `CreateFileW`.
+            let handle = unsafe {
+                w::kernel32::CreateFileW(
+                    wpath.as_ptr(),
+                    0,
+                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                    core::ptr::null_mut(),
+                    w::OPEN_EXISTING,
+                    // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
+                    // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
+                    // follow the full reparse chain to the final target.
+                    w::FILE_FLAG_BACKUP_SEMANTICS,
+                    core::ptr::null_mut(),
+                )
+            };
             // Dangling link / loop / EACCES: `cache.kind` is already set
             // from the link's own directory bit, which is correct for all
             // of those. `Entry.kind`/`Entry.symlink` swallow errors and
@@ -2296,13 +2317,15 @@ impl RealFS {
                 return Ok(cache);
             }
             scopeguard::defer! {
-                let _ = w::CloseHandle(handle);
+                // SAFETY: `handle` ≠ INVALID_HANDLE_VALUE (checked above).
+                let _ = unsafe { w::CloseHandle(handle) };
             }
 
             let mut info: w::BY_HANDLE_FILE_INFORMATION =
                 // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD)
                 unsafe { core::mem::zeroed() };
-            if w::GetFileInformationByHandle(handle, &mut info) != 0 {
+            // SAFETY: `handle` is a valid file handle for the scope.
+            if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
                 cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                     EntryKind::Dir
                 } else {
@@ -2310,8 +2333,10 @@ impl RealFS {
                 };
             }
 
-            let buf2 = bun_paths::path_buffer_pool().get();
-            match bun_sys::get_fd_path(Fd::from_native(handle), &mut *buf2) {
+            let mut buf2 = bun_paths::path_buffer_pool::get();
+            // `Fd` packs the kernel handle into its `u64` backing on Windows;
+            // round-trip via `usize` (HANDLE is pointer-sized).
+            match bun_sys::get_fd_path(Fd::from_native(handle as usize as u64), &mut *buf2) {
                 bun_sys::Result::Ok(real) => {
                     cache.symlink = PathString::init(FilenameStore::instance().append(real)?);
                 }

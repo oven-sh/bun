@@ -849,12 +849,10 @@ fn handle_path(
     string: &bun_str::String,
 ) -> JsResult<CString> {
     let name = string.to_owned_slice_z();
-    // Zig: `std.posix.system.access(name, F_OK) != 0`.
-    // TODO(port): Windows — Zig path goes through `std.posix.system.access`,
-    // which on Windows shells out to `_waccess`; route through `bun_sys` once a
-    // cross-platform `access(ZStr, F_OK)` lands there.
-    // SAFETY: `name` is a valid NUL-terminated buffer; access(2) only reads it.
-    if unsafe { libc::access(name.as_ptr(), libc::F_OK) } != 0 {
+    // Zig: `std.posix.system.access(name, F_OK) != 0`. `bun_sys::access`
+    // routes to `access(2)` on POSIX and `GetFileAttributesW` on Windows
+    // (via `sys_uv`), so this is the cross-platform existence probe.
+    if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
         // errdefer: free_sensitive(name) — zero before drop.
         free_sensitive_bytes(name.into_vec_with_nul());
         return Err(global.throw_invalid_arguments(

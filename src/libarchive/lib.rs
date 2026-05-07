@@ -1591,7 +1591,10 @@ impl Archiver {
 
                     // strip and normalize the path
                     // TODO(port): std.mem.tokenizeScalar(OSPathChar, pathname, '/') + .rest()
-                    let pathname_slice: &[OSPathChar] = pathname_z.as_bytes();
+                    // `pathname_z` is `&ZStr` on POSIX (`as_bytes() → &[u8]`)
+                    // and `&WStr` on Windows (`as_slice() → &[u16]`); both
+                    // deref to `&[OSPathChar]`.
+                    let pathname_slice: &[OSPathChar] = &pathname_z[..];
                     let mut remaining: &[OSPathChar] = pathname_slice;
                     {
                         let sep: OSPathChar = b'/' as OSPathChar;

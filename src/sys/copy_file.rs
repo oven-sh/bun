@@ -427,7 +427,7 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
     // PERF(port): Zig used `undefined` (uninitialized) 32 KiB stack buffer — profile in Phase B
     let mut buf = [0u8; 8 * 4096];
     let adjusted_count = buf.len().min(len);
-    match crate::read(Fd::from_native(in_), &mut buf[0..adjusted_count]) {
+    match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
         Ok(amt_read) => {
             let mut amt_written: usize = 0;
             if amt_read == 0 {
@@ -435,7 +435,7 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
             }
 
             while amt_written < amt_read {
-                match crate::write(Fd::from_native(out), &buf[amt_written..amt_read]) {
+                match crate::write(Fd::from_native(out as _), &buf[amt_written..amt_read]) {
                     Ok(wrote) => {
                         if wrote == 0 {
                             return Ok(amt_written);

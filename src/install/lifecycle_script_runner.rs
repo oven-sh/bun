@@ -18,6 +18,11 @@ use bun_io::{FilePollFlag, PosixFlags};
 use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
+// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
+// `bun_aio::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
+// on Windows. The inherent `loop_()` projects through the uws wrapper
+// (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
+// `BufferedReaderParent::loop_` expects.
 use bun_aio::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
@@ -313,23 +318,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub fn loop_(&self) -> *mut AsyncLoop {
         // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`. On POSIX
-        // `bun_aio::Loop` *is* `UwsLoop`, so the cast is a no-op. On Windows
-        // `bun_aio::Loop` is `uv::Loop` and the inner libuv loop must be
-        // projected out of the uws wrapper (Zig: `loop().uv_loop`); reinter-
-        // preting the `UwsLoop*` as a `uv::Loop*` would hand BufferedReader
-        // the wrong pointer.
+        // `bun_aio::Loop` *is* `PosixLoop` (identity). On Windows the uws
+        // wrapper (`WindowsLoop`) embeds the `*mut uv_loop_t` as a field —
+        // project it so the `BufferedReaderParent::loop_` consumer (which
+        // feeds `uv_fs_read`/`Source::open`) sees a real `uv_loop_t*`.
         #[cfg(not(windows))]
-        {
-            self.manager_mut().event_loop.r#loop().cast::<AsyncLoop>()
-        }
+        { self.manager_mut().event_loop.r#loop().cast::<AsyncLoop>() }
         #[cfg(windows)]
-        {
-            let uws = self.manager_mut().event_loop.r#loop();
-            // SAFETY: `r#loop()` returns the live `*mut UwsLoop` owned by the
-            // VM/mini event loop; its `uv_loop` field is initialized at loop
-            // creation and stable for the loop's lifetime.
-            unsafe { (*uws).uv_loop }
-        }
+        // SAFETY: `r#loop()` returns the live `us_loop` allocated by
+        // `us_create_loop`; `uv_loop` is set once in C at construction.
+        { unsafe { (*self.manager_mut().event_loop.r#loop()).uv_loop } }
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {

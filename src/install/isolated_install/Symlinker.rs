@@ -16,10 +16,14 @@ impl Symlinker {
     pub fn symlink(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
+            // PORT NOTE: borrowck — `slice_z()` mut-borrows each path to write
+            // the trailing NUL; bind the fallback first so all three borrows
+            // are live disjointly when passed to `symlink_or_junction`.
+            let fallback = self.fallback_junction_target.slice_z();
             return bun_sys::symlink_or_junction(
                 self.dest.slice_z(),
                 self.target.slice_z(),
-                self.fallback_junction_target.slice_z(),
+                Some(fallback),
             );
         }
         #[cfg(not(windows))]

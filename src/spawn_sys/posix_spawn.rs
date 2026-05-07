@@ -50,7 +50,11 @@ mod posix_compat {
     use bun_core::{err, Error};
 
     /// `std.posix.fd_t` — native fd backing int.
-    pub type fd_t = bun_core::FdNative;
+    // posix_spawn file actions use libc `int` fds on the C side
+    // (`posix_spawn_bun.cpp`). On POSIX `FdNative == c_int`; on Windows
+    // `FdNative` is HANDLE, but this code path is unreachable there — keep
+    // the C-ABI type so the struct compiles unchanged.
+    pub type fd_t = core::ffi::c_int;
     /// `std.posix.pid_t`.
     #[cfg(unix)]
     pub type pid_t = libc::pid_t;
@@ -93,7 +97,13 @@ mod posix_compat {
     #[inline]
     pub fn errno(rc: c_int) -> Errno {
         if rc == -1 {
+            // Windows has no thread-local POSIX errno here — `posix_spawn`
+            // is unreachable on that target (the libuv path handles spawn),
+            // so just return UNKNOWN to keep the type compiling.
+            #[cfg(unix)]
             return Errno(bun_sys::posix::errno());
+            #[cfg(windows)]
+            return Errno(bun_sys::E::UNKNOWN as i32);
         }
         Errno::SUCCESS
     }
@@ -139,6 +149,14 @@ pub mod bun_spawn {
         pub fds: [fd_t; 2],
         pub flags: c_int,
         pub mode: c_int,
+    }
+
+    // `Fd::native()` returns `*mut c_void` on Windows, which can't fill the
+    // `c_int` action slot. posix_spawn never runs on Windows (libuv handles
+    // spawn there), so trap instead of inventing a HANDLE→int cast.
+    #[cfg(unix)] #[inline(always)] fn fd_int(fd: Fd) -> fd_t { fd.native() }
+    #[cfg(windows)] #[inline(always)] fn fd_int(_fd: Fd) -> fd_t {
+        unreachable!("posix_spawn file actions are unix-only")
     }
 
     impl Default for Action {
@@ -204,7 +222,7 @@ pub mod bun_spawn {
                 path: path_ptr,
                 flags: i32::try_from(flags).expect("int cast"),
                 mode: i32::try_from(mode).expect("int cast"),
-                fds: [fd.native(), 0],
+                fds: [fd_int(fd), 0],
             });
             Ok(())
         }
@@ -212,7 +230,7 @@ pub mod bun_spawn {
         pub fn close(&mut self, fd: Fd) -> Result<(), Error> {
             self.actions.push(Action {
                 kind: FileActionType::Close,
-                fds: [fd.native(), 0],
+                fds: [fd_int(fd), 0],
                 ..Default::default()
             });
             Ok(())
@@ -221,7 +239,7 @@ pub mod bun_spawn {
         pub fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
             self.actions.push(Action {
                 kind: FileActionType::Dup2,
-                fds: [fd.native(), newfd.native()],
+                fds: [fd_int(fd), fd_int(newfd)],
                 ..Default::default()
             });
             Ok(())

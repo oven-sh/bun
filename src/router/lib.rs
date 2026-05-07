@@ -1108,7 +1108,7 @@ impl Route {
 
                 #[cfg(windows)]
                 {
-                    bun_paths::platform_to_posix_in_place(&mut route_file_buf[0..written_len]);
+                    bun_paths::resolve_path::platform_to_posix_in_place(&mut route_file_buf[0..written_len]);
                 }
 
                 // SAFETY: written_len computed from sub-slice pointer arithmetic above
@@ -1274,7 +1274,7 @@ impl Route {
                 // Zig: `allocator.dupe(u8, platformToPosixBuf(...))` — process-
                 // lifetime heap dup. Intern into DirnameStore so the slice is
                 // genuinely `'static` and `arena_slice()` is sound on Windows.
-                let normalized = bun_paths::platform_to_posix_buf(
+                let normalized = bun_paths::resolve_path::platform_to_posix_buf(
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
                 );

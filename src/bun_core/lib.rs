@@ -9,6 +9,56 @@ pub mod Global;
 
 pub mod env;
 pub mod wtf;
+#[cfg(windows)]
+pub mod windows_sys;
+
+/// Port of Zig's `std.os.environ` global (`[][*:0]u8`). On Windows the
+/// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
+/// with a WTF-8-encoded envp slice; `getenvZ` and `bun_main` then read it via
+/// `os_environ_ptr()`. POSIX builds leave it empty and use libc's `environ`.
+#[cfg(windows)]
+pub mod os {
+    use core::ffi::c_char;
+
+    // Stored as raw (ptr, len) — NOT `&'static mut [_]` — so `environ()` (which
+    // hands out a shared `&[_]`) never aliases a live `&mut`. Zig's
+    // `std.os.environ` is a plain slice global with no exclusivity guarantee;
+    // mirroring that with `&'static mut` would be UB the moment a reader
+    // borrows while a writer holds the swapped-out `&mut`.
+    static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
+
+    /// Swap in a new envp slice; returns the previous (ptr, len) pair (Zig:
+    /// `orig_environ = std.os.environ; std.os.environ = new`).
+    /// SAFETY: single-threaded startup only.
+    pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
+        // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
+        // under rust_2024_compatibility, and we never need a borrow here.
+        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
+    }
+    /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
+    /// elements for the process lifetime (leaked allocation).
+    pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
+        unsafe { core::ptr::write(&raw mut ENVIRON, (ptr, len)); }
+    }
+    /// Borrowed view of the current envp slice (read side of `std.os.environ`).
+    /// SAFETY: caller must not race with `set_environ`.
+    pub unsafe fn environ() -> &'static [*mut c_char] {
+        unsafe {
+            let (p, n) = core::ptr::read(&raw const ENVIRON);
+            if p.is_null() { &[] } else { core::slice::from_raw_parts(p, n) }
+        }
+    }
+}
+
+/// `bun.os_environ_ptr()` — pointer to the first element of `std.os.environ`
+/// (or null if empty). Windows-only; POSIX uses libc's `environ` symbol.
+#[cfg(windows)]
+#[inline]
+pub fn os_environ_ptr() -> *const *mut core::ffi::c_char {
+    // SAFETY: read of a process-global written once at startup.
+    let e = unsafe { os::environ() };
+    if e.is_empty() { core::ptr::null() } else { e.as_ptr() }
+}
 pub mod feature_flags;
 pub mod env_var;
 pub mod deprecated;
@@ -262,6 +312,54 @@ pub mod strings {
             start += 1;
         }
         false
+    }
+    /// `bun.strings.isWindowsAbsolutePathMissingDriveLetter` (immutable/paths.zig)
+    /// — true for `\foo`-style absolute paths that lack a `C:` / `\\?\` /
+    /// `\\server\` prefix and therefore need the cwd's drive prepended.
+    /// Generic over `u8`/`u16` to mirror the Zig comptime `T: type` param.
+    pub fn is_windows_absolute_path_missing_drive_letter<T>(chars: &[T]) -> bool
+    where T: Copy + PartialEq + From<u8> {
+        // Zig asserts non-empty + windows-absolute; release-mode callers may
+        // still pass `""`, so bail instead of indexing OOB.
+        debug_assert!(!chars.is_empty());
+        if chars.is_empty() { return false; }
+        let sep = |c: T| c == T::from(b'/') || c == T::from(b'\\');
+
+        // 'C:\hello' -> false — most common case, check first.
+        if !sep(chars[0]) {
+            debug_assert!(chars.len() > 2);
+            debug_assert!(chars[1] == T::from(b':'));
+            return false;
+        }
+
+        if chars.len() > 4 {
+            // '\??\hello' -> false (NT object prefix)
+            if chars[1] == T::from(b'?')
+                && chars[2] == T::from(b'?')
+                && sep(chars[3])
+            {
+                return false;
+            }
+            // '\\?\hello' -> false (other NT object prefix)
+            // '\\.\hello' -> false (NT device prefix)
+            if sep(chars[1])
+                && (chars[2] == T::from(b'?') || chars[2] == T::from(b'.'))
+                && sep(chars[3])
+            {
+                return false;
+            }
+        }
+
+        // Zig: `bun.path.windowsFilesystemRootT(T, chars).len == 1`. With
+        // `chars[0]` already known to be a separator, that fn returns len > 1
+        // only via its UNC/device branch (`len >= 5 && sep[0] && sep[1] &&
+        // !sep[2]`); every other separator-led path resolves to a single-char
+        // root. Inlined here because `bun_paths` would be a tier-0 cycle.
+        //
+        // '\\Server\Share'  -> false (UNC)
+        // '\\Server\\Share' -> true  (extra separator — not UNC)
+        // '\Server\Share'   -> true  (posix-style)
+        !(chars.len() >= 5 && sep(chars[1]) && !sep(chars[2]))
     }
     /// `strings.eqlComptimeIgnoreLen` — caller has already checked `a.len() ==
     /// b.len()` (the "ignore len" means "don't re-check"). PERF(port): the Zig

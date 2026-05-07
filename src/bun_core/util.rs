@@ -179,6 +179,42 @@ pub fn from_slice_boxed<T: Copy>(default: &[T]) -> Box<[T]> {
     Box::<[T]>::from(default)
 }
 
+// ─── std.mem.bytesAsSlice / sliceAsBytes ─────────────────────────────────────
+/// Zig `std.mem.bytesAsSlice(T, bytes)` for `&mut [u8]` → `&mut [T]`.
+///
+/// SAFETY (caller-upheld):
+/// * `bytes.as_ptr()` must be aligned to `align_of::<T>()` — Zig spells this
+///   as `@alignCast`, which is a *checked* operation (illegal-behavior trap in
+///   safe builds). We mirror that with a hard `assert!` rather than
+///   `debug_assert!`: forming a misaligned `&mut [T]` is instant UB in Rust
+///   even if never dereferenced, so this must not be silently elided in
+///   release. The check is a single AND+CMP and every current call site is
+///   immediately followed by a syscall, so the cost is negligible.
+/// * `T` must be plain-old-data — every byte pattern in `bytes[..len/size]`
+///   must be a valid `T` (callers use `u16`/`u32` only),
+/// * the trailing `len % size_of::<T>()` bytes are silently dropped from the
+///   reinterpreted view, matching Zig's `bytesAsSlice` semantics.
+#[inline]
+pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
+    assert!(
+        bytes.as_ptr().cast::<T>().is_aligned(),
+        "bytes_as_slice_mut: misaligned for {}",
+        core::any::type_name::<T>(),
+    );
+    let len = bytes.len() / core::mem::size_of::<T>();
+    // SAFETY: alignment + validity preconditions documented above.
+    unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
+}
+
+/// Same as [`bytes_as_slice_mut`] — alias kept for call sites ported from
+/// `bun.reinterpretSlice(T, &buf)` (Zig) which is spelled differently but is
+/// identical to `std.mem.bytesAsSlice` for the `&mut [u8]` → `&mut [T]` shape.
+#[inline]
+pub unsafe fn reinterpret_slice<T>(bytes: &mut [u8]) -> &mut [T] {
+    // SAFETY: forwarded to bytes_as_slice_mut; caller upholds its contract.
+    unsafe { bytes_as_slice_mut::<T>(bytes) }
+}
+
 // ─── Unaligned<T> ─────────────────────────────────────────────────────────────
 /// Port of Zig's `align(1) T` element type. Rust references and slices require
 /// natural alignment for `T`; producing a `&[u16]` from an odd address is
@@ -508,10 +544,50 @@ impl WStr {
     #[inline] pub const fn as_slice(&self) -> &[u16] { &self.0 }
     #[inline] pub const fn len(&self) -> usize { self.0.len() }
     #[inline] pub const fn as_ptr(&self) -> *const u16 { self.0.as_ptr() }
+    /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
+    /// Mirrors [`ZStr::from_raw_mut`] so callers can rewrite UTF-16 path
+    /// chars in place (Windows tar path-escape pass) without round-tripping
+    /// through an owned buffer.
+    #[inline]
+    pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
+        unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u16] as *mut WStr) }
+    }
+    #[inline] pub fn as_mut_slice(&mut self) -> &mut [u16] { &mut self.0 }
 }
 impl core::ops::Deref for WStr {
     type Target = [u16];
     #[inline] fn deref(&self) -> &[u16] { &self.0 }
+}
+impl core::ops::DerefMut for WStr {
+    #[inline] fn deref_mut(&mut self) -> &mut [u16] { &mut self.0 }
+}
+impl AsRef<[u16]> for WStr {
+    #[inline] fn as_ref(&self) -> &[u16] { &self.0 }
+}
+
+/// `wstr!("lit")` → `&'static [u16; N+1]` (NUL-terminated). Compile-time
+/// ASCII→UTF-16LE widening for Windows path / API literals; mirrors Zig
+/// `bun.strings.w("lit")` / `std.unicode.utf8ToUtf16LeStringLiteral`.
+///
+/// Restricted to ASCII (`debug_assert` in the const evaluator) — every call
+/// site is a hard-coded path component (`"node_modules"`, `".git"`, etc.).
+#[macro_export]
+macro_rules! wstr {
+    ($lit:literal) => {{
+        const __BYTES: &[u8] = $lit.as_bytes();
+        const __N: usize = __BYTES.len();
+        const __W: [u16; __N + 1] = {
+            let mut out = [0u16; __N + 1];
+            let mut i = 0;
+            while i < __N {
+                debug_assert!(__BYTES[i].is_ascii(), "wstr!() literal must be ASCII");
+                out[i] = __BYTES[i] as u16;
+                i += 1;
+            }
+            out
+        };
+        &__W
+    }};
 }
 
 /// `zstr!("lit")` → `&'static ZStr`. Mirrors Zig `"lit"` which is `*const [N:0]u8`.
@@ -561,6 +637,16 @@ pub type OSPathSlice<'a> = &'a [OSPathChar];
 /// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
 /// `bun_core::getcwd`/`which` without a pointer cast.
+///
+/// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
+/// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
+/// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
+/// hard `assert!` (mirroring Zig `@alignCast`). We do *not* bump this struct
+/// to `#[repr(align(2))]` because several call sites reinterpret an arbitrary
+/// `&mut [u8]` *as* `PathBuffer`, and raising the nominal alignment would
+/// make *those* casts unsound instead. In practice every `PathBuffer` fed to
+/// the `[u16]` view is a fresh stack local or a pooled heap allocation, both
+/// of which are ≥8-byte aligned on every supported target.
 #[repr(transparent)]
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {
@@ -591,6 +677,12 @@ impl WPathBuffer {
     pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
     #[inline]
     pub fn uninit() -> Self { Self::ZEROED }
+    /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
+    /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.
+    #[inline]
+    pub fn as_slice(&self) -> &[u16] { &self.0 }
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u16] { &mut self.0 }
 }
 impl Default for WPathBuffer {
     #[inline] fn default() -> Self { Self::ZEROED }
@@ -790,6 +882,30 @@ impl Fd {
         }
     }
 
+    /// Zig `FD.makeLibUVOwned` (`fd.zig`): on Windows, convert a system-kind
+    /// `Fd` (raw `HANDLE`) into a libuv-kind `Fd` (CRT `_open_osfhandle`-backed
+    /// `int`) so libuv `uv_fs_*` APIs can consume it. uv-kind passes through.
+    /// On POSIX this is the identity (libuv fd == posix fd).
+    ///
+    /// Returns `Err(())` (= Zig's `error.SystemFdQuotaExceeded`) when
+    /// `uv_open_osfhandle` returns `-1`; the caller decides whether to close
+    /// the original handle (see `make_libuv_owned_for_syscall`).
+    #[inline]
+    pub fn make_libuv_owned(self) -> Result<Fd, ()> {
+        debug_assert!(self.is_valid());
+        #[cfg(not(windows))]
+        { Ok(self) }
+        #[cfg(windows)]
+        match self.kind() {
+            FdKind::Uv => Ok(self),
+            FdKind::System => {
+                // SAFETY: FFI; `uv_open_osfhandle` wraps `_open_osfhandle(h, 0)`.
+                let crt_fd = unsafe { fd::uv_open_osfhandle(self.native()) };
+                if crt_fd == -1 { Err(()) } else { Ok(Fd::from_uv(crt_fd)) }
+            }
+        }
+    }
+
     #[inline]
     pub fn is_valid(self) -> bool {
         #[cfg(not(windows))]
@@ -852,10 +968,10 @@ impl Fd {
 
 /// Zig `Kind` — tag in bit 63 on Windows, `enum(u0)` (zero-width) on POSIX.
 #[cfg(not(windows))]
-#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq)]
+#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FdKind { System = 0 }
 #[cfg(windows)]
-#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq)]
+#[repr(u8)] #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FdKind { System = 0, Uv = 1 }
 
 #[cfg(windows)]
@@ -959,6 +1075,10 @@ pub mod fd {
     unsafe extern "C" {
         // libuv: convert C-runtime fd → OS HANDLE.
         pub fn uv_get_osfhandle(fd: c_int) -> *mut c_void;
+        /// libuv: `_open_osfhandle(os_fd, 0)` — wraps a HANDLE in a CRT fd so
+        /// libuv `uv_fs_*` (which speak `uv_file == int`) can use it. Returns
+        /// `-1` on `EMFILE` (CRT fd table full).
+        pub fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
     }
     #[cfg(windows)]
     unsafe extern "system" {
@@ -988,14 +1108,15 @@ pub mod fd {
     }
     #[cfg(windows)]
     pub unsafe fn windows_process_parameters() -> &'static ProcessParametersStdio {
-        // TODO(b2-windows): PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}
-        // via bun_windows_sys::peb(). Until that crate is real, return cached values.
-        static FALLBACK: ProcessParametersStdio = ProcessParametersStdio {
-            hStdInput: core::ptr::null_mut(),
-            hStdOutput: core::ptr::null_mut(),
-            hStdError: core::ptr::null_mut(),
-        };
-        &FALLBACK
+        // PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}. The
+        // `crate::windows_sys::ProcessParameters` layout places the three
+        // handles at the same consecutive offsets as this view, so a pointer
+        // cast is sound.
+        // SAFETY: PEB is process-lifetime; handle fields are at fixed offsets.
+        unsafe {
+            let pp = crate::windows_sys::peb().ProcessParameters;
+            &*(core::ptr::addr_of!(pp.hStdInput) as *const ProcessParametersStdio)
+        }
     }
     #[cfg(windows)]
     pub unsafe fn windows_current_directory_handle() -> *mut c_void {
@@ -1253,6 +1374,7 @@ impl ThreadLock {
 fn thread_id() -> u64 {
     // Use the OS tid; matches Zig `Thread.getCurrentId()` semantics per-platform.
     #[cfg(target_os = "linux")]
+    // SAFETY: `gettid` has no preconditions.
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
     #[cfg(target_os = "macos")]
     unsafe {
@@ -2538,10 +2660,7 @@ pub fn exit_thread() -> ! {
     // SAFETY: `ExitThread` is the documented Windows API for terminating the
     // calling thread; it never returns.
     unsafe {
-        extern "system" {
-            fn ExitThread(code: u32) -> !;
-        }
-        ExitThread(0);
+        crate::windows_sys::kernel32::ExitThread(0);
     }
     #[allow(unreachable_code)]
     loop {
@@ -2584,7 +2703,7 @@ pub fn maybe_handle_panic_during_process_reload() {
         #[cfg(unix)]
         unsafe { libc::pthread_exit(core::ptr::null_mut()); }
         #[cfg(windows)]
-        unsafe { extern "system" { fn ExitThread(code: u32) -> !; } ExitThread(0); }
+        unsafe { crate::windows_sys::kernel32::ExitThread(0); }
     }
     // Spin if pthread_exit was a no-op (pathological).
     while is_process_reload_in_progress_on_another_thread() {
@@ -2614,7 +2733,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     #[cfg(windows)]
     {
         // Signal the watcher-manager parent via magic exit code.
-        extern "system" {
+        unsafe extern "system" {
             fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
             fn GetCurrentProcess() -> *mut core::ffi::c_void;
             fn GetLastError() -> u32;

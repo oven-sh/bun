@@ -20,7 +20,10 @@ use bun_sys::{self, Fd, Stat};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 #[cfg(windows)]
-use bun_jsc::EventLoop;
+use bun_sys::ReturnCodeExt as _;
+#[cfg(windows)]
+// `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
+use bun_jsc::event_loop::EventLoop;
 use bun_threading::{WorkPool, WorkPoolTask};
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -1063,7 +1066,7 @@ impl<'a> ReadFileUV<'a> {
             opened_fd.uv(),
             Some(Self::on_file_initial_stat),
         )
-        .err_enum()
+        .err_enum_e()
         {
             self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             self.system_error =
@@ -1080,7 +1083,7 @@ impl<'a> ReadFileUV<'a> {
         // SAFETY: req.data was set to *mut Self in on_file_open().
         let this: &mut ReadFileUV = unsafe { &mut *(*req).data.cast::<ReadFileUV>() };
 
-        if let Some(errno) = unsafe { (*req).result.err_enum() } {
+        if let Some(errno) = unsafe { (*req).result.err_enum_e() } {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error =
                 Some(bun_sys::Error::from_code(errno, bun_sys::Tag::fstat).to_system_error());
@@ -1095,7 +1098,7 @@ impl<'a> ReadFileUV<'a> {
             file.last_modified = jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
         }
 
-        if bun_sys::S::ISDIR(u32::try_from(stat.mode).expect("int cast")) {
+        if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
             this.errno = Some(bun_core::err!("EISDIR"));
             this.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
@@ -1111,15 +1114,17 @@ impl<'a> ReadFileUV<'a> {
             this.on_finish();
             return;
         }
-        this.total_size =
-            SizeType::try_from(stat.size.max(0).min(MAX_SIZE as i64)).unwrap();
-        this.is_regular_file = bun_sys::is_regular_file(stat.mode);
+        // `uv_stat_t::st_size` is `u64` (never negative); clamp to MAX_SIZE
+        // without a signed detour so a hypothetical >i64::MAX value isn't
+        // wrapped to negative and then floored to 0.
+        this.total_size = stat.size().min(MAX_SIZE as u64) as SizeType;
+        this.is_regular_file = bun_sys::is_regular_file(stat.mode() as bun_sys::Mode);
 
         log!("is_regular_file: {}", this.is_regular_file);
 
-        if stat.size > 0 && this.is_regular_file {
+        if stat.size() > 0 && this.is_regular_file {
             this.size = this.total_size.min(this.max_length);
-        } else if stat.size == 0 && !this.is_regular_file {
+        } else if stat.size() == 0 && !this.is_regular_file {
             // read up to 4k at a time if they didn't explicitly set a size and
             // we're reading from something that's not a regular file.
             this.size = this.max_length.min(4096);
@@ -1219,7 +1224,7 @@ impl<'a> ReadFileUV<'a> {
                 Some(Self::on_read),
             );
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
-            if let Some(errno) = res.err_enum() {
+            if let Some(errno) = res.err_enum_e() {
                 self.errno = Some(bun_core::errno_to_zig_err(errno as i32));
                 self.system_error =
                     Some(bun_sys::Error::from_code(errno, bun_sys::Tag::read).to_system_error());
@@ -1242,7 +1247,7 @@ impl<'a> ReadFileUV<'a> {
 
         let result = unsafe { (*req).result };
 
-        if let Some(errno) = result.err_enum() {
+        if let Some(errno) = result.err_enum_e() {
             this.errno = Some(bun_core::errno_to_zig_err(errno as i32));
             this.system_error =
                 Some(bun_sys::Error::from_code(errno, bun_sys::Tag::read).to_system_error());

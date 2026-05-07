@@ -468,6 +468,23 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         set_socket_field: Option<impl FnOnce(&mut This, Self)>,
         is_ipc: bool,
     ) -> Option<Self> {
+        // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET` (`usize`) on
+        // Windows. Do NOT route through `Fd::native()` on Windows — that calls
+        // `uv_get_osfhandle` for kind=uv fds and yields a *file* HANDLE, which
+        // is not interchangeable with a winsock SOCKET. The caller must supply
+        // a system-kind (raw SOCKET) fd here.
+        #[cfg(windows)] let fd_raw = match handle.decode_windows() {
+            // System-kind: raw SOCKET stored verbatim — reinterpret as
+            // LIBUS_SOCKET_DESCRIPTOR (= SOCKET = usize) without going through
+            // `.native()`, which would otherwise call `uv_get_osfhandle` for
+            // the Uv arm and yield a *file* HANDLE (wrong kernel table).
+            bun_core::DecodeWindows::Windows(h) => h as crate::LIBUS_SOCKET_DESCRIPTOR,
+            bun_core::DecodeWindows::Uv(_) => {
+                debug_assert!(false, "Socket::from_fd requires a system-kind (raw SOCKET) Fd on Windows");
+                return None;
+            }
+        };
+        #[cfg(not(windows))] let fd_raw = handle.native();
         // Zig `?*This` is null-niche optimized (8 bytes); the dispatch
         // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
         // write must match that layout — NOT `Option<*mut This>` (16 bytes).
@@ -475,7 +492,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             k,
             core::ptr::null_mut(),
             size_of::<Option<core::ptr::NonNull<This>>>() as c_int,
-            handle.native(),
+            fd_raw,
             is_ipc,
         );
         if raw.is_null() {

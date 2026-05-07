@@ -14,6 +14,10 @@ use bun_string::{strings, String as BunString};
 use bun_sys::FdExt;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(windows)]
+use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 use bun_sys::Fd;
 use bun_uws;
 
@@ -1476,12 +1480,18 @@ impl SendQueue {
             let result = unsafe {
                 (*write_req).write_req.write(
                     (*pipe).as_stream(),
-                    &mut (*write_req).write_buffer,
+                    &(*write_req).write_buffer,
                     write_req,
-                    Self::_windows_on_write_complete,
+                    // `write()` stores a *Rust* fn pointer (`fn(&mut T, ReturnCode)`)
+                    // and thunks it through libuv; the callback signature is
+                    // `(*mut WindowsWrite, ReturnCode)` so adapt with a closure-
+                    // shaped fn item that takes `&mut`.
+                    |req: &mut WindowsWrite, rc| {
+                        SendQueue::_windows_on_write_complete(req as *mut _, rc)
+                    },
                 )
             };
-            if let Some(err) = result.as_err() {
+            if let Some(err) = result.to_error(bun_sys::Tag::write) {
                 Self::_windows_on_write_complete(
                     write_req,
                     uv::ReturnCode::from_raw(-(err.errno as c_int)),
@@ -1513,7 +1523,9 @@ impl SendQueue {
     fn _windows_on_write_complete(write_req: *mut WindowsWrite, status: uv::ReturnCode) {
         log!("SendQueue#_windowsOnWriteComplete");
         // SAFETY: write_req was passed to uv_write as the data ptr; libuv hands it back here.
-        let write_len = unsafe { (*write_req).write_slice.len() };
+        // Explicit `&` so the slice `.len()` autoref doesn't trigger
+        // `dangerous_implicit_autorefs` on the raw-ptr place.
+        let write_len = unsafe { (&(*write_req).write_slice).len() };
         let this: *mut SendQueue = 'blk: {
             let owner = unsafe { (*write_req).owner };
             WindowsWrite::destroy(write_req);
@@ -1537,7 +1549,7 @@ impl SendQueue {
             // live `uv_pipe_t` place (matches the `(*pipe).ref_()` site in `_write`).
             unsafe { (**socket).unref() }; // write complete; unref
         }
-        if status.to_error(uv::Op::Write).is_some() {
+        if status.to_error(bun_sys::Tag::write).is_some() {
             this._on_write_complete(-1);
         } else {
             this._on_write_complete(i32::try_from(write_len).expect("int cast"));
@@ -1595,17 +1607,15 @@ impl SendQueue {
         let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };
 
         // SAFETY: stream points to the live uv handle just stored in self.socket.
-        let read_start_result = unsafe {
-            (*stream).read_start(
-                self,
-                IPCHandlers::WindowsNamedPipe::on_read_alloc,
-                IPCHandlers::WindowsNamedPipe::on_read_error,
-                IPCHandlers::WindowsNamedPipe::on_read,
-            )
-        };
-        if read_start_result.is_err() {
+        // `read_start_ctx` stores `self` in `handle.data` and routes through
+        // the `StreamReader for SendQueue` impl below (wraps the
+        // `IPCHandlers::WindowsNamedPipe` callbacks).
+        let read_start_result =
+            unsafe { (*stream).read_start_ctx::<SendQueue>(self) }
+                .to_error(bun_sys::Tag::listen);
+        if let Some(err) = read_start_result {
             self.close_socket(CloseReason::Failure, CloseFrom::User);
-            return read_start_result;
+            return Err(err);
         }
         bun_sys::Result::Ok(())
     }
@@ -1618,15 +1628,19 @@ impl SendQueue {
         let ipc_pipe: *mut uv::Pipe =
             Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
         // SAFETY: ipc_pipe just allocated above.
-        if let Err(err) = unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.unwrap_() {
+        if let Some(err) =
+            unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)
+        {
             // SAFETY: ipc_pipe was Box::into_raw'd above and init failed before libuv took ownership.
             let _ = unsafe { Box::from_raw(ipc_pipe) };
             return Err(err.into());
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
-        if let Err(err) = unsafe { (*ipc_pipe).open(pipe_fd) }.unwrap_() {
+        if let Some(err) =
+            unsafe { (*ipc_pipe).open(pipe_fd.uv()) }.to_error(bun_sys::Tag::pipe)
+        {
             // SAFETY: ipc_pipe is a live initialized uv_pipe_t; close_and_destroy frees the Box.
-            unsafe { (*ipc_pipe).close_and_destroy() };
+            unsafe { uv::Pipe::close_and_destroy(ipc_pipe) };
             return Err(err.into());
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
@@ -1638,20 +1652,48 @@ impl SendQueue {
         let stream = unsafe { (*ipc_pipe).as_stream() };
 
         // SAFETY: stream points to the live uv handle just stored in self.socket.
-        if let Err(err) = unsafe {
-            (*stream).read_start(
-                self,
-                IPCHandlers::WindowsNamedPipe::on_read_alloc,
-                IPCHandlers::WindowsNamedPipe::on_read_error,
-                IPCHandlers::WindowsNamedPipe::on_read,
-            )
-        }
-        .unwrap_()
+        if let Some(err) =
+            unsafe { (*stream).read_start_ctx::<SendQueue>(self) }
+                .to_error(bun_sys::Tag::listen)
         {
             self.close_socket(CloseReason::Failure, CloseFrom::User);
             return Err(err.into());
         }
         Ok(())
+    }
+}
+
+/// Adapter from `UvStream::read_start_ctx` to the `IPCHandlers::WindowsNamedPipe`
+/// callbacks. Zig passed the three fns as `comptime` pointers; Rust bakes them
+/// into the trait impl so the `extern "C"` trampoline is monomorphised over
+/// `SendQueue` with zero per-handle storage.
+#[cfg(windows)]
+impl uv::StreamReader for SendQueue {
+    #[inline]
+    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
+        IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
+    }
+    #[inline]
+    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+        // Zig: `errEnum() orelse bun.sys.E.CANCELED` — map the raw libuv errno
+        // to `bun_sys::E`, defaulting to CANCELED for unmapped codes.
+        let e = bun_sys::windows::translate_uv_error_to_e(err);
+        IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
+    }
+    #[inline]
+    unsafe fn on_read(this: *mut Self, data: &[u8]) {
+        // `data` points into `(*this).incoming` (it was returned from
+        // `on_read_alloc`). Forming `&mut *this` would retag every byte of
+        // `*this` Unique and pop the SharedRW tag `data`'s provenance descends
+        // from — any later read through `data` is UB under Stacked Borrows
+        // *regardless* of write order. Capture the only thing we need (length)
+        // while `data` is still valid, drop it, then reborrow `*this`; the
+        // callee re-derives the just-written tail from `incoming` itself.
+        let nread = data.len();
+        let _ = data;
+        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
+        // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
+        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
     }
 }
 
@@ -2140,8 +2182,13 @@ pub mod IPCHandlers {
             send_queue.close_socket_next_tick(true);
         }
 
-        pub fn on_read(send_queue: &mut SendQueue, buffer: &[u8]) {
-            log!("NewNamedPipeIPCHandler#onRead {}", buffer.len());
+        /// `nread` is the byte count libuv reported into the slice handed out
+        /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
+        /// current `len`). The slice itself is *not* passed through because it
+        /// aliases `send_queue.incoming`; see the `StreamReader::on_read`
+        /// trampoline for the Stacked-Borrows rationale.
+        pub fn on_read(send_queue: &mut SendQueue, nread: usize) {
+            log!("NewNamedPipeIPCHandler#onRead {}", nread);
             let global_this = send_queue.get_global_this();
             // call `event_loop(&self)` without materializing
             // `&mut VirtualMachine`.
@@ -2159,18 +2206,14 @@ pub mod IPCHandlers {
                         unreachable!()
                     };
                     debug_assert!(
-                        json_buf.data.len() as usize + buffer.len() <= json_buf.data.capacity() as usize
+                        json_buf.data.len() as usize + nread <= json_buf.data.capacity() as usize
                     );
-                    // SAFETY: allocated_slice() yields `[MaybeUninit<u8>]`; we
-                    // only inspect its address range here, never read its bytes.
-                    debug_assert!(bun_core::is_slice_in_buffer(buffer, unsafe {
-                        core::slice::from_raw_parts(
-                            json_buf.data.as_mut_ptr().cast::<u8>(),
-                            json_buf.data.capacity() as usize,
-                        )
-                    }));
-
-                    json_buf.notify_written(buffer);
+                    // libuv wrote `nread` bytes at `data[old_len..]` via the
+                    // slice returned from `on_read_alloc`. Only the *count*
+                    // is forwarded — re-deriving a `&[u8]` over that region
+                    // and handing it to a `&mut self` method would alias
+                    // `json_buf.data`, undoing the Stacked-Borrows fix above.
+                    json_buf.notify_written(nread);
 
                     // Process complete messages using next() - avoids O(n²) re-scanning
                     loop {
@@ -2216,19 +2259,15 @@ pub mod IPCHandlers {
                     let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    unsafe { adv_buf.set_len(adv_buf.len().saturating_add(buffer.len())) };
+                    // libuv wrote `nread` bytes into the spare-capacity slice
+                    // returned by `on_read_alloc`; bump `len` to cover them.
+                    // SAFETY: `on_read_alloc` reserved `>= nread` bytes of
+                    // capacity past `len` and libuv initialised them.
+                    unsafe { adv_buf.set_len(adv_buf.len().saturating_add(nread)) };
                     let total_len = adv_buf.len() as usize;
                     let mut slice_start: usize = 0;
 
                     debug_assert!(adv_buf.len() <= adv_buf.capacity());
-                    // SAFETY: allocated_slice() yields `[MaybeUninit<u8>]`; we
-                    // only inspect its address range here, never read its bytes.
-                    debug_assert!(bun_core::is_slice_in_buffer(buffer, unsafe {
-                        core::slice::from_raw_parts(
-                            adv_buf.as_mut_ptr().cast::<u8>(),
-                            adv_buf.capacity() as usize,
-                        )
-                    }));
 
                     loop {
                         let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {

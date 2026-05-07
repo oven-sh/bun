@@ -1176,7 +1176,7 @@ pub(super) fn append_utf8_machine_word_to_utf16_machine_word(
 }
 
 #[inline]
-pub(super) fn copy_u8_into_u16(output_: &mut [u16], input_: &[u8]) {
+pub fn copy_u8_into_u16(output_: &mut [u16], input_: &[u8]) {
     let output = output_;
     let input = input_;
     debug_assert!(input.len() <= output.len());
@@ -1904,7 +1904,7 @@ pub(super) fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u
     &mut buf[..result]
 }
 
-pub(super) fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a WStr {
+pub fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a WStr {
     // TODO: see convert_utf8_to_utf16_in_buffer
     if input.is_empty() {
         buf[0] = 0;

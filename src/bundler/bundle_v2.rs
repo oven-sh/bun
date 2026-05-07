@@ -5420,14 +5420,14 @@ impl<'a> BundleV2<'a> {
                                         ).expect("oom");
                                     }
                                 } else {
-                                    let buf = bun_paths::path_buffer_pool::get();
-                                    let specifier_to_use = if loader == Loader::Html
+                                    let mut buf = bun_paths::path_buffer_pool::get();
+                                    let specifier_to_use: &[u8] = if loader == Loader::Html
                                         && import_record.path.text.starts_with(&Fs::FileSystem::instance().top_level_dir)
                                     {
                                         let specifier_to_use = &import_record.path.text[Fs::FileSystem::instance().top_level_dir.len()..];
                                         #[cfg(windows)]
                                         {
-                                            bun_paths::path_to_posix_buf::<u8>(specifier_to_use, &mut *buf)
+                                            &*bun_paths::resolve_path::path_to_posix_buf::<u8>(specifier_to_use, &mut *buf)
                                         }
                                         #[cfg(not(windows))]
                                         {

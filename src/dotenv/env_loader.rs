@@ -1556,19 +1556,10 @@ pub struct HashTableValue {
 // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
 // some strings collide.
 // Spec: env_loader.zig:1220 — `bun.CaseInsensitiveASCIIStringArrayHashMap` on Windows.
-// TODO(b2-blocked): bun_collections::CaseInsensitiveAsciiStringArrayHashMap not yet ported.
-// Until it lands, gate Windows builds with a compile_error so we cannot silently ship a
-// case-sensitive env map there (would break `Path` vs `PATH` precedence / dedup).
-#[cfg(windows)]
-compile_error!(
-    "dotenv HashTable requires bun_collections::CaseInsensitiveAsciiStringArrayHashMap on Windows; \
-     port that collection before enabling this crate for Windows targets"
-);
 #[cfg(not(windows))]
 pub type HashTable = bun_collections::StringArrayHashMap<HashTableValue>;
-// Once the case-insensitive map lands:
-//   #[cfg(windows)]
-//   pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
+#[cfg(windows)]
+pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
 
 pub struct Map {
     pub map: HashTable,

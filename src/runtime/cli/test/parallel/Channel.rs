@@ -26,6 +26,8 @@ use bun_uws as uws;
 
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 
 use super::frame;
 
@@ -203,7 +205,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // SAFETY: uv::Pipe is #[repr(C)] POD; all-zero is a valid value
             // (matches Zig `std.mem.zeroes(uv.Pipe)`).
             let mut pipe = Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() });
-            if let Err(e) = pipe.init(uv::Loop::get(), true).unwrap_result() {
+            if let Some(e) = pipe.init(uv::Loop::get(), true).to_error(bun_sys::Tag::pipe) {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_init failed: {}",
                     e.name(),
@@ -211,13 +213,14 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 drop(pipe);
                 return false;
             }
-            if let Err(e) = pipe.open(fd).unwrap_result() {
+            if let Some(e) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
                 Output::debug_warn(format_args!(
                     "Channel.adopt: uv_pipe_open({}) failed: {}",
                     fd.uv(),
                     e.name(),
                 ));
-                pipe.close_and_destroy();
+                // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
+                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
                 return false;
             }
             if !self.adopt_pipe(vm, pipe) {
@@ -289,7 +292,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // TODO(port): Zig returned false leaving caller owning `pipe`;
             // with Box we'd need to hand it back. Phase B: take `&mut Box` or
             // return the Box on failure.
-            pipe.close_and_destroy();
+            // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
+            unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
             return false;
         }
         self.backend.pipe = Some(pipe);
@@ -372,7 +376,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 core::ptr::from_mut(self),
                 WindowsHandlers::<Owner>::on_write,
             )
-            .unwrap_result()
             .is_err()
         {
             self.backend.inflight.clear();
@@ -440,7 +443,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         {
             if let Some(p) = self.backend.pipe.take() {
                 if !p.is_closing() {
-                    p.close_and_destroy();
+                    // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
+                    unsafe { uv::Pipe::close_and_destroy(Box::into_raw(p)) };
                 } else {
                     // TODO(port): Zig left the field set if already closing;
                     // with Box we cannot put it back without re-taking. Phase B
@@ -521,7 +525,8 @@ impl<Owner> Drop for Channel<Owner> {
         #[cfg(windows)]
         {
             if let Some(p) = self.backend.pipe.take() {
-                p.close_and_destroy();
+                // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
+                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(p)) };
             }
             // `inflight` Vec drops automatically.
         }
@@ -635,7 +640,8 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         // signalling done so the owner can tell EOF apart from a protocol
         // error (where the pipe is still attached).
         if let Some(p) = self_.backend.pipe.take() {
-            p.close_and_destroy();
+            // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
+            unsafe { uv::Pipe::close_and_destroy(Box::into_raw(p)) };
         }
         self_.mark_done();
     }
@@ -644,7 +650,7 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         if self_.done {
             return;
         }
-        if status.to_error(uv::SyscallTag::Write).is_some() {
+        if status.is_err() {
             self_.mark_done();
             return;
         }

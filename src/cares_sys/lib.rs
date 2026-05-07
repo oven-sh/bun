@@ -5,6 +5,25 @@
 #[path = "c_ares.rs"]
 pub mod c_ares_draft;
 
+/// Winsock typedefs not provided by `libc` on `x86_64-pc-windows-msvc`.
+/// Kept local so this `*_sys` crate stays leaf (no `bun_sys`/`windows-sys`).
+#[cfg(windows)]
+pub(crate) mod winsock {
+    use core::ffi::{c_int, c_long, c_ushort};
+    pub type socklen_t = c_int; // ws2tcpip.h: `typedef int socklen_t;`
+    #[repr(C)] #[derive(Clone, Copy)]
+    pub struct sockaddr { pub sa_family: c_ushort, pub sa_data: [u8; 14] }
+    #[repr(C)] #[derive(Clone, Copy)]
+    pub struct sockaddr_in { pub sin_family: c_ushort, pub sin_port: c_ushort, pub sin_addr: [u8; 4], pub sin_zero: [u8; 8] }
+    #[repr(C)] #[derive(Clone, Copy)]
+    pub struct sockaddr_in6 { pub sin6_family: c_ushort, pub sin6_port: c_ushort, pub sin6_flowinfo: u32, pub sin6_addr: [u8; 16], pub sin6_scope_id: u32 }
+    #[repr(C)] #[derive(Clone, Copy)]
+    pub struct timeval { pub tv_sec: c_long, pub tv_usec: c_long }
+    /// `WSABUF` — Windows scatter/gather vector (libc has no `iovec` here).
+    #[repr(C)] #[derive(Clone, Copy)]
+    pub struct iovec { pub iov_len: u32, pub iov_base: *mut u8 }
+}
+
 #[repr(C)] pub struct Opaque { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
 
 /// Minimal un-gated surface of the c-ares FFI needed by downstream crates while
@@ -16,7 +35,10 @@ pub mod c_ares {
 
     /// `ares_socklen_t` — alias of the platform `socklen_t` (see
     /// `vendor/cares/include/ares.h` / `c_ares.zig: pub const socklen_t = c.socklen_t`).
+    #[cfg(not(windows))]
     pub type ares_socklen_t = libc::socklen_t;
+    #[cfg(windows)]
+    pub type ares_socklen_t = core::ffi::c_int; // ws2tcpip.h: `typedef int socklen_t;`
     pub type socklen_t = ares_socklen_t;
 
     /// `struct ares_addrinfo_hints` — POD hints passed to `ares_getaddrinfo`.

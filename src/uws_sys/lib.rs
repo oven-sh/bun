@@ -152,6 +152,49 @@ impl UpgradedDuplex {
     #[inline] pub fn close(&mut self) { unsafe { UpgradedDuplex__close(self) } }
 }
 
+// ── WindowsNamedPipe (cycle-break shim) ─────────────────────────────────────
+// Same link-time-dispatch as `UpgradedDuplex` above: the real
+// `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
+// forwards to `extern "C"` symbols that the runtime crate exports with
+// `#[no_mangle]`. Surface mirrors `src/jsc/api/bun/socket.zig WindowsNamedPipe`.
+#[cfg(windows)]
+unsafe extern "C" {
+    fn WindowsNamedPipe__ssl_error(this: *const WindowsNamedPipe) -> us_bun_verify_error_t;
+    fn WindowsNamedPipe__is_established(this: *const WindowsNamedPipe) -> bool;
+    fn WindowsNamedPipe__is_closed(this: *const WindowsNamedPipe) -> bool;
+    fn WindowsNamedPipe__is_shutdown(this: *const WindowsNamedPipe) -> bool;
+    fn WindowsNamedPipe__ssl(this: *const WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
+    fn WindowsNamedPipe__set_timeout(this: *mut WindowsNamedPipe, seconds: core::ffi::c_uint);
+    fn WindowsNamedPipe__flush(this: *mut WindowsNamedPipe);
+    fn WindowsNamedPipe__encode_and_write(this: *mut WindowsNamedPipe, ptr: *const u8, len: usize) -> i32;
+    fn WindowsNamedPipe__raw_write(this: *mut WindowsNamedPipe, ptr: *const u8, len: usize) -> i32;
+    fn WindowsNamedPipe__shutdown(this: *mut WindowsNamedPipe);
+    fn WindowsNamedPipe__shutdown_read(this: *mut WindowsNamedPipe);
+    fn WindowsNamedPipe__close(this: *mut WindowsNamedPipe);
+    fn WindowsNamedPipe__pause_stream(this: *mut WindowsNamedPipe) -> bool;
+    fn WindowsNamedPipe__resume_stream(this: *mut WindowsNamedPipe) -> bool;
+}
+#[cfg(windows)]
+impl WindowsNamedPipe {
+    #[inline] pub fn ssl_error(&self) -> us_bun_verify_error_t { unsafe { WindowsNamedPipe__ssl_error(self) } }
+    #[inline] pub fn is_established(&self) -> bool { unsafe { WindowsNamedPipe__is_established(self) } }
+    #[inline] pub fn is_closed(&self) -> bool { unsafe { WindowsNamedPipe__is_closed(self) } }
+    #[inline] pub fn is_shutdown(&self) -> bool { unsafe { WindowsNamedPipe__is_shutdown(self) } }
+    #[inline] pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+        let p = unsafe { WindowsNamedPipe__ssl(self) };
+        if p.is_null() { None } else { Some(p) }
+    }
+    #[inline] pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) { unsafe { WindowsNamedPipe__set_timeout(self, seconds) } }
+    #[inline] pub fn flush(&mut self) { unsafe { WindowsNamedPipe__flush(self) } }
+    #[inline] pub fn encode_and_write(&mut self, data: &[u8]) -> i32 { unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) } }
+    #[inline] pub fn raw_write(&mut self, data: &[u8]) -> i32 { unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) } }
+    #[inline] pub fn shutdown(&mut self) { unsafe { WindowsNamedPipe__shutdown(self) } }
+    #[inline] pub fn shutdown_read(&mut self) { unsafe { WindowsNamedPipe__shutdown_read(self) } }
+    #[inline] pub fn close(&mut self) { unsafe { WindowsNamedPipe__close(self) } }
+    #[inline] pub fn pause_stream(&mut self) -> bool { unsafe { WindowsNamedPipe__pause_stream(self) } }
+    #[inline] pub fn resume_stream(&mut self) -> bool { unsafe { WindowsNamedPipe__resume_stream(self) } }
+}
+
 // ───────────────────────────── module map ────────────────────────────────────
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
 // PascalCase Phase-A drafts kept on disk.

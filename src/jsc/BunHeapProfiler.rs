@@ -58,7 +58,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Re
     // PORT NOTE: reshaped for borrowck — `slice_z()` borrows `path_buf` mutably,
     // so we re-derive it at each call site instead of holding a single binding.
     #[cfg(windows)]
-    let result = sys::File::write_file(Fd::cwd(), output_path_os, profile_slice.slice());
+    let result = sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
     #[cfg(not(windows))]
     let result = sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
     if let Err(err) = result {
@@ -73,7 +73,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Re
                 // Retry write
                 #[cfg(windows)]
                 let retry_result =
-                    sys::File::write_file(Fd::cwd(), output_path_os, profile_slice.slice());
+                    sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
                 #[cfg(not(windows))]
                 let retry_result =
                     sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());

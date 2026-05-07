@@ -408,7 +408,8 @@ impl Entry {
                 let mut total: usize = 0;
                 for v in vecs {
                     debug_assert!(v.len > 0);
-                    total += v.len;
+                    // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
+                    total += v.len as usize;
                 }
                 debug_assert!(end_position == total);
             }

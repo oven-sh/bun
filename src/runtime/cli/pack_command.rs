@@ -478,7 +478,10 @@ fn iterate_included_project_tree(
                 continue;
             }
 
-            let entry_name = entry.name.slice();
+            // `slice_u8()` is the platform-unifying accessor — on Windows the
+            // iterator's native u16 name is transcoded once at construction so
+            // pack-tree logic stays byte-based on every target.
+            let entry_name = entry.name.slice_u8();
             let entry_subpath = entry_subpath(&dir_subpath, entry_name)?;
 
             let mut included = false;
@@ -675,7 +678,10 @@ fn add_entire_tree(
                 continue;
             }
 
-            let entry_name = entry.name.slice();
+            // `slice_u8()` is the platform-unifying accessor — on Windows the
+            // iterator's native u16 name is transcoded once at construction so
+            // pack-tree logic stays byte-based on every target.
+            let entry_name = entry.name.slice_u8();
             let entry_subpath = entry_subpath(&dir_subpath, entry_name)?;
 
             if dir_depth == root_depth {
@@ -815,7 +821,7 @@ fn iterate_bundled_deps(
             continue;
         }
 
-        let _entry_name = entry.name.slice();
+        let _entry_name = entry.name.slice_u8();
 
         if strings::starts_with_char(_entry_name, b'@') {
             let concat = entry_subpath(b"node_modules", _entry_name)?;
@@ -832,7 +838,7 @@ fn iterate_bundled_deps(
 
             let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
-                let entry_name = entry_subpath(_entry_name, sub_entry.name.slice())?;
+                let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
 
                 // PORT NOTE: reshaped for borrowck — Zig iterates `*dep` and
                 // calls `add_bundled_dep(ctx, ...)` mid-loop; in Rust we find
@@ -952,7 +958,7 @@ fn add_bundled_dep(
                 continue;
             }
 
-            let entry_name = entry.name.slice();
+            let entry_name = entry.name.slice_u8();
             let entry_subpath_ = entry_subpath(&dir_subpath, entry_name)?;
 
             if dir_depth == bundled_root_depth {
@@ -1164,7 +1170,7 @@ fn iterate_project_tree(
                 continue;
             }
 
-            let entry_name = entry.name.slice();
+            let entry_name = entry.name.slice_u8();
             let entry_subpath_ = entry_subpath(&dir_subpath, entry_name)?;
 
             if dir_depth == 1 {
@@ -1386,7 +1392,7 @@ fn is_excluded<'a>(
     dir_depth: usize,
     ignores: &'a [IgnorePatterns],
 ) -> Option<(&'a [u8], IgnorePatternsKind)> {
-    let entry_name = entry.name.slice();
+    let entry_name = entry.name.slice_u8();
 
     if dir_depth == 1 {
         // first, check files that can never be ignored. project root

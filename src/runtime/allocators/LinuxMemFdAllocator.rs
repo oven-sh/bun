@@ -137,6 +137,17 @@ impl LinuxMemFdAllocator {
         // pass `libc::MAP_*` directly. `.TYPE = .SHARED` is forced below.
         flags: i32,
     ) -> sys::Result<BlobStoreBytes> {
+        // memfd + mmap are POSIX-only; on Windows `should_use()` always
+        // returns false so this path is unreachable. Guard the body so
+        // `libc::MAP_*`/`PROT_*` (which don't exist on `*-windows-msvc`)
+        // never participate in name resolution.
+        #[cfg(windows)]
+        {
+            let _ = (this, len, offset, flags);
+            return sys::Result::Err(sys::Error::from_code(sys::E::NOSYS, sys::Tag::mmap));
+        }
+        #[cfg(not(windows))]
+        {
         let mut size = len;
 
         // size rounded up to nearest page
@@ -183,6 +194,7 @@ impl LinuxMemFdAllocator {
             }
             Err(errno) => Err(errno),
         }
+        } // #[cfg(not(windows))]
     }
 
     pub fn should_use(bytes: &[u8]) -> bool {

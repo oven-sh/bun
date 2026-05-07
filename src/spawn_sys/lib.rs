@@ -80,6 +80,11 @@ const _: () = assert!(
 pub mod ffi {
     use core::ffi::c_int;
 
+    // `pid_t` doesn't exist in `libc` on Windows; the noOrphans tracker is
+    // macOS-only anyway, so just use the raw C type the C++ side declares.
+    #[allow(non_camel_case_types)]
+    type pid_t = c_int;
+
     unsafe extern "C" {
         /// Install SIGINT/SIGTERM/… handlers that record the signal for
         /// forwarding to [`Bun__currentSyncPID`].
@@ -87,10 +92,10 @@ pub mod ffi {
         pub fn Bun__unregisterSignalsForForwarding();
 
         // macOS p_puniqueid descendant tracker — see NoOrphansTracker.cpp.
-        pub fn Bun__noOrphans_begin(kq: c_int, root: libc::pid_t);
+        pub fn Bun__noOrphans_begin(kq: c_int, root: pid_t);
         pub fn Bun__noOrphans_releaseKq();
         pub fn Bun__noOrphans_onFork();
-        pub fn Bun__noOrphans_onExit(pid: libc::pid_t);
+        pub fn Bun__noOrphans_onExit(pid: pid_t);
 
         /// The PID to forward signals to. Set to 0 when unregistering.
         ///

@@ -14,7 +14,10 @@ use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_sys::{self, SystemErrno};
 use bun_uws as uws;
+#[cfg(not(windows))]
 use libc::sockaddr_storage;
+#[cfg(windows)]
+use bun_libuv_sys::sockaddr_storage;
 #[cfg(not(windows))]
 use libc::{if_indextoname, if_nametoindex, IF_NAMESIZE};
 
@@ -1585,17 +1588,21 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         }
 
         if USE_WSA {
-            if let Some(wsa) = bun_sys::windows::wsa_get_last_error() {
-                if wsa != bun_sys::windows::WsaError::SUCCESS {
-                    // SAFETY: WSASetLastError is thread-local errno write; always safe.
+            // Zig: `bun.windows.WSAGetLastError()` returns `?SystemErrno`
+            // already mapped to `E` (`SUCCESS` filtered out by `init`). The
+            // Rust port does the same in `bun_sys::windows::WSAGetLastError`.
+            if let Some(e) = bun_sys::windows::WSAGetLastError() {
+                if e != bun_sys::E::SUCCESS {
+                    // SAFETY: WSASetLastError is a thread-local errno write.
                     unsafe { bun_sys::windows::ws2_32::WSASetLastError(0) };
-                    return Some(bun_sys::Error::from_code(wsa.to_e(), tag));
+                    return Some(bun_sys::Error::from_code(e, tag));
                 }
             }
         }
 
-        // SAFETY: _errno() returns a valid pointer to thread-local errno.
-        let errno_val = unsafe { *bun_sys::c::_errno() };
+        // SAFETY: `errno_location()` (`_errno()` on Windows) returns a valid
+        // pointer to thread-local errno.
+        let errno_val = unsafe { *bun_sys::c::errno_location() };
         return Some(bun_sys::Error::from_code_int(errno_val, tag));
     }
     #[cfg(not(windows))]

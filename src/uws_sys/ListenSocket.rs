@@ -54,7 +54,11 @@ impl ListenSocket {
 
     pub fn fd(&mut self) -> Fd {
         // SAFETY: self is a valid listen socket.
-        Fd::from_native(unsafe { us_listen_socket_get_fd(self) })
+        let raw = unsafe { us_listen_socket_get_fd(self) };
+        // SOCKET → kind=system (mask bit 63); `from_native` would store the
+        // raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
+        #[cfg(windows)] { Fd::from_system(raw as *mut core::ffi::c_void) }
+        #[cfg(not(windows))] { Fd::from_native(raw) }
     }
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops

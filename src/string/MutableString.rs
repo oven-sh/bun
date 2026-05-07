@@ -14,6 +14,17 @@ pub trait EStringRef {
 /// A growable byte buffer. In Zig this paired an `Allocator` with an
 /// `ArrayListUnmanaged(u8)`; in Rust the global mimalloc allocator is implicit,
 /// so this is a thin wrapper over `Vec<u8>`.
+/// `uv_buf_t`-shaped scatter/gather vector for Windows (`{ ULONG len; char* base; }`).
+/// Layout-identical to `bun_libuv_sys::uv_buf_t`; declared locally because
+/// `bun_string` is leaf and may not depend on `bun_libuv_sys`.
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SocketBuffer {
+    pub len: u32,
+    pub base: *mut u8,
+}
+
 #[derive(Default, Clone)]
 pub struct MutableString {
     // Zig field `allocator: Allocator` — deleted (global mimalloc).
@@ -433,6 +444,7 @@ impl MutableString {
         self.list.as_slice() == other
     }
 
+    #[cfg(not(windows))]
     pub fn to_socket_buffers<const COUNT: usize>(
         &self,
         ranges: [(usize, usize); COUNT],
@@ -446,6 +458,25 @@ impl MutableString {
         for (b, r) in buffers.iter_mut().zip(ranges.iter()) {
             let s = &self.list[r.0..r.1];
             *b = libc::iovec { iov_base: s.as_ptr().cast_mut().cast::<_>(), iov_len: s.len() };
+        }
+        buffers
+    }
+
+    /// Windows variant — `std.posix.iovec_const` aliases `uv_buf_t` there
+    /// (`{ ULONG len; char* base; }`). `bun_string` is leaf and may not depend
+    /// on `bun_libuv_sys`, so the 16-byte struct is mirrored locally; callers
+    /// reinterpret-cast to `*const uv_buf_t` (identical layout).
+    #[cfg(windows)]
+    pub fn to_socket_buffers<const COUNT: usize>(
+        &self,
+        ranges: [(usize, usize); COUNT],
+    ) -> [SocketBuffer; COUNT] {
+        let mut buffers: [SocketBuffer; COUNT] =
+            // SAFETY: every element is written in the loop below before return.
+            unsafe { core::mem::zeroed() };
+        for (b, r) in buffers.iter_mut().zip(ranges.iter()) {
+            let s = &self.list[r.0..r.1];
+            *b = SocketBuffer { len: s.len() as u32, base: s.as_ptr() as *mut _ };
         }
         buffers
     }

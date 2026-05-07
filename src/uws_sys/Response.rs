@@ -288,12 +288,14 @@ impl<const SSL: bool> Response<SSL> {
     pub fn get_native_handle(&mut self) -> Fd {
         #[cfg(windows)]
         {
-            // on windows uSockets exposes SOCKET
+            // on windows uSockets exposes SOCKET (uintptr-sized) as a pointer
+            // value; tag kind=system via `from_system` (masks bit 63) so
+            // `INVALID_SOCKET` (~0) doesn't decode as kind=uv.
             // SAFETY: uws_res_get_native_handle returns the OS SOCKET handle as a pointer.
-            return Fd::from_native(unsafe {
+            return Fd::from_system(unsafe {
                 c::uws_res_get_native_handle(Self::ssl_flag(), self.downcast())
-            }
-            .cast());
+                    as *mut core::ffi::c_void
+            });
         }
         #[cfg(not(windows))]
         {

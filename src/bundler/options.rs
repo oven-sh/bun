@@ -2548,7 +2548,11 @@ impl TransformOptions {
         // TODO(port): Environment.isWasi
         #[cfg(any(target_os = "wasi", windows))]
         {
-            _cwd = bun_sys::getcwd_alloc()?;
+            // `getcwd_alloc` returns a NUL-terminated `ZBox`; strip the NUL
+            // and reuse the allocation as a plain `Box<[u8]>`.
+            let mut v = bun_sys::getcwd_alloc()?.into_vec_with_nul();
+            v.pop();
+            _cwd = v.into_boxed_slice();
         }
 
         let mut define = StringHashMap::<Box<[u8]>>::default();

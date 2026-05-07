@@ -8,13 +8,13 @@ use bun_sys::{posix, O};
 
 // File Access Constants
 /// Constant for fs.access(). File is visible to the calling process.
-pub const F_OK: i32 = libc::F_OK;
+pub const F_OK: i32 = posix::F_OK;
 /// Constant for fs.access(). File can be read by the calling process.
-pub const R_OK: i32 = libc::R_OK;
+pub const R_OK: i32 = posix::R_OK;
 /// Constant for fs.access(). File can be written by the calling process.
-pub const W_OK: i32 = libc::W_OK;
+pub const W_OK: i32 = posix::W_OK;
 /// Constant for fs.access(). File can be executed by the calling process.
-pub const X_OK: i32 = libc::X_OK;
+pub const X_OK: i32 = posix::X_OK;
 
 // File Copy Constants
 // PORT NOTE: Zig `enum(i32) { _ }` (non-exhaustive, no variants) is a newtype

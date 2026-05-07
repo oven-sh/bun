@@ -73,7 +73,13 @@ pub(crate) fn throw_panic_as_js_error(
 /// Rust does not accept a macro in ABI position, so the canonical encoding is the
 /// `#[bun_jsc::host_call]` attribute on the concrete `extern fn`. This alias uses
 /// `extern "C"` as the placeholder; the proc-macro rewrites it per-target.
-// TODO(port): jsc.conv ABI — the proc-macro must emit `extern "sysv64"` on windows-x64.
+// `jsc.conv` is `"sysv64"` on Windows-x64 (JSC always uses System V there) and
+// `"C"` everywhere else. Rust forbids macros in ABI position, so cfg-split the
+// alias — the `#[bun_jsc::host_call]` proc-macro emits the matching ABI on
+// each target so `JsHostFn`-typed slots accept its output without a cast.
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub type JsHostFn = unsafe extern "sysv64" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
+#[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type JsHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
 
 /// To allow usage of `?` for error handling, Bun provides `to_js_host_fn` to
@@ -84,9 +90,35 @@ pub type JsHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 pub type JsHostFnZigWithContext<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 
 // Zig: `pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type`
-// TODO(port): jsc.conv ABI (see JsHostFn note)
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub type JsHostFunctionTypeWithContext<C> =
+    unsafe extern "sysv64" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
+#[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type JsHostFunctionTypeWithContext<C> =
     unsafe extern "C" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
+
+/// Expand to the JSC host-function ABI string for the current target. Rust
+/// forbids macros in `extern "<abi>"` position, but *does* accept them as the
+/// whole `extern` token sequence inside an item — so callers spell:
+///
+/// ```ignore
+/// bun_jsc::jsc_host_abi! {
+///     unsafe fn thunk(g: *mut JSGlobalObject, cf: *mut CallFrame) -> JSValue { … }
+/// }
+/// ```
+///
+/// and get `extern "sysv64"` on Windows-x64, `extern "C"` elsewhere. Use this
+/// for inline thunks that can't carry the `#[bun_jsc::host_call]` proc-macro
+/// (e.g. inside `macro_rules!` expansions).
+#[macro_export]
+macro_rules! jsc_host_abi {
+    ($(#[$m:meta])* $vis:vis unsafe fn $name:ident($($args:tt)*) -> $ret:ty $body:block) => {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        $(#[$m])* $vis unsafe extern "sysv64" fn $name($($args)*) -> $ret $body
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        $(#[$m])* $vis unsafe extern "C" fn $name($($args)*) -> $ret $body
+    };
+}
 
 // Capitalized re-exports — Zig spells these `JSHostFn*` (acronym-caps); the
 // PORTING.md acronym rule lowercases to `Js…`, but enough call sites (and the

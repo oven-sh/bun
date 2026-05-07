@@ -8,11 +8,20 @@ use bun_sys::windows::libuv as uv;
 use bun_uws_sys::WindowsLoop;
 
 use crate::posix_event_loop as posix;
-use crate::posix_event_loop::{get_vm_ctx, AllocatorType, EventLoopCtx, OpaqueCallback};
+// Shared scaffolding lives in `posix_event_loop` (platform-agnostic types);
+// only `FilePoll`/`Store`/`KeepAlive`/`Closer`/`Loop`/`Waker` are redefined
+// here. `Flags`/`Owner`/etc. are re-aliased below from `posix` for callers
+// that name them via this module.
+pub use crate::posix_event_loop::{get_vm_ctx, AllocatorType, EventLoopCtx, OpaqueCallback};
 
-bun_output::declare_scope!(KeepAlive, visible);
-bun_output::declare_scope!(FilePoll, visible);
+bun_core::declare_scope!(KeepAlive, visible);
+bun_core::declare_scope!(FilePoll, visible);
 
+// Zig `windows_event_loop.zig:1` — `pub const Loop = uv.Loop;` — the raw
+// `uv_loop_t`. (`WindowsLoop` is the uws wrapper that *owns* a `*mut uv::Loop`
+// in its `.uv_loop` field; callers that hold a `WindowsLoop*` project that
+// field themselves. See `VirtualMachine::event_loop_handle` /
+// `SpawnSyncEventLoop` which store/compare the inner `uv::Loop` pointer.)
 pub type Loop = uv::Loop;
 
 #[derive(Default)]
@@ -73,7 +82,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        event_loop_ctx.platform_event_loop().sub_active(1);
+        unsafe { event_loop_ctx.platform_event_loop() }.sub_active(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -91,7 +100,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        vm.platform_event_loop().dec();
+        unsafe { vm.platform_event_loop() }.dec();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
@@ -101,7 +110,7 @@ impl KeepAlive {
         }
         self.status = Status::Inactive;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        vm.platform_event_loop().dec();
+        unsafe { vm.platform_event_loop() }.dec();
     }
 
     /// Allow a poll to keep the process alive.
@@ -110,7 +119,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Active;
-        event_loop_ctx.platform_event_loop().ref_();
+        unsafe { event_loop_ctx.platform_event_loop() }.ref_();
     }
 
     /// Allow a poll to keep the process alive.
@@ -141,10 +150,10 @@ impl KeepAlive {
     }
 }
 
-pub type Flags = posix::file_poll::Flags;
-pub type FlagsSet = posix::file_poll::FlagsSet;
-pub type FlagsStruct = posix::file_poll::FlagsStruct;
-pub type Owner = posix::file_poll::Owner;
+pub type Flags = posix::Flags;
+pub type FlagsSet = posix::FlagsSet;
+pub type FlagsStruct = posix::FlagsStruct;
+pub type Owner = posix::Owner;
 
 pub struct FilePoll {
     pub fd: Fd,
@@ -187,7 +196,7 @@ impl FilePoll {
         }
         self.flags.insert(Flags::Closed);
 
-        vm.platform_event_loop()
+        unsafe { vm.platform_event_loop() }
             .sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
         // vm.event_loop_handle.?.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
@@ -207,14 +216,15 @@ impl FilePoll {
         flags: FlagsStruct,
         owner: Owner,
     ) -> *mut FilePoll {
-        let poll = vm.file_polls().get();
+        // SAFETY: vtable contract — single live `&mut Store` borrow.
+        let poll = unsafe { vm.file_polls() }.get();
         // SAFETY: `get()` returns a valid, uniquely-owned, *uninitialized* slot from the
         // HiveArray pool. We must not materialize `&mut FilePoll` (validity invariant
         // requires initialized memory); write the whole value through the raw pointer.
         unsafe {
             poll.write(FilePoll {
                 fd,
-                flags: FlagsSet::init(flags),
+                flags,
                 owner,
                 next_to_free: ptr::null_mut(),
             });
@@ -237,7 +247,7 @@ impl FilePoll {
         self.deinit()
     }
 
-    pub fn unregister(&mut self, _loop: &mut Loop) -> bool {
+    pub fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
         // TODO(@paperclover): This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
@@ -253,7 +263,7 @@ impl FilePoll {
     fn deinit_possibly_defer(
         &mut self,
         vm: EventLoopCtx,
-        loop_: &mut Loop,
+        loop_: &mut WindowsLoop,
         polls: &mut Store,
     ) {
         if self.is_registered() {
@@ -295,8 +305,10 @@ impl FilePoll {
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        let loop_ = vm.platform_event_loop();
-        let polls = vm.file_polls();
+        // SAFETY: vtable contract — `loop_` and `polls` are disjoint
+        // allocations (uws loop vs. HiveArray pool); single live borrow each.
+        let loop_ = unsafe { vm.platform_event_loop() };
+        let polls = unsafe { vm.file_polls() };
         self.deinit_possibly_defer(vm, loop_, polls);
     }
 
@@ -307,7 +319,7 @@ impl FilePoll {
         self.flags.remove(Flags::Closed);
 
         // vm.event_loop_handle.?.active_handles += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
-        vm.platform_event_loop()
+        unsafe { vm.platform_event_loop() }
             .add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
 
@@ -316,20 +328,27 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    pub fn deactivate(&mut self, loop_: &mut Loop) {
+    // PORT NOTE: Zig takes `*Loop = *uv.Loop` here (`vm.event_loop_handle.?`),
+    // but the cycle-broken `EventLoopCtx::platform_event_loop` vtable returns
+    // the uws `WindowsLoop` wrapper. `WindowsLoop::sub_active`/`add_active`
+    // proxy straight through to `(*self.uv_loop).{sub,add}_active`, so accept
+    // the wrapper type to avoid an extra unsafe deref at every call site.
+    pub fn deactivate(&mut self, loop_: &mut WindowsLoop) {
         debug_assert!(self.flags.contains(Flags::HasIncrementedPollCount));
         loop_.sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
-        bun_output::scoped_log!(FilePoll, "deactivate - {}", loop_.active_handles);
+        // SAFETY: uv_loop is set by C us_create_loop; valid for loop lifetime.
+        bun_core::scoped_log!(FilePoll, "deactivate - {}", unsafe { (*loop_.uv_loop).active_handles });
         self.flags.remove(Flags::HasIncrementedPollCount);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    pub fn activate(&mut self, loop_: &mut Loop) {
+    pub fn activate(&mut self, loop_: &mut WindowsLoop) {
         loop_.add_active(
             (!self.flags.contains(Flags::Closed)
                 && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,
         );
-        bun_output::scoped_log!(FilePoll, "activate - {}", loop_.active_handles);
+        // SAFETY: uv_loop is set by C us_create_loop; valid for loop lifetime.
+        bun_core::scoped_log!(FilePoll, "activate - {}", unsafe { (*loop_.uv_loop).active_handles });
         self.flags.insert(Flags::HasIncrementedPollCount);
     }
 
@@ -351,7 +370,7 @@ impl FilePoll {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
         // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(event_loop_ctx.platform_event_loop());
+        self.deactivate(unsafe { event_loop_ctx.platform_event_loop() });
     }
 
     /// Prevent a poll from keeping the process alive.
@@ -359,9 +378,9 @@ impl FilePoll {
         if !self.can_unref() {
             return;
         }
-        bun_output::scoped_log!(FilePoll, "unref");
+        bun_core::scoped_log!(FilePoll, "unref");
         // this.deactivate(vm.event_loop_handle.?);
-        self.deactivate(vm.platform_event_loop());
+        self.deactivate(unsafe { vm.platform_event_loop() });
     }
 
     /// Allow a poll to keep the process alive.
@@ -370,9 +389,9 @@ impl FilePoll {
         if self.can_ref() {
             return;
         }
-        bun_output::scoped_log!(FilePoll, "ref");
+        bun_core::scoped_log!(FilePoll, "ref");
         // this.activate(vm.event_loop_handle.?);
-        self.activate(event_loop_ctx.platform_event_loop());
+        self.activate(unsafe { event_loop_ctx.platform_event_loop() });
     }
 }
 
@@ -463,8 +482,15 @@ impl Store {
 }
 
 pub struct Waker {
-    loop_: &'static WindowsLoop,
+    // Raw `*mut`, not `&'static mut`: `WindowsLoop::get()` hands out a shared
+    // process-global; multiple `Waker`s and the event-loop thread all alias it.
+    // Holding `&'static mut` would be UB the moment a second borrow exists.
+    loop_: *mut WindowsLoop,
 }
+// SAFETY: `Waker::wake()` only forwards to `WindowsLoop::wakeup()`, which is
+// the documented cross-thread wake path (uv_async_send under the hood).
+unsafe impl Send for Waker {}
+unsafe impl Sync for Waker {}
 
 impl Waker {
     pub fn init() -> Result<Waker, bun_core::Error> {
@@ -472,6 +498,17 @@ impl Waker {
         Ok(Waker {
             loop_: WindowsLoop::get(),
         })
+    }
+
+    /// The libuv loop backing the process-global `WindowsLoop`. Exposed so
+    /// callers that need a bare `uv_loop_t*` (e.g. `BundleThread`'s keep-alive
+    /// timer) can wire libuv handles without holding a `&WindowsLoop` borrow
+    /// against the shared global.
+    #[inline]
+    pub fn uv_loop(&self) -> *mut uv::Loop {
+        // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton; its
+        // `uv_loop` is set by `us_create_loop` and immutable for the process.
+        unsafe { (*self.loop_).uv_loop }
     }
 
     // TODO(port): Zig used @compileError here; on Windows these must never be linked.
@@ -487,11 +524,13 @@ impl Waker {
     }
 
     pub fn wait(&self) {
-        self.loop_.wait();
+        // SAFETY: process-global loop; single-threaded `wait()` caller.
+        unsafe { (*self.loop_).wait() };
     }
 
     pub fn wake(&self) {
-        self.loop_.wakeup();
+        // SAFETY: process-global loop; `wakeup()` is the cross-thread path.
+        unsafe { (*self.loop_).wakeup() };
     }
 }
 
@@ -531,7 +570,8 @@ impl Closer {
             debug_assert!(closer == (*req).data.cast::<Closer>());
             bun_sys::syslog!(
                 "uv_fs_close({}) = {}",
-                Fd::from_uv((*req).file.fd),
+                // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
+                Fd::from_uv((*req).file_fd()),
                 (*req).result
             );
 

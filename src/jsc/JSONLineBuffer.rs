@@ -148,10 +148,17 @@ impl JSONLineBuffer {
         bun_core::handle_oom(self.data.ensure_unused_capacity(additional));
     }
 
-    /// Notify the buffer that data was written directly (e.g., via pre-allocated slice).
-    pub fn notify_written(&mut self, new_data: &[u8]) {
-        debug_assert!((new_data.len() as u64) <= u32::MAX as u64);
-        unsafe { self.data.set_len(self.data.len().saturating_add(new_data.len())) };
+    /// Notify the buffer that `nread` bytes were written directly into the
+    /// tail of `data` (e.g., via the slice handed out by
+    /// `unused_capacity_slice()`).
+    ///
+    /// Takes a length, not a `&[u8]`, because the only caller's slice would
+    /// alias `&mut self.data` — and only the length is used here. Passing the
+    /// slice through would re-introduce the Stacked-Borrows hazard the
+    /// `on_read` refactor removed.
+    pub fn notify_written(&mut self, nread: usize) {
+        debug_assert!((nread as u64) <= u32::MAX as u64);
+        unsafe { self.data.set_len(self.data.len().saturating_add(nread)) };
         self.scan_for_newline();
     }
 }

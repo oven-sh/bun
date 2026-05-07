@@ -381,7 +381,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ipc: ipc_fd,
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(
+                loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: same lifetime erasure as the `!use_system_shell`
                         // branch above — `env` outlives the mini event loop.
@@ -1809,7 +1809,15 @@ impl RunCommand {
                     }
                 )
             };
-            let dir_name_w = bun_str::w!(DIR_NAME);
+            // Zig: `comptime bun.strings.w(DIR_NAME)`. `bun_str::w!` requires
+            // a string-literal *token*, which `concatcp!` doesn't yield, so
+            // widen the ASCII const at runtime into a small stack buffer.
+            let mut dir_name_buf = [0u16; 64];
+            for (i, b) in DIR_NAME.bytes().enumerate() {
+                debug_assert!(b < 0x80, "DIR_NAME is ASCII-only");
+                dir_name_buf[i] = b as u16;
+            }
+            let dir_name_w: &[u16] = &dir_name_buf[..DIR_NAME.len()];
             target_path_buffer[prefix.len() + len..prefix.len() + len + dir_name_w.len()]
                 .copy_from_slice(dir_name_w);
             let dir_slice_len = prefix.len() + len + dir_name_w.len();
@@ -1843,8 +1851,8 @@ impl RunCommand {
                     std::ptr::null_mut(),
                 ) == 0
                 {
-                    match sys::windows::get_last_error() {
-                        sys::windows::Error::ALREADY_EXISTS => {}
+                    match sys::windows::get_last_win32_error() {
+                        sys::windows::Win32Error::ALREADY_EXISTS => {}
                         _ => {
                             {
                                 debug_assert!(target_path_buffer[dir_slice_len] == b'\\' as u16);
@@ -2161,7 +2169,7 @@ impl RunCommand {
             use_execve_on_macos: silent,
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(
+                loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
                         Some(unsafe {
                             // SAFETY: env loader is process-lifetime; erase

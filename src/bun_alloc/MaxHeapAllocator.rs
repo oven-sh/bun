@@ -6,7 +6,21 @@ use core::ptr::NonNull;
 
 use crate::{Alignment, Allocator};
 
-// libc::max_align_t alignment (16 on x86_64/aarch64).
+// `std.c.max_align_t` alignment. The `libc` crate does not expose
+// `max_align_t` on Windows MSVC, so a local mirror is used there only —
+// non-Windows targets keep `libc::max_align_t` (which carries `long double`,
+// align 16 on x86_64/aarch64; the {f64,i64,*const ()} fallback would silently
+// downgrade to 8).
+#[cfg(windows)]
+#[repr(C)]
+struct MaxAlignT {
+    _f: f64,
+    _i: i64,
+    _p: *const (),
+}
+#[cfg(windows)]
+const MAX_ALIGN: usize = align_of::<MaxAlignT>();
+#[cfg(not(windows))]
 const MAX_ALIGN: usize = align_of::<libc::max_align_t>();
 
 /// Zig backed `array_list` with `std.array_list.AlignedManaged(u8, .of(std.c.max_align_t))`

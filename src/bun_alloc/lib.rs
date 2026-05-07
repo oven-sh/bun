@@ -445,8 +445,23 @@ pub fn page_size() -> usize {
         #[cfg(windows)]
         // SAFETY: `GetSystemInfo` writes a fully-initialized SYSTEM_INFO.
         unsafe {
-            let mut info = core::mem::zeroed::<windows_sys::Win32::System::SystemInformation::SYSTEM_INFO>();
-            windows_sys::Win32::System::SystemInformation::GetSystemInfo(&mut info);
+            // Local `#[repr(C)]` mirror so this crate stays leaf (no
+            // `windows-sys` dep — see PORTING.md §Crate map). Only
+            // `dwPageSize` is read; the rest is opaque padding sized to
+            // `sizeof(SYSTEM_INFO)` (48 bytes on both x86 and x64).
+            #[repr(C)]
+            struct SystemInfo {
+                wProcessorArchitecture: u16,
+                wReserved: u16,
+                dwPageSize: u32,
+                _tail: [*mut core::ffi::c_void; 3],
+                _ints: [u32; 5],
+            }
+            unsafe extern "system" {
+                fn GetSystemInfo(lpSystemInfo: *mut SystemInfo);
+            }
+            let mut info = core::mem::zeroed::<SystemInfo>();
+            GetSystemInfo(&mut info);
             info.dwPageSize as usize
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]

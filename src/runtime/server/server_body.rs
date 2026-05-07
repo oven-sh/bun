@@ -2346,32 +2346,8 @@ where
 
 
 
-    fn notify_inspector_server_stopped(&mut self) {
-        if self.inspector_server_id.get() != 0 {
-            #[cold] fn cold() {}
-            cold();
-            if let Some(debugger) = &self.vm_mut().debugger {
-                cold();
-                // PORT NOTE (layering): the Zig `HTTPServerAgent.notifyServerStopped`
-                // takes `AnyServer` and unpacks `inspector_server_id` itself.
-                // The Rust `bun_jsc` tier can't name `AnyServer`, so the
-                // tier-hoisted free fn takes `(agent_ptr, server_id, timestamp)`
-                // directly — call it with the bits we have.
-                if let Some(agent) = debugger.http_server_agent.agent {
-                    // SAFETY: agent is a live C++ InspectorHTTPServerAgent while
-                    // the debugger is attached.
-                    unsafe {
-                        InspectorHTTPServerAgent::notify_server_stopped(
-                            agent.as_ptr(),
-                            self.inspector_server_id,
-                            bun_core::time::milli_timestamp() as f64,
-                        );
-                    }
-                }
-                self.inspector_server_id = DebuggerId::new(0);
-            }
-        }
-    }
+    // `notify_inspector_server_stopped` lives in the unbounded impl block
+    // above so the unbounded `deinit()` (mod.rs) can call it.
 
 
 

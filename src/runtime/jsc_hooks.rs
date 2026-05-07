@@ -2002,19 +2002,28 @@ fn transpile_source_code_inner(
             // deferred `.close()` (which the parse path always reaches) UB.
             let should_close_ptr: *mut bool = &mut should_close_input_file_fd;
             let input_file_fd_ptr: *mut bun_sys::Fd = &mut input_file_fd;
-            scopeguard::defer! {
-                // SAFETY: `should_close_input_file_fd` / `input_file_fd` are
-                // declared earlier in this stack frame and outlive this guard
-                // (locals drop in reverse declaration order); the guard runs on
-                // the same thread before either is destroyed.
-                unsafe {
-                    if *should_close_ptr && (*input_file_fd_ptr).is_valid() {
-                        use bun_sys::FdExt as _;
-                        (*input_file_fd_ptr).close();
-                        *input_file_fd_ptr = bun_sys::Fd::INVALID;
+            // PORT NOTE: `scopeguard::defer!` would capture the two `*mut`
+            // locals by-ref in its non-`move` closure, which borrowck then
+            // treats as conflicting with the later `&mut *ptr` reborrows below
+            // (edition-2021 capture analysis). Thread the raw pointers through
+            // the guard *payload* instead so nothing is captured.
+            let _fd_guard = scopeguard::guard(
+                (should_close_ptr, input_file_fd_ptr),
+                |(should_close_ptr, input_file_fd_ptr)| {
+                    // SAFETY: `should_close_input_file_fd` / `input_file_fd`
+                    // are declared earlier in this stack frame and outlive
+                    // this guard (locals drop in reverse declaration order);
+                    // the guard runs on the same thread before either is
+                    // destroyed.
+                    unsafe {
+                        if *should_close_ptr && (*input_file_fd_ptr).is_valid() {
+                            use bun_sys::FdExt as _;
+                            (*input_file_fd_ptr).close();
+                            *input_file_fd_ptr = bun_sys::Fd::INVALID;
+                        }
                     }
-                }
-            }
+                },
+            );
 
             // ── Node-fallback virtual source ────────────────────────────────
             // Spec :258-264.

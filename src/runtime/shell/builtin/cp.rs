@@ -15,6 +15,12 @@ use crate::shell::{ExitCode, ShellErr};
 pub struct Cp {
     pub opts: Opts,
     pub state: State,
+    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
+    /// `ExecState`) because `print_shell_cp_task` is also driven from
+    /// [`State::Ebusy`] on Windows; both states must be able to stash/pop.
+    pub output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
 }
 
 #[derive(Default)]
@@ -39,10 +45,6 @@ pub struct ExecState {
     pub output_waiting: u32,
     pub output_done: u32,
     pub err: Option<ShellErr>,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
-    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
     #[cfg(windows)]
     pub ebusy: EbusyState,
 }
@@ -94,7 +96,6 @@ impl Cp {
             output_waiting: 0,
             output_done: 0,
             err: None,
-            output_queue: std::collections::VecDeque::new(),
             #[cfg(windows)]
             ebusy: EbusyState::default(),
         });
@@ -201,12 +202,14 @@ impl Cp {
                     // SAFETY: argv entries are NUL-terminated.
                     let tgt = unsafe { CStr::from_ptr(tgt_ptr) }.to_bytes().to_vec();
                     let operands = 1 + (target - start);
+                    let interp_ptr = interp as *mut Interpreter;
                     for i in start..target {
                         let p = Builtin::of(interp, cmd).args_slice()[i];
                         // SAFETY: argv entries are NUL-terminated.
                         let src = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
                         let task = ShellCpTask::create(
                             cmd, evtloop, opts, operands, src, tgt.clone(), cwd.clone(),
+                            interp_ptr,
                         );
                         // SAFETY: freshly Box::into_raw'd.
                         unsafe { ShellCpTask::schedule(task) };

@@ -869,10 +869,13 @@ impl Drop for FSEventsLoop {
 }
 
 pub struct FSEventsWatcher {
-    // TODO(port): lifetime — borrowed from owning PathWatcher (not 'static, not owned here).
-    // Zig stored a `[]const u8` slice whose backing buffer is owned by the PathWatcher
-    // that holds this FSEventsWatcher; deinit() does not free it.
-    pub path: &'static [u8],
+    /// Borrowed from the owning `PathWatcher` (Zig: `[]const u8`). Stored raw
+    /// because the lifetime can't be named here — the PathWatcher heap-allocates
+    /// this watcher and only frees it after `Drop` (→ `unregister_watcher`) has
+    /// run, so the bytes outlive every read in `_events_cb` / `_schedule`.
+    /// The backing buffer is a `ZBox`, so `(*path).as_ptr()` is NUL-terminated
+    /// (required by `CFStringCreateWithFileSystemRepresentation`).
+    pub path: *const [u8],
     pub callback: Callback,
     pub flush_callback: UpdateEndCallback,
     // Zig: `loop: ?*FSEventsLoop`. Stored as a raw pointer because the loop is
@@ -881,23 +884,23 @@ pub struct FSEventsWatcher {
     // be UB (write through pointer derived from shared ref).
     pub loop_: Option<NonNull<FSEventsLoop>>,
     pub recursive: bool,
-    pub ctx: *mut (),
+    pub ctx: *mut c_void,
 }
 
-pub type Callback = fn(ctx: *mut (), event: Event, is_file: bool);
-pub type UpdateEndCallback = fn(ctx: *mut ());
+pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
+pub type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
     pub fn init(
         loop_: *mut FSEventsLoop,
-        path: &'static [u8],
+        path: &[u8],
         recursive: bool,
         callback: Callback,
         update_end: UpdateEndCallback,
-        ctx: *mut (),
+        ctx: *mut c_void,
     ) -> Box<FSEventsWatcher> {
         let mut this = Box::new(FSEventsWatcher {
-            path,
+            path: path as *const [u8],
             callback,
             flush_callback: update_end,
             loop_: NonNull::new(loop_),
@@ -938,11 +941,11 @@ impl Drop for FSEventsWatcher {
 }
 
 pub fn watch(
-    path: &'static [u8],
+    path: &[u8],
     recursive: bool,
     callback: Callback,
     update_end: UpdateEndCallback,
-    ctx: *mut (),
+    ctx: *mut c_void,
 ) -> Result<Box<FSEventsWatcher>, bun_core::Error> {
     // TODO(port): narrow error set
     // SAFETY: FSEVENTS_DEFAULT_LOOP is only mutated under FSEVENTS_DEFAULT_LOOP_MUTEX

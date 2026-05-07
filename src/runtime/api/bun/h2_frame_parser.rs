@@ -388,6 +388,12 @@ impl UInt31WithReserved {
     fn init(value: u32, reserved: bool) -> Self {
         Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
     }
+    /// PORT NOTE (intentional divergence): Zig's `toUInt32()` is `@bitCast` of
+    /// `packed struct(u32){ reserved: bool, uint31: u31 }`, which on little-endian places
+    /// `reserved` in bit 0 and yields `(uint31 << 1) | reserved`. That is a latent RFC 7540
+    /// §6.3 bug in Zig's deprecated PRIORITY path — the wire format wants the reserved/E
+    /// bit at bit 31. We keep the RFC-compliant `(reserved << 31) | uint31` layout here, which
+    /// already matches `from_bytes`/`write` and the on-wire `StreamPriority.stream_identifier`.
     #[inline]
     fn to_uint32(self) -> u32 {
         self.0
@@ -1921,12 +1927,12 @@ impl H2FrameParser {
         // TODO(port): narrow error set
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
-        encoded_headers.reserve(required.saturating_sub(old_len));
-        // PORT NOTE: Zig used allocatedSlice() to write past .len then bump .len. In Rust,
-        // forming &mut [u8] over uninitialized capacity is UB, so zero-fill to capacity first
-        // (hpack.encode() takes &mut [u8], not &mut [MaybeUninit<u8>]).
-        let cap = encoded_headers.capacity();
-        encoded_headers.resize(cap, 0);
+        // PORT NOTE: Zig wrote into `allocatedSlice()` past `.len` then bumped `.len` on
+        // success. In Rust, materializing `&mut [u8]` over uninitialized capacity is UB and
+        // hpack.encode() needs `&mut [u8]` (not `&mut [MaybeUninit<u8>]`), so zero-extend to
+        // `required` first. On both Ok and Err we truncate so `len` never exposes scratch
+        // bytes — the `?` early-return / corrupted-len hazard from the original port is gone.
+        encoded_headers.resize(required, 0);
         match self.encode(encoded_headers.as_mut_slice(), old_len, name, value, never_index) {
             Ok(bytes_written) => {
                 encoded_headers.truncate(old_len + bytes_written);

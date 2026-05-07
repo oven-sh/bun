@@ -1008,8 +1008,9 @@ pub struct DarwinWatch {
 impl Drop for DarwinWatch {
     fn drop(&mut self) {
         if let Some(fse) = self.fsevents.take() {
-            // SAFETY: fse was returned by `FSEvents.watch` and never deinit'd.
-            unsafe { fsevents::FSEventsWatcher::deinit(fse) };
+            // SAFETY: fse came from `Box::into_raw` in `add_watch`; reconstitute
+            // to run `FSEventsWatcher::drop` (→ `unregister_watcher`).
+            drop(unsafe { Box::from_raw(fse) });
         }
     }
 }

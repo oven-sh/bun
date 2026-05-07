@@ -144,6 +144,56 @@ fn isKnownArmPart(part_name: []const u8) bool {
     return !strings.contains(part_name, "unknown");
 }
 
+/// Finalize a single CPU's model using ARM decoder or Hardware fallback.
+/// Called when a CPU has no model name and its data is complete.
+fn finalizeCpuModel(
+    globalThis: *jsc.JSGlobalObject,
+    values: jsc.JSValue,
+    cpu_index: u32,
+    arm_impl: ?u32,
+    arm_part: ?u32,
+    hardware_value: ?[]const u8,
+    model_name_buf: *[64]u8,
+) !void {
+    const cpu = try values.getIndex(globalThis, cpu_index);
+    const model = cpu.get(globalThis, "model");
+    if (model.isUndefined() or model.isNull()) {
+        if (arm_impl != null and arm_part != null) {
+            const impl_name = cpuImplementerName(arm_impl.?);
+            const part_name = cpuPartName(arm_impl.?, arm_part.?);
+            if (isKnownArmPart(part_name)) {
+                const model_str = formatArmModel(model_name_buf, impl_name, part_name);
+                try setCpuModel(globalThis, values, cpu_index, model_str);
+                return;
+            }
+        }
+        if (hardware_value) |hv| {
+            try setCpuModel(globalThis, values, cpu_index, hv);
+        }
+    }
+}
+
+/// Apply Hardware or "unknown" fallback to CPUs that still have no model.
+fn applyModelFallback(
+    globalThis: *jsc.JSGlobalObject,
+    values: jsc.JSValue,
+    num_cpus: u32,
+    hardware_value: ?[]const u8,
+) !void {
+    var it = try values.arrayIterator(globalThis);
+    var idx: u32 = 0;
+    while (try it.next()) |cpu| : (idx += 1) {
+        const model = cpu.get(globalThis, "model");
+        if (model.isUndefined() or model.isNull()) {
+            if (hardware_value) |hv| {
+                try setCpuModel(globalThis, values, idx, hv);
+            } else {
+                try setCpuModel(globalThis, values, idx, "unknown");
+            }
+        }
+    }
+}
+
 pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     const cpusImpl = switch (Environment.os) {
         .linux => cpusImplLinux,
@@ -250,25 +300,8 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             const value = strings.trim(line[colon_pos + 1 ..], " \t\r\n:");
 
             if (strings.eqlComptime(key, "processor")) {
-                // Finalize previous CPU: if it has no model name, try ARM decoder
-                if (cpu_index < num_cpus) {
-                    const prev_cpu = try values.getIndex(globalThis, cpu_index);
-                    const prev_model = prev_cpu.get(globalThis, "model");
-                    if (prev_model.isUndefined() or prev_model.isNull()) {
-                        if (arm_impl != null and arm_part != null) {
-                            const impl_name = cpuImplementerName(arm_impl.?);
-                            const part_name = cpuPartName(arm_impl.?, arm_part.?);
-                            if (isKnownArmPart(part_name)) {
-                                const model_str = formatArmModel(&model_name_buf, impl_name, part_name);
-                                try setCpuModel(globalThis, values, cpu_index, model_str);
-                            } else if (hardware_value) |hv| {
-                                try setCpuModel(globalThis, values, cpu_index, hv);
-                            }
-                        } else if (hardware_value) |hv| {
-                            try setCpuModel(globalThis, values, cpu_index, hv);
-                        }
-                    }
-                }
+                // Finalize previous CPU using ARM decoder or Hardware fallback
+                try finalizeCpuModel(globalThis, values, cpu_index, arm_impl, arm_part, hardware_value, &model_name_buf);
                 cpu_index = try std.fmt.parseInt(u32, value, 10);
                 if (cpu_index >= num_cpus) return error.too_may_cpus;
                 arm_impl = null;
@@ -276,7 +309,6 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             } else if (strings.eqlComptime(key, "model name")) {
                 try setCpuModel(globalThis, values, cpu_index, value);
             } else if (strings.eqlComptime(key, "Hardware")) {
-                // Stash the SoC name; apply only to CPUs that end up with no model.
                 hardware_value = value;
             } else if (strings.eqlComptime(key, "CPU implementer")) {
                 arm_impl = std.fmt.parseInt(u32, value, 0) catch null;
@@ -286,48 +318,10 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         }
 
         // Finalize the last CPU
-        if (cpu_index < num_cpus) {
-            const last_cpu = try values.getIndex(globalThis, cpu_index);
-            const last_model = last_cpu.get(globalThis, "model");
-            if (last_model.isUndefined() or last_model.isNull()) {
-                if (arm_impl != null and arm_part != null) {
-                    const impl_name = cpuImplementerName(arm_impl.?);
-                    const part_name = cpuPartName(arm_impl.?, arm_part.?);
-                    if (isKnownArmPart(part_name)) {
-                        const model_str = formatArmModel(&model_name_buf, impl_name, part_name);
-                        try setCpuModel(globalThis, values, cpu_index, model_str);
-                    } else if (hardware_value) |hv| {
-                        try setCpuModel(globalThis, values, cpu_index, hv);
-                    }
-                } else if (hardware_value) |hv| {
-                    try setCpuModel(globalThis, values, cpu_index, hv);
-                }
-            }
-        }
+        try finalizeCpuModel(globalThis, values, cpu_index, arm_impl, arm_part, hardware_value, &model_name_buf);
 
-        // Apply hardware fallback to CPUs that still have no model
-        if (hardware_value) |hv| {
-            var it = try values.arrayIterator(globalThis);
-            var idx: u32 = 0;
-            while (try it.next()) |cpu| : (idx += 1) {
-                const model = cpu.get(globalThis, "model");
-                if (model.isUndefined() or model.isNull()) {
-                    try setCpuModel(globalThis, values, idx, hv);
-                }
-            }
-        }
-
-        // CPUs with no model at all → "unknown"
-        {
-            var it = try values.arrayIterator(globalThis);
-            var idx: u32 = 0;
-            while (try it.next()) |cpu| : (idx += 1) {
-                const model = cpu.get(globalThis, "model");
-                if (model.isUndefined() or model.isNull()) {
-                    try setCpuModel(globalThis, values, idx, "unknown");
-                }
-            }
-        }
+        // Apply fallback (Hardware or "unknown") to CPUs with no model
+        try applyModelFallback(globalThis, values, num_cpus, hardware_value);
     } else |_| {
         // Initialize model name to "unknown"
         var it = try values.arrayIterator(globalThis);

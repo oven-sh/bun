@@ -1187,11 +1187,7 @@ impl BlobExt for Blob {
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
                     if strings::is_all_ascii(slice) {
-                        if self.content_type_allocated {
-                            // SAFETY: content_type_allocated implies content_type is a Box<[u8]>.
-                            unsafe { drop(Box::from_raw(self.content_type as *mut [u8])) };
-                            self.content_type_allocated = false;
-                        }
+                        self.free_content_type();
                         self.content_type_was_set = true;
 
                         // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -1400,9 +1396,12 @@ impl BlobExt for Blob {
             {
                 let sink = webcore::FileSink::init(
                     Fd::INVALID,
-                    // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                     jsc::EventLoopHandle::init(
-                        unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
+                        self.global_this()
+                            .expect("Blob.global_this set at construction")
+                            .bun_vm()
+                            .as_mut()
+                            .event_loop() as *mut (),
                     ),
                 );
 
@@ -1563,12 +1562,7 @@ impl BlobExt for Blob {
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
                     if strings::is_all_ascii(slice) {
-                        if self.content_type_allocated {
-                            // SAFETY: `content_type_allocated` ⇒ the bytes were
-                            // a leaked `Box<[u8]>` (or default-allocator buf).
-                            unsafe { drop(Box::from_raw(self.content_type as *mut [u8])) };
-                            self.content_type_allocated = false;
-                        }
+                        self.free_content_type();
                         self.content_type_was_set = true;
                         // SAFETY: see other `mime_type` call sites.
                         if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
@@ -1680,11 +1674,14 @@ impl BlobExt for Blob {
                 )
             };
 
-            // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
             let sink = webcore::FileSink::init(
                 fd,
                 jsc::EventLoopHandle::init(
-                    unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop() as *mut (),
                 ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
@@ -1709,9 +1706,12 @@ impl BlobExt for Blob {
         {
             let sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
-                // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                 jsc::EventLoopHandle::init(
-                    unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop() as *mut (),
                 ),
             );
 
@@ -1769,10 +1769,7 @@ impl BlobExt for Blob {
 
         // dupe() deep-copies an allocated content_type; we're about to replace it,
         // so release that copy first to avoid leaking it.
-        if blob.content_type_allocated {
-            // SAFETY: content_type_allocated implies a Box<[u8]> was leaked into content_type.
-            unsafe { drop(Box::from_raw(blob.content_type as *mut [u8])) };
-        }
+        blob.free_content_type();
 
         // infer the content type if it was not specified
         if content_type.is_empty() && !self.content_type_slice().is_empty() && !self.content_type_allocated {
@@ -5161,6 +5158,12 @@ impl S3BlobDownloadTask {
         let _drop = scopeguard::guard(this as *mut S3BlobDownloadTask, |p| unsafe {
             drop(Box::from_raw(p));
         });
+        // NOTE(accessor-sweep): no `&`-returning accessor for
+        // `S3BlobDownloadTask::global_this` — the borrow must outlive
+        // `&mut this` calls (`this.call_handler`, `this.promise.*`) below,
+        // which a `fn(&self) -> &JSGlobalObject` lifetime cannot express.
+        // SAFETY: `global_this` is set from a live `&JSGlobalObject` in
+        // `init()` and `poll_ref` keeps the VM alive until this resolves.
         let global = unsafe { &*this.global_this };
         match result {
             crate::webcore::__s3_client::S3DownloadResult::Success(mut response) => {

@@ -1208,6 +1208,6 @@ impl Drop for LifecycleScriptSubprocess<'_> {
 // PORT STATUS
 //   source:     src/install/lifecycle_script_runner.zig (605 lines)
 //   confidence: medium
-//   todos:      12
+//   todos:      8
 //   notes:      manager is &'a but mutated (active_lifecycle_scripts, progress, scripts_node) — needs interior mutability; envp owned by-value (NullDelimitedEnvMap) so it survives across spawn_next_script; self-freeing intrusive type uses Drop + unsafe destroy(*mut Self).
 // ──────────────────────────────────────────────────────────────────────────

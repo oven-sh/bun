@@ -1795,14 +1795,12 @@ impl<'a> Printer<'a> {
 
         env_loader.load_process()?;
         // `DotEnv::Loader::load` is typed against the `bun_sys::fs::DirEntry`
-        // seam (bun_dotenv has no `bun_resolver` dep); the resolver `DirEntry`
-        // *is* the concrete type behind that opaque handle, so erase across the
-        // seam at the call boundary.
-        // SAFETY: `bun_sys::fs::DirEntry` is `#[repr(C)]` opaque; the resolver's
-        // vtable casts pointers between the two identically (resolver/fs.rs
-        // `SYS_FS_VTABLE`). `entries` lives in the BSSMap singleton.
+        // seam (bun_dotenv sits below `bun_resolver` in the crate graph). Go
+        // through the resolver-provided typed adapter rather than open-coding
+        // the `as *mut ZST` reinterpret here — the seam erase lives in
+        // `bun_resolver::fs::DirEntry::as_sys_seam_mut` next to `SYS_FS_VTABLE`.
         env_loader.load(
-            unsafe { &mut *(entries as *mut Fs::DirEntry as *mut bun_sys::fs::DirEntry) },
+            entries.as_sys_seam_mut(),
             &[] as &[&[u8]],
             DotEnv::DotEnvFileSuffix::Production,
             false,

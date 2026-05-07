@@ -1,12 +1,12 @@
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
-use crate::event_loop::{ConcurrentTask, EventLoop};
-use crate::rare_data::RareData;
+use crate::event_loop::ConcurrentTask;
+use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
     VirtualMachineRef as VirtualMachine,
 };
+use bun_bundler::transpiler::PluginResolver;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
 use bun_string::String as BunString;

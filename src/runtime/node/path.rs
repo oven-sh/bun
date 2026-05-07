@@ -3556,7 +3556,7 @@ pub fn resolve(
         paths_buf[paths_offset] = path_str.to_owned_slice().into_boxed_slice();
 
         if !is_windows {
-            if path_str.char_at(0) == CHAR_FORWARD_SLASH as u32 {
+            if path_str.char_at(0) == u16::from(CHAR_FORWARD_SLASH) {
                 resolved_root = true;
             }
         }

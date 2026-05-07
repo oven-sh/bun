@@ -124,12 +124,11 @@ pub fn to_throw(
             }
 
             let mut formatter2 = super::make_formatter(global);
-            return this.throw_fmt(
+            return this.throw(
                 global,
                 signature,
-                "\n\nExpected substring: not <green>{}<r>\nReceived message: <red>{}<r>\n",
                 format_args!(
-                    "{}{}",
+                    "\n\nExpected substring: not <green>{}<r>\nReceived message: <red>{}<r>\n",
                     expected_value.to_fmt(&mut formatter),
                     received_message.to_fmt(&mut formatter2),
                 ),

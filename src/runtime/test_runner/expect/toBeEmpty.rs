@@ -120,7 +120,7 @@ pub fn to_be_empty(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/expect/toBeEmpty.zig (88 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer postMatch via scopeguard owning &mut Expect; JSPropertyIterator path replaced with is_object_empty shim
+//   confidence: high
+//   todos:      0
+//   notes:      defer postMatch via scopeguard owning &mut Expect; JSPropertyIterator path ported with runtime options struct
 // ──────────────────────────────────────────────────────────────────────────

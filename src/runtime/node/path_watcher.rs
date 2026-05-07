@@ -29,15 +29,15 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap};
-use bun_core::{handle_oom, zstr, Output, ZStr};
-use bun_paths::resolve_path::{join_string_buf, join_z_buf, platform};
-use bun_paths::{self as path, path_buffer_pool, PathBuffer};
-use bun_str::strings;
-use bun_sys::{self as sys, Fd, FdExt, Tag};
+use bun_core::{zstr, Output};
+use bun_paths::resolve_path::{self as path, platform};
+use bun_paths::{path_buffer_pool, PathBuffer};
+use bun_str::{strings, ZStr};
+use bun_sys::{self as sys, Fd, FdExt, Tag, E};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
-use bun_jsc::VirtualMachineRef as VirtualMachine;
+use bun_jsc::virtual_machine::VirtualMachine;
 
 use crate::node::node_fs_watcher::{self as fswatcher, Event, FSWatcher};
 type EventPathString = fswatcher::EventPathString;
@@ -52,7 +52,7 @@ macro_rules! log {
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
 /// the FSEvents loop and Windows libuv loop lifetimes).
-// PORT NOTE: static mut — guarded by DEFAULT_MANAGER_MUTEX; matches Zig's plain global.
+// PORT NOTE: static mut — guarded by DEFAULT_MANAGER_MUTEX; consider OnceLock in Phase B
 static mut DEFAULT_MANAGER: Option<&'static PathWatcherManager> = None;
 static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
@@ -233,26 +233,28 @@ impl PathWatcher {
     fn emit(&mut self, event_type: EventType, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
         let h = hash(rel_path);
-        // PORT NOTE: reshaped for borrowck — index instead of zip(keys, values_mut).
-        for i in 0..self.handlers.len() {
+        // PORT NOTE: reshaped for borrowck — capture handler count then index by ptr.
+        let n = self.handlers.len();
+        for i in 0..n {
             let ctx = self.handlers.keys()[i];
-            if self.handlers.values_mut()[i].should_emit(h, timestamp, event_type) {
+            let last = &mut self.handlers.values_mut()[i];
+            if last.should_emit(h, timestamp, event_type) {
                 on_path_update_fn(Some(ctx), event_type.to_event(rel_path.into()), is_file);
             }
         }
     }
 
     fn emit_error(&mut self, err: sys::Error) {
-        for &ctx in self.handlers.keys() {
-            on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
+        for ctx in self.handlers.keys() {
+            on_path_update_fn(Some(*ctx), Event::Error(err.clone()), false);
         }
     }
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     /// Caller holds `manager.mutex`.
     fn flush(&mut self) {
-        for &ctx in self.handlers.keys() {
-            on_update_end_fn(Some(ctx));
+        for ctx in self.handlers.keys() {
+            on_update_end_fn(Some(*ctx));
         }
     }
 
@@ -326,12 +328,12 @@ pub fn watch(
     update_end: UpdateEndCallback,
     ctx: *mut c_void,
 ) -> sys::Result<*mut PathWatcher> {
-    // The callback/updateEnd are comptime in Zig so the emit path can call them directly
-    // without an indirect-call-per-event. Rust can't `comptime assert` fn-ptr identity;
-    // the emit path calls `FSWatcher::ON_PATH_UPDATE` / `on_update_end` directly and the
-    // params are kept for API parity with `node_fs_watcher.rs`'s call site.
-    // PERF(port): was comptime monomorphization — profile in Phase B.
-    let _ = (vm, callback, update_end);
+    // The callback/updateEnd are comptime so the emit path can call them directly
+    // without an indirect-call-per-event; assert they're what node_fs_watcher passes.
+    // PERF(port): was comptime monomorphization — Zig asserted at compile time.
+    debug_assert!(callback as usize == FSWatcher::ON_PATH_UPDATE as usize);
+    debug_assert!(update_end as usize == FSWatcher::on_update_end as usize);
+    let _ = vm;
 
     let manager = match PathWatcherManager::get() {
         Err(e) => return Err(e),
@@ -351,7 +353,7 @@ pub fn watch(
     let probe_fd: Fd = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0) {
         Ok(f) => f,
         Err(e) => {
-            if e.get_errno() == sys::E::ENOTDIR {
+            if e.get_errno() == E::ENOTDIR {
                 is_file = true;
                 match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
                     Ok(f) => f,
@@ -374,20 +376,23 @@ pub fn watch(
     };
 
     let mut key_buf = path_buffer_pool::get();
-    let key = PathWatcherManager::make_key(&mut key_buf, resolved.as_bytes(), recursive);
+    let key = PathWatcherManager::make_key(&mut key_buf[..], resolved.as_bytes(), recursive);
 
     manager.mutex.lock();
 
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
     let watchers = unsafe { &mut *manager.watchers.get() };
-    if let Some(&existing) = watchers.get(key) {
+    let gop = bun_core::handle_oom(watchers.get_or_put(key));
+    if gop.found_existing {
+        let existing = *gop.value_ptr;
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
+        let _ = unsafe { (*existing).handlers.put(ctx, ChangeEvent::default()) };
         manager.mutex.unlock();
         return Ok(existing);
     }
 
     // New watcher: own the key and path.
+    *gop.key_ptr = Box::<[u8]>::from(key);
     let watcher = PathWatcher::new(PathWatcher {
         manager: Some(manager),
         path: ZStr::boxed(resolved.as_bytes()),
@@ -397,8 +402,8 @@ pub fn watch(
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
-    unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
-    handle_oom(watchers.put(key, watcher));
+    let _ = unsafe { (*watcher).handlers.put(ctx, ChangeEvent::default()) };
+    *gop.value_ptr = watcher;
 
     // Linux/FreeBSD: `addWatch` mutates the platform dispatch maps (wd_map/entries)
     // which live under `manager.mutex`, so call it while still locked.
@@ -450,7 +455,7 @@ pub fn watch(
             let w = unsafe { &mut *watcher };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() > 0 {
-                w.emit_error(err);
+                w.emit_error(err.clone());
                 w.flush();
                 manager.mutex.unlock();
                 return Err(err.without_path());
@@ -502,11 +507,11 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         }
         let name = entry.name.slice();
         let child_abs =
-            join_z_buf::<platform::Posix>(abs_buf.as_mut_slice(), &[abs_dir.as_bytes(), name]);
+            path::join_z_buf::<platform::Posix>(&mut abs_buf[..], &[abs_dir.as_bytes(), name]);
         let child_rel: &[u8] = if rel_dir.is_empty() {
             name
         } else {
-            join_string_buf::<platform::Posix>(rel_buf.as_mut_slice(), &[rel_dir, name])
+            path::join_string_buf::<platform::Posix>(&mut rel_buf[..], &[rel_dir, name])
         };
         cb(child_abs, child_rel, child_is_file);
         if !child_is_file {
@@ -538,9 +543,6 @@ type PlatformWatch = KqueueWatch;
 type Platform = WindowsStub;
 #[cfg(windows)]
 type PlatformWatch = WindowsStubWatch;
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd", windows)))]
-compile_error!("path_watcher: unsupported platform");
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Linux
@@ -611,9 +613,9 @@ mod inotify_masks {
 #[cfg(target_os = "linux")]
 impl Linux {
     fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
-        use bun_sys::linux::IN;
+        use bun_sys::linux::{self, IN};
         // SAFETY: FFI call; flags are valid.
-        let rc = unsafe { sys::linux::inotify_init1(IN::CLOEXEC) };
+        let rc = unsafe { linux::inotify_init1(IN::CLOEXEC) };
         if rc < 0 {
             return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch));
         }
@@ -621,29 +623,35 @@ impl Linux {
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
         let mgr_ptr = manager as *mut PathWatcherManager as usize;
-        let spawn_result = std::thread::Builder::new().spawn(move || {
+        let builder = std::thread::Builder::new().name("fs.watch".into());
+        match builder.spawn(move || {
             // SAFETY: manager is process-global (&'static), never freed.
             Linux::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
-        });
-        if spawn_result.is_err() {
-            manager.platform.get_mut().fd.close();
-            return Err(sys::Error {
-                errno: sys::E::ENOMEM as _,
-                syscall: Tag::watch,
-                ..Default::default()
-            });
+        }) {
+            Ok(_handle) => {
+                // detached: dropping the JoinHandle detaches the thread.
+            }
+            Err(_) => {
+                manager.platform.get_mut().fd.close();
+                return Err(sys::Error {
+                    errno: E::ENOMEM as sys::ErrorInt,
+                    syscall: Tag::watch,
+                    ..Default::default()
+                });
+            }
         }
-        // JoinHandle dropped → thread detached.
         Ok(())
     }
 
     /// Caller holds `manager.mutex`.
     fn add_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
-        // PORT NOTE: reshaped for borrowck — clone path so &/&mut on watcher don't overlap.
-        let root = ZStr::boxed(watcher.path.as_bytes());
-        Linux::add_one(manager, watcher, &root, b"")?;
+        // PORT NOTE: reshaped for borrowck — clone path to avoid &/&mut overlap on watcher.
+        let root = watcher.path.as_bytes_with_nul().to_vec();
+        // SAFETY: `root` is a copy of a NUL-terminated path.
+        let root_z = unsafe { ZStr::from_raw(root.as_ptr(), root.len() - 1) };
+        Linux::add_one(manager, watcher, root_z, b"")?;
         if watcher.recursive && !watcher.is_file {
-            Linux::walk_and_add(manager, watcher, &root, b"");
+            Linux::walk_and_add(manager, watcher, root_z, b"");
         }
         Ok(())
     }
@@ -664,15 +672,16 @@ impl Linux {
         // SAFETY: `fd` is set once in `init()` before the reader thread spawns and
         // never mutated again; reading it here races with nothing.
         let fd = unsafe { (*plat).fd };
-        // SAFETY: FFI; abs_path is NUL-terminated, fd is a valid inotify fd.
-        let rc = unsafe { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
+        // SAFETY: FFI; abs_path is NUL-terminated.
+        let rc = unsafe { bun_sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
         if rc < 0 {
             // ENOTDIR/ENOENT during a recursive walk just means we raced; skip.
             if !subpath.is_empty() {
                 return Ok(());
             }
-            return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch)
-                .with_path(abs_path.as_bytes()));
+            return Err(
+                sys::Error::from_code_int(sys::last_errno(), Tag::watch).with_path(abs_path.as_bytes()),
+            );
         }
         let wd: i32 = rc;
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`. Project
@@ -742,15 +751,15 @@ impl Linux {
             }
             if owners.is_empty() {
                 wd_map.remove(&wd);
-                // SAFETY: FFI; fd is the inotify fd, wd was returned by inotify_add_watch.
-                unsafe { sys::linux::inotify_rm_watch(fd.native(), wd) };
+                // SAFETY: FFI; fd/wd valid.
+                let _ = unsafe { bun_sys::linux::inotify_rm_watch(fd.native(), wd) };
             }
         }
         watcher.platform.wds.clear();
     }
 
     fn thread_main(manager: &'static PathWatcherManager) {
-        use bun_sys::linux::IN;
+        use bun_sys::linux::{self, IN};
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Linux = manager.platform.get();
         // SAFETY: `fd` and `running` are set in `init()` before this thread spawns and
@@ -761,22 +770,22 @@ impl Linux {
         let fd = unsafe { (*plat).fd };
         let running: &AtomicBool = unsafe { &(*plat).running };
         // Large enough for a burst of events; inotify guarantees whole events per read.
-        // 4-byte alignment for `InotifyEvent` header — ensured via `#[repr(align(4))]`.
+        // 4-byte alignment matches `struct inotify_event`.
         #[repr(C, align(4))]
         struct AlignedBuf([u8; 64 * 1024]);
-        let mut buf: Box<AlignedBuf> = Box::new(AlignedBuf([0u8; 64 * 1024]));
+        let mut buf = Box::new(AlignedBuf([0u8; 64 * 1024]));
         let mut path_buf = PathBuffer::uninit();
 
         while running.load(Ordering::Acquire) {
-            // SAFETY: FFI; buf is valid for buf.0.len() bytes; fd is the inotify fd.
-            let rc = unsafe { sys::linux::read(fd.native(), buf.0.as_mut_ptr(), buf.0.len()) };
+            // SAFETY: FFI; buf valid for buf.0.len() bytes.
+            let rc = unsafe { linux::read(fd.native(), buf.0.as_mut_ptr(), buf.0.len()) };
             match sys::get_errno(rc) {
-                sys::E::SUCCESS => {}
-                sys::E::EAGAIN | sys::E::EINTR => continue,
+                E::SUCCESS => {}
+                E::EAGAIN | E::EINTR => continue,
                 errno => {
                     // Fatal: surface to every watcher, then exit the thread.
                     let err = sys::Error {
-                        errno: errno as _,
+                        errno: errno as sys::ErrorInt,
                         syscall: Tag::read,
                         ..Default::default()
                     };
@@ -794,7 +803,7 @@ impl Linux {
                     return;
                 }
             }
-            let n: usize = usize::try_from(rc).unwrap();
+            let n: usize = rc as usize;
             if n == 0 {
                 continue;
             }
@@ -881,14 +890,14 @@ impl Linux {
 
                     // Build the path relative to this owner's root.
                     let rel: &[u8] = if watcher.is_file {
-                        path::basename(watcher.path.as_bytes())
+                        bun_paths::basename(watcher.path.as_bytes())
                     } else if owner_subpath.is_empty() {
                         name
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
-                        join_string_buf::<platform::Posix>(
-                            path_buf.as_mut_slice(),
+                        path::join_string_buf::<platform::Posix>(
+                            &mut path_buf[..],
                             &[owner_subpath, name],
                         )
                     };
@@ -900,7 +909,7 @@ impl Linux {
                             && !((ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0)
                                 && !watcher.is_file),
                     );
-                    handle_oom(touched.put(owner_watcher, ()));
+                    let _ = touched.get_or_put(owner_watcher);
 
                     // Recursive: a new directory appeared under this owner's tree —
                     // start watching it so future events inside it are delivered.
@@ -912,8 +921,8 @@ impl Linux {
                         && !name.is_empty()
                     {
                         let mut abs_buf = path_buffer_pool::get();
-                        let child_abs = join_z_buf::<platform::Posix>(
-                            abs_buf.as_mut_slice(),
+                        let child_abs = path::join_z_buf::<platform::Posix>(
+                            &mut abs_buf[..],
                             &[watcher.path.as_bytes(), owner_subpath, name],
                         );
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
@@ -987,8 +996,8 @@ impl Darwin {
             }
             Err(e) => Err(sys::Error {
                 errno: match e {
-                    fsevents::Error::FailedToCreateCoreFoudationSourceLoop => sys::E::EINVAL as _,
-                    _ => sys::E::ENOMEM as _,
+                    fsevents::Error::FailedToCreateCoreFoudationSourceLoop => E::EINVAL as sys::ErrorInt,
+                    _ => E::ENOMEM as sys::ErrorInt,
                 },
                 syscall: Tag::watch,
                 ..Default::default()
@@ -1025,8 +1034,8 @@ impl Darwin {
             return;
         }
         match event {
-            Event::Rename(path) => watcher.emit(EventType::Rename, path.as_bytes(), is_file),
-            Event::Change(path) => watcher.emit(EventType::Change, path.as_bytes(), is_file),
+            Event::Rename(path) => watcher.emit(EventType::Rename, &path, is_file),
+            Event::Change(path) => watcher.emit(EventType::Change, &path, is_file),
             Event::Error(err) => watcher.emit_error(err),
             _ => {}
         }
@@ -1100,7 +1109,7 @@ pub struct KqueueWatch {
 #[cfg(target_os = "freebsd")]
 impl Kqueue {
     fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
-        // SAFETY: FFI call.
+        // SAFETY: FFI.
         let rc = unsafe { libc::kqueue() };
         if rc < 0 {
             return Err(sys::Error::from_code_int(sys::last_errno(), Tag::kqueue));
@@ -1108,32 +1117,36 @@ impl Kqueue {
         manager.platform.get_mut().kq = Fd::from_native(rc);
         // Daemon reader — the manager is process-global and never torn down.
         let mgr_ptr = manager as *mut PathWatcherManager as usize;
-        let spawn_result = std::thread::Builder::new().spawn(move || {
+        let builder = std::thread::Builder::new().name("fs.watch".into());
+        match builder.spawn(move || {
             // SAFETY: manager is process-global (&'static), never freed.
             Kqueue::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
-        });
-        if spawn_result.is_err() {
-            manager.platform.get_mut().kq.close();
-            return Err(sys::Error {
-                errno: sys::E::ENOMEM as _,
-                syscall: Tag::watch,
-                ..Default::default()
-            });
+        }) {
+            Ok(_handle) => {} // detached on drop
+            Err(_) => {
+                manager.platform.get_mut().kq.close();
+                return Err(sys::Error {
+                    errno: E::ENOMEM as sys::ErrorInt,
+                    syscall: Tag::watch,
+                    ..Default::default()
+                });
+            }
         }
-        // JoinHandle dropped → thread detached.
         Ok(())
     }
 
     /// Caller holds `manager.mutex`.
     fn add_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
         // PORT NOTE: reshaped for borrowck — clone path to avoid &/&mut overlap.
-        let root = ZStr::boxed(watcher.path.as_bytes());
-        let watcher_is_file = watcher.is_file;
-        Kqueue::add_one(manager, watcher, &root, b"", watcher_is_file)?;
+        let root = watcher.path.as_bytes_with_nul().to_vec();
+        // SAFETY: `root` is a copy of a NUL-terminated path.
+        let root_z = unsafe { ZStr::from_raw(root.as_ptr(), root.len() - 1) };
+        let is_file = watcher.is_file;
+        Kqueue::add_one(manager, watcher, root_z, b"", is_file)?;
         if watcher.recursive && !watcher.is_file {
             // kqueue needs an open fd per *file* as well as per directory.
-            walk_subtree::<false>(&root, b"", &mut |abs, rel, is_file| {
-                let _ = Kqueue::add_one(manager, watcher, abs, rel, is_file);
+            walk_subtree::<false>(root_z, b"", &mut |abs, rel, child_is_file| {
+                let _ = Kqueue::add_one(manager, watcher, abs, rel, child_is_file);
             });
         }
         Ok(())
@@ -1146,6 +1159,7 @@ impl Kqueue {
         subpath: &[u8],
         is_file: bool,
     ) -> sys::Result<()> {
+        use bun_sys::c::{Kevent, EV, EVFILT, NOTE};
         let plat: *mut Kqueue = manager.platform.get();
         // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
         // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
@@ -1169,23 +1183,18 @@ impl Kqueue {
         };
         let kq = unsafe { (*plat).kq };
 
-        // SAFETY: all-zero is a valid libc::kevent (#[repr(C)] POD).
-        let mut kev: libc::kevent = unsafe { core::mem::zeroed() };
-        kev.ident = usize::try_from(fd.native()).unwrap();
-        kev.filter = libc::EVFILT_VNODE;
-        kev.flags = libc::EV_ADD | libc::EV_CLEAR | libc::EV_ENABLE;
-        kev.fflags = libc::NOTE_WRITE
-            | libc::NOTE_DELETE
-            | libc::NOTE_RENAME
-            | libc::NOTE_EXTEND
-            | libc::NOTE_ATTRIB
-            | libc::NOTE_LINK
-            | libc::NOTE_REVOKE;
-        kev.udata = generation as *mut c_void;
+        // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD).
+        let mut kev: Kevent = unsafe { core::mem::zeroed() };
+        kev.ident = fd.native() as usize;
+        kev.filter = EVFILT::VNODE;
+        kev.flags = EV::ADD | EV::CLEAR | EV::ENABLE;
+        kev.fflags =
+            NOTE::WRITE | NOTE::DELETE | NOTE::RENAME | NOTE::EXTEND | NOTE::ATTRIB | NOTE::LINK | NOTE::REVOKE;
+        kev.udata = generation as _;
         let mut changes = [kev];
-        // SAFETY: FFI; kq is a valid kqueue fd; changes is a 1-element array.
+        // SAFETY: FFI; arrays valid for given lengths.
         let krc = unsafe {
-            sys::c::kevent(kq.native(), changes.as_ptr(), 1, changes.as_mut_ptr(), 0, core::ptr::null())
+            libc::kevent(kq.native(), changes.as_ptr(), 1, changes.as_mut_ptr(), 0, core::ptr::null())
         };
         if krc < 0 {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
@@ -1195,12 +1204,16 @@ impl Kqueue {
             if !subpath.is_empty() {
                 return Ok(()); // best-effort on children
             }
-            return Err(sys::Error::from_code_int(errno, Tag::kevent));
+            return Err(sys::Error {
+                errno: errno as sys::ErrorInt,
+                syscall: Tag::kevent,
+                ..Default::default()
+            });
         }
 
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
         unsafe {
-            handle_oom((*plat).entries.put(
+            let _ = (*plat).entries.put(
                 fd.native(),
                 KqEntry {
                     watcher: watcher as *mut PathWatcher,
@@ -1209,7 +1222,7 @@ impl Kqueue {
                     generation,
                     is_file,
                 },
-            ));
+            );
         }
         watcher.platform.fds.push(fd.native());
         Ok(())
@@ -1220,16 +1233,17 @@ impl Kqueue {
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
         let entries = unsafe { &mut (*manager.platform.get()).entries };
         for &ident in watcher.platform.fds.iter() {
-            if let Some((_k, v)) = entries.fetch_swap_remove(&ident) {
+            if let Some((_, entry)) = entries.fetch_swap_remove(&ident) {
                 // Closing the fd auto-removes the kevent.
-                v.fd.close();
-                // v.subpath dropped here.
+                entry.fd.close();
+                // entry.subpath dropped here.
             }
         }
         watcher.platform.fds.clear();
     }
 
     fn thread_main(manager: &'static PathWatcherManager) {
+        use bun_sys::c::{Kevent, NOTE};
         Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Kqueue = manager.platform.get();
         // SAFETY: `kq` and `running` are set in `init()` before this thread spawns and
@@ -1238,12 +1252,12 @@ impl Kqueue {
         // never alias them — we never form `&Kqueue` / `&mut Kqueue` over the whole struct.
         let kq = unsafe { (*plat).kq };
         let running: &AtomicBool = unsafe { &(*plat).running };
-        // SAFETY: libc::kevent is POD; zeroed array filled by kernel before read.
-        let mut events: [libc::kevent; 128] = unsafe { core::mem::zeroed() };
+        // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
+        let mut events: [Kevent; 128] = unsafe { core::mem::zeroed() };
         while running.load(Ordering::Acquire) {
-            // SAFETY: FFI; kq is a valid kqueue fd; events is a valid output buffer.
+            // SAFETY: FFI; events valid for events.len() entries.
             let count = unsafe {
-                sys::c::kevent(
+                libc::kevent(
                     kq.native(),
                     events.as_ptr(),
                     0,
@@ -1262,7 +1276,7 @@ impl Kqueue {
             let entries = unsafe { &(*plat).entries };
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
 
-            for kev in &events[..usize::try_from(count).unwrap()] {
+            for kev in &events[..count as usize] {
                 // Validate via the map — the entry may have been freed by a racing
                 // removeWatch between kevent() returning and us taking the lock. POSIX
                 // recycles the lowest fd on open(), so the ident could also now belong
@@ -1270,7 +1284,7 @@ impl Kqueue {
                 // set to a monotonic generation at registration and survives in the
                 // already-delivered event, so compare it to the current entry's gen
                 // to reject stale fd-reuse hits.
-                let Some(entry) = entries.get(&(i32::try_from(kev.ident).unwrap())) else {
+                let Some(entry) = entries.get(&(kev.ident as i32)) else {
                     continue;
                 };
                 if entry.generation != kev.udata as usize {
@@ -1281,7 +1295,7 @@ impl Kqueue {
                 let watcher = unsafe { &mut *entry.watcher };
 
                 let event_type: EventType = if kev.fflags
-                    & (libc::NOTE_DELETE | libc::NOTE_RENAME | libc::NOTE_REVOKE | libc::NOTE_LINK)
+                    & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE | NOTE::LINK)
                     != 0
                 {
                     EventType::Rename
@@ -1292,13 +1306,13 @@ impl Kqueue {
                 // kqueue has no filenames. For a file watch, report the basename; for a
                 // directory, report the subpath (empty for root → caller re-scans).
                 let rel: &[u8] = if entry.is_file && entry.subpath.as_bytes().is_empty() {
-                    path::basename(watcher.path.as_bytes())
+                    bun_paths::basename(watcher.path.as_bytes())
                 } else {
                     entry.subpath.as_bytes()
                 };
 
                 watcher.emit(event_type, rel, entry.is_file);
-                handle_oom(touched.put(watcher as *mut PathWatcher, ()));
+                let _ = touched.get_or_put(watcher as *mut PathWatcher);
             }
 
             for &w in touched.keys() {
@@ -1326,14 +1340,14 @@ pub struct WindowsStubWatch {}
 impl WindowsStub {
     fn init(_: &mut PathWatcherManager) -> sys::Result<()> {
         Err(sys::Error {
-            errno: sys::E::ENOTSUP as _,
+            errno: E::ENOTSUP as sys::ErrorInt,
             syscall: Tag::watch,
             ..Default::default()
         })
     }
     fn add_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) -> sys::Result<()> {
         Err(sys::Error {
-            errno: sys::E::ENOTSUP as _,
+            errno: E::ENOTSUP as sys::ErrorInt,
             syscall: Tag::watch,
             ..Default::default()
         })
@@ -1357,5 +1371,5 @@ fn on_update_end_fn(ctx: Option<*mut c_void>) {
 // PORT STATUS
 //   source:     src/runtime/node/path_watcher.zig (958 lines)
 //   confidence: medium
-//   todos:      0
+//   notes:      ZStr::boxed() for owned NUL-terminated paths; std::thread for daemon reader threads
 // ──────────────────────────────────────────────────────────────────────────

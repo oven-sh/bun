@@ -1088,7 +1088,8 @@ impl PathLikeExt for PathLike {
                     }
                     arguments.eat();
 
-                    return Ok(Some(Self::from_bun_string(ctx, &str, arguments.will_be_async)?));
+                    let mut str = str;
+                    return Ok(Some(Self::from_bun_string(ctx, &mut str, arguments.will_be_async)?));
                 }
 
                 Ok(None)
@@ -1098,36 +1099,36 @@ impl PathLikeExt for PathLike {
 
     fn from_bun_string(
         global: &JSGlobalObject,
-        str: &bun_str::String,
+        str: &mut bun_str::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
         // TODO(port): narrow error set
         if will_be_async {
-            let mut sliced = BunStringSliceExt::to_thread_safe_slice(str)?;
-            // errdefer sliced.deinit() — Drop handles this.
+            let mut sliced = str.to_thread_safe_slice();
+            let mut sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
             Valid::path_string_length(sliced.slice().len(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
+            let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
             sliced.report_extra_memory(global.vm());
 
             if sliced.underlying.is_empty() {
-                // TODO(port): partial move out of SliceWithUnderlyingString — use into_utf8() accessor in Phase B.
-                let utf8 = core::mem::take(&mut sliced.utf8);
-                core::mem::forget(sliced);
-                return Ok(Self::EncodedSlice(utf8));
+                return Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)));
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
-            let mut sliced = BunStringSliceExt::to_slice_with_underlying(str);
-            // errdefer sliced.deinit() — Drop handles this.
+            let mut sliced = str.to_slice();
+            let mut sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
             Valid::path_string_length(sliced.slice().len(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
+
+            let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
 
             // Costs nothing to keep both around.
             if sliced.is_wtf_allocated() {
@@ -1137,10 +1138,7 @@ impl PathLikeExt for PathLike {
             sliced.report_extra_memory(global.vm());
 
             // It is expensive to keep both around.
-            // TODO(port): partial move out of SliceWithUnderlyingString — use into_utf8() accessor in Phase B.
-            let utf8 = core::mem::take(&mut sliced.utf8);
-            core::mem::forget(sliced);
-            Ok(Self::EncodedSlice(utf8))
+            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
         }
     }
 }
@@ -1299,7 +1297,6 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         match strings::parse_int::<Mode>(slice, 8) {
             Ok(v) => v as u32,
             Err(_) => {
-                use crate::test_runner::expect::JSValueTestExt as _;
                 let mut formatter = jsc::console_object::Formatter::new(ctx);
                 // formatter.deinit() on Drop
                 return Err(ctx.throw_value(
@@ -1338,13 +1335,6 @@ impl PathOrFdExt for PathOrFileDescriptor {
     /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
     fn deinit(&self) {
         if let Self::Path(path) = self { path.deinit(); }
-    }
-
-    fn deinit_and_unprotect(&self) {
-        match self {
-            Self::Path(path) => path.deinit_and_unprotect(),
-            Self::Fd(_) => {}
-        }
     }
 
     fn from_js(

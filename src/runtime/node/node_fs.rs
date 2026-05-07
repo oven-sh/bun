@@ -4070,7 +4070,7 @@ impl NodeFS {
             // inode, that would zero the file before the first read. Match
             // Node by checking inodes after both are open and refusing.
             if let Maybe::Ok(dst_stat) = Syscall::fstat(dest_fd) {
-                if stat_.ino == dst_stat.ino && stat_.dev == dst_stat.dev {
+                if stat_.st_ino == dst_stat.st_ino && stat_.st_dev == dst_stat.st_dev {
                     return Maybe::Err(sys::Error {
                         errno: SystemErrno::EINVAL as _, syscall: sys::Tag::copyfile,
                         path: args.src.slice().into(), ..Default::default()
@@ -6521,7 +6521,7 @@ impl NodeFS {
             let mut buf = PathBuffer::uninit();
             let Maybe::Ok(statbuf) = Syscall::stat(src.slice_z(&mut buf)) else { return result };
             let Maybe::Ok(new_statbuf) = Syscall::stat(dest.slice_z(&mut buf)) else { return result };
-            if statbuf.dev == new_statbuf.dev && statbuf.ino == new_statbuf.ino {
+            if statbuf.st_dev == new_statbuf.st_dev && statbuf.st_ino == new_statbuf.st_ino {
                 return Maybe::Ok(());
             }
             result
@@ -6851,7 +6851,7 @@ impl NodeFS {
             // No O_TRUNC at open: if src and dest resolve to the same inode,
             // that would zero the file before the first read.
             if let Maybe::Ok(dst_stat) = Syscall::fstat(dest_fd) {
-                if stat_.ino == dst_stat.ino && stat_.dev == dst_stat.dev {
+                if stat_.st_ino == dst_stat.st_ino && stat_.st_dev == dst_stat.st_dev {
                     dest_fd.close();
                     self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                     return Maybe::Err(sys::Error {

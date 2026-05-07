@@ -928,7 +928,7 @@ impl RunCommand {
             (&raw mut RUN).write(Run {
                 ctx: ctx as *mut ContextData,
                 vm: vm_ptr,
-                entry_path: Box::into_raw(entry_path),
+                entry_path: entry_ptr,
             });
         }
 

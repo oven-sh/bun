@@ -506,14 +506,16 @@ impl Builtin {
                     return None;
                 }
 
-                // PORT NOTE: Builtin.zig:502 passes only the const `is_pollable`
-                // and ignores the `var pollable` populated by `openForWritingImpl`
-                // (a Zig dead-store bug). We intentionally honor `pollable` here
-                // so a FIFO/socket redirect target on POSIX is marked pollable.
+                // Spec (Builtin.zig:429/502): the IOWriter receives the
+                // hardcoded platform const `is_pollable` (false on POSIX, true
+                // on Windows); the `var pollable` out-param populated by
+                // `openForWritingImpl` is a dead store in Zig and is ignored
+                // here too so polling behaviour matches the spec exactly.
+                let _ = pollable;
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
-                        pollable: pollable || is_pollable_default,
+                        pollable: is_pollable_default,
                         nonblock: is_nonblocking,
                         is_socket,
                         ..Default::default()

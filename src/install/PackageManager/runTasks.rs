@@ -165,7 +165,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // write goes through this `&mut` so `has_updated_ptr` keeps provenance for
     // the guard's read.
     let has_updated_this_run = unsafe { &mut *has_updated_ptr };
-    let _drain_guard = scopeguard::guard((), move |()| {
+    scopeguard::defer! {
         // SAFETY: guard drops after every body borrow of `manager` /
         // `has_updated_this_run` has ended (scope exit or `?` unwind);
         // `manager_ptr` / `has_updated_ptr` retain provenance because the body
@@ -193,7 +193,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             unsafe { &mut *manager.downloads_node.unwrap() }.activate();
             manager.progress.maybe_refresh();
         }
-    });
+    };
 
     let patch_tasks_batch = manager.patch_task_queue.pop_batch();
     let mut patch_tasks_iter = patch_tasks_batch.iterator();

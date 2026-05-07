@@ -984,15 +984,28 @@ impl Tree {
             }
 
             if AS_DEFINED && !dep.behavior.is_peer() {
-                builder.maybe_report_error(format_args!(
-                    "Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"",
-                    builder.package_name(package_id),
-                    builder.package_version(package_id),
-                    builder.package_name(res_id),
-                    builder.package_version(res_id),
-                    dependency.name.fmt(builder.buf()),
-                    dependency.version.literal.fmt(builder.buf()),
-                ));
+                // PORT NOTE: reshaped for borrowck — `maybe_report_error` takes
+                // `&mut self` but the format args borrow `&self` (via
+                // `package_name`/`package_version`/`buf`). Inline against split
+                // field borrows: copy the `&'a Lockfile` out, then write to
+                // `builder.log` directly.
+                let lockfile = builder.lockfile;
+                let buf = lockfile.buffers.string_bytes.as_slice();
+                let names = lockfile.packages.items_name();
+                let resolutions = lockfile.packages.items_resolution();
+                let _ = builder.log.add_error_fmt(
+                    None,
+                    logger::Loc::EMPTY,
+                    format_args!(
+                        "Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"",
+                        names[package_id as usize].fmt(buf),
+                        resolutions[package_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto),
+                        names[res_id as usize].fmt(buf),
+                        resolutions[res_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto),
+                        dependency.name.fmt(buf),
+                        dependency.version.literal.fmt(buf),
+                    ),
+                );
                 return Err(SubtreeError::DependencyLoop);
             }
 

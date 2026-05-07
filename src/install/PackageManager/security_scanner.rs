@@ -943,6 +943,15 @@ pub struct SecurityScanSubprocess<'a> {
 // on the parent type; map to a generic StaticPipeWriter<Parent> in bun_sys::subprocess.
 pub type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
 
+impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
+    unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
+        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live; the
+        // writer is a field of `Self`, so reborrow via raw pointer to avoid
+        // aliasing `&mut self.json_writer`.
+        unsafe { (*this).on_close_io(kind) }
+    }
+}
+
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
         if let Some(p) = &self.process {

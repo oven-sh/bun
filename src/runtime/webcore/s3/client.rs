@@ -1007,7 +1007,13 @@ pub fn download_stream(
         response_buffer: MutableString::default(),
         mutex: Default::default(),
         reported_response_buffer: MutableString::default(),
-        state: core::sync::atomic::AtomicU64::new(0),
+        // Zig: `state: State.AtomicType = .init(@bitCast(State{}))` — `State{}` defaults
+        // `has_more = true` (bit 48). Passing 0 here would start the task with
+        // `has_more == false`, tripping the `assert(state.has_more)` in
+        // `process_http_callback` on the very first HTTP-thread callback.
+        state: core::sync::atomic::AtomicU64::new(
+            crate::webcore::s3::download_stream::State::default().0,
+        ),
         concurrent_task: Default::default(),
     }));
     // SAFETY: just allocated via Box::into_raw, non-null; lifetime owned by HTTP callback

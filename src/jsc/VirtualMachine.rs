@@ -1732,6 +1732,13 @@ impl VirtualMachine {
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
             addr_of_mut!((*vm).smol).write(opts.smol);
+            // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
+            // payload contains a `bool`, and rustc picks that field's invalid
+            // range (not the `&[u8]` null-ptr) as the enum niche, so all-zero
+            // bytes decode as `Some` with null-ref slices. Write `None`
+            // explicitly.
+            addr_of_mut!((*vm).cpu_profiler_config).write(None);
+            addr_of_mut!((*vm).heap_profiler_config).write(None);
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             #[cfg(debug_assertions)]

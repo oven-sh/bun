@@ -1640,9 +1640,9 @@ impl JSTranspiler {
         }
 
         if !loader.is_java_script_like() {
-            return Err(global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Only JavaScript-like files support this fast path",
-            ));
+            )));
         }
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B

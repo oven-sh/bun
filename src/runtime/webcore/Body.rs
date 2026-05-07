@@ -1483,13 +1483,17 @@ impl Value {
             return Ok(Value::Null);
         }
 
-        let mut reader = webcore::readable_stream::NewSource::<ByteStream>::new(
+        let reader = webcore::readable_stream::NewSource::<ByteStream>::new(
             webcore::readable_stream::NewSource {
                 context: ByteStream::default(),
                 global_this,
                 ..Default::default()
             },
         );
+        // SAFETY: `NewSource::new()` heap-allocates via `Box::into_raw`; ownership
+        // transfers to the JS wrapper's `m_ctx` in `to_readable_stream()` below
+        // (freed by the GC finalizer). Not a leak — FFI ownership hand-off.
+        let reader = unsafe { &mut *reader };
 
         reader.context.setup();
 
@@ -1508,13 +1512,6 @@ impl Value {
         // PORT NOTE: reshaped for borrowck — re-borrow locked after the early *self = Null path above.
         let Value::Locked(locked) = self else { unreachable!() };
 
-        // PORT NOTE: `reader` is `Box<NewSource<ByteStream>>`; `to_readable_stream`
-        // transfers ownership of the heap allocation to the JS wrapper's `m_ctx`
-        // (freed by the GC finalizer). Release the Box via `into_raw` — this is
-        // an FFI ownership hand-off, not a leak.
-        let reader: *mut webcore::readable_stream::NewSource<ByteStream> = Box::into_raw(reader);
-        // SAFETY: freshly allocated; JS wrapper takes ownership below.
-        let reader = unsafe { &mut *reader };
         let context_ptr: *mut ByteStream = &mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(
             ReadableStream {

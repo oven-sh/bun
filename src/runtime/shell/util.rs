@@ -16,10 +16,11 @@ impl OutKind {
     }
 }
 
-// TODO(port): verify crate path for bun.spawn.Stdio in Phase B
-// TODO(b2-blocked): bun_spawn::Stdio (no such crate; bun.spawn lives in crate::api::bun)
-
-pub use bun_spawn::Stdio;
+// Spec (util.zig): `pub const Stdio = bun.spawn.Stdio;` — the user-facing
+// stdio union with `isPiped()` from `runtime/api/bun/spawn/stdio.zig`, NOT the
+// low-level `PosixStdio`/`WindowsStdio` spawn-option shape that the
+// `bun_spawn` *crate* re-exports under the same name.
+pub use crate::api::bun_spawn::stdio::Stdio;
 
 #[cfg(target_os = "linux")]
 pub type WatchFd = core::ffi::c_int; // std.posix.fd_t
@@ -30,6 +31,4 @@ pub type WatchFd = i32;
 // PORT STATUS
 //   source:     src/shell/util.zig (21 lines)
 //   confidence: high
-//   todos:      1
-//   notes:      Stdio re-export crate path (bun_spawn) needs Phase B verification
 // ──────────────────────────────────────────────────────────────────────────

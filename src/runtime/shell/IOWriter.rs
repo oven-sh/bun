@@ -1097,8 +1097,11 @@ impl Drop for IOWriter {
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
         }
+        // SAFETY: see `io_evtloop` — pass address of the stored handle for the
+        // FilePoll vtable to recover. `s` (and thus `&s.evtloop`) is live for
+        // the duration of this call.
         s.writer.disable_keeping_process_alive(bun_io::EventLoopHandle(
-            s.evtloop.0 as *mut c_void,
+            &s.evtloop as *const _ as *mut c_void,
         ));
     }
 }

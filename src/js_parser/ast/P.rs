@@ -60,7 +60,7 @@ type Map<K, V> = HashMap<K, V>;
 /// parse_* / visit_* sibling files un-gate.
 pub trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
-    fn log(&mut self) -> &mut logger::Log;
+    fn log(&self) -> &mut logger::Log;
     fn bump(&self) -> &'a Bump;
     fn source(&self) -> &'a logger::Source;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: logger::Loc) -> Expr;
@@ -72,7 +72,7 @@ pub trait ParserLike<'a> {
 // code does so yet (callers are in parse_*/visit_* which are also gated).
 impl<'a, const TS: bool, J: JsxT, const SCAN: bool> ParserLike<'a> for P<'a, TS, J, SCAN> {
     #[inline] fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> { &mut self.lexer }
-    #[inline] fn log(&mut self) -> &mut logger::Log { self.log }
+    #[inline] fn log(&self) -> &mut logger::Log { P::log(self) }
     #[inline] fn bump(&self) -> &'a Bump { self.allocator }
     #[inline] fn source(&self) -> &'a logger::Source { self.source }
     #[inline] fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: logger::Loc) -> Expr {
@@ -241,7 +241,11 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     pub macro_: MacroState<'a>,
     pub allocator: &'a Bump,
     pub options: ParserOptions<'a>,
-    pub log: &'a mut logger::Log,
+    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` (`p.log` and
+    /// `lexer.log`); Rust cannot store two `&'a mut Log` to one allocation
+    /// (Stacked-Borrows UB), so this is a `NonNull` and reborrowed at use sites
+    /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
+    pub log: core::ptr::NonNull<logger::Log>,
     pub define: &'a Define,
     pub source: &'a logger::Source,
     pub lexer: js_lexer::Lexer<'a>,
@@ -7792,7 +7796,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 {
     pub fn init(
         allocator: &'a Bump,
-        log: &'a mut logger::Log,
+        log: core::ptr::NonNull<logger::Log>,
         source: &'a logger::Source,
         define: &'a Define,
         lexer: js_lexer::Lexer<'a>,

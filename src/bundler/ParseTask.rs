@@ -680,6 +680,66 @@ pub struct FileLoaderHash {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// CSS Symbol bridge — `bun_logger::Symbol` ↔ `bun_js_parser::Symbol`
+//
+// Both port the same Zig `js_ast.Symbol` (Symbol.zig). Under
+// `feature = "css"` `StylesheetExtra.symbols` is `BabyList<bun_logger::Symbol>`;
+// `new_lazy_export_ast_impl` takes `BabyList<bun_js_parser::Symbol>`. Convert
+// field-by-field so CSS-module local refs (`ref.inner_index()`) index a
+// populated symbol table (.zig:613). Under no-css the shim already yields the
+// parser type, so this is the identity.
+// ───────────────────────────────────────────────────────────────────────────
+
+#[cfg(feature = "css")]
+fn css_symbols_to_parser_symbols(
+    src: BabyList<bun_logger::Symbol>,
+) -> bun_js_parser::ast::symbol::List {
+    use bun_js_parser::ast::symbol::{Kind as PKind, Symbol as PSym};
+    let mut out = bun_core::handle_oom(BabyList::<PSym>::init_capacity(src.len as usize));
+    for s in src.slice() {
+        // SAFETY: both `Kind`/`ImportItemStatus` are `#[repr(u8)]` ports of the
+        // same Zig enums (Symbol.zig:192, ImportItemStatus); discriminants are
+        // identical by construction. `Ref` is `#[repr(transparent)] u64` on
+        // both sides (ast/base.rs:178, logger/lib.rs:346).
+        let kind: PKind = unsafe { core::mem::transmute::<u8, PKind>(s.kind as u8) };
+        let import_item_status = unsafe {
+            core::mem::transmute::<u8, bun_js_parser::ImportItemStatus>(s.import_item_status as u8)
+        };
+        let link = unsafe {
+            core::mem::transmute::<bun_logger::Ref, bun_js_parser::ast::Ref>(s.link)
+        };
+        out.push_assume_capacity(PSym {
+            original_name: s.original_name as *const [u8],
+            // CSS-module locals are never ES6 namespace-aliased (the CSS parser
+            // never assigns `namespace_alias`); drop rather than bridge the
+            // distinct `NamespaceAlias` mirrors.
+            namespace_alias: None,
+            link,
+            use_count_estimate: s.use_count_estimate,
+            chunk_index: s.chunk_index,
+            nested_scope_slot: s.nested_scope_slot,
+            did_keep_name: s.did_keep_name,
+            must_start_with_capital_letter_for_jsx: s.must_start_with_capital_letter_for_jsx,
+            kind,
+            must_not_be_renamed: s.must_not_be_renamed,
+            import_item_status,
+            private_symbol_must_be_lowered: s.private_symbol_must_be_lowered,
+            remove_overwritten_function_declaration: s.remove_overwritten_function_declaration,
+            has_been_assigned_to: s.has_been_assigned_to,
+        });
+    }
+    out
+}
+
+#[cfg(not(feature = "css"))]
+#[inline(always)]
+fn css_symbols_to_parser_symbols(
+    src: BabyList<bun_js_parser::ast::symbol::Symbol>,
+) -> bun_js_parser::ast::symbol::List {
+    src
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // getAST
 // ───────────────────────────────────────────────────────────────────────────
 

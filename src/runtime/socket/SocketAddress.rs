@@ -62,17 +62,16 @@ fn throw_invalid_argument_property_value(
     expected: &str,
     value: JSValue,
 ) -> JsError {
-    // `defer actual.deref()` → OwnedString releases the +1 from determine_specific_type
+    // `defer actual.deref()` → OwnedString (returned by determine_specific_type) releases the +1.
     let actual = match global.determine_specific_type(value) {
-        Ok(s) => OwnedString::new(s),
+        Ok(s) => s,
         Err(e) => return e,
     };
     global
         .err(
             bun_jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!(
-                "The property \"{argname}\" is invalid. Expected {expected}, received {}",
-                actual.get(),
+                "The property \"{argname}\" is invalid. Expected {expected}, received {actual}",
             ),
         )
         .throw()
@@ -195,17 +194,16 @@ impl Options {
     }
 
     fn throw_bad_port(global: &JSGlobalObject, port_: JSValue) -> JsError {
+        // `defer ty.deref()` → OwnedString (returned by determine_specific_type) releases the +1.
         let Ok(ty) = global.determine_specific_type(port_) else {
             return global
                 .err(bun_jsc::ErrorCode::SOCKET_BAD_PORT, format_args!("The \"options.port\" argument must be a valid IP port number."))
                 .throw();
         };
-        // `defer ty.deref()` → OwnedString releases the +1 from determine_specific_type
-        let ty = OwnedString::new(ty);
         global
             .err(
                 bun_jsc::ErrorCode::SOCKET_BAD_PORT,
-                format_args!("The \"options.port\" argument must be a valid IP port number. Got {}.", ty.get()),
+                format_args!("The \"options.port\" argument must be a valid IP port number. Got {ty}."),
             )
             .throw()
     }

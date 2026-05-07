@@ -513,7 +513,7 @@ lexer_impl_header! {
 
     /// Capture a `Copy` snapshot of all backtrack-relevant state. See
     /// `LexerSnapshot` doc — this replaces Zig's by-value struct copy, which
-    /// Rust can't do here because of `log: &mut Log`.
+    /// Rust can't do here because the lexer owns heap-backed `Vec`s.
     pub fn snapshot(&self) -> LexerSnapshot<'a> {
         LexerSnapshot {
             current: self.current,
@@ -2710,7 +2710,7 @@ lexer_impl_header! {
         allocator: &'a Arena,
     ) -> Self {
         Self {
-            log,
+            log: core::ptr::NonNull::from(log),
             source: source,
             current: 0,
             start: 0,

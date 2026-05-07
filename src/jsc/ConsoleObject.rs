@@ -333,13 +333,15 @@ impl Drop for ConsoleStreamLock {
 }
 
 /// RAII flush of a borrowed `bun_io::Write` at scope exit when `enabled`
-/// (Zig: `defer if (options.flush) writer.flush()`). Holds a raw fat pointer
-/// so the body of the scope can keep its own `&mut *writer` borrow; the guard
-/// only dereferences at scope exit when no other borrow is live. The lifetime
-/// parameter carries the trait-object bound — `*mut dyn Trait` in a struct
-/// field defaults to `+ 'static`, which a borrowed writer cannot satisfy.
+/// (Zig: `defer if (options.flush) writer.flush()`).
+///
+/// Owns the `&mut dyn Write` for its lifetime; the body of the scope must
+/// reborrow through `&mut *guard.writer` so that all body accesses are
+/// children of the guard's borrow under Stacked Borrows. Coercing to a raw
+/// pointer here while the body kept using the parent `&mut` would invalidate
+/// the raw pointer's tag before `Drop` runs.
 struct FlushOnDrop<'a> {
-    writer: *mut (dyn bun_io::Write + 'a),
+    writer: &'a mut (dyn bun_io::Write + 'a),
     enabled: bool,
 }
 
@@ -347,9 +349,7 @@ impl Drop for FlushOnDrop<'_> {
     #[inline]
     fn drop(&mut self) {
         if self.enabled {
-            // SAFETY: constructed from a `&mut dyn bun_io::Write` that outlives
-            // this guard; no other borrow is live at the guard's drop point.
-            let _ = unsafe { (*self.writer).flush() };
+            let _ = self.writer.flush();
         }
     }
 }
@@ -1377,7 +1377,10 @@ pub fn format2(
             let _ = writer.flush();
         } else {
             // PORT NOTE: Zig `defer if (options.flush) writer.flush()`.
-            let _flush = FlushOnDrop { writer, enabled: options.flush };
+            // Reborrow through the guard so SB sees body writes as children
+            // of the guard's borrow (see `FlushOnDrop` doc).
+            let mut _flush = FlushOnDrop { writer, enabled: options.flush };
+            let writer: &mut dyn bun_io::Write = &mut *_flush.writer;
             if options.enable_colors {
                 fmt.format::<true>(tag, writer, vals[0], global)?;
             } else {
@@ -1392,7 +1395,10 @@ pub fn format2(
     }
 
     // PORT NOTE: Zig `defer if (options.flush) writer.flush()`.
-    let _flush = FlushOnDrop { writer, enabled: options.flush };
+    // Reborrow through the guard so SB sees body writes as children of the
+    // guard's borrow (see `FlushOnDrop` doc).
+    let mut _flush = FlushOnDrop { writer, enabled: options.flush };
+    let writer: &mut dyn bun_io::Write = &mut *_flush.writer;
 
     let mut this_value: JSValue = vals[0];
     // PORT NOTE: see E0509 note above.

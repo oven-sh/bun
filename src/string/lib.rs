@@ -1818,98 +1818,14 @@ pub mod lexer_tables {
     };
 }
 
-// Hook slot: bun_runtime sets the WTFString allocation cap.
-pub static STRING_ALLOCATION_LIMIT_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-// ──────────────────────────────────────────────────────────────────────────
-// move-in: webcore_encoding (HOOK ← src/runtime/webcore/encoding.zig)
-//
-// `String::encode_into` dispatches to `jsc.WebCore.encoding.encodeIntoFrom{8,16}`
-// (tier-6 — base64/hex/simdutf bodies). Per PORTING.md §Dispatch (debug/crash
-// hooks), expose fn-ptr hooks that `bun_runtime::init()` populates.
-// ──────────────────────────────────────────────────────────────────────────
-pub mod webcore_encoding {
-    use super::encoding::Encoding;
-    use core::sync::atomic::{AtomicPtr, Ordering};
-
-    pub type EncodeInto16 =
-        unsafe fn(*const u16, usize, *mut u8, usize, Encoding, bool) -> usize;
-    pub type EncodeInto8 = unsafe fn(*const u8, usize, *mut u8, usize, Encoding) -> usize;
-
-    pub static ENCODE_INTO_FROM16_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-    pub static ENCODE_INTO_FROM8_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-    /// `bun_runtime::init()` calls this once with real impls.
-    pub fn install_hooks(encode16: EncodeInto16, encode8: EncodeInto8) {
-        ENCODE_INTO_FROM16_HOOK.store(encode16 as *mut (), Ordering::Release);
-        ENCODE_INTO_FROM8_HOOK.store(encode8 as *mut (), Ordering::Release);
-    }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // construct_from{u8,u16} hooks — used by `ZigString::encode` (bun_jsc).
-    // Real impls live in `src/runtime/webcore/encoding.rs` (forward-dep on
-    // bun_jsc). Same hook pattern as `encode_into_from*` above.
-    // ──────────────────────────────────────────────────────────────────────
-    pub type ConstructFromU8 = unsafe fn(*const u8, usize, Encoding) -> Vec<u8>;
-    pub type ConstructFromU16 = unsafe fn(*const u16, usize, Encoding) -> Vec<u8>;
-
-    pub static CONSTRUCT_FROM_U8_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-    pub static CONSTRUCT_FROM_U16_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-    pub fn install_construct_hooks(from_u8: ConstructFromU8, from_u16: ConstructFromU16) {
-        CONSTRUCT_FROM_U8_HOOK.store(from_u8 as *mut (), Ordering::Release);
-        CONSTRUCT_FROM_U16_HOOK.store(from_u16 as *mut (), Ordering::Release);
-    }
-
-    #[inline]
-    pub fn construct_from_u8(input: &[u8], enc: Encoding) -> Vec<u8> {
-        let f = CONSTRUCT_FROM_U8_HOOK.load(Ordering::Acquire);
-        debug_assert!(!f.is_null(), "webcore_encoding construct hooks not installed");
-        // SAFETY: hook installed by runtime init; input describes a valid slice.
-        unsafe {
-            core::mem::transmute::<*mut (), ConstructFromU8>(f)(input.as_ptr(), input.len(), enc)
-        }
-    }
-
-    #[inline]
-    pub fn construct_from_u16(input: &[u16], enc: Encoding) -> Vec<u8> {
-        let f = CONSTRUCT_FROM_U16_HOOK.load(Ordering::Acquire);
-        debug_assert!(!f.is_null(), "webcore_encoding construct hooks not installed");
-        // SAFETY: hook installed by runtime init; input describes a valid slice.
-        unsafe {
-            core::mem::transmute::<*mut (), ConstructFromU16>(f)(input.as_ptr(), input.len(), enc)
-        }
-    }
-
-    #[inline]
-    pub fn encode_into_from16(
-        input: &[u16],
-        out: &mut [u8],
-        enc: Encoding,
-        allow_partial_write: bool,
-    ) -> usize {
-        let f = ENCODE_INTO_FROM16_HOOK.load(Ordering::Acquire);
-        debug_assert!(!f.is_null(), "webcore_encoding hooks not installed");
-        // SAFETY: hook installed by runtime init; input/out describe valid slices.
-        unsafe {
-            core::mem::transmute::<*mut (), EncodeInto16>(f)(
-                input.as_ptr(), input.len(), out.as_mut_ptr(), out.len(), enc, allow_partial_write,
-            )
-        }
-    }
-
-    #[inline]
-    pub fn encode_into_from8(input: &[u8], out: &mut [u8], enc: Encoding) -> usize {
-        let f = ENCODE_INTO_FROM8_HOOK.load(Ordering::Acquire);
-        debug_assert!(!f.is_null(), "webcore_encoding hooks not installed");
-        // SAFETY: hook installed by runtime init; input/out describe valid slices.
-        unsafe {
-            core::mem::transmute::<*mut (), EncodeInto8>(f)(
-                input.as_ptr(), input.len(), out.as_mut_ptr(), out.len(), enc,
-            )
-        }
-    }
-}
+/// `jsc::VirtualMachine::string_allocation_limit` (VirtualMachine.zig:14) —
+/// process-wide WTF::StringImpl character-count cap, exported for C++ as
+/// `Bun__stringSyntheticAllocationLimit`. The value lives here (not `bun_jsc`)
+/// because [`String::max_length`] / `create_external*` need it without an
+/// upward dep; `bun_jsc::VirtualMachine` writes it during init / via the
+/// `setSyntheticAllocationLimitForTesting` hook.
+#[unsafe(export_name = "Bun__stringSyntheticAllocationLimit")]
+pub static STRING_ALLOCATION_LIMIT: AtomicUsize = AtomicUsize::new(u32::MAX as usize);
 
 // ──────────────────────────────────────────────────────────────────────────
 // move-in: printer (MOVE_DOWN ← src/js_printer/js_printer.zig)

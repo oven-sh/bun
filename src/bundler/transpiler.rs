@@ -2635,6 +2635,13 @@ impl<'a> Transpiler<'a> {
         // `text` (the only field both shapes share semantically).
         let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
         let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name.ext);
+
+        // Step 1. Parse & scan
+        // Spec (transpiler.zig:397) keys the loader on the ORIGINAL resolve
+        // result's extension *before* the `client_entry_point` path override
+        // (line 400). Compute it here, then apply the override.
+        let loader = self.options.loader(file_path_ext);
+
         // `client_entry_point_` is always `None` from the only in-tree caller;
         // its source path uses the `logger::fs::Path` shape, so just override
         // text/ext when present.
@@ -2648,9 +2655,6 @@ impl<'a> Transpiler<'a> {
         };
 
         let mut file_path = Fs::Path::init(file_path_text);
-
-        // Step 1. Parse & scan
-        let loader = self.options.loader(file_path_ext);
 
         // SAFETY: `self.fs` is the process-lifetime singleton.
         let top_level_dir = unsafe { (*self.fs).top_level_dir };

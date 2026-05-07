@@ -677,7 +677,7 @@ unsafe extern "C" {
     pub fn ERR_peek_error() -> u32;
     pub fn ERR_peek_last_error() -> u32;
     pub fn ERR_error_string(packed_error: u32, buf: *mut c_char) -> *mut c_char;
-    pub fn ERR_error_string_n(packed_error: u32, buf: *mut c_char, len: usize) -> *mut c_char;
+    // `ERR_error_string_n` declared once in the crypto/err block above.
     /// Returns a static NUL-terminated string, or NULL if unknown.
     pub fn ERR_lib_error_string(packed_error: u32) -> *const c_char;
     /// Returns a static NUL-terminated string, or NULL if unknown.

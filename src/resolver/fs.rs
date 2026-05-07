@@ -3162,6 +3162,25 @@ static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
         // `DirnameStore` singleton (see `string_store_impl!` PORT NOTE).
         Ok(unsafe { launder_static(r) })
     },
+    filename_store: |_p| {
+        // Process-static singleton (fs.zig:77); receiver ignored — see
+        // `dirname_store` note.
+        FilenameStore::instance() as *const FilenameStore as *const bun_sys::fs::FilenameStore
+    },
+    filename_store_append: |s, v| {
+        // SAFETY: `s` is an erased `&FilenameStore` (process-static singleton).
+        unsafe { &*(s as *const FilenameStore) }.append(v)
+    },
+    filename_store_append_lower_case: |s, v| {
+        use strings::Appender as _;
+        // SAFETY: see `filename_store_append`. `Appender` is on
+        // `&'static FilenameStore`; bind and pass `&mut store` as trait `&mut self`.
+        let mut store: &'static FilenameStore = unsafe { &*(s as *const FilenameStore) };
+        let r = strings::Appender::append_lower_case(&mut store, v)?;
+        // SAFETY: re-erase to `'static`; storage owned by the process-lifetime
+        // `FilenameStore` singleton (see `string_store_impl!` PORT NOTE).
+        Ok(unsafe { launder_static(r) })
+    },
     get_default_temp_dir: RealFS::get_default_temp_dir,
     read_directory: |p, dir, generation, store_fd| {
         // SAFETY: `p` is the erased process-static `bun_resolver::fs::FileSystem`;

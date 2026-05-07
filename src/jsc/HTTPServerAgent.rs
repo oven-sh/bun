@@ -253,10 +253,7 @@ pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServ
     // SAFETY: VM singleton is process-lifetime.
     let vm = unsafe { &mut *VirtualMachine::get() };
     if let Some(debugger) = &mut vm.debugger {
-        // PORT NOTE: `Debugger.http_server_agent` is the layout-stable opaque
-        // `{ handle: *mut c_void }` until this module re-exports replace the
-        // sibling stub. Same storage, same size.
-        debugger.http_server_agent.handle = agent.cast::<c_void>();
+        debugger.http_server_agent.agent = NonNull::new(agent);
     }
 }
 

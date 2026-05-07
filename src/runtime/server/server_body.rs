@@ -1066,10 +1066,8 @@ impl ServePlugins {
                     jsc::js_promise::Status::Pending => {
                         self.ref_();
                         let promise_value = promise.as_value();
-                        if let ServePluginsState::Pending { promise: _promise, .. } = &mut self.state {
-                            // TODO(port): blocked_on bun_jsc::JSPromiseStrong field `strong` is private
-                            // and there is no `set` accessor. Zig: `promise.strong.set(global, promise_value)`.
-                            let _ = (global, promise_value);
+                        if let ServePluginsState::Pending { promise: pending_promise, .. } = &mut self.state {
+                            pending_promise.set(global, promise_value);
                         }
                         promise_value.then(global, self as *mut Self, __jsc_host_on_resolve_impl, __jsc_host_on_reject_impl);
                         return Ok(());
@@ -1079,9 +1077,7 @@ impl ServePlugins {
                         return Ok(());
                     }
                     jsc::js_promise::Status::Rejected => {
-                        // TODO(port): blocked_on bun_jsc::AnyPromise::result — not yet on the
-                        // root `AnyPromise` enum (only on the lifetime-param'd variant).
-                        let value = JSValue::UNDEFINED;
+                        let value = promise.result(global.vm());
                         self.handle_on_reject(global, value);
                         return Ok(());
                     }
@@ -1119,11 +1115,13 @@ impl ServePlugins {
             // SAFETY: paired with the `ref_` taken when the route was pushed.
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
-        if let Some(_server) = dev_server {
-            // TODO(port): blocked_on crate::bake::dev_server::DevServer::on_plugins_resolved
-            // — method exists on bake::dev_server_body::DevServer<'_> but not the
-            // lifetime-erased re-export this file imports.
-            let _ = plugin_ref;
+        if let Some(mut server) = dev_server {
+            // SAFETY: dev_server outlives plugin load (stored as a back-reference
+            // by `get_or_start_load`; the owning Box<DevServer> is held by the
+            // server instance, which itself holds a counted ref on `self`).
+            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(
+                Some(plugin_ref as *const JSBundler::Plugin as *mut JSBundler::Plugin),
+            ));
         }
     }
 
@@ -1147,7 +1145,7 @@ impl ServePlugins {
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load
-            unsafe { server.as_mut() }.on_plugins_rejected();
+            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_rejected());
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
@@ -1167,12 +1165,12 @@ impl Drop for ServePlugins {
     }
 }
 
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(export = "BunServe__onResolvePlugins")]
 pub fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     ctx_log!("onResolve");
 
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
-    let plugins = as_promise_ptr::<ServePlugins>(plugins_js);
+    let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
     let _guard = scopeguard::guard((), move |_| unsafe { ServePlugins::deref_(plugins) });
     plugins_result.ensure_still_alive();
@@ -1183,12 +1181,12 @@ pub fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsRes
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(export = "BunServe__onRejectPlugins")]
 pub fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     ctx_log!("onReject");
 
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
-    let plugins = as_promise_ptr::<ServePlugins>(plugin_js);
+    let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
     let _guard = scopeguard::guard((), move |_| unsafe { ServePlugins::deref_(plugins) });
     // SAFETY: pointer was passed via .then() above
@@ -1197,7 +1195,9 @@ pub fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     Ok(JSValue::UNDEFINED)
 }
 
-// TODO(port): move to <area>_sys
+// FFI: implemented in C++ (`JSBundler.cpp`); not surfaced through `bun_jsc`
+// because `JSBundler::Plugin` lives in `bun_runtime` (forward dep).
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn JSBundlerPlugin__loadAndResolvePluginsForServe(
         plugin: *const JSBundler::Plugin,
@@ -1206,60 +1206,9 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// Local shim for `JSValue.asPromisePtr` (gated upstream): decode a pointer
-/// smuggled through `JSValue::from_ptr_address` as the trailing `.then` arg.
-#[inline]
-fn as_promise_ptr<T>(value: JSValue) -> *mut T {
-    // PORT NOTE: Zig `asPromisePtr` does `@ptrFromInt(@intFromFloat(asNumber()))`.
-    value.as_number() as usize as *mut T
-}
-
-/// Local shim for `JSGlobalObject::throw_not_enough_arguments` (gated in
-/// `bun_jsc::js_global_object`).
-#[inline]
-fn throw_not_enough_arguments(
-    global: &JSGlobalObject,
-    name_: &str,
-    expected: usize,
-    got: usize,
-) -> JsError {
-    global.throw(format_args!(
-        "Not enough arguments to '{}'. Expected {}, got {}.",
-        name_, expected, got
-    ))
-}
-
-// ─── Local JsClass shims (codegen `*__fromJS` not yet emitted) ───────────────
-// Pointee types lack #[repr(C)] but are only ever passed by pointer across FFI.
-#[allow(improper_ctypes)]
-unsafe extern "C" {
-    fn Request__fromJS(value: JSValue) -> Option<core::ptr::NonNull<Request>>;
-    fn NodeHTTPResponse__fromJS(value: JSValue) -> Option<core::ptr::NonNull<NodeHTTPResponse>>;
-}
-#[inline]
-fn request_from_js(value: JSValue, _global: &JSGlobalObject) -> Option<*mut Request> {
-    // SAFETY: FFI call into generated class binding
-    unsafe { Request__fromJS(value) }.map(|p| p.as_ptr())
-}
-#[inline]
-fn node_http_response_from_js(value: JSValue, _global: &JSGlobalObject) -> Option<*mut NodeHTTPResponse> {
-    // SAFETY: FFI call into generated class binding
-    unsafe { NodeHTTPResponse__fromJS(value) }.map(|p| p.as_ptr())
-}
 #[inline]
 fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut FetchHeaders> {
     FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
-}
-
-// Exported as BunServe__onResolvePlugins / BunServe__onRejectPlugins
-// TODO(port): @export — the #[bun_jsc::host_fn] macro emits the C-ABI shim; export under these names
-#[unsafe(no_mangle)]
-pub extern "C" fn BunServe__onResolvePlugins() {
-    // TODO(port): proc-macro — re-export the host_fn shim of on_resolve_impl
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn BunServe__onRejectPlugins() {
-    // TODO(port): proc-macro — re-export the host_fn shim of on_reject_impl
 }
 
 // ─── PluginsResult ───────────────────────────────────────────────────────────

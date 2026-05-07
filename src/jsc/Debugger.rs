@@ -33,19 +33,10 @@ bun_core::declare_scope!(LifecycleAgent, visible);
 // struct layout is stable without the forward dep. The high tier casts back.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `jsc.Debugger.HTTPServerAgent` — opaque until `http_server_agent.rs`
-/// un-gates. Layout: single nullable C++ handle pointer (matches the real
-/// struct's only stateful field).
-#[derive(Default)]
-pub struct HTTPServerAgent {
-    pub handle: *mut c_void,
-}
-impl HTTPServerAgent {
-    #[inline]
-    pub fn is_enabled(&self) -> bool {
-        !self.handle.is_null()
-    }
-}
+/// `jsc.Debugger.HTTPServerAgent` — re-export the real definition from the
+/// sibling module so `Debugger.http_server_agent` carries `next_server_id`
+/// state (the runtime-tier `notify_server_started` body increments it).
+pub use crate::http_server_agent::HTTPServerAgent;
 
 /// `bun_runtime::server::inspector_bun_frontend_dev_server_agent::BunFrontendDevServerAgent`
 /// — opaque until `bun_runtime` is reachable from this tier.

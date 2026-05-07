@@ -1086,12 +1086,7 @@ impl Lockfile {
         };
 
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
-        let _ = root.clone(manager, old, &mut *new, &mut package_id_mapping, &mut cloner)?;
-        // TODO(port): borrowck — cloner already borrows old/new/mapping/manager mutably.
-        // Proper fix: drop the redundant (manager, old, new, package_id_mapping) params from
-        // Package::clone and have it read them through `&mut Cloner` exclusively (Cloner
-        // already carries all four). Same applies to the call inside `Cloner::flush`.
-        // Requires editing lockfile/Package.rs (out of scope for this file).
+        let _ = root.clone(&mut cloner)?;
 
         // Clone workspace_paths and workspace_versions at the end.
         if old.workspace_paths.count() > 0 || old.workspace_versions.count() > 0 {
@@ -1314,14 +1309,9 @@ impl<'a> Cloner<'a> {
 
             let old_package = self.old.packages.get(to_clone.old_resolution as usize);
 
-            self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = old_package.clone(
-                self.manager,
-                self.old,
-                self.lockfile,
-                self.mapping,
-                self,
-            )?;
-            // TODO(port): borrowck — passes self plus disjoint &mut fields of self
+            // `Package::clone` reads/writes through `cloner` exclusively.
+            let new_id = old_package.clone(self)?;
+            self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
         }
 
         // cloning finished, items in lockfile buffer might have a different order, meaning
@@ -2205,14 +2195,18 @@ impl Lockfile {
         package_: Package,
         id: PackageID,
     ) -> Result<Package, AllocError> {
+        // Zig's `defer` reads `package_` (the original arg) for the assertion.
+        let name_hash = package_.name_hash;
+        let resolution = package_.resolution;
+
         let mut package = package_;
         package.meta.id = id;
         self.packages.append(package)?;
-        self.get_or_put_id(id, package.name_hash)?;
+        self.get_or_put_id(id, name_hash)?;
 
         if cfg!(debug_assertions) {
             debug_assert!(self
-                .get_package_id(package.name_hash, None, &package.resolution)
+                .get_package_id(name_hash, None, &resolution)
                 .is_some());
         }
 

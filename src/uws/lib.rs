@@ -106,31 +106,10 @@ pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: i32 = 16;
 pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: i32 = 32;
 
-// TODO: refactor to error union
-#[repr(C)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum create_bun_socket_error_t {
-    none = 0,
-    load_ca_file,
-    invalid_ca_file,
-    invalid_ca,
-    invalid_ciphers,
-}
-
-impl create_bun_socket_error_t {
-    pub fn message(self) -> Option<&'static [u8]> {
-        match self {
-            Self::none => None,
-            Self::load_ca_file => Some(b"Failed to load CA file"),
-            Self::invalid_ca_file => Some(b"Invalid CA file"),
-            Self::invalid_ca => Some(b"Invalid CA"),
-            Self::invalid_ciphers => Some(b"Invalid ciphers"),
-        }
-    }
-
-    // Zig: `pub const toJS = @import("../runtime/socket/uws_jsc.zig").createBunSocketErrorToJS;`
-    // Deleted per PORTING.md — `to_js` lives as an extension trait in the *_jsc crate.
-}
+// Re-export the `_sys` definition so higher tiers see one type. `to_js`
+// (Zig: `@import("../runtime/socket/uws_jsc.zig").createBunSocketErrorToJS`)
+// lives as an extension trait in the *_jsc crate per PORTING.md.
+pub use bun_uws_sys::create_bun_socket_error_t;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -1442,102 +1421,12 @@ impl SocketGroup {
 // SocketContext::BunSocketContextOptions
 // ═══════════════════════════════════════════════════════════════════════════
 pub mod SocketContext {
-    use core::ffi::c_char;
-    use core::ptr;
-
     /// `#[repr(C)]` mirror of `us_bun_socket_context_options_t`. What
     /// `SSLConfig.asUSockets()` produces and `us_ssl_ctx_from_options` consumes.
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub struct BunSocketContextOptions {
-        pub key_file_name: *const c_char,
-        pub cert_file_name: *const c_char,
-        pub passphrase: *const c_char,
-        pub dh_params_file_name: *const c_char,
-        pub ca_file_name: *const c_char,
-        pub ssl_ciphers: *const c_char,
-        pub ssl_prefer_low_memory_usage: i32,
-        pub key: *const *const c_char,
-        pub key_count: u32,
-        pub cert: *const *const c_char,
-        pub cert_count: u32,
-        pub ca: *const *const c_char,
-        pub ca_count: u32,
-        pub secure_options: u32,
-        pub reject_unauthorized: i32,
-        pub request_cert: i32,
-        pub client_renegotiation_limit: u32,
-        pub client_renegotiation_window: u32,
-    }
-
-    impl Default for BunSocketContextOptions {
-        fn default() -> Self {
-            Self {
-                key_file_name: ptr::null(),
-                cert_file_name: ptr::null(),
-                passphrase: ptr::null(),
-                dh_params_file_name: ptr::null(),
-                ca_file_name: ptr::null(),
-                ssl_ciphers: ptr::null(),
-                ssl_prefer_low_memory_usage: 0,
-                key: ptr::null(),
-                key_count: 0,
-                cert: ptr::null(),
-                cert_count: 0,
-                ca: ptr::null(),
-                ca_count: 0,
-                secure_options: 0,
-                reject_unauthorized: 0,
-                request_cert: 0,
-                client_renegotiation_limit: 3,
-                client_renegotiation_window: 600,
-            }
-        }
-    }
-
-    impl BunSocketContextOptions {
-        /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
-        /// and releases with `SSL_CTX_free`.
-        pub fn create_ssl_context(
-            self,
-            err: &mut crate::create_bun_socket_error_t,
-        ) -> Option<*mut crate::SslCtx> {
-            // SAFETY: `self` is `#[repr(C)]` passed by value; `err` is a valid out-param.
-            let ctx = unsafe { us_ssl_ctx_from_options(self, err) };
-            if ctx.is_null() { None } else { Some(ctx) }
-        }
-
-        /// SHA-256 over every field this struct carries, dereferencing string
-        /// pointers so the digest is content-addressed (not pointer-addressed).
-        /// Two option structs that build the same `SSL_CTX*` produce the same
-        /// digest. Used as the key for `SSLContextCache`.
-        ///
-        /// Delegates to `bun_uws_sys::BunSocketContextOptions::digest` — both
-        /// structs are `#[repr(C)]` with identical field list/order, so a value
-        /// transmute is sound and avoids duplicating the hashing body.
-        pub fn digest(&self) -> [u8; 32] {
-            const _: () = assert!(
-                core::mem::size_of::<BunSocketContextOptions>()
-                    == core::mem::size_of::<bun_uws_sys::BunSocketContextOptions>()
-            );
-            const _: () = assert!(
-                core::mem::align_of::<BunSocketContextOptions>()
-                    == core::mem::align_of::<bun_uws_sys::BunSocketContextOptions>()
-            );
-            // SAFETY: both are `#[repr(C)]` with identical field list/order (see
-            // src/uws_sys/SocketContext.rs); Copy + POD, value transmute is sound.
-            let sys: bun_uws_sys::BunSocketContextOptions =
-                unsafe { core::mem::transmute_copy(self) };
-            sys.digest()
-        }
-    }
-
-    unsafe extern "C" {
-        fn us_ssl_ctx_from_options(
-            options: BunSocketContextOptions,
-            err: *mut crate::create_bun_socket_error_t,
-        ) -> *mut crate::SslCtx;
-    }
+    /// The struct body, `Default`, `digest()` and `create_ssl_context()` live in
+    /// `bun_uws_sys`; re-exported so this crate and `_sys` share one definition
+    /// (callers in higher tiers pass values to `_sys` constructors directly).
+    pub use bun_uws_sys::BunSocketContextOptions;
 }
 /// Snake-case module alias for the porting tooling that lowercases Zig namespaces.
 pub use SocketContext as socket_context;

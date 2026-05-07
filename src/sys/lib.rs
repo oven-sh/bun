@@ -2638,7 +2638,7 @@ impl File {
     /// closing the handle around the rename. On Windows the file must be
     /// closed *before* `MoveFileEx`; on POSIX, close after `rename` so the
     /// fd stays valid for `move_file_z_with_handle`'s `fcopyfile` fallback.
-    pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> Result<(), bun_core::Error> {
+    pub fn close_and_move_to(self, src: &ZStr, dest: &ZStr) -> core::result::Result<(), bun_core::Error> {
         #[cfg(windows)]
         self.close();
         let cwd = Fd::cwd();
@@ -5604,6 +5604,14 @@ pub mod fs {
             unsafe fn(*const DirnameStore, &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
         pub dirname_store_append_lower_case:
             unsafe fn(*const DirnameStore, &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
+        /// Zig: `FileSystem.filename_store` (fs.zig:77) — distinct
+        /// `BSSStringList` singleton from `dirname_store` (different
+        /// preallocation count / item-length).
+        pub filename_store: unsafe fn(*const FileSystem) -> *const FilenameStore,
+        pub filename_store_append:
+            unsafe fn(*const FilenameStore, &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
+        pub filename_store_append_lower_case:
+            unsafe fn(*const FilenameStore, &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
         /// Zig: `FileSystem.RealFS.getDefaultTempDir()` (fs.zig) — `BUN_TMPDIR`
         /// or the platform fallback. Process-static once-computed.
         pub get_default_temp_dir: fn() -> &'static [u8],
@@ -5726,6 +5734,13 @@ pub mod fs {
             // SAFETY: vtable returns the address of the process-static
             // `DirnameStore::instance()`; never null after init.
             unsafe { &*(vtable().dirname_store)(self) }
+        }
+        /// `fs.filenameStore` — interned-string store for basenames /
+        /// package names. Distinct singleton from `dirname_store` (fs.zig:77).
+        pub fn filename_store(&self) -> &FilenameStore {
+            // SAFETY: vtable returns the address of the process-static
+            // `FilenameStore::instance()`; never null after init.
+            unsafe { &*(vtable().filename_store)(self) }
         }
         /// `fs.setMaxFd(fd)` (fs.zig:62) — track highest fd seen so the
         /// stat-cache fd-pressure heuristic (fs.zig:774 `file_limit >
@@ -6020,6 +6035,23 @@ pub mod fs {
         pub fn append_lower_case(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
             // SAFETY: see `append()`.
             unsafe { (vtable().dirname_store_append_lower_case)(self, value) }
+        }
+    }
+    /// `bun.fs.FileSystem.FilenameStore` — interned-filename arena.
+    #[repr(C)]
+    pub struct FilenameStore { _opaque: [u8; 0] }
+    impl FilenameStore {
+        /// Intern `value` into the filename arena, returning a `&'static`
+        /// slice. Zig: `FilenameStore.append(allocator, value)`.
+        pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+            // SAFETY: `self` is an erased `&bun_resolver::fs::FilenameStore`.
+            unsafe { (vtable().filename_store_append)(self, value) }
+        }
+        /// Intern the ASCII-lowercased form of `value`.
+        /// Zig: `FilenameStore.appendLowerCase(allocator, value)`.
+        pub fn append_lower_case(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+            // SAFETY: see `append()`.
+            unsafe { (vtable().filename_store_append_lower_case)(self, value) }
         }
     }
     /// `bun.fs.DirEntry.Err` (fs.zig:239) — preserves both the original errno

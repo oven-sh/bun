@@ -469,13 +469,20 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 impl Package<u64> {
     pub fn clone(
         &self,
-        pm: &mut PackageManager,
-        old: &mut Lockfile,
-        new: &mut Lockfile,
-        package_id_mapping: &mut [PackageID],
         cloner: &mut Cloner,
     ) -> Result<PackageID, bun_core::Error> {
         // TODO(port): narrow error set
+        // PORT NOTE: Zig passes (`pm`, `old`, `new`, `package_id_mapping`,
+        // `cloner`) separately, but `cloner` already owns `&mut` to all four.
+        // Rust borrowck rejects the redundant aliasing at the call site, so
+        // route everything through `cloner`'s disjoint fields here instead.
+        // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
+        // from `cloner.clone_queue` / `.trees_count` / `.old_preinstall_state`);
+        // `manager` is accessed via `cloner.manager` at each use so the borrow
+        // doesn't span the `cloner.*` accesses below.
+        let old = &mut *cloner.old;
+        let new = &mut *cloner.lockfile;
+        let package_id_mapping = &mut *cloner.mapping;
         let old_string_buf = old.buffers.string_bytes.as_slice();
         let old_extern_string_buf = old.buffers.extern_strings.as_slice();
         let mut builder_ = new.string_builder();
@@ -580,7 +587,7 @@ impl Package<u64> {
 
         debug_assert_eq!(old_dependencies.len(), dependencies.len());
         for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
-            *new_dep = old_dep.clone_in(pm, old_string_buf, &mut *builder)?;
+            *new_dep = old_dep.clone_in(cloner.manager, old_string_buf, &mut *builder)?;
         }
 
         builder.clamp();

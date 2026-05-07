@@ -312,7 +312,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 PackageJSONEditor::edit(
                     manager,
                     &mut updates_slice,
-                    &mut current_package_json.root,
+                    &mut current_package_json_root,
                     dependency_list,
                     EditOptions {
                         exact_versions: manager.options.enable.exact_versions(),
@@ -326,7 +326,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             } else if subcommand == Subcommand::Update {
                 PackageJSONEditor::edit_update_no_args(
                     manager,
-                    &mut current_package_json.root,
+                    &mut current_package_json_root,
                     EditOptions {
                         exact_versions: true,
                         before_install: true,
@@ -346,7 +346,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                     } else {
                         PackageJSONEditor::edit_patched_dependencies(
                             manager,
-                            &mut current_package_json.root,
+                            &mut current_package_json_root,
                             &stuff.patch_key,
                             &stuff.patchfile_path,
                         )?;
@@ -374,7 +374,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let mut written = match js_printer::print_json(
         &mut package_json_writer,
-        current_package_json.root,
+        current_package_json_root,
         &current_package_json.source,
         js_printer::PrintJsonOptions {
             indent: current_package_json_indent,
@@ -469,9 +469,12 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
 
         if let Some(stuff) = &not_in_workspace_root {
+            // PORT NOTE (layering): see `current_package_json_root` above — promote
+            // T2 → T4 for `PackageJSONEditor` / `print_json`.
+            let mut root_package_json_root: bun_js_parser::Expr = root_package_json.root.into();
             PackageJSONEditor::edit_patched_dependencies(
                 manager,
-                &mut root_package_json.root,
+                &mut root_package_json_root,
                 &stuff.patch_key,
                 &stuff.patchfile_path,
             )?;
@@ -485,7 +488,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
             let _ = match js_printer::print_json(
                 &mut package_json_writer2,
-                root_package_json.root,
+                root_package_json_root,
                 &root_package_json.source,
                 js_printer::PrintJsonOptions {
                     indent: root_package_json.indentation,

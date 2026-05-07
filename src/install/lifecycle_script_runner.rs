@@ -539,17 +539,25 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 ]
             };
 
+        // PORT NOTE: Zig allocates the libuv pipes (`bun.new(uv.Pipe, zeroes)`),
+        // stashes them in `this.stdout.source.?.pipe`, and then reuses the same
+        // heap pointer for `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`.
+        // The Rust `bun_io::Source::Pipe` owns a `Box<uv::Pipe>`; capture the
+        // stable heap address before moving the Box into `source` so the
+        // `Stdio::Buffer` arm can name it without re-borrowing through the enum.
         #[cfg(windows)]
-        {
-            // SAFETY: all-zero is a valid uv::Pipe (POD libuv handle).
-            (*this).stdout.source = bun_io::Source::Pipe(Box::into_raw(Box::new(unsafe {
-                core::mem::zeroed::<uv::Pipe>()
-            })));
-            // SAFETY: all-zero is a valid uv::Pipe.
-            (*this).stderr.source = bun_io::Source::Pipe(Box::into_raw(Box::new(unsafe {
-                core::mem::zeroed::<uv::Pipe>()
-            })));
-        }
+        let (stdout_pipe_ptr, stderr_pipe_ptr): (*mut uv::Pipe, *mut uv::Pipe) = {
+            // SAFETY: all-zero is a valid uv::Pipe (POD libuv handle; matches
+            // Zig `std.mem.zeroes(uv.Pipe)`).
+            let mut stdout_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
+            // SAFETY: as above.
+            let mut stderr_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
+            let stdout_ptr = stdout_pipe.as_mut() as *mut uv::Pipe;
+            let stderr_ptr = stderr_pipe.as_mut() as *mut uv::Pipe;
+            (*this).stdout.source = Some(bun_io::Source::Pipe(stdout_pipe));
+            (*this).stderr.source = Some(bun_io::Source::Pipe(stderr_pipe));
+            (stdout_ptr, stderr_ptr)
+        };
 
         let spawn_options = SpawnOptions {
             stdin: if (*this).foreground {
@@ -569,7 +577,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    bun_spawn::Stdio::BufferPipe((*this).stdout.source.as_ref().unwrap().pipe)
+                    bun_spawn::Stdio::Buffer(stdout_pipe_ptr as bun_spawn::windows::UvPipePtr)
                 }
             },
             stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
@@ -583,7 +591,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
                 #[cfg(not(unix))]
                 {
-                    bun_spawn::Stdio::BufferPipe((*this).stderr.source.as_ref().unwrap().pipe)
+                    bun_spawn::Stdio::Buffer(stderr_pipe_ptr as bun_spawn::windows::UvPipePtr)
                 }
             },
             cwd,
@@ -653,13 +661,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
         #[cfg(windows)]
         {
-            if matches!(spawned.stdout, bun_spawn::Stdio::Buffer { .. }) {
-                (*this).stdout.parent = this;
+            if matches!(spawned.stdout, bun_spawn::SpawnedStdio::Buffer(_)) {
+                (*this).stdout.set_parent(this as *mut c_void);
                 (*this).remaining_fds += 1;
                 (*this).stdout.start_with_current_pipe()?;
             }
-            if matches!(spawned.stderr, bun_spawn::Stdio::Buffer { .. }) {
-                (*this).stderr.parent = this;
+            if matches!(spawned.stderr, bun_spawn::SpawnedStdio::Buffer(_)) {
+                (*this).stderr.set_parent(this as *mut c_void);
                 (*this).remaining_fds += 1;
                 (*this).stderr.start_with_current_pipe()?;
             }
@@ -689,17 +697,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub fn print_output(&mut self) {
         if !self.manager().options.log_level.is_verbose() {
             // Reuse the memory
-            // PORT NOTE: reshaped for borrowck — Zig held two `*ArrayList(u8)`
-            // simultaneously; here we scope the `stdout`/`stderr` borrows.
-            {
+            // PORT NOTE: reshaped for borrowck — Zig evaluated all three clauses
+            // (`stdout.len==0 && stdout.cap>0 && stderr.buffer().cap==0`) before
+            // the swap, holding two `*ArrayList(u8)` simultaneously. Evaluate
+            // the stderr-capacity check first (immutable), then take the
+            // disjoint `stdout` mutable borrow, so `core::mem::take` only fires
+            // when the full Zig guard would — otherwise stdout's buffer is left
+            // in place for the `stdout.items.len +| stderr.items.len` check.
+            if self.stderr.buffer().capacity() == 0 {
                 let stdout = self.stdout.final_buffer();
-                let take = stdout.is_empty() && stdout.capacity() > 0;
-                if take {
+                if stdout.is_empty() && stdout.capacity() > 0 {
                     let buf = core::mem::take(stdout);
-                    let stderr = self.stderr.buffer();
-                    if stderr.capacity() == 0 {
-                        *stderr = buf;
-                    }
+                    *self.stderr.buffer() = buf;
                 }
             }
 

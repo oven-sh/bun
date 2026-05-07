@@ -60,14 +60,16 @@ describe("export", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(exitCode).toBe(0);
-      return stdout;
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      return { stdout, exitCode };
     };
 
     const first = await run();
     const second = await run();
-    expect(second).toBe(first);
-    expect(first.split("\n").filter(Boolean)).toEqual([...first.split("\n").filter(Boolean)].sort());
+    expect(second.stdout).toBe(first.stdout);
+    expect(first.stdout.split("\n").filter(Boolean)).toEqual([...first.stdout.split("\n").filter(Boolean)].sort());
+    expect(first.exitCode).toBe(0);
+    expect(second.exitCode).toBe(0);
   });
 });

@@ -1297,7 +1297,7 @@ impl Kqueue {
                 };
 
                 watcher.emit(event_type, rel, entry.is_file);
-                let _ = touched.get_or_put(watcher as *mut PathWatcher);
+                handle_oom(touched.put(watcher as *mut PathWatcher, ()));
             }
 
             for &w in touched.keys() {
@@ -1325,15 +1325,15 @@ pub struct WindowsStubWatch {}
 impl WindowsStub {
     fn init(_: &mut PathWatcherManager) -> sys::Result<()> {
         Err(sys::Error {
-            errno: sys::E::NOTSUP as _,
-            syscall: Syscall::Watch,
+            errno: sys::E::ENOTSUP as _,
+            syscall: Tag::watch,
             ..Default::default()
         })
     }
     fn add_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) -> sys::Result<()> {
         Err(sys::Error {
-            errno: sys::E::NOTSUP as _,
-            syscall: Syscall::Watch,
+            errno: sys::E::ENOTSUP as _,
+            syscall: Tag::watch,
             ..Default::default()
         })
     }

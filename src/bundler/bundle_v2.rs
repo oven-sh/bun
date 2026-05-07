@@ -19,7 +19,7 @@ pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
 pub use bv2_impl::api;
 pub use bv2_impl::{
-    JSMeta, ImportData, ExportData, ImportTracker, DevServerOutput,
+    JSMeta, ImportData, ExportData, ImportTracker, DevServerInput, DevServerOutput,
     EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
 };
 // Flatten the impl-body module into this file's namespace so external callers

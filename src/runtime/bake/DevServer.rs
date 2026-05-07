@@ -1265,7 +1265,7 @@ impl DevServer {
         unsafe {
             (*self_ptr).router.scan_all(
                 &mut (*(*self_ptr).server_transpiler.as_mut_ptr()).resolver,
-                framework_router::insertion_context::wrap(&mut *self_ptr),
+                framework_router::InsertionContext::wrap(&mut *self_ptr),
             )?;
         }
 
@@ -1386,9 +1386,9 @@ unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     let dev = unsafe { &mut *(ud as *mut DevServer) };
     let req = unsafe { &mut *(req as *mut Request) };
     let resp = if SSL {
-        AnyResponse::SSL(res as *mut bun_uws_sys::TLSResponse)
+        AnyResponse::SSL(res as *mut bun_uws_sys::response::TLSResponse)
     } else {
-        AnyResponse::TCP(res as *mut bun_uws_sys::TCPResponse)
+        AnyResponse::TCP(res as *mut bun_uws_sys::response::TCPResponse)
     };
     match ID {
         DevHandlerId::JsRequest => on_js_request(dev, req, resp),
@@ -1504,7 +1504,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         // SAFETY: `init_from_any_blob` returns a fresh ref_count=1 box.
         scopeguard::defer! { unsafe { (*response).deref() } };
         // SAFETY: `response` is live until `_deref` runs after this returns.
-        unsafe { (*response).on_request(crate::server::static_route::OnRequestArg::H1(req), resp) };
+        unsafe { StaticRoute::on_request(response, bun_uws::AnyRequest::H1(req), resp) };
         return;
     }
 

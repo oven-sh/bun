@@ -347,10 +347,10 @@ fn collect_packages_for_audit(
 
     // PORT NOTE: reshaped for borrowck — column slices borrow `pm.lockfile`
     // immutably for the loop, so resolve `root_id` / `prod_packages` (which
-    // need `&mut pm`) above, and take `scope_for_package_name`'s receiver via
-    // a raw pointer below to avoid the shared/mut overlap (`pm.lockfile` vs
-    // `pm.options.scope` are disjoint fields; Zig had no aliasing model).
-    let pm_ptr: *const PackageManager = pm;
+    // need `&mut pm`) above, and split-borrow `pm.options` for the scope lookup
+    // (disjoint from `pm.lockfile`; Zig had no aliasing model).
+    let options = &pm.options;
+    let default_url_hash = options.scope.url_hash;
     let packages = pm.lockfile.packages.slice();
     let pkg_names = packages.items_name();
     let pkg_resolutions = packages.items_resolution();
@@ -374,10 +374,8 @@ fn collect_packages_for_audit(
             }
         }
 
-        // SAFETY: `scope_for_package_name` only reads `pm.options.scope`,
-        // disjoint from the `pm.lockfile` borrow held by `packages`/`buf`.
-        let package_scope = unsafe { &*pm_ptr }.scope_for_package_name(name_slice);
-        if package_scope.url_hash != unsafe { &*pm_ptr }.options.scope.url_hash {
+        let package_scope = options.scope_for_package_name(name_slice);
+        if package_scope.url_hash != default_url_hash {
             skipped_packages.push(Box::<[u8]>::from(name_slice));
             continue;
         }

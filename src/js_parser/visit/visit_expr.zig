@@ -844,13 +844,18 @@ pub fn VisitExpr(
                                 }
                             }
 
-                            // Copy the side effect flags over in case this expression is unused
-                            if (define.data.can_be_removed_if_unused()) {
-                                e_.can_be_removed_if_unused = true;
-                            }
+                            // Copy the side-effect flags over in case this expression is unused.
+                            // Skip this for optional chain expressions — `a?.b` has observable
+                            // short-circuit semantics (checks whether `a` is nullish), so we
+                            // can't treat `Symbol?.for(...)` as unconditionally pure.
+                            if (e_.optional_chain == null) {
+                                if (define.data.can_be_removed_if_unused()) {
+                                    e_.can_be_removed_if_unused = true;
+                                }
 
-                            if (define.data.call_can_be_unwrapped_if_unused() != .never and !p.options.ignore_dce_annotations) {
-                                e_.call_can_be_unwrapped_if_unused = define.data.call_can_be_unwrapped_if_unused();
+                                if (define.data.call_can_be_unwrapped_if_unused() != .never and !p.options.ignore_dce_annotations) {
+                                    e_.call_can_be_unwrapped_if_unused = define.data.call_can_be_unwrapped_if_unused();
+                                }
                             }
 
                             break;

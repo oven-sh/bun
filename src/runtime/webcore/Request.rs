@@ -52,8 +52,6 @@ const _: () = {
         fn __from_js(value: bun_jsc::JSValue) -> Option<core::ptr::NonNull<Request>>;
         #[link_name = "Request__fromJSDirect"]
         fn __from_js_direct(value: bun_jsc::JSValue) -> Option<core::ptr::NonNull<Request>>;
-        #[link_name = "Request__create"]
-        fn __create(global: *const bun_jsc::JSGlobalObject, ptr: *mut Request) -> bun_jsc::JSValue;
         #[link_name = "Request__getConstructor"]
         fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
     }

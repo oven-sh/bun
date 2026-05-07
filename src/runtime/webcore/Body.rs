@@ -2,6 +2,7 @@
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;

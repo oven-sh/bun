@@ -553,7 +553,13 @@ impl JSValue {
         })
     }
     pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
-        Ok(self.to_bun_string(global)?.to_utf8())
+        // Spec (JSValue.zig `toSlice`): `bun.String.fromJS` → `defer str.deref()`
+        // → `toUTF8`. `to_bun_string` returns a +1 ref; `bun_string::String` is
+        // `Copy` (no `Drop`), so wrap in `OwnedString` for the scope-exit
+        // `deref()`. `to_utf8()` takes its own ref (or owned alloc) so the
+        // slice survives the drop.
+        let s = bun_string::OwnedString::new(self.to_bun_string(global)?);
+        Ok(s.to_utf8())
     }
     /// Call `toString()` on the JSValue and clone the result.
     /// On exception or out of memory, this returns a `JsError`.
@@ -573,13 +579,15 @@ impl JSValue {
     }
     /// Call `toString()` on the JSValue and clone the result.
     ///
-    /// Spec (JSValue.zig `toSliceOrNull`): `bun.String.fromJS` → `toUTF8` with
-    /// the default allocator. The `defer str.deref()` is handled by
-    /// `bun_string::String`'s `Drop`; `to_utf8()` refs the underlying
-    /// WTFStringImpl when borrowing so the slice survives that drop.
+    /// Spec (JSValue.zig `toSliceOrNull`): `bun.String.fromJS` →
+    /// `defer str.deref()` → `toUTF8` with the default allocator.
+    /// `bun_string::String` is `Copy` and has NO `Drop`; the RAII spelling of
+    /// Zig's `defer str.deref()` is `OwnedString`. `to_utf8()` refs the
+    /// underlying WTFStringImpl (or heap-clones) so the slice survives the
+    /// `OwnedString` drop.
     pub fn to_slice_or_null(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
-        let str = self.to_bun_string(global)?;
-        Ok(str.to_utf8())
+        let s = bun_string::OwnedString::new(self.to_bun_string(global)?);
+        Ok(s.to_utf8())
     }
     pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
         // SAFETY: `global` is live; `exception` is a valid out-param.

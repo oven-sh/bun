@@ -12,7 +12,8 @@ use crate::{
 };
 
 use bun_core::{fmt as bun_fmt, perf, StackCheck};
-use bun_string::{strings, String as BunString, ZigString};
+use bun_string::{strings, String as BunString};
+use crate::zig_string::ZigString;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -1084,7 +1085,7 @@ impl JSGlobalObject {
         value: JSValue,
         opts: ValidateObjectOpts,
     ) -> JsResult<()> {
-        if (!opts.allow_nullable && value.is_null())
+        if (!opts.nullable && value.is_null())
             || (!opts.allow_array && value.is_array())
             || (!value.is_object() && (!opts.allow_function || !value.is_function()))
         {

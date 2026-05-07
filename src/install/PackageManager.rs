@@ -1885,7 +1885,7 @@ pub fn init(
                 env: Some(NonNull::from(&mut *env)),
                 cpu_count,
                 thread_pool: ThreadPool::init(thread_pool::Config {
-                    max_threads: cpu_count as u32,
+                    max_threads: cpu_count,
                     ..Default::default()
                 }),
                 resolve_tasks: ResolveTaskQueue::default(),
@@ -2177,7 +2177,7 @@ pub fn init_with_runtime_once(
         }
     }
 
-    let cpu_count = bun_core::get_thread_count();
+    let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     allocate_package_manager();
     // SAFETY: holder::RAW_PTR was just set by allocate_package_manager() to a
     // freshly allocated, *uninitialized* PackageManager. Do NOT call `get()` /
@@ -2264,7 +2264,7 @@ pub fn init_with_runtime_once(
                 env: Some(NonNull::from(&mut *env)),
                 cpu_count,
                 thread_pool: ThreadPool::init(thread_pool::Config {
-                    max_threads: cpu_count as u32,
+                    max_threads: cpu_count,
                     ..Default::default()
                 }),
                 // Zig: `.lockfile = undefined` then `manager.lockfile = try allocator.create(Lockfile)`

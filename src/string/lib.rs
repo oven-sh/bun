@@ -716,6 +716,224 @@ impl String {
         w::latin1(self.latin1())
     }
 
+    /// `bun.String.isGlobal` (string.zig:63) — true iff this is a `ZigString`
+    /// whose pointer is tagged as globally-allocated (mimalloc heap).
+    #[inline]
+    pub fn is_global(&self) -> bool {
+        self.tag == Tag::ZigString && unsafe { self.value.zig.is_globally_allocated() }
+    }
+
+    /// `bun.String.createIfDifferent` (string.zig:117) — if `other` already
+    /// holds `utf8_slice` verbatim (and is WTF-backed), return a `dupe_ref`;
+    /// otherwise allocate a fresh WTF-backed copy of `utf8_slice`.
+    pub fn create_if_different(other: &String, utf8_slice: &[u8]) -> String {
+        if other.tag == Tag::WTFStringImpl && other.eql_utf8(utf8_slice) {
+            return other.dupe_ref();
+        }
+        Self::clone_utf8(utf8_slice)
+    }
+
+    /// `bun.String.createAtomASCII` — same as [`create_atom`]; the Zig name
+    /// documents the ASCII-only precondition (string.zig:265).
+    #[inline]
+    pub fn create_atom_ascii(s: &[u8]) -> Self { Self::create_atom(s) }
+
+    /// `bun.String.initLatin1OrASCIIView` — borrow `value` as a Latin-1/ASCII
+    /// 8-bit `ZigString` view without UTF-8-tagging it (string.zig:491).
+    #[inline]
+    pub fn init_latin1_or_ascii_view(value: &[u8]) -> Self {
+        Self::init(ZigString::init(value))
+    }
+
+    /// `bun.String.encoding` (string.zig:594) — coarse encoding classifier.
+    pub fn encoding(&self) -> strings::EncodingNonAscii {
+        if self.is_utf16() {
+            strings::EncodingNonAscii::Utf16
+        } else if self.is_utf8() {
+            strings::EncodingNonAscii::Utf8
+        } else {
+            strings::EncodingNonAscii::Latin1
+        }
+    }
+
+    /// `bun.String.canBeUTF8` (string.zig:654) — true iff `self`'s 8-bit bytes
+    /// are valid UTF-8 (i.e. either UTF-8-tagged or all-ASCII).
+    pub fn can_be_utf8(&self) -> bool {
+        match self.tag {
+            Tag::WTFStringImpl => unsafe {
+                let w = &*self.value.wtf;
+                w.is_8bit() && strings::is_all_ascii(w.latin1_slice())
+            },
+            Tag::ZigString | Tag::StaticZigString => {
+                let z = unsafe { &self.value.zig };
+                if z.is_utf8() { return true; }
+                !z.is_16bit() && strings::is_all_ascii(z.slice())
+            }
+            Tag::Empty => true,
+            Tag::Dead => false,
+        }
+    }
+
+    /// `bun.String.utf8` (string.zig:646) — raw UTF-8 byte slice. Debug-asserts
+    /// `self` is a UTF-8-safe `ZigString`/`StaticZigString` (use [`as_utf8`] for
+    /// the checked variant).
+    #[inline]
+    pub fn utf8(&self) -> &[u8] {
+        debug_assert!(matches!(self.tag, Tag::ZigString | Tag::StaticZigString));
+        debug_assert!(self.can_be_utf8());
+        unsafe { self.value.zig.slice() }
+    }
+
+    /// `bun.String.encode` (string.zig:642) — encode `self` into a freshly
+    /// allocated buffer using a Node.js Buffer encoding. Dispatches to
+    /// `jsc.WebCore.encoding.constructFrom{U8,U16}` via [`webcore_encoding`]
+    /// hooks (tier-6 owns the bodies).
+    pub fn encode(&self, enc: encoding::Encoding) -> Vec<u8> {
+        self.to_zig_string().encode_with_allocator(enc)
+    }
+
+    /// `bun.String.toUTF8Owned` — like [`to_utf8_without_ref`] but guarantees
+    /// the returned slice owns its buffer (string.zig:724).
+    pub fn to_utf8_owned(&self) -> ZigStringSlice {
+        self.to_utf8_without_ref().clone_if_borrowed()
+    }
+
+    /// `bun.String.toUTF8Bytes` — owned `Vec<u8>` of `self` as UTF-8
+    /// (string.zig:729).
+    #[inline]
+    pub fn to_utf8_bytes(&self) -> Vec<u8> {
+        self.to_utf8_owned().into_vec()
+    }
+
+    /// `bun.String.toOwnedSliceReturningAllASCII` (string.zig:81) — returns
+    /// `(utf8_bytes, is_all_ascii)`. `false` means at least one non-ASCII byte.
+    pub fn to_owned_slice_returning_all_ascii(&self) -> (Vec<u8>, bool) {
+        match self.tag {
+            Tag::ZigString | Tag::StaticZigString => {
+                let bytes = unsafe { self.value.zig.to_owned_slice() };
+                let ascii = strings::is_all_ascii(&bytes);
+                (bytes, ascii)
+            }
+            Tag::WTFStringImpl => {
+                let slice = unsafe { (*self.value.wtf).to_utf8_without_ref() };
+                let ascii_status = match &slice {
+                    // No allocation ⇒ 8-bit and all-ASCII (borrowed latin1).
+                    ZigStringSlice::Static(..) => Some(true),
+                    _ if unsafe { (*self.value.wtf).is_8bit() } => Some(false),
+                    _ => None,
+                };
+                let bytes = slice.into_vec();
+                let is_ascii = ascii_status.unwrap_or_else(|| strings::is_all_ascii(&bytes));
+                (bytes, is_ascii)
+            }
+            Tag::Dead | Tag::Empty => (Vec::new(), true),
+        }
+    }
+
+    /// `bun.String.toSlice` (string.zig:734) — consume `self` into a
+    /// [`SliceWithUnderlyingString`], leaving `self` as [`EMPTY`].
+    pub fn to_slice(&mut self) -> SliceWithUnderlyingString {
+        let utf8 = self.to_utf8();
+        let underlying = core::mem::replace(self, Self::EMPTY);
+        SliceWithUnderlyingString {
+            utf8,
+            underlying,
+            #[cfg(debug_assertions)]
+            did_report_extra_memory_debug: false,
+        }
+    }
+
+    /// `bun.String.toThreadSafeSlice` (string.zig:742) — like [`to_slice`] but
+    /// guarantees the resulting buffer is safe to send to another thread.
+    pub fn to_thread_safe_slice(&mut self) -> SliceWithUnderlyingString {
+        if self.tag == Tag::WTFStringImpl {
+            let wtf = unsafe { &*self.value.wtf };
+            let slice = wtf.to_utf8_without_ref();
+            if !wtf.is_thread_safe() {
+                // Either borrowed-ASCII (Static) or freshly-transcoded Owned —
+                // in both cases we want an Owned copy detached from the impl.
+                return SliceWithUnderlyingString {
+                    utf8: slice.clone_if_borrowed(),
+                    underlying: String::EMPTY,
+                    #[cfg(debug_assertions)]
+                    did_report_extra_memory_debug: false,
+                };
+            }
+            // Thread-safe impl. If `slice` is borrowed (all-ASCII Latin-1),
+            // re-use the impl's storage by taking two refs (one for `utf8`,
+            // one for `underlying`).
+            if let ZigStringSlice::Static(ptr, len) = slice {
+                self.ref_();
+                self.ref_();
+                return SliceWithUnderlyingString {
+                    utf8: ZigStringSlice::WTF { string_impl: self.value.wtf, ptr, len },
+                    underlying: *self,
+                    #[cfg(debug_assertions)]
+                    did_report_extra_memory_debug: false,
+                };
+            }
+            // Already cloned (Owned); drop the WTF backing to release memory.
+            return SliceWithUnderlyingString {
+                utf8: slice,
+                underlying: String::EMPTY,
+                #[cfg(debug_assertions)]
+                did_report_extra_memory_debug: false,
+            };
+        }
+        self.to_slice()
+    }
+
+    /// `bun.String.charAt` (string.zig:831) — code unit at `index`, widened to
+    /// `u16` regardless of encoding. Caller must ensure `index < self.length()`.
+    #[inline]
+    pub fn char_at(&self, index: usize) -> u16 {
+        debug_assert!(index < self.length());
+        match self.tag {
+            Tag::WTFStringImpl => unsafe {
+                let w = &*self.value.wtf;
+                if w.is_8bit() { w.latin1_slice()[index] as u16 } else { w.utf16_slice()[index] }
+            },
+            Tag::ZigString | Tag::StaticZigString => unsafe { self.value.zig.char_at(index) },
+            _ => 0,
+        }
+    }
+
+    /// `bun.String.indexOfAsciiChar` (string.zig:842).
+    pub fn index_of_ascii_char(&self, chr: u8) -> Option<usize> {
+        debug_assert!(chr < 128);
+        if self.is_utf16() {
+            self.utf16().iter().position(|&c| c == chr as u16)
+        } else {
+            strings::index_of_char_usize(self.byte_slice(), chr)
+        }
+    }
+
+    /// `bun.String.eqlBytes` (string.zig:983) — raw byte-slice equality
+    /// (encoding-unaware).
+    #[inline]
+    pub fn eql_bytes(&self, value: &[u8]) -> bool {
+        strings::eql_long(self.byte_slice(), value, true)
+    }
+
+    /// `bun.String.toThreadSafeEnsureRef` (string.zig:1001) — like
+    /// [`to_thread_safe`] but leaves the result with one extra ref.
+    pub fn to_thread_safe_ensure_ref(&mut self) {
+        if self.tag == Tag::WTFStringImpl {
+            unsafe { BunString__toThreadSafe(self) };
+            unsafe { (*self.value.wtf).ref_() };
+        }
+    }
+
+    /// `bun.String.estimatedSize` (string.zig:1021) — owned allocation size in
+    /// bytes (not character count). `0` for static/empty/dead.
+    pub fn estimated_size(&self) -> usize {
+        match self.tag {
+            Tag::Dead | Tag::Empty | Tag::StaticZigString => 0,
+            Tag::ZigString => unsafe { self.value.zig.len },
+            Tag::WTFStringImpl => unsafe { (*self.value.wtf).byte_length() },
+        }
+    }
+
     // `to_js` / `transfer_to_js` / `create_utf8_for_js` are tier-6 (jsc) — the
     // *_jsc alias pattern: deleted here per PORTING.md, defined as inherent
     // free fns / extension trait in `bun_jsc::string` (would otherwise create

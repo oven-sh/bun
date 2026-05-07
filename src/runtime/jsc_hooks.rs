@@ -1131,7 +1131,186 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     vm_loader_vtable: &VM_LOADER_VTABLE,
     handle_ipc_internal_child,
     ipc_child_singleton_deinit,
+    console_on_before_print,
+    console_print_runtime_object,
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// ConsoleObject runtime-type hooks (spec ConsoleObject.zig)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// `Jest.runner.?.bun_test_root.onBeforePrint()` — flush the test reporter's
+/// line state before user `console.log` output interleaves with it.
+unsafe fn console_on_before_print() {
+    if let Some(runner) = crate::test_runner::jest::Jest::runner() {
+        runner.bun_test_root.on_before_print();
+    }
+}
+
+/// `&mut dyn bun_io::Write` → `core::fmt::Write` bridge for `write_format`
+/// hooks (which all take `W: core::fmt::Write`).
+struct IoAsFmt<'a>(&'a mut dyn bun_io::Write);
+impl core::fmt::Write for IoAsFmt<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        bun_io::Write::write_all(self.0, s.as_bytes()).map_err(|_| core::fmt::Error)
+    }
+}
+
+/// `ConsoleObject.Formatter.printAs(.Private, …)` runtime-type chain — see
+/// [`RuntimeHooks::console_print_runtime_object`]. Returns `true` when `value`
+/// matched one of the high-tier types and was fully formatted.
+unsafe fn console_print_runtime_object<'a, 'f>(
+    formatter: &'a mut bun_jsc::Formatter<'f>,
+    writer: &'a mut dyn bun_io::Write,
+    value: JSValue,
+    name_buf: &'a mut [u8; 512],
+    enable_ansi_colors: bool,
+) -> JsResult<bool> {
+    if enable_ansi_colors {
+        console_print_runtime_object_inner::<true>(formatter, writer, value, name_buf)
+    } else {
+        console_print_runtime_object_inner::<false>(formatter, writer, value, name_buf)
+    }
+}
+
+fn console_print_runtime_object_inner<const C: bool>(
+    formatter: &mut bun_jsc::Formatter<'_>,
+    writer_: &mut dyn bun_io::Write,
+    value: JSValue,
+    name_buf: &mut [u8; 512],
+) -> JsResult<bool> {
+    use bun_jsc::ConsoleFormatter as _;
+    use crate::webcore::{Request, Response};
+    use crate::api::Archive;
+
+    macro_rules! pf {
+        ($s:literal) => {
+            if C { ::bun_core::pretty_fmt!($s, true) } else { ::bun_core::pretty_fmt!($s, false) }
+        };
+    }
+
+    // SAFETY: `as_` returns a non-null `*mut T` only when `value` wraps a
+    // live `T` cell; conservative stack scan keeps `value` alive for the
+    // duration of each branch.
+    if let Some(response) = value.as_::<Response>() {
+        let mut w = IoAsFmt(writer_);
+        let _ = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
+        return Ok(true);
+    }
+    if let Some(request) = value.as_::<Request>() {
+        let mut w = IoAsFmt(writer_);
+        let _ = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
+        return Ok(true);
+    }
+    // TODO(b2-blocked): `BuildArtifact`/`S3Client` need `JsClass`/`from_js`
+    // downcasts before they can be matched here (spec ConsoleObject.zig).
+    if let Some(blob) = value.as_::<bun_jsc::webcore_types::Blob>() {
+        let mut w = IoAsFmt(writer_);
+        let _ = crate::webcore::blob_ext::write_format::<_, _, C>(
+            unsafe { &mut *blob },
+            formatter,
+            &mut w,
+        );
+        return Ok(true);
+    }
+    if let Some(archive) = value.as_::<Archive>() {
+        let mut w = IoAsFmt(writer_);
+        let _ = unsafe { &*archive }.write_format::<_, _, C>(formatter, &mut w);
+        return Ok(true);
+    }
+    if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
+        if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {
+            formatter.add_for_new_line("Headers ".len());
+            let _ = bun_io::Write::write_all(writer_, pf!("<r>Headers ").as_bytes());
+            let prev_quote_keys = formatter.quote_keys;
+            formatter.quote_keys = true;
+            let result = to_json_function
+                .call(formatter.global_this, value, &[])
+                .unwrap_or_else(|err| formatter.global_this.take_exception(err));
+            let mut w = IoAsFmt(writer_);
+            let r = formatter.print_as::<_, C>(
+                bun_jsc::FormatTag::Object,
+                &mut w,
+                result,
+                bun_jsc::JSType::Object,
+            );
+            formatter.quote_keys = prev_quote_keys;
+            r?;
+            return Ok(true);
+        }
+        // Spec falls through (no `return`) when `toJSON` is absent.
+    }
+    if let Some(timer) = crate::timer::TimeoutObject::from_js(value) {
+        // SAFETY: `from_js` returned non-null; cell is live while `value` is on stack.
+        let internals = unsafe { &(*timer).internals };
+        let id = internals.id;
+        formatter.add_for_new_line(
+            "Timeout(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
+        );
+        let mut w = IoAsFmt(writer_);
+        if internals.flags.kind() == crate::timer::Kind::SetInterval {
+            formatter.add_for_new_line(
+                "repeats ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
+            );
+            let _ = write!(
+                w,
+                "{}Timeout{} {}(#{}{}{}{}, repeats){}",
+                pf!("<r><blue>"), pf!("<r>"), pf!("<d>"), pf!("<yellow>"),
+                id, pf!("<r>"), pf!("<d>"), pf!("<r>")
+            );
+        } else {
+            let _ = write!(
+                w,
+                "{}Timeout{} {}(#{}{}{}{}){}",
+                pf!("<r><blue>"), pf!("<r>"), pf!("<d>"), pf!("<yellow>"),
+                id, pf!("<r>"), pf!("<d>"), pf!("<r>")
+            );
+        }
+        return Ok(true);
+    }
+    if let Some(immediate) = crate::timer::ImmediateObject::from_js(value) {
+        // SAFETY: `from_js` returned non-null; cell is live while `value` is on stack.
+        let id = unsafe { (*immediate).internals.assume_init_ref() }.id;
+        formatter.add_for_new_line(
+            "Immediate(# ) ".len() + bun_core::fmt::fast_digit_count(id.max(0) as u64) as usize,
+        );
+        let mut w = IoAsFmt(writer_);
+        let _ = write!(
+            w,
+            "{}Immediate{} {}(#{}{}{}{}){}",
+            pf!("<r><blue>"), pf!("<r>"), pf!("<d>"), pf!("<yellow>"),
+            id, pf!("<r>"), pf!("<d>"), pf!("<r>")
+        );
+        return Ok(true);
+    }
+    if let Some(build_log) = bun_jsc::BuildMessage::from_js(value) {
+        let mut w = IoAsFmt(writer_);
+        // SAFETY: `from_js` returned a live cell.
+        let _ = unsafe { &(*build_log).msg }.write_format::<C>(&mut w);
+        return Ok(true);
+    }
+    if let Some(resolve_log) = bun_jsc::ResolveMessage::from_js(value) {
+        let mut w = IoAsFmt(writer_);
+        // SAFETY: `from_js` returned a live cell.
+        let _ = unsafe { &(*resolve_log).msg }.write_format::<C>(&mut w);
+        return Ok(true);
+    }
+    {
+        use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
+        let mut wrapped = WrappedWriter::new(writer_);
+        if JestPrettyFormat::print_asymmetric_matcher::<_, { bun_jsc::FormatTag::Object }, C>(
+            formatter,
+            &mut wrapped,
+            *name_buf,
+            value,
+        )? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // LoaderHooks bodies

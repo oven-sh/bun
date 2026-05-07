@@ -869,7 +869,8 @@ pub fn edit(
                 }
             }
 
-            Expr::init(
+            Expr::allocate(
+                arena,
                 E::Object {
                     properties: G::PropertyList::default(),
                     ..Default::default()
@@ -899,7 +900,8 @@ pub fn edit(
                 }
             }
 
-            Expr::init(
+            Expr::allocate(
+                arena,
                 E::Array {
                     items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice())?,
                     ..Default::default()

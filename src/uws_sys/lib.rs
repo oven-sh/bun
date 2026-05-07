@@ -50,6 +50,18 @@ pub enum create_bun_socket_error_t {
     invalid_ciphers,
 }
 
+impl create_bun_socket_error_t {
+    pub fn message(self) -> Option<&'static [u8]> {
+        match self {
+            Self::none => None,
+            Self::load_ca_file => Some(b"Failed to load CA file"),
+            Self::invalid_ca_file => Some(b"Invalid CA file"),
+            Self::invalid_ca => Some(b"Invalid CA"),
+            Self::invalid_ciphers => Some(b"Invalid ciphers"),
+        }
+    }
+}
+
 /// WebSocket frame opcode (`uWS::OpCode`).
 ///
 /// Spec is `enum(i32) { ..., _ }` — non-exhaustive, so any `i32` from C++ is a

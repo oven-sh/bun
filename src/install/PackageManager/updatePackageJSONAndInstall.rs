@@ -247,7 +247,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                     b"peerDependencies",
                 ];
                 for list in LISTS {
-                    if let Some(query) = current_package_json.root.as_property(list) {
+                    if let Some(query) = current_package_json_root.as_property(list) {
                         if query.expr.data.is_e_object() {
                             // PORT NOTE: reshaped for borrowck — Zig held `data.e_object` (a
                             // `*E.Object`) across writes to both the inner list and the parent
@@ -284,14 +284,12 @@ fn update_package_json_and_install_with_manager_with_updates(
                                     // TODO: Theoretically we could change these two lines to
                                     // `.orderedRemove(query.i)`, but would that change user-facing
                                     // behavior?
-                                    let _ = current_package_json
-                                        .root
+                                    let _ = current_package_json_root
                                         .data
                                         .as_e_object_mut()
                                         .properties
                                         .swap_remove(query.i as usize);
-                                    current_package_json
-                                        .root
+                                    current_package_json_root
                                         .data
                                         .as_e_object_mut()
                                         .package_json_sort();

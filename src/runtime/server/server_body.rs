@@ -1005,11 +1005,11 @@ impl ServePlugins {
     fn load_and_resolve_plugins(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(matches!(self.state, ServePluginsState::Unqueued(_)));
         let ServePluginsState::Unqueued(plugin_list) = &self.state else { unreachable!() };
-        let plugin_list: Vec<_> = plugin_list.iter().collect(); // borrow before state mutation
         // PORT NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
-        // TODO(port): blocked_on bun_jsc::VirtualMachine.transpiler.options.bunfig_path —
-        // field path not yet surfaced on the Rust VM stub. Use empty dir as a placeholder.
-        let bunfig_folder: &[u8] = b"";
+        let plugin_list: Vec<_> = plugin_list.iter().collect();
+        // SAFETY: `bun_vm()` returns the JS-thread singleton; `transpiler.options` is
+        // process-lifetime once VM is initialized.
+        let bunfig_folder: &[u8] = unsafe { &(*global.bun_vm()).transpiler.options.bunfig_path };
 
         self.ref_();
         let this_ptr: *const Self = self;
@@ -1025,7 +1025,7 @@ impl ServePlugins {
         for raw_plugin in &plugin_list {
             bunstring_array.push(BunString::init(&***raw_plugin));
         }
-        let plugin_js_array = bun_string_jsc_shim::to_js_array(global, &bunstring_array)?;
+        let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
         let bunfig_folder_bunstr = jsc::bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {

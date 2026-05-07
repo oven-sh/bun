@@ -306,9 +306,24 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn loop_(&self) -> *mut AsyncLoop {
-        // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`; on POSIX
-        // `bun_aio::Loop` is a type alias for `UwsLoop`.
-        self.manager_mut().event_loop.r#loop() as *mut AsyncLoop
+        // `AnyEventLoop::r#loop()` returns `*mut UwsLoop`. On POSIX
+        // `bun_aio::Loop` *is* `UwsLoop`, so the cast is a no-op. On Windows
+        // `bun_aio::Loop` is `uv::Loop` and the inner libuv loop must be
+        // projected out of the uws wrapper (Zig: `loop().uv_loop`); reinter-
+        // preting the `UwsLoop*` as a `uv::Loop*` would hand BufferedReader
+        // the wrong pointer.
+        #[cfg(not(windows))]
+        {
+            self.manager_mut().event_loop.r#loop() as *mut AsyncLoop
+        }
+        #[cfg(windows)]
+        {
+            let uws = self.manager_mut().event_loop.r#loop();
+            // SAFETY: `r#loop()` returns the live `*mut UwsLoop` owned by the
+            // VM/mini event loop; its `uv_loop` field is initialized at loop
+            // creation and stable for the loop's lifetime.
+            unsafe { (*uws).uv_loop }
+        }
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {

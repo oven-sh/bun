@@ -1414,7 +1414,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 }
 
-impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
+impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG>
+where
+    // PORT NOTE (const-generic dispatch): the per-transport `RequestContext`
+    // inherent methods are only defined where `TransportFor<SSL,H3>: Transport`
+    // and `Self: RequestContextHostFns` (the host-fn export table is
+    // monomorphized per (SSL,DBG,H3) tuple). Spelling the bounds here lets every
+    // call to `ServerRequestContext` / `ServerH3RequestContext` resolve without
+    // each method repeating them — Rust cannot see that all four bool combos are
+    // covered by the concrete impls in `RequestContext.rs`.
+    super::request_context::TransportFor<SSL, false>: super::request_context::Transport,
+    super::request_context::TransportFor<SSL, true>: super::request_context::Transport,
+    NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
+    NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
+{
     pub const SSL_ENABLED: bool = SSL;
     pub const DEBUG_MODE: bool = DEBUG;
     const HAS_H3: bool = SSL;

@@ -525,9 +525,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                     break 'ipc_mode match IPC::Mode::from_js(global_this, mode_val)? {
                                         Some(m) => m,
                                         None => {
-                                            return Err(global_this.throw_invalid_arguments(
+                                            return Err(global_this.throw_invalid_arguments(format_args!(
                                                 "serialization must be \"json\" or \"advanced\"",
-                                            ));
+                                            )));
                                         }
                                     };
                                 } else {
@@ -564,9 +564,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if let Some(on_disconnect_) = args.get_truthy(global_this, "onDisconnect")? {
                 if !on_disconnect_.is_cell() || !on_disconnect_.is_callable() {
-                    return Err(global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "onDisconnect must be a function or undefined",
-                    ));
+                    )));
                 }
 
                 on_disconnect_callback = if IS_SYNC {
@@ -578,9 +578,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if let Some(on_exit_) = args.get_truthy(global_this, "onExit")? {
                 if !on_exit_.is_cell() || !on_exit_.is_callable() {
-                    return Err(global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "onExit must be a function or undefined",
-                    ));
+                    )));
                 }
 
                 on_exit_callback = if IS_SYNC {
@@ -741,9 +741,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             return Err(global_this.throw_invalid_arguments(format_args!("terminal is closed")));
                         }
                         if term.is_inline_spawned() {
-                            return Err(global_this.throw_invalid_arguments(
+                            return Err(global_this.throw_invalid_arguments(format_args!(
                                 "terminal was created inline by a previous spawn and cannot be reused",
-                            ));
+                            )));
                         }
                         #[cfg(unix)]
                         if term.get_slave_fd() == Fd::INVALID {

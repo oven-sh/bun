@@ -1346,16 +1346,16 @@ impl ServerConfig {
         if args.h3 {
             if args.ssl_config.is_none() {
                 return Err(global
-                    .throw_invalid_arguments("HTTP/3 requires 'tls' to be set"));
+                    .throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set")));
             }
         } else if !args.h1 {
             return Err(global
-                .throw_invalid_arguments("Cannot disable h1 without enabling h3"));
+                .throw_invalid_arguments(format_args!("Cannot disable h1 without enabling h3")));
         }
         if !args.h1 && matches!(args.address, Address::Unix(_)) {
-            return Err(global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable h1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
-            ));
+            )));
         }
 
         // ---- base_uri / base_url normalization ----

@@ -1015,9 +1015,7 @@ impl Interpreter {
         size += self.args.memory_cost();
         size += self.root_shell.memory_cost();
         size += self.root_io.memory_cost();
-        // SAFETY: `jsobjs` is either an empty slice (init) or points into the
-        // args arena (set by `init`); valid for the life of the interpreter.
-        size += unsafe { (*self.jsobjs).len() } * core::mem::size_of::<crate::jsc::JSValue>();
+        size += self.jsobjs.len() * core::mem::size_of::<crate::jsc::JSValue>();
         // PORT NOTE: Zig also walks `vm_args_utf8` (cached argv slices for the
         // builtin `$@` expansion). The Rust struct does not carry that field
         // yet — added when builtin argv expansion lands.
@@ -1726,11 +1724,12 @@ pub fn shell_openat(
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let p = shell_get_path(dir, path, &mut buf)?;
-        return bun_sys::open(p, flags, perm)?
-            .make_lib_uv_owned_for_syscall(
-                bun_sys::Tag::open,
-                bun_sys::ErrorCase::CloseOnFail,
-            );
+        // Spec interpreter.zig:1904-1909: `return bun.sys.open(p, flags, perm)`
+        // — no `makeLibUVOwnedForSyscall` here. `bun_sys::open` on Windows
+        // routes through `sys_uv` and already yields a uv-owned fd; the
+        // trailing `if (isWindows) makeLibUVOwned` in the Zig source is dead
+        // code (the Windows block early-returns before it).
+        return bun_sys::open(p, flags, perm);
     }
     #[cfg(not(windows))]
     {
@@ -2202,7 +2201,11 @@ pub fn create_shell_interpreter(
     };
 
     if global.has_exception() {
-        // export_env / shargs are owned by `interpreter` now and freed by Drop.
+        // Spec interpreter.zig:828-834: `interpreter.finalize()` →
+        // `deinitFromFinalizer` derefs root_io and closes `root_shell.cwd_fd`.
+        // Neither `Interpreter` nor `ShellExecEnv` implements `Drop`, so a plain
+        // box drop would leak the raw `cwd_fd`; run the explicit teardown.
+        interpreter.deinit_from_exec();
         return Err(crate::jsc::JsError::Thrown);
     }
 

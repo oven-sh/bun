@@ -1158,7 +1158,7 @@ impl<'a> ParserCtx<'a> {
                 let arr = JSValue::create_empty_array(self.global, e_array.items.len as usize)?;
 
                 args.append(arr);
-                self.seen_objects.insert(key, arr);
+                self.seen_objects.put(key, arr)?;
 
                 for (_i, item) in e_array.slice().iter().enumerate() {
                     let i: u32 = u32::try_from(_i).unwrap();

@@ -698,10 +698,11 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 
         if !T::HAS_CONSTRUCT {
             let err = bun_jsc::SystemError {
-                message: bun_string::String::create_utf8(
-                    format!("{} is not constructable", T::NAME).as_bytes(),
-                ),
-                code: bun_string::String::borrow_utf8("ERR_ILLEGAL_CONSTRUCTOR"),
+                message: bun_string::String::create_format(format_args!(
+                    "{} is not constructable",
+                    T::NAME
+                )),
+                code: bun_string::String::static_("ERR_ILLEGAL_CONSTRUCTOR"),
                 ..Default::default()
             };
             return Err(global.throw_value(err.to_error_instance(global)));
@@ -764,7 +765,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             let data = unsafe { ByteList::from_borrowed_slice_dangerous(slice) };
             return Ok(this
                 .sink
-                .write_bytes(streams::Result::Temporary(ManuallyDrop::into_inner(data)))
+                .write_bytes(streams::Result::Temporary(data))
                 .to_js(global));
         }
 
@@ -783,7 +784,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
 
         // SAFETY: keep the JSString GC-live while we borrow its character buffer.
-        let _keep_str = bun_jsc::EnsureStillAlive(unsafe { &*str_ }.as_value());
+        let _keep_str = bun_jsc::EnsureStillAlive(unsafe { &*str_ }.to_js());
         if view.is_16bit() {
             let utf16 = view.utf16_slice_aligned();
             // SAFETY: reinterpreting &[u16] as &[u8] of double length.
@@ -794,7 +795,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             let data = unsafe { ByteList::from_borrowed_slice_dangerous(bytes) };
             return Ok(this
                 .sink
-                .write_utf16(streams::Result::Temporary(ManuallyDrop::into_inner(data)))
+                .write_utf16(streams::Result::Temporary(data))
                 .to_js(global));
         }
 
@@ -802,7 +803,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         let data = unsafe { ByteList::from_borrowed_slice_dangerous(view.slice()) };
         Ok(this
             .sink
-            .write_latin1(streams::Result::Temporary(ManuallyDrop::into_inner(data)))
+            .write_latin1(streams::Result::Temporary(data))
             .to_js(global))
     }
 

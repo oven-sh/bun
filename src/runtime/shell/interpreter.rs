@@ -294,11 +294,13 @@ pub struct Interpreter {
 
     pub args: Box<ShellArgs>,
 
-    /// JS objects used as input for the shell script (allocated in the AST arena).
+    /// JS objects used as input for the shell script. Owned storage (the Zig
+    /// `ArrayList(JSValue).items` borrow becomes `Vec` ownership in the port —
+    /// `create_shell_interpreter` moves the parsed-script's vec in here).
     // TODO(port): GC root — bare JSValue heap storage is invisible to the
     // conservative stack scan. Phase B: switch to MarkedArgumentBuffer or root
     // via wrapper visitChildren.
-    pub jsobjs: *mut [crate::jsc::JSValue],
+    pub jsobjs: Vec<crate::jsc::JSValue>,
 
     pub root_shell: ShellExecEnv,
     pub root_io: IO,
@@ -1482,15 +1484,14 @@ pub struct ShellArgs {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// EventLoopHandle shim
+// EventLoopHandle
 // ────────────────────────────────────────────────────────────────────────────
 
 /// `bun.jsc.EventLoopHandle` — tagged union over `{ js: *JSEventLoop, mini:
-/// *MiniEventLoop }`. The real type lives in `bun_jsc` (blocked); the shell
-/// only stores/forwards it, so an opaque copyable handle suffices for now.
-// TODO(b2-blocked): bun_jsc::EventLoopHandle
-#[derive(Clone, Copy, Debug, Default)]
-pub struct EventLoopHandle(pub usize);
+/// *MiniEventLoop }`. The real type was moved (CYCLEBREAK) into
+/// `bun_event_loop` and re-exported through `bun_jsc`; shell re-exports it
+/// here so `IOReader`/`IOWriter`/builtin tasks keep their existing import path.
+pub use bun_event_loop::EventLoopHandle;
 
 // ────────────────────────────────────────────────────────────────────────────
 // CowFd

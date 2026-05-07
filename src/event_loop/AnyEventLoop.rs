@@ -424,6 +424,22 @@ impl EventLoopHandle {
         EventLoopHandle::Mini(mini)
     }
 
+    /// Erase to a `bun_aio::EventLoopCtx` for `KeepAlive`/`FilePoll` calls
+    /// (Zig: `KeepAlive.ref(anytype)` accepted `EventLoopHandle` directly via
+    /// comptime dispatch). The JS arm reaches the global VM-ctx hook — there
+    /// is exactly one JS event loop per thread, so the hook resolves to the
+    /// same loop as `owner`. The mini arm uses the per-loop adapter so a
+    /// non-global `MiniEventLoop` (e.g. spawn-sync) is honoured.
+    #[inline]
+    pub fn as_event_loop_ctx(self) -> bun_aio::EventLoopCtx {
+        match self {
+            EventLoopHandle::Js { .. } => {
+                bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+            }
+            EventLoopHandle::Mini(mini) => MiniEventLoop::as_event_loop_ctx(mini),
+        }
+    }
+
     /// Erase to the `(tag, ptr)` pair stored in `uws::InternalLoopData`
     /// (`parent_tag` / `parent_ptr`). Tag 1 = JS, tag 2 = mini — matches Zig
     /// `setParentEventLoop`.

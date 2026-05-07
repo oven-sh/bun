@@ -13,6 +13,7 @@ use bun_core::{Global, Output};
 use bun_resolver::fs::FileSystem;
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
+use bun_install::lockfile::package::{PackageListExt as _, PackageSliceExt as _};
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     self, install_with_manager, populate_manifest_cache, LogLevel, ManifestCacheOptions,
@@ -193,9 +194,14 @@ impl UpdateInteractiveCommand {
         buffer_writer.append_newline = preserve_trailing_newline;
         let mut package_json_writer = BufferPrinter::init(buffer_writer);
 
+        // PORT NOTE (layering): `MapEntry.root` is the T2 `bun_logger::js_ast::Expr`;
+        // `js_printer::print_json` consumes the T4 `bun_js_parser::Expr`. Lift via
+        // the existing `From<T2> for T4` deep-rebuild (same as
+        // `updatePackageJSONAndInstall` / pnpm migration). The T2 entry is not
+        // re-read — only `source.contents` is written back below.
         if let Err(err) = js_printer::print_json(
             &mut package_json_writer,
-            package_json.root,
+            package_json.root.into(),
             &package_json.source,
             PrintJsonOptions {
                 indent: package_json.indentation,
@@ -214,17 +220,14 @@ impl UpdateInteractiveCommand {
         // PORT NOTE: Zig used `std.fs.cwd().createFile(path).writeAll(..)`; the
         // Rust port routes through `bun_sys::File::write_file` (cwd-relative
         // open + write + close) per src/CLAUDE.md.
-        let path_z = bun_str::ZStr::from_bytes(package_json_path);
-        if let Err(err) = bun_sys::File::write_file(
-            bun_sys::Fd::cwd(),
-            &path_z,
-            &new_package_json_source,
-        )
-        .into_result()
+        let mut path_zbuf = PathBuffer::uninit();
+        let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
+        if let Err(err) =
+            bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &new_package_json_source)
         {
             Output::err_generic(
                 "Failed to write package.json at {s}: {s}",
-                (BStr::new(package_json_path), err.name()),
+                (BStr::new(package_json_path), BStr::new(err.name())),
             );
             return Err(err.into());
         }
@@ -948,8 +951,13 @@ impl UpdateInteractiveCommand {
 
                 let scope = manager.scope_for_package_name(package_name).clone();
                 let mut expired = false;
+                // SAFETY: `manifests.by_name_allow_expired` only touches
+                // `pm.options` / `pm.get_cache_directory()` / `pm.timestamp_*`,
+                // never `pm.manifests` (Zig invariant — `*PackageManager` is
+                // freely aliased there). The `&mut self` receiver is
+                // `manager.manifests`, disjoint from those reads.
                 let Some(manifest) = manager.manifests.by_name_allow_expired(
-                    pm_ptr,
+                    unsafe { &mut *pm_ptr },
                     &scope,
                     package_name,
                     Some(&mut expired),
@@ -1664,12 +1672,14 @@ impl UpdateInteractiveCommand {
                             minor: current_ver_parsed.version.minor.unwrap_or(0),
                             patch: current_ver_parsed.version.patch.unwrap_or(0),
                             tag: current_ver_parsed.version.tag,
+                            _tag_padding: Default::default(),
                         };
                         let update_full = semver::Version {
                             major: update_ver_parsed.version.major.unwrap_or(0),
                             minor: update_ver_parsed.version.minor.unwrap_or(0),
                             patch: update_ver_parsed.version.patch.unwrap_or(0),
                             tag: update_ver_parsed.version.tag,
+                            _tag_padding: Default::default(),
                         };
 
                         let target_ver_str: &[u8] = if pkg.use_latest {
@@ -1847,12 +1857,14 @@ impl UpdateInteractiveCommand {
                             minor: current_ver_parsed.version.minor.unwrap_or(0),
                             patch: current_ver_parsed.version.patch.unwrap_or(0),
                             tag: current_ver_parsed.version.tag,
+                            _tag_padding: Default::default(),
                         };
                         let target_full = semver::Version {
                             major: target_ver_parsed.version.major.unwrap_or(0),
                             minor: target_ver_parsed.version.minor.unwrap_or(0),
                             patch: target_ver_parsed.version.patch.unwrap_or(0),
                             tag: target_ver_parsed.version.tag,
+                            _tag_padding: Default::default(),
                         };
 
                         // Print target version (use truncated version for narrow terminals)
@@ -1916,12 +1928,14 @@ impl UpdateInteractiveCommand {
                             minor: current_ver_parsed.version.minor.unwrap_or(0),
                             patch: current_ver_parsed.version.patch.unwrap_or(0),
                             tag: current_ver_parsed.version.tag,
+                            _tag_padding: Default::default(),
                         };
                         let latest_full = semver::Version {
                             major: latest_ver_parsed.version.major.unwrap_or(0),
                             minor: latest_ver_parsed.version.minor.unwrap_or(0),
                             patch: latest_ver_parsed.version.patch.unwrap_or(0),
                             tag: latest_ver_parsed.version.tag,
+                            _tag_padding: Default::default(),
                         };
 
                         // Dim if latest matches target version

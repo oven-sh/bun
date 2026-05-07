@@ -1391,7 +1391,7 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
         HmrSocket::on_open(self, ws)
     }
     #[inline]
-    fn on_message(&mut self, ws: bun_uws_sys::AnyWebSocket, message: &[u8], opcode: Opcode) {
+    fn on_message(&mut self, ws: bun_uws_sys::AnyWebSocket, message: &[u8], opcode: bun_uws_sys::Opcode) {
         HmrSocket::on_message(self, ws, message, opcode)
     }
     #[inline]
@@ -1503,6 +1503,10 @@ unsafe fn bake_watcher_add_file(
     // SAFETY: `package_json` is an erased `*const PackageJSON` owned by the
     // resolver's package-json cache (process lifetime); Watcher only stores it.
     let pj = package_json.map(|p| unsafe { &*(p as *const bun_watcher::PackageJSON) });
+    // PORT NOTE: `bun_watcher::Loader` is an opaque `#[repr(transparent)] u8`
+    // newtype mirroring `bun_options_types::Loader` (#[repr(u8)]). Watcher only
+    // stores the discriminant; convert by value.
+    let loader = bun_watcher::Loader(loader as u8);
     let r = if copy_file_path {
         w.add_file::<true>(fd, file_path, hash, loader, dir_fd, pj)
     } else {

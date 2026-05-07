@@ -468,7 +468,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple.
     let (abort_signal, terminal_info) = &mut *defer_guard;
 
-    // TODO(port): lifetime — owned ZBox for cwd held here so the borrow stays valid.
+    // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
+    // `spawn_process` returns (Zig used the bump arena).
     let mut cwd_owned: Option<ZBox> = None;
     {
         if args.is_empty_or_undefined_or_null() {
@@ -1904,6 +1905,7 @@ pub fn append_envp_from_js(
             2)
         .saturating_sub(envp.len()),
     );
+    storage.reserve(object_iter.len);
     while let Some(key) = object_iter.next()? {
         let value = object_iter.value;
         if value.is_undefined() {
@@ -1948,8 +1950,9 @@ pub fn append_envp_from_js(
         };
 
         if key.eql_comptime(b"PATH") {
-            // SAFETY: `line` is leaked below (mem::forget), so the pointed-to
-            // bytes outlive `*path` for the duration of the spawn call.
+            // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
+            // outlives every read of `*path`), and `ZBox` is heap-backed so the
+            // bytes don't move when the `ZBox` value itself is moved.
             *path = unsafe {
                 core::slice::from_raw_parts(
                     line.as_bytes().as_ptr().add(b"PATH=".len()),
@@ -1958,11 +1961,8 @@ pub fn append_envp_from_js(
             };
         }
 
-        // TODO(port): lifetime — `line: ZBox` would drop at end of loop body;
-        // Phase B: collect into a backing Vec<ZBox> in the caller that lives
-        // past spawn_process. For now, leak to keep the *const c_char valid.
         envp.push(Some(line.as_ptr()));
-        core::mem::forget(line);
+        storage.push(line);
     }
     Ok(())
 }
@@ -1970,7 +1970,7 @@ pub fn append_envp_from_js(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/bun/js_bun_spawn_bindings.zig (1204 lines)
-//   confidence: low
-//   todos:      16
-//   notes:      arena dropped per non-AST rule — argv/env *const c_char now point into owned Box<ZStr>s that need a backing Vec in Phase B; memfd-close + abort/terminal `defer`s reshaped via scopeguard re-borrows; `comptime is_sync` → const generic with void types collapsed to Option; Subprocess/IPC/Terminal cross-crate paths guessed
+//   confidence: medium
+//   todos:      8
+//   notes:      arena dropped per non-AST rule — argv/env *const c_char point into ZBoxes owned by `cstr_storage: Vec<ZBox>` (freed at fn exit, matching Zig's arena.deinit()); memfd-close + abort/terminal `defer`s reshaped via scopeguard re-borrows; `comptime is_sync` → const generic with void types collapsed to Option; Subprocess/IPC/Terminal cross-crate paths guessed
 // ──────────────────────────────────────────────────────────────────────────

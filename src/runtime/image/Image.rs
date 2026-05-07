@@ -455,7 +455,7 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
             let r = base64::decode(&mut out, payload);
             if r.fail {
                 return Err(global
-                    .throw_invalid_arguments("Image(): invalid base64 in data: URL"));
+                    .throw_invalid_arguments(format_args!("Image(): invalid base64 in data: URL")));
             }
             out.truncate(r.written);
             return Ok(Source::Owned(out));
@@ -471,9 +471,9 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
         // *borrows* the slice (see `pin_for_task`), so this rejection is
         // load-bearing — `buf.slice()` is the obvious workaround.
         if ab.resizable || ab.shared {
-            return Err(global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
-            ));
+            )));
         }
         // Just remember the JS object — see Source::JsBuffer for why we don't
         // cache the pointer or pin here.
@@ -498,9 +498,9 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
             return Ok(Source::Blob(Strong::create(value, global)));
         }
     }
-    Err(global.throw_invalid_arguments(
+    Err(global.throw_invalid_arguments(format_args!(
         "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob",
-    ))
+    )))
 }
 
 // ───────────────────────────── chainable ops ────────────────────────────────
@@ -514,7 +514,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_number() {
-            return Err(global.throw_invalid_arguments("resize(width, height?, options?)"));
+            return Err(global.throw_invalid_arguments(format_args!("resize(width, height?, options?)")));
         }
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.
@@ -553,7 +553,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_number() {
-            return Err(global.throw_invalid_arguments("rotate(degrees) expects 90, 180 or 270"));
+            return Err(global.throw_invalid_arguments(format_args!("rotate(degrees) expects 90, 180 or 270")));
         }
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
         // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".
@@ -561,7 +561,7 @@ impl Image {
         let deg: u32 = u32::try_from(((raw % 360) + 360) % 360).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
             return Err(global
-                .throw_invalid_arguments("rotate: only multiples of 90 are supported"));
+                .throw_invalid_arguments(format_args!("rotate: only multiples of 90 are supported")));
         }
         self.pipeline.rotate = u16::try_from(deg).unwrap();
         Ok(callframe.this())
@@ -1022,9 +1022,9 @@ impl Image {
         if args.len() > 0 && !args[0].is_undefined_or_null() {
             let s = args[0].to_bun_string(global)?;
             if !s.eql_utf8(b"dataurl") {
-                return Err(global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
-                ));
+                )));
             }
         }
         self.schedule(global, cf.this(), Kind::Placeholder, Deliver::DataUrl)
@@ -1040,9 +1040,9 @@ impl Image {
     pub fn do_write(&mut self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
-            return Err(global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
-            ));
+            )));
         }
 
         let mut output = self.pipeline.output;
@@ -1161,7 +1161,7 @@ impl Image {
             const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
             let blob_js = strong.get();
             let Some(blob) = blob_js.as_::<Blob>() else {
-                return Err(global.throw(REFUSE));
+                return Err(global.throw(format_args!("{REFUSE}")));
             };
             // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
             let blob = unsafe { &*blob };
@@ -1176,13 +1176,13 @@ impl Image {
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
                         self.source = Source::Path(p);
                     } else {
-                        return Err(global.throw(REFUSE));
+                        return Err(global.throw(format_args!("{REFUSE}")));
                     }
                 } else {
-                    return Err(global.throw(REFUSE));
+                    return Err(global.throw(format_args!("{REFUSE}")));
                 }
             } else {
-                return Err(global.throw(REFUSE));
+                return Err(global.throw(format_args!("{REFUSE}")));
             }
         }
         let input = match self.pin_for_task(this_value, global) {
@@ -1191,7 +1191,7 @@ impl Image {
                 if matches!(e, PinError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
-                return Err(global.throw("Image: source ArrayBuffer was detached"));
+                return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
         };
         // PORT NOTE: Zig `defer input.release()` is hoisted below — `input`
@@ -1265,7 +1265,7 @@ impl<'a> BlobReadChain<'a> {
         let blob_js = strong.get();
         let Some(blob) = blob_js.as_::<Blob>() else {
             drop(deliver);
-            return Err(global.throw("Image: Blob source is no longer a Blob"));
+            return Err(global.throw(format_args!("Image: Blob source is no longer a Blob")));
         };
         // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
         let blob = unsafe { &mut *blob };

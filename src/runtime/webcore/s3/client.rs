@@ -742,6 +742,7 @@ pub fn upload_stream(
 ) -> JsResult<JSValue> {
     let proxy_url = proxy.unwrap_or(b"");
     if readable_stream.is_disturbed(global_this) {
+        credentials.deref();
         return Ok(bun_jsc::JSPromise::rejected_promise(
             global_this,
             strings::String::static_("ReadableStream is already disturbed").to_error_instance(global_this),
@@ -751,6 +752,7 @@ pub fn upload_stream(
 
     match &readable_stream.ptr {
         ReadableStreamPtr::Invalid => {
+            credentials.deref();
             return Ok(bun_jsc::JSPromise::rejected_promise(
                 global_this,
                 strings::String::static_("ReadableStream is invalid").to_error_instance(global_this),
@@ -781,6 +783,7 @@ pub fn upload_stream(
                     js_err.unprotect();
                 }
                 js_err.ensure_still_alive();
+                credentials.deref();
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
             }
         }
@@ -805,6 +808,7 @@ pub fn upload_stream(
                     js_err.unprotect();
                 }
                 js_err.ensure_still_alive();
+                credentials.deref();
                 return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
             }
         }
@@ -828,11 +832,10 @@ pub fn upload_stream(
 
     // PORT NOTE: Zig calls `this.ref()` *before* the is_disturbed/Invalid/pending-err early
     // returns above (client.zig:465), leaking a credential ref on every early-return path.
-    // We intentionally defer the ref until after those checks — strictly an improvement.
+    // Here `credentials` is owned-by-value and explicitly `.deref()`ed on each early
+    // return — strictly an improvement.
     //
-    // ref the credentials — `IntrusiveRc::init_ref` bumps the intrusive count and wraps.
-    // SAFETY: `this` points to a live heap-allocated `S3Credentials` (intrusive-refcounted).
-    let credentials = unsafe { bun_ptr::IntrusiveRc::init_ref(this as *mut S3Credentials) };
+    // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static: &'static JSGlobalObject =
         unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };

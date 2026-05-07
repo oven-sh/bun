@@ -1146,13 +1146,10 @@ impl Expect {
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
                 // TODO(port): comptime string concatenation
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
-                return Err(global_this.throw_pretty(
-                    signature,
-                    format_args!(
-                        "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
-                        value.to_fmt(&mut formatter)
-                    ),
-                ));
+                return Err(global_this.throw_pretty(format_args!(
+                    "{signature}\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
+                    value.to_fmt(&mut formatter)
+                )));
             }
         }
 
@@ -1247,7 +1244,7 @@ impl Expect {
                 global_this: Some(global_this),
                 ..Default::default()
             };
-            return Err(global_this.throw_pretty(signature, format_args!("\n\n{}\n", diff_format)));
+            return Err(global_this.throw_pretty(format_args!("{signature}\n\n{diff_format}\n")));
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1316,10 +1313,9 @@ impl Expect {
         let args = args_.slice();
 
         if args.is_empty() || !args[0].is_object() {
-            return Err(global_this.throw_pretty(
+            return Err(global_this.throw_pretty(format_args!(
                 "<d>expect.<r>extend<d>(<r>matchers<d>)<r>\n\nExpected an object containing matchers\n",
-                format_args!(""),
-            ));
+            )));
         }
 
         // SAFETY: FFI call with valid &JSGlobalObject
@@ -2035,7 +2031,7 @@ impl ExpectStringMatching {
 
         if args.is_empty() || (!args[0].is_string() && !args[0].is_reg_exp()) {
             const FMT: &str = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n";
-            return Err(global_this.throw_pretty(FMT, format_args!("")));
+            return Err(global_this.throw_pretty(format_args!("{FMT}")));
         }
 
         let test_value = args[0];
@@ -2067,10 +2063,9 @@ impl ExpectCloseTo {
         let args = args_buf.slice();
 
         if args.is_empty() || !args[0].is_number() {
-            return Err(global_this.throw_pretty(
+            return Err(global_this.throw_pretty(format_args!(
                 "<d>expect.<r>closeTo<d>(<r>number<d>, precision?)<r>\n\nExpected a number value",
-                format_args!(""),
-            ));
+            )));
         }
         let number_value = args[0];
 
@@ -2116,7 +2111,7 @@ impl ExpectObjectContaining {
 
         if args.is_empty() || !args[0].is_object() {
             const FMT: &str = "<d>expect.<r>objectContaining<d>(<r>object<d>)<r>\n\nExpected an object\n";
-            return Err(global_this.throw_pretty(FMT, format_args!("")));
+            return Err(global_this.throw_pretty(format_args!("{FMT}")));
         }
 
         let object_value = args[0];
@@ -2149,7 +2144,7 @@ impl ExpectStringContaining {
 
         if args.is_empty() || !args[0].is_string() {
             const FMT: &str = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
-            return Err(global_this.throw_pretty(FMT, format_args!("")));
+            return Err(global_this.throw_pretty(format_args!("{FMT}")));
         }
 
         let string_value = args[0];
@@ -2191,7 +2186,7 @@ impl ExpectAny {
         constructor.ensure_still_alive();
         if !constructor.is_constructor() {
             const FMT: &str = "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n";
-            return Err(global_this.throw_pretty(FMT, format_args!("")));
+            return Err(global_this.throw_pretty(format_args!("{FMT}")));
         }
 
         let asymmetric_matcher_constructor_type = AsymmetricMatcherConstructorType::from_js(global_this, constructor)?;
@@ -2235,7 +2230,7 @@ impl ExpectArrayContaining {
 
         if args.is_empty() || !args[0].js_type().is_array() {
             const FMT: &str = "<d>expect.<r>arrayContaining<d>(<r>array<d>)<r>\n\nExpected a array\n";
-            return Err(global_this.throw_pretty(FMT, format_args!("")));
+            return Err(global_this.throw_pretty(format_args!("{FMT}")));
         }
 
         let array_value = args[0];

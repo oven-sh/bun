@@ -641,7 +641,7 @@ impl AnyRoute {
         path: &mut Node::PathOrFileDescriptor,
     ) -> JsResult<AnyRoute> {
         // The file/static route doesn't ref it.
-        let blob = Blob::find_or_create_file_from_path(path, global, false);
+        let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, false);
 
         if blob.needs_to_read_file() {
             // Throw a more helpful error upfront if the file does not exist.
@@ -650,7 +650,7 @@ impl AnyRoute {
             // are 404'ing when the user goes to the route. You want to find
             // that out immediately so that the health check on startup fails
             // and the process exits with a non-zero status code.
-            if let Some(store) = blob.store() {
+            if let Some(store) = blob.store.as_deref() {
                 if let Some(store_path) = store.get_path() {
                     // PORT NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path
@@ -711,8 +711,9 @@ impl AnyRoute {
                     // slot would leak +1 per first-seen HTMLBundle.
                     let route = html_bundle::Route::init(html_bundle);
                     // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
-                    // adopt without bumping so the map slot stays non-owning.
-                    let borrowed = unsafe { RefPtr::adopt_ref_unchecked(route.data.as_ptr()) };
+                    // wrap without bumping so the map slot stays non-owning
+                    // (`RefPtr<T>` has no `Drop`; this is the bit-copy Zig did).
+                    let borrowed = unsafe { RefPtr::from_raw(route.data.as_ptr()) };
                     v.insert(borrowed);
                     AnyRoute::Html(route)
                 }
@@ -1248,6 +1249,13 @@ impl<'a, Ctx: RequestCtxOps> PreparedRequestFor<'a, Ctx> {
 // `app.ws(...)` accept `*mut Self` / `*mut UserRoute<..>` as the upgrade ctx.
 impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeServer<SSL>
     for NewServer<SSL, DEBUG>
+where
+    // PORT NOTE: see the bounded `impl NewServer` below for why these are
+    // spelled out — `on_web_socket_upgrade` lives in that impl.
+    super::request_context::TransportFor<SSL, false>: super::request_context::Transport,
+    super::request_context::TransportFor<SSL, true>: super::request_context::Transport,
+    NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
+    NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {
     fn on_websocket_upgrade(
         &mut self,
@@ -1272,7 +1280,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Shared `&VirtualMachine` accessor (struct stores it as `*const`).
     #[inline]
-    fn vm_ref(&self) -> &jsc::VirtualMachine {
+    fn vm_ref(&self) -> &jsc::virtual_machine::VirtualMachine {
         // SAFETY: `vm` is the per-thread singleton, set in `init()`; non-null
         // and valid for the server's lifetime (LIFETIMES.tsv: STATIC).
         unsafe { &*self.vm }
@@ -1282,10 +1290,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `VirtualMachine::get()` pointer (not `self.vm`) so the borrow does not
     /// derive from `&self`'s read-only provenance.
     #[inline]
-    fn vm_mut(&self) -> &mut jsc::VirtualMachine {
+    fn vm_mut(&self) -> &mut jsc::virtual_machine::VirtualMachine {
         // SAFETY: per-thread singleton; caller is on the JS thread and holds
         // no other `&mut VirtualMachine` for this scope.
-        unsafe { &mut *jsc::VirtualMachine::get() }
+        unsafe { &mut *jsc::virtual_machine::VirtualMachine::get() }
     }
 
     /// `server.zig:notifyInspectorServerStopped`. Unbounded so `deinit()` (in
@@ -1297,17 +1305,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             cold();
             if let Some(debugger) = &self.vm_mut().debugger {
                 cold();
-                if let Some(agent) = debugger.http_server_agent.agent {
-                    // SAFETY: agent is a live C++ InspectorHTTPServerAgent while
-                    // the debugger is attached.
-                    unsafe {
-                        InspectorHTTPServerAgent::notify_server_stopped(
-                            agent.as_ptr(),
-                            self.inspector_server_id,
-                            bun_core::time::milli_timestamp() as f64,
-                        );
-                    }
-                }
+                // PORT NOTE (layering): `HTTPServerAgent.notifyServerStopped`
+                // takes `AnyServer` in Zig and unpacks `inspector_server_id`
+                // itself. The Rust port hoists that wrapper to
+                // `super::http_server_agent` so this crate-tier call doesn't
+                // re-declare the C ABI.
+                super::http_server_agent::notify_server_stopped(
+                    &debugger.http_server_agent,
+                    self.as_any_server(),
+                );
             }
             self.inspector_server_id = DebuggerId::new(0);
         }

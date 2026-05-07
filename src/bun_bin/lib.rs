@@ -1,4 +1,9 @@
-//! `bun-rs` — the Rust-port executable.
+//! `libbun_rust.a` — the Rust-port staticlib.
+//!
+//! Built by `cargo build -p bun_bin` (emitted from `scripts/build/rust.ts`)
+//! and linked into the final `bun-debug` executable by ninja's link step,
+//! occupying the slot `bun-zig.o` used to. The clang++ driver supplies the
+//! C runtime startup (`_start` → `main`); `main` below is the process entry.
 //!
 //! Init order mirrors `src/main.zig`:
 //!   1. crash handler / signal masks
@@ -7,12 +12,10 @@
 //!   4. `Output.Source.Stdio.init()` — stdout/stderr writers
 //!   5. `StackCheck.configureThread()`
 //!   6. `cli::Cli::start()` → `Global::exit(0)`
-//!
-//! `bun_runtime` (which owns `cli::Cli::start`) is gated out until its
-//! upstream crates compile; until then we report and exit cleanly so the
-//! link step itself can be exercised.
 
 #![allow(unused_imports)]
+
+use core::ffi::{c_char, c_int};
 
 mod phase_c_exports;
 
@@ -50,7 +53,16 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     c"detect_stack_use_after_return=0:detect_leaks=0:symbolize=0:fast_unwind_on_fatal=1".as_ptr()
 }
 
-fn main() {
+/// Process entry point. `extern "C"` so the linker resolves crt1.o's
+/// undefined `main` against this symbol — same role as Zig's `pub fn main`.
+///
+/// `argc`/`argv` are accepted for signature compatibility but unused:
+/// `std::env::args_os()` (which `bun_core::argv()` wraps) captures them
+/// independently via the `.init_array` hook on Linux / `_NSGetArgv` on
+/// macOS / `GetCommandLineW` on Windows, so a Rust `lang_start` is not
+/// required.
+#[unsafe(no_mangle)]
+pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
@@ -102,4 +114,6 @@ fn main() {
     // 7. CLI dispatch.
     bun_runtime::cli::Cli::start();
     Global::exit(0);
+    // Unreachable — Global::exit never returns. Satisfies the `c_int` return.
+    0
 }

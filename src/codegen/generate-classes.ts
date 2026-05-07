@@ -2605,7 +2605,27 @@ const rustModuleResolver = (() => {
   const structToPath = new Map<string, string>(); // StructName → crate::a::b::StructName
   // `(?:#[path = "…"]\s*)? (?:#[...]\s*)* (?:pub\s+)? mod NAME ;`
   const modRe = /(?:#\[path\s*=\s*"([^"]+)"\]\s*)?(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g;
-  const structRe = /\bpub\s+struct\s+([A-Z]\w*)\b/g;
+  // Index both `pub struct Name` and `pub type Name = …` — several JS classes
+  // (HTTPServer/HTTPSServer/MD4/MD5/…) are generic instantiations exposed as
+  // type aliases; the thunks call `Name::method` either way.
+  const structRe = /\bpub\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
+
+  // ── Prior-output cache ────────────────────────────────────────────────
+  // Some classes don't map 1:1 to a `pub struct`/`pub type` of the same name
+  // (e.g. `Immediate` → `crate::timer::ImmediateObject`, the three
+  // `*InternalReadableStreamSource` classes → distinct `Source` structs).
+  // The walk can't derive those; they're encoded as `rustPath` overrides or
+  // were hand-tuned in the committed output. Seed the index from the
+  // existing `generated_classes.rs` so a regeneration preserves them
+  // instead of falling through to a broken `.classes.ts`-derived guess.
+  // Walk-discovered paths still win (set after this block).
+  const priorPath = new Map<string, string>();
+  try {
+    const prior = readFileSync(`${outBase}/generated_classes.rs`, "utf8");
+    for (const m of prior.matchAll(/^pub use (\S+) as (\w+);$/gm)) {
+      priorPath.set(m[2], m[1]);
+    }
+  } catch {}
 
   function walk(file: string, modPath: string) {
     const abs = path.resolve(file);
@@ -2644,6 +2664,14 @@ const rustModuleResolver = (() => {
   return {
     /** Resolve a class name to its `crate::…::Name` path, or a derived guess. */
     resolveStruct(name: string, classesFile?: string): string {
+      // Prior-output cache wins: it's the known-compiling mapping. The walk
+      // is a heuristic that doesn't see `pub use` re-exports, so it can
+      // return a path through a private module (e.g.
+      // `crate::socket::socket_body::TCPSocket` instead of the re-exported
+      // `crate::socket::TCPSocket`). When a class genuinely moves, the stale
+      // path fails to compile and the fix is updating `rustPath` in the
+      // `.classes.ts` — same as before.
+      if (priorPath.has(name)) return priorPath.get(name)!;
       if (structToPath.has(name)) return structToPath.get(name)!;
       // Fallback: derive from the .classes.ts location → sibling .rs module.
       // src/runtime/webcore/response.classes.ts → crate::webcore::response::Name

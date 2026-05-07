@@ -385,7 +385,7 @@ pub mod js_Blob {
 /// Native backing type for `JSBlobInternalReadableStreamSource.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").BlobInternalReadableStreamSource.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::streams::BlobInternalReadableStreamSource`, not here.
+/// compile error — fix it in `crate::webcore::byte_blob_loader::Source`, not here.
 pub use crate::webcore::byte_blob_loader::Source as BlobInternalReadableStreamSource;
 
 #[unsafe(no_mangle)]
@@ -1015,7 +1015,7 @@ pub mod js_BuildMessage {
 /// Native backing type for `JSBytesInternalReadableStreamSource.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").BytesInternalReadableStreamSource.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::streams::BytesInternalReadableStreamSource`, not here.
+/// compile error — fix it in `crate::webcore::byte_stream::Source`, not here.
 pub use crate::webcore::byte_stream::Source as BytesInternalReadableStreamSource;
 
 #[unsafe(no_mangle)]
@@ -1461,7 +1461,7 @@ pub mod js_Crypto {
 /// Native backing type for `JSCryptoHasher.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").CryptoHasher.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::CryptoHasher`, not here.
+/// compile error — fix it in `crate::crypto::CryptoHasher`, not here.
 pub use crate::crypto::CryptoHasher as CryptoHasher;
 
 #[unsafe(no_mangle)]
@@ -1571,7 +1571,7 @@ pub mod js_CryptoHasher {
 /// Native backing type for `JSDNSResolver.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").DNSResolver.<fn>`). A missing method is a
-/// compile error — fix it in `crate::node::node::DNSResolver`, not here.
+/// compile error — fix it in `crate::dns_jsc::Resolver`, not here.
 pub use crate::dns_jsc::Resolver as DNSResolver;
 
 #[unsafe(no_mangle)]
@@ -1729,7 +1729,7 @@ pub mod js_DNSResolver {
 /// Native backing type for `JSDebugHTTPSServer.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").DebugHTTPSServer.<fn>`). A missing method is a
-/// compile error — fix it in `crate::server::server::DebugHTTPSServer`, not here.
+/// compile error — fix it in `crate::server::DebugHTTPSServer`, not here.
 pub use crate::server::DebugHTTPSServer as DebugHTTPSServer;
 
 #[unsafe(no_mangle)]
@@ -1968,7 +1968,7 @@ pub mod js_DebugHTTPSServer {
 /// Native backing type for `JSDebugHTTPServer.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").DebugHTTPServer.<fn>`). A missing method is a
-/// compile error — fix it in `crate::server::server::DebugHTTPServer`, not here.
+/// compile error — fix it in `crate::server::DebugHTTPServer`, not here.
 pub use crate::server::DebugHTTPServer as DebugHTTPServer;
 
 #[unsafe(no_mangle)]
@@ -4433,7 +4433,7 @@ pub mod js_FSWatcher {
 /// Native backing type for `JSFileInternalReadableStreamSource.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").FileInternalReadableStreamSource.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::streams::FileInternalReadableStreamSource`, not here.
+/// compile error — fix it in `crate::webcore::file_reader::Source`, not here.
 pub use crate::webcore::file_reader::Source as FileInternalReadableStreamSource;
 
 #[unsafe(no_mangle)]
@@ -5450,7 +5450,7 @@ pub mod js_HTMLRewriter {
 /// Native backing type for `JSHTTPSServer.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").HTTPSServer.<fn>`). A missing method is a
-/// compile error — fix it in `crate::server::server::HTTPSServer`, not here.
+/// compile error — fix it in `crate::server::HTTPSServer`, not here.
 pub use crate::server::HTTPSServer as HTTPSServer;
 
 #[unsafe(no_mangle)]
@@ -5689,7 +5689,7 @@ pub mod js_HTTPSServer {
 /// Native backing type for `JSHTTPServer.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").HTTPServer.<fn>`). A missing method is a
-/// compile error — fix it in `crate::server::server::HTTPServer`, not here.
+/// compile error — fix it in `crate::server::HTTPServer`, not here.
 pub use crate::server::HTTPServer as HTTPServer;
 
 #[unsafe(no_mangle)]
@@ -6165,7 +6165,7 @@ pub mod js_Image {
 /// Native backing type for `JSImmediate.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").Immediate.<fn>`). A missing method is a
-/// compile error — fix it in `crate::node::node::Immediate`, not here.
+/// compile error — fix it in `crate::timer::ImmediateObject`, not here.
 pub use crate::timer::ImmediateObject as Immediate;
 
 #[unsafe(no_mangle)]
@@ -6425,7 +6425,7 @@ pub mod js_Listener {
 /// Native backing type for `JSMD4.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").MD4.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::MD4`, not here.
+/// compile error — fix it in `crate::crypto::MD4`, not here.
 pub use crate::crypto::MD4 as MD4;
 
 #[unsafe(no_mangle)]
@@ -6513,7 +6513,7 @@ pub mod js_MD4 {
 /// Native backing type for `JSMD5.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").MD5.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::MD5`, not here.
+/// compile error — fix it in `crate::crypto::MD5`, not here.
 pub use crate::crypto::MD5 as MD5;
 
 #[unsafe(no_mangle)]
@@ -6764,7 +6764,7 @@ pub mod js_MatchedRoute {
 /// Native backing type for `JSMySQLConnection.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").MySQLConnection.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::sql::MySQLConnection`, not here.
+/// compile error — fix it in `bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection`, not here.
 pub use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 
 #[unsafe(no_mangle)]
@@ -6914,7 +6914,7 @@ pub mod js_MySQLConnection {
 /// Native backing type for `JSMySQLQuery.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").MySQLQuery.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::sql::MySQLQuery`, not here.
+/// compile error — fix it in `bun_sql_jsc::mysql::js_my_sql_query::JSMySQLQuery`, not here.
 pub use bun_sql_jsc::mysql::js_my_sql_query::JSMySQLQuery as MySQLQuery;
 
 #[unsafe(no_mangle)]
@@ -7739,7 +7739,7 @@ pub mod js_NodeHTTPResponse {
 /// Native backing type for `JSNodeJSFS.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").NodeJSFS.<fn>`). A missing method is a
-/// compile error — fix it in `crate::node::node::NodeJSFS`, not here.
+/// compile error — fix it in `crate::node::node_fs_binding::Binding`, not here.
 pub use crate::node::node_fs_binding::Binding as NodeJSFS;
 
 #[unsafe(no_mangle)]
@@ -8480,7 +8480,7 @@ pub mod js_ParsedShellScript {
 /// Native backing type for `JSPostgresSQLConnection.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").PostgresSQLConnection.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::sql::PostgresSQLConnection`, not here.
+/// compile error — fix it in `bun_sql_jsc::postgres::PostgresSQLConnection`, not here.
 pub use bun_sql_jsc::postgres::PostgresSQLConnection as PostgresSQLConnection;
 
 #[unsafe(no_mangle)]
@@ -8635,7 +8635,7 @@ pub mod js_PostgresSQLConnection {
 /// Native backing type for `JSPostgresSQLQuery.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").PostgresSQLQuery.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::sql::PostgresSQLQuery`, not here.
+/// compile error — fix it in `bun_sql_jsc::postgres::PostgresSQLQuery`, not here.
 pub use bun_sql_jsc::postgres::PostgresSQLQuery as PostgresSQLQuery;
 
 #[unsafe(no_mangle)]
@@ -10862,7 +10862,7 @@ pub mod js_Response {
 /// Native backing type for `JSResumableFetchSink.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").ResumableFetchSink.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::resumable_sink::ResumableFetchSink`, not here.
+/// compile error — fix it in `crate::webcore::ResumableFetchSink`, not here.
 pub use crate::webcore::ResumableFetchSink as ResumableFetchSink;
 
 #[unsafe(no_mangle)]
@@ -10976,7 +10976,7 @@ pub mod js_ResumableFetchSink {
 /// Native backing type for `JSResumableS3UploadSink.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").ResumableS3UploadSink.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::resumable_sink::ResumableS3UploadSink`, not here.
+/// compile error — fix it in `crate::webcore::ResumableS3UploadSink`, not here.
 pub use crate::webcore::ResumableS3UploadSink as ResumableS3UploadSink;
 
 #[unsafe(no_mangle)]
@@ -11378,7 +11378,7 @@ pub mod js_S3Stat {
 /// Native backing type for `JSSHA1.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").SHA1.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::SHA1`, not here.
+/// compile error — fix it in `crate::crypto::SHA1`, not here.
 pub use crate::crypto::SHA1 as SHA1;
 
 #[unsafe(no_mangle)]
@@ -11466,7 +11466,7 @@ pub mod js_SHA1 {
 /// Native backing type for `JSSHA224.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").SHA224.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::SHA224`, not here.
+/// compile error — fix it in `crate::crypto::SHA224`, not here.
 pub use crate::crypto::SHA224 as SHA224;
 
 #[unsafe(no_mangle)]
@@ -11554,7 +11554,7 @@ pub mod js_SHA224 {
 /// Native backing type for `JSSHA256.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").SHA256.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::SHA256`, not here.
+/// compile error — fix it in `crate::crypto::SHA256`, not here.
 pub use crate::crypto::SHA256 as SHA256;
 
 #[unsafe(no_mangle)]
@@ -11642,7 +11642,7 @@ pub mod js_SHA256 {
 /// Native backing type for `JSSHA384.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").SHA384.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::SHA384`, not here.
+/// compile error — fix it in `crate::crypto::SHA384`, not here.
 pub use crate::crypto::SHA384 as SHA384;
 
 #[unsafe(no_mangle)]
@@ -11730,7 +11730,7 @@ pub mod js_SHA384 {
 /// Native backing type for `JSSHA512.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").SHA512.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::SHA512`, not here.
+/// compile error — fix it in `crate::crypto::SHA512`, not here.
 pub use crate::crypto::SHA512 as SHA512;
 
 #[unsafe(no_mangle)]
@@ -11818,7 +11818,7 @@ pub mod js_SHA512 {
 /// Native backing type for `JSSHA512_256.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").SHA512_256.<fn>`). A missing method is a
-/// compile error — fix it in `crate::crypto::crypto::SHA512_256`, not here.
+/// compile error — fix it in `crate::crypto::SHA512_256`, not here.
 pub use crate::crypto::SHA512_256 as SHA512_256;
 
 #[unsafe(no_mangle)]
@@ -12411,7 +12411,7 @@ pub mod js_ServerWebSocket {
 /// Native backing type for `JSShellInterpreter.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").ShellInterpreter.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::shell::ShellInterpreter`, not here.
+/// compile error — fix it in `crate::shell::Interpreter`, not here.
 pub use crate::shell::Interpreter as ShellInterpreter;
 
 #[unsafe(no_mangle)]
@@ -12638,7 +12638,7 @@ pub mod js_SocketAddress {
 /// Native backing type for `JSSourceMap.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").SourceMap.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::sourcemap::SourceMap`, not here.
+/// compile error — fix it in `bun_sourcemap_jsc::JSSourceMap`, not here.
 pub use bun_sourcemap_jsc::JSSourceMap as SourceMap;
 
 #[unsafe(no_mangle)]
@@ -13082,7 +13082,7 @@ pub mod js_Subprocess {
 /// Native backing type for `JSTCPSocket.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").TCPSocket.<fn>`). A missing method is a
-/// compile error — fix it in `crate::socket::sockets::TCPSocket`, not here.
+/// compile error — fix it in `crate::socket::TCPSocket`, not here.
 pub use crate::socket::TCPSocket as TCPSocket;
 
 #[unsafe(no_mangle)]
@@ -13537,7 +13537,7 @@ pub mod js_TCPSocket {
 /// Native backing type for `JSTLSSocket.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").TLSSocket.<fn>`). A missing method is a
-/// compile error — fix it in `crate::socket::sockets::TLSSocket`, not here.
+/// compile error — fix it in `crate::socket::TLSSocket`, not here.
 pub use crate::socket::TLSSocket as TLSSocket;
 
 #[unsafe(no_mangle)]
@@ -14454,7 +14454,7 @@ pub mod js_TextEncoderStreamEncoder {
 /// Native backing type for `JSTimeout.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").Timeout.<fn>`). A missing method is a
-/// compile error — fix it in `crate::node::node::Timeout`, not here.
+/// compile error — fix it in `crate::timer::TimeoutObject`, not here.
 pub use crate::timer::TimeoutObject as Timeout;
 
 #[unsafe(no_mangle)]
@@ -14665,7 +14665,7 @@ pub mod js_Timeout {
 /// Native backing type for `JSTranspiler.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").Transpiler.<fn>`). A missing method is a
-/// compile error — fix it in `crate::api::js_bundler::Transpiler`, not here.
+/// compile error — fix it in `crate::api::js_transpiler::JSTranspiler`, not here.
 pub use crate::api::js_transpiler::JSTranspiler as Transpiler;
 
 #[unsafe(no_mangle)]
@@ -14748,7 +14748,7 @@ pub mod js_Transpiler {
 /// Native backing type for `JSUDPSocket.m_ctx`. Re-export of the real
 /// hand-ported struct so the thunks below call its inherent methods directly
 /// (mirrors Zig's `@import("…").UDPSocket.<fn>`). A missing method is a
-/// compile error — fix it in `crate::socket::UDPSocket`, not here.
+/// compile error — fix it in `crate::socket::udp_socket::UDPSocket`, not here.
 pub use crate::socket::udp_socket::UDPSocket as UDPSocket;
 
 #[unsafe(no_mangle)]
@@ -15014,4 +15014,4 @@ pub mod js_UDPSocket {
     }
 }
 
-// classes: 92 (56 structs found, 36 unresolved), exported symbols: 1432
+// classes: 92 (72 structs found, 20 unresolved), exported symbols: 1432

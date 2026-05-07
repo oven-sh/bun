@@ -2,11 +2,16 @@
 name = "bun_bin"
 version.workspace = true
 edition.workspace = true
-build = "build.rs"
 
-[[bin]]
-name = "bun-rs"
-path = "main.rs"
+# Built as a staticlib so the native build (`bun bd` → ninja) can feed the
+# whole Rust crate graph into its own link step alongside the C/C++ object
+# set, exactly where `bun-zig.o` used to go. The C entry point (`main`) is
+# `#[no_mangle] extern "C"` in lib.rs; the clang++ driver provides crt1.o
+# (`_start` → `main`).
+[lib]
+name = "bun_rust"
+path = "lib.rs"
+crate-type = ["staticlib"]
 
 [dependencies]
 libc.workspace = true
@@ -26,6 +31,3 @@ bun_platform.workspace = true
 # default-features = false: keep bun_css off the `bun-rs -e` path.
 bun_runtime = { workspace = true, default-features = false }
 # bun_jsc.workspace = true
-
-[build-dependencies]
-# none — build.rs only needs std (fs/path/glob via read_dir).

@@ -73,6 +73,10 @@ const patterns = {
   zig: {
     paths: ["src/**/*.zig"],
   },
+  /** all `*.rs` + workspace manifests — implicit inputs to the cargo step */
+  rust: {
+    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock"],
+  },
   /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
   cxx: {
     paths: [

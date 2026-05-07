@@ -34,12 +34,13 @@ import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
+import { emitRust } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
-import { emitZig, emitZigCheck, zigObjectPaths } from "./zig.ts";
+import { emitZig, zigObjectPaths } from "./zig.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Executable naming
@@ -208,33 +209,24 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 2: codegen ───
   const codegen = emitCodegen(n, cfg, sources);
 
-  // ─── Step 3: zig ───
-  // zstd source must be FETCHED (not built) before zig runs — build.zig
-  // @cImports zstd headers. The fetch stamp is the order-only dep.
+  // ─── Step 3: rust ───
+  // Mirrors the old zig step: one cargo invocation produces a single
+  // staticlib that occupies the same slot in the link as `bun-zig.o` did.
+  // Rust `include!`s codegen `.rs` outputs (written as side effects of the
+  // generate-classes / bundle-modules / generate-jssink edges), so the
+  // codegen output set is forwarded as implicit inputs to order it first.
   //
-  // Filter codegen-into-src .zig files from the glob result — they're
-  // OUTPUTS of steps above, not inputs to zig build. Leaving them in
-  // would create a cycle (or a fresh-build error: file doesn't exist yet).
+  // cpp-only: skip rust entirely (runs on a separate CI machine).
   //
-  // cpp-only: skip zig entirely (runs on a separate CI machine).
-  let zigObjects: string[] = [];
+  // The zig path (`emitZig`) is kept importable for the zig-only CI mode
+  // but is no longer part of the full-mode link.
+  let rustObjects: string[] = [];
   if (cfg.mode !== "cpp-only") {
-    const codegenZigSet = new Set(zigFilesGeneratedIntoSrc.map(p => resolve(cfg.cwd, p)));
-    const zigSources = sources.zig.filter(f => !codegenZigSet.has(f));
-    const zigInputs = {
+    rustObjects = emitRust(n, cfg, {
       codegenInputs: codegen.zigInputs,
       codegenOrderOnly: codegen.zigOrderOnly,
-      zigSources,
-      zstdStamp: depSourceStamp(cfg, "zstd"),
-    };
-    zigObjects = emitZig(n, cfg, zigInputs);
-    // `zig build check[-*]` targets share the same inputs as the obj
-    // build. Not default — invoked explicitly via `--target=zig-check`.
-    // Skipped in CI (ci-* profiles do obj or cpp separately) to avoid
-    // accidentally firing.
-    if (!cfg.ci) {
-      emitZigCheck(n, cfg, zigInputs);
-    }
+      rustSources: sources.rust,
+    });
   }
 
   // ─── Step 4: configure-time generated header + assemble flags ───
@@ -450,7 +442,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // transitively — but link-only still needs them uploaded.
     n.phony("bun", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
     n.default(["bun"]);
-    return { archive, deps, codegen, zigObjects, objects: allObjects };
+    return { archive, deps, codegen, zigObjects: rustObjects, objects: allObjects };
   }
 
   // ─── Step 7: link ───
@@ -464,8 +456,16 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   // Full link.
+  // The Rust staticlib goes into `$in` between bun's own objects and the
+  // dependency archives — same position `bun-zig.o` occupied — so symbol
+  // resolution order is preserved: C++ objects create the `Bun__*` undefined
+  // refs, the Rust archive satisfies them (and `main`, via crt1.o) and in
+  // turn references JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
+  // export the C++ side touches is reached transitively from those roots,
+  // so no `--whole-archive` wrapping is needed; if a member ever isn't,
+  // `rustLinkFlags()` in rust.ts is the wrapping helper.
   const shims = emitShims(n, cfg);
-  const exe = link(n, cfg, exeName, [...allObjects, ...zigObjects, ...windowsRes], {
+  const exe = link(n, cfg, exeName, [...allObjects, ...rustObjects, ...windowsRes], {
     libs: depLibs,
     flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
@@ -506,7 +506,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // fall back to direct invocation.
   emitSmokeTest(n, cfg, exe, exeName);
 
-  return { exe, strippedExe, dsym, deps, codegen, zigObjects, objects: allObjects };
+  return { exe, strippedExe, dsym, deps, codegen, zigObjects: rustObjects, objects: allObjects };
 }
 
 /**

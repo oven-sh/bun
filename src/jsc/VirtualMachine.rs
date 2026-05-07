@@ -575,8 +575,8 @@ impl VirtualMachine {
     /// Safe `&'static` accessor for the current thread's VM. The VM is a
     /// per-thread singleton allocated once in [`init`] and never freed until
     /// thread teardown, so the `'static` lifetime is sound. Mutation goes
-    /// through [`JsCell`]-wrapped fields (`vm.field.get_mut()`); legacy code
-    /// that still needs `&mut VirtualMachine` whole-struct uses
+    /// through [`JsCell`]-wrapped fields (`vm.field.with_mut(|x| ...)`);
+    /// legacy code that still needs `&mut VirtualMachine` whole-struct uses
     /// [`Self::get_mut_ptr`] + an explicit `unsafe` deref.
     #[inline]
     pub fn get() -> &'static VirtualMachine {

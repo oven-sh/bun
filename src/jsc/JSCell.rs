@@ -107,8 +107,10 @@ unsafe extern "C" {
 /// `enqueueTaskConcurrent`, which never hands out a `&JsCell`.
 ///
 /// This is morally `Cell<T>` with a `get_mut`-from-`&self` escape hatch and
-/// no `T: Copy` bound. It exists so ~10k `unsafe { &mut *vm_ptr }` blocks at
-/// call sites collapse into one audited `unsafe` here.
+/// no `T: Copy` bound. [`Self::with_mut`] is the safe entry point (the
+/// `&mut T` is closure-scoped and cannot escape); [`Self::get_mut`] is
+/// `unsafe` and requires the caller to uphold the no-alias invariant
+/// explicitly.
 #[repr(transparent)]
 pub struct JsCell<T>(core::cell::UnsafeCell<T>);
 
@@ -137,14 +139,39 @@ impl<T> JsCell<T> {
         unsafe { &*self.0.get() }
     }
 
-    /// Mutable-reference projection from `&self`. This is the whole point of
-    /// `JsCell`: it lets `&'static VirtualMachine` mutate post-init fields
-    /// without an `unsafe` block at every call site.
+    /// Mutable-reference projection from `&self`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee that **no other reference** (`&T` or `&mut T`) to
+    /// the contained value is live for the lifetime of the returned borrow.
+    /// The single-JS-thread invariant rules out *concurrent* aliasing, but
+    /// same-thread *reentrancy* (host fn → JS → host fn) can still produce
+    /// stacked `&mut T` if a borrow is held across a call that re-enters.
+    /// Keep the borrow short and do not hold it across any call that may
+    /// reach back into code touching this cell.
+    ///
+    /// Prefer [`Self::with_mut`] when the mutation fits in a closure — its
+    /// borrow cannot escape and the safety obligation is discharged at one
+    /// audited site.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn get_mut(&self) -> &mut T {
-        // SAFETY: single-JS-thread invariant — see type docs.
+    pub unsafe fn get_mut(&self) -> &mut T {
+        // SAFETY: forwarded to caller — see fn-level contract.
         unsafe { &mut *self.0.get() }
+    }
+
+    /// Closure-scoped mutable access. The `&mut T` cannot escape `f`, so the
+    /// only way to violate the aliasing invariant is for `f` itself to
+    /// re-enter a path that touches this same cell — which the
+    /// single-JS-thread model already forbids for the duration of a field
+    /// mutation. This is the **safe** spelling of `get_mut`; use it whenever
+    /// the mutation does not need to outlive a single expression.
+    #[inline]
+    pub fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        // SAFETY: single-JS-thread invariant (see type docs); the `&mut T`
+        // is confined to `f`'s frame and cannot be stored or returned.
+        f(unsafe { &mut *self.0.get() })
     }
 
     /// Overwrite the contained value.
@@ -157,7 +184,9 @@ impl<T> JsCell<T> {
     /// Replace the contained value, returning the old one.
     #[inline]
     pub fn replace(&self, value: T) -> T {
-        core::mem::replace(self.get_mut(), value)
+        // SAFETY: no other borrow of `self.0` is live — we form one here and
+        // drop it before returning.
+        core::mem::replace(unsafe { self.get_mut() }, value)
     }
 
     /// Raw pointer to the inner `T` — for FFI / `addr_of!` paths that must

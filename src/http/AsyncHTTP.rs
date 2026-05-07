@@ -810,12 +810,40 @@ impl<'a> AsyncHTTP<'a> {
                 callback.run(async_http, result);
             } else {
                 // PORT NOTE: Zig `this.client.deinit()` runs BEFORE the user
-                // callback. Swap in a drop-safe blank so the real client's `Drop`
-                // runs now and the later Box reclaim doesn't double-drop.
-                drop(core::ptr::replace(
-                    core::ptr::addr_of_mut!((*this).client),
-                    blank_client(),
-                ));
+                // callback, then `threadlocal_http.deinit()` (a `TrivialDeinit`
+                // — frees the box, NO field destructors) runs after.
+                //
+                // The threadlocal `AsyncHTTP` was created by a bitwise
+                // `core::ptr::read` of the JS-thread original
+                // (`start_queued_task`), so any owned field that was already
+                // populated at that point — `request_headers`,
+                // `client.header_entries`, `client.proxy_headers`,
+                // `client.proxy_authorization`, `client.tls_props`,
+                // `client.unix_socket_path` — is *shared* with the original
+                // and must NOT be dropped here; the original drops them when
+                // its `Box<AsyncHTTP>` is reclaimed. Only the state the clone
+                // built up itself during request processing is torn down.
+                {
+                    let client = &mut (*this).client;
+                    // Clone-owned (allocated after `ptr::read`).
+                    drop(core::mem::take(&mut client.redirect));
+                    drop(core::mem::take(&mut client.prev_redirect));
+                    if let Some(tunnel) = client.proxy_tunnel.take() {
+                        // SAFETY: tunnel was created by ProxyTunnel::new
+                        // (Box::into_raw) and refcounted; this releases the
+                        // clone's strong ref.
+                        (*tunnel.as_ptr()).detach_and_deref();
+                    }
+                    debug_assert!(client.h2.is_none());
+                    if let Some(ctx) = client.custom_ssl_ctx.take() {
+                        // SAFETY: clone took one strong ref in set_custom_ssl_ctx.
+                        crate::HttpsContext::deref(ctx.as_ptr());
+                    }
+                    // `state` was `Default` at `ptr::read` time and was
+                    // populated by the clone (`on_start` → `client.start`); it
+                    // owns the decompressor / compressed_body buffers.
+                    drop(core::mem::take(&mut client.state));
+                }
                 let elapsed = (*this).elapsed;
                 bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", elapsed);
                 callback.run(async_http, result);
@@ -828,8 +856,16 @@ impl<'a> AsyncHTTP<'a> {
                 let threadlocal_http: *mut ThreadlocalAsyncHTTP = async_http.cast::<u8>()
                     .sub(offset_of!(ThreadlocalAsyncHTTP, async_http))
                     .cast::<ThreadlocalAsyncHTTP>();
-                // PORT NOTE: Zig `defer threadlocal_http.deinit()` — explicit Box reclaim.
-                drop(Box::from_raw(threadlocal_http));
+                // PORT NOTE: Zig `defer threadlocal_http.deinit()` is
+                // `bun.TrivialDeinit` — it frees the heap slot WITHOUT running
+                // any field destructors. Reclaiming as `Box<_>` here would
+                // drop the bitwise-shared fields enumerated above and
+                // double-free with the JS-thread original; deallocate the
+                // storage directly instead.
+                std::alloc::dealloc(
+                    threadlocal_http.cast::<u8>(),
+                    std::alloc::Layout::new::<ThreadlocalAsyncHTTP>(),
+                );
 
                 let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
                 debug_assert!(active_requests > 0);

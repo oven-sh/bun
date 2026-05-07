@@ -1267,8 +1267,8 @@ impl<'a> PackageInstaller<'a> {
             }
             resolution::Tag::Folder => {
                 // SAFETY: tag == Folder checked by match arm.
-                let folder = unsafe { resolution.value.folder }
-                    .slice(string_buf!());
+                let folder_str = unsafe { resolution.value.folder };
+                let folder = folder_str.slice(string_buf!());
 
                 if self.lockfile.is_workspace_tree_id(self.current_tree_id) {
                     // Handle when a package depends on itself via file:
@@ -1317,8 +1317,8 @@ impl<'a> PackageInstaller<'a> {
             }
             resolution::Tag::Workspace => {
                 // SAFETY: tag == Workspace checked by match arm.
-                let folder = unsafe { resolution.value.workspace }
-                    .slice(string_buf!());
+                let folder_str = unsafe { resolution.value.workspace };
+                let folder = folder_str.slice(string_buf!());
                 // Handle when a package depends on itself
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");

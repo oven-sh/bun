@@ -17,11 +17,11 @@ describe("S3 path ownership on error", () => {
       stdout: "ignore",
       timeout: 30_000,
     });
-    const err = stderr.toString();
-    if (exitCode !== 0 || signalCode) {
-      throw new Error(`exit=${exitCode} signal=${signalCode}\n${err}`);
-    }
-    expect(err).not.toContain("panic");
+    expect({ stderr: stderr.toString(), exitCode, signalCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      signalCode: undefined,
+    });
   }
 
   test("S3Client.presign (static)", () => {
@@ -35,7 +35,7 @@ describe("S3 path ownership on error", () => {
       }
       Bun.gc(true);
     `);
-  }, 60_000);
+  });
 
   test("S3Client#presign (instance)", () => {
     run(`
@@ -49,7 +49,7 @@ describe("S3 path ownership on error", () => {
       }
       Bun.gc(true);
     `);
-  }, 60_000);
+  });
 
   // The constructor does fallible work (reading options.type) after initS3
   // has already taken ownership of the path. A getter that throws on its
@@ -68,7 +68,7 @@ describe("S3 path ownership on error", () => {
       }
       Bun.gc(true);
     `);
-  }, 60_000);
+  });
 
   test("S3Client#presign (instance) throwing options.type getter", () => {
     run(`
@@ -85,5 +85,5 @@ describe("S3 path ownership on error", () => {
       }
       Bun.gc(true);
     `);
-  }, 60_000);
+  });
 });

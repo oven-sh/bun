@@ -254,7 +254,7 @@ impl VM {
     /// a writable pointer via `UnsafeCell::get` does not launder a read-only
     /// borrow (unlike a bare `&T as *const T as *mut T` cast).
     #[inline(always)]
-    fn as_mut_ptr(&self) -> *mut VM {
+    pub fn as_mut_ptr(&self) -> *mut VM {
         // SAFETY: `_p` is at offset 0 of a `#[repr(C)]` ZST handle, so its
         // address is the address of `self`; `UnsafeCell::get` yields a `*mut`
         // with write provenance from a shared borrow.
@@ -262,16 +262,23 @@ impl VM {
     }
 }
 
+/// RAII JSLockHolder returned by [`VM::get_api_lock`]. Mirrors Zig
+/// `JSC.VM.Lock` (`defer api_lock.release()` → `Drop`).
 pub struct Lock<'a> {
     vm: &'a VM,
 }
 
 impl<'a> Lock<'a> {
-    pub fn release(self) {
+    /// Explicit release (Zig spelling). Equivalent to `drop(self)`.
+    #[inline]
+    pub fn release(self) {}
+}
+
+impl Drop for Lock<'_> {
+    fn drop(&mut self) {
         // SAFETY: lock was acquired via JSC__VM__getAPILock on this VM.
         unsafe { JSC__VM__releaseAPILock(self.vm.as_mut_ptr()) }
     }
-    // TODO(port): consider `impl Drop` for RAII release (Zig callers use `defer lock.release()`)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

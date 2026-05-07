@@ -298,6 +298,26 @@ impl Clone for Headers {
 
 // PORT NOTE: `pub fn deinit` only freed `entries` and `buf`; both are Drop types now — no explicit Drop impl needed.
 
+/// Compute the ETag for `bytes` (xxhash64, hex-lowered, quoted) and append it as
+/// an `etag` header. Mirrors `bun.http.ETag.appendToHeaders`.
+///
+/// LAYERING: `bun_http_types::ETag::append_to_headers` is typed against the
+/// duplicate `http_types::ETag::Headers`. This crate owns the canonical
+/// `Headers`, so the helper lives here so callers in `bun_runtime` (StaticRoute,
+/// DevServer) don't each inline the hash+format.
+pub fn append_etag(bytes: &[u8], headers: &mut Headers) {
+    let hash: u64 = bun_core::hash::xxhash64(0, bytes);
+    let mut etag_buf = [0u8; 40];
+    let len = {
+        use std::io::Write as _;
+        let mut cursor = &mut etag_buf[..];
+        // Zig `bun.fmt.hexIntLower(u64)` is fixed-width 16 hex chars.
+        write!(cursor, "\"{:016x}\"", hash).expect("unreachable");
+        40 - cursor.len()
+    };
+    headers.append(b"etag", &etag_buf[..len]);
+}
+
 pub struct Options<'a> {
     pub body: Option<AnyBlobRef<'a>>,
 }

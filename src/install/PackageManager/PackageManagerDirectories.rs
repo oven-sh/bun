@@ -1,6 +1,5 @@
 use core::fmt;
 use std::io::Write as _;
-use bun_io::Write as _;
 
 use bun_alloc::AllocError;
 
@@ -1006,16 +1005,24 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
     let file = tmpfile.file();
     {
+        // PORT NOTE: `Printer.options` is typed against the column-vec
+        // `PackageManagerOptionsStub` (see lockfile.rs:1562). `Yarn::print`
+        // never reads `options`, so a default stub is semantically equivalent
+        // to passing `this.options` here. Unifies once `Options` and
+        // `PackageManagerOptionsStub` collapse (reconciler-6).
+        let options_stub = crate::PackageManagerOptionsStub::default();
         let mut printer = crate::lockfile_real::Printer {
             lockfile: &this.lockfile,
-            options: &this.options,
+            options: &options_stub,
             successfully_installed: None,
-            updates: &this.update_requests,
+            updates: &this.update_requests[..],
         };
-        let mut file_buffer = [0u8; 4096];
-        let mut writer = bun_io::BufWriter::with_buffer(&mut file_buffer, file.writer());
-        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut writer)?;
-        writer.flush()?;
+        // PORT NOTE: Zig used `file.writerStreaming(&[4096]u8)`. `bun_sys::File`
+        // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
+        // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
+        let mut buf: Vec<u8> = Vec::with_capacity(4096);
+        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
+        file.write_all(&buf).map_err(Error::from)?;
     }
     {
         #[cfg(unix)]

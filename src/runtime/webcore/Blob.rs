@@ -5943,52 +5943,11 @@ impl Any {
 // Internal (InternalBlob)
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: `bun_str::ZigString` lacks the JSC-side methods (`to_js`,
-// `to_external_value`, `with_encoding`) — those live as inherent methods on
-// `bun_jsc::zig_string::ZigString` (a `repr(C)`-identical local twin). We
-// can't add inherent impls cross-crate, so shim via a local extension trait
-// that round-trips through the FFI surface directly.
-unsafe extern "C" {
-    fn ZigString__toValueGC(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toExternalValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-}
-pub(crate) trait ZigStringBlobExt {
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
-    fn with_encoding(self) -> Self;
-    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
-}
-impl ZigStringBlobExt for ZigString {
-    #[inline]
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        if (*self).is_globally_allocated() {
-            return self.to_external_value(global);
-        }
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-        unsafe { ZigString__toValueGC(self, global) }
-    }
-    #[inline]
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: see `to_js`.
-        unsafe { ZigString__toExternalValue(self, global) }
-    }
-    #[inline]
-    fn with_encoding(mut self) -> Self {
-        // PORT NOTE: `bun_str::ZigString` lacks `set_output_encoding`; mirror
-        // its effect (mark UTF-8 when bytes are not all-ASCII).
-        if !strings::is_all_ascii(self.byte_slice()) {
-            self.mark_utf8();
-        }
-        self
-    }
-    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            fn ZigString__toJSONObject(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
-        }
-        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
-        unsafe { ZigString__toJSONObject(self, global) }
-    }
-}
+// `to_js` / `to_external_value` / `with_encoding` / `to_json_object` /
+// `external` on `bun_str::ZigString` are provided by `bun_jsc::ZigStringJsc`
+// (imported above). The legacy `ZigStringBlobExt` name is re-exported for
+// sibling modules (`Request.rs`) that still import it under that name.
+pub(crate) use bun_jsc::ZigStringJsc as ZigStringBlobExt;
 
 /// A single-use Blob backed by an allocation of memory.
 pub struct Internal {

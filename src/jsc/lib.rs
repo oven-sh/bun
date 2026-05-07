@@ -1244,53 +1244,12 @@ impl IntoIterObject for &mut JSObject {
     #[inline] fn into_iter_object(self) -> JSValue { JSValue::from_cell(&*self) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — JSGlobalObject surface (signatures from JSGlobalObject.zig).
-// ──────────────────────────────────────────────────────────────────────────
-#[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
+// `ZigString` → JS bridges used by the `ZigStringJsc` extension trait below
+// (the rest of the `JSGlobalObject` extern surface lives in `JSGlobalObject.rs`).
 unsafe extern "C" {
     fn JSC__JSGlobalObject__vm(this: *const JSGlobalObject) -> *mut VM;
-    fn JSC__JSGlobalObject__bunVM(this: *const JSGlobalObject) -> *mut virtual_machine::VirtualMachine;
-    fn JSGlobalObject__hasException(this: *const JSGlobalObject) -> bool;
-    fn JSGlobalObject__throwOutOfMemoryError(this: *const JSGlobalObject);
-    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
-    fn JSC__JSGlobalObject__createAggregateError(
-        this: *const JSGlobalObject,
-        errors: *const JSValue,
-        len: usize,
-        message: *const bun_string::ZigString,
-    ) -> JSValue;
-    fn JSC__JSGlobalObject__createAggregateErrorWithArray(
-        this: *const JSGlobalObject,
-        errors_array: JSValue,
-        message: bun_string::String,
-        cause: JSValue,
-    ) -> JSValue;
-    fn JSC__VM__throwError(vm: *mut VM, global: *const JSGlobalObject, value: JSValue);
-    fn JSGlobalObject__createOutOfMemoryError(this: *const JSGlobalObject) -> JSValue;
-    fn JSGlobalObject__tryTakeException(this: *const JSGlobalObject) -> JSValue;
-    fn JSGlobalObject__clearTerminationException(this: *const JSGlobalObject);
-    fn JSC__JSGlobalObject__queueMicrotaskCallback(
-        this: *const JSGlobalObject,
-        ctx: *mut c_void,
-        function: unsafe extern "C" fn(*mut c_void),
-    );
-    fn Bun__msToGregorianDateTime(
-        this: *const JSGlobalObject,
-        ms: f64,
-        input_is_utc: bool,
-        year: *mut i32,
-        month: *mut i32,
-        day: *mut i32,
-        hour: *mut i32,
-        minute: *mut i32,
-        second: *mut i32,
-        weekday: *mut i32,
-    );
     fn ZigString__toErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toTypeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toSyntaxErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
-    fn ZigString__toRangeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toValueGC(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toExternalValue(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toJSONObject(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
@@ -1347,26 +1306,6 @@ impl JSGlobalObject {
     pub fn err_invalid_url(&self, args: core::fmt::Arguments<'_>) -> JSValue {
         ErrorCode::INVALID_URL.fmt(self, args)
     }
-}
-
-unsafe extern "C" {
-    fn Bun__runOnResolvePlugins(
-        global: *mut JSGlobalObject,
-        namespace: *const bun_string::String,
-        path: *const bun_string::String,
-        source: *const bun_string::String,
-        target: BunPluginTarget,
-    ) -> JSValue;
-    fn Bun__runOnLoadPlugins(
-        global: *mut JSGlobalObject,
-        namespace: *const bun_string::String,
-        path: *const bun_string::String,
-        target: BunPluginTarget,
-    ) -> JSValue;
-    fn Bun__ErrorCode__determineSpecificType(
-        global: *mut JSGlobalObject,
-        value: JSValue,
-    ) -> bun_string::String;
 }
 
 /// `bun.fmt.OutOfRangeOptions` — re-exported here under the name dependents

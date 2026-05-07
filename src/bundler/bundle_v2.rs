@@ -1079,8 +1079,10 @@ pub mod api {
             /// Defer may only be called once.
             pub called_defer: bool,
             pub js_task: bun_event_loop::AnyTask::AnyTask,
-            // SAFETY: erased `jsc::AnyEventLoop::Task` storage; T6 casts in-place.
-            pub task: [usize; 4],
+            /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue
+            /// (used by `onDefer` to notify the bundler thread when it runs
+            /// under a `MiniEventLoop`).
+            pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
         }
         impl Load {
             pub fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
@@ -1099,7 +1101,7 @@ pub mod api {
                     was_file: false,
                     called_defer: false,
                     js_task: bun_event_loop::AnyTask::AnyTask::default(),
-                    task: [0; 4],
+                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
             }
             #[inline]
@@ -1107,13 +1109,45 @@ pub mod api {
                 // SAFETY: parse_task is live for the duration of the load.
                 unsafe { (*self.parse_task).known_target.bake_graph() }
             }
+            /// Hops to the JS thread to call the `onLoad` plugin chain.
+            /// Zig spec (JSBundler.zig:1449):
+            ///   `this.js_task = AnyTask.init(this);
+            ///    let concurrent_task = jsc.ConcurrentTask.createFrom(&this.js_task);
+            ///    bv2.jsLoopForPlugins().enqueueTaskConcurrent(concurrent_task)`
             pub fn dispatch(&mut self) {
-                let hook = super::super::dispatch::PLUGIN_LOAD_HOOK
-                    .load(core::sync::atomic::Ordering::Acquire);
-                if !hook.is_null() {
-                    // SAFETY: hook was registered by runtime with matching sig.
-                    unsafe { (*hook)(self) };
+                self.js_task = bun_event_loop::AnyTask::AnyTask {
+                    ctx: core::ptr::NonNull::new(self as *mut Self as *mut core::ffi::c_void),
+                    callback: Self::run_on_js_thread_wrap,
+                };
+                let concurrent_task =
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
+                // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
+                // by `js_loop_for_plugins`).
+                unsafe {
+                    (*self.bv2).js_loop_for_plugins().enqueue_task_concurrent(concurrent_task);
                 }
+            }
+            pub fn run_on_js_thread(&mut self) {
+                let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
+                let default_loader = self.default_loader;
+                // PORT NOTE: reshaped for borrowck — capture the erased self
+                // pointer before borrowing fields immutably for the FFI call.
+                let self_ptr = self as *mut Self as *mut core::ffi::c_void;
+                // SAFETY: `bv2` is a valid backref; `plugins` is Some.
+                unsafe {
+                    (*(*self.bv2).plugins.unwrap().as_ptr()).match_on_load(
+                        &self.path,
+                        &self.namespace,
+                        self_ptr,
+                        default_loader,
+                        is_server_side,
+                    );
+                }
+            }
+            fn run_on_js_thread_wrap(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
+                // SAFETY: ctx was stored from `*mut Load` in `dispatch`.
+                unsafe { &mut *(ctx as *mut Load) }.run_on_js_thread();
+                Ok(())
             }
         }
     }
@@ -1294,14 +1328,6 @@ pub mod dispatch {
 
     /// Debug hook: bundler state dump for crash handler.
     pub static DUMP_BUNDLER: AtomicPtr<()> = AtomicPtr::new(null_mut());
-
-    /// One-shot hooks for `JSBundler::{Resolve,Load}::dispatch` — runtime writes
-    /// the JS-thread trampoline (`runOnJSThread`) at init. See PORTING.md
-    /// §Dispatch "Debug/crash hooks" pattern (AtomicPtr fn-ptr registration).
-    pub static PLUGIN_RESOLVE_HOOK: AtomicPtr<unsafe fn(*mut super::api::JSBundler::Resolve)> =
-        AtomicPtr::new(null_mut());
-    pub static PLUGIN_LOAD_HOOK: AtomicPtr<unsafe fn(*mut super::api::JSBundler::Load)> =
-        AtomicPtr::new(null_mut());
 
     /// CYCLEBREAK GENUINE: `bun.jsc.hot_reloader.NewHotReloader<BundleV2, …>` is
     /// a T6 generic instantiated over a T5 type. The bundler stores it as an

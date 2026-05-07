@@ -147,6 +147,11 @@ fn bun_string_to_js_array(global: &JSGlobalObject, items: &[BunString]) -> JsRes
 // ───────────────────────────── title ─────────────────────────────
 
 static TITLE_MUTEX: bun_threading::Mutex = bun_threading::Mutex::new();
+/// Heap-owned backing for `Bun__Node__ProcessTitle` when it was set via JS
+/// (`process.title = ...`). The CLI may also set the static to a slice
+/// borrowing process-lifetime argv storage; that case is *not* tracked here so
+/// dropping this never frees argv. Guarded by `TITLE_MUTEX`.
+static mut PROCESS_TITLE_OWNED: Option<Box<[u8]>> = None;
 
 #[unsafe(export_name = "Bun__Process__getTitle")]
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
@@ -162,24 +167,30 @@ pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunStrin
 
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
 #[unsafe(export_name = "Bun__Process__setTitle")]
-pub extern "C" fn set_title(global_object: *const JSGlobalObject, newvalue: *mut BunString) {
+pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
     // SAFETY: newvalue is a valid pointer from C++; we consume one ref before returning
     let newvalue = unsafe { &mut *newvalue };
+    let _guard_deref = scopeguard::guard((), |()| newvalue.deref());
     TITLE_MUTEX.lock();
     let _guard = scopeguard::guard((), |()| TITLE_MUTEX.unlock());
 
-    // PORT NOTE: reshaped — Zig `defer newvalue.deref()` inlined; to_owned_slice
-    // is now infallible (Vec<u8>) so the OOM-throw path is unreachable here.
-    // The static holds `&'static [u8]` so we leak the box; the previous value
-    // (if heap-backed) is intentionally leaked too — the Zig frees it but the
-    // Rust static's element type cannot distinguish heap from rodata. Process
-    // title changes are rare enough that this is acceptable for now.
-    // TODO(port): switch Bun__Node__ProcessTitle to Option<Box<[u8]>> and free old.
-    let new_title: &'static [u8] = Box::leak(newvalue.to_owned_slice().into_boxed_slice());
+    // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
+    // the Zig OOM-throw path is unreachable here.
+    let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
-    // SAFETY: TITLE_MUTEX held; Bun__Node__ProcessTitle is the static guarded by it
-    unsafe { crate::cli::Bun__Node__ProcessTitle = Some(new_title) };
-    newvalue.deref();
+    // SAFETY: TITLE_MUTEX held; both statics are guarded by it. The
+    // `&'static [u8]` published into `Bun__Node__ProcessTitle` borrows
+    // `PROCESS_TITLE_OWNED`; readers under the mutex never observe a stale
+    // borrow because we publish the slice *before* swapping the owned box,
+    // and the old box is dropped only after the slice no longer points at it.
+    unsafe {
+        let slice: &'static [u8] = core::mem::transmute::<&[u8], &'static [u8]>(&new_title[..]);
+        crate::cli::Bun__Node__ProcessTitle = Some(slice);
+        // Zig: `if (old) |slice| allocator.free(slice)` — drop the previous
+        // heap-owned title (if any). Argv-borrowed initial titles are not in
+        // PROCESS_TITLE_OWNED so are correctly left alone.
+        PROCESS_TITLE_OWNED = Some(new_title);
+    }
 }
 
 // ───────────────────────────── execArgv ─────────────────────────────
@@ -191,20 +202,18 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
     let vm = unsafe { &*global_object.bun_vm() };
 
-    if let Some(_worker) = vm.worker {
+    if let Some(worker) = vm.worker {
+        // SAFETY: `vm.worker` is a BACKREF `*const c_void` set by `init_worker`
+        // to the live `WebWorker` for this VM; valid while the VM is.
+        let worker = unsafe { &*(worker as *const WebWorker) };
         // was explicitly overridden for the worker?
-        // TODO(port): WebWorker.exec_argv / inherit_exec_argv are private fields on
-        // bun_jsc::WebWorker with no accessor yet. Until those land the worker
-        // override path falls through to the parent's argv re-parse below.
-        let _ = _worker;
-        if let Some(exec_argv) = todo!("blocked_on: bun_jsc::WebWorker::exec_argv") {
-            let exec_argv: &[BunString] = exec_argv;
+        if let Some(exec_argv) = worker.exec_argv() {
             let array = JSValue::create_empty_array(global_object, exec_argv.len())?;
-            for i in 0..exec_argv.len() {
+            for (i, &wtf) in exec_argv.iter().enumerate() {
                 array.put_index(
                     global_object,
                     u32::try_from(i).unwrap(),
-                    exec_argv[i].to_js(global_object)?,
+                    BunString::init(wtf).to_js(global_object)?,
                 )?;
             }
             return Ok(array);
@@ -217,24 +226,19 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         // SAFETY: `standalone_module_graph` is `NonNull<c_void>` pointing at a
         // process-lifetime `bun_standalone_graph::Graph` (BACKREF — set during init).
         let graph = unsafe { graph.cast::<bun_standalone_graph::Graph>().as_ref() };
-        // TODO(blocked_on): `bun_options_argc` / `append_options_env` live in
-        // src/bun.rs which is not yet mounted in any reachable crate (mirrors
-        // the same stub in cli_body.rs). Treat the BUN_OPTIONS-injected count
-        // as 0 until that module lands; compile_exec_argv handling below is
-        // unaffected.
-        let bun_options_argc: usize = 0;
+        let bun_options_argc = bun_core::bun_options_argc();
         if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
             let mut args: Vec<BunString> = Vec::new();
-            // `defer args.deinit()` + `defer for args |*a| a.deref()` → Drop on Vec<BunString>
+            let _guard = scopeguard::guard((), |()| {
+                // `defer for args |*a| a.deref()` — BunString has no Drop.
+            });
 
             // Process BUN_OPTIONS first using append_options_env for proper quote handling.
             // append_options_env inserts starting at index 1, so we need a placeholder.
             if bun_options_argc > 0 {
                 if let Some(opts) = env_var::BUN_OPTIONS.get() {
                     args.push(BunString::empty()); // placeholder for insert-at-1
-                    let _ = opts;
-                    todo!("blocked_on: bun_core::append_options_env");
-                    #[allow(unreachable_code)]
+                    bun_core::append_options_env::<BunString>(opts, &mut args);
                     let _ = args.remove(0); // remove placeholder
                 }
             }

@@ -3410,24 +3410,30 @@ impl VirtualMachine {
         }
 
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
-        let old_log = jsc_vm.log;
+        // `vm.log` is set unconditionally in `init` and never cleared (Zig
+        // stores `*logger.Log`, always non-null), so the `Option` is purely a
+        // zeroed-init nicety; the `expect` is infallible.
+        let old_log: NonNull<logger::Log> = jsc_vm.log.expect("vm.log set in init");
         let mut log = logger::Log::default();
         jsc_vm.log = NonNull::new(&mut log);
         jsc_vm.transpiler.resolver.log = &mut log;
         // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
         // — gated bundler fields.
-        // PORT NOTE: Zig `defer { restore old_log }` — restored on every path
-        // below before return. `vm.log` is set unconditionally in `init` and
-        // never cleared (Zig stores `*logger.Log`, always non-null), so the
-        // `Option` is purely a zeroed-init nicety; deref is sound.
-        let old_log_ptr = old_log
-            .expect("vm.log set in init")
-            .as_ptr();
-        let restore = |jsc_vm: &mut VirtualMachine| {
-            jsc_vm.log = old_log;
-            // SAFETY: `old_log` outlives the VM (Box::leak in `init`).
-            jsc_vm.transpiler.resolver.log = unsafe { &mut *old_log_ptr };
-        };
+        // PORT NOTE: Zig `defer { restore old_log }` — scopeguard fires on every
+        // exit (including `?` from `ResolveMessage::create` below), so the VM's
+        // `log` cannot be left pointing at the dropped stack `log`.
+        let jsc_vm_ptr = jsc_vm as *mut VirtualMachine;
+        let _restore = scopeguard::guard((), move |()| {
+            // SAFETY: `jsc_vm_ptr` is the live per-thread VM (caller is on the
+            // JS thread); `old_log` outlives the VM (Box::leak in `init`).
+            let jsc_vm = unsafe { &mut *jsc_vm_ptr };
+            jsc_vm.log = Some(old_log);
+            jsc_vm.transpiler.resolver.log = unsafe { &mut *old_log.as_ptr() };
+        });
+        // PORT NOTE: reshaped for borrowck — re-derive from raw so the unique
+        // borrow doesn't span the scopeguard's drop.
+        // SAFETY: per-thread VM is live for this synchronous call.
+        let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
         let resolve_result = jsc_vm._resolve(
             &mut result,
@@ -3478,7 +3484,6 @@ impl VirtualMachine {
                 err,
                 crate::ResolveMessage::create(global, &msg, source_utf8.slice())?,
             );
-            restore(jsc_vm);
             return Ok(());
         }
 
@@ -3491,7 +3496,6 @@ impl VirtualMachine {
         }
 
         *res = ErrorableString::ok(bun_string::String::clone_utf8(result.path));
-        restore(jsc_vm);
         Ok(())
     }
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec
@@ -4034,11 +4038,6 @@ impl VirtualMachine {
         trace: &crate::ZigStackTrace,
         allow_ansi_colors: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): `ZigStackTrace`/`ZigStackFrame` per-frame walk —
-        // body not yet ported (matches Zig :2720).
-        let _ = (writer, trace, allow_ansi_colors);
-        return Ok(());
-        {
         let stack = trace.frames();
         if stack.is_empty() {
             return Ok(());
@@ -4046,6 +4045,7 @@ impl VirtualMachine {
         // SAFETY: per-thread VM.
         let vm = unsafe { &mut *VirtualMachine::get() };
         let origin = if vm.is_from_devserver { Some(&vm.origin) } else { None };
+        // SAFETY: `transpiler.fs` set during `init` and live for VM lifetime.
         let dir = unsafe { (*vm.transpiler.fs).top_level_dir };
 
         for frame in stack {
@@ -4056,16 +4056,12 @@ impl VirtualMachine {
             if file.is_empty() && func.is_empty() {
                 continue;
             }
-            let name_fmt = frame.name_formatter(allow_ansi_colors);
             // PERF(port): Zig used `std.fmt.count` to test if the formatter
-            // emits anything; here we format into a small buffer.
+            // emits anything; format into a scratch `String` to probe.
             let has_name = {
-                // PERF(port): Zig used `std.fmt.count`; format into a scratch
-                // `String` to probe — `bun_string::CountingWriter` does not
-                // exist yet. Tiny formatter, allocation is negligible.
                 use core::fmt::Write as _;
                 let mut probe = String::new();
-                let _ = write!(probe, "{name_fmt}");
+                let _ = write!(probe, "{}", frame.name_formatter(false));
                 !probe.is_empty()
             };
 
@@ -4084,7 +4080,7 @@ impl VirtualMachine {
             if has_name && !frame.position.is_invalid() {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
-                    name_fmt,
+                    frame.name_formatter(allow_ansi_colors),
                     frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
                 )?;
             } else if !frame.position.is_invalid() {
@@ -4095,7 +4091,7 @@ impl VirtualMachine {
             } else if has_name {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d>\n",
-                    name_fmt
+                    frame.name_formatter(allow_ansi_colors)
                 )?;
             } else {
                 pretty_write!(

@@ -42,10 +42,13 @@ use crate::{
     ServerComponentBoundary, StableRef, WrapKind, ThreadPool,
 };
 
-/// `bun.jsc.EventLoopHandle` (LinkerContext.zig:28). The real handle is a T6
-/// JSC type; the linker only stores it to pass through to chunk-generation
-/// tasks. Erased here to break the cycle (CYCLEBREAK GENUINE).
-pub type EventLoop = Option<core::ptr::NonNull<()>>;
+/// `bun.jsc.AnyEventLoop` (LinkerContext.zig:28). `bun_event_loop` is a
+/// lower-tier crate, so the bundler can name the real enum (the `Js` arm
+/// holds an erased `*mut jsc::EventLoop` driven through a vtable). Stored as
+/// a pointer because the linker borrows the loop owned by the
+/// `BundleThread` / runtime.
+pub type EventLoop =
+    Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop::AnyEventLoop<'static>>>;
 
 bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);

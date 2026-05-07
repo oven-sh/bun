@@ -322,60 +322,21 @@ impl JSValueBooleanStrict for JSValue {
 }
 
 pub use super::node_fs_constant as constants;
-// node_fs_watcher / node_fs_stat_watcher are JSC-bound and not yet declared in
-// `node.rs`. Their `Arguments` structs are needed by `args::Watch` /
-// `args::WatchFile` and the `watch()` / `watch_file()` bodies below, so we
-// provide minimal local stand-ins that mirror the real shapes from
-// `node_fs_watcher.rs` / `node_fs_stat_watcher.rs`. Swap to
-// `pub use super::node_fs_watcher::FSWatcher as Watcher;` /
-// `pub use super::node_fs_stat_watcher::StatWatcher;` once the parent
-// `node.rs` wires those `#[path = ...]` modules.
+// `Watcher` / `StatWatcher` mirror Zig's `pub const Watcher = @import(
+// "./node_fs_watcher.zig");` / `pub const StatWatcher = @import(
+// "./node_fs_stat_watcher.zig");`. The sibling modules are declared in
+// `node.rs`; re-export them under the names the `args::Watch` / `watch()`
+// bodies below expect.
 #[allow(non_snake_case)]
-pub mod Watcher {
-    use super::{JSGlobalObject, JSValue, Maybe, PathLike};
-    /// Stand-in for `node_fs_watcher::FSWatcher` — only the field read by
-    /// [`NodeFS::watch`] (`js_this`) is modeled.
-    pub struct FSWatcher {
-        pub js_this: JSValue,
-    }
-    /// Stand-in for `node_fs_watcher::Arguments` — see real struct at
-    /// `src/runtime/node/node_fs_watcher.rs`.
-    pub struct Arguments {
-        pub path: PathLike,
-        pub global_this: *const JSGlobalObject,
-    }
-    impl Arguments {
-        pub fn create_fs_watcher(&self) -> Maybe<FSWatcher> {
-            todo!("blocked_on: super::node_fs_watcher (module not declared in node.rs)")
-        }
-    }
-}
+pub use super::node_fs_watcher as Watcher;
 #[allow(non_snake_case)]
-pub mod StatWatcher {
-    use super::{JSGlobalObject, JSValue, PathLike};
-    /// Stand-in for `node_fs_stat_watcher::Arguments` — see real struct at
-    /// `src/runtime/node/node_fs_stat_watcher.rs`.
-    pub struct Arguments {
-        pub path: PathLike,
-        pub global_this: &'static JSGlobalObject,
-    }
-    impl Arguments {
-        pub fn create_stat_watcher(&self) -> Result<JSValue, bun_core::Error> {
-            todo!("blocked_on: super::node_fs_stat_watcher (module not declared in node.rs)")
-        }
-    }
-}
+pub use super::node_fs_stat_watcher as StatWatcher;
 
-// PORT NOTE: `Binding` is `super::node_fs_binding::Binding` in Zig, but that
-// module is not yet wired into `node.rs`. The async `create()` entry points
-// only thread it through as an unused `_binding: &mut Binding` (the JSC class
-// instance that owns the per-thread `NodeFS`). Forward-declare an opaque type
-// here so the signatures stay source-compatible; swap to the real re-export
-// once `node_fs_binding` is declared.
-#[repr(C)]
-pub struct Binding {
-    _opaque: [u8; 0],
-}
+/// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
+/// (`super::node_fs_binding::Binding`). Re-exported so the async `create()`
+/// entry points keep their `&mut Binding` signature source-compatible with
+/// `node_fs.zig`.
+pub use super::node_fs_binding::Binding;
 
 /// `jsc.JSPromise.Strong` — re-exported under its Rust crate name. The Zig
 /// source spells this `JSPromise.Strong` (a nested decl), which Rust models as
@@ -972,24 +933,10 @@ impl FsArgument for args::WriteFile {
 
 /// Convert an async-FS result payload to a `JSValue`. Mirrors Zig's
 /// `globalObject.toJS(res)` (a generic `anytype` dispatcher that calls
-/// `res.toJS(globalObject)`). Each `ret::*` type implements this; the default
-/// body is a porting stub.
+/// `res.toJSNewlyCreated(globalObject)` if it exists, else `res.toJS(...)`).
+/// Each `ret::*` type implements this by forwarding to its inherent method.
 pub trait FsReturn {
     fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
-}
-macro_rules! impl_fs_return_stub {
-    ( $( $ty:ty ),+ $(,)? ) => {
-        $( impl FsReturn for $ty {
-            #[inline]
-            fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-                // TODO(port): forward to inherent `to_js` once all `ret::*`
-                // grow uniform signatures; until then this keeps the generic
-                // `AsyncFSTask::run_from_js_thread` body type-correct.
-                let _ = _global;
-                todo!("blocked_on: ret::{}::to_js", core::any::type_name::<$ty>())
-            }
-        } )+
-    };
 }
 impl FsReturn for () {
     #[inline]
@@ -1005,10 +952,69 @@ impl FsReturn for Null {
     #[inline]
     fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> { Ok(JSValue::NULL) }
 }
-impl_fs_return_stub!(
-    Stats, FD, ZigString, StringOrBuffer, StringOrUndefined,
-    ret::Read, ret::Write, node::StatFS, ret::Readdir, StatOrNotFound,
-);
+impl FsReturn for Stats {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js_newly_created(global)
+    }
+}
+impl FsReturn for FD {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(super::types::FdJsc::to_js(*self, global))
+    }
+}
+impl FsReturn for ZigString {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(bun_jsc::ZigStringJsc::to_js(self, global))
+    }
+}
+impl FsReturn for StringOrBuffer {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js(global)
+    }
+}
+impl FsReturn for StringOrUndefined {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js(global)
+    }
+}
+impl FsReturn for ret::Read {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(self.to_js(global))
+    }
+}
+impl FsReturn for ret::Write {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(self.to_js(global))
+    }
+}
+impl FsReturn for node::StatFS {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js_newly_created(global)
+    }
+}
+impl FsReturn for ret::Readdir {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // `Readdir::to_js` consumes by value (the boxed slices are handed to
+        // JS). Swap in an empty `Files` payload so `&mut self` stays valid.
+        let owned = core::mem::replace(self, ret::Readdir::Files(Box::default()));
+        owned.to_js(global)
+    }
+}
+impl FsReturn for StatOrNotFound {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js_newly_created(global)
+    }
+}
 
 /// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the
 /// generic `AsyncFSTask<R, A, F>`. The Zig source mapped each instantiation to

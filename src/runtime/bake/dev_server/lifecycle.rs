@@ -575,27 +575,33 @@ impl DevServer {
     /// DevServer.zig `getOrPutRouteBundle` (DevServer.zig:3256).
     pub fn get_or_put_route_bundle(
         &mut self,
-        route: route_bundle::UnresolvedIndex<'_>,
+        route: route_bundle::UnresolvedIndex,
     ) -> Result<route_bundle::Index, bun_alloc::AllocError> {
         // Fast path: already registered.
-        if let Some(existing) = match &route {
+        if let Some(existing) = match route {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
-                self.router.route_ptr(*route_index).bundle
+                self.router.route_ptr(route_index).bundle
             }
-            route_bundle::UnresolvedIndex::Html(html) => html.dev_server_id,
+            // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed allocation.
+            route_bundle::UnresolvedIndex::Html(html) => unsafe { (*html).dev_server_id },
         } {
             return Ok(existing);
         }
 
         self.graph_safety_lock.lock();
-        let _unlock = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
+        // borrow of `self` for the rest of the scope (Zig `defer` had no aliasing).
+        let lock_ptr: *mut ThreadLock = &mut self.graph_safety_lock;
+        // SAFETY: `lock_ptr` points into `*self`, which outlives `_unlock`.
+        let _unlock = scopeguard::guard((), move |_| unsafe { (*lock_ptr).unlock() });
 
-        let bundle_index = route_bundle::Index::init(self.route_bundles.len() as u32);
+        let bundle_index =
+            route_bundle::Index::init(u32::try_from(self.route_bundles.len()).unwrap());
 
-        let data = match &route {
+        let data = match route {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
                 route_bundle::Data::Framework(route_bundle::Framework {
-                    route_index: *route_index,
+                    route_index,
                     evaluate_failure: None,
                     cached_module_list: jsc::StrongOptional::empty(),
                     cached_client_bundle_url: jsc::StrongOptional::empty(),
@@ -603,21 +609,26 @@ impl DevServer {
                 })
             }
             route_bundle::UnresolvedIndex::Html(html) => {
+                // SAFETY: caller guarantees `html` is live; single-threaded
+                // (uws JS-thread callback). The `&mut DevServer` borrow does
+                // not alias `*html` (HTMLBundleRoute is owned by ServerConfig).
+                let html_ref = unsafe { &mut *html };
                 let incremental_graph_index = self
                     .client_graph
-                    .insert_stale_extra(&html.bundle.path, false, true)?;
+                    .insert_stale_extra(&html_ref.bundle.path, false, true)?;
+                // PORT NOTE: Zig packs/unpacks; the un-gated `incremental_graph::File`
+                // is unpacked already.
                 self.client_graph.bundled_files.values_mut()
                     [incremental_graph_index.get() as usize]
                     .html_route_bundle_index = Some(bundle_index);
-                // SAFETY: `html` is a live IntrusiveRc-managed allocation;
-                // matched by the `deref` in `route_bundle::Html` drop.
+                // Zig `.initRef(html)` — bump intrusive refcount; matched by
+                // `RouteBundle::deinit`'s deref of `html_bundle`.
+                // SAFETY: `html` is a live IntrusiveRc-managed allocation.
                 unsafe {
-                    bun_ptr::RefCount::<crate::server::html_bundle::HTMLBundleRoute>::ref_(
-                        *html as *const _ as *mut _,
-                    )
+                    bun_ptr::RefCount::<crate::server::html_bundle::HTMLBundleRoute>::ref_(html)
                 };
                 route_bundle::Data::Html(route_bundle::Html {
-                    html_bundle: *html as *const _ as *mut _,
+                    html_bundle: html,
                     bundled_file: incremental_graph_index,
                     script_injection_offset: None,
                     cached_response: None,
@@ -628,6 +639,7 @@ impl DevServer {
 
         self.route_bundles.push(route_bundle::RouteBundle {
             data,
+            // Zig: `std.crypto.random.int(u32)` — OS CSPRNG.
             client_script_generation: {
                 let mut buf = [0u8; 4];
                 bun_core::csprng(&mut buf);
@@ -644,15 +656,8 @@ impl DevServer {
                 self.router.route_ptr_mut(route_index).bundle = Some(bundle_index);
             }
             route_bundle::UnresolvedIndex::Html(html) => {
-                // PORT NOTE: `UnresolvedIndex::Html` borrows `&HTMLBundleRoute`
-                // (LIFETIMES.tsv BORROW_PARAM); Zig stored a `*HTMLBundle.Route`
-                // and mutated through it. Cast to obtain the writable slot —
-                // the route outlives this call and is single-threaded here.
-                // SAFETY: see PORT NOTE above; no other &mut alias active.
-                unsafe {
-                    (*(html as *const _ as *mut crate::server::html_bundle::HTMLBundleRoute))
-                        .dev_server_id = Some(bundle_index);
-                }
+                // SAFETY: see above; no other `&mut` alias active.
+                unsafe { (*html).dev_server_id = Some(bundle_index) };
             }
         }
         Ok(bundle_index)

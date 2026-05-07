@@ -500,6 +500,36 @@ impl Drop for AutoGcOnDrop<'_> {
     }
 }
 
+/// RAII guard that scopes [`VirtualMachine::enable_macro_mode`] /
+/// [`VirtualMachine::disable_macro_mode`] — the Rust spelling of Zig's
+/// `vm.enableMacroMode(); defer vm.disableMacroMode();` (Macro.zig:120).
+///
+/// Holds a raw `*mut` (not `&'a mut`) because callers continue to access the
+/// per-thread VM (event loop, `run_with_api_lock`) while the guard is live;
+/// an exclusive borrow would forbid that under stacked-borrows.
+#[must_use = "macro mode is disabled on drop; bind to a named local"]
+pub struct MacroModeGuard {
+    vm: *mut VirtualMachine,
+}
+impl MacroModeGuard {
+    /// # Safety
+    /// `vm` must point to the live per-thread `VirtualMachine` and remain
+    /// valid until the returned guard is dropped.
+    #[inline]
+    pub unsafe fn new(vm: *mut VirtualMachine) -> Self {
+        // SAFETY: caller contract.
+        unsafe { (*vm).enable_macro_mode() };
+        Self { vm }
+    }
+}
+impl Drop for MacroModeGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: per `new` contract — `vm` outlives the guard.
+        unsafe { (*self.vm).disable_macro_mode() };
+    }
+}
+
 impl VirtualMachine {
     /// Spec VirtualMachine.zig:357-366 returns a raw `*VirtualMachine`.
     /// Returning `&'static mut` would let any two overlapping calls (e.g. a JS

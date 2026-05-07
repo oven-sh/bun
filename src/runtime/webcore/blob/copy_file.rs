@@ -314,12 +314,12 @@ impl<'a> CopyFile<'a> {
         // defer { this.read_len = @truncate(total_written); }
         let read_len_slot: *mut SizeType = &mut self.read_len;
         let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
-        let _guard = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             // SAFETY: both raw ptrs point into the enclosing stack frame which
             // outlives this guard (dropped before fn return); disjoint fields.
             unsafe { *read_len_slot = *total_written_slot as SizeType };
-        });
-        // TODO(port): errdefer — scopeguard captures &mut to disjoint field via raw ptr;
+        }
+        // TODO(port): defer captures &mut to disjoint field via raw ptr;
         // Phase B: reshape to set read_len at each return site instead.
 
         #[allow(unused_mut, unused_variables)]
@@ -1447,9 +1447,11 @@ impl<'a> CopyFileWindows<'a> {
         let promise = self.promise.swap();
         let err_instance = err.to_js_with_async_stack(global_this, &promise);
 
-        let event_loop = self.event_loop;
-        event_loop.enter();
-        let _guard = scopeguard::guard((), |_| event_loop.exit());
+        // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
+        // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
+        let _guard = unsafe {
+            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
+        };
         // SAFETY: self was Box::into_raw'd in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(self as *mut Self) };
         let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
@@ -1516,9 +1518,11 @@ impl<'a> CopyFileWindows<'a> {
     fn resolve_promise(&mut self, written: usize) {
         let global_this = self.event_loop.global;
         let promise = self.promise.swap();
-        let event_loop = self.event_loop;
-        event_loop.enter();
-        let _guard = scopeguard::guard((), |_| event_loop.exit());
+        // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
+        // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
+        let _guard = unsafe {
+            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
+        };
 
         // SAFETY: self was Box::into_raw'd in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(self as *mut Self) };

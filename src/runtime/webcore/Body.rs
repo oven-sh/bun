@@ -2314,11 +2314,11 @@ impl<'a> ValueBufferer<'a> {
                         );
                     }
                     jsc::js_promise::Status::Fulfilled => {
-                        let _guard = scopeguard::guard((), |_| stream.value.unprotect());
+                        let _guard = jsc::js_value::Protected::adopt(stream.value);
                         self.handle_resolve_stream(false);
                     }
                     jsc::js_promise::Status::Rejected => {
-                        let _guard = scopeguard::guard((), |_| stream.value.unprotect());
+                        let _guard = jsc::js_value::Protected::adopt(stream.value);
                         self.handle_reject_stream(promise.result(global_this.vm()), false);
                     }
                 }

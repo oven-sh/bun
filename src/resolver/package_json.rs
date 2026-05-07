@@ -20,7 +20,7 @@ use crate as resolver;
 use bumpalo::Bump;
 use bun_wyhash::Wyhash;
 
-// ── FORWARD_DECL: bun_install types reachable only on the auto-install path ──
+// ── bun_install types (MOVE_DOWN: bun_install_types) ──────────────────────
 // CYCLEBREAK: bun_resolver → bun_install would loop through bun_http. The
 // auto-install path is dormant until `bun_install` writes `r.package_manager`;
 // all install-tier value types are the canonical `bun_install_types` shapes.

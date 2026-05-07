@@ -265,38 +265,16 @@ impl InitCommand {
     pub fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
         // Set raw mode to read single characters without echo
         #[cfg(windows)]
-        let original_mode: Option<bun_sys::windows::DWORD> = bun_sys::windows::update_stdio_mode_flags(
-            bun_sys::windows::StdHandle::StdIn,
-            bun_sys::windows::ModeFlags {
-                // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
-                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
-                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-                // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
-                unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
-            },
-        )
-        .ok();
+        let _restore = bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+            // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
+            set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
+                | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+            // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
+            unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
+        });
 
         #[cfg(unix)]
-        {
-            let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Raw);
-        }
-
-        scopeguard::defer! {
-            #[cfg(windows)]
-            {
-                if let Some(mode) = original_mode {
-                    // SAFETY: stdin handle is valid for the lifetime of the process.
-                    unsafe {
-                        let _ = bun_sys::windows::c::SetConsoleMode(Fd::stdin().native(), mode);
-                    }
-                }
-            }
-            #[cfg(unix)]
-            {
-                let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Normal);
-            }
-        };
+        let _restore = bun_core::tty::RawModeGuard::new(0);
 
         let selection = match Self::process_radio_button::<C>(label) {
             Ok(s) => s,

@@ -104,6 +104,29 @@ impl Drop for StoreResetGuard {
     }
 }
 
+/// RAII guard that pins the thread-local `disable_reset` flag on both AST
+/// `Store`s for its scope. Replaces the Zig idiom (Macro.zig)
+/// `Expr.Data.Store.disable_reset = true; defer Expr.Data.Store.disable_reset = false;`
+/// (and the paired `Stmt` toggle) so callers don't hand-roll a `scopeguard`
+/// per PORTING.md.
+#[must_use = "disable_reset is cleared on drop; bind to a named local"]
+pub struct DisableStoreReset(());
+impl DisableStoreReset {
+    #[inline]
+    pub fn new() -> Self {
+        expr::data::Store::set_disable_reset(true);
+        stmt::data::Store::set_disable_reset(true);
+        Self(())
+    }
+}
+impl Drop for DisableStoreReset {
+    #[inline]
+    fn drop(&mut self) {
+        expr::data::Store::set_disable_reset(false);
+        stmt::data::Store::set_disable_reset(false);
+    }
+}
+
 // ── flat re-exports (the rest of lib.rs/ast/ expects these at `crate::ast::X`) ──
 
 pub use ast::Ast;

@@ -1155,6 +1155,12 @@ impl JSValue {
 #[must_use = "dropping immediately unprotects; bind to a local"]
 pub struct Protected(JSValue);
 impl Protected {
+    /// Wrap an **already-protected** value so it is unprotected on drop.
+    /// Unlike [`JSValue::protected`], this does *not* bump the protect
+    /// refcount — use when adopting a `protect()` taken elsewhere (the
+    /// Rust spelling of Zig's bare `defer value.unprotect()`).
+    #[inline]
+    pub fn adopt(value: JSValue) -> Self { Self(value) }
     #[inline]
     pub fn value(&self) -> JSValue { self.0 }
 }

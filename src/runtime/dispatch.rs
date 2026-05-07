@@ -210,14 +210,16 @@ pub fn run_task(
         task_tag::AnyTask => {
             let any = cast!(AnyTask);
             // Zig: `any.run() catch |err| reportErrorOrTerminate(global, err)`.
+            // `bun_event_loop::ErasedJsError` carries the discriminant; recover
+            // the real `JsError` so `Terminated` short-circuits correctly.
             if let Err(err) = any.run() {
-                report_error_or_terminate(global, erased_js_error(err))?;
+                report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
             }
         }
         task_tag::ManagedTask => {
             // Zig: `any.run() catch |err| reportErrorOrTerminate(global, err)`.
             if let Err(err) = ManagedTask::run(cast_ptr!(ManagedTask)) {
-                report_error_or_terminate(global, erased_js_error(err))?;
+                report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
             }
         }
         task_tag::CppTask => {

@@ -1393,6 +1393,12 @@ impl VirtualMachine {
         let _ = vm_ref.regular_event_loop.tasks.ensure_unused_capacity(64);
         vm_ref.event_loop = &mut vm_ref.regular_event_loop;
 
+        // `source_mappings.map` is a sibling-field backref onto
+        // `saved_source_map_table` (spec VirtualMachine.zig:1273).
+        vm_ref.saved_source_map_table = crate::saved_source_map::HashTable::default();
+        vm_ref.source_mappings = SavedSourceMap::default();
+        vm_ref.source_mappings.map = &mut vm_ref.saved_source_map_table;
+
         // Capture inputs and end `vm_ref`'s last use BEFORE the hook/FFI
         // below: both re-enter Rust via the thread-local raw `vm` stored
         // above — a parent provenance of `vm_ref` — so any access during the

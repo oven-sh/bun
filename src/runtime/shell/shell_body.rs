@@ -721,6 +721,44 @@ pub use test as Test;
 
 // ───────────────────────────── JS bridge ─────────────────────────────
 
+/// RAII owner for the `bun.String` array threaded through `shell_cmd_from_js` →
+/// `Interpreter::parse`. `bun.String` is `Copy` (no `Drop`) for FFI, so the
+/// per-element `deref()` from Zig's `defer { for (jsstrings.items) |bunstr|
+/// bunstr.deref(); jsstrings.deinit(); }` must be explicit. Wrapping the `Vec`
+/// avoids the unit-state `scopeguard` + raw-pointer-reborrow pattern that is UB
+/// under Stacked Borrows (PORTING.md §Idiom-map: `defer <side effect>`).
+pub struct JsStrings(pub Vec<BunString>);
+
+impl JsStrings {
+    #[inline]
+    pub fn with_capacity(cap: usize) -> Self {
+        Self(Vec::with_capacity(cap))
+    }
+}
+
+impl core::ops::Deref for JsStrings {
+    type Target = Vec<BunString>;
+    #[inline]
+    fn deref(&self) -> &Vec<BunString> {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for JsStrings {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Vec<BunString> {
+        &mut self.0
+    }
+}
+
+impl Drop for JsStrings {
+    fn drop(&mut self) {
+        for s in &self.0 {
+            s.deref();
+        }
+    }
+}
+
 pub fn shell_cmd_from_js(
     global: &JSGlobalObject,
     string_args: JSValue,

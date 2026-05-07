@@ -684,7 +684,7 @@ pub fn build_with_vm(
             &entry_points,
             // SAFETY: see `server_ptr` comment above.
             unsafe { &mut *server_ptr },
-            bun_bundler::BakeOptions {
+            bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
                 // SAFETY: stack-owned; see above.
                 client_transpiler: unsafe { NonNull::new_unchecked(client_ptr) },

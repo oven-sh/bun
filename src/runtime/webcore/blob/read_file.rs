@@ -242,6 +242,10 @@ impl ReadFile {
         }
     }
 
+    // Zig: `if (Environment.isWindows) @compileError("…")` — Zig analyzes this
+    // lazily (only fires if a Windows caller reaches it). Rust's `compile_error!`
+    // is eager, so we gate the whole fn instead; Windows callers use ReadFileUV.
+    #[cfg(not(windows))]
     pub fn create_with_ctx(
         store: StoreRef,
         on_read_file_context: *mut c_void,
@@ -250,11 +254,6 @@ impl ReadFile {
         max_len: SizeType,
     ) -> Result<Box<ReadFile>, Error> {
         // TODO(port): narrow error set
-        #[cfg(windows)]
-        {
-            compile_error!("Do not call ReadFile.create_with_ctx on Windows, see ReadFileUV");
-        }
-
         // store.ref() — `StoreRef` carries the +1; held in `self.store`.
         let file_store = store.data.as_file().clone();
         let read_file = Box::new(ReadFile {

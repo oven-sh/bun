@@ -2694,11 +2694,16 @@ fn get_or_put_resolved_package(
             }
         }
         dependency::version::Tag::Symlink => {
+            // PORT NOTE: reshaped for borrowck — args borrow `*this`; route
+            // through a raw root so `&mut PackageManager` is reachable.
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `get_or_put` copies the slice into the lockfile string
+            // buffer before any other mutation; `version.tag == Symlink`.
             let res = FolderResolution::get_or_put(
-                GlobalOrRelative::Global(&this.global_link_dir_path),
-                version,
-                this.lockfile.str(&version.value.symlink),
-                this,
+                GlobalOrRelative::Global(unsafe { &(*this_ptr).global_link_dir_path }),
+                version.clone(),
+                unsafe { &*this_ptr }.lockfile.str(unsafe { &version.value.symlink }),
+                unsafe { &mut *this_ptr },
             );
 
             match res {

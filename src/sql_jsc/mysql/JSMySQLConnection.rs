@@ -1153,34 +1153,30 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_data(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
-        this.ref_();
-        // Zig `defer this.deref();` + `defer { resetConnectionTimeout(); ... }`.
+        // Zig `this.ref(); defer this.deref();` + `defer { resetConnectionTimeout(); ... }`.
         // Both guards re-enter via raw pointer so neither captures a `&mut`
         // alias and no reference is live across the potential free. Guard drop
-        // order is LIFO, so `_ref_guard` (deref) runs last — matches Zig.
+        // order is LIFO, so `_ref` (deref) runs last — matches Zig.
         let p: *mut JSMySQLConnection = this;
-        // SAFETY: `p` from live `&mut this`; paired with `ref_()` above.
-        let _ref_guard = scopeguard::guard((), move |_| unsafe { JSMySQLConnection::deref(p) });
+        // SAFETY: `p` from live `&mut this`.
+        let _ref = unsafe { JSMySQLConnection::ref_guard(p) };
         let vm = this.vm();
 
-        let _tail_guard = scopeguard::guard((), move |_| {
-            // SAFETY: `p` valid — `_ref_guard` has not yet dropped, so the
-            // matching `ref_()` keeps `*p` alive through this block.
+        scopeguard::defer! {
+            // SAFETY: `_ref` has not yet dropped, so `*p` is still live.
             unsafe {
                 // reset the connection timeout after we're done processing the data
                 (*p).reset_connection_timeout();
                 (*p).update_reference_type();
                 (*p).register_auto_flusher();
             }
-        });
+        }
         if this.vm().is_shutting_down() {
             // we are shutting down lets not process the data
             return;
         }
 
-        let event_loop = vm.event_loop();
-        event_loop.enter();
-        let _loop_guard = scopeguard::guard((), |_| event_loop.exit());
+        let _loop_guard = vm.event_loop().entered();
         this.ensure_js_value_is_alive();
 
         if let Err(e) = this.connection.read_and_process_data(data) {

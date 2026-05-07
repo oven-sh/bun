@@ -486,7 +486,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
             let off: u32 = u32::try_from(dep_ids.len()).unwrap();
             for &dep_id in child.iter() {
-                let pkg_id = self.lockfile().buffers.resolutions.as_slice()[dep_id as usize];
+                let pkg_id = self.resolutions[dep_id as usize];
                 if pkg_id == invalid_package_id {
                     // optional peers that never resolved
                     continue;

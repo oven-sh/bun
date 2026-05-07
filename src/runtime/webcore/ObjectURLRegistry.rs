@@ -99,9 +99,7 @@ impl ObjectURLRegistry {
         let uuid = unsafe { &mut *vm }.rare_data().next_uuid();
         let entry = Entry::init(blob);
 
-        let map = self.map.lock();
-        map.insert(uuid.bytes, entry);
-        self.map.unlock();
+        self.map.lock().insert(uuid.bytes, entry);
         uuid
     }
 
@@ -112,19 +110,14 @@ impl ObjectURLRegistry {
 
     fn get_duped_blob(&self, uuid: &UUID) -> Option<Blob> {
         let map = self.map.lock();
-        let result = map.get(&uuid.bytes).map(|e| e.blob.dupe_with_content_type(true));
-        self.map.unlock();
-        result
+        map.get(&uuid.bytes).map(|e| e.blob.dupe_with_content_type(true))
     }
 
     pub fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
-        let result = map
-            .get(&uuid.bytes)
-            .map(|e| e.blob.dupe_with_content_type(true));
-        self.map.unlock();
-        result
+        map.get(&uuid.bytes)
+            .map(|e| e.blob.dupe_with_content_type(true))
     }
 
     pub fn resolve_and_dupe_to_js(
@@ -141,20 +134,15 @@ impl ObjectURLRegistry {
         let Some(uuid) = uuid_from_pathname(pathname) else {
             return;
         };
-        let map = self.map.lock();
-        let _ = map.remove(&uuid.bytes);
         // Box<Entry> dropped here (was `entry.value.deinit()` in Zig)
-        self.map.unlock();
+        let _ = self.map.lock().remove(&uuid.bytes);
     }
 
     pub fn has(&self, pathname: &[u8]) -> bool {
         let Some(uuid) = uuid_from_pathname(pathname) else {
             return false;
         };
-        let map = self.map.lock();
-        let result = map.contains_key(&uuid.bytes);
-        self.map.unlock();
-        result
+        self.map.lock().contains_key(&uuid.bytes)
     }
 }
 

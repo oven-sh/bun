@@ -2327,8 +2327,7 @@ impl ThreadSafeFunction {
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();
 
-        self.tracker.will_dispatch(global_object);
-        let _g = scopeguard::guard((), |_| self.tracker.did_dispatch(global_object));
+        let _dispatch = self.tracker.dispatch(global_object);
 
         match &self.callback {
             TsfnCallback::Js(strong) => {

@@ -3994,11 +3994,9 @@ impl Resolver {
         unsafe {
             let parent: *mut Resolver = (*poll).parent;
             let vm = &*(*parent).vm;
-            (*vm.event_loop()).enter();
-            let _exit = scopeguard::guard((), |_| (*vm.event_loop()).exit());
-            (*parent).ref_();
-            // SAFETY: `parent` is the live heap-allocated Resolver back-ptr; paired with `ref_()` above.
-            let _deref = scopeguard::guard((), move |_| Self::deref(parent));
+            let _exit = EventLoop::enter_scope(vm.event_loop());
+            // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
+            let _deref = Self::ref_scope(parent);
             // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
             let channel = (*parent).channel.unwrap();
             if status < 0 {

@@ -7380,7 +7380,10 @@ impl<'a> Resolver<'a> {
                     };
 
                     // bun.fs.debug("open({s})", .{sentinel}) — TODO(port): scoped log
-                    drop(restore);
+                    // Restore the byte we NUL-terminated above (Zig: `defer path[len] = prev_char`).
+                    // No early-return path exists between the write and here, so a guard is unnecessary.
+                    // SAFETY: `restore_at` is in-bounds of the threadlocal path buffer.
+                    unsafe { *restore_at = prev_char };
 
                     match open_req {
                         Ok(fd) => break 'open_dir fd,

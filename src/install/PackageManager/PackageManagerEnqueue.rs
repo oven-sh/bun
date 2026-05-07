@@ -2369,17 +2369,28 @@ fn get_or_put_resolved_package(
             }
 
             // Resolve the version from the loaded NPM manifest
-            let name_str = this.lockfile.str(&name);
+            // PORT NOTE: reshaped for borrowck — `name_str`/`manifest` borrow
+            // `*this`; route through a raw root so the `&mut PackageManager`
+            // calls below can coexist (Zig passes the aliased `*PackageManager`).
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `string_bytes` is not resized between here and the
+            // `find_result` lookup; `manifest` lives in `this.manifests` and
+            // is only read.
+            let name_str = unsafe { &*this_ptr }.lockfile.str(&name);
 
-            let Some(manifest) = this.manifests.by_name_hash(
-                this,
-                this.scope_for_package_name(name_str),
+            let scope: *const crate::npm::registry::Scope =
+                unsafe { &*this_ptr }.scope_for_package_name(name_str);
+            let needs_ext = this.options.minimum_release_age_ms.is_some();
+            let Some(manifest) = unsafe { &mut (*this_ptr).manifests }.by_name_hash(
+                unsafe { &mut *this_ptr },
+                unsafe { &*scope },
                 name_hash,
                 ManifestLoad::LoadFromMemoryFallbackToDisk,
-                this.options.minimum_release_age_ms.is_some(),
+                needs_ext,
             ) else {
                 return Ok(None); // manifest might still be downloading. This feels unreliable.
             };
+            let manifest: &Npm::PackageManifest = manifest;
 
             let version_result: Npm::FindVersionResult = match version.tag {
                 // SAFETY: `version.tag` discriminates the union arm.
@@ -2507,15 +2518,21 @@ fn get_or_put_resolved_package(
                 }
             };
 
+            // PORT NOTE: reshaped for borrowck — `manifest`/`find_result`
+            // borrow `this.manifests`; detach via raw so the `&mut *this`
+            // call can proceed.
+            let manifest_ptr: *const Npm::PackageManifest = manifest;
             get_or_put_resolved_package_with_find_result(
-                this,
+                // SAFETY: see `this_ptr` note above.
+                unsafe { &mut *this_ptr },
                 name_hash,
                 name,
                 dependency,
                 version,
                 dependency_id,
                 behavior,
-                manifest,
+                // SAFETY: `this.manifests` is not mutated by the callee.
+                unsafe { &*manifest_ptr },
                 find_result,
                 install_peer,
                 success_fn,
@@ -2523,10 +2540,12 @@ fn get_or_put_resolved_package(
         }
 
         dependency::version::Tag::Folder => {
+            // SAFETY: `version.tag == Folder` discriminates the union arm.
+            let folder = unsafe { version.value.folder };
             let res: FolderResolutionValue = 'res: {
                 if this.lockfile.is_workspace_dependency(dependency_id) {
                     // relative to cwd
-                    let folder_path = this.lockfile.str(&version.value.folder);
+                    let folder_path = this.lockfile.str(&folder);
                     let mut buf2 = PathBuffer::uninit();
                     let folder_path_abs = if bun_paths::is_absolute(folder_path) {
                         folder_path
@@ -2549,30 +2568,40 @@ fn get_or_put_resolved_package(
                     //     return .{ .package = this.lockfile.packages.get(0) };
                     // }
 
+                    // PORT NOTE: reshaped for borrowck — `folder_path_abs`
+                    // borrows either `this.lockfile` or `buf2`; route through
+                    // a raw root so `&mut PackageManager` is reachable.
+                    let this_ptr: *mut PackageManager = this;
+                    // SAFETY: `get_or_put` copies `folder_path_abs` into the
+                    // lockfile string buffer before any other mutation.
                     break 'res FolderResolution::get_or_put(
                         GlobalOrRelative::Relative(dependency::version::Tag::Folder),
                         version,
                         folder_path_abs,
-                        this,
+                        unsafe { &mut *this_ptr },
                     );
                 }
 
                 // transitive folder dependencies do not have their dependencies resolved
-                let mut name_slice = this.lockfile.str(&name);
-                let mut folder_path = this.lockfile.str(&version.value.folder);
                 let mut package = Package::default();
 
                 {
                     // only need name and path
-                    let mut builder = this.lockfile.string_builder();
+                    // PORT NOTE: reshaped for borrowck — split lockfile
+                    // borrows through a raw root so `string_builder` (mut)
+                    // and `str` (shared) can coexist.
+                    let lockfile_ptr: *mut Lockfile::Lockfile = &mut *this.lockfile;
+                    // SAFETY: `string_builder` borrows `string_bytes` mutably;
+                    // `str` only reads from it via the offset table.
+                    let mut builder = unsafe { &mut *lockfile_ptr }.string_builder();
 
-                    builder.count(name_slice);
-                    builder.count(folder_path);
+                    builder.count(unsafe { &*lockfile_ptr }.str(&name));
+                    builder.count(unsafe { &*lockfile_ptr }.str(&folder));
 
                     builder.allocate().expect("OOM");
 
-                    name_slice = this.lockfile.str(&name);
-                    folder_path = this.lockfile.str(&version.value.folder);
+                    let name_slice = unsafe { &*lockfile_ptr }.str(&name);
+                    let folder_path = unsafe { &*lockfile_ptr }.str(&folder);
 
                     package.name = builder.append::<SemverString>(name_slice);
                     package.name_hash = name_hash;
@@ -2614,12 +2643,14 @@ fn get_or_put_resolved_package(
         }
         dependency::version::Tag::Workspace => {
             // package name hash should be used to find workspace path from map
-            let workspace_path_raw: &SemverString = this
+            // SAFETY: `version.tag == Workspace` discriminates the union arm.
+            let workspace_path_raw: SemverString = this
                 .lockfile
                 .workspace_paths
                 .get(&name_hash)
-                .unwrap_or(&version.value.workspace);
-            let workspace_path = this.lockfile.str(workspace_path_raw);
+                .copied()
+                .unwrap_or(unsafe { version.value.workspace });
+            let workspace_path = this.lockfile.str(&workspace_path_raw);
             let mut buf2 = PathBuffer::uninit();
             let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
                 workspace_path
@@ -2631,11 +2662,16 @@ fn get_or_put_resolved_package(
                 )
             };
 
+            // PORT NOTE: reshaped for borrowck — `workspace_path_u8` may
+            // borrow `this.lockfile`; route through a raw root.
+            let this_ptr: *mut PackageManager = this;
+            // SAFETY: `get_or_put` copies `workspace_path_u8` into the
+            // lockfile string buffer before any other mutation.
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
                 version,
                 workspace_path_u8,
-                this,
+                unsafe { &mut *this_ptr },
             );
 
             match res {

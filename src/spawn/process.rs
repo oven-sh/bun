@@ -2590,7 +2590,7 @@ pub fn spawn_process_windows(
     uv_process_options.exit_cb = Some(Process::on_exit_uv);
 
     let process = Box::into_raw(Box::new(Process {
-        ref_count: AtomicU32::new(1),
+        ref_count: bun_ptr::ThreadSafeRefCount::init(),
         event_loop: options.windows.loop_,
         pid: 0,
         pidfd: (),
@@ -2709,7 +2709,7 @@ pub fn spawn_process_windows(
 
     cleanup_dup(false);
     cleanup_uv_files(&uv_files_to_close, loop_);
-    Ok(Maybe::Result(result))
+    Ok(Ok(result))
 }
 
 #[cfg(windows)]
@@ -3038,7 +3038,7 @@ pub mod sync {
         let loop_ = options.windows.loop_.platform_event_loop();
         let mut spawned = match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
             Maybe::Err(err) => return Ok(Maybe::Err(err)),
-            Maybe::Result(proces) => proces,
+            Ok(proces) => proces,
         };
 
         // `*mut Process` — intrusive refcount (Box::into_raw in to_process).
@@ -3063,7 +3063,7 @@ pub mod sync {
             loop_.run();
         }
 
-        Ok(Maybe::Result(Result {
+        Ok(Ok(Result {
             // SAFETY: process has exited; no further mutation.
             status: unsafe { (*process).status.clone() },
             stdout: Vec::new(),
@@ -3080,7 +3080,7 @@ pub mod sync {
         let loop_: EventLoopHandle = options.windows.loop_;
         let mut spawned = match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
             Maybe::Err(err) => return Ok(Maybe::Err(err)),
-            Maybe::Result(process) => process,
+            Ok(process) => process,
         };
         // Single-pointer ownership (mirrors Zig `bun.TrivialNew`): the
         // `Box::into_raw` result is the *only* root for this allocation. Every
@@ -3147,7 +3147,7 @@ pub mod sync {
                             ),
                         );
                     }
-                    Maybe::Result(()) => {}
+                    Ok(()) => {}
                 }
             }
         }
@@ -3176,7 +3176,7 @@ pub mod sync {
             (*(*this_ptr).process).deref();
             drop(Box::from_raw(this_ptr));
         }
-        Ok(Maybe::Result(result))
+        Ok(Ok(result))
     }
 
     pub fn spawn_with_argv(
@@ -3793,7 +3793,7 @@ pub mod sync {
         let mut receipts: [libc::kevent; 5] = unsafe { core::mem::zeroed() };
         match bun_sys::kevent(kq_fd, &changes_buf[..changes_len], &mut receipts[..changes_len], None) {
             Maybe::Err(err) => return Some(Maybe::Err(err)),
-            Maybe::Result(_) => {}
+            Ok(_) => {}
         }
         for r in &receipts[..changes_len] {
             if r.flags & libc::EV_ERROR == 0 || r.data == 0 {
@@ -3841,7 +3841,7 @@ pub mod sync {
         loop {
             let got = match bun_sys::kevent(kq_fd, &[], &mut events[..], None) {
                 Maybe::Err(err) => return Some(Maybe::Err(err)),
-                Maybe::Result(c) => c,
+                Ok(c) => c,
             };
             let mut saw_fork = false;
             for ev in &events[..got] {
@@ -3874,7 +3874,7 @@ pub mod sync {
                     // (racing NOTE_EXIT in this batch) — stash the status so
                     // `reapChild` below doesn't block on an already-reaped pid.
                     let r = posix_spawn::wait4(child, libc::WNOHANG | libc::WUNTRACED, None);
-                    if let Maybe::Result(ref w) = r {
+                    if let Ok(ref w) = r {
                         if w.pid == child {
                             if libc::WIFSTOPPED(w.status as i32) {
                                 jc.on_child_stopped();
@@ -3923,7 +3923,7 @@ pub mod sync {
                 for i in 0..2 {
                     let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
                 }
-                return Some(Maybe::Result(child_status.unwrap_or_else(|| reap_child(child))));
+                return Some(Ok(child_status.unwrap_or_else(|| reap_child(child))));
             }
         }
     }

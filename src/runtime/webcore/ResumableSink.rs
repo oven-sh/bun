@@ -449,7 +449,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 
     fn detach_js(&mut self) {
         if let Some(js_this) = self.js_this.try_get() {
-            let global = self.global();
+            // SAFETY: see [`Self::global`].
+            let global = unsafe { &*self.global_this };
             Self::set_drain(js_this, global, JSValue::ZERO);
             Self::set_cancel(js_this, global, JSValue::ZERO);
             Self::set_stream(js_this, global, JSValue::ZERO);

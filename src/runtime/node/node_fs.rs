@@ -5929,25 +5929,32 @@ impl NodeFS {
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
         // PORT NOTE: Zig used `std.posix.unlinkZ/rmdirZ` (which return Zig error
-        // sets). The Rust port goes straight to `bun_sys::unlink/rmdir` returning
-        // `Maybe<()>` with a `sys::Error` carrying the errno, so the
-        // `bun_core::err!("…")`/`map_anyerror_to_errno*` round-trip collapses to
-        // a direct errno match — semantically identical, fewer allocations.
+        // sets) and then mapped that error set through a *narrow* table to an
+        // errno, defaulting to `EFAULT`. The Rust port goes straight to
+        // `bun_sys::unlink`/`libc::rmdir` (raw errno), so route the result
+        // through `map_rm_errno_narrow` to preserve the EFAULT fallthrough
+        // (e.g. `EISDIR` with `recursive=false` must surface as `EFAULT`).
         if let Maybe::Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
             // empirically, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
             if args.recursive && matches!(e1, E::EISDIR | E::ENOTDIR | E::EACCES | E::EPERM) {
                 // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
-                if let Some(err2) = Maybe::<()>::errno_sys_p(unsafe { libc::rmdir(dest.as_ptr().cast()) }, sys::Tag::rmdir, args.path.slice()) {
-                    let Maybe::Err(err2) = err2 else { return Maybe::Ok(()) };
-                    if err2.get_errno() == E::ENOENT && args.force { return Maybe::Ok(()); }
-                    return Maybe::Err(err2.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
+                if let Some(Maybe::Err(err2)) = Maybe::<()>::errno_sys_p(unsafe { libc::rmdir(dest.as_ptr().cast()) }, sys::Tag::rmdir, args.path.slice()) {
+                    let e2 = err2.get_errno();
+                    if e2 == E::ENOENT && args.force { return Maybe::Ok(()); }
+                    return Maybe::Err(
+                        sys::Error::from_code(map_rm_errno_narrow(e2), sys::Tag::rm)
+                            .with_path(args.path.slice()),
+                    );
                 }
                 return Maybe::Ok(());
             }
             if e1 == E::ENOENT && args.force { return Maybe::Ok(()); }
-            return Maybe::Err(err1.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
+            return Maybe::Err(
+                sys::Error::from_code(map_rm_errno_narrow(e1), sys::Tag::rm)
+                    .with_path(args.path.slice()),
+            );
         }
         Maybe::Ok(())
     }
@@ -6378,8 +6385,7 @@ impl NodeFS {
 
         // PORT NOTE: Zig used `.u16` iterator on Windows so `name.slice()` is `[]u16`.
         // The OSPathBuffer copy below is generic over `OSPathChar`, so on Windows
-        // this needs the wide iterator. Gated until `DirIterator::WrappedIteratorW`
-        // is wired; the u8 path is correct for POSIX.
+        // this needs the wide iterator; the u8 path is correct for POSIX.
         #[cfg(windows)]
         let mut iterator = DirIterator::WrappedIteratorW::init(fd);
         #[cfg(not(windows))]
@@ -7265,16 +7271,17 @@ fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
 
 // `rm` non-recursive unlinkZ/rmdirZ fallback — narrower table; anything not
 // listed here falls through to EFAULT (node_fs.zig:5842-5859 / 5870-5887).
-fn map_anyerror_to_errno_rm_narrow(err: bun_core::Error) -> E {
-    match err.name() {
-        "AccessDenied" => E::EACCES,
-        "SymLinkLoop" => E::ELOOP,
-        "NameTooLong" => E::ENAMETOOLONG,
-        "SystemResources" => E::ENOMEM,
-        "ReadOnlyFileSystem" => E::EROFS,
-        "FileBusy" => E::EBUSY,
-        "InvalidUtf8" | "InvalidWtf8" | "BadPathName" => E::EINVAL,
-        "FileNotFound" => E::ENOENT,
+//
+// The Rust port calls `bun_sys::unlink`/`libc::rmdir` which yield a raw errno
+// rather than a Zig error name, so this composes `std.posix.unlinkZ`'s
+// errno→error map with the Zig switch above. Notably EPERM lands in
+// AccessDenied (→ EACCES) and EISDIR/ENOTDIR/ENOTEMPTY are *not* in the
+// narrow set, so they fall through to EFAULT — matching Node's error surface
+// for `rm` without `recursive`.
+fn map_rm_errno_narrow(e: E) -> E {
+    match e {
+        E::EACCES | E::EPERM => E::EACCES,
+        E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
         _ => E::EFAULT,
     }
 }

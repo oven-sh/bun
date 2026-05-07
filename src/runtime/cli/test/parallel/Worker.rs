@@ -455,7 +455,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
         // SAFETY: worker/coord backrefs valid for pipe lifetime; the
         // `Coordinator` outlives every `WorkerPipe` callback.
         bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of!((*(*(*this).worker).coord).event_loop_handle) as *mut c_void
+            core::ptr::addr_of!((*(*(*this).worker).coord).event_loop_handle).cast_mut().cast::<c_void>()
         })
     }
 }

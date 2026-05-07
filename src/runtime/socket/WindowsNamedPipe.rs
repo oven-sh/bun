@@ -943,7 +943,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
         // vtable; pass the address of the stored `bun_jsc::EventLoopHandle` so
         // the (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of!((*this).event_loop_handle) as *mut c_void
+            core::ptr::addr_of_mut!((*this).event_loop_handle).cast::<c_void>()
         })
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {

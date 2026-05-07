@@ -619,7 +619,7 @@ impl bun_io::BufferedReaderParent for FileResponseStream {
         // SAFETY: `this` non-null/live per trait contract; `event_loop_handle`
         // is `Copy` and disjoint from `reader`.
         bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of!((*this).event_loop_handle) as *mut c_void
+            core::ptr::addr_of_mut!((*this).event_loop_handle).cast::<c_void>()
         })
     }
 }

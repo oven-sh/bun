@@ -971,7 +971,7 @@ impl FilePoll {
             };
 
             let ident = usize::try_from(fd.native()).expect("int cast");
-            let udata = Pollable::init(self as *const _).ptr() as *mut core::ffi::c_void;
+            let udata = Pollable::init(self).ptr();
             changelist[0] = match flag {
                 Flags::Readable => make_kevent(ident, EVFILT::READ, EV::ADD | one_shot_flag, 0, udata),
                 Flags::Writable => make_kevent(ident, EVFILT::WRITE, EV::ADD | one_shot_flag, 0, udata),
@@ -1236,7 +1236,7 @@ impl FilePoll {
             // SAFETY: all-zero is a valid Kevent
             let mut changelist: [Kevent; 2] = unsafe { core::mem::zeroed() };
             let ident = usize::try_from(fd.native()).expect("int cast");
-            let udata = Pollable::init(self as *const _).ptr() as *mut core::ffi::c_void;
+            let udata = Pollable::init(self).ptr();
             changelist[0] = match flag {
                 Flags::Readable => make_kevent(ident, EVFILT::READ, EV::DELETE, 0, udata),
                 Flags::Writable => make_kevent(ident, EVFILT::WRITE, EV::DELETE, 0, udata),

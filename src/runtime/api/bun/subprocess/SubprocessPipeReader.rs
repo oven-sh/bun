@@ -448,7 +448,7 @@ impl BufferedReaderParent for PipeReader {
         // SAFETY: `this` is non-null/live per trait contract; `event_loop_handle`
         // is `Copy` and disjoint from the reader field.
         bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of!((*this).event_loop_handle) as *mut core::ffi::c_void
+            core::ptr::addr_of_mut!((*this).event_loop_handle).cast::<core::ffi::c_void>()
         })
     }
 }

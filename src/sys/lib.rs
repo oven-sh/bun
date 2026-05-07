@@ -780,7 +780,7 @@ pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
     match SystemErrno::init(err as i64) {
-        Some(e) => <&'static str>::from(e).as_ptr() as *const core::ffi::c_char,
+        Some(e) => <&'static str>::from(e).as_ptr().cast::<core::ffi::c_char>(),
         None => core::ptr::null(),
     }
 }

@@ -3229,7 +3229,7 @@ impl BlobExt for Blob {
             return crate::webcore::s3_file::to_js_unchecked(global_object, std::ptr::from_mut::<Blob>(self));
         }
 
-        js::to_js_unchecked(global_object, self as *mut Blob)
+        js::to_js_unchecked(global_object, std::ptr::from_mut::<Blob>(self))
     }
 
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and

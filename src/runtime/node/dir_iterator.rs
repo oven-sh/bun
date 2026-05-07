@@ -230,7 +230,7 @@ mod platform {
                     let rc = unsafe {
                         getdents(
                             self.dir.native(),
-                            self.buf.0.as_mut_ptr() as *mut libc::c_char,
+                            self.buf.0.as_mut_ptr().cast::<libc::c_char>(),
                             self.buf.0.len(),
                         )
                     };
@@ -254,7 +254,7 @@ mod platform {
                 // form a `&dirent` — read each field through the raw pointer.
                 // SAFETY: index < end_index ≤ 8192; kernel wrote a valid record.
                 let entry = unsafe {
-                    self.buf.0.as_ptr().add(self.index) as *const libc::dirent
+                    self.buf.0.as_ptr().add(self.index).cast::<libc::dirent>()
                 };
                 // SAFETY: entry points at a valid (possibly unaligned) dirent.
                 let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
@@ -266,7 +266,7 @@ mod platform {
                 // SAFETY: name is d_namlen bytes within the record
                 let name = unsafe {
                     core::slice::from_raw_parts(
-                        addr_of!((*entry).d_name) as *const u8,
+                        addr_of!((*entry).d_name).cast::<u8>(),
                         d_namlen as usize,
                     )
                 };

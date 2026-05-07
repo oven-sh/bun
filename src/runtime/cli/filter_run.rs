@@ -257,7 +257,7 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for ProcessHandle<'a> {
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: state backref valid for the lifetime of the run loop.
         bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of!((*(*this).state).event_loop_handle) as *mut c_void
+            core::ptr::addr_of_mut!((*(*this).state).event_loop_handle).cast::<c_void>()
         })
     }
 }

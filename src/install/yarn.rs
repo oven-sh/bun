@@ -1647,8 +1647,7 @@ pub fn migrate_yarn_lockfile<'a>(
                 ResolutionTag::Npm => 'brk: {
                     let mut version_buf = [0u8; 64];
                     let mut cursor = &mut version_buf[..];
-                    // SAFETY: tag == Npm ⇒ `value.npm` is the active union field.
-                    let npm_version = unsafe { pkg_resolution.value.npm.version };
+                    let npm_version = pkg_resolution.npm().version;
                     let _ = write!(
                         &mut cursor,
                         "{}",

@@ -122,8 +122,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
     if unsafe { (*manager.log).errors } > 0 {
         if log_level != LogLevel::Silent {
-            // SAFETY: see above.
-            let _ = unsafe { &*manager.log }.print(Output::error_writer() as *mut _);
+            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
         }
         Global::crash();
     }
@@ -138,8 +137,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     let current_package_json_ptr: *mut MapEntry = match manager
         .workspace_package_json_cache
         .get_with_path(
-            // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-            unsafe { &mut *manager.log },
+            manager.log_mut(),
             manager.original_package_json_path.as_bytes(),
             GetJSONOptions {
                 guess_indentation: true,
@@ -147,8 +145,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             },
         ) {
         GetResult::ParseErr(err) => {
-            // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-            let _ = unsafe { &*manager.log }.print(Output::error_writer() as *mut _);
+            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
             Output::err_generic(
                 "failed to parse package.json \"{s}\": {s}",
                 (
@@ -434,8 +431,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json_ptr: *mut MapEntry = match manager
             .workspace_package_json_cache
             .get_with_path(
-                // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-                unsafe { &mut *manager.log },
+                manager.log_mut(),
                 root_package_json_path,
                 GetJSONOptions {
                     guess_indentation: true,
@@ -443,8 +439,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 },
             ) {
             GetResult::ParseErr(err) => {
-                // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-                let _ = unsafe { &*manager.log }.print(Output::error_writer() as *mut _);
+                let _ = manager.log_mut().print(Output::error_writer() as *mut _);
                 Output::err_generic(
                     "failed to parse package.json \"{s}\": {s}",
                     (BStr::new(root_package_json_path), err.name()),
@@ -542,8 +537,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         let json_arena = bun_alloc::Arena::new();
         let mut new_package_json: bun_js_parser::Expr = match json::parse_package_json_utf8(
             &source,
-            // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-            unsafe { &mut *manager.log },
+            manager.log_mut(),
             &json_arena,
         ) {
             Ok(v) => v.into(),
@@ -622,8 +616,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                     let root_package_json_entry = match manager
                         .workspace_package_json_cache
                         .get_with_path(
-                            // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-                            unsafe { &mut *manager.log },
+                            manager.log_mut(),
                             root_package_json_path.as_bytes(),
                             GetJSONOptions::default(),
                         )

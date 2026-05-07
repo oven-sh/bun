@@ -220,8 +220,7 @@ fn should_print_package_install<'a>(
 
     let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     if resolution.tag == resolution::Tag::Npm {
-        // SAFETY: tag == Npm checked above.
-        let npm_version = unsafe { resolution.value.npm }.version;
+        let npm_version = resolution.npm().version;
         let name = dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice());
         if let Some(entry) = manager.updating_packages.get(name) {
             if let Some(original_version) = entry.original_version {
@@ -268,8 +267,7 @@ where
             (
                 bstr::BStr::new(dependency.name.slice(string_buf)),
                 update_info.version.fmt(update_info.version_buf),
-                // SAFETY: `update_info` is only constructed when `resolution.tag == Npm`.
-                unsafe { update_info.resolution.value.npm }.version.fmt(string_buf),
+                update_info.resolution.npm().version.fmt(string_buf),
             ),
         ),
     )?;

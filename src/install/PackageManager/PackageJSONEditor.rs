@@ -419,7 +419,7 @@ pub fn edit_update_no_args(
                                     let resolved_version = lockfile
                                         .resolve_catalog_dependency(workspace_dep)
                                         .unwrap_or_else(|| workspace_dep.version.clone());
-                                    if let Some(npm_version) = resolved_version.npm() {
+                                    if let Some(npm_version) = resolved_version.try_npm() {
                                         // It's possible we inserted a dependency that won't update (version is an exact version).
                                         // If we find one, skip to keep the original version literal.
                                         if !manager.options.do_.contains(Do::UPDATE_TO_LATEST)
@@ -1188,8 +1188,7 @@ pub fn edit(
                         };
 
                         if request.version.tag == dependency::Tag::Npm
-                            // SAFETY: `tag == Npm` checked above.
-                            && unsafe { request.version.value.npm.is_alias }
+                            && request.version.npm().is_alias
                         {
                             let dep_literal = request.version.literal.slice(request.version_buf());
                             if let Some(at_index) = strings::index_of_char(dep_literal, b'@') {

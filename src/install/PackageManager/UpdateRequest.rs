@@ -280,8 +280,7 @@ impl UpdateRequest {
                 request.name = name.to_vec().leak();
                 request.name_hash = StringBuilder::string_hash(name);
             } else if request.version.tag == dependency::version::Tag::Github
-                // SAFETY: union field access guarded by `tag == Github`.
-                && unsafe { request.version.value.github.committish.is_empty() }
+                && request.version.github().committish.is_empty()
             {
                 request.name_hash =
                     StringBuilder::string_hash(request.version.literal.slice(input));

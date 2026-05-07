@@ -181,7 +181,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
                 // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
                 // points into `manager.progress` which is live.
-                let node = unsafe { &mut *manager.downloads_node.expect("infallible: progress active") };
+                let node = manager.downloads_node_mut();
                 if completed_items != node.unprotected_completed_items.load(Ordering::Relaxed)
                     || has_updated_this_run
                 {
@@ -189,8 +189,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     node.set_estimated_total_items(manager.total_tasks as usize);
                 }
             }
-            // SAFETY: see above.
-            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") }.activate();
+            manager.downloads_node_mut().activate();
             manager.progress.maybe_refresh();
         }
     };
@@ -373,7 +372,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
+                            manager.downloads_node_mut(),
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
@@ -402,7 +401,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
-                            unsafe { &mut *manager.log }
+                            manager.log_mut()
                                 .add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
@@ -435,7 +434,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     } else {
                         let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
-                            bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
+                            bun_core::handle_oom(manager.log_mut().add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
@@ -445,7 +444,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 ),
                             ));
                         } else {
-                            bun_core::handle_oom(unsafe { &mut *manager.log }.add_warning_fmt(
+                            bun_core::handle_oom(manager.log_mut().add_warning_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
@@ -495,7 +494,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if manager.is_network_task_required(task.task_id) {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -507,7 +506,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         ));
                     } else {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_warning_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -676,7 +675,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
-                            unsafe { &mut *manager.log }.add_warning_fmt(
+                            manager.log_mut().add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
                                     format_args!(
@@ -753,7 +752,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -767,7 +766,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         ));
                     } else {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_warning_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -849,7 +848,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -861,7 +860,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             ),
                         ));
                     } else {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_warning_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -906,7 +905,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
+                            manager.downloads_node_mut(),
                             extract.name.slice(),
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                             );
@@ -997,7 +996,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &(*req.network).url_buf },
                         );
                     } else {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1028,7 +1027,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
+                            manager.downloads_node_mut(),
                             manifest.name(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
@@ -1124,7 +1123,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
+                    bun_core::handle_oom(manager.log_mut().add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -1269,7 +1268,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
+                            manager.downloads_node_mut(),
                             alias,
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                             );
@@ -1318,7 +1317,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 }
                                 // SAFETY: `res.tag == Git` checked just above —
                                 // `value.git` is the active union arm.
-                                let res_git = unsafe { &res.value.git };
+                                let res_git = res.git();
                                 let checkout_id = Task::Id::for_git_checkout(
                                     manager.lockfile.str(&res_git.repo),
                                     manager.lockfile.str(&res_git.resolved),
@@ -1343,7 +1342,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             // only enqueued for git resolutions; `value.git` is
                             // the active union arm.
                             let resolved =
-                                unsafe { &clone.res.value.git.resolved };
+                                &clone.res.git().resolved;
                             let checkout_id = Task::Id::for_git_checkout(
                                 url,
                                 manager.lockfile.str(resolved),
@@ -1358,7 +1357,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
                     } else if log_level != Options::LogLevel::Silent {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1389,7 +1388,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     };
                     // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
                     // enqueued for git resolutions; `value.git` is the active arm.
-                    let git = unsafe { clone.res.value.git };
+                    let git = *clone.res.git();
                     let string_buf_ptr: *const [u8] =
                         manager.lockfile.buffers.string_bytes.as_slice();
                     // SAFETY: `string_bytes` lives as long as `manager.lockfile`
@@ -1405,8 +1404,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // SAFETY: `env` is set during `PackageManager::init` and
                         // outlives all tasks.
                         unsafe { manager.env.expect("infallible: env loaded").as_mut() },
-                        // SAFETY: `manager.log` is a non-null backref to the CLI log.
-                        unsafe { &mut *manager.log },
+                        manager.log_mut(),
                         bun_sys::Dir { fd: repo_fd },
                         dep_name,
                         committish,
@@ -1447,7 +1445,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
+                            manager.downloads_node_mut(),
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
@@ -1469,7 +1467,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
                         // only enqueued for git resolutions; `value.git` is the
                         // active union arm.
-                        let repo = unsafe { &resolution.value.git.repo };
+                        let repo = &resolution.git().repo;
                         C::on_package_download_error(
                             extract_ctx,
                             task.id,
@@ -1479,7 +1477,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.lockfile.str(repo),
                         );
                     } else {
-                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1564,7 +1562,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     };
                                     // SAFETY: `pkg.resolution.value` is a Zig `extern union`;
                                     // `Tag::Git` was checked when the resolution was set.
-                                    repo.resolved = unsafe { pkg.resolution.value.git }.resolved;
+                                    repo.resolved = pkg.resolution.git().resolved;
                                     repo.package_name = pkg.name;
                                     manager.process_dependency_list_item(
                                         dep,
@@ -1592,7 +1590,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
+                            manager.downloads_node_mut(),
                             alias.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
@@ -1730,7 +1728,7 @@ pub fn drain_dependency_list(this: &mut PackageManager) {
 
     // SAFETY: `VERBOSE_INSTALL` is only mutated during single-threaded options
     // parsing; reads here are race-free in practice (Zig: plain `pub var`).
-    if unsafe { super::VERBOSE_INSTALL } {
+    if PackageManager::verbose_install() {
         Output::flush();
     }
 

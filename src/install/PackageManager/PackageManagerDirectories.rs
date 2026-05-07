@@ -554,8 +554,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
     }
 
     buf[spanned_len + end_len] = 0;
-    // SAFETY: buf[spanned_len + end_len] == 0 written above
-    unsafe { ZStr::from_raw(buf.as_ptr(), spanned_len + end_len) }
+    ZStr::from_buf(buf, spanned_len + end_len)
 }
 
 fn cached_github_folder_name_print_guess<'a>(
@@ -815,8 +814,7 @@ pub fn path_for_resolution<'a>(
     // const folder_name = this.cachedNPMPackageFolderName(name, version);
     match resolution.tag {
         ResolutionTag::Npm => {
-            // SAFETY: tag == Npm guarantees `value.npm` is the active union arm.
-            let npm = unsafe { resolution.value.npm };
+            let npm = *resolution.npm();
             let package_name_ = this.lockfile.packages.items_name()[package_id as usize];
             // PORT NOTE: borrowck — `path_for_cached_npm_path` reborrows `this`
             // mutably (for `get_cache_directory`), so the `&this.lockfile`
@@ -849,27 +847,23 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
     match resolution.tag {
         ResolutionTag::Npm => {
-            // SAFETY: tag == Npm guarantees `value.npm` is the active union arm.
-            let version = unsafe { resolution.value.npm }.version;
+            let version = resolution.npm().version;
             cache_dir_subpath = cached_npm_package_folder_name(manager, name, version, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {
-            // SAFETY: tag == Git guarantees `value.git` is the active union arm.
-            let git = unsafe { &resolution.value.git };
+            let git = resolution.git();
             cache_dir_subpath = cached_git_folder_name(manager, git, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Github => {
-            // SAFETY: tag == Github guarantees `value.github` is the active union arm.
-            let github = unsafe { &resolution.value.github };
+            let github = resolution.github();
             cache_dir_subpath = cached_github_folder_name(manager, github, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Folder => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
-            // SAFETY: tag == Folder guarantees `value.folder` is the active union arm.
-            let folder = unsafe { &resolution.value.folder }.slice(buf);
+            let folder = resolution.folder().slice(buf);
             // Handle when a package depends on itself via file:
             // example:
             //   "mineflayer": "file:."
@@ -884,21 +878,18 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Dir::cwd();
         }
         ResolutionTag::LocalTarball => {
-            // SAFETY: tag == LocalTarball guarantees `value.local_tarball` is the active union arm.
-            let tarball = unsafe { resolution.value.local_tarball };
+            let tarball = *resolution.local_tarball();
             cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::RemoteTarball => {
-            // SAFETY: tag == RemoteTarball guarantees `value.remote_tarball` is the active union arm.
-            let tarball = unsafe { resolution.value.remote_tarball };
+            let tarball = *resolution.remote_tarball();
             cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Workspace => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
-            // SAFETY: tag == Workspace guarantees `value.workspace` is the active union arm.
-            let folder = unsafe { &resolution.value.workspace }.slice(buf);
+            let folder = resolution.workspace().slice(buf);
             // Handle when a package depends on itself
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
@@ -916,8 +907,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // PORT NOTE: borrowck — `global_link_dir_path` below reborrows
             // `manager` mutably, so copy the symlink target out of the lockfile
             // string buffer first instead of holding a slice across that call.
-            // SAFETY: tag == Symlink guarantees `value.symlink` is the active union arm.
-            let folder = unsafe { resolution.value.symlink }
+            let folder = resolution.symlink()
                 .slice(manager.lockfile.buffers.string_bytes.as_slice())
                 .to_vec();
 
@@ -1216,7 +1206,7 @@ static mut USING_FALLBACK_TEMP_DIR: bool = false;
 fn verbose_install() -> bool {
     // SAFETY: `VERBOSE_INSTALL` is set once during single-threaded CLI startup
     // (PackageManagerOptions.load) and only read on the main thread.
-    unsafe { super::VERBOSE_INSTALL }
+    PackageManager::verbose_install()
 }
 
 /// Thread-local cached folder-name buffer accessor. Zig used a plain
@@ -1250,8 +1240,7 @@ fn buf_print_z<'a>(buf: &'a mut [u8], args: fmt::Arguments<'_>) -> Result<&'a ZS
         return Err(fmt::Error);
     }
     buf[written] = 0;
-    // SAFETY: buf[written] == 0 written above; bytes [0..written] initialized by write_fmt
-    Ok(unsafe { ZStr::from_raw(buf.as_ptr(), written) })
+    Ok(ZStr::from_buf(buf, written))
 }
 
 /// Equivalent of `std.fmt.bufPrint` — returns the number of bytes written.

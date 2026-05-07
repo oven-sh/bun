@@ -403,23 +403,53 @@ impl Clone for DependencyVersion {
     }
 }
 
+/// Tag-checked accessors for the untagged [`DependencyVersionValue`] union.
+///
+/// Every payload is POD/arena-backed (`SemverString` handles, `Repository`,
+/// `ManuallyDrop<NpmInfo>` over an arena-owned linked list), so reading the
+/// "wrong" variant is not UB — it yields garbage. `debug_assert_eq!` catches
+/// tag mismatches in debug builds; release matches Zig's unchecked field read.
+/// Centralizing the `unsafe` here lets the ~50 lockfile-graph call sites in
+/// `bun_install` borrow the active variant without an `unsafe` block apiece.
+macro_rules! dep_version_accessors {
+    ($( $tag:ident => $field:ident : $ty:ty ),* $(,)?) => {
+        $(
+            #[inline]
+            pub fn $field(&self) -> &$ty {
+                debug_assert!(self.tag == DependencyVersionTag::$tag);
+                // SAFETY: discriminant `self.tag` selects the active field;
+                // payload types are arena-backed POD (no validity invariants
+                // beyond initialization, which the constructing path upholds).
+                unsafe { &self.value.$field }
+            }
+        )*
+    };
+}
+
 impl DependencyVersion {
-    /// Zig: `version.value.npm` guarded by `version.tag == .npm`.
+    dep_version_accessors! {
+        Npm      => npm:      NpmInfo,
+        DistTag  => dist_tag: TagInfo,
+        Tarball  => tarball:  TarballInfo,
+        Folder   => folder:   SemverString,
+        Symlink  => symlink:  SemverString,
+        Workspace=> workspace:SemverString,
+        Git      => git:      Repository,
+        Github   => github:   Repository,
+        Catalog  => catalog:  SemverString,
+    }
+
+    /// Zig: `if (version.tag == .npm) version.value.npm else null`.
     #[inline]
-    pub fn npm(&self) -> Option<&NpmInfo> {
-        if self.tag == DependencyVersionTag::Npm {
-            // SAFETY: tag-guarded union read.
-            Some(unsafe { &*self.value.npm })
-        } else {
-            None
-        }
+    pub fn try_npm(&self) -> Option<&NpmInfo> {
+        (self.tag == DependencyVersionTag::Npm).then(|| self.npm())
     }
 
     /// Port of `dependency_version.value.npm.version.isExact()`
     /// (resolver/package_json.zig:926). Returns false for non-npm tags.
     #[inline]
     pub fn is_exact_npm(&self) -> bool {
-        self.npm().is_some_and(|n| n.version.is_exact())
+        self.try_npm().is_some_and(|n| n.version.is_exact())
     }
 }
 

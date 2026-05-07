@@ -995,8 +995,7 @@ impl Package<u64> {
 
             #[cfg(debug_assertions)]
             {
-                // SAFETY: `resolution` was initialised with `TaggedValue::Npm` just above.
-                if unsafe { package.resolution.value.npm }.url.is_empty() {
+                if package.resolution.npm().url.is_empty() {
                     Output::panic(format_args!(
                         "tarball_url is empty for package {}@{}",
                         bstr::BStr::new(manifest.name()),
@@ -1737,8 +1736,7 @@ impl Package<u64> {
         let FEATURES = features;
         let name_hash = match dependency_version.tag {
             dependency::version::Tag::Npm => {
-                // SAFETY: tag == Npm selects the `npm` union member.
-                let npm_name = unsafe { dependency_version.value.npm.name };
+                let npm_name = dependency_version.npm().name;
                 semver::string::Builder::string_hash(npm_name.slice(buf))
             }
             dependency::version::Tag::Workspace => {
@@ -1789,8 +1787,7 @@ impl Package<u64> {
 
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
-                // SAFETY: tag == Folder selects the `folder` union member.
-                let folder = unsafe { dependency_version.value.folder };
+                let folder = *dependency_version.folder();
                 let relative = resolve_path::relative(
                     FileSystem::instance().top_level_dir(),
                     resolve_path::join_abs_string::<path::platform::Auto>(
@@ -1887,7 +1884,7 @@ impl Package<u64> {
                     // SAFETY: tag == Workspace selects the `workspace` union member.
                     // Bind the (Copy) union field first so `slice()`'s `&self`
                     // borrow has a named place to point at.
-                    let workspace_str = unsafe { dependency_version.value.workspace };
+                    let workspace_str = *dependency_version.workspace();
                     let workspace = workspace_str.slice(buf);
                     let path = string_builder.append::<String>(if workspace == b"*" {
                         b"*"
@@ -2085,9 +2082,8 @@ impl Package<u64> {
             if R::IS_GIT_RESOLVER {
                 let resolution: &Resolution<u64> = resolver.resolution();
                 let repo = match resolution.tag {
-                    // SAFETY: tag selects the active union member.
-                    ResolutionTag::Git => unsafe { resolution.value.git },
-                    ResolutionTag::Github => unsafe { resolution.value.github },
+                    ResolutionTag::Git => *resolution.git(),
+                    ResolutionTag::Github => *resolution.github(),
                     _ => break 'name,
                 };
 
@@ -2818,7 +2814,7 @@ impl Package<u64> {
                         // SAFETY: `parse_dependency` was called with
                         // `Tag::Workspace`, so `dep.version.value.workspace`
                         // is the active union member.
-                        let ws_path = unsafe { dep.version.value.workspace };
+                        let ws_path = *dep.version.workspace();
                         package_dependencies[total_dependencies_count as usize] = dep;
                         total_dependencies_count += 1;
 

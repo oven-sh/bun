@@ -45,8 +45,7 @@ where
     w.object_field(b"name")?;
     w.write(dep.name.slice(sb))?;
 
-    // SAFETY: tag-guarded union access — `value.npm` is the active variant when tag == Npm.
-    if dep.version.tag == DependencyVersionTag::Npm && unsafe { dep.version.value.npm.is_alias } {
+    if dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias {
         w.object_field(b"is_alias")?;
         w.write(true)?;
     }
@@ -60,8 +59,7 @@ where
         DependencyVersionTag::Npm => {
             w.begin_object()?;
 
-            // SAFETY: tag == Npm guards the `npm` union field.
-            let info: &NpmInfo = unsafe { &*dep.version.value.npm };
+            let info: &NpmInfo = dep.version.npm();
 
             w.object_field(b"name")?;
             w.write(info.name.slice(sb))?;
@@ -74,8 +72,7 @@ where
         DependencyVersionTag::DistTag => {
             w.begin_object()?;
 
-            // SAFETY: tag == DistTag guards the `dist_tag` union field.
-            let info: TagInfo = unsafe { dep.version.value.dist_tag };
+            let info: TagInfo = *dep.version.dist_tag();
 
             w.object_field(b"name")?;
             w.write(info.name.slice(sb))?;
@@ -88,8 +85,7 @@ where
         DependencyVersionTag::Tarball => {
             w.begin_object()?;
 
-            // SAFETY: tag == Tarball guards the `tarball` union field.
-            let info: TarballInfo = unsafe { dep.version.value.tarball };
+            let info: TarballInfo = *dep.version.tarball();
             // Zig: `@tagName(info.uri)` then `switch (info.uri) { inline else => |s| s.slice(sb) }`
             // — every TarballURI variant payload has `.slice(sb)`.
             let (uri_tag, uri_slice): (&'static str, &[u8]) = match info.uri {
@@ -105,22 +101,18 @@ where
             let _ = w.end_object();
         }
         DependencyVersionTag::Folder => {
-            // SAFETY: tag == Folder guards the `folder` union field.
-            w.write(unsafe { dep.version.value.folder }.slice(sb))?;
+            w.write(dep.version.folder().slice(sb))?;
         }
         DependencyVersionTag::Symlink => {
-            // SAFETY: tag == Symlink guards the `symlink` union field.
-            w.write(unsafe { dep.version.value.symlink }.slice(sb))?;
+            w.write(dep.version.symlink().slice(sb))?;
         }
         DependencyVersionTag::Workspace => {
-            // SAFETY: tag == Workspace guards the `workspace` union field.
-            w.write(unsafe { dep.version.value.workspace }.slice(sb))?;
+            w.write(dep.version.workspace().slice(sb))?;
         }
         DependencyVersionTag::Git => {
             w.begin_object()?;
 
-            // SAFETY: tag == Git guards the `git` union field.
-            let info: &Repository = unsafe { &*dep.version.value.git };
+            let info: &Repository = dep.version.git();
 
             w.object_field(b"owner")?;
             w.write(info.owner.slice(sb))?;
@@ -138,8 +130,7 @@ where
         DependencyVersionTag::Github => {
             w.begin_object()?;
 
-            // SAFETY: tag == Github guards the `github` union field.
-            let info: &Repository = unsafe { &*dep.version.value.github };
+            let info: &Repository = dep.version.github();
 
             w.object_field(b"owner")?;
             w.write(info.owner.slice(sb))?;
@@ -157,8 +148,7 @@ where
         DependencyVersionTag::Catalog => {
             w.begin_object()?;
 
-            // SAFETY: tag == Catalog guards the `catalog` union field.
-            let info = unsafe { dep.version.value.catalog };
+            let info = *dep.version.catalog();
 
             w.object_field(b"name")?;
             w.write(dep.name.slice(sb))?;
@@ -433,16 +423,14 @@ where
                     w.begin_object()?;
 
                     w.object_field(b"file")?;
-                    // SAFETY: tag == File guards the `file` union field.
-                    w.write(unsafe { pkg.bin.value.file }.slice(sb))?;
+                    w.write(pkg.bin.file().slice(sb))?;
 
                     let _ = w.end_object();
                 }
                 BinTag::NamedFile => {
                     w.begin_object()?;
 
-                    // SAFETY: tag == NamedFile guards the `named_file` union field.
-                    let named_file = unsafe { pkg.bin.value.named_file };
+                    let named_file = *pkg.bin.named_file();
                     w.object_field(b"name")?;
                     w.write(named_file[0].slice(sb))?;
 
@@ -453,15 +441,14 @@ where
                 }
                 BinTag::Dir => {
                     w.object_field(b"dir")?;
-                    // SAFETY: tag == Dir guards the `dir` union field.
-                    w.write(unsafe { pkg.bin.value.dir }.slice(sb))?;
+                    w.write(pkg.bin.dir().slice(sb))?;
                 }
                 BinTag::Map => {
                     w.begin_object()?;
 
                     // SAFETY: tag == Map guards the `map` union field.
                     let data: &[ExternalString] =
-                        unsafe { pkg.bin.value.map }.get(this.buffers.extern_strings.as_slice());
+                        pkg.bin.map().get(this.buffers.extern_strings.as_slice());
                     let mut bin_i: usize = 0;
                     while bin_i < data.len() {
                         w.object_field(data[bin_i].slice(sb))?;

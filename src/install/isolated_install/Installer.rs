@@ -810,8 +810,7 @@ impl Task {
                         ResolutionTag::Folder | ResolutionTag::Root => {
                             let path: &[u8] = match pkg_res.tag {
                                 ResolutionTag::Folder => {
-                                    // SAFETY: `tag == Folder` discriminates the active variant.
-                                    unsafe { &pkg_res.value.folder }.slice(string_buf)
+                                    pkg_res.folder().slice(string_buf)
                                 }
                                 ResolutionTag::Root => b".",
                                 _ => unreachable!(),
@@ -832,8 +831,7 @@ impl Task {
                                     InstallMethod::Hardlink => {
                                         let mut src =
                                             OsAutoAbsPath::init_top_level_dir_long_path();
-                                        // SAFETY: outer match guarantees `tag == Folder` here.
-                                        src.append_join(unsafe { pkg_res.value.folder }.slice(string_buf));
+                                        src.append_join(pkg_res.folder().slice(string_buf));
 
                                         let mut dest = OsAutoPath::init();
                                         installer.append_store_path(&mut dest, self.entry_id);
@@ -952,27 +950,27 @@ impl Task {
                                 ResolutionTag::Npm => directories::cached_npm_package_folder_name(
                                     manager,
                                     pkg_name.slice(string_buf),
-                                    unsafe { pkg_res.value.npm }.version,
+                                    pkg_res.npm().version,
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::Git => directories::cached_git_folder_name(
                                     manager,
-                                    unsafe { &pkg_res.value.git },
+                                    pkg_res.git(),
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::Github => directories::cached_github_folder_name(
                                     manager,
-                                    unsafe { &pkg_res.value.github },
+                                    pkg_res.github(),
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
                                     manager,
-                                    unsafe { pkg_res.value.local_tarball },
+                                    *pkg_res.local_tarball(),
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
                                     manager,
-                                    unsafe { pkg_res.value.remote_tarball },
+                                    *pkg_res.remote_tarball(),
                                     patch_info.contents_hash(),
                                 ),
 
@@ -1498,8 +1496,7 @@ impl Task {
                                 postinstall_optimizer::PkgInfo {
                                     name_hash: pkg_name_hash,
                                     version: if pkg_res.tag == ResolutionTag::Npm {
-                                        // SAFETY: `tag == Npm` discriminates the active variant.
-                                        Some(unsafe { pkg_res.value.npm }.version)
+                                        Some(pkg_res.npm().version)
                                     } else {
                                         None
                                     },
@@ -2429,8 +2426,7 @@ impl<'a> Installer<'a> {
                 buf.append(b"node_modules");
             }
             ResolutionTag::Workspace => {
-                // SAFETY: `tag == Workspace` discriminates the active variant.
-                buf.append(unsafe { pkg_res.value.workspace }.slice(string_buf));
+                buf.append(pkg_res.workspace().slice(string_buf));
                 buf.append(b"node_modules");
             }
             _ => {
@@ -2527,8 +2523,7 @@ impl<'a> Installer<'a> {
                 }
             }
             ResolutionTag::Workspace => {
-                // SAFETY: `tag == Workspace` discriminates the active variant.
-                buf.append(unsafe { pkg_res.value.workspace }.slice(string_buf));
+                buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
                 // PORT NOTE: reshaped — Zig `globalLinkDirPath()` lazily ensures
@@ -2545,8 +2540,7 @@ impl<'a> Installer<'a> {
 
                 buf.clear();
                 buf.append(symlink_dir_path);
-                // SAFETY: `tag == Symlink` discriminates the active variant.
-                buf.append(unsafe { pkg_res.value.symlink }.slice(string_buf));
+                buf.append(pkg_res.symlink().slice(string_buf));
             }
             _ => {
                 let pkg_name = pkg_names[pkg_id as usize];

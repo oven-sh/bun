@@ -289,8 +289,7 @@ impl Stringifier {
                 workspace_sort_buf.sort_by(|&l, &r| {
                     let l_res = &pkg_resolutions[l as usize];
                     let r_res = &pkg_resolutions[r as usize];
-                    // SAFETY: both resolutions were filtered to `tag == Workspace` above.
-                    unsafe { l_res.value.workspace.order(&r_res.value.workspace, buf, buf) }
+                    l_res.workspace().order(r_res.workspace(), buf, buf)
                 });
                 // PERF(port): std.sort.pdq — Rust sort_by is also pattern-defeating quicksort
 
@@ -304,7 +303,7 @@ impl Stringifier {
                         u32::try_from(workspace_pkg_id).expect("int cast"),
                         // SAFETY: `workspace_sort_buf` only contains pkgs whose
                         // resolution `tag == Workspace`.
-                        unsafe { res.value.workspace },
+                        *res.workspace(),
                         pkg_names,
                         pkg_name_hashes,
                         pkg_bins,
@@ -652,8 +651,7 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@file:{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == Folder` in this match arm.
-                                unsafe { res.value.folder }.fmt_json(buf, JsonOpts { quote: false }),
+                                res.folder().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -678,8 +676,7 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == LocalTarball` in this match arm.
-                                unsafe { res.value.local_tarball }.fmt_json(buf, JsonOpts { quote: false }),
+                                res.local_tarball().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -708,8 +705,7 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == RemoteTarball` in this match arm.
-                                unsafe { res.value.remote_tarball }.fmt_json(buf, JsonOpts { quote: false }),
+                                res.remote_tarball().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -738,8 +734,7 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@link:{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == Symlink` in this match arm.
-                                unsafe { res.value.symlink }.fmt_json(buf, JsonOpts { quote: false }),
+                                res.symlink().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -764,15 +759,14 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == Npm` in this match arm.
-                                unsafe { res.value.npm.version }.fmt(buf),
+                                res.npm().version.fmt(buf),
                             )?;
 
                             // only write the registry if it's not the default. empty string means default registry
                             // SAFETY: `tag == Npm` in this match arm.
                             // `String::slice` ties the return to `&self` as well as `buf`, so
                             // bind the union read to a local instead of slicing a temporary.
-                            let url = unsafe { res.value.npm.url };
+                            let url = res.npm().url;
                             let url_slice = url.slice(buf);
                             write!(
                                 writer,
@@ -809,8 +803,7 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@workspace:{}\"]",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == Workspace` in this match arm.
-                                unsafe { res.value.workspace }.fmt_json(buf, JsonOpts { quote: false }),
+                                res.workspace().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
                         }
                         tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
@@ -2036,16 +2029,13 @@ pub fn parse_into_binary_lockfile(
                     let url = ExtractTarball::build_url(
                         registry_url,
                         &strings::StringOrTinyString::init(name.slice(lockfile.buffers.string_bytes.as_slice())),
-                        // SAFETY: `tag == Npm` was checked just above.
-                        unsafe { res.value.npm.version },
+                        res.npm().version,
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;
 
-                    // SAFETY: `tag == Npm`.
-                    unsafe { res.value.npm.url = sbuf!(lockfile).append(&url)?; }
+                    res.npm_mut().url = sbuf!(lockfile).append(&url)?;
                 } else {
-                    // SAFETY: `tag == Npm`.
-                    unsafe { res.value.npm.url = sbuf!(lockfile).append(registry_str)?; }
+                    res.npm_mut().url = sbuf!(lockfile).append(registry_str)?;
                 }
             }
 
@@ -2099,8 +2089,7 @@ pub fn parse_into_binary_lockfile(
                     log.add_error_fmt(
                         source,
                         res_info.loc,
-                        // SAFETY: `tag == Workspace` was checked above.
-                        format_args!("Unknown workspace: '{}'", bstr::BStr::new(unsafe { res.value.workspace }.slice(lockfile.buffers.string_bytes.as_slice()))),
+                        format_args!("Unknown workspace: '{}'", bstr::BStr::new(res.workspace().slice(lockfile.buffers.string_bytes.as_slice()))),
                     )?;
                     return Err(ParseError::InvalidPackageInfo);
                 }
@@ -2455,7 +2444,7 @@ fn map_dep_to_pkg(
             dep.version.tag = DependencyVersionTag::Workspace;
             // SAFETY: `res.tag == Workspace` was just checked, so the
             // `workspace` arm of the `Resolution.value` union is the active one.
-            dep.version.value = DependencyVersionValue { workspace: unsafe { res.value.workspace } };
+            dep.version.value = DependencyVersionValue { workspace: *res.workspace() };
         }
     }
 }

@@ -660,16 +660,66 @@ pub use bun_install_types::resolver_hooks::WakeHandler;
 // Globals / statics
 // ──────────────────────────────────────────────────────────────────────────
 
-pub static mut VERBOSE_INSTALL: bool = false;
+/// Port of Zig `pub var verbose_install: bool`. Set once during
+/// single-threaded CLI startup (`PackageManagerOptions::load`) and read on
+/// both the main thread and ThreadPool workers thereafter — `AtomicBool` with
+/// `Relaxed` is sufficient (no ordering against other state; the write
+/// happens-before any worker spawn).
+pub static VERBOSE_INSTALL: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 impl PackageManager {
     /// Port of Zig `pub var verbose_install: bool` (PackageManager.zig) — read
     /// as `PackageManager.verbose_install` throughout the install pipeline.
     #[inline]
     pub fn verbose_install() -> bool {
-        // SAFETY: set once during single-threaded CLI startup
-        // (PackageManagerOptions.load); only read afterwards.
-        unsafe { VERBOSE_INSTALL }
+        VERBOSE_INSTALL.load(core::sync::atomic::Ordering::Relaxed)
+    }
+    #[inline]
+    pub fn set_verbose_install(v: bool) {
+        VERBOSE_INSTALL.store(v, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Reborrow the externally-owned [`logger::Log`].
+    ///
+    /// `log` is `*mut Log` (not `&'a mut Log`) only because `PackageManager` is
+    /// a leaked `'static` singleton stored in a global; threading the borrow
+    /// lifetime through `static INSTANCE` is deferred (see field comment). The
+    /// `Log` itself outlives the manager — it's the CLI-scope log allocated in
+    /// `Command::init` before the manager exists.
+    ///
+    /// The returned lifetime is **decoupled** from `&self`: callers routinely
+    /// hold a borrow into `self.lockfile`/`self.options` while appending an
+    /// error, and the `Log` is a disjoint allocation. This mirrors Zig's
+    /// `*PackageManager` field-aliasing; it is the caller's responsibility not
+    /// to alias the returned `&mut Log` (single-threaded by construction —
+    /// only the main install loop touches `log`).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn log_mut<'a>(&self) -> &'a mut logger::Log {
+        let p = self.log;
+        // SAFETY: `self.log` is non-null for the manager's lifetime (set in
+        // `init`, never cleared) and the pointee is the CLI-scope `Log`, which
+        // outlives every `'a` a caller can name. Exclusive access is upheld by
+        // single-threaded use; see doc comment.
+        unsafe { &mut *p }
+    }
+
+    /// Reborrow the active progress download node (`self.progress.root`-rooted).
+    /// Panics if no download node is active — callers gate on
+    /// `options.log_level.show_progress()`, which is the same condition that
+    /// populates `downloads_node`. Lifetime is decoupled from `&self` for the
+    /// same reason as [`log_mut`]: `Progress` is a stable allocation on the
+    /// leaked-singleton manager and callers interleave node updates with
+    /// disjoint `&mut self.X` field writes.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn downloads_node_mut<'a>(&self) -> &'a mut ProgressNode {
+        let p = self.downloads_node.expect("downloads_node active");
+        // SAFETY: `downloads_node` points into `self.progress` (BORROW_FIELD);
+        // `Progress` is pinned for the manager's lifetime (leaked singleton)
+        // and the node is set before any caller reaches this path.
+        unsafe { &mut *p }
     }
 
     /// Port of Zig `pub fn get() *PackageManager` (PackageManager.zig:442) —
@@ -795,7 +845,7 @@ impl PackageManager {
             // logger.zig:1204), so we only need a shared borrow here — the sole invariant is
             // that no `&mut logger::Log` to the pointee is live, which holds on this path.
             // `IntoLogWrite` is impl'd for `*mut io::Writer`, not `&mut`.
-            let _ = unsafe { &*self.log }.print(Output::error_writer() as *mut _);
+            let _ = self.log_mut().print(Output::error_writer() as *mut _);
         }
         Global::crash();
     }
@@ -1826,10 +1876,7 @@ pub fn init(
     };
 
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
-        // SAFETY: main-thread init
-        unsafe {
-            VERBOSE_INSTALL = true;
-        }
+        PackageManager::set_verbose_install(true);
     }
 
     if env.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
@@ -1841,7 +1888,7 @@ pub fn init(
     }
 
     // SAFETY: main-thread init
-    if unsafe { VERBOSE_INSTALL } {
+    if PackageManager::verbose_install() {
         Output::pretty_errorln(format_args!(
             "Cache Dir: {}",
             bstr::BStr::new(&options.cache_directory),
@@ -2173,10 +2220,7 @@ pub fn init_with_runtime_once(
     env: &mut dot_env::Loader<'static>,
 ) {
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
-        // SAFETY: main-thread init
-        unsafe {
-            VERBOSE_INSTALL = true;
-        }
+        PackageManager::set_verbose_install(true);
     }
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());

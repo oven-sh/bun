@@ -111,6 +111,82 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         Self::init(TaggedValue::Symlink(s))
     }
 
+    // ── Tag-checked union accessors ────────────────────────────────────────
+    // Every `Value` payload is `Copy` (`String` handles, `Repository`,
+    // `VersionedURLType`) and the union is zero-initialized, so reading the
+    // wrong variant is well-defined garbage — `debug_assert_eq!` catches tag
+    // mismatches in debug. Centralizing the `unsafe` here removes ~100
+    // per-call-site `unsafe` blocks across the lockfile graph traversal
+    // without changing release codegen (these inline to a field projection).
+    #[inline]
+    pub fn npm(&self) -> &VersionedURLType<SemverInt> {
+        debug_assert_eq!(self.tag, Tag::Npm);
+        // SAFETY: tag-guarded; `Value` is a `Copy` POD union.
+        unsafe { &(*core::ptr::from_ref(&self.value)).npm }
+    }
+    #[inline]
+    pub fn npm_mut(&mut self) -> &mut VersionedURLType<SemverInt> {
+        debug_assert_eq!(self.tag, Tag::Npm);
+        // SAFETY: tag-guarded; `Value` is a `Copy` POD union.
+        unsafe { &mut (*core::ptr::from_mut(&mut self.value)).npm }
+    }
+    #[inline]
+    pub fn folder(&self) -> &String {
+        debug_assert_eq!(self.tag, Tag::Folder);
+        // SAFETY: tag-guarded.
+        unsafe { &(*core::ptr::from_ref(&self.value)).folder }
+    }
+    #[inline]
+    pub fn local_tarball(&self) -> &String {
+        debug_assert_eq!(self.tag, Tag::LocalTarball);
+        // SAFETY: tag-guarded.
+        unsafe { &(*core::ptr::from_ref(&self.value)).local_tarball }
+    }
+    #[inline]
+    pub fn remote_tarball(&self) -> &String {
+        debug_assert_eq!(self.tag, Tag::RemoteTarball);
+        // SAFETY: tag-guarded.
+        unsafe { &(*core::ptr::from_ref(&self.value)).remote_tarball }
+    }
+    #[inline]
+    pub fn workspace(&self) -> &String {
+        debug_assert_eq!(self.tag, Tag::Workspace);
+        // SAFETY: tag-guarded.
+        unsafe { &(*core::ptr::from_ref(&self.value)).workspace }
+    }
+    #[inline]
+    pub fn symlink(&self) -> &String {
+        debug_assert_eq!(self.tag, Tag::Symlink);
+        // SAFETY: tag-guarded.
+        unsafe { &(*core::ptr::from_ref(&self.value)).symlink }
+    }
+    #[inline]
+    pub fn single_file_module(&self) -> &String {
+        debug_assert_eq!(self.tag, Tag::SingleFileModule);
+        // SAFETY: tag-guarded.
+        unsafe { &(*core::ptr::from_ref(&self.value)).single_file_module }
+    }
+    #[inline]
+    pub fn git(&self) -> &Repository {
+        debug_assert_eq!(self.tag, Tag::Git);
+        // SAFETY: tag-guarded.
+        unsafe { &(*core::ptr::from_ref(&self.value)).git }
+    }
+    #[inline]
+    pub fn github(&self) -> &Repository {
+        debug_assert_eq!(self.tag, Tag::Github);
+        // SAFETY: tag-guarded.
+        unsafe { &(*core::ptr::from_ref(&self.value)).github }
+    }
+    /// `git` or `github` payload — they share the [`Repository`] shape.
+    #[inline]
+    pub fn repository(&self) -> &Repository {
+        debug_assert!(self.tag == Tag::Git || self.tag == Tag::Github);
+        // SAFETY: `git` and `github` occupy the same union slot type
+        // (`Repository`); tag asserted to be one of the two.
+        unsafe { &(*core::ptr::from_ref(&self.value)).git }
+    }
+
     pub fn is_git(&self) -> bool {
         self.tag.is_git()
     }

@@ -702,7 +702,7 @@ pub fn load(
                     // SAFETY: tag == Workspace discriminates the active union field.
                     lockfile
                         .workspace_paths
-                        .put(name_hash, unsafe { resolution.value.workspace })?;
+                        .put(name_hash, *resolution.workspace())?;
                 }
                 _ => {}
             }

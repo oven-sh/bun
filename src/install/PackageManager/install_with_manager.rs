@@ -145,11 +145,10 @@ pub fn install_with_manager(
                 }
 
                 if unsafe { (*ctx.log).errors } > 0 {
-                    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-                    unsafe { &*manager.log }
+                    manager.log_mut()
                         .print(Output::error_writer() as *mut _)
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
-                    unsafe { &mut *manager.log }.reset();
+                    manager.log_mut().reset();
                 }
                 Output::flush();
             }
@@ -200,14 +199,13 @@ pub fn install_with_manager(
 
                         // SAFETY: `original_resolution.tag == ResolutionTag::Npm` was checked
                         // immediately above, so the `.npm` arm of the value union is active.
-                        let mut original = unsafe { original_resolution.value.npm }.version;
+                        let mut original = original_resolution.npm().version;
                         let tag_total = original.tag.pre.len() + original.tag.build.len();
                         if tag_total > 0 {
                             // clone because don't know if lockfile buffer will reallocate
                             let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
                             let mut ptr = &mut tag_buf[..];
-                            // SAFETY: same `.npm` active-arm guarantee as above.
-                            original.tag = unsafe { original_resolution.value.npm }
+                            original.tag = original_resolution.npm()
                                 .version
                                 .tag
                                 .clone_into(&lockfile.buffers.string_bytes, &mut ptr);
@@ -241,14 +239,14 @@ pub fn install_with_manager(
 
                 // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
                 let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
-                    unsafe { &mut *manager.log },
+                    manager.log_mut(),
                     root_package_json_path.as_bytes(),
                     Default::default(),
                 ) {
                     WorkspacePackageJsonCacheResult::Entry(entry) => entry,
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            unsafe { &*manager.log }
+                            manager.log_mut()
                                 .print(Output::error_writer() as *mut _)
                                 .map_err(|_| bun_core::err!("WriteFailed"))?;
                         }
@@ -257,7 +255,7 @@ pub fn install_with_manager(
                     }
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            unsafe { &*manager.log }
+                            manager.log_mut()
                                 .print(Output::error_writer() as *mut _)
                                 .map_err(|_| bun_core::err!("WriteFailed"))?;
                         }
@@ -695,14 +693,14 @@ pub fn install_with_manager(
 
         // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
         let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
-            unsafe { &mut *manager.log },
+            manager.log_mut(),
             root_package_json_path.as_bytes(),
             Default::default(),
         ) {
             WorkspacePackageJsonCacheResult::Entry(entry) => entry,
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    unsafe { &*manager.log }
+                    manager.log_mut()
                         .print(Output::error_writer() as *mut _)
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
                 }
@@ -711,7 +709,7 @@ pub fn install_with_manager(
             }
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    unsafe { &*manager.log }
+                    manager.log_mut()
                         .print(Output::error_writer() as *mut _)
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
                 }
@@ -812,12 +810,11 @@ pub fn install_with_manager(
         }
     }
 
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-    let had_errors_before_cleaning_lockfile = unsafe { &*manager.log }.has_errors();
-    unsafe { &*manager.log }
+    let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
+    manager.log_mut()
         .print(Output::error_writer() as *mut _)
         .map_err(|_| bun_core::err!("WriteFailed"))?;
-    unsafe { &mut *manager.log }.reset();
+    manager.log_mut().reset();
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // PORT NOTE: Zig copies the `*Lockfile` pointer, leaving `manager.lockfile` intact so both
@@ -1120,13 +1117,11 @@ pub fn install_with_manager(
     };
 
     if log_level != Options::LogLevel::Silent {
-        // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-        unsafe { &*manager.log }
+        manager.log_mut()
             .print(Output::error_writer() as *mut _)
             .map_err(|_| bun_core::err!("WriteFailed"))?;
     }
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-    if had_errors_before_cleaning_lockfile || unsafe { &*manager.log }.has_errors() {
+    if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
     }
 
@@ -1631,8 +1626,7 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
         },
     );
 
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-    let log = unsafe { &mut *manager.log };
+    let log = manager.log_mut();
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
         bun_core::handle_oom(log.add_warning_with_note(
             None,

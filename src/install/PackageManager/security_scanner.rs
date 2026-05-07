@@ -758,7 +758,7 @@ impl<'a> JSONBuilder<'a> {
             // SAFETY: `PackageCollector::collect_packages_from_root` only inserts
             // packages whose resolution tag is `Tag::Npm` into `package_paths`,
             // so the `npm` union variant is the active field here.
-            let npm = unsafe { &pkg_res.value.npm };
+            let npm = pkg_res.npm();
             if dep_id == invalid_dependency_id {
                 write!(
                     &mut json_buf,

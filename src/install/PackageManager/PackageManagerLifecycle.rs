@@ -193,12 +193,12 @@ impl PackageManager {
                 let folder_path: &ZStr = match pkg.resolution.tag {
                     ResolutionTag::Git => directories::cached_git_folder_name_print_auto(
                         self,
-                        unsafe { &pkg.resolution.value.git },
+                        pkg.resolution.git(),
                         patch_hash,
                     ),
                     ResolutionTag::Github => directories::cached_github_folder_name_print_auto(
                         self,
-                        unsafe { &pkg.resolution.value.github },
+                        pkg.resolution.github(),
                         patch_hash,
                     ),
                     ResolutionTag::Npm => {
@@ -208,18 +208,18 @@ impl PackageManager {
                         directories::cached_npm_package_folder_name(
                             self,
                             name,
-                            unsafe { pkg.resolution.value.npm.version },
+                            pkg.resolution.npm().version,
                             patch_hash,
                         )
                     }
                     ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
                         self,
-                        unsafe { pkg.resolution.value.local_tarball },
+                        *pkg.resolution.local_tarball(),
                         patch_hash,
                     ),
                     ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
                         self,
-                        unsafe { pkg.resolution.value.remote_tarball },
+                        *pkg.resolution.remote_tarball(),
                         patch_hash,
                     ),
                     _ => ZStr::EMPTY,

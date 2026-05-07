@@ -387,7 +387,7 @@ impl NetworkTask {
         let pm = unsafe { &mut *(self.package_manager as *mut PackageManager) };
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with; Zig dereferences `this.package_manager.log`.
-        let log = unsafe { &mut *pm.log };
+        let log = pm.log_mut();
 
         self.url_buf = 'blk: {
             // Not all registries support scoped package names when fetching the manifest.
@@ -678,7 +678,7 @@ impl NetworkTask {
             // SAFETY: `value` is the `Npm` variant on this code path —
             // `for_tarball` is only reached for npm tarball downloads
             // (callers gate on `resolution.tag == .npm`).
-            let version = unsafe { tarball_.resolution.value.npm }.version;
+            let version = tarball_.resolution.npm().version;
             Box::from(extract_tarball::build_url(
                 scope.url.href(),
                 &tarball_.name,
@@ -699,7 +699,7 @@ impl NetworkTask {
             // SAFETY: `pm.log` is the long-lived `*mut Log` the package
             // manager was constructed with; Zig dereferences
             // `this.package_manager.log`.
-            unsafe { &mut *pm.log }.add_error_fmt(
+            pm.log_mut().add_error_fmt(
                 None,
                 logger::Loc::EMPTY,
                 format_args!(

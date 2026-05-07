@@ -308,7 +308,7 @@ where
                 // arm reads only the field corresponding to `dep.version.tag`.
                 match dep.version.tag {
                     Tag::Folder => {
-                        let folder = lockfile.str(unsafe { &dep.version.value.folder });
+                        let folder = lockfile.str(dep.version.folder());
                         if strings::contains_char(folder, SEP_WINDOWS) {
                             panic!(
                                 "workspace windows separator: {}\n",
@@ -318,7 +318,7 @@ where
                     }
                     Tag::Tarball => {
                         if let crate::dependency::URI::Local(local) =
-                            unsafe { dep.version.value.tarball.uri }
+                            dep.version.tarball().uri
                         {
                             let tarball = lockfile.str(&local);
                             if strings::contains_char(tarball, SEP_WINDOWS) {
@@ -330,7 +330,7 @@ where
                         }
                     }
                     Tag::Workspace => {
-                        let workspace = lockfile.str(unsafe { &dep.version.value.workspace });
+                        let workspace = lockfile.str(dep.version.workspace());
                         if strings::contains_char(workspace, SEP_WINDOWS) {
                             panic!(
                                 "workspace windows separator: {}\n",
@@ -339,7 +339,7 @@ where
                         }
                     }
                     Tag::Symlink => {
-                        let symlink = lockfile.str(unsafe { &dep.version.value.symlink });
+                        let symlink = lockfile.str(dep.version.symlink());
                         if strings::contains_char(symlink, SEP_WINDOWS) {
                             panic!(
                                 "symlink windows separator: {}\n",

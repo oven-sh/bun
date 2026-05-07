@@ -297,7 +297,7 @@ impl hooks::AutoInstaller for PackageManager {
         // SAFETY: caller passes a `Resolution` whose tag was already checked
         // == Npm by the resolver (`resolution.tag == .npm`); the projection
         // overlay preserves the tag/union pairing.
-        let npm = unsafe { r.value.npm };
+        let npm = *r.npm();
         let url = self.lockfile.str(&npm.url).to_vec();
         enqueue::enqueue_package_for_download(
             self,

@@ -1569,9 +1569,8 @@ impl FetchTasklet {
         };
         let thread_safe_stream_buffer = thread_safe_stream_buffer.as_ptr();
         // SAFETY: intrusive-refcounted heap allocation; this side holds a ref. Mutex
-        // guards `buffer` against the HTTP thread between acquire/release.
-        let stream_buffer = unsafe { (*thread_safe_stream_buffer).acquire() };
-        let _release = scopeguard::guard((), move |_| unsafe { (*thread_safe_stream_buffer).release() });
+        // guards `buffer` against the HTTP thread; released when `stream_buffer` drops.
+        let mut stream_buffer = unsafe { (*thread_safe_stream_buffer).lock() };
         // SAFETY: sink alive while self.sink is Some (guaranteed by the
         // `ReadableStream` request-body path that reaches here).
         let high_water_mark: usize = match self.sink {

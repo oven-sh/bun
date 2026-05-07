@@ -132,18 +132,19 @@ impl PosixStat {
         }
         #[cfg(windows)]
         {
-            // Windows `Stat` is a libuv-shaped struct; field-for-field copy.
+            // Windows `Stat` is libuv `uv_stat_t` (libuv.zig:2236) — bare-named
+            // u64 fields, not `st_*`.
             PosixStat {
-                dev: to_u64(stat_.st_dev),
-                ino: to_u64(stat_.st_ino),
-                mode: to_u64(stat_.st_mode),
-                nlink: to_u64(stat_.st_nlink),
-                uid: to_u64(stat_.st_uid),
-                gid: to_u64(stat_.st_gid),
-                rdev: to_u64(stat_.st_rdev),
-                size: to_u64(stat_.st_size),
-                blksize: 0,
-                blocks: 0,
+                dev: stat_.dev,
+                ino: stat_.ino,
+                mode: stat_.mode,
+                nlink: stat_.nlink,
+                uid: stat_.uid,
+                gid: stat_.gid,
+                rdev: stat_.rdev,
+                size: stat_.size,
+                blksize: stat_.blksize,
+                blocks: stat_.blocks,
                 atim: atime_val,
                 mtim: mtime_val,
                 ctim: ctime_val,

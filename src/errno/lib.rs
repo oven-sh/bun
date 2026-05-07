@@ -9,7 +9,7 @@
 #[cfg(target_os = "linux")] pub mod linux_errno;
 #[cfg(target_os = "linux")] pub use linux_errno::{*, posix};
 #[cfg(windows)] pub mod windows_errno;
-#[cfg(windows)] pub use windows_errno::*;
+#[cfg(windows)] pub use windows_errno::{*, posix};
 
 impl SystemErrno {
     /// Zig: `@enumFromInt(n)`. Unchecked discriminant cast; debug-asserts `n < MAX`.

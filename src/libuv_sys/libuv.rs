@@ -1694,12 +1694,14 @@ impl fs_t {
 
     /// Debug sentinel: `loop_` is poisoned so `deinit()` can assert that libuv
     /// actually wrote the request before we try to clean it up.
-    pub const UNINITIALIZED: fs_t = {
+    /// Zig: `pub const uninitialized: fs_t`.
+    #[inline]
+    pub fn uninitialized() -> fs_t {
         // SAFETY: all-zero is a valid `fs_t` (POD `#[repr(C)]`).
         let mut v: fs_t = unsafe { mem::zeroed() };
         v.loop_ = 0xAAAA_AAAA_AAAA_0000usize as *mut Loop;
         v
-    };
+    }
 
     #[inline]
     pub fn deinit(&mut self) {
@@ -1905,6 +1907,18 @@ impl ReturnCodeI64 {
     #[inline]
     pub const fn errno(self) -> Option<u16> {
         if self.0 < 0 { Some(self.0.unsigned_abs() as u16) } else { None }
+    }
+    /// Zig `errEnum()` — alias for [`errno`]; the `bun_sys::E` mapping lives in
+    /// `bun_sys::windows::translate_uv_error_to_e` (layering).
+    #[inline]
+    pub const fn err_enum(self) -> Option<u16> { self.errno() }
+    /// Zig: `toFD()` — `req.result` after a successful `uv_fs_open` is the
+    /// CRT fd. Returns the raw `uv_file`; caller wraps with `Fd::from_uv`
+    /// (`bun_core::Fd` is a higher-tier type).
+    #[inline]
+    pub fn to_fd(self) -> uv_file {
+        debug_assert!(self.0 >= 0);
+        self.0 as uv_file
     }
 }
 

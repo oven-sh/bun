@@ -252,7 +252,124 @@ impl E {
         // SAFETY: caller-guaranteed valid discriminant (matches Zig @enumFromInt UB semantics).
         unsafe { core::mem::transmute::<u16, E>(n) }
     }
+
+    // Cross-platform aliases: on POSIX `E` is a `type` alias for `SystemErrno`
+    // (whose variants are `EPERM`/`ENOENT`/…), so call sites uniformly write
+    // `E::ENOENT`. On Windows `E` is its own enum with bare names; expose the
+    // E-prefixed spellings as zero-cost associated consts so the same source
+    // compiles on both targets.
+    pub const EPERM: E = E::PERM;
+    pub const ENOENT: E = E::NOENT;
+    pub const ESRCH: E = E::SRCH;
+    pub const EINTR: E = E::INTR;
+    pub const EIO: E = E::IO;
+    pub const ENXIO: E = E::NXIO;
+    pub const E2BIG: E = E::_2BIG;
+    pub const ENOEXEC: E = E::NOEXEC;
+    pub const EBADF: E = E::BADF;
+    pub const ECHILD: E = E::CHILD;
+    pub const EAGAIN: E = E::AGAIN;
+    pub const ENOMEM: E = E::NOMEM;
+    pub const EACCES: E = E::ACCES;
+    pub const EFAULT: E = E::FAULT;
+    pub const EBUSY: E = E::BUSY;
+    pub const EEXIST: E = E::EXIST;
+    pub const EXDEV: E = E::XDEV;
+    pub const ENODEV: E = E::NODEV;
+    pub const ENOTDIR: E = E::NOTDIR;
+    pub const EISDIR: E = E::ISDIR;
+    pub const EINVAL: E = E::INVAL;
+    pub const ENFILE: E = E::NFILE;
+    pub const EMFILE: E = E::MFILE;
+    pub const ENOTTY: E = E::NOTTY;
+    pub const ETXTBSY: E = E::TXTBSY;
+    pub const EFBIG: E = E::FBIG;
+    pub const ENOSPC: E = E::NOSPC;
+    pub const ESPIPE: E = E::SPIPE;
+    pub const EROFS: E = E::ROFS;
+    pub const EMLINK: E = E::MLINK;
+    pub const EPIPE: E = E::PIPE;
+    pub const ERANGE: E = E::RANGE;
+    pub const ENAMETOOLONG: E = E::NAMETOOLONG;
+    pub const ENOSYS: E = E::NOSYS;
+    pub const ENOTEMPTY: E = E::NOTEMPTY;
+    pub const ELOOP: E = E::LOOP;
+    pub const EWOULDBLOCK: E = E::WOULDBLOCK;
+    pub const EOVERFLOW: E = E::OVERFLOW;
+    pub const ENOTSOCK: E = E::NOTSOCK;
+    pub const EMSGSIZE: E = E::MSGSIZE;
+    pub const EPROTONOSUPPORT: E = E::PROTONOSUPPORT;
+    pub const ENOTSUP: E = E::NOTSUP;
+    pub const EOPNOTSUPP: E = E::NOTSUP;
+    pub const EAFNOSUPPORT: E = E::AFNOSUPPORT;
+    pub const EADDRINUSE: E = E::ADDRINUSE;
+    pub const EADDRNOTAVAIL: E = E::ADDRNOTAVAIL;
+    pub const ENETUNREACH: E = E::NETUNREACH;
+    pub const ECONNABORTED: E = E::CONNABORTED;
+    pub const ECONNRESET: E = E::CONNRESET;
+    pub const ENOBUFS: E = E::NOBUFS;
+    pub const EISCONN: E = E::ISCONN;
+    pub const ENOTCONN: E = E::NOTCONN;
+    pub const ETIMEDOUT: E = E::TIMEDOUT;
+    pub const ECONNREFUSED: E = E::CONNREFUSED;
+    pub const EHOSTUNREACH: E = E::HOSTUNREACH;
+    pub const EALREADY: E = E::ALREADY;
+    pub const EINPROGRESS: E = E::INPROGRESS;
+    pub const ECANCELED: E = E::CANCELED;
+    pub const EUNKNOWN: E = E::UNKNOWN;
+    pub const ECHARSET: E = E::CHARSET;
+    pub const EFTYPE: E = E::FTYPE;
 }
+
+/// Mirrors `bun_errno::posix` on POSIX targets so callers can `use
+/// bun_errno::posix::*` unconditionally. Windows has no real `mode_t`/kernel
+/// `errno`, so this is the minimal subset higher tiers reach for.
+pub mod posix {
+    use super::SystemErrno;
+    pub type mode_t = i32;
+
+    pub const ACCES: i32 = SystemErrno::EACCES as i32;
+    pub const AGAIN: i32 = SystemErrno::EAGAIN as i32;
+    pub const BADF: i32 = SystemErrno::EBADF as i32;
+    pub const BUSY: i32 = SystemErrno::EBUSY as i32;
+    pub const EXIST: i32 = SystemErrno::EEXIST as i32;
+    pub const INTR: i32 = SystemErrno::EINTR as i32;
+    pub const INVAL: i32 = SystemErrno::EINVAL as i32;
+    pub const ISDIR: i32 = SystemErrno::EISDIR as i32;
+    pub const MFILE: i32 = SystemErrno::EMFILE as i32;
+    pub const NAMETOOLONG: i32 = SystemErrno::ENAMETOOLONG as i32;
+    pub const NOENT: i32 = SystemErrno::ENOENT as i32;
+    pub const NOMEM: i32 = SystemErrno::ENOMEM as i32;
+    pub const NOSPC: i32 = SystemErrno::ENOSPC as i32;
+    pub const NOSYS: i32 = SystemErrno::ENOSYS as i32;
+    pub const NOTDIR: i32 = SystemErrno::ENOTDIR as i32;
+    pub const NOTSUP: i32 = SystemErrno::ENOTSUP as i32;
+    pub const PERM: i32 = SystemErrno::EPERM as i32;
+    pub const PIPE: i32 = SystemErrno::EPIPE as i32;
+    pub const XDEV: i32 = SystemErrno::EXDEV as i32;
+}
+
+/// Uppercase re-export so `bun_errno::S::IFDIR` compiles cross-platform
+/// (POSIX builds export `S` from libc; Windows defines the bits locally as `s`).
+pub use self::s as S;
+
+/// Cross-platform shim for the trait callers `use bun_errno::GetErrno`. On
+/// POSIX this is implemented per integer type and reads `errno`/the syscall
+/// return; Windows errno comes from `GetLastError()` regardless of `rc`, so
+/// every impl ignores `self`. Kept to the same concrete-type set as POSIX —
+/// a blanket impl would shadow `bun_sys::Error::get_errno` (inherent method)
+/// via autoref and cause moves.
+pub trait GetErrno: Copy {
+    fn get_errno(self) -> E;
+}
+macro_rules! impl_win_get_errno {
+    ($($t:ty),*) => {$(
+        impl GetErrno for $t {
+            #[inline] fn get_errno(self) -> E { get_errno(self) }
+        }
+    )*};
+}
+impl_win_get_errno!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
 // ──────────────────────────────────────────────────────────────────────────
 // S — file mode bits (Zig namespace struct → Rust module)
@@ -736,6 +853,33 @@ impl From<Error> for bun_core::Error {
     }
 }
 
+/// Type-dispatch shim for `SystemErrno::init` (Zig: `init(code: anytype)`).
+/// Covers every concrete type the codebase actually passes — `i64` (shared
+/// `Error.rs` paths), `u32`/`DWORD` (`GetLastError()`), `c_int` (libuv rc),
+/// `u16`, and `Win32Error`.
+pub trait SystemErrnoInit {
+    fn into_system_errno(self) -> Option<SystemErrno>;
+}
+impl SystemErrnoInit for i64 {
+    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_c_int(self as c_int) }
+}
+impl SystemErrnoInit for i32 {
+    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_c_int(self) }
+}
+impl SystemErrnoInit for u32 {
+    #[inline] fn into_system_errno(self) -> Option<SystemErrno> {
+        // GetLastError()/WSAGetLastError() — Win32 error codes fit in u16; values
+        // above are unmapped (Zig peer-widening would have failed every range check).
+        u16::try_from(self).ok().and_then(SystemErrno::init_u16)
+    }
+}
+impl SystemErrnoInit for u16 {
+    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_u16(self) }
+}
+impl SystemErrnoInit for Win32Error {
+    #[inline] fn into_system_errno(self) -> Option<SystemErrno> { SystemErrno::init_win32_error(self) }
+}
+
 impl SystemErrno {
     pub const MAX: usize = 138;
 
@@ -753,6 +897,16 @@ impl SystemErrno {
     const fn from_raw(n: u16) -> Self {
         // SAFETY: caller-guaranteed valid discriminant (matches Zig @enumFromInt).
         unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+    }
+
+    /// Cross-platform `SystemErrno::init` — POSIX targets define a single
+    /// `init(i64)`; Windows split it into typed entry points (`init_u16` /
+    /// `init_c_int` / `init_win32_error`) because Zig's `anytype` dispatch has
+    /// no stable-Rust equivalent. Re-unified here behind `SystemErrnoInit` so
+    /// shared call sites can keep writing `SystemErrno::init(code)`.
+    #[inline]
+    pub fn init<C: SystemErrnoInit>(code: C) -> Option<SystemErrno> {
+        code.into_system_errno()
     }
 
     pub fn from_error(err: bun_core::Error) -> Option<SystemErrno> {

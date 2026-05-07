@@ -2195,6 +2195,8 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_errno",
+ "bun_libuv_sys",
+ "bun_output",
  "bun_paths",
  "bun_string",
  "bun_windows_sys",

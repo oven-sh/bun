@@ -591,6 +591,12 @@ impl WPathBuffer {
     pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
     #[inline]
     pub fn uninit() -> Self { Self::ZEROED }
+    /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
+    /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.
+    #[inline]
+    pub fn as_slice(&self) -> &[u16] { &self.0 }
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u16] { &mut self.0 }
 }
 impl Default for WPathBuffer {
     #[inline] fn default() -> Self { Self::ZEROED }

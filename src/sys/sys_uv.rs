@@ -6,10 +6,11 @@ use core::ffi::{c_char, c_int, c_uint, CStr};
 
 use bstr::BStr;
 
-use bun_str::ZStr;
+use bun_core::ZStr;
 
 use crate::windows::libuv as uv;
-use crate::{Fd, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS, E};
+use crate::{Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS, E};
+use crate::Tag;
 
 /// `Maybe(T)` from Zig.
 type Result<T> = crate::Result<T>;
@@ -27,10 +28,11 @@ pub use crate::PosixStat;
 // libuv dont support openat (https://github.com/libuv/libuv/issues/4167)
 pub use crate::access;
 pub use crate::get_fd_path;
-pub use crate::mkdir_os_path;
 pub use crate::openat;
 pub use crate::openat_os_path;
 pub use crate::set_file_offset;
+// `mkdir_os_path` lands in B-2; until then route through the UTF-8 wrapper.
+pub use crate::mkdir as mkdir_os_path;
 
 // Note: `req = undefined; req.deinit()` has a safety-check in a debug build
 
@@ -52,7 +54,7 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
             &mut req,
             file_path.as_ptr(),
             flags,
-            perm,
+            perm as c_int,
             None,
         )
     };
@@ -66,14 +68,14 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
     if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::open).with_path(file_path.as_bytes()))
     } else {
-        Result::Ok(req.result.to_fd())
+        Result::Ok(Fd::from_uv(req.result.to_fd()))
     }
 }
 
 pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_mkdir(uv::Loop::get(), &mut req, file_path.as_ptr(), flags, None) };
+    let rc = unsafe { uv::uv_fs_mkdir(uv::Loop::get(), &mut req, file_path.as_ptr(), flags as c_int, None) };
 
     log!(
         "uv mkdir({}, {}) = {}",
@@ -92,7 +94,7 @@ pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
     let mut req = uv::fs_t::uninitialized();
 
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_chmod(uv::Loop::get(), &mut req, file_path.as_ptr(), flags, None) };
+    let rc = unsafe { uv::uv_fs_chmod(uv::Loop::get(), &mut req, file_path.as_ptr(), flags as c_int, None) };
 
     log!(
         "uv chmod({}, {}) = {}",
@@ -111,7 +113,7 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
     let uv_fd = fd.uv();
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &mut req, uv_fd, flags, None) };
+    let rc = unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &mut req, uv_fd, flags as c_int, None) };
 
     log!("uv fchmod({}, {}) = {}", uv_fd, flags, rc.int());
     if let Some(errno) = rc.errno() {
@@ -227,7 +229,7 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
     } else {
         // Seems like `rc` does not contain the size?
         debug_assert!(rc.int() == 0);
-        let result_ptr: *mut c_char = req.ptr_as::<c_char>();
+        let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() } as *mut c_char;
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(
                 Error::new(E::NOENT as _, Tag::readlink).with_path(file_path.as_bytes()),
@@ -335,7 +337,7 @@ pub fn ftruncate(fd: Fd, size: isize) -> Result<()> {
     let uv_fd = fd.uv();
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut req, uv_fd, size, None) };
+    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut req, uv_fd, size as i64, None) };
 
     log!("uv ftruncate({}, {}) = {}", uv_fd, size, rc.int());
     if let Some(errno) = rc.errno() {
@@ -414,13 +416,13 @@ pub fn lstat(path: &ZStr) -> Result<Stat> {
 }
 
 pub fn close(fd: Fd) -> Option<Error> {
-    // TODO(port): @returnAddress() — Rust has no stable equivalent; pass null for now.
-    fd.close_allowing_bad_file_descriptor(core::ptr::null())
+    // TODO(port): @returnAddress() — Rust has no stable equivalent; pass None for now.
+    fd.close_allowing_bad_file_descriptor(None)
 }
 
 pub fn close_allowing_stdout_and_stderr(fd: Fd) -> Option<Error> {
-    // TODO(port): @returnAddress() — Rust has no stable equivalent; pass null for now.
-    fd.close_allowing_standard_io(core::ptr::null())
+    // TODO(port): @returnAddress() — Rust has no stable equivalent; pass None for now.
+    fd.close_allowing_standard_io(None)
 }
 
 /// Maximum number of iovec buffers that can be passed to uv_fs_read/uv_fs_write.
@@ -538,7 +540,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
                 uv::Loop::get(),
                 &mut req,
                 uv_fd,
-                chunk_bufs.as_ptr(),
+                chunk_bufs.as_ptr().cast(),
                 c_uint::try_from(chunk_len).expect("int cast"),
                 current_position,
                 None,
@@ -751,8 +753,6 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
 fn writev_const(fd: Fd, bufs: &[PlatformIOVecConst]) -> Result<usize> {
     pwritev(fd, bufs, -1)
 }
-
-pub use crate::Tag;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -279,7 +279,11 @@ impl StringBuilder {
     pub fn move_to_slice(&mut self) -> Box<[u8]> {
         // TODO(port): Zig wrote into `*[]u8` out-param and reset self. Here we
         // reconstruct the Box (allocated in init_capacity/allocate) and hand it back.
-        let Some(ptr) = self.ptr else {
+        //
+        // `take()` first: `*self = Self::default()` drops the old value, and
+        // `Drop` frees the buffer when `ptr` is still `Some` — leaving it set
+        // here would free the allocation we're about to hand back.
+        let Some(ptr) = self.ptr.take() else {
             *self = Self::default();
             return Box::default();
         };

@@ -424,7 +424,7 @@ impl ReadableStream {
         };
         match &store.data {
             webcore::blob::store::Data::File(_) => {
-                let mut reader = NewSource::<FileReader>::new(NewSource {
+                let reader = NewSource::<FileReader>::new(NewSource {
                     global_this,
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
@@ -438,7 +438,9 @@ impl ReadableStream {
                     ..Default::default()
                 });
                 store.ref_();
-                reader.to_readable_stream(global_this)
+                // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
+                // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
+                unsafe { &mut *reader }.to_readable_stream(global_this)
             }
             _ => Err(global_this.throw(format_args!("Expected FileBlob"))),
         }
@@ -452,7 +454,7 @@ impl ReadableStream {
     ) -> JsResult<JSValue> {
         // TODO(port): Zig's `buffered_reader: anytype` — only ever instantiated with the
         // platform `PipeReader`/`PosixBufferedReader`.
-        let mut source = NewSource::<FileReader>::new(NewSource {
+        let source = NewSource::<FileReader>::new(NewSource {
             global_this,
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
@@ -463,6 +465,9 @@ impl ReadableStream {
             },
             ..Default::default()
         });
+        // SAFETY: `new()` heap-allocated; ownership transfers to the JS wrapper's
+        // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
+        let source = unsafe { &mut *source };
         // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
         let ctx_ptr: *mut FileReader = &mut source.context;
         source.context.reader().from(buffered_reader, ctx_ptr.cast::<c_void>());
@@ -1068,7 +1073,10 @@ pub mod js_readable_stream_source {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<bool> {
-        this.close_handler = Some(on_close::<C>);
+        // Store the handler by *identity* — `NewSource::on_close` compares the
+        // stored fn pointer against `on_js_close` to decide whether to pass
+        // `self` (JS path) or `close_ctx` (native path).
+        this.close_handler = Some(NewSource::<C>::on_js_close);
         this.global_this = global_object;
 
         if value.is_undefined() {
@@ -1150,12 +1158,6 @@ pub mod js_readable_stream_source {
         let ref_or_unref = call_frame.argument(0).to_boolean();
         this.set_ref(ref_or_unref);
         Ok(JSValue::UNDEFINED)
-    }
-
-    pub(super) use super::NewSource as _; // on_close moved to NewSource::on_js_close
-
-    pub fn on_close<C: SourceContext>(ptr: Option<*mut c_void>) {
-        NewSource::<C>::on_js_close(ptr)
     }
 
     pub fn finalize<C: SourceContext>(this: *mut NewSource<C>) {

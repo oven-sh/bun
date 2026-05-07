@@ -309,12 +309,14 @@ impl TimerObjectInternals {
     }
 
     pub fn async_id(&self) -> u64 {
-        ID { id: self.id, kind: self.flags.kind().big() }.async_id()
+        // LAYERING: `Kind` lives in `bun_event_loop`; `KindBig` here. Zig's
+        // `Kind.big()` is the `From<Kind> for KindBig` impl in `super`.
+        ID { id: self.id, kind: self.flags.kind().into() }.async_id()
     }
 
     pub fn fire(&mut self, _now: &Timespec, vm: *mut VirtualMachine) {
         let id = self.id;
-        let kind = self.flags.kind().big();
+        let kind: KindBig = self.flags.kind().into();
         let async_id = ID { id, kind };
         // SAFETY: `vm` is the live per-thread VM (FIRE_TIMER hook contract).
         let has_been_cleared = self.event_loop_timer().state == EventLoopTimerState::CANCELLED

@@ -355,7 +355,7 @@ impl Framework {
                 // SAFETY: `Resolver.log` is a `*mut Log` JSC_BORROW set at init
                 // (LIFETIMES.tsv); valid for the resolver's lifetime.
                 let log = unsafe { &mut *r.log };
-                bun_core::handle_oom(log.add_errorf(
+                bun_core::handle_oom(log.add_error_fmt(
                     None,
                     bun_logger::Loc::EMPTY,
                     format_args!(
@@ -377,7 +377,7 @@ impl Framework {
             data: bun_logger::range_data(
                 None,
                 bun_logger::Range::NONE,
-                b"Install the built-in React framework dependencies:\n  bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun\n".as_slice().into(),
+                b"Install the built-in React framework dependencies:\n  bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun\n".as_slice(),
             ),
             ..Default::default()
         }));

@@ -104,7 +104,8 @@ impl Default for TimeoutObject {
             // Zig: `.{ .next = .epoch, .tag = .TimeoutObject }` — `init_paused`
             // is exactly that (next=EPOCH, state=PENDING, heap zeroed).
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::TimeoutObject),
-            // TODO(port): in-place init — Zig used `undefined`; overwritten by `internals.init()`
+            // PORT NOTE: Zig left `internals = undefined` and assigned in `init()`;
+            // Rust default-constructs then overwrites — same observable behavior.
             internals: TimerObjectInternals::default(),
         }
     }
@@ -144,7 +145,7 @@ impl TimeoutObject {
             Debugger::did_schedule_async_call(
                 global,
                 Debugger::AsyncCallType::DOMTimer,
-                ID::async_id(ID { id, kind: kind.big() }),
+                ID { id, kind: kind.into() }.async_id(),
                 kind != Kind::SetInterval,
             );
         }
@@ -168,7 +169,7 @@ impl TimeoutObject {
     // `#[host_fn]` here — its `Free`-kind expansion calls `constructor(..)` as
     // a bare path, which fails to resolve inside an `impl` block.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw("Timeout is not constructible"))
+        Err(global.throw(format_args!("Timeout is not constructible")))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -215,9 +216,10 @@ impl TimeoutObject {
         Ok(frame.this())
     }
 
-    // TODO(port): cached-property getters/setters — codegen passes `this_value` (the JS
+    // Cached-property getters/setters — codegen passes `this_value` (the JS
     // wrapper) so the cached `WriteBarrier` slot on the C++ side can be read/written.
-    // Signature does not match the standard `host_fn(getter/setter)` shape.
+    // Signature does not match the standard `host_fn(getter/setter)` shape; the
+    // `#[JsClass]` derive emits the C-ABI shims directly.
 
     pub fn get_on_timeout(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         js::callback_get_cached(this_value).unwrap()

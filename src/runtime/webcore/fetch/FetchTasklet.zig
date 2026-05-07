@@ -777,6 +777,13 @@ pub const FetchTasklet = struct {
                 error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                 error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
                 error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
+                error.SocksAuthenticationFailed, error.SocksNoAcceptableAuthMethod => bun.String.static("SOCKS proxy authentication failed."),
+                error.SocksConnectionRefused => bun.String.static("SOCKS proxy refused the connection."),
+                error.SocksNetworkUnreachable => bun.String.static("SOCKS proxy reported the network is unreachable."),
+                error.SocksHostUnreachable => bun.String.static("SOCKS proxy reported the host is unreachable."),
+                error.SocksCredentialsTooLong => bun.String.static("SOCKS proxy credentials are too long."),
+                error.SocksDomainTooLong => bun.String.static("SOCKS proxy target hostname is too long."),
+                error.SocksInvalidResponse => bun.String.static("SOCKS proxy returned an invalid response."),
                 error.RedirectURLInvalid => bun.String.static("Redirect URL in Location header is invalid."),
 
                 error.UNABLE_TO_GET_ISSUER_CERT => bun.String.static("unable to get issuer certificate"),

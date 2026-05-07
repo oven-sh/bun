@@ -11,6 +11,19 @@ export interface ConnectProxyOptions {
   requireAuth?: boolean;
 }
 
+export interface SocksProxyRecord {
+  atyp: number;
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+}
+
+export interface SocksProxyOptions {
+  requireAuth?: boolean;
+  records?: SocksProxyRecord[];
+}
+
 /**
  * Create an HTTP CONNECT proxy server using Node's net module.
  * This proxy handles the CONNECT method to establish tunnels for WebSocket connections.
@@ -182,6 +195,100 @@ export function createTLSConnectProxy(): tls.Server {
       });
     },
   );
+}
+
+export function createSocksProxy(options: SocksProxyOptions = {}): net.Server {
+  return net.createServer(clientSocket => {
+    let buffer = Buffer.alloc(0);
+    let stage: "method" | "auth" | "connect" | "tunnel" = "method";
+    let targetSocket: net.Socket | null = null;
+    let auth: { username?: string; password?: string } = {};
+
+    const fail = (code: number) => {
+      clientSocket.write(Buffer.from([0x05, code, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
+      clientSocket.end();
+    };
+
+    clientSocket.on("data", data => {
+      if (stage === "tunnel" && targetSocket) {
+        targetSocket.write(data);
+        return;
+      }
+
+      buffer = Buffer.concat([buffer, data]);
+
+      while (true) {
+        if (stage === "method") {
+          if (buffer.length < 2) return;
+          const nmethods = buffer[1];
+          if (buffer.length < 2 + nmethods) return;
+          buffer = buffer.subarray(2 + nmethods);
+          clientSocket.write(Buffer.from([0x05, options.requireAuth ? 0x02 : 0x00]));
+          stage = options.requireAuth ? "auth" : "connect";
+          continue;
+        }
+
+        if (stage === "auth") {
+          if (buffer.length < 2) return;
+          const ulen = buffer[1];
+          if (buffer.length < 2 + ulen + 1) return;
+          const plen = buffer[2 + ulen];
+          if (buffer.length < 3 + ulen + plen) return;
+          const username = buffer.subarray(2, 2 + ulen).toString();
+          const password = buffer.subarray(3 + ulen, 3 + ulen + plen).toString();
+          buffer = buffer.subarray(3 + ulen + plen);
+          auth = { username, password };
+          if (username !== "proxy_user" || password !== "proxy_pass") {
+            clientSocket.write(Buffer.from([0x01, 0x01]));
+            clientSocket.end();
+            return;
+          }
+          clientSocket.write(Buffer.from([0x01, 0x00]));
+          stage = "connect";
+          continue;
+        }
+
+        if (stage === "connect") {
+          if (buffer.length < 5) return;
+          const atyp = buffer[3];
+          let offset = 4;
+          let host = "";
+          if (atyp === 0x01) {
+            if (buffer.length < offset + 4 + 2) return;
+            host = `${buffer[offset]}.${buffer[offset + 1]}.${buffer[offset + 2]}.${buffer[offset + 3]}`;
+            offset += 4;
+          } else if (atyp === 0x03) {
+            const len = buffer[offset++];
+            if (buffer.length < offset + len + 2) return;
+            host = buffer.subarray(offset, offset + len).toString();
+            offset += len;
+          } else {
+            fail(0x08);
+            return;
+          }
+          const port = buffer.readUInt16BE(offset);
+          const remaining = buffer.subarray(offset + 2);
+          buffer = Buffer.alloc(0);
+          options.records?.push({ atyp, host, port, ...auth });
+
+          targetSocket = net.connect(port, host, () => {
+            clientSocket.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
+            stage = "tunnel";
+            if (remaining.length > 0) targetSocket!.write(remaining);
+            targetSocket!.on("data", chunk => clientSocket.write(chunk));
+          });
+          targetSocket.on("error", () => fail(0x05));
+          targetSocket.on("close", () => clientSocket.destroy());
+          clientSocket.on("close", () => targetSocket?.destroy());
+          return;
+        }
+
+        return;
+      }
+    });
+
+    clientSocket.on("error", () => targetSocket?.destroy());
+  });
 }
 
 /**

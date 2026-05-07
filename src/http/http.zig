@@ -167,7 +167,7 @@ pub fn onOpen(
 ) !void {
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
-            assert(is_ssl == proxy.isHTTPS());
+            assert(is_ssl == (SocksProxy.Kind.fromURL(proxy) == .https));
         } else {
             assert(is_ssl == client.url.isHTTPS());
         }
@@ -666,6 +666,7 @@ http_proxy: ?URL = null,
 proxy_headers: ?Headers = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
+socks_proxy: ?SocksProxy = null,
 /// Set when this request is bound to a stream on an HTTP/2 session.
 /// Owned by the session; cleared by the session when the stream completes.
 h2: ?*H2.Stream = null,
@@ -702,6 +703,10 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
+    if (this.socks_proxy) |*proxy| {
+        proxy.deinit();
+        this.socks_proxy = null;
+    }
     // The session detaches `h2` before any terminal callback, so this should
     // be null by the time the result callback's deinit path runs.
     bun.debugAssert(this.h2 == null);
@@ -718,6 +723,9 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
     if (comptime FeatureFlags.enable_keepalive) {
         // TODO keepalive for unix sockets
         if (this.unix_socket_path.length() > 0) return false;
+        if (this.http_proxy) |proxy| {
+            if (SocksProxy.Kind.fromURL(proxy).isSocks()) return false;
+        }
 
         // check state
         if (this.state.flags.allow_keepalive and !this.flags.disable_keepalive) return true;
@@ -1156,6 +1164,10 @@ pub fn doRedirect(
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
+    if (this.socks_proxy) |*proxy| {
+        proxy.deinit();
+        this.socks_proxy = null;
+    }
     this.flags.protocol = .http1_1;
 
     return this.start(.{ .bytes = request_body }, body_out_str);
@@ -1164,10 +1176,7 @@ pub fn doRedirect(
 /// **Not thread safe while request is in-flight**
 pub fn isHTTPS(this: *HTTPClient) bool {
     if (this.http_proxy) |proxy| {
-        if (proxy.isHTTPS()) {
-            return true;
-        }
-        return false;
+        return SocksProxy.Kind.fromURL(proxy) == .https;
     }
     if (this.url.isHTTPS()) {
         return true;
@@ -1385,10 +1394,49 @@ noinline fn sendInitialRequestPayload(this: *HTTPClient, comptime is_first_call:
 
     const writer = &temporary_send_buffer.writer();
 
+    if (this.http_proxy) |proxy| {
+        const kind = SocksProxy.Kind.fromURL(proxy);
+        if (kind.isSocks()) {
+            if (this.socks_proxy) |*socks| {
+                if (socks.state != .connected) {
+                    log("continue socks proxy handshake", .{});
+                    this.flags.proxy_tunneling = true;
+                    try socks.flush(socket);
+                    const done = !socks.hasPendingWrite();
+                    return .{
+                        .has_sent_headers = done,
+                        .has_sent_body = done,
+                        .try_sending_more_data = false,
+                    };
+                }
+            } else {
+                log("start socks proxy handshake", .{});
+                this.flags.proxy_tunneling = true;
+                this.socks_proxy = try SocksProxy.init(this.allocator, proxy);
+                try this.socks_proxy.?.begin();
+                try this.socks_proxy.?.flush(socket);
+                const done = !this.socks_proxy.?.hasPendingWrite();
+                return .{
+                    .has_sent_headers = done,
+                    .has_sent_body = done,
+                    .try_sending_more_data = false,
+                };
+            }
+        }
+    }
+
     const request = this.buildRequest(this.state.original_request_body.len());
 
-    if (this.http_proxy) |_| {
-        if (this.url.isHTTPS()) {
+    if (this.http_proxy) |proxy| {
+        const kind = SocksProxy.Kind.fromURL(proxy);
+        if (kind.isSocks()) {
+            log("send request through socks proxy", .{});
+            try writeRequest(
+                @TypeOf(writer),
+                writer,
+                request,
+            );
+        } else if (this.url.isHTTPS()) {
             log("start proxy tunneling (https proxy)", .{});
             //DO the tunneling!
             this.flags.proxy_tunneling = true;
@@ -1601,6 +1649,16 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
         proxy.onWritable(is_ssl, socket);
     }
 
+    if (this.socks_proxy) |*proxy| {
+        if (proxy.hasPendingWrite()) {
+            proxy.flush(socket) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
+            if (proxy.hasPendingWrite()) return;
+        }
+    }
+
     switch (this.state.request_stage) {
         .pending, .headers, .opened => {
             log("sendInitialRequestPayload", .{});
@@ -1638,7 +1696,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 }
                 assert(
                     // we should have leftover data OR we use sendfile/stream
-                    (this.state.original_request_body == .bytes and this.state.request_body.len > 0) or
+                    (this.state.original_request_body == .bytes and (this.state.request_body.len > 0 or this.state.original_request_body.bytes.len == 0)) or
                         this.state.original_request_body == .sendfile or this.state.original_request_body == .stream,
                 );
 
@@ -2022,6 +2080,41 @@ pub fn onData(
         this.setTimeout(socket, 5);
         proxy.receive(incoming_data);
         return;
+    }
+
+    if (this.socks_proxy) |*proxy| {
+        if (proxy.state != .connected) {
+            this.setTimeout(socket, 5);
+            const result = proxy.receive(incoming_data, this.url.hostname, this.url.getPortAuto()) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
+            proxy.flush(socket) catch |err| {
+                this.closeAndFail(err, is_ssl, socket);
+                return;
+            };
+            if (result == .connected) {
+                this.flags.proxy_tunneling = false;
+                this.state.request_sent_len = 0;
+                if (this.url.isHTTPS()) {
+                    const allocator = this.allocator;
+                    const trailing = proxy.read_buffer.slice();
+                    const start_payload = if (trailing.len > 0)
+                        allocator.dupe(u8, trailing) catch |err| bun.handleOom(err)
+                    else
+                        "";
+                    defer if (start_payload.len > 0) allocator.free(start_payload);
+                    proxy.deinit();
+                    this.socks_proxy = null;
+                    this.startProxyHandshake(is_ssl, socket, start_payload);
+                } else {
+                    this.state.request_stage = .headers;
+                    this.state.response_stage = .pending;
+                    this.onWritable(true, is_ssl, socket);
+                }
+            }
+            return;
+        }
     }
 
     switch (this.state.response_stage) {
@@ -3240,6 +3333,7 @@ const string = []const u8;
 
 const HTTPCertError = @import("./HTTPCertError.zig");
 const ProxyTunnel = @import("./ProxyTunnel.zig");
+const SocksProxy = @import("./SocksProxy.zig");
 const std = @import("std");
 const URL = @import("../url/url.zig").URL;
 

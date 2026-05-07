@@ -6,6 +6,7 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
+import { createSocksProxy, startProxy } from "../../web/websocket/proxy-test-utils";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
   if (is_tls) {
@@ -945,6 +946,91 @@ describe.concurrent("proxy object format with headers", () => {
     // The request should succeed (without proxy, since URL object is ignored)
     expect(response.ok).toBe(true);
     expect(response.status).toBe(200);
+  });
+});
+
+describe("fetch through SOCKS5 proxy", () => {
+  let socksProxy: net.Server;
+  let socksAuthProxy: net.Server;
+  let socksPort: number;
+  let socksAuthPort: number;
+  const records: { atyp: number; host: string; port: number; username?: string; password?: string }[] = [];
+  const authRecords: { atyp: number; host: string; port: number; username?: string; password?: string }[] = [];
+
+  beforeAll(async () => {
+    socksProxy = createSocksProxy({ records });
+    socksPort = await startProxy(socksProxy);
+    socksAuthProxy = createSocksProxy({ requireAuth: true, records: authRecords });
+    socksAuthPort = await startProxy(socksAuthProxy);
+  });
+
+  afterAll(() => {
+    socksProxy?.close();
+    socksAuthProxy?.close();
+  });
+
+  test("HTTP fetch through socks5h sends domain to proxy", async () => {
+    records.length = 0;
+    const response = await fetch(`http://127.0.0.1:${httpServer.port}/`, {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+    });
+
+    expect(response.status).toBe(200);
+    expect(records[0]).toMatchObject({ atyp: 0x03, host: "127.0.0.1", port: httpServer.port });
+  });
+
+  test("HTTPS fetch through socks5h proxy", async () => {
+    records.length = 0;
+    const response = await fetch(`https://127.0.0.1:${httpsServer.port}/`, {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(records[0]).toMatchObject({ atyp: 0x03, host: "127.0.0.1", port: httpsServer.port });
+  });
+
+  test("HTTP POST through socks5 proxy with username/password", async () => {
+    authRecords.length = 0;
+    const response = await fetch(`http://127.0.0.1:${httpServer.port}/`, {
+      method: "POST",
+      body: "hello via socks auth",
+      proxy: `socks5://proxy_user:proxy_pa%73s@127.0.0.1:${socksAuthPort}`,
+    });
+
+    expect(await response.text()).toBe("hello via socks auth");
+    expect(authRecords[0]).toMatchObject({
+      atyp: 0x01,
+      host: "127.0.0.1",
+      port: httpServer.port,
+      username: "proxy_user",
+      password: "proxy_pass",
+    });
+  });
+
+  test("redirect through socks5 creates a new tunnel", async () => {
+    records.length = 0;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/redirect") {
+          return Response.redirect("/done", 302);
+        }
+        return new Response("redirected through socks");
+      },
+    });
+
+    const response = await fetch(`${server.url.origin}/redirect`, {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+    });
+
+    expect(await response.text()).toBe("redirected through socks");
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({ atyp: 0x03, host: server.url.hostname, port: server.port });
+    expect(records[1]).toMatchObject({ atyp: 0x03, host: server.url.hostname, port: server.port });
   });
 });
 

@@ -1404,6 +1404,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let committish = git.committish.slice(string_buf);
                     let repo = git.repo.slice(string_buf);
 
+                    use crate::repository_real::RepositoryExt as _;
                     let resolved = crate::repository_real::Repository::find_commit(
                         // SAFETY: `env` is set during `PackageManager::init` and
                         // outlives all tasks.

@@ -177,6 +177,10 @@ pub trait RequestCtxOps: RequestCtx {
     fn set_is_transfer_encoding(&mut self, v: bool);
     fn set_is_waiting_for_request_body(&mut self, v: bool);
     fn arm_on_data(&mut self, resp: &mut Self::Resp);
+    // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`)
+    fn on_start_buffering_callback(this: *mut c_void);
+    fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult;
+    fn on_request_body_readable_stream_available(this: *mut c_void, stream: JSValue);
 }
 
 impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps

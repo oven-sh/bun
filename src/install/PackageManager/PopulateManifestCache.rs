@@ -3,6 +3,7 @@ use bun_core::Output;
 
 use crate::Dependency;
 use crate::DependencyID;
+use crate::dependency::Behavior;
 use crate::ManifestLoad;
 use crate::NetworkTask;
 use crate::PackageID;

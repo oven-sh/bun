@@ -189,12 +189,18 @@ impl HTMLRewriterBuilder {
     /// handler execution. So they should never be leaked outside of handlers.
     // TODO(port): Zig used comptime fn-value params to monomorphize trampolines per callback.
     // Rust cannot take const fn pointers as const generics; modeled via DirectiveCallback trait.
+    // PORT NOTE: handler-data params are `Option<NonNull<H>>`, not
+    // `Option<&mut H>` — callers routinely pass the SAME allocation for
+    // multiple slots (one `DocumentHandler` services doctype/comment/text/end),
+    // and materializing several live `&mut` to one object is UB under Stacked
+    // Borrows. The wrapper only ever erases the pointer to `*mut c_void`
+    // userdata, so a raw `NonNull` is the honest type.
     pub fn add_document_content_handlers<DT, CM, TX, DE>(
         &mut self,
-        doctype_handler_data: Option<&mut DT>,
-        comment_handler_data: Option<&mut CM>,
-        text_chunk_handler_data: Option<&mut TX>,
-        end_tag_handler_data: Option<&mut DE>,
+        doctype_handler_data: Option<NonNull<DT>>,
+        comment_handler_data: Option<NonNull<CM>>,
+        text_chunk_handler_data: Option<NonNull<TX>>,
+        end_tag_handler_data: Option<NonNull<DE>>,
     ) where
         DT: DirectiveCallback<DocType>,
         CM: DirectiveCallback<Comment>,
@@ -208,30 +214,14 @@ impl HTMLRewriterBuilder {
         unsafe {
             lol_html_rewriter_builder_add_document_content_handlers(
                 self,
-                if doctype_handler_data.is_some() {
-                    Some(directive_handler::<DocType, DT>)
-                } else {
-                    None
-                },
-                doctype_handler_data.map_or(core::ptr::null_mut(), |p| p as *mut DT as *mut c_void),
-                if comment_handler_data.is_some() {
-                    Some(directive_handler::<Comment, CM>)
-                } else {
-                    None
-                },
-                comment_handler_data.map_or(core::ptr::null_mut(), |p| p as *mut CM as *mut c_void),
-                if text_chunk_handler_data.is_some() {
-                    Some(directive_handler::<TextChunk, TX>)
-                } else {
-                    None
-                },
-                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p as *mut TX as *mut c_void),
-                if end_tag_handler_data.is_some() {
-                    Some(directive_handler::<DocEnd, DE>)
-                } else {
-                    None
-                },
-                end_tag_handler_data.map_or(core::ptr::null_mut(), |p| p as *mut DE as *mut c_void),
+                doctype_handler_data.map(|_| directive_handler::<DocType, DT> as _),
+                doctype_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                comment_handler_data.map(|_| directive_handler::<Comment, CM> as _),
+                comment_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                text_chunk_handler_data.map(|_| directive_handler::<TextChunk, TX> as _),
+                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                end_tag_handler_data.map(|_| directive_handler::<DocEnd, DE> as _),
+                end_tag_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
             );
         }
     }

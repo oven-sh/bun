@@ -621,8 +621,9 @@ pub fn run(ctx: Command.Context) !noreturn {
             });
         }
 
-        // Phase 2: Sort by package name, then by path as tiebreaker for deterministic ordering
-        std.mem.sort(MatchedPackage, matched_packages.items, {}, struct {
+        // Phase 2: Sort by package name, then by path as tiebreaker for deterministic ordering.
+        // dirpath is unique per workspace, so the comparator is a total order and stability is moot.
+        std.sort.pdq(MatchedPackage, matched_packages.items, {}, struct {
             fn lessThan(_: void, a: MatchedPackage, b: MatchedPackage) bool {
                 const name_order = std.mem.order(u8, a.name, b.name);
                 if (name_order != .eq) return name_order == .lt;
@@ -641,11 +642,7 @@ pub fn run(ctx: Command.Context) !noreturn {
                             try matches.append(key);
                         }
                     }
-                    std.mem.sort([]const u8, matches.items, {}, struct {
-                        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-                            return std.mem.order(u8, a, b) == .lt;
-                        }
-                    }.lessThan);
+                    bun.strings.sortAsc(matches.items);
                     for (matches.items) |matched_name| {
                         try addScriptConfigs(&configs, &group_infos, matched_name, pkg.scripts, ctx.allocator, pkg.dirpath, pkg.PATH, pkg.name);
                     }
@@ -700,11 +697,7 @@ pub fn run(ctx: Command.Context) !noreturn {
                     }
 
                     // Sort alphabetically
-                    std.mem.sort([]const u8, matches.items, {}, struct {
-                        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-                            return std.mem.order(u8, a, b) == .lt;
-                        }
-                    }.lessThan);
+                    bun.strings.sortAsc(matches.items);
 
                     if (matches.items.len == 0) {
                         Output.prettyErrorln("<r><red>error<r>: No scripts match pattern \"{s}\"", .{raw_name});

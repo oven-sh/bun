@@ -52,7 +52,7 @@ pub fn start(this: *Export) Yield {
             }) catch |err| bun.handleOom(err);
         }
 
-        std.mem.sort(Entry, keys.items[0..], {}, Entry.compare);
+        std.sort.pdq(Entry, keys.items[0..], {}, Entry.compare);
 
         const len = brk: {
             var len: usize = 0;

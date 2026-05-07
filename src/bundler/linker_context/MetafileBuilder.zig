@@ -601,7 +601,7 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
     try writer.writeAll("Modules sorted by bytes contributed to the output bundle. Large modules may indicate bloat.\n\n");
 
     // Sort by bytes_in_output descending
-    std.mem.sort(InputFileInfo, input_files.items, {}, struct {
+    std.sort.pdq(InputFileInfo, input_files.items, {}, struct {
         fn lessThan(_: void, a: InputFileInfo, b: InputFileInfo) bool {
             return a.bytes_in_output > b.bytes_in_output;
         }
@@ -745,7 +745,7 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
                     }
                 }
 
-                std.mem.sort(ModuleSize, module_sizes.items, {}, struct {
+                std.sort.pdq(ModuleSize, module_sizes.items, {}, struct {
                     fn lessThan(_: void, a: ModuleSize, b: ModuleSize) bool {
                         return a.bytes > b.bytes;
                     }
@@ -779,7 +779,7 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
         try highly_imported.append(allocator, .{ .path = entry.key_ptr.*, .count = entry.value_ptr.items.len });
     }
 
-    std.mem.sort(ImportedByInfo, highly_imported.items, {}, struct {
+    std.sort.pdq(ImportedByInfo, highly_imported.items, {}, struct {
         fn lessThan(_: void, a: ImportedByInfo, b: ImportedByInfo) bool {
             return a.count > b.count;
         }
@@ -829,7 +829,7 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
         try sorted_paths.append(allocator, .{ .path = entry.key_ptr.* });
     }
 
-    std.mem.sort(PathOnly, sorted_paths.items, {}, struct {
+    std.sort.pdq(PathOnly, sorted_paths.items, {}, struct {
         fn lessThan(_: void, a: PathOnly, b: PathOnly) bool {
             return std.mem.lessThan(u8, a.path, b.path);
         }

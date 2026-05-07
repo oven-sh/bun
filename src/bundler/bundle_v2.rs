@@ -2462,6 +2462,14 @@ impl<'a> BundleV2<'a> {
             out_source_index = Some(Index::init(existing));
         } else {
             path = self.path_with_pretty_initialized(path, target).expect("oom");
+            // PORT NOTE: Zig wrote through `path.* = …` (a `*Fs.Path` into
+            // `resolve_result.path_pair`); the borrowck-reshape above cloned
+            // `path` out, so write the prettified path back so
+            // `ParseTask::init(&resolve_result, ..)` (via `enqueue_parse_task`)
+            // sees the relativized `pretty`.
+            if let Some(p) = resolve_result.path() {
+                *p = path.clone();
+            }
             let loader: Loader = 'brk: {
                 let record: &ImportRecord = &self.graph.ast.items_import_records()[import_record.importer_source_index as usize].slice()[import_record.import_record_index as usize];
                 if let Some(out_loader) = record.loader {
@@ -2534,7 +2542,7 @@ impl<'a> BundleV2<'a> {
         if self.path_to_source_index_map(target).get(path_slice).is_some() {
             return Ok(());
         }
-        let result = match self.transpiler_for_target(target).resolve_entry_point(path_slice) {
+        let mut result = match self.transpiler_for_target(target).resolve_entry_point(path_slice) {
             Ok(r) => r,
             Err(_) => return Ok(()),
         };
@@ -2545,6 +2553,10 @@ impl<'a> BundleV2<'a> {
 
         path = self.path_with_pretty_initialized(path, target)?;
         path.assert_pretty_is_valid();
+        // PORT NOTE: see `enqueue_entry_item` — write the prettified path back
+        // into `result` so `ParseTask::init(&result, ..)` reads the relativized
+        // `pretty` (Zig mutated `result.path_pair.primary` in place via `path.*`).
+        result.path_pair.primary = path.clone();
         self.path_to_source_index_map(target).put(path_slice, source_index.get()).expect("oom");
         let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
@@ -2623,6 +2635,16 @@ impl<'a> BundleV2<'a> {
             )
         };
         path.assert_pretty_is_valid();
+        // PORT NOTE: Zig's `var path = result.path()` is a `*Fs.Path` *into*
+        // `result.path_pair`, so the `path.* = pathWithPrettyInitialized(...)`
+        // assignment mutates the resolver result in place. The borrowck-reshape
+        // above cloned `path` out, which left `result.path_pair` with the
+        // unrelativized `pretty` — and `ParseTask::init(&result, ..)` reads
+        // exactly that field, so the source comment header lost its
+        // `top_level_dir`-relative path. Write the prettified path back here.
+        if let Some(p) = result.path() {
+            *p = path.clone();
+        }
         self.path_to_source_index_map(target).put(&path.text, source_index.get()).expect("oom");
         let _ = self.graph.ast.append(JSAst::empty()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 

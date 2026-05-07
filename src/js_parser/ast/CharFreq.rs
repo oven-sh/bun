@@ -139,11 +139,19 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
         deltas[c as usize] += delta;
     }
 
-    out[0..26].copy_from_slice(&deltas[b'a' as usize..b'a' as usize + 26]);
-    out[26..26 * 2].copy_from_slice(&deltas[b'A' as usize..b'A' as usize + 26]);
-    out[26 * 2..62].copy_from_slice(&deltas[b'0' as usize..b'0' as usize + 10]);
-    out[62] = deltas[b'_' as usize];
-    out[63] = deltas[b'$' as usize];
+    // PORT NOTE: Zig writes `freqs[0..26].* = deltas[...]` which *overwrites* the
+    // accumulator (a latent bug — `var freqs = out.*` is dead). With Zig's
+    // deterministic StringHashMap iteration the lossy result is stable, but in
+    // Rust the RandomState-seeded `scope.members` order makes the overwritten
+    // value vary run-to-run, breaking minified-output determinism (the
+    // observable `OV`/`OU` flap on three.js). We add instead — the histogram
+    // the algorithm intends — so output is stable and the freq table reflects
+    // the whole input rather than the last ≥32-byte scan.
+    for i in 0..26 { out[i] += deltas[b'a' as usize + i]; }
+    for i in 0..26 { out[26 + i] += deltas[b'A' as usize + i]; }
+    for i in 0..10 { out[52 + i] += deltas[b'0' as usize + i]; }
+    out[62] += deltas[b'_' as usize];
+    out[63] += deltas[b'$' as usize];
 }
 
 fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {

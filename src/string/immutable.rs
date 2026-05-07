@@ -1435,7 +1435,7 @@ fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
     eql_comptime_debug_runtime_fallback(a, b, check_len)
 }
 #[cfg(not(debug_assertions))]
-fn eql_comptime_check_len_u8(a: &[u8], b: &'static [u8], check_len: bool) -> bool {
+fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
     eql_comptime_check_len_u8_impl(a, b, check_len)
 }
 
@@ -1444,7 +1444,7 @@ fn eql_comptime_debug_runtime_fallback(a: &[u8], b: &[u8], check_len: bool) -> b
 }
 
 #[allow(dead_code)]
-fn eql_comptime_check_len_u8_impl(a: &[u8], b: &'static [u8], check_len: bool) -> bool {
+fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
     // PERF(port): Zig unrolled at comptime over b.len in usize/u32/u16/u8 chunks.
     // Rust cannot iterate a runtime slice at const-eval. Slice equality compiles
     // to memcmp; for short literals LLVM should emit comparable code.

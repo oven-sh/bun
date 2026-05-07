@@ -733,17 +733,19 @@ impl MatchedRoute {
         asset_prefix: Option<*mut RefString>,
         base_dir: *mut RefString,
     ) -> Result<Box<MatchedRoute>, bun_alloc::AllocError> {
-        let params_list = match_.params.clone();
+        // SAFETY: `match_.params` points at the caller's stack `route_param::List`, which is
+        // live for this call. Clone its contents into our own holder before re-pointing.
+        let params_list = unsafe { (*match_.params).clone() };
 
         let mut route = Box::new(MatchedRoute {
-            route_holder: match_,
+            route_holder: UnsafeCell::new(match_),
             route: core::ptr::null(),
             asset_prefix,
             origin,
             base_dir: Some(base_dir),
             query_string_map: None,
             param_map: None,
-            params_list_holder: route_param::List::default(),
+            params_list_holder: UnsafeCell::new(params_list),
             needs_deinit: true,
         });
         // PORT NOTE: `base_dir.ref()` / `o.ref()` / `prefix.ref()` — bump refcounts.
@@ -755,12 +757,12 @@ impl MatchedRoute {
         if let Some(p) = asset_prefix {
             unsafe { (*p).ref_() };
         }
-        route.params_list_holder = params_list;
-        route.route = &route.route_holder as *const RouterMatch<'static>;
-        // SAFETY: `params_list_holder` lives at a stable heap address inside the Box for the
-        // lifetime of `MatchedRoute`; forging `&'static mut` matches the Zig raw-slice semantics.
-        route.route_holder.params =
-            unsafe { &mut *(&mut route.params_list_holder as *mut route_param::List<'static>) };
+        // Self-referential wiring: `route` → `route_holder`; `route_holder.params` →
+        // `params_list_holder`. Both targets are `UnsafeCell` so the raw pointers stay
+        // valid under Stacked Borrows across later `&mut MatchedRoute` accesses.
+        route.route = route.route_holder.get();
+        // SAFETY: sole access to `route_holder` contents at this point.
+        unsafe { (*route.route_holder.get()).params = route.params_list_holder.get() };
 
         Ok(route)
     }
@@ -783,7 +785,7 @@ impl MatchedRoute {
                 unsafe { bun_alloc::mimalloc::mi_free(pathname.as_ptr() as *mut c_void) };
             }
 
-            this_ref.params_list_holder = route_param::List::default();
+            *this_ref.params_list_holder.get_mut() = route_param::List::default();
         }
 
         if let Some(p) = this_ref.origin.take() {
@@ -941,7 +943,7 @@ impl MatchedRoute {
     // `&mut Self` to lazily build `param_map`. The real shim is owned by the `.classes.ts`
     // codegen (which gets the m_ctx as `*mut`), so the placeholder shim is omitted here.
     pub fn get_params(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if this.route().params.is_empty() {
+        if this.params().is_empty() {
             return Ok(JSValue::create_empty_object(global_this, 0));
         }
 
@@ -952,7 +954,7 @@ impl MatchedRoute {
                 b"",
                 route.pathname_without_leading_slash(),
                 route.name,
-                route.params,
+                this.params(),
             );
             this.param_map = QueryStringMap::init_with_scanner(scanner)?;
         }
@@ -963,7 +965,7 @@ impl MatchedRoute {
     // PORT NOTE: see `get_params` — `host_fn(getter)` shim omitted (needs `&mut Self`).
     pub fn get_query(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let route = this.route();
-        if route.query_string.is_empty() && route.params.is_empty() {
+        if route.query_string.is_empty() && this.params().is_empty() {
             return Ok(JSValue::create_empty_object(global_this, 0));
         } else if route.query_string.is_empty() {
             return Self::get_params(this, global_this);
@@ -971,12 +973,12 @@ impl MatchedRoute {
 
         if this.query_string_map.is_none() {
             let route = this.route();
-            if !route.params.is_empty() {
+            if !this.params().is_empty() {
                 let scanner = CombinedScanner::init(
                     route.query_string,
                     route.pathname_without_leading_slash(),
                     route.name,
-                    route.params,
+                    this.params(),
                 );
                 this.query_string_map = QueryStringMap::init_with_scanner(scanner)?;
             } else {

@@ -144,6 +144,131 @@ where
     const IS_H3: bool = true;
 }
 
+/// Field/method surface needed on the generic `Ctx` so the bodies of
+/// `handle_request_for` / `prepare_js_request_context_for` / `on_saved_request`
+/// can be written without naming the concrete `RequestContext<_, SSL, DBG, H3>`
+/// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
+#[allow(clippy::too_many_arguments)]
+pub trait RequestCtxOps: RequestCtx {
+    type Server;
+    fn create_in(
+        slot: *mut Self,
+        server: *const Self::Server,
+        req: &mut Self::Req,
+        resp: &mut Self::Resp,
+        should_deinit_context: Option<*mut bool>,
+        method: Option<http::Method>,
+    );
+    fn on_response(&mut self, server: &Self::Server, request_value: JSValue, response_value: JSValue);
+    fn deinit(&mut self);
+    fn should_render_missing(&self) -> bool;
+    fn render_missing(&mut self);
+    fn to_async(&mut self, req: &mut Self::Req, request_object: &mut Request);
+    fn ctx_method(&self) -> http::Method;
+    fn set_upgrade_context(&mut self, ctx: Option<*mut WebSocketUpgradeContext>);
+    fn defer_deinit_ptr(&mut self) -> &mut Option<*mut bool>;
+    fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>);
+    fn request_body_mut(&mut self) -> Option<&mut BodyValue>;
+    fn set_signal(&mut self, sig: *mut AbortSignal);
+    fn set_request_weakref(&mut self, req: *mut Request);
+    fn clear_req(&mut self);
+    fn set_is_web_browser_navigation(&mut self, v: bool);
+    fn set_request_body_content_len(&mut self, len: usize);
+    fn set_is_transfer_encoding(&mut self, v: bool);
+    fn set_is_waiting_for_request_body(&mut self, v: bool);
+    fn arm_on_data(&mut self, resp: &mut Self::Resp);
+}
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
+    for NewRequestContext<ThisServer, SSL, DBG, H3>
+where
+    Self: RequestCtx,
+    ThisServer: super::ServerLike + 'static,
+    super::request_context::TransportFor<SSL, H3>: super::request_context::Transport,
+    Self: crate::api::native_promise_context::NativePromiseContextType
+        + super::request_context::RequestContextHostFns,
+{
+    type Server = ThisServer;
+    #[inline]
+    fn create_in(
+        slot: *mut Self,
+        server: *const ThisServer,
+        req: &mut Self::Req,
+        resp: &mut Self::Resp,
+        should_deinit_context: Option<*mut bool>,
+        method: Option<http::Method>,
+    ) {
+        // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
+        // MaybeUninit for in-place construction.
+        let slot = unsafe { &mut *(slot as *mut core::mem::MaybeUninit<Self>) };
+        let any_resp = uws::AnyResponse::init_from(SSL, H3, resp as *mut Self::Resp as *mut c_void);
+        Self::create(slot, server, req as *mut _ as *mut _, any_resp, should_deinit_context, method);
+    }
+    #[inline]
+    fn on_response(&mut self, server: &ThisServer, rq: JSValue, rv: JSValue) { Self::on_response(self, server, rq, rv) }
+    #[inline]
+    fn deinit(&mut self) { Self::deinit(self) }
+    #[inline]
+    fn should_render_missing(&self) -> bool { Self::should_render_missing(self) }
+    #[inline]
+    fn render_missing(&mut self) { Self::render_missing(self) }
+    #[inline]
+    fn to_async(&mut self, req: &mut Self::Req, ro: &mut Request) { Self::to_async(self, req as *mut _ as *mut _, ro) }
+    #[inline]
+    fn ctx_method(&self) -> http::Method { self.method }
+    #[inline]
+    fn set_upgrade_context(&mut self, c: Option<*mut WebSocketUpgradeContext>) { self.upgrade_context = c }
+    #[inline]
+    fn defer_deinit_ptr(&mut self) -> &mut Option<*mut bool> { &mut self.defer_deinit_until_callback_completes }
+    #[inline]
+    fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>) { self.request_body = body }
+    #[inline]
+    fn request_body_mut(&mut self) -> Option<&mut BodyValue> {
+        // SAFETY: request_body points at a live HiveRef<Value> slot owned by the
+        // VM's hive allocator while the RequestContext holds a ref.
+        self.request_body.map(|p| unsafe { &mut *p.as_ptr() })
+    }
+    #[inline]
+    fn set_signal(&mut self, sig: *mut AbortSignal) {
+        // SAFETY: AbortSignal is FFI-refcounted; we hold a +1 ref from
+        // `AbortSignal::new()`. Wrap as `Arc::from_raw` is wrong here (Arc has
+        // its own header) — RequestContext.signal stores `Option<Arc<..>>`, but
+        // the existing port treats it as a raw +1. Convert via the upstream
+        // `webcore::AbortSignal::adopt_arc` shape once available; for now keep
+        // the ref alive on the ctx by wrapping the ptr.
+        // TODO(port): unify Arc<AbortSignal> vs raw +1 ref across RequestContext.
+        self.signal = NonNull::new(sig).map(|p| unsafe { std::sync::Arc::from_raw(p.as_ptr()) });
+    }
+    #[inline]
+    fn set_request_weakref(&mut self, req: *mut Request) {
+        self.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(req);
+    }
+    #[inline]
+    fn clear_req(&mut self) { self.req = None }
+    #[inline]
+    fn set_is_web_browser_navigation(&mut self, v: bool) { self.flags.set_is_web_browser_navigation(v) }
+    #[inline]
+    fn set_request_body_content_len(&mut self, len: usize) { self.request_body_content_len = len }
+    #[inline]
+    fn set_is_transfer_encoding(&mut self, v: bool) { self.flags.set_is_transfer_encoding(v) }
+    #[inline]
+    fn set_is_waiting_for_request_body(&mut self, v: bool) { self.flags.set_is_waiting_for_request_body(v) }
+    #[inline]
+    fn arm_on_data(&mut self, resp: &mut Self::Resp) {
+        // PORT NOTE: `Ctx::Resp` is one of `NewAppResponse<SSL>` / `h3::Response`.
+        // Both expose `on_data<U, H>(handler, ctx)`; the handler signature is
+        // `Fn(&mut U, &[u8], bool)` for H1, `Fn(*mut U, &mut h3::Response, &[u8], bool)`
+        // for H3. The concrete `on_buffered_body_chunk` lives on `RequestContext`,
+        // so we route via the type-erased `AnyResponse::on_data` to keep this
+        // generic over the Resp type.
+        let any_resp = uws::AnyResponse::init_from(SSL, H3, resp as *mut Self::Resp as *mut c_void);
+        any_resp.on_data(self as *mut Self, |ctx, chunk, last| {
+            // SAFETY: ctx was registered as `*mut Self` above; uWS keeps it live.
+            Self::on_buffered_body_chunk(ctx, chunk, last);
+        });
+    }
+}
+
 // PORT NOTE: local request/response trait so generic `Ctx::Req` / `Ctx::Resp`
 // call sites can dispatch to either uWS HTTP/1 or HTTP/3 handle types without
 // touching `bun_uws_sys`. Only the surface `prepare_js_request_context_for`
@@ -242,9 +367,9 @@ impl AnyPromiseResultExt for jsc::AnyPromise {
         match self {
             // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
             jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
-            jsc::AnyPromise::Internal(_p) => {
-                todo!("blocked_on: bun_jsc::JSInternalPromise::result")
-            }
+            // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`;
+            // `JSInternalPromise` aliases `JSPromise` (JSInternalPromise.rs).
+            jsc::AnyPromise::Internal(p) => unsafe { (*p).result(vm) },
         }
     }
 }

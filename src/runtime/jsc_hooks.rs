@@ -871,6 +871,208 @@ unsafe fn timer_remove(
     unsafe { (*state).timer.remove(t) };
 }
 
+/// `Node.fs.NodeFS{ .vm = … }` lazy creation — Spec VirtualMachine.zig:827.
+/// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
+///
+/// # Safety
+/// `vm` is the live per-thread VM. The returned box is reclaimed (if at all)
+/// only by VM teardown — Zig leaks it for the main VM as well.
+unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
+    use crate::node::fs::NodeFS;
+    // Spec :829-831 — `.vm` is set only when standalone-module-graph is active
+    // (it gates the embedded-file `Bun.file()` lookups inside `node:fs`).
+    // SAFETY: per fn contract.
+    let vm_field = if unsafe { (*vm).standalone_module_graph.is_some() } {
+        core::ptr::NonNull::new(vm)
+    } else {
+        None
+    };
+    Box::into_raw(Box::new(NodeFS {
+        sync_error_buf: bun_paths::PathBuffer::uninit(),
+        vm: vm_field,
+    }))
+    .cast::<c_void>()
+}
+
+/// `Body.Value.HiveRef.init(body, &vm.body_value_hive_allocator)` — Spec
+/// VirtualMachine.zig:255. `body` is moved by value into the pooled slot.
+///
+/// # Safety
+/// `body` is a `*mut webcore::body::Value` the caller is donating (read-once,
+/// not dropped by the caller). Returns a `*mut webcore::body::HiveRef` erased
+/// to `*mut c_void`.
+unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -> *mut c_void {
+    use crate::webcore::body::{HiveRef, Value};
+    let state = runtime_state();
+    debug_assert!(
+        !state.is_null(),
+        "init_request_body_value before init_runtime_state"
+    );
+    // SAFETY: per fn contract — `body` points at an initialised `Body::Value`
+    // the caller hands over by move; `state` is the live per-thread box and
+    // its `body_value_hive_allocator` `Box` payload is heap-stable for the
+    // VM's lifetime (BACKREF contract on `HiveRef::allocator`).
+    let value = unsafe { core::ptr::read(body.cast::<Value>()) };
+    let allocator: *mut crate::webcore::body::HiveAllocator =
+        unsafe { &mut *(*state).body_value_hive_allocator };
+    match unsafe { HiveRef::init(value, allocator) } {
+        Ok(slot) => slot.cast::<c_void>(),
+        // Spec returns `!*HiveRef` with the only `try` site being the pool
+        // allocation; `bun.handleOom`-style crash matches Zig.
+        Err(_) => bun_core::out_of_memory(),
+    }
+}
+
+/// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
+/// Spec VirtualMachine.zig:1760.
+///
+/// # Safety
+/// Trivially safe; `unsafe` only to match the `RuntimeHooks` slot type.
+unsafe fn has_blob_url(blob_id: &[u8]) -> bool {
+    crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
+}
+
+/// `node_cluster_binding.handleInternalMessageChild(global, data)` — Spec
+/// VirtualMachine.zig:3960 (`IPCInstance.handleIPCMessage` `.internal` arm).
+///
+/// # Safety
+/// `global` is the live VM global; called on the JS thread inside an
+/// `event_loop.enter()` scope.
+unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) {
+    // SAFETY: per fn contract.
+    let global = unsafe { &*global };
+    // Spec discards a JS exception here (`catch |err| switch (err) {
+    // error.JSError => {} }`); the low tier already wrapped this call in
+    // `event_loop.enter()/exit()` which clears any pending exception, so
+    // dropping the `Err` is correct.
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data);
+}
+
+/// `node_cluster_binding.child_singleton.deinit()` — Spec
+/// VirtualMachine.zig:3972 (`IPCInstance.handleIPCClose`).
+///
+/// # Safety
+/// Called on the JS thread (the `CHILD_SINGLETON` static is JS-thread-only).
+unsafe fn ipc_child_singleton_deinit() {
+    // `InternalMsgHolder`'s owned fields (`Strong`s, map, `Vec`) all impl
+    // `Drop`; taking the `Option` runs them — equivalent to Zig `deinit()`.
+    // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
+    unsafe {
+        (*core::ptr::addr_of_mut!(crate::node::node_cluster_binding::CHILD_SINGLETON)).take();
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// VmLoaderVTable — supplies the high-tier bodies for
+// `bun_bundler::options::{normalize_specifier, get_loader_and_virtual_source}`.
+// The low-tier `VirtualMachine::fetch_without_on_load_plugins` constructs a
+// `VmLoaderCtx { vm: vm.cast(), vtable: hooks.vm_loader_vtable }` and threads
+// it through; every fn pointer here recovers the concrete `*const
+// VirtualMachine` / `*mut Blob` from the erased `*const ()` / `OpaqueBlob`.
+// ────────────────────────────────────────────────────────────────────────────
+
+mod vm_loader_vtable {
+    use super::*;
+    use bun_bundler::options::{OpaqueBlob, StringArrayHashMap, VmLoaderVTable};
+    use bun_resolver::package_json::PackageJSON;
+    use crate::webcore::Blob;
+
+    #[inline]
+    unsafe fn vm(p: *const ()) -> *const VirtualMachine {
+        p.cast::<VirtualMachine>()
+    }
+
+    unsafe fn origin_host(p: *const ()) -> &'static [u8] {
+        // SAFETY: `p` is the live per-thread VM erased by the caller; `origin`
+        // is `URL<'static>`.
+        unsafe { (*vm(p)).origin.host }
+    }
+    unsafe fn origin_path(p: *const ()) -> &'static [u8] {
+        // SAFETY: see `origin_host`.
+        unsafe { (*vm(p)).origin.path }
+    }
+    unsafe fn loaders(p: *const ()) -> *const StringArrayHashMap<Loader> {
+        // SAFETY: see `origin_host`.
+        unsafe { &(*vm(p)).transpiler.options.loaders }
+    }
+    unsafe fn eval_source(p: *const ()) -> Option<*const bun_logger::Source> {
+        // SAFETY: see `origin_host`.
+        unsafe { (*vm(p)).module_loader.eval_source.as_deref() }
+            .map(|s| s as *const bun_logger::Source)
+    }
+    unsafe fn main(p: *const ()) -> &'static [u8] {
+        // SAFETY: see `origin_host`.
+        unsafe { (*vm(p)).main }
+    }
+    unsafe fn read_dir_info_package_json(p: *const (), dir: &[u8]) -> Option<*const PackageJSON> {
+        // SAFETY: `p` is the live per-thread VM; `read_dir_info` is re-entrant
+        // on the JS thread and returns interned cache slots.
+        match unsafe { (*vm(p).cast_mut()).transpiler.resolver.read_dir_info(dir) } {
+            Ok(Some(dir_info)) => {
+                // SAFETY: `read_dir_info` returns a stable `*mut DirInfo`
+                // owned by the resolver's interned arena.
+                let dir_info = unsafe { &*dir_info };
+                dir_info
+                    .package_json()
+                    .or(dir_info.enclosing_package_json)
+                    .map(|pj| pj as *const PackageJSON)
+            }
+            _ => None,
+        }
+    }
+    unsafe fn is_blob_url(spec: &[u8]) -> bool {
+        crate::webcore::object_url_registry::is_blob_url(spec)
+    }
+    unsafe fn resolve_blob(spec: &[u8]) -> Option<OpaqueBlob> {
+        crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
+            .resolve_and_dupe(spec)
+            .map(|blob| Box::into_raw(Box::new(blob)).cast::<()>())
+    }
+    unsafe fn blob_loader(b: OpaqueBlob, p: *const ()) -> Option<Loader> {
+        // SAFETY: `b` was produced by `resolve_blob` above; `p` is the live VM.
+        unsafe { (*b.cast::<Blob>()).get_loader(&*vm(p)) }
+    }
+    unsafe fn blob_file_name(b: OpaqueBlob) -> Option<&'static [u8]> {
+        // SAFETY: `b` is a live boxed `Blob`; the returned slice borrows the
+        // blob's heap-owned name buffer, which lives until `blob_deinit`.
+        // Erased to `'static` per the vtable signature — sound because the
+        // bundler caller drops the slice before calling `blob_deinit`.
+        unsafe { (*b.cast::<Blob>()).get_file_name() }
+            .map(|s| unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+    }
+    unsafe fn blob_needs_read_file(b: OpaqueBlob) -> bool {
+        // SAFETY: `b` is a live boxed `Blob`.
+        unsafe { (*b.cast::<Blob>()).needs_to_read_file() }
+    }
+    unsafe fn blob_shared_view(b: OpaqueBlob) -> &'static [u8] {
+        // SAFETY: `b` is a live boxed `Blob`; lifetime erased per
+        // `blob_file_name`'s rationale.
+        let v = unsafe { (*b.cast::<Blob>()).shared_view() };
+        unsafe { core::slice::from_raw_parts(v.as_ptr(), v.len()) }
+    }
+    unsafe fn blob_deinit(b: OpaqueBlob) {
+        // SAFETY: `b` was produced by `Box::into_raw` in `resolve_blob` above.
+        drop(unsafe { Box::from_raw(b.cast::<Blob>()) });
+    }
+
+    pub static VM_LOADER_VTABLE: VmLoaderVTable = VmLoaderVTable {
+        origin_host,
+        origin_path,
+        loaders,
+        eval_source,
+        main,
+        read_dir_info_package_json,
+        is_blob_url,
+        resolve_blob,
+        blob_loader,
+        blob_file_name,
+        blob_needs_read_file,
+        blob_shared_view,
+        blob_deinit,
+    };
+}
+pub use vm_loader_vtable::VM_LOADER_VTABLE;
+
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.
 pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
@@ -883,6 +1085,12 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     print_exception,
     timer_insert,
     timer_remove,
+    create_node_fs,
+    init_request_body_value,
+    has_blob_url,
+    vm_loader_vtable: &VM_LOADER_VTABLE,
+    handle_ipc_internal_child,
+    ipc_child_singleton_deinit,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

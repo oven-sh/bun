@@ -1051,7 +1051,10 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         let mut task = Box::new(Self {
             promise: JSPromiseStrong::init(global_object),
             args,
-            result: unsafe { core::mem::zeroed() }, // SAFETY: written before read
+            // Sentinel — overwritten by `work_pool_callback` before any read on
+            // the JS thread. `Maybe<R>` is `Result<R, sys::Error>` and may be
+            // niche-optimised; never construct an all-zero `Result` value.
+            result: Maybe::Err(sys::Error::default()),
             global_object: global_object as *const _,
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
@@ -1324,8 +1327,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             promise: if enable_promise { JSPromiseStrong::init(global_object) } else { JSPromiseStrong::default() },
             args: cp_args,
             has_result: AtomicBool::new(false),
-            // SAFETY: all-zero is a valid Maybe<ret::Cp>; written before read
-            result: core::cell::UnsafeCell::new(unsafe { core::mem::zeroed() }),
+            // Sentinel — overwritten by `finish_concurrently` (gated by the
+            // `has_result` CAS) before any read on the JS thread.
+            result: core::cell::UnsafeCell::new(Maybe::Ok(())),
             evtloop: EventLoopHandle::init(vm.event_loop.cast()),
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
@@ -1356,8 +1360,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             promise: JSPromiseStrong::default(),
             args: cp_args,
             has_result: AtomicBool::new(false),
-            // SAFETY: all-zero is a valid Maybe<ret::Cp>; written before read
-            result: core::cell::UnsafeCell::new(unsafe { core::mem::zeroed() }),
+            // Sentinel — overwritten by `finish_concurrently` (gated by the
+            // `has_result` CAS) before any read on the JS thread.
+            result: core::cell::UnsafeCell::new(Maybe::Ok(())),
             evtloop: EventLoopHandle::Mini(mini),
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),

@@ -878,15 +878,19 @@ impl<'a> PackageInstaller<'a> {
 
     /// Call when you mutate the length of `lockfile.packages`
     pub fn fix_cached_lockfile_package_slices(&mut self) {
-        let packages = self.lockfile.packages.slice();
-        // TODO(port): these reassign &'a [T] fields from a &'a mut Lockfile borrow — borrowck
-        // conflict. Phase B: make these fields raw `*const [T]` or recompute on demand.
-        self.metas = packages.items_meta();
-        self.names = packages.items_name();
-        self.pkg_name_hashes = packages.items_name_hash();
-        self.bins = packages.items_bin();
-        self.resolutions = packages.items_resolution_mut();
-        self.pkg_dependencies = packages.items_dependencies();
+        // PORT NOTE: these `&'a [T]` fields alias into `self.lockfile.packages` (BACKREF).
+        // Borrowck rejects reassigning `&'a [T]` from a `&'a mut Lockfile` borrow inside a
+        // method, so detach the lifetime via raw pointers (Zig stored raw slice ptr+len).
+        // SAFETY: `self.lockfile: &'a mut Lockfile` outlives `'a`; the packages buffer is
+        // not freed for the lifetime of this `PackageInstaller` (only grows, which is why
+        // this fn exists — to re-point after growth).
+        let mut packages = self.lockfile.packages.slice();
+        self.metas = unsafe { &*(packages.items_meta() as *const [_]) };
+        self.names = unsafe { &*(packages.items_name() as *const [_]) };
+        self.pkg_name_hashes = unsafe { &*(packages.items_name_hash() as *const [_]) };
+        self.bins = unsafe { &*(packages.items_bin() as *const [_]) };
+        self.resolutions = unsafe { &mut *(packages.items_resolution_mut() as *mut [_]) };
+        self.pkg_dependencies = unsafe { &*(packages.items_dependencies() as *const [_]) };
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
@@ -1929,7 +1933,7 @@ impl<'a> PackageInstaller<'a> {
                             cause.err,
                             "failed {} for package <b>{}<r>",
                             (
-                                cause.step.name(),
+                                bstr::BStr::new(cause.step.name()),
                                 bstr::BStr::new(
                                     self.names[package_id as usize]
                                         .slice(self.lockfile.buffers.string_bytes.as_slice()),
@@ -1939,7 +1943,7 @@ impl<'a> PackageInstaller<'a> {
                         #[cfg(debug_assertions)]
                         {
                             let mut t = cause.debug_trace;
-                            bun_crash_handler::dump_stack_trace(t.trace(), Default::default());
+                            bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());
                         }
                         self.summary.fail += 1;
                     }

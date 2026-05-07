@@ -243,7 +243,13 @@ impl JSBundleCompletionTask {
         // SAFETY: `global_this` was stashed at construction on the JS thread; this
         // callback runs on that same thread (enqueued via `enqueue_task_concurrent`).
         let global_this = unsafe { &*this.global_this };
-        let promise = this.promise.swap();
+        // PORT NOTE: `Strong::swap` ties the returned `&mut JSPromise` to
+        // `&mut this.promise` even though the cell lives on the GC heap (raw
+        // ptr deref inside). Detach via raw ptr so `this` can be reborrowed
+        // for `result`/`config`/`log` below — Zig stored `*JSPromise`.
+        let promise: *mut JSPromise = this.promise.swap();
+        // SAFETY: GC-owned cell; valid for the duration of this JS-thread callback.
+        let promise = unsafe { &mut *promise };
 
         if let BundleV2Result::Value(_) = &this.result {
             if this.config.compile.is_some() {
@@ -263,9 +269,15 @@ impl JSBundleCompletionTask {
             }
         }
 
-        match &mut this.result {
+        // PORT NOTE: reshaped for borrowck — `to_js_error` borrows `&mut self`,
+        // which would overlap a `&mut this.result` match scrutinee. Dispatch
+        // the pending/err arms first, then take a fresh `&mut` for Value.
+        match this.result {
             BundleV2Result::Pending => unreachable!(),
-            BundleV2Result::Err(_) => this.to_js_error(promise, global_this)?,
+            BundleV2Result::Err(_) => return Ok(this.to_js_error(promise, global_this)?),
+            BundleV2Result::Value(_) => {}
+        }
+        match &mut this.result {
             BundleV2Result::Value(build) => {
                 let output_files = &mut build.output_files;
                 let output_files_js =

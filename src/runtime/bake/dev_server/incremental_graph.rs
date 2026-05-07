@@ -1708,6 +1708,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
         list.extend_from_slice(&end_list);
+
+        #[cfg(feature = "bake_debugging_features")]
+        // SAFETY: sibling-field access via `owner()`; `dump_dir` is disjoint.
+        if let Some(dump_dir) = unsafe { (*dev).dump_dir.as_mut() } {
+            let rel_path_escaped: &[u8] = match kind {
+                ChunkKind::InitialResponse => b"latest_chunk.js",
+                ChunkKind::HmrChunk => b"latest_hmr.js",
+            };
+            if let Err(err) = crate::bake::dev_server_body::dump_bundle(
+                dump_dir, bake::Graph::Client, rel_path_escaped, &list[start..], false,
+            ) {
+                bun_core::Output::warn(format_args!("Could not dump bundle: {}", err));
+            }
+        }
         let _ = start;
         Ok(())
     }
@@ -1733,12 +1747,28 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let end: &[u8] = b"})";
 
         let runtime_code = runtime.code.as_bytes();
+        let start = list.len();
         list.reserve_exact(self.current_chunk_len + runtime_code.len() + end.len());
         list.extend_from_slice(runtime_code);
         for code in &self.current_chunk_code {
             list.extend_from_slice(code);
         }
         list.extend_from_slice(end);
+
+        #[cfg(feature = "bake_debugging_features")]
+        // SAFETY: sibling-field access via `owner()`; `dump_dir` is disjoint.
+        if let Some(dump_dir) = unsafe { (*self.owner()).dump_dir.as_mut() } {
+            let rel_path_escaped: &[u8] = match options.kind {
+                ChunkKind::InitialResponse => b"latest_chunk.js",
+                ChunkKind::HmrChunk => b"latest_hmr.js",
+            };
+            if let Err(err) = crate::bake::dev_server_body::dump_bundle(
+                dump_dir, bake::Graph::Server, rel_path_escaped, &list[start..], false,
+            ) {
+                bun_core::Output::warn(format_args!("Could not dump bundle: {}", err));
+            }
+        }
+        let _ = start;
         Ok(())
     }
 

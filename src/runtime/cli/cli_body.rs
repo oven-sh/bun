@@ -742,8 +742,11 @@ pub mod command {
                             bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
                         }
 
-                        // Store the full argv including user arguments
-                        let full_argv: &'static [&'static ZStr] = argv_list.leak();
+                        // Store the full argv including user arguments. The
+                        // rebuilt vector is parked in process-static storage
+                        // by `intern_argv` (OnceLock-backed) so subslices are
+                        // `'static` without `Vec::leak`.
+                        let full_argv: &'static [&'static ZStr] = bun::intern_argv(argv_list);
                         let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
                         // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
@@ -757,7 +760,7 @@ pub mod command {
                         // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                         // This prevents user arguments like --version/--help from being intercepted
                         // by Bun's argument parser (they should be passed through to user code).
-                        // SAFETY: single-threaded startup; `full_argv` is a leaked &'static slice.
+                        // SAFETY: single-threaded startup; `full_argv` is process-static.
                         unsafe {
                             bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
                         }
@@ -1412,7 +1415,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
             None,
         )
     }
-    }
 
     fn bun_lockb(ctx: Context) -> Result<(), bun_core::Error> {
         for arg in bun::argv() {
@@ -1551,13 +1553,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                             break;
                         }
                     }
-                    // `commands` is `&'static [..]`; the stack array's elements are already
-                    // `&'static [u8]` (from add_completions tables). Leak the outer slice for
-                    // process lifetime — print() runs immediately and the process exits after.
-                    completions.commands = Box::leak(
-                        prefilled_completions[0..prefilled_i]
-                            .to_vec()
-                            .into_boxed_slice(),
+                    // Elements are `&'static [u8]` (from `add_completions` tables);
+                    // the outer slice is owned by the `ShellCompletions` value
+                    // until `print()` consumes it.
+                    completions.commands = std::borrow::Cow::Owned(
+                        prefilled_completions[0..prefilled_i].to_vec(),
                     );
                 }
             }
@@ -1682,14 +1682,17 @@ To create a project with the official Next.js scaffolding tool, run
             if dash_dash_bun {
                 bunx_args.push(bun_core::zstr!("--bun"));
             }
-            // `add_create_prefix` returns an owned NUL-terminated buffer; leak it
-            // for the process lifetime so the &ZStr stays valid through exec().
+            // `add_create_prefix` returns an owned NUL-terminated buffer. `bun
+            // create` is a one-shot CLI subcommand that ends in `exec()`/`exit()`,
+            // so the prefixed package name is a true process singleton — park the
+            // owning `ZBox` in a `OnceLock` so the `&'static ZStr` borrow is sound
+            // without `Box::leak`/`transmute` (PORTING.md §Forbidden patterns).
+            static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> =
+                std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
-            let prefixed: &'static ZStr =
-                Box::leak(Box::new(bun_core::ZBox::from_vec(prefixed))).as_zstr();
-            // SAFETY: backing ZBox was leaked; storage is process-static.
-            let prefixed: &'static ZStr =
-                unsafe { core::mem::transmute::<&ZStr, &'static ZStr>(prefixed) };
+            let prefixed: &'static ZStr = CREATE_PREFIX
+                .get_or_init(|| bun_core::ZBox::from_vec_with_nul(prefixed))
+                .as_zstr();
             bunx_args.push(prefixed);
             debug_assert_eq!(
                 bunx_args.capacity() - bunx_args.len(),

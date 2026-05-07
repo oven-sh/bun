@@ -341,7 +341,7 @@ impl SocketAddress {
                     family: options.family.int(),
                     port: options.port.to_be(),
                     addr: 0, // undefined → overwritten below
-                    ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in is #[repr(C)] POD
+                    ..inet::sockaddr_in::ZEROED
                 };
                 if let Some(address_str) = options.address {
                     presentation = address_str;

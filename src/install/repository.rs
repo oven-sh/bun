@@ -1,4 +1,3 @@
-use core::cell::UnsafeCell;
 use core::cmp::Ordering;
 use core::fmt;
 use std::sync::Once;
@@ -32,12 +31,11 @@ struct TlBufs {
 }
 
 thread_local! {
-    static TL_BUFS: UnsafeCell<TlBufs> = const { UnsafeCell::new(TlBufs {
-        final_path_buf: PathBuffer::ZEROED,
-        ssh_path_buf: PathBuffer::ZEROED,
-        folder_name_buf: PathBuffer::ZEROED,
-        json_path_buf: PathBuffer::ZEROED,
-    }) };
+    // bun.ThreadlocalBuffers: store only a pointer in TLS; lazily heap-allocate the
+    // 4×PathBuffer payload on first use so the static-TLS template stays small
+    // (see test/js/bun/binary/tls-segment-size).
+    static TL_BUFS: core::cell::Cell<*mut TlBufs> =
+        const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
 
 fn tl_bufs() -> *mut TlBufs {
@@ -62,7 +60,19 @@ fn tl_bufs() -> *mut TlBufs {
     //   `try_ssh`/`try_https` can return slices into the buffer, mirroring the Zig API.
     //   Callers must not retain a slice into a given field across a subsequent reborrow
     //   of that SAME field.
-    TL_BUFS.with(|b| b.get())
+    TL_BUFS.with(|c| {
+        let mut p = c.get();
+        if p.is_null() {
+            p = Box::into_raw(Box::new(TlBufs {
+                final_path_buf: PathBuffer::ZEROED,
+                ssh_path_buf: PathBuffer::ZEROED,
+                folder_name_buf: PathBuffer::ZEROED,
+                json_path_buf: PathBuffer::ZEROED,
+            }));
+            c.set(p);
+        }
+        p
+    })
 }
 
 #[derive(Clone, Copy, Default)]

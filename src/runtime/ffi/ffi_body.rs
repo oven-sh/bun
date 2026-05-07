@@ -136,11 +136,12 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_str::String]) -> JsR
     Ok(arr)
 }
 
-// `bun_tcc_sys` is an un-gated workspace crate (B-2) and is now a direct dep of
-// `bun_runtime`, so import it unconditionally. The `feature = "tinycc"` flag
-// (wired by build.rs in Phase C) only governs *runtime availability* via the
-// early-return guards in the host-fns below — type resolution for
-// `TCC::{Config, ConfigErr, OutputFormat, State}` must succeed regardless.
+// `bun_tcc_sys` is an un-gated workspace crate and a direct dep of
+// `bun_runtime`, so import it unconditionally. Runtime availability is governed
+// by `bun_core::Environment::ENABLE_TINYCC` (mirrors Zig
+// `Environment.enable_tinycc`) via the early-return guards in the host-fns
+// below — type resolution for `TCC::{Config, ConfigErr, OutputFormat, State}`
+// must succeed regardless.
 use bun_tcc_sys as TCC;
 
 bun_output::declare_scope!(TCC, visible);

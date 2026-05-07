@@ -387,18 +387,29 @@ pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
     longest_common_path_generic::<platform::Posix>(input)
 }
 
-// PORT NOTE: bun.ThreadlocalBuffers(struct {...}) is a typed thread-local pool.
-// Represented as three independent `UnsafeCell<PathBuffer>` thread-locals so that
-// `relative_platform_buf` can hold disjoint `&mut` to from/to buffers while
-// `relative_to_common_path_buf()` is borrowed elsewhere without aliasing a single
-// parent payload. See the SAFETY invariant on PARSER_BUFFER above.
+// PORT NOTE: bun.ThreadlocalBuffers(struct {...}) heap-allocates on first use and
+// stores only a pointer in TLS. Represented as three independent lazily-boxed
+// thread-locals so that `relative_platform_buf` can hold disjoint `&mut` to
+// from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
+// without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
+// of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
 thread_local! {
-    static RELATIVE_TO_COMMON_PATH_BUF: UnsafeCell<PathBuffer> =
-        const { UnsafeCell::new(PathBuffer::ZEROED) };
-    static RELATIVE_FROM_BUF: UnsafeCell<PathBuffer> =
-        const { UnsafeCell::new(PathBuffer::ZEROED) };
-    static RELATIVE_TO_BUF: UnsafeCell<PathBuffer> =
-        const { UnsafeCell::new(PathBuffer::ZEROED) };
+    static RELATIVE_TO_COMMON_PATH_BUF: core::cell::Cell<*mut PathBuffer> =
+        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static RELATIVE_FROM_BUF: core::cell::Cell<*mut PathBuffer> =
+        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static RELATIVE_TO_BUF: core::cell::Cell<*mut PathBuffer> =
+        const { core::cell::Cell::new(core::ptr::null_mut()) };
+}
+
+#[inline]
+fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> *mut PathBuffer {
+    let mut p = c.get();
+    if p.is_null() {
+        p = Box::into_raw(Box::new(PathBuffer::ZEROED));
+        c.set(p);
+    }
+    p
 }
 
 /// Raw pointer into the thread-local scratch buffer. Callers reborrow
@@ -407,7 +418,7 @@ thread_local! {
 /// pointer semantics).
 #[inline]
 pub fn relative_to_common_path_buf() -> *mut PathBuffer {
-    RELATIVE_TO_COMMON_PATH_BUF.with(|b| b.get())
+    RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf)
 }
 
 /// Find a relative path from a common path
@@ -692,12 +703,12 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     from: &[u8],
     to: &[u8],
 ) -> &'a [u8] {
-    // SAFETY: thread-local UnsafeCell; RELATIVE_FROM_BUF and RELATIVE_TO_BUF are
-    // independent cells so the two `&mut` borrows below are disjoint. Single live
-    // borrow per cell per thread (see invariant on PARSER_BUFFER).
-    let relative_from_buf = RELATIVE_FROM_BUF.with(|b| unsafe { &mut *b.get() });
-    // SAFETY: see above — disjoint thread-local UnsafeCell.
-    let relative_to_buf = RELATIVE_TO_BUF.with(|b| unsafe { &mut *b.get() });
+    // SAFETY: thread-local lazily-boxed buffers; RELATIVE_FROM_BUF and RELATIVE_TO_BUF
+    // are independent allocations so the two `&mut` borrows below are disjoint. Single
+    // live borrow per buffer per thread (see invariant on PARSER_BUFFER).
+    let relative_from_buf = unsafe { &mut *RELATIVE_FROM_BUF.with(lazy_path_buf) };
+    // SAFETY: see above — disjoint thread-local allocation.
+    let relative_to_buf = unsafe { &mut *RELATIVE_TO_BUF.with(lazy_path_buf) };
 
     let normalized_from: &[u8] = if P::P.is_absolute(from) {
         'brk: {

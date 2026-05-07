@@ -859,7 +859,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // heap pointer now (Zig: `allocator.dupe` + never-free) so the address
         // is stable for both `set_main` and the `RUN` write below. The runner
         // never returns, so the allocation is process-lifetime by construction.
-        let entry_ptr: *const [u8] = Box::into_raw(entry_path);
+        // `mut` because the cron-execution branch below may swap in a synthetic
+        // `cwd/[eval]` path (Zig: `run.entry_path = heap_entry_path`).
+        let mut entry_ptr: *const [u8] = Box::into_raw(entry_path);
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
         let entry: &[u8] = unsafe { &*entry_ptr };
         vm.set_main(entry);
@@ -879,6 +881,45 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
+        } else if !ctx.runtime_options.cron_title.is_empty()
+            && !ctx.runtime_options.cron_period.is_empty()
+        {
+            // Cron execution mode (bun.js.zig:213-244): wrap the entry point in
+            // a script that imports the module and calls
+            // `default.scheduled(controller)`. The synthetic source is keyed at
+            // `cwd/[eval]` so the module loader serves it from `eval_source`.
+            let escaped_path = escape_for_js_string(entry);
+            let escaped_period = escape_for_js_string(&ctx.runtime_options.cron_period);
+            let cron_script = format!(
+                "const mod = await import(\"{path}\");\n\
+                 const scheduled = (mod.default || mod).scheduled;\n\
+                 if (typeof scheduled !== \"function\") throw new Error(\"Module does not export default.scheduled()\");\n\
+                 const controller = {{ cron: \"{period}\", type: \"scheduled\", scheduledTime: Date.now() }};\n\
+                 await scheduled(controller);\n",
+                path = bstr::BStr::new(&escaped_path),
+                period = bstr::BStr::new(&escaped_period),
+            );
+            // PORT NOTE: process-lifetime (runner never returns) — leak both
+            // the script bytes and the synthetic entry path so the `Source`
+            // stored in the VM can backref into them (Zig: `allocPrint` +
+            // `dupe` + never-free).
+            let cron_script: &'static [u8] = Box::leak(cron_script.into_bytes().into_boxed_slice());
+
+            // entry_path must end with /[eval] for the transpiler to use eval_source
+            let mut cwd_buf = PathBuffer::uninit();
+            let cwd = bun_core::getcwd(&mut cwd_buf)?;
+            let cwd_bytes = cwd.as_bytes();
+            let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
+            eval_path.extend_from_slice(cwd_bytes);
+            eval_path.extend_from_slice(EVAL_TRIGGER);
+            let heap_entry: &'static [u8] = Box::leak(eval_path.into_boxed_slice());
+
+            vm.module_loader.eval_source =
+                Some(Box::new(bun_logger::Source::init_path_string(heap_entry, cron_script)));
+            // Zig: `run.entry_path = heap_entry_path` — override what
+            // `Run::start` will pass to `vm.load_entry_point`.
+            entry_ptr = std::ptr::from_ref::<[u8]>(heap_entry);
+            vm.set_main(heap_entry);
         }
 
         // ctx → transpiler/resolver option mapping (bun.js.zig:247-275).
@@ -3065,6 +3106,30 @@ impl RunCommand {
 const EVAL_TRIGGER: &[u8] = b"\\[eval]";
 #[cfg(not(windows))]
 const EVAL_TRIGGER: &[u8] = b"/[eval]";
+
+/// Port of `escapeForJSString` (bun.js.zig:615) — escape `\ " \n \r \t` for
+/// embedding in a double-quoted JS string literal. Used by the cron-execution
+/// wrapper script to inline the entry path and cron period.
+fn escape_for_js_string(input: &[u8]) -> Vec<u8> {
+    if !input
+        .iter()
+        .any(|&c| matches!(c, b'\\' | b'"' | b'\n' | b'\r' | b'\t'))
+    {
+        return input.to_vec();
+    }
+    let mut result: Vec<u8> = Vec::with_capacity(input.len() + 16);
+    for &c in input {
+        match c {
+            b'\\' => result.extend_from_slice(b"\\\\"),
+            b'"' => result.extend_from_slice(b"\\\""),
+            b'\n' => result.extend_from_slice(b"\\n"),
+            b'\r' => result.extend_from_slice(b"\\r"),
+            b'\t' => result.extend_from_slice(b"\\t"),
+            _ => result.push(c),
+        }
+    }
+    result
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ::core::marker::ConstParamTy)]
 pub enum Filter { Script, Bin, BunJs, All, AllPlusBunJs, ScriptExclude, ScriptAndDescriptions }

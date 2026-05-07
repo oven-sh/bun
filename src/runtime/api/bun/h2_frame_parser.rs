@@ -1124,11 +1124,15 @@ const MAX_BUFFER_SIZE: u32 = 32768;
 type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
 
 thread_local! {
-    static CORK_BUFFER: RefCell<[u8; 16386]> = const { RefCell::new([0u8; 16386]) };
+    // Boxed so only a pointer lives in static TLS — these two buffers are 32 KB
+    // combined and would otherwise dominate PT_TLS MemSiz on every thread
+    // (see test/js/bun/binary/tls-segment-size). Lazily allocated on first
+    // HTTP/2 access; threads that never touch h2 pay nothing.
+    static CORK_BUFFER: RefCell<Box<[u8; 16386]>> = RefCell::new(Box::new([0u8; 16386]));
     static CORK_OFFSET: Cell<u16> = const { Cell::new(0) };
     static CORKED_H2: Cell<Option<*mut H2FrameParser>> = const { Cell::new(None) };
     static POOL: RefCell<Option<Box<H2FrameParserHiveAllocator>>> = const { RefCell::new(None) };
-    static SHARED_REQUEST_BUFFER: RefCell<[u8; 16384]> = const { RefCell::new([0u8; 16384]) };
+    static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
 }
 
 #[bun_jsc::JsClass]

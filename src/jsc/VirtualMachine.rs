@@ -2734,9 +2734,22 @@ fn normalize_specifier_for_resolution<'a>(
 }
 
 thread_local! {
-    /// Spec VirtualMachine.zig:1722 `specifier_cache_resolver_bufs`.
-    static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::UnsafeCell<bun_paths::PathBuffer> =
-        const { core::cell::UnsafeCell::new(bun_paths::PathBuffer::ZEROED) };
+    /// Spec VirtualMachine.zig:1722 `specifier_cache_resolver_bufs` (bun.ThreadlocalBuffers —
+    /// heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size).
+    static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
+        const { core::cell::Cell::new(core::ptr::null_mut()) };
+}
+
+#[inline]
+fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
+    SPECIFIER_CACHE_RESOLVER_BUF.with(|c| {
+        let mut p = c.get();
+        if p.is_null() {
+            p = Box::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
+            c.set(p);
+        }
+        p
+    })
 }
 
 fn ensure_source_code_printer() {
@@ -3835,11 +3848,9 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
-                    // SAFETY: thread-local; sole `&mut` on the JS thread for
-                    // the duration of the bust below.
-                    let buf = SPECIFIER_CACHE_RESOLVER_BUF
-                        .with(|b| unsafe { &mut *b.get() })
-                        .as_mut_slice();
+                    // SAFETY: thread-local heap allocation; sole `&mut` on the JS
+                    // thread for the duration of the bust below.
+                    let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {

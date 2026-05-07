@@ -724,26 +724,35 @@ impl<T, const N: usize> SmallList<T, N> {
                 drop(Vec::from_raw_parts(ptr_, 0, cap as usize));
             }
         } else if new_cap != cap {
-            let new_alloc: *mut T = if unspilled {
+            // Both arms record the *actual* capacity the allocator handed back,
+            // not `new_cap`. `Vec::with_capacity` / `reserve_exact` may
+            // over-allocate; reconstructing later via `Vec::from_raw_parts`
+            // with a mismatched capacity is UB and corrupts subsequent reallocs.
+            // (Zig's `allocator.alloc(T, new_cap)` returns exactly `new_cap`
+            // items, so the .zig spec stores `new_cap` directly — Rust's Vec
+            // does not give that guarantee.)
+            if unspilled {
                 // SAFETY: ptr_ points to inlined storage with `length` initialized elements
                 let mut new_alloc: Vec<T> = Vec::with_capacity(new_cap as usize);
+                let actual_cap = new_alloc.capacity();
                 let new_ptr = new_alloc.as_mut_ptr();
                 core::mem::forget(new_alloc);
                 unsafe { ptr::copy_nonoverlapping(ptr_, new_ptr, length as usize) };
-                new_ptr
+                self.data = Data { heap: HeapData { ptr: new_ptr, len: length } };
+                self.capacity = u32::try_from(actual_cap).expect("int cast");
             } else {
                 // SAFETY: ptr_ is heap ptr allocated with capacity `cap` via global arena
                 // PERF(port): was arena.realloc — using Vec reserve_exact
                 unsafe {
                     let mut v = Vec::from_raw_parts(ptr_, length as usize, cap as usize);
                     v.reserve_exact((new_cap - length) as usize);
+                    let actual_cap = v.capacity();
                     let new_ptr = v.as_mut_ptr();
                     core::mem::forget(v);
-                    new_ptr
+                    self.data = Data { heap: HeapData { ptr: new_ptr, len: length } };
+                    self.capacity = u32::try_from(actual_cap).expect("int cast");
                 }
-            };
-            self.data = Data { heap: HeapData { ptr: new_alloc, len: length } };
-            self.capacity = new_cap;
+            }
         }
     }
 
@@ -778,6 +787,8 @@ impl<T, const N: usize> SmallList<T, N> {
         debug_assert!(!self.spilled());
         let new_size = grow_capacity(self.capacity, self.capacity + u32::try_from(additional).expect("int cast"));
         let mut slc: Vec<T> = Vec::with_capacity(new_size as usize);
+        // Record actual capacity (may exceed `new_size`); see try_grow note.
+        let actual_cap = slc.capacity();
         let slc_ptr = slc.as_mut_ptr();
         core::mem::forget(slc);
         // SAFETY: !spilled => inlined active with `capacity` initialized elements
@@ -789,7 +800,7 @@ impl<T, const N: usize> SmallList<T, N> {
             );
         }
         self.data = Data { heap: HeapData { len: self.capacity, ptr: slc_ptr } };
-        self.capacity = new_size;
+        self.capacity = u32::try_from(actual_cap).expect("int cast");
     }
 
     #[inline]

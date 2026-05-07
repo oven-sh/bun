@@ -28,6 +28,6 @@ bun_platform.workspace = true
 
 # Phase-C: bun_runtime now compiles green; pulled in for `Cli::start()`.
 # bun_jsc remains gated until the JSC bridge links.
-# default-features = false: keep bun_css off the `bun-rs -e` path.
-bun_runtime = { workspace = true, default-features = false }
+# `css` re-enabled for phase-g test parity (Bun.color(), css internals).
+bun_runtime = { workspace = true, features = ["css"] }
 # bun_jsc.workspace = true

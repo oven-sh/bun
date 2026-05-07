@@ -609,9 +609,11 @@ impl EventLoop {
     pub fn tick(&mut self) {
         jsc::mark_binding();
         // PORT NOTE: `TopExceptionScope` is placement-constructed into its
-        // `bytes` field, so `scope` MUST NOT move after binding (no NRVO
-        // guarantee in Rust). It is held by value here and only borrowed.
-        let mut scope = jsc::TopExceptionScope::init(self.global_ref());
+        // `bytes` field, so its storage MUST NOT move after init (no NRVO
+        // guarantee in Rust). Stack-allocate the slot here and hand `init`
+        // its final address.
+        let mut scope_storage = core::mem::MaybeUninit::uninit();
+        let scope = jsc::TopExceptionScope::init(&mut scope_storage, self.global_ref());
         self.entered_event_loop_count += 1;
         self.debug.enter();
         // PORT NOTE: reshaped for borrowck — Zig
@@ -642,7 +644,7 @@ impl EventLoop {
                 self.entered_event_loop_count -= 1;
                 self.debug.exit();
                 // SAFETY: `scope` was init'd above and not moved.
-                unsafe { jsc::TopExceptionScope::destroy(&mut scope) };
+                unsafe { jsc::TopExceptionScope::destroy(scope) };
                 return;
             }
             self.tick_concurrent();
@@ -661,7 +663,7 @@ impl EventLoop {
         self.entered_event_loop_count -= 1;
         self.debug.exit();
         // SAFETY: `scope` was init'd above and not moved.
-        unsafe { jsc::TopExceptionScope::destroy(&mut scope) };
+        unsafe { jsc::TopExceptionScope::destroy(scope) };
     }
 
     /// Tick the task queue without draining microtasks afterward.

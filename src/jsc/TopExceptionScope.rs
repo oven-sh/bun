@@ -60,18 +60,40 @@ impl TopExceptionScope {
     /// symmetry with `ExceptionValidationScope::new` so call sites can pass
     /// `Location::caller()` uniformly.
     #[track_caller]
-    pub fn new(global: &JSGlobalObject, _src: &'static core::panic::Location<'static>) -> Self {
-        Self::init(global)
+    pub fn new<'a>(
+        storage: &'a mut core::mem::MaybeUninit<Self>,
+        global: &JSGlobalObject,
+        _src: &'static core::panic::Location<'static>,
+    ) -> &'a mut Self {
+        Self::init(storage, global)
     }
 
+    /// Construct in caller-owned storage. The C++ `ExceptionScope` ctor stores
+    /// `&bytes` into `vm.m_topExceptionScope`, so the storage address must be
+    /// stable from before this call until [`destroy`](Self::destroy) — which
+    /// rules out a `-> Self` return (Rust does not guarantee NRVO, and ASAN's
+    /// stack redzones make the local/return-slot mismatch observable).
+    ///
+    /// Typical use:
+    /// ```ignore
+    /// let mut storage = core::mem::MaybeUninit::uninit();
+    /// let scope = TopExceptionScope::init(&mut storage, global);
+    /// // ... use `scope` ...
+    /// unsafe { TopExceptionScope::destroy(scope) };
+    /// ```
     #[track_caller]
-    pub fn init(global: &JSGlobalObject) -> Self {
+    pub fn init<'a>(
+        storage: &'a mut core::mem::MaybeUninit<Self>,
+        global: &JSGlobalObject,
+    ) -> &'a mut Self {
         let loc = core::panic::Location::caller();
-        let mut this = Self {
+        // Seat the Rust struct first (zeroed bytes; `location` null) so
+        // `init_in_place` sees a valid `&mut Self` at its final address.
+        let this = storage.write(Self {
             bytes: [0u8; SIZE],
             #[cfg(feature = "ci_assert")]
             location: core::ptr::null(),
-        };
+        });
         this.init_in_place(
             global,
             SourceLocation {
@@ -251,32 +273,54 @@ pub struct ExceptionValidationScope {
 }
 
 impl ExceptionValidationScope {
-    /// Value-returning convenience constructor — see [`TopExceptionScope::init`].
-    /// When `ci_assert` is off this is a no-op ZST, so the move-after-init caveat
-    /// does not apply; with `ci_assert` on, the same Pin caveat as `TopExceptionScope` holds.
+    /// See [`TopExceptionScope::init`] for the storage-passing rationale.
+    /// When `ci_assert` is off this is a no-op ZST and the storage indirection
+    /// is purely for signature uniformity; with `ci_assert` on, the address
+    /// must be stable (same constraint as `TopExceptionScope`).
     ///
     /// `src` is currently advisory (forwarded to the C++ scope when `ci_assert`
     /// is enabled via `init_in_place` callers); kept in the signature so call
     /// sites can pass `core::panic::Location::caller()` today and the value
     /// flows through once the C++ side consumes it.
     #[track_caller]
-    pub fn new(global: &JSGlobalObject, _src: &'static core::panic::Location<'static>) -> Self {
-        Self::init(global)
+    pub fn new<'a>(
+        storage: &'a mut core::mem::MaybeUninit<Self>,
+        global: &JSGlobalObject,
+        _src: &'static core::panic::Location<'static>,
+    ) -> &'a mut Self {
+        Self::init(storage, global)
     }
 
-    /// Value-returning convenience constructor — see [`TopExceptionScope::init`].
-    /// When `ci_assert` is off this is a no-op ZST, so the move-after-init caveat
-    /// does not apply; with `ci_assert` on, the same Pin caveat as `TopExceptionScope` holds.
+    /// See [`TopExceptionScope::init`] for the storage-passing rationale.
     #[track_caller]
-    pub fn init(global: &JSGlobalObject) -> Self {
+    pub fn init<'a>(
+        storage: &'a mut core::mem::MaybeUninit<Self>,
+        global: &JSGlobalObject,
+    ) -> &'a mut Self {
         #[cfg(feature = "ci_assert")]
         {
-            Self { scope: TopExceptionScope::init(global) }
+            // Reinterpret the outer storage as storage for the inner
+            // `TopExceptionScope` — the wrapper has no other fields under
+            // `ci_assert`, so layouts match exactly.
+            const _: () = assert!(
+                core::mem::size_of::<ExceptionValidationScope>()
+                    == core::mem::size_of::<TopExceptionScope>()
+                    && core::mem::align_of::<ExceptionValidationScope>()
+                        == core::mem::align_of::<TopExceptionScope>()
+            );
+            // SAFETY: layout assertion above; `MaybeUninit<T>` is `repr(transparent)`.
+            let inner = unsafe {
+                &mut *(storage as *mut core::mem::MaybeUninit<Self>
+                    as *mut core::mem::MaybeUninit<TopExceptionScope>)
+            };
+            TopExceptionScope::init(inner, global);
+            // SAFETY: `init` fully initialized the sole field.
+            unsafe { storage.assume_init_mut() }
         }
         #[cfg(not(feature = "ci_assert"))]
         {
             let _ = global;
-            Self { scope: () }
+            storage.write(Self { scope: () })
         }
     }
 

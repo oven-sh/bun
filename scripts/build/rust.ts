@@ -200,6 +200,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   };
   if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;
+  // Pin explicitly so this and the cargo deps (lolhtml) agree on libstd —
+  // see emitCargo for the worktree-symlink hazard this guards against.
+  if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   // ─── Emit build node ───

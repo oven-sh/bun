@@ -73,9 +73,13 @@ const patterns = {
   zig: {
     paths: ["src/**/*.zig"],
   },
-  /** all `*.rs` + workspace manifests — implicit inputs to the cargo step */
+  /**
+   * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
+   * `rust-toolchain.toml` is included so a nightly bump invalidates the
+   * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   */
   rust: {
-    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock"],
+    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"],
   },
   /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
   cxx: {

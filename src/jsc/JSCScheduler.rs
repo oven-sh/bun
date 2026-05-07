@@ -26,11 +26,12 @@ impl JSCDeferredWorkTask {
         // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; `global` is
         // initialized during VM startup and remains valid for the VM's lifetime.
         let global_this = unsafe { &*VirtualMachine::get().as_mut().global };
-        let mut scope = ExceptionValidationScope::init(global_this);
+        let mut scope_storage = core::mem::MaybeUninit::uninit();
+        let scope = ExceptionValidationScope::init(&mut scope_storage, global_this);
         // Zig: `defer scope.deinit()` — there is no `Drop` impl for ExceptionValidationScope
         // (it wraps a placement-constructed C++ TopExceptionScope), so register an explicit
         // guard that tears it down on every exit path. Mirrors the JSPromise::wrap pattern.
-        let scope_ptr: *mut ExceptionValidationScope = &mut scope;
+        let scope_ptr: *mut ExceptionValidationScope = scope;
         let _scope_guard = scopeguard::guard(scope_ptr, |s| {
             // SAFETY: `s` was initialized by `init()` above and is destroyed exactly once here.
             unsafe { ExceptionValidationScope::destroy(s) }

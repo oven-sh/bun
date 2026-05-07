@@ -1353,6 +1353,13 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   };
   if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;
+  // Pin the toolchain explicitly. `vendor/` is commonly a symlink shared
+  // across worktrees; rustup's directory walk from manifestDir resolves
+  // through the symlink and picks up the *target* worktree's
+  // `rust-toolchain.toml`. The dep then bundles a libstd that doesn't match
+  // the workspace staticlib's, and the link dies on duplicate
+  // `rust_eh_personality`. RUSTUP_TOOLCHAIN overrides the directory walk.
+  if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
 
   if (spec.rustflags && spec.rustflags.length > 0) {
     // The \x1f encoding is deliberate — see cargo's docs on CARGO_ENCODED_RUSTFLAGS.
@@ -1396,9 +1403,14 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     outputs: [lib],
     rule: cross ? "dep_cargo_cross" : "dep_cargo",
     inputs: [],
-    // Rebuild if source changed or cargo binary changed. Cargo's own
-    // dependency tracking handles file-level granularity below manifestDir.
-    implicitInputs: [sourceStamp, cfg.cargo],
+    // Rebuild if source changed, cargo binary changed, or the pinned
+    // toolchain changed. Cargo's own dependency tracking handles file-level
+    // granularity below manifestDir. `rust-toolchain.toml` matters because
+    // the dep's staticlib bundles a copy of libstd — if the workspace
+    // staticlib is built with a different nightly, the two archives carry
+    // mismatched std hashes and both get pulled into the link, colliding on
+    // unmangled symbols like `rust_eh_personality`.
+    implicitInputs: [sourceStamp, cfg.cargo, resolve(cfg.cwd, "rust-toolchain.toml")],
     vars: {
       name,
       manifestdir: manifestDir,

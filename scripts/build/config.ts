@@ -189,6 +189,14 @@ export interface Config {
   cargoHome: string | undefined;
   /** RUSTUP_HOME — passed to cargo invocations for reproducibility. */
   rustupHome: string | undefined;
+  /**
+   * RUSTUP_TOOLCHAIN — the `channel` from this repo's `rust-toolchain.toml`.
+   * Passed explicitly to every cargo invocation so the dep build and the
+   * workspace build agree on libstd even when `vendor/` is a symlink into a
+   * sibling worktree (rustup's directory walk follows the resolved path and
+   * would otherwise pick up that worktree's pin).
+   */
+  rustToolchain: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
@@ -814,6 +822,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cargo: toolchain.cargo,
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
+    rustToolchain: readRustToolchainChannel(cwd),
     msvcLinker: toolchain.msvcLinker,
     rc: toolchain.rc,
     mt: toolchain.mt,
@@ -982,6 +991,23 @@ export function findRepoRoot(): string {
  * matters more than the ~20ms spawn. Git's plumbing has edge cases
  * (packed-refs, worktrees, symbolic refs) that rev-parse handles for free.
  */
+/**
+ * Read `channel` from `rust-toolchain.toml`. Passed as `RUSTUP_TOOLCHAIN` to
+ * cargo invocations so vendored Rust deps and the workspace staticlib are
+ * built with the same nightly — see `Config.rustToolchain` for why rustup's
+ * own directory walk isn't sufficient when `vendor/` is a worktree-shared
+ * symlink.
+ *
+ * Returns undefined if the file is missing (rustup then falls back to its
+ * normal lookup, which is correct for the workspace build's cwd).
+ */
+function readRustToolchainChannel(cwd: string): string | undefined {
+  const path = resolve(cwd, "rust-toolchain.toml");
+  if (!existsSync(path)) return undefined;
+  const m = /^\s*channel\s*=\s*"([^"]+)"/m.exec(readFileSync(path, "utf8"));
+  return m?.[1];
+}
+
 function getGitRevision(cwd: string): string {
   // CI env first — authoritative and zero-cost.
   const envSha = process.env.BUILDKITE_COMMIT ?? process.env.GITHUB_SHA ?? process.env.GIT_SHA;

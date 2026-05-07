@@ -77,7 +77,8 @@ pub fn to_range_error_instance(this: &String, global_object: &JSGlobalObject) ->
 
 #[track_caller]
 pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<String> {
-    let mut scope = ExceptionValidationScope::init(global_object);
+    let mut scope_storage = core::mem::MaybeUninit::uninit();
+    let scope = ExceptionValidationScope::init(&mut scope_storage, global_object);
     let mut out: String = String::DEAD;
     // SAFETY: FFI call into JSC; `out` is a valid out-param, global_object borrowed for call duration.
     let ok = unsafe { BunString__fromJS(global_object.as_ptr(), value, &mut out) };
@@ -94,7 +95,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     // Zig: `defer scope.deinit()`. `ExceptionValidationScope` has no `Drop` impl
     // (placement-constructed C++ TopExceptionScope), so destroy explicitly.
     // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { ExceptionValidationScope::destroy(&mut scope) };
+    unsafe { ExceptionValidationScope::destroy(scope) };
 
     if ok { Ok(out) } else { Err(JsError::Thrown) }
 }

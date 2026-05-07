@@ -423,11 +423,12 @@ pub fn host_setter_result<R: IntoHostSetterReturn>(
     global: &JSGlobalObject,
     f: impl FnOnce() -> R,
 ) -> bool {
-    let mut scope = jsc::ExceptionValidationScope::init(global);
+    let mut scope_storage = core::mem::MaybeUninit::uninit();
+    let scope = jsc::ExceptionValidationScope::init(&mut scope_storage, global);
     let r = to_js_host_setter_value(global, f().into_host_setter_return());
     scope.assert_exception_presence_matches(!r);
     // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { jsc::ExceptionValidationScope::destroy(&mut scope) };
+    unsafe { jsc::ExceptionValidationScope::destroy(scope) };
     r
 }
 
@@ -438,7 +439,8 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
     global: &JSGlobalObject,
     f: impl FnOnce() -> R,
 ) -> *mut c_void {
-    let mut scope = jsc::ExceptionValidationScope::init(global);
+    let mut scope_storage = core::mem::MaybeUninit::uninit();
+    let scope = jsc::ExceptionValidationScope::init(&mut scope_storage, global);
     let ptr = match f().into_host_construct_return() {
         Ok(p) => p,
         Err(JsError::OutOfMemory) => {
@@ -449,7 +451,7 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
     };
     scope.assert_exception_presence_matches(ptr.is_null());
     // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { jsc::ExceptionValidationScope::destroy(&mut scope) };
+    unsafe { jsc::ExceptionValidationScope::destroy(scope) };
     ptr
 }
 
@@ -466,7 +468,8 @@ pub fn to_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JsResult<JSValue>,
 ) -> JSValue {
-    let mut scope = jsc::ExceptionValidationScope::init(global_this);
+    let mut scope_storage = core::mem::MaybeUninit::uninit();
+    let scope = jsc::ExceptionValidationScope::init(&mut scope_storage, global_this);
 
     let returned: JsResult<JSValue> = f();
     let normal = match returned {
@@ -477,7 +480,7 @@ pub fn to_js_host_call(
     };
     scope.assert_exception_presence_matches(normal.is_empty());
     // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { jsc::ExceptionValidationScope::destroy(&mut scope) };
+    unsafe { jsc::ExceptionValidationScope::destroy(scope) };
     normal
 }
 
@@ -494,14 +497,15 @@ pub fn from_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JSValue,
 ) -> Result<JSValue, JsError> {
-    let mut scope = jsc::ExceptionValidationScope::init(global_this);
+    let mut scope_storage = core::mem::MaybeUninit::uninit();
+    let scope = jsc::ExceptionValidationScope::init(&mut scope_storage, global_this);
 
     let value = f();
     // Zig: `if (@TypeOf(value) != JSValue) @compileError(...)` — enforced by the
     // closure return type here.
     scope.assert_exception_presence_matches(value.is_empty());
     // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
-    unsafe { jsc::ExceptionValidationScope::destroy(&mut scope) };
+    unsafe { jsc::ExceptionValidationScope::destroy(scope) };
     if value.is_empty() { Err(JsError::Thrown) } else { Ok(value) }
 }
 
@@ -515,10 +519,11 @@ pub fn from_js_host_call_generic<R>(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> R,
 ) -> Result<R, JsError> {
-    let mut scope = jsc::TopExceptionScope::init(global_this);
+    let mut scope_storage = core::mem::MaybeUninit::uninit();
+    let scope = jsc::TopExceptionScope::init(&mut scope_storage, global_this);
     // Ensure the C++ scope object is destructed on every return path
     // (Zig: `defer scope.deinit()`).
-    let mut scope = scopeguard::guard(&mut scope, |s| {
+    let mut scope = scopeguard::guard(scope, |s| {
         // SAFETY: `s` was initialized via `init` above and is destroyed exactly once.
         unsafe { jsc::TopExceptionScope::destroy(s) };
     });

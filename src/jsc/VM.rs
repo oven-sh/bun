@@ -212,15 +212,16 @@ impl VM {
 
     #[track_caller]
     pub fn throw_error(&self, global_object: &JSGlobalObject, value: JSValue) -> JsError {
-        let mut scope =
-            ExceptionValidationScope::new(global_object, core::panic::Location::caller());
+        let mut scope_storage = core::mem::MaybeUninit::uninit();
+        let scope =
+            ExceptionValidationScope::new(&mut scope_storage, global_object, core::panic::Location::caller());
         scope.assert_no_exception();
         // SAFETY: self and global_object are valid; value is a live JSValue on this VM.
         unsafe { JSC__VM__throwError(self.as_mut_ptr(), global_object.as_mut_ptr(), value) }
         scope.assert_exception_presence_matches(true);
         // Zig: `defer scope.deinit()` — `ExceptionValidationScope` has no `Drop`, destroy explicitly.
         // SAFETY: scope was initialized via `ExceptionValidationScope::new` above and not yet destroyed.
-        unsafe { ExceptionValidationScope::destroy(&mut scope) };
+        unsafe { ExceptionValidationScope::destroy(scope) };
         JsError::Thrown
     }
 

@@ -133,9 +133,12 @@ pub extern "C" fn Bun__VM__specifierIsEvalEntryPoint(
     if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
         let global = this.global();
         // Zig: `specifier.toBunString(this.global) catch @panic("unexpected exception")`
-        let specifier_str = bun_jsc::bun_string_jsc::from_js(specifier, global)
-            .expect("unexpected exception");
-        // `bun.String` derefs on Drop.
+        // followed by `defer specifier_str.deref()`. `bun_string::String` is
+        // `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that derefs.
+        let specifier_str = bun_string::OwnedString::new(
+            bun_jsc::bun_string_jsc::from_js(specifier, global)
+                .expect("unexpected exception"),
+        );
         return specifier_str.eql_utf8(&eval_source.path.text);
     }
     false

@@ -4081,7 +4081,7 @@ impl H2FrameParser {
         }
 
         if this.out_standing_pings >= this.max_outstanding_pings {
-            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_PING_CANCEL, "HTTP2 ping cancelled");
+            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_PING_CANCEL, format_args!("HTTP2 ping cancelled"));
             return Err(global_object.throw_value(exception));
         }
 
@@ -4117,7 +4117,7 @@ impl H2FrameParser {
             let origin_string = origin_arg.to_slice(global_object)?;
             let slice = origin_string.slice();
             if slice.len() + 2 > 16384 {
-                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes");
+                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
                 return Err(global_object.throw_value(exception));
             }
 
@@ -4150,12 +4150,12 @@ impl H2FrameParser {
                 let origin_string = item.to_slice(global_object)?;
                 let slice = origin_string.slice();
                 if stream.write_int_u16_be(u16::try_from(slice.len()).unwrap()).is_err() {
-                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes");
+                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
                     return Err(global_object.throw_value(exception));
                 }
 
                 if stream.write(slice).is_err() {
-                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes");
+                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
                     return Err(global_object.throw_value(exception));
                 }
             }

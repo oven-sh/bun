@@ -250,7 +250,7 @@ impl<'a> UpgradedDuplex<'a> {
                     );
                     data_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(data_callback, self as *mut Self as *mut c_void);
+                    host_fn::set_function_data(data_callback, Some(self as *mut Self as *mut c_void));
 
                     self.on_data_callback = StrongOptional::create(data_callback, global);
                     data_callback
@@ -272,7 +272,7 @@ impl<'a> UpgradedDuplex<'a> {
                     );
                     end_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(end_callback, self as *mut Self as *mut c_void);
+                    host_fn::set_function_data(end_callback, Some(self as *mut Self as *mut c_void));
 
                     self.on_end_callback = StrongOptional::create(end_callback, global);
                     end_callback
@@ -294,7 +294,7 @@ impl<'a> UpgradedDuplex<'a> {
                     );
                     writable_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(writable_callback, self as *mut Self as *mut c_void);
+                    host_fn::set_function_data(writable_callback, Some(self as *mut Self as *mut c_void));
                     self.on_writable_callback = StrongOptional::create(writable_callback, global);
                     writable_callback
                 }
@@ -315,7 +315,7 @@ impl<'a> UpgradedDuplex<'a> {
                     );
                     close_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(close_callback, self as *mut Self as *mut c_void);
+                    host_fn::set_function_data(close_callback, Some(self as *mut Self as *mut c_void));
                     self.on_close_callback = StrongOptional::create(close_callback, global);
                     close_callback
                 }
@@ -498,19 +498,19 @@ impl<'a> UpgradedDuplex<'a> {
 
         self.origin.deinit();
         if let Some(callback) = self.on_data_callback.get() {
-            host_fn::set_function_data(callback, core::ptr::null_mut());
+            host_fn::set_function_data(callback, None);
             self.on_data_callback.deinit();
         }
         if let Some(callback) = self.on_end_callback.get() {
-            host_fn::set_function_data(callback, core::ptr::null_mut());
+            host_fn::set_function_data(callback, None);
             self.on_end_callback.deinit();
         }
         if let Some(callback) = self.on_writable_callback.get() {
-            host_fn::set_function_data(callback, core::ptr::null_mut());
+            host_fn::set_function_data(callback, None);
             self.on_writable_callback.deinit();
         }
         if let Some(callback) = self.on_close_callback.get() {
-            host_fn::set_function_data(callback, core::ptr::null_mut());
+            host_fn::set_function_data(callback, None);
             self.on_close_callback.deinit();
         }
         self.ssl_error = CertError::default();

@@ -1831,42 +1831,14 @@ pub struct BuildArtifact {
     pub path: Box<[u8]>,
     pub hash: u64,
     pub output_kind: OutputKind,
-    pub sourcemap: bun_jsc::Strong, // Strong.Optional
+    pub sourcemap: bun_jsc::StrongOptional,
 }
 
-/// `BuildArtifact.kind` — what role an output file plays.
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum OutputKind {
-    #[strum(serialize = "chunk")]
-    Chunk,
-    #[strum(serialize = "asset")]
-    Asset,
-    #[strum(serialize = "entry-point")]
-    EntryPoint,
-    #[strum(serialize = "sourcemap")]
-    Sourcemap,
-    #[strum(serialize = "bytecode")]
-    Bytecode,
-    #[strum(serialize = "module_info")]
-    ModuleInfo,
-    #[strum(serialize = "metafile-json")]
-    MetafileJson,
-    #[strum(serialize = "metafile-markdown")]
-    MetafileMarkdown,
-}
-
-impl OutputKind {
-    pub fn is_file_in_standalone_mode(self) -> bool {
-        !matches!(
-            self,
-            Self::Sourcemap
-                | Self::Bytecode
-                | Self::ModuleInfo
-                | Self::MetafileJson
-                | Self::MetafileMarkdown
-        )
-    }
-}
+/// `BuildArtifact.kind` — what role an output file plays. Single canonical
+/// definition lives in `bun_bundler::options` (it backs
+/// `OutputFile.output_kind`); re-exported so `crate::api::OutputKind`
+/// callers stay unchanged.
+pub use bun_bundler::options::OutputKind;
 
 impl BuildArtifact {
     /// `BuildArtifact` is not user-constructible (`noConstructor` in .classes.ts).
@@ -1974,11 +1946,7 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_source_map(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        let value = this.sourcemap.get();
-        if !value.is_empty() {
-            return value;
-        }
-        JSValue::NULL
+        this.sourcemap.get().unwrap_or(JSValue::NULL)
     }
 
     pub fn finalize(this: *mut Self) {
@@ -2100,19 +2068,14 @@ impl BuildArtifact {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>sourcemap<r>: "),
                 )?;
 
-                let sourcemap_value = self.sourcemap.get();
-                if !sourcemap_value.is_empty() {
-                    if let Some(sourcemap) = sourcemap_value.as_::<BuildArtifact>() {
-                        // SAFETY: `as_` returned a non-null wrapper-owned pointer.
-                        unsafe { &mut *sourcemap }
-                            .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
-                    } else {
-                        write!(
-                            writer,
-                            "{}",
-                            Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<yellow>null<r>"),
-                        )?;
-                    }
+                if let Some(sourcemap) = self
+                    .sourcemap
+                    .get()
+                    .and_then(|v| v.as_::<BuildArtifact>())
+                {
+                    // SAFETY: `as_` returned a non-null wrapper-owned pointer.
+                    unsafe { &mut *sourcemap }
+                        .write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
                 } else {
                     write!(
                         writer,

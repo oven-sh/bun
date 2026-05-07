@@ -843,10 +843,22 @@ impl RunCommand {
             )?;
         }
 
+        // PORT NOTE: layering — `Options::graph` is the resolver's trait object
+        // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete
+        // `bun_standalone_graph::Graph` implements it. The graph is the
+        // process-global singleton (`StandaloneModuleGraph::set` in
+        // `cli_body.rs`), so erasing the borrow lifetime via raw-pointer
+        // round-trip per PORTING.md §process-lifetime borrows is sound.
+        // SAFETY: `graph` lives in the process-global INSTANCE static; never
+        // freed (`global_exit` ends the process before any deinit).
+        let graph_dyn: &'static dyn bun_resolver::StandaloneModuleGraph = unsafe {
+            &*(graph as *const bun_standalone_graph::Graph
+                as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
+        };
         let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
             log: std::ptr::NonNull::new(ctx.log),
             args: ctx.args.clone(),
-            graph: Some(std::ptr::NonNull::from(&mut *graph).cast()),
+            graph: Some(graph_dyn),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
             // TODO(port): `dns_result_order` is `u8` here pending the
@@ -861,19 +873,22 @@ impl RunCommand {
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
         // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap
-        // buffer; the `Box` is moved into `RUN` below (heap address stable
-        // across the move), so the backref stays valid for process lifetime.
-        vm.set_main(&entry_path);
+        // buffer; convert the `Box` to a raw heap pointer now (Zig:
+        // `allocator.dupe` + never-free) so the address is stable for both
+        // `set_main` and the `RUN` write below. The runner never returns, so
+        // the allocation is process-lifetime by construction.
+        let entry_ptr: *const [u8] = Box::into_raw(entry_path);
+        // SAFETY: freshly-allocated heap bytes, never freed (see above).
+        vm.set_main(unsafe { &*entry_ptr });
 
         // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
         // capture the defines result, drop `b`, then branch.
         let defines_ok = {
             let b = &mut vm.transpiler;
-            b.options.install = ctx
-                .install
-                .as_deref()
-                .map(|p| unsafe { &*(p as *const api::BunInstall) });
+            // PORT NOTE: `BundleOptions::install` is a raw `NonNull` backref
+            // into the CLI's `Box<BunInstall>` (process-lifetime).
+            b.options.install = ctx.install.as_deref().map(::core::ptr::NonNull::from);
             b.resolver.opts.global_cache = ctx.debug.global_cache;
             b.options.global_cache = ctx.debug.global_cache;
             b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
@@ -913,7 +928,7 @@ impl RunCommand {
             (&raw mut RUN).write(Run {
                 ctx: ctx as *mut ContextData,
                 vm: vm_ptr,
-                entry_path: entry_path as *const [u8],
+                entry_path: Box::into_raw(entry_path),
             });
         }
 
@@ -988,31 +1003,178 @@ impl Run {
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
     }
 
+    /// `Run.addConditionalGlobals` (bun.js.zig:562) — wire `--eval`/`--print`
+    /// node-module globals and `--expose-gc` into the JSC global object.
+    fn add_conditional_globals(&mut self) {
+        unsafe extern "C" {
+            fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
+            fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
+        }
+        // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
+        // `boot()` before the API-lock trampoline runs.
+        let vm = unsafe { &*self.vm };
+        let ro = unsafe { &(*self.ctx).runtime_options };
+        if !ro.eval.script.is_empty() {
+            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
+            unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
+        }
+        if ro.expose_gc {
+            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
+            unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+        }
+    }
+
     /// `Run.start` — load the entry point, run the event loop until idle,
     /// fire `beforeExit`/`exit`, then `globalExit`. Called under the JSC API
     /// lock via `hold_api_lock`.
     #[allow(unused_assignments)] // `printed_…` writes before `global_exit` are intentional Zig-shape.
     fn start(&mut self) -> ! {
-        // PORT NOTE: deref the raw VM pointer once instead of going through a
-        // `&mut self` accessor so `self.{any_unhandled,entry_path,…}` stay
-        // borrowable alongside `vm` for the rest of this body.
-        // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; valid for
-        // process lifetime once `boot` writes it.
+        // PORT NOTE: deref the raw VM/ctx pointers once so the rest of this
+        // body can borrow `vm` and `ctx` alongside `self.entry_path`.
+        // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; `self.ctx`
+        // is the CLI's process-lifetime `ContextData`. Both are written by
+        // `boot()`/`boot_standalone()` before the API-lock trampoline runs.
         let vm = unsafe { &mut *self.vm };
+        let ctx = unsafe { &*self.ctx };
+        // SAFETY: `entry_path` is process-lifetime (heap from `Box::into_raw`
+        // or a borrow into the standalone graph); deref to a `'static` slice
+        // so `enable_hot_module_reloading` can store it without re-erasing.
+        let mut entry: &'static [u8] = unsafe { &*self.entry_path };
+
+        vm.hot_reload = ctx.debug.hot_reload as u8;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // TODO(port): CPU/heap profiler start, `addConditionalGlobals`,
-        // redis/sql preconnect, hot-reloader enable (bun.js.zig:312-390). The
-        // `CPUProfiler`/`HeapProfiler` config types are `Option<()>` placeholders
-        // on `VirtualMachine` and `valkey`/`hot_reloader::enable_*` route through
-        // `RuntimeHooks` slots not yet populated.
+        // ── CPU profiler (bun.js.zig:316-331) ──────────────────────────────
+        if ctx.runtime_options.cpu_prof.enabled {
+            let opts = &ctx.runtime_options.cpu_prof;
+            // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
+            // `'static` for `CPUProfilerConfig` (Zig stored borrowed slices).
+            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+                name: unsafe { &*(opts.name.as_ref() as *const [u8]) },
+                dir: unsafe { &*(opts.dir.as_ref() as *const [u8]) },
+                md_format: opts.md_format,
+                json_format: opts.json_format,
+                interval: opts.interval,
+            });
+            bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
+            // SAFETY: `vm.jsc_vm` set in `init`.
+            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
+            bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
+        }
 
-        // Zig: `if entry_path == "." { entry_path = fs.top_level_dir }` —
-        // `vm.transpiler.fs` is a b2-cycle placeholder; skip the rewrite.
+        // ── Heap profiler (bun.js.zig:333-342) ─────────────────────────────
+        if ctx.runtime_options.heap_prof.enabled {
+            let opts = &ctx.runtime_options.heap_prof;
+            // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
+            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
+                name: unsafe { &*(opts.name.as_ref() as *const [u8]) },
+                dir: unsafe { &*(opts.dir.as_ref() as *const [u8]) },
+                text_format: opts.text_format,
+            });
+            bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
+        }
+
+        self.add_conditional_globals();
+
+        // ── redis preconnect (must run under the API lock) ─────────────────
+        'do_redis_preconnect: {
+            if !ctx.runtime_options.redis_preconnect {
+                break 'do_redis_preconnect;
+            }
+            // Go through the global object's getter because `Bun.redis` is a
+            // PropertyCallback (no direct WriteBarrier handle to read).
+            let global = vm.global();
+            let bun_object = match global.to_js_value().get(global, "Bun") {
+                Ok(Some(v)) => v,
+                Ok(None) => break 'do_redis_preconnect,
+                Err(e) => {
+                    global.report_active_exception_as_unhandled(e);
+                    break 'do_redis_preconnect;
+                }
+            };
+            let redis = match bun_object.get(global, "redis") {
+                Ok(Some(v)) => v,
+                Ok(None) => break 'do_redis_preconnect,
+                Err(e) => {
+                    global.report_active_exception_as_unhandled(e);
+                    break 'do_redis_preconnect;
+                }
+            };
+            let Some(client) =
+                redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
+            else {
+                break 'do_redis_preconnect;
+            };
+            // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
+            // wrapper; uniquely accessed here under the API lock.
+            if let Err(e) = unsafe { &mut *client }.do_connect(global, redis) {
+                global.report_active_exception_as_unhandled(e);
+            }
+        }
+
+        // ── postgres/sql preconnect ───────────────────────────────────────
+        'do_postgres_preconnect: {
+            if !ctx.runtime_options.sql_preconnect {
+                break 'do_postgres_preconnect;
+            }
+            let global = vm.global();
+            let bun_object = match global.to_js_value().get(global, "Bun") {
+                Ok(Some(v)) => v,
+                Ok(None) => break 'do_postgres_preconnect,
+                Err(e) => {
+                    global.report_active_exception_as_unhandled(e);
+                    break 'do_postgres_preconnect;
+                }
+            };
+            let sql_object = match bun_object.get(global, "sql") {
+                Ok(Some(v)) => v,
+                Ok(None) => break 'do_postgres_preconnect,
+                Err(e) => {
+                    global.report_active_exception_as_unhandled(e);
+                    break 'do_postgres_preconnect;
+                }
+            };
+            let connect_fn = match sql_object.get(global, "connect") {
+                Ok(Some(v)) => v,
+                Ok(None) => break 'do_postgres_preconnect,
+                Err(e) => {
+                    global.report_active_exception_as_unhandled(e);
+                    break 'do_postgres_preconnect;
+                }
+            };
+            if let Err(e) = connect_fn.call(global, sql_object, &[]) {
+                global.report_active_exception_as_unhandled(e);
+            }
+        }
+
+        // ── hot-reloader enable (bun.js.zig:390-394) ───────────────────────
+        match ctx.debug.hot_reload {
+            cli::HotReload::Hot => bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                self.vm,
+                Some(entry),
+            ),
+            cli::HotReload::Watch => {
+                bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                    self.vm,
+                    Some(entry),
+                )
+            }
+            _ => {}
+        }
+
+        // Zig: `if entry_path == "." { entry_path = fs.top_level_dir }`.
+        if entry == b"." {
+            // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
+            // singleton (set in `Transpiler::init`).
+            let tld = unsafe { (*vm.transpiler.fs).top_level_dir };
+            if !tld.is_empty() {
+                entry = tld;
+            }
+        }
 
         let mut printed_sourcemap_warning_and_version = false;
 
-        match vm.load_entry_point(&self.entry_path) {
+        match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
@@ -1088,25 +1250,33 @@ impl Run {
         // SAFETY: `event_loop` is a self-pointer into this VM; uniquely accessed.
         if vm.is_event_loop_alive() || unsafe { (*vm.event_loop()).tick_concurrent_with_count() } > 0 {
             vm.global().vm().release_weak_refs();
-            // TODO(port): `vm.arena.gc()` — `bun_alloc::Arena` is `bumpalo::Bump`
-            // which has no per-heap GC; the Zig MimallocArena's `gc()` was a
-            // mimalloc heap collect. Phase B replaces `Arena` with the
-            // mimalloc-backed type once `bun_alloc::MimallocArena::gc` lands.
+            // PERF(port): `vm.arena.gc()` — Zig's `MimallocArena.gc()` is
+            // `mi_heap_collect`; `bun_alloc::Arena = bumpalo::Bump` has no
+            // per-heap collect, so this is a no-op until Phase B swaps the
+            // arena type. Semantically a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }
 
-        bun_standalone_graph::Graph::hint_source_pages_dont_need();
+        // Initial synchronous evaluation of the entrypoint is done (TLA may
+        // still be pending and will resolve in the loop below); the embedded
+        // source pages are off the hot path now. Skip under --watch/--hot
+        // since those re-read source on every reload.
+        if !vm.is_watcher_enabled() {
+            bun_standalone_graph::Graph::hint_source_pages_dont_need();
+        }
 
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {
+            vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {
-                vm.report_exception_in_hot_reloaded_module_if_needed();
                 while vm.is_event_loop_alive() {
                     vm.tick();
+                    vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
                 }
                 vm.on_before_exit();
+                vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
                 // reloads (bun.js.zig `start` watcher loop).
@@ -1118,10 +1288,49 @@ impl Run {
                 vm.auto_tick_active();
             }
 
-            if self.eval_and_print {
-                // TODO(port): `bun -p` result printing — needs `JSValue::then2`
-                // (the JSValue-ctx variant). `Bun__on{Resolve,Reject}EntryPointResult`
-                // are exported from `crate::hw_exports`; wire once `then2` lands.
+            if ctx.runtime_options.eval.eval_and_print {
+                let to_print: JSValue = 'brk: {
+                    let result = vm
+                        .entry_point_result
+                        .value
+                        .get()
+                        .unwrap_or(JSValue::UNDEFINED);
+                    if let Some(promise) = result.as_any_promise() {
+                        match promise.status() {
+                            PromiseStatus::Pending => {
+                                result.then2(
+                                    vm.global(),
+                                    JSValue::UNDEFINED,
+                                    crate::hw_exports::on_resolve_entry_point_result,
+                                    crate::hw_exports::on_reject_entry_point_result,
+                                );
+                                vm.tick();
+                                vm.auto_tick_active();
+                                while vm.is_event_loop_alive() {
+                                    vm.tick();
+                                    vm.auto_tick_active();
+                                }
+                                break 'brk result;
+                            }
+                            // SAFETY: `vm.jsc_vm` set in `init`.
+                            _ => break 'brk promise.result(unsafe { &*vm.jsc_vm }),
+                        }
+                    }
+                    result
+                };
+                // Zig: `to_print.print(vm.global, .Log, .Log)`.
+                // SAFETY: `vals[..1]` is the single stack `to_print`; null
+                // `ctype` routes to the VM's stdout/stderr default.
+                unsafe {
+                    bun_jsc::ConsoleObject::message_with_type_and_level(
+                        ::core::ptr::null_mut(),
+                        bun_jsc::ConsoleObject::MessageType::Log,
+                        bun_jsc::ConsoleObject::MessageLevel::Log,
+                        vm.global(),
+                        &to_print as *const JSValue,
+                        1,
+                    );
+                }
             }
 
             vm.on_before_exit();
@@ -2946,7 +3155,14 @@ impl RunCommand {
             // Dupe d.url for the map key — `collector.urls` owns the backing
             // bytes and gets freed when this function returns.
             let key = d.url.to_vec().into_boxed_slice();
-            let _ = out_map.put_owned(key, path.into_boxed_slice());
+            // PORT NOTE: reshaped — Zig frees `key`/`path` and unlinks on
+            // `put` failure. `put_owned` consumes both, so check capacity
+            // first while `path` is still borrowable for `unlink_staged_path`.
+            if out_map.try_reserve(1).is_err() {
+                Self::unlink_staged_path(&path);
+                continue;
+            }
+            out_map.insert(key, path.into_boxed_slice());
         }
     }
 
@@ -3333,9 +3549,11 @@ impl RunCommand {
                             }
                         }
 
-                        let Ok(entry_item) = results.get_or_put(Box::from(key)) else {
-                            continue 'loop_;
-                        };
+                        // PERF(port): capacity reserved by `ensure_unused_capacity`
+                        // above; `assume_capacity` skips the grow check and
+                        // avoids a redundant alloc when the key is a duplicate.
+                        let entry_item =
+                            results.get_or_put_assume_capacity(Box::from(key));
 
                         if FILTER == Filter::ScriptAndDescriptions && max_description_len > 0 {
                             let mut description: &[u8] = *scripts.get(key).unwrap();
@@ -3412,9 +3630,11 @@ impl RunCommand {
             .keys()
             .iter()
             .map(|k| -> &'static [u8] {
-                // SAFETY: keys are either `'static` literals or interned in the
-                // process-lifetime `FilenameStore`/package.json source; erase
-                // the Box borrow.
+                // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by
+                // `results`. The owning `ArrayHashMap` is parked in the
+                // process-lifetime `runner_arena()` below and `bumpalo::Bump`
+                // never runs `Drop`, so the boxed bytes live until process
+                // exit and erasing to `'static` is sound.
                 unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
             })
             .collect();

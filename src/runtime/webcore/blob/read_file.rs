@@ -355,7 +355,7 @@ impl ReadFile {
     pub fn on_io_error(&mut self, err: bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
         self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-        self.system_error = Some(err.to_system_error());
+        self.system_error = Some(err.to_system_error().into());
         self.task = WorkPoolTask { node: Default::default(), callback: Self::do_read_loop_task };
         // On macOS, we use one-shot mode, so:
         // - we don't need to unregister
@@ -466,7 +466,7 @@ impl ReadFile {
                         }
                         _ => {
                             self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-                            self.system_error = Some(err.to_system_error());
+                            self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
                                     if self.file_store.pathlike.is_path() {
@@ -598,7 +598,7 @@ impl ReadFile {
             Ok(result) => result,
             Err(err) => {
                 self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
-                self.system_error = Some(err.to_system_error());
+                self.system_error = Some(err.to_system_error().into());
                 return;
             }
         };
@@ -677,7 +677,8 @@ impl ReadFile {
                 self.errno = Some(bun_core::err!("OutOfMemory"));
                 self.system_error = Some(
                     bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::read)
-                        .to_system_error(),
+                        .to_system_error()
+                        .into(),
                 );
                 self.on_finish();
                 return;

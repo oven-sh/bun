@@ -1083,13 +1083,16 @@ impl Readable {
     ) -> Readable {
         assert_stdio_result(result);
 
+        // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
+        // Default-able payloads instead of partial moves (E0509).
+        let mut stdio = stdio;
         #[cfg(windows)]
         {
-            return match stdio {
+            return match &mut stdio {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
                 Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(fd) => Readable::Fd(fd),
+                Stdio::Fd(fd) => Readable::Fd(*fd),
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
@@ -1110,7 +1113,7 @@ impl Readable {
                             PipeReader::set_buffered_output(
                                 Arc::as_ptr(pipe).cast_mut(),
                                 BufferedOutput::ArrayBuffer {
-                                    buf: array_buffer,
+                                    buf: core::mem::take(array_buffer),
                                     i: 0,
                                 },
                             )
@@ -1127,9 +1130,6 @@ impl Readable {
 
         #[cfg(not(windows))]
         {
-        // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
-        // Default-able payloads instead of partial moves.
-        let mut stdio = stdio;
         match &mut stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
@@ -1979,10 +1979,8 @@ impl PipeReader {
     }
 
     pub fn to_owned_slice(&mut self) -> Box<[u8]> {
-        if let PipeReaderState::Done(buf) =
-            core::mem::replace(&mut self.state, PipeReaderState::Done(Box::default()))
-        {
-            return buf;
+        if let PipeReaderState::Done(buf) = &mut self.state {
+            return core::mem::take(buf);
         }
         // we do not use .toOwnedSlice() because we don't want to reallocate memory.
         let out = core::mem::take(&mut self.reader._buffer);

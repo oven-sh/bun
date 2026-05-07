@@ -636,9 +636,7 @@ pub fn run_as_worker(
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
     let vm_ref = unsafe { &mut *vm };
     vm_ref.test_isolation_enabled = true;
-    // TODO(b2-cycle): `auto_killer` is a `()` placeholder upstream — re-enable when ported.
-    // vm_ref.auto_killer.enabled = true;
-    let _ = todo_auto_killer_enabled();
+    vm_ref.auto_killer.enabled = true;
 
     // TODO(port): MimallocArena assigned to vm.arena/vm.allocator — verify
     // whether Rust VM still needs explicit arena wiring or if this is a no-op.
@@ -681,11 +679,6 @@ pub fn run_as_worker(
         unsafe { (*vm_ref.event_loop()).auto_tick() };
     }
     Global::exit(0);
-}
-
-#[inline(always)]
-fn todo_auto_killer_enabled() {
-    // blocked_on: bun_jsc::VirtualMachineRef::auto_killer (ProcessAutoKiller)
 }
 
 fn worker_flush_aggregates(

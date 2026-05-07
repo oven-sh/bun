@@ -1661,9 +1661,10 @@ impl BlobExt for Blob {
                 );
             }
 
-            let mut creds = s3.get_credentials().dupe();
+            // SAFETY: heap-dupe (ref=1); see comment above.
+            let creds = s3.get_credentials().dupe().into_raw();
             return crate::webcore::s3::client::writable_stream(
-                &mut creds,
+                unsafe { &mut *creds },
                 path,
                 global_this,
                 Default::default(),
@@ -3071,8 +3072,9 @@ impl BlobExt for Blob {
                             // source) and *falls through* — no `return` — when
                             // there's no allocator (i.e. the empty slice), letting
                             // the joiner path below handle it.
-                            if let ZigStringSlice::Owned(v) = current.to_slice_clone(global)? {
-                                return Ok(Blob::init_with_all_ascii(v, global, false));
+                            let sliced = current.to_slice_clone(global)?;
+                            if matches!(sliced, ZigStringSlice::Owned(_)) {
+                                return Ok(Blob::init_with_all_ascii(sliced.into_vec(), global, false));
                             }
                         }
                     }
@@ -3587,7 +3589,7 @@ impl FormDataContext {
                             match res {
                                 bun_sys::Maybe::Err(err) => {
                                     self.failed = true;
-                                    let Ok(js_err) = err.to_js(global_this) else { return };
+                                    let js_err = err.to_js(global_this);
                                     let _ = global_this.throw_value(js_err);
                                 }
                                 bun_sys::Maybe::Ok(result) => {
@@ -3990,7 +3992,15 @@ fn write_file_with_empty_source_to_destination(
 ) -> JsResult<JSValue> {
     // SAFETY: null-checked by caller
     let destination_store = destination_blob.store.as_ref().unwrap().clone();
-    let _detach = scopeguard::guard(&mut *destination_blob, |b| b.detach());
+    // PORT NOTE: `scopeguard::guard(&mut *destination_blob, …)` would hold an
+    // exclusive borrow for the entire function, blocking the immut reads below
+    // (`content_type_or_mime_type`). Capture a raw pointer instead — the
+    // `&mut Blob` parameter outlives this stack frame, and the closure runs
+    // strictly after every other use of `destination_blob` here.
+    let dest_ptr: *mut Blob = destination_blob;
+    // SAFETY: `dest_ptr` derives from the caller's `&mut Blob`; deref'd only on
+    // scope exit, after all other borrows in this function have ended.
+    let _detach = scopeguard::guard((), move |_| unsafe { (*dest_ptr).detach() });
 
     match &destination_store.data {
         store::Data::File(file) => {
@@ -4317,12 +4327,11 @@ pub fn write_file_with_source_destination(
                         ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as crate::webcore::blob::SizeType)?,
                         ctx,
                     )? {
+                        // SAFETY: heap-dupe (ref=1); `upload_stream` bumps via
+                        // `IntrusiveRc::init_ref` and the MultiPartUpload derefs.
+                        let creds_heap = aws_options.credentials.dupe().into_raw();
                         return Ok(s3_client::upload_stream(
-                            // PORT NOTE: Zig conditionally `.dupe()`d when extra_options
-                            // were provided (passing ownership). Rust `upload_stream`
-                            // takes `&S3Credentials`, and `aws_options.credentials`
-                            // already reflects extra_options, so borrow it directly.
-                            &aws_options.credentials,
+                            unsafe { &mut *creds_heap },
                             s3.path(),
                             stream,
                             ctx,
@@ -4404,11 +4413,11 @@ pub fn write_file_with_source_destination(
                     ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as crate::webcore::blob::SizeType)?,
                     ctx,
                 )? {
+                    // SAFETY: heap-dupe (ref=1); `upload_stream` bumps via
+                    // `IntrusiveRc::init_ref` and the MultiPartUpload derefs.
+                    let creds_heap = aws_options.credentials.dupe().into_raw();
                     return Ok(s3_client::upload_stream(
-                        // PORT NOTE: Zig conditionally `.dupe()`d when extra_options
-                        // were provided. Rust `upload_stream` takes `&S3Credentials`;
-                        // `aws_options.credentials` already reflects extra_options.
-                        &aws_options.credentials,
+                        unsafe { &mut *creds_heap },
                         s3.path(),
                         stream,
                         ctx,
@@ -4614,16 +4623,11 @@ pub fn write_file_internal(
                             }
                             let proxy_owned = http_proxy_href(global_this);
                             let proxy_url = proxy_owned.as_deref();
+                            // SAFETY: heap-dupe (ref=1); `upload_stream` bumps via
+                            // `IntrusiveRc::init_ref` and the MultiPartUpload derefs.
+                            let creds_heap = aws_options.credentials.dupe().into_raw();
                             return Ok(ControlFlow::Break(s3_client::upload_stream(
-                                // Zig: `if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()`.
-                                // Rust `upload_stream` borrows; pick the merged-with-options
-                                // struct only when extra options were supplied, otherwise
-                                // borrow the store's base credentials directly.
-                                if options.extra_options.is_some() {
-                                    &aws_options.credentials
-                                } else {
-                                    s3.get_credentials()
-                                },
+                                unsafe { &mut *creds_heap },
                                 s3.path(),
                                 readable,
                                 global_this,
@@ -5838,8 +5842,11 @@ impl Any {
             }
             streams::BufferActionTag::Blob => {
                 let result = Blob::new(self.to_blob(global_this));
+                // SAFETY: `Blob::new` returns a fresh heap allocation we own;
+                // `BlobExt::to_js` (the `&mut self` overload) consumes the
+                // pointer into a JS wrapper which takes ownership.
                 unsafe { (*result).global_this = global_this };
-                Ok(unsafe { (*result).to_js(global_this) })
+                Ok(BlobExt::to_js(unsafe { &mut *result }, global_this))
             }
             streams::BufferActionTag::ArrayBuffer => {
                 if matches!(self, Any::Blob(_)) {

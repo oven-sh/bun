@@ -2061,8 +2061,9 @@ impl DevServer {
         req: ReqOrSaved,
         resp: AnyResponse,
     ) -> Result<(), bun_core::Error> {
-        let Some(deferred_ptr) = self.deferred_request_pool.get() else { return Ok(()) };
-        // SAFETY: HiveArray::get returns an exclusively-owned, live node ptr.
+        let deferred_ptr = self.deferred_request_pool.get();
+        // SAFETY: HiveArrayFallback::get returns an exclusively-owned, live node ptr
+        // (heap-allocates on overflow; never null).
         let deferred = unsafe { &mut *deferred_ptr };
         // Precompute the data slot pointer (used inside the initializer for
         // abort-callback registration) before borrowing `deferred.data` for `.write()`.

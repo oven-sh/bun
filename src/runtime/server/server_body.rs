@@ -2503,12 +2503,19 @@ where
             NodeHTTPServer__onRequest_http
         };
 
+        // C++ forwards `any_server` to `NodeHTTPResponse::create`, which
+        // unpacks it via `any_server_from_packed` (bits 49..64 = variant tag).
+        // A raw `*mut Self` has zero in those bits and would hit
+        // `unreachable!("Invalid pointer tag")`, so re-pack to the Zig
+        // `TaggedPointerUnion` wire format here.
+        let any_server_packed = super::AnyServer::from(self as *const Self).to_packed() as usize;
         let result: JSValue = match jsc::from_js_host_call(global, || unsafe {
             on_node_http_request_fn(
-                self as *mut Self as usize,
+                any_server_packed,
                 global,
                 this_object,
-                self.config.on_node_http_request.as_ref().map(|s| s.get()).unwrap_or(JSValue::UNDEFINED),
+                // Zig: `this.config.onNodeHTTPRequest` (raw JSValue, may be `.zero`).
+                self.config.on_node_http_request.as_ref().map(|s| s.get()).unwrap_or(JSValue::ZERO),
                 if let Some(method) = http::Method::find(req.method()) {
                     method.to_js(global)
                 } else {

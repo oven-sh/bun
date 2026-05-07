@@ -536,10 +536,13 @@ impl PostgresSQLConnection {
         self.drain_internal();
     }
 
-    // TODO(b2-blocked): #[crate::jsc::host_call] proc-macro attr
-    pub extern "C" fn has_pending_activity(this: *mut Self) -> bool {
-        // SAFETY: called on GC thread; reads only atomic field.
-        unsafe { (*this).pending_activity_count.load(Ordering::Acquire) > 0 }
+    // Codegen (`generated_classes.rs`) calls this as `T::has_pending_activity(&*this)`;
+    // match that shape so the same body satisfies both the C-ABI thunk and direct
+    // Rust callers. The atomic load is `&self`-only, so the `*mut Self` receiver
+    // was never required.
+    pub fn has_pending_activity(this: &Self) -> bool {
+        // Called on GC thread; reads only atomic field.
+        this.pending_activity_count.load(Ordering::Acquire) > 0
     }
 
     fn update_has_pending_activity(&mut self) {

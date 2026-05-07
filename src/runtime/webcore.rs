@@ -37,7 +37,15 @@ pub mod array_buffer_sink;
 pub use bun_jsc::js_error_code::DOMExceptionCode;
 pub use bun_jsc::web_worker;
 pub use s3_stat::S3Stat;
-pub use resumable_sink::{ResumableFetchSink, ResumableS3UploadSink, ResumableSinkBackpressure};
+// `ResumableSink<'a, …>` carries a borrow of the request it streams into. Every
+// live instance is heap-allocated as the `m_ctx` payload of a JS wrapper, so the
+// canonical re-export pins `'static` — that's what `generated_classes.rs` (and
+// every Rust caller of `js_ResumableFetchSink::from_js`) needs to name without a
+// lifetime parameter. The generic spelling stays available via the
+// `resumable_sink` module for callers that thread an explicit lifetime.
+pub type ResumableFetchSink = resumable_sink::ResumableFetchSink<'static>;
+pub type ResumableS3UploadSink = resumable_sink::ResumableS3UploadSink<'static>;
+pub use resumable_sink::ResumableSinkBackpressure;
 pub use s3_client::S3Client;
 pub use cookie_map::CookieMap;
 pub use streams::{NetworkSink, HTTPResponseSink, HTTPSResponseSink, H3ResponseSink, HTTPServerWritable};

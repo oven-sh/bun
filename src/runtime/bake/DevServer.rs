@@ -2866,6 +2866,11 @@ impl DevServer {
 
         self.incremental_result.reset();
 
+        // Ref server to keep it from closing.
+        if let Some(server) = self.server.as_mut() {
+            server.on_pending_request();
+        }
+
         let heap = bun_alloc::MimallocArena::new();
         // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
         // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.allocator()` accessor);

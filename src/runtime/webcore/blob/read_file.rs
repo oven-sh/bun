@@ -263,7 +263,7 @@ impl ReadFile {
             store: Some(store),
             offset: off,
             max_length: max_len,
-            total_size: Blob::MAX_SIZE,
+            total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
             read_off: 0,
             read_eof: false,
@@ -896,7 +896,7 @@ impl<'a> ReadFileUV<'a> {
             store, // store.ref() — Arc clone owned here
             offset: off,
             max_length: max_len,
-            total_size: Blob::MAX_SIZE,
+            total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
             read_len: 0,
             read_off: 0,

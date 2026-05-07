@@ -431,14 +431,22 @@ impl SocketAddress {
 // ================================ DESTRUCTORS ================================
 // =============================================================================
 
+impl Drop for SocketAddress {
+    fn drop(&mut self) {
+        // Zig `deinit`: `this._presentation.deref()` then `destroy(this)`.
+        // `bun_str::String` is `Copy` (no Drop), so the +1 on the cached
+        // presentation must be released explicitly here. `deref()` on a `.Dead`
+        // string is a no-op, matching the Zig spec.
+        self._presentation.deref();
+    }
+}
+
 impl SocketAddress {
-    // Zig `deinit` only freed owned fields (`_presentation.deref()` + destroy(this)).
-    // Per PORTING.md idiom map: body that only frees owned fields → delete; Box drop
-    // runs `_presentation: BunString`'s Drop (which derefs). Keeping the explicit
-    // `.deref()` here would double-deref.
     pub fn finalize(this: *mut SocketAddress) {
         bun_jsc::mark_binding!();
-        // SAFETY: called from JSC finalizer on the mutator thread; `this` is the m_ctx payload
+        // SAFETY: called from JSC finalizer on the mutator thread; `this` is the
+        // m_ctx payload allocated via `Box::new` in `SocketAddress::new`.
+        // Box drop runs `<SocketAddress as Drop>::drop` (releases `_presentation`).
         unsafe { drop(Box::from_raw(this)); }
     }
 }

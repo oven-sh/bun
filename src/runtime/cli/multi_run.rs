@@ -87,11 +87,13 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
     unsafe fn on_reader_error(_this: *mut Self, _err: bun_sys::Error) {}
 
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void` whose
-        // concrete repr the FilePoll vtable (registered by bun_runtime::init)
-        // knows how to interpret. Pass the raw `*mut MiniEventLoop` through.
-        // SAFETY: backref; see on_read_chunk.
-        bun_io::EventLoopHandle(unsafe { (*this).event_loop_ptr() } as *mut c_void)
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // the address of the stored `bun_event_loop::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
+        // SAFETY: backref; see on_read_chunk. State outlives all handles.
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*(*(*this).handle).state).event_loop_handle) as *mut c_void
+        })
     }
 
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
@@ -263,6 +265,9 @@ const RESET: &[u8] = b"\x1b[0m";
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     event_loop: *mut MiniEventLoop<'static>,
+    /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
+    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
     // NUL-terminated (last byte is 0) for argv[0].
@@ -1075,6 +1080,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         // Using Vec then into_boxed_slice after init loop below to avoid MaybeUninit gymnastics.
         handles: Box::default(),
         event_loop,
+        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         max_label_len,
         shell_bin,

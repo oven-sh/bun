@@ -450,11 +450,13 @@ impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
-        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
-        // by bun_runtime::init) knows how to interpret it.
-        // SAFETY: worker/coord backrefs valid for pipe lifetime; `vm.event_loop()`
-        // returns a live pointer for the VM lifetime.
-        bun_io::EventLoopHandle(unsafe { (*(*(*this).worker).coord).vm.event_loop() } as *mut c_void)
+        // the address of the stored `bun_jsc::EventLoopHandle` so the
+        // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
+        // SAFETY: worker/coord backrefs valid for pipe lifetime; the
+        // `Coordinator` outlives every `WorkerPipe` callback.
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*(*(*this).worker).coord).event_loop_handle) as *mut c_void
+        })
     }
 }
 

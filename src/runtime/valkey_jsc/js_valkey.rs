@@ -454,10 +454,7 @@ impl JSValkeyClient {
         // (Phase A models it as `&'static`).
         let global_object: &'static JSGlobalObject =
             unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_object) };
-        // SAFETY: the JS VM is process-lifetime; widen the borrow so it can be
-        // stored on `ValkeyClient.vm` (`&'static VirtualMachine`).
-        let vm: &'static VirtualMachine =
-            unsafe { &*(global_object.bun_vm() as *const VirtualMachine) };
+        let vm: &'static VirtualMachine = global_object.bun_vm();
         let vm_ref = vm;
 
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
@@ -746,9 +743,7 @@ impl JSValkeyClient {
         // SAFETY: see `create_no_js_no_pubsub`.
         let global_object: &'static JSGlobalObject =
             unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_object) };
-        // SAFETY: process-lifetime VM; widen for `ValkeyClient.vm`.
-        let vm: &'static VirtualMachine =
-            unsafe { &*(global_object.bun_vm() as *const VirtualMachine) };
+        let vm: &'static VirtualMachine = global_object.bun_vm();
 
         // PORT NOTE: in Zig, `username`/`password`/`address.hostname` are sub-slices
         // into the single `connection_strings` allocation, so the spec dupes

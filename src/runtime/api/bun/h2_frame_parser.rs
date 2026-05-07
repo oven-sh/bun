@@ -1879,9 +1879,7 @@ impl Stream {
         }
         // unsafe to ask GC to run if we are already inside GC
         if !FINALIZING {
-            // SAFETY: VirtualMachine::get() returns the thread-local VM (non-null while
-            // JS is running); event_loop() returns a non-null *mut EventLoop owned by it.
-            unsafe { (*VirtualMachine::get().as_mut().event_loop()).process_gc_timer() };
+            VirtualMachine::get().event_loop_mut().process_gc_timer();
         }
     }
 }
@@ -2609,8 +2607,7 @@ impl H2FrameParser {
         AutoFlusher::register_deferred_microtask_with_type_unchecked::<H2FrameParser>(
             self,
             // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null.
-            // bun_vm() returns *mut VirtualMachine; deref to &VirtualMachine for the AutoFlusher API.
-            unsafe { &*(*self.global_this).bun_vm() },
+            unsafe { &*self.global_this }.bun_vm(),
         );
     }
 
@@ -2621,8 +2618,7 @@ impl H2FrameParser {
         AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<H2FrameParser>(
             self,
             // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null.
-            // bun_vm() returns *mut VirtualMachine; deref to &VirtualMachine for the AutoFlusher API.
-            unsafe { &*(*self.global_this).bun_vm() },
+            unsafe { &*self.global_this }.bun_vm(),
         );
         self.deref();
     }

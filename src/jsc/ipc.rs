@@ -97,8 +97,7 @@ impl InternalMsgHolder {
         let cb = self.cb.get().unwrap();
         let worker = self.worker.get().unwrap();
 
-        // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-        let event_loop = unsafe { &mut *global.bun_vm().as_mut().event_loop() };
+        let event_loop = global.bun_vm().event_loop_mut();
 
         if let Some(p) = message.get(global, "ack")? {
             if !p.is_undefined() {
@@ -2030,7 +2029,6 @@ pub mod IPCHandlers {
 
         pub fn on_data(send_queue: &mut SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            // SAFETY: `bun_vm()` yields the live `*mut VirtualMachine`;
             // `event_loop()` takes `&self`, so deref-and-reborrow at the call
             // site — never materialize `&mut VirtualMachine` (Stacked-Borrows
             // UB).
@@ -2065,7 +2063,6 @@ pub mod IPCHandlers {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
-            // SAFETY: see `on_data` — `bun_vm()` is live; deref to call
             // `event_loop(&self)` without materializing `&mut VirtualMachine`.
             let loop_ = global_this.bun_vm().as_mut().event_loop();
             // SAFETY: see `on_data` — VM-owned `*mut EventLoop`, per-use reborrow.
@@ -2146,7 +2143,6 @@ pub mod IPCHandlers {
         pub fn on_read(send_queue: &mut SendQueue, buffer: &[u8]) {
             log!("NewNamedPipeIPCHandler#onRead {}", buffer.len());
             let global_this = send_queue.get_global_this();
-            // SAFETY: see `PosixSocket::on_data` — `bun_vm()` is live; deref to
             // call `event_loop(&self)` without materializing
             // `&mut VirtualMachine`.
             let loop_ = global_this.bun_vm().as_mut().event_loop();

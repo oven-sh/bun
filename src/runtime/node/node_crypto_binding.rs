@@ -590,7 +590,6 @@ pub mod random {
         let uuid = if disable_entropy_cache {
             UUID::init()
         } else {
-            // SAFETY: `bun_vm()` returns the singleton JS VM; mutably borrowed only here.
             global.bun_vm().as_mut().rare_data().next_uuid()
         };
 
@@ -1102,10 +1101,9 @@ impl CryptoJobCtx for Scrypt {
     }
 
     fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
-        // SAFETY: `bun_vm()` is non-null for a Bun-owned global; `event_loop()` is
         // a self-ptr live for the VM lifetime. Short-lived `&mut` formed at use site
         // per VirtualMachine.rs §event_loop contract.
-        let event_loop = unsafe { &mut *global.bun_vm().as_mut().event_loop() };
+        let event_loop = global.bun_vm().event_loop_mut();
 
         if let Some(err) = self.err {
             if err != 0 {

@@ -1896,8 +1896,7 @@ impl JSFrameworkRouter {
             stored_parse_errors: Vec::new(),
         });
 
-        // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global.
-        let resolver = unsafe { &mut global.bun_vm().as_mut().transpiler.resolver };
+        let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
         // PORT NOTE: reshaped for borrowck — Zig passes `jsfr` as both the router owner and the
         // insertion-context. The handler only touches `files`/`stored_parse_errors`, so
         // split-borrow those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).

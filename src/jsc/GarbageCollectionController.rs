@@ -215,8 +215,7 @@ impl GarbageCollectionController {
         if self.disabled {
             return;
         }
-        // SAFETY: jsc_vm is set during VM init and live for the controller's lifetime.
-        let vm = unsafe { &*self.bun_vm().jsc_vm };
+        let vm = VirtualMachine::get().jsc_vm();
         self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
     }
 
@@ -259,8 +258,7 @@ impl GarbageCollectionController {
         if self.disabled {
             return;
         }
-        // SAFETY: jsc_vm is set during VM init and live for the controller's lifetime.
-        let vm = unsafe { &*self.bun_vm().jsc_vm };
+        let vm = VirtualMachine::get().jsc_vm();
         vm.collect_async();
         self.gc_last_heap_size = vm.block_bytes_allocated();
     }

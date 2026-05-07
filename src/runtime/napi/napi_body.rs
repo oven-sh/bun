@@ -2018,7 +2018,7 @@ pub extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_
         // SAFETY: `VirtualMachine::event_loop` already yields `*mut EventLoop`;
         // no const→mut cast needed.
         // SAFETY: bun_vm() never null for a Bun-owned global.
-        *loop_out = unsafe { &*env.to_js().bun_vm() }.event_loop();
+        *loop_out = env.to_js().bun_vm().event_loop();
     }
     env.ok()
 }
@@ -2044,7 +2044,6 @@ extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
 pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null (Zig used `.?`).
     let env = unsafe { &*env_ };
-    // SAFETY: bun_vm() never null; rare_data() needs `&mut`.
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
         env_ as *mut c_void,
@@ -2086,13 +2085,11 @@ impl Finalizer {
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         if let Some(exception) = env_ref.to_js().try_take_exception() {
-            // SAFETY: bun_vm() never null; uncaught_exception needs `&mut`.
             let _ = env_ref.to_js().bun_vm().as_mut()
                 .uncaught_exception(env_ref.to_js(), exception, false);
         }
 
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            // SAFETY: bun_vm() never null; uncaught_exception needs `&mut`.
             let _ = env_ref.to_js().bun_vm().as_mut()
                 .uncaught_exception(env_ref.to_js(), exception, false);
         }
@@ -2536,7 +2533,6 @@ pub extern "C" fn napi_create_threadsafe_function(
         return NapiEnv::set_last_error(Some(env), NapiStatus::function_expected);
     }
 
-    // SAFETY: bun_vm() never null for a Bun-owned global.
     let vm = env.to_js().bun_vm().as_mut();
     let callback = if let Some(c) = call_js_cb {
         TsfnCallback::C {
@@ -3190,7 +3186,6 @@ impl NapiFinalizerTask {
 
         if vm.is_shutting_down() {
             // Immediate tasks won't run, so we run this as a cleanup hook instead
-            // SAFETY: bun_vm() never null; rare_data() needs `&mut`.
             global_this.bun_vm().as_mut()
                 .rare_data()
                 .push_cleanup_hook(vm.global(), this as *mut c_void, Self::run_as_cleanup_hook);

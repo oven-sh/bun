@@ -1650,8 +1650,7 @@ impl Terminal {
         };
         if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
             let global_this = self.global();
-            // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
-            unsafe { &mut *global_this.bun_vm().as_mut().event_loop() }.run_callback(
+            global_this.bun_vm().event_loop_mut().run_callback(
                 callback,
                 global_this,
                 this_jsvalue,
@@ -1730,8 +1729,7 @@ impl Terminal {
             JSValue::NULL
         };
 
-        // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
-        unsafe { &mut *global_this.bun_vm().as_mut().event_loop() }.run_callback(
+        global_this.bun_vm().event_loop_mut().run_callback(
             callback,
             global_this,
             this_jsvalue,
@@ -1790,8 +1788,7 @@ impl Terminal {
         let data = MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
             .to_node_buffer(global_this);
 
-        // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
-        unsafe { &mut *global_this.bun_vm().as_mut().event_loop() }.run_callback(
+        global_this.bun_vm().event_loop_mut().run_callback(
             callback,
             global_this,
             this_jsvalue,

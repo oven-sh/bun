@@ -887,7 +887,7 @@ fn print_source_at_address(
         let frame = unsafe { &*frame };
         // SAFETY: VM singleton is process-lifetime; `global` is set before any
         // JS frame can be on the stack to inspect.
-        let srcloc = frame.get_caller_src_loc(unsafe { &*VirtualMachine::get().as_mut().global });
+        let srcloc = frame.get_caller_src_loc(VirtualMachine::get().global());
         tty_config.set_color(out_stream, Color::Bold)?;
         write!(out_stream, "{}:{}:{}: ", srcloc.str, srcloc.line, srcloc.column)?;
         tty_config.set_color(out_stream, Color::Reset)?;

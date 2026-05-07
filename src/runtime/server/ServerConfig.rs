@@ -14,7 +14,6 @@ use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsError, J
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
-use crate::node::crypto::JSValueCryptoExt as _; // with_async_context_if_needed
 use bun_core::fmt as bun_fmt;
 
 // `pub const SSLConfig = @import("../socket/SSLConfig.zig");`

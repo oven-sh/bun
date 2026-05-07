@@ -749,13 +749,19 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
     // `framework`/`log`/`bundler_options` were written above; reborrowing each
     // individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
+    // PORT NOTE: `Transpiler<'static>` erases the arena lifetime — `options.arena`
+    // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
+    // box (Zig had no lifetime). Widen `'a → 'static` here once.
+    // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
+    // `Options::arena` doc — "must live until DevServer drops").
+    let arena: &'static Arena = unsafe { &*(options.arena as *const Arena) };
     unsafe {
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
 
         if let Err(err) = framework.init_transpiler(
-            options.arena,
+            arena,
             log,
             bake::Mode::Development,
             bake::Graph::Server,

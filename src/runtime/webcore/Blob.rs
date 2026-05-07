@@ -2402,11 +2402,17 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     let written = core::cell::Cell::new(0usize);
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     // we only truncate if it's a path
     // if it's a file descriptor, we assume they want manual control over that behavior
     scopeguard::defer! {
 ||||||| Stash base
     let _cleanup = scopeguard::guard((), |_| {
+||||||| Stash base
+    let _cleanup = scopeguard::guard((), |_| {
+=======
+    scopeguard::defer! {
+>>>>>>> Stashed changes
         // we only truncate if it's a path
         // if it's a file descriptor, we assume they want manual control over that behavior
 =======
@@ -2423,11 +2429,17 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         if NEEDS_OPEN {
             let _ = bun_sys::close(fd);
         }
+<<<<<<< Updated upstream
     });
 =======
         if NEEDS_OPEN {
             let _ = bun_sys::close(fd);
         }
+    }
+>>>>>>> Stashed changes
+||||||| Stash base
+    });
+=======
     }
 >>>>>>> Stashed changes
 

@@ -176,7 +176,7 @@ macro_rules! os_arch_flags {
         impl $name {
             #[inline] pub fn none() -> Self { Self::empty() }
             #[inline] pub fn negatable(self) -> Negatable<$name> { Negatable { has: self, not: Self::empty() } }
-            fn from_name(s: &[u8]) -> Option<Self> {
+            fn match_name(s: &[u8]) -> Option<Self> {
                 match s { $( $lit => Some(Self::$variant), )* _ => None }
             }
         }
@@ -184,7 +184,7 @@ macro_rules! os_arch_flags {
             /// Port of `npm.zig` `Negatable.apply` — `!foo` clears, `foo` sets.
             pub fn apply(&mut self, s: &[u8]) {
                 let (neg, key) = if let Some(rest) = s.strip_prefix(b"!") { (true, rest) } else { (false, s) };
-                if let Some(bit) = <$name>::from_name(key) {
+                if let Some(bit) = <$name>::match_name(key) {
                     if neg { self.not |= bit; } else { self.has |= bit; }
                 }
             }

@@ -55,7 +55,9 @@ impl Drop for PathLike {
             // `PathString` is a borrowed (ptr,len) pair; `MarkedArrayBuffer`
             // is JS-GC-owned. Neither needs an explicit release here.
             Self::String(_) | Self::Buffer(_) => {}
-            Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => s.deinit(),
+            Self::SliceWithUnderlyingString(s) | Self::ThreadsafeString(s) => {
+                core::mem::take(s).deinit();
+            }
             // `ZigStringSlice` releases its WTF ref / owned buffer in its own
             // `Drop`.
             Self::EncodedSlice(_) => {}

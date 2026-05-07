@@ -4503,8 +4503,8 @@ unsafe extern "C" {
 /// sys.zig:3835 `disableLinger` — set `SO_LINGER {1,0}` so close sends RST.
 #[inline]
 pub fn disable_linger(fd: Fd) {
-    // SAFETY: FFI; `fd.cast()` yields the platform-native handle/int.
-    unsafe { Bun__disableSOLinger(fd.cast()) };
+    // SAFETY: FFI; `fd.native()` yields the platform-native handle/int.
+    unsafe { Bun__disableSOLinger(fd.native()) };
 }
 
 /// sys.zig:3788 — `lseek(fd, offset, SEEK_SET)`; result discarded.

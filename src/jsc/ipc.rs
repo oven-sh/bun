@@ -2022,10 +2022,11 @@ pub mod IPCHandlers {
 
         pub fn on_data(send_queue: &mut SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            // `event_loop()` takes `&self`; never materialize
-            // `&mut VirtualMachine` from the shared `bun_vm()` borrow
-            // (Stacked-Borrows UB).
-            let loop_ = global_this.bun_vm().event_loop();
+            // SAFETY: `bun_vm()` yields the live `*mut VirtualMachine`;
+            // `event_loop()` takes `&self`, so deref-and-reborrow at the call
+            // site — never materialize `&mut VirtualMachine` (Stacked-Borrows
+            // UB).
+            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
             // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
             // as the VM); reborrow per use so `&mut EventLoop` isn't held
             // across `on_data2`.
@@ -2056,8 +2057,9 @@ pub mod IPCHandlers {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
-            // See on_data — `event_loop()` takes `&self`; no `&mut VirtualMachine`.
-            let loop_ = global_this.bun_vm().event_loop();
+            // SAFETY: see `on_data` — `bun_vm()` is live; deref to call
+            // `event_loop(&self)` without materializing `&mut VirtualMachine`.
+            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
             // SAFETY: see `on_data` — VM-owned `*mut EventLoop`, per-use reborrow.
             unsafe { (*loop_).enter() };
             let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
@@ -2136,9 +2138,10 @@ pub mod IPCHandlers {
         pub fn on_read(send_queue: &mut SendQueue, buffer: &[u8]) {
             log!("NewNamedPipeIPCHandler#onRead {}", buffer.len());
             let global_this = send_queue.get_global_this();
-            // See PosixSocket::on_data — `event_loop()` takes `&self`; no
+            // SAFETY: see `PosixSocket::on_data` — `bun_vm()` is live; deref to
+            // call `event_loop(&self)` without materializing
             // `&mut VirtualMachine`.
-            let loop_ = global_this.bun_vm().event_loop();
+            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
             // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
             // as the VM); reborrow at each enter/exit so `&mut EventLoop` isn't
             // held across the decode loop or send_queue borrows below.

@@ -3401,7 +3401,7 @@ impl Resolver {
         // `{ sec: i64, nsec: i64 }` layout — convert by field, not transmute.
         let now = bun::timespec { sec: now.sec, nsec: now.nsec };
         let uws_loop = vm.uws_loop();
-        let _g = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             // PORT NOTE (b2-cycle): low-tier `VirtualMachine.timer` is `()`;
             // resolve via the high-tier `RuntimeState` hook.
             let state = crate::jsc_hooks::runtime_state();
@@ -3413,7 +3413,7 @@ impl Resolver {
             // `IntrusiveRc<Resolver>`, so this `deref` cannot drop the last ref
             // and `*this` stays live for the rest of the function body.
             unsafe { Self::deref(this) };
-        });
+        }
 
         // SAFETY: `this` is live (see guard comment); short-lived `&mut` borrows
         // below are released before the re-entrant `ares_process_fd` call.

@@ -453,6 +453,13 @@ impl From<std::io::Error> for Error {
 impl From<bun_alloc::AllocError> for Error {
     fn from(_: bun_alloc::AllocError) -> Self { Self::OUT_OF_MEMORY }
 }
+/// Zig's `std.Io.Writer` error set surfaces as `error.WriteFailed` when
+/// propagated through `try writer.print(…)`; the Rust port routes formatted
+/// output through `core::fmt::Write`, whose only error value is the unit
+/// `fmt::Error`. Map it to the same tag so `?`-propagation matches the spec.
+impl From<core::fmt::Error> for Error {
+    fn from(_: core::fmt::Error) -> Self { Self::WRITE_FAILED }
+}
 
 // ─── coreutils_error_map ─────────────────────────────────────────────────
 // Zig builds a comptime `EnumMap<SystemErrno, []const u8>` with a per-OS

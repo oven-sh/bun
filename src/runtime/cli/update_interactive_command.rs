@@ -834,13 +834,13 @@ impl UpdateInteractiveCommand {
         workspace_pkg_ids
     }
 
-    fn group_catalog_dependencies<'a>(
-        packages: Vec<OutdatedPackage<'a>>,
-    ) -> Result<Vec<OutdatedPackage<'a>>, bun_core::Error> {
+    fn group_catalog_dependencies(
+        packages: Vec<OutdatedPackage>,
+    ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
         // Create a map to track catalog dependencies by name
-        let mut catalog_map: StringHashMap<Vec<OutdatedPackage<'a>>> = StringHashMap::default();
+        let mut catalog_map: StringHashMap<Vec<OutdatedPackage>> = StringHashMap::default();
 
-        let mut result: Vec<OutdatedPackage<'a>> = Vec::new();
+        let mut result: Vec<OutdatedPackage> = Vec::new();
 
         // Group catalog dependencies
         for pkg in packages {
@@ -881,7 +881,7 @@ impl UpdateInteractiveCommand {
                 workspace_names.extend_from_slice(b" (");
 
                 workspace_names.extend_from_slice(&first.workspace_name);
-                let rest: Vec<OutdatedPackage<'a>> = catalog_packages.collect();
+                let rest: Vec<OutdatedPackage> = catalog_packages.collect();
                 for cat_pkg in &rest {
                     workspace_names.extend_from_slice(b", ");
                     workspace_names.extend_from_slice(&cat_pkg.workspace_name);
@@ -1110,7 +1110,7 @@ impl UpdateInteractiveCommand {
         Ok(grouped_result)
     }
 
-    fn calculate_column_widths(packages: &[OutdatedPackage<'_>]) -> ColumnWidths {
+    fn calculate_column_widths(packages: &[OutdatedPackage]) -> ColumnWidths {
         // Calculate natural widths based on content
         let mut max_name_len: usize = b"Package".len();
         let mut max_current_len: usize = b"Current".len();
@@ -1429,8 +1429,8 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    fn process_multi_select<'a, 's, 'b>(
-        state: &'b mut MultiSelectState<'a, 's>,
+    fn process_multi_select<'s, 'b>(
+        state: &'b mut MultiSelectState<'s>,
         initial_terminal_size: TerminalSize,
     ) -> Result<&'b [bool], bun_core::Error> {
         let colors = Output::enable_ansi_colors_stdout();

@@ -524,22 +524,6 @@ impl EventLoopHandle {
         self.enter();
         EnteredEventLoop(self)
     }
-}
-
-/// RAII guard returned by [`EventLoopHandle::entered`]; calls `exit()` on drop.
-/// `EventLoopHandle` is `Copy`, so the guard owns its own copy and never
-/// extends a borrow of the surrounding struct.
-#[must_use = "dropping immediately exits the event loop scope"]
-pub struct EnteredEventLoop(EventLoopHandle);
-
-impl Drop for EnteredEventLoop {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.exit();
-    }
-}
-
-impl EventLoopHandle {
     /// Returns the FilePoll store as a raw pointer (mirrors Zig `*FilePoll.Store`).
     /// `EventLoopHandle` is `Copy`; promoting to `&'static mut` would let two
     /// calls produce aliased exclusive references (UB). Callers deref locally

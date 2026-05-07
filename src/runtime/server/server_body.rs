@@ -988,11 +988,9 @@ impl ServePlugins {
         let bunfig_folder: &[u8] =
             bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path);
 
-        self.ref_();
-        let this_ptr: *const Self = self;
         // SAFETY: `self` originates from a `*mut ServePlugins` (Box::into_raw in init()); the
         // raw pointer preserves that provenance for the paired deref_ on scope exit.
-        let _deref_guard = scopeguard::guard((), move |_| unsafe { Self::deref_(this_ptr) });
+        let _deref_guard = unsafe { Self::guard_ref(self) };
 
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
@@ -1171,7 +1169,7 @@ pub fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsRes
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
     let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
-    let _guard = scopeguard::guard((), move |_| unsafe { ServePlugins::deref_(plugins) });
+    let _guard = unsafe { ServePluginsRef::adopt(plugins) };
     plugins_result.ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above

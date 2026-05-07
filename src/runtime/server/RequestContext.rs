@@ -2779,12 +2779,9 @@ where
         // PORT NOTE: reshaped for borrowck — the defer reads `stream` through a
         // raw ptr so the body below can keep borrowing it.
         let stream_ptr: *mut WebCore::streams::Result = &mut stream;
-        let this_ptr = this as *mut Self;
-        let _guard = scopeguard::guard((), move |_| {
-            if is_done {
-                // SAFETY: this outlives the guard
-                unsafe { (*this_ptr).deref() };
-            }
+        // Drop one ref only when the stream signals completion.
+        let _ref = is_done.then(|| RequestContextRef(this as *mut Self));
+        scopeguard::defer! {
             if stream_needs_deinit {
                 // SAFETY: stream lives on the caller's stack frame past the guard.
                 match unsafe { &mut *stream_ptr } {
@@ -2796,7 +2793,7 @@ where
                     _ => unreachable!(),
                 }
             }
-        });
+        }
 
         if this.is_aborted_or_ended() {
             return;
@@ -3364,9 +3361,7 @@ where
         if let Some(readable) = this.request_body_readable_stream_ref.get(global_this) {
             debug_assert!(this.request_body_buf.is_empty());
             // SAFETY: event_loop() returns a live raw ptr.
-            let loop_ = vm.event_loop();
-            unsafe { (*loop_).enter() };
-            let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+            let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
             // SAFETY: from_borrowed_slice_dangerous returns a ManuallyDrop
             // wrapper; ownership of `chunk` stays with the caller.
@@ -3380,8 +3375,9 @@ where
                     WebCore::streams::Result::Temporary(borrowed),
                 ) }; // TODO: properly propagate exception upwards
             } else {
-                let mut strong = core::mem::take(&mut this.request_body_readable_stream_ref);
-                let _strong_guard = scopeguard::guard((), |_| strong.deinit());
+                // Moved out so the Strong (and its underlying GC handle) is
+                // released at scope exit via `Drop` on `strong::Optional`.
+                let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
                 if let Some(mut request_body) = this.request_body.take() {
                     // SAFETY: pointee is the pooled HiveRef slot; live until this
                     // unref drops the last count. `drop(NonNull)` is a Copy no-op.
@@ -3418,10 +3414,8 @@ where
                 unsafe { this.resp.unwrap().clear_on_data() };
                 this.flags.set_is_waiting_for_request_body(false);
 
-                let loop_ = vm.event_loop();
                 // SAFETY: event_loop() returns a live raw ptr.
-                unsafe { (*loop_).enter() };
-                let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+                let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
                 // Reject the pending body first so endRequestStreaming()
                 // below (via this.endWithoutBody) doesn't substitute a
                 // generic ConnectionClosed. toErrorInstance handles

@@ -499,8 +499,9 @@ impl PostgresSQLQuery {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
                     // fail to run do cleanup
                     this.statement = None;
-                    // SAFETY: `stmt` is the sole owner just created above.
-                    drop(unsafe { Box::from_raw(stmt) });
+                    // SAFETY: sole owner just created above (rc=1); decrement → 0 frees,
+                    // satisfying `Drop`'s `debug_assert_eq!(ref_count, 0)`.
+                    unsafe { PostgresSQLStatement::deref(stmt) };
                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                     unsafe { Self::deref_(this_ptr) };
 
@@ -522,8 +523,9 @@ impl PostgresSQLQuery {
             if let Err(_) = connection.requests.write_item(this_ptr) {
                 // fail to run do cleanup
                 this.statement = None;
-                // SAFETY: `stmt` is the sole owner just created above.
-                drop(unsafe { Box::from_raw(stmt) });
+                // SAFETY: sole owner just created above (rc=1); decrement → 0 frees,
+                // satisfying `Drop`'s `debug_assert_eq!(ref_count, 0)`.
+                unsafe { PostgresSQLStatement::deref(stmt) };
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                 unsafe { Self::deref_(this_ptr) };
 

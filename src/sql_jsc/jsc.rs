@@ -1034,6 +1034,14 @@ pub mod call_frame {
             self.remaining = rest;
             Some(*first)
         }
+        /// Zig `Node.ArgumentsSlice.nextEat` (CallFrame.zig) — returns the head
+        /// and advances the cursor. The local `next` above already has eat
+        /// semantics (it splits `remaining`), so this is an alias kept for
+        /// callers ported verbatim from Zig.
+        #[inline]
+        pub fn next_eat(&mut self) -> Option<JSValue> {
+            self.next()
+        }
     }
 }
 

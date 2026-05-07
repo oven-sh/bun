@@ -19,47 +19,34 @@ use bun_url::PathnameScanner;
 use bun_http_types::URLPath::URLPath;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-1 gate-and-stub: local shims for cross-tier symbols not yet exposed by
-// lower-tier crates. Do NOT edit other crates; un-gating happens in B-2.
+// Cross-crate name aliases. These are pure re-exports of real lower-tier types
+// (no shadow structs); kept as a private module so Zig-shaped paths
+// (`logger::Log`, `Fs::Entry`, `api::LoadedRouteConfig`) read naturally.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(dead_code, non_snake_case)]
-mod b1_stubs {
-    // `bun.hash(bytes)` — std.hash.Wyhash seed 0. NOT Wyhash11 (different algo).
-    #[inline]
-    pub fn wyhash(input: &[u8]) -> u64 {
-        bun_wyhash::hash(input)
-    }
-
-    // CYCLEBREAK B-2 resolved: `bun_logger` is a lower-tier crate (deps:
-    // bun_core/collections/string/sys only), so depending on it here is
-    // acyclic. Re-export the real types so route-validation diagnostics
-    // (`append_route` duplicates, `Pattern::validate`, open failures) land in
-    // the SAME `Log` the caller threads through `load_routes` and later throws
-    // to JS. The previous no-op ZST stub silently dropped those errors —
-    // a spec divergence vs. router.zig.
-    pub mod logger {
-        pub use bun_logger::{Loc, Log, Source};
-    }
-
-    // `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
-    // name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
-    pub use bun_resolver::fs as Fs;
-    pub use bun_resolver::fs::FileSystem;
-
-    // peechy batch 2 landed: re-export the real schema types so
-    // `RouteConfig::{to_api, from_loaded_routes, from_api}` and
-    // `TinyPtr::to_string_pointer` name lower-tier surface instead of local
-    // shims. `StringPointer` lives in `bun_core::schema::api` (T0); the route
-    // config pair lives in `bun_options_types::schema::api`.
-    pub mod api {
-        pub use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
-        pub use bun_core::schema::api::StringPointer;
-    }
-
-    // bun_core::Error landed in T0; alias kept for churn-free callers.
-    pub type CoreError = bun_core::Error;
+// `bun.hash(bytes)` — std.hash.Wyhash seed 0. NOT Wyhash11 (different algo).
+#[inline]
+fn wyhash(input: &[u8]) -> u64 {
+    bun_wyhash::hash(input)
 }
-use b1_stubs::{api, logger, wyhash, CoreError, FileSystem, Fs};
+
+mod logger {
+    pub use bun_logger::{Loc, Log, Source};
+}
+
+// `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
+// name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
+use bun_resolver::fs as Fs;
+use bun_resolver::fs::FileSystem;
+
+// peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
+// the route-config pair lives in `bun_options_types::schema::api`.
+mod api {
+    pub use bun_core::schema::api::StringPointer;
+    pub use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
+}
+
+type CoreError = bun_core::Error;
+
 use bun_string::{HashedString, PathString};
 
 /// Every `PathString` stored on a [`Route`] wraps bytes interned in

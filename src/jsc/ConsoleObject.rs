@@ -252,9 +252,7 @@ pub enum MessageType {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Body — format2 / TablePrinter / Formatter::print_as / C-exported
-// Bun__ConsoleObject__* shims. The high-tier-cycle deps (bun_runtime: CLI,
-// JSLexer, JSPrinter, JestPrettyFormat) remain individually -
-// gated at their use sites; everything else is live.
+// Bun__ConsoleObject__* shims.
 // ───────────────────────────────────────────────────────────────────────────
 
 use bun_threading::Mutex;
@@ -1522,7 +1520,6 @@ pub mod formatter {
     /// on `self` for the body of the scope. Zig `defer` reads at scope-exit
     /// time and never aliases, so we capture a raw `*mut` to the field and
     /// write through it on drop. This lets the body freely take `&mut self`.
-    #[allow(unused_macros)] // only used by gated `print_as` body
     macro_rules! defer_restore {
         ($place:expr, $prev:expr) => {
             Restore { place: core::ptr::addr_of_mut!($place), prev: $prev }
@@ -1530,7 +1527,6 @@ pub mod formatter {
     }
 
     /// Mirror Zig's `defer this.field -|= 1;` without holding a live borrow.
-    #[allow(unused_macros)] // only used by gated `print_as` body
     macro_rules! defer_decrement {
         ($place:expr) => {
             Decrement { place: core::ptr::addr_of_mut!($place) }

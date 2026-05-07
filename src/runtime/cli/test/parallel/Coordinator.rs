@@ -756,6 +756,7 @@ pub mod abort_handler {
                 );
             }
         }
+        Guard(())
     }
 
     pub fn uninstall() {

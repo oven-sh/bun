@@ -444,17 +444,16 @@ pub struct Alphabetizer<SemverIntType: VersionInt> {
 }
 
 impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
-    pub fn is_alphabetical(&self, lhs: PackageID, rhs: PackageID) -> bool {
+    pub fn order(&self, lhs: PackageID, rhs: PackageID) -> core::cmp::Ordering {
         // SAFETY: caller constructs Alphabetizer with slices that outlive the sort call.
         let (names, buf, resolutions) = unsafe { (&*self.names, &*self.buf, &*self.resolutions) };
-        match names[lhs as usize].order(&names[rhs as usize], buf, buf) {
-            core::cmp::Ordering::Equal => {
-                resolutions[lhs as usize].order(&resolutions[rhs as usize], buf, buf)
-                    == core::cmp::Ordering::Less
-            }
-            core::cmp::Ordering::Less => true,
-            core::cmp::Ordering::Greater => false,
-        }
+        names[lhs as usize]
+            .order(&names[rhs as usize], buf, buf)
+            .then_with(|| resolutions[lhs as usize].order(&resolutions[rhs as usize], buf, buf))
+    }
+
+    pub fn is_alphabetical(&self, lhs: PackageID, rhs: PackageID) -> bool {
+        self.order(lhs, rhs) == core::cmp::Ordering::Less
     }
 }
 

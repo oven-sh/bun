@@ -317,9 +317,9 @@ impl LinkerContext<'_> {
         re_exports_count: usize,
     ) {
         // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
-        // re-entrancy guards around the global Store). `scoped()` is the RAII
-        // form of Zig's `disable(); defer enable();` bracket — currently a
-        // no-op stub until the thread-local toggle lands (`js_parser/ast/mod.rs`).
+        // re-entrancy guards around the global Store). `Disabler::scoped()`
+        // calls `disable()` and re-`enable()`s on drop — currently no-op stubs
+        // until the thread-local toggle lands (`js_parser/ast/mod.rs`).
         let _stmt_guard = bun_js_parser::ast::stmt::Disabler::scoped();
         let _expr_guard = bun_js_parser::ast::expr::Disabler::scoped();
 

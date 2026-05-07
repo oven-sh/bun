@@ -185,8 +185,8 @@ impl HostedGitInfo {
     ) -> Result<Range<usize>, HostedGitInfoError> {
         let start = sb.len;
         let writable = sb.writable();
-        // TODO(port): PercentEncoding.decode in Zig takes a writer; here we assume a
-        // `decode_into(dst: &mut [u8], src: &[u8]) -> Result<usize, _>` shape.
+        // PORT NOTE: Zig `PercentEncoding.decode(Writer, writer, input)` ported via the
+        // fixed-buffer `decode_into(out, input) -> Result<u32, _>` overload in bun_url.
         let decoded_len =
             PercentEncoding::decode_into(writable, input).map_err(|_| HostedGitInfoError::InvalidURL)? as usize;
         sb.len += decoded_len;
@@ -362,7 +362,8 @@ impl HostedGitInfo {
 // Rust can't nest struct defs inside `impl`, so it lives at module scope but is
 // re-exported through the type's namespace conceptually.
 pub struct StringPair {
-    // TODO(port): lifetime/ownership of these slices unclear; never constructed in this file.
+    // PORT NOTE: Zig `[]const u8` aliasing-semantics. No constructor in this module
+    // (consumed by install_jsc), so own the buffers — callers allocate per use.
     pub save_spec: Box<[u8]>,
     pub fetch_spec: Option<Box<[u8]>>,
 }

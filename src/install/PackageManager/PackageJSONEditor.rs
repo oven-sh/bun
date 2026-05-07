@@ -254,7 +254,7 @@ pub fn edit_update_no_args(
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
-    let _guard = ExprDisabler::scoped();
+    let _guard = ExprDisabler::scope();
 
     for group in DEPENDENCY_GROUPS {
         let group_str = group.0;
@@ -527,7 +527,7 @@ pub fn edit(
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
-    let _guard = ExprDisabler::scoped();
+    let _guard = ExprDisabler::scope();
 
     let mut remaining = updates.len();
     let mut replacing: usize = 0;

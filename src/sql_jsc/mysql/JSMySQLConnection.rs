@@ -5,8 +5,9 @@ use bun_boringssl_sys as boringssl;
 use bun_core::{err, fmt as bun_fmt, timespec, TimespecMockMode};
 use crate::jsc::{
     api::server_config::SSLConfig, codegen::js_mysql_connection as js, webcore::AutoFlusher,
-    CallFrame, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, JSGlobalObject, JSValue,
-    JsRef, JsResult, KeepAlive, VirtualMachine,
+    CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
+    HasAutoFlush, JSGlobalObject, JSValue, JsRef, JsResult, KeepAlive, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
@@ -193,6 +194,25 @@ impl JSMySQLConnection {
         unsafe { &mut *self.vm }
     }
 
+    /// `bun_aio::EventLoopCtx` for `KeepAlive::{ref_,unref}`. The JS-thread VM
+    /// is a singleton; route through the global hook (same target as
+    /// `self.vm`).
+    #[inline]
+    fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
+        self.vm().vm_ctx()
+    }
+}
+
+impl HasAutoFlush for JSMySQLConnection {
+    fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: `this` is the live `*mut JSMySQLConnection` registered with
+        // the deferred-task queue; the queue runs on the JS thread with
+        // exclusive access.
+        unsafe { (*this).on_auto_flush() }
+    }
+}
+
+impl JSMySQLConnection {
     pub fn on_auto_flush(&mut self) -> bool {
         bun_core::scoped_log!(MySQLConnection, "onAutoFlush");
         if self.connection.has_backpressure() {

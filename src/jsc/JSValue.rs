@@ -511,26 +511,6 @@ impl JSValue {
         // SAFETY: pure FFI conversion; C++ handles any tagged JSValue.
         unsafe { JSC__JSValue__toUInt64NoTruncate(self) }
     }
-    /// `JSValue.isBigIntInInt64Range(min, max)` (JSValue.zig:40) — true iff
-    /// `self` is a BigInt and `min <= self <= max`.
-    #[inline]
-    pub fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {
-        unsafe extern "C" {
-            fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
-        }
-        // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
-        unsafe { JSC__isBigIntInInt64Range(self, min, max) }
-    }
-    /// `JSValue.isBigIntInUInt64Range(min, max)` (JSValue.zig:36) — true iff
-    /// `self` is a BigInt and `min <= self <= max`.
-    #[inline]
-    pub fn is_big_int_in_uint64_range(self, min: u64, max: u64) -> bool {
-        unsafe extern "C" {
-            fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
-        }
-        // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
-        unsafe { JSC__isBigIntInUInt64Range(self, min, max) }
-    }
     /// `JSValue.createUninitializedUint8Array(global, len)` — allocate a new
     /// `Uint8Array` of `len` bytes without zeroing. Backing memory is
     /// uninitialized; caller must write every byte before exposing it to JS.

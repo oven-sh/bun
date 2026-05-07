@@ -574,7 +574,11 @@ mod json {
                 JsError::Terminated => IPCSerializationError::JSTerminated,
                 JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
             })?;
-        // `out` Drops (deref) at scope exit.
+        // Zig: `defer out.deref()`. `bun_string::String` is `Copy` (no `Drop`),
+        // so the +1 ref written by `json_stringify_fast` is wrapped in
+        // `OwnedString` immediately so every exit path (Dead, OOM in
+        // `ensure_unused_capacity`, success) releases it.
+        let out = bun_string::OwnedString::new(out);
 
         if out.tag() == bun_string::Tag::Dead {
             return Err(IPCSerializationError::SerializationFailed);

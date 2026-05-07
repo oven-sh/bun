@@ -161,3 +161,49 @@ impl PathOrFileDescriptor {
         }
     }
 }
+
+impl core::fmt::Display for PathOrFileDescriptor {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Path(p) => write!(f, "{}", bstr::BStr::new(p.slice())),
+            Self::Fd(fd) => write!(f, "{:?}", fd),
+        }
+    }
+}
+
+impl PathOrFileDescriptor {
+    /// Unwrap the `Path` arm. Panics on `Fd` (mirrors Zig's `pathlike.path`
+    /// direct field access, used only after the caller has matched on the tag).
+    #[inline]
+    pub fn path(&self) -> &PathLike {
+        match self {
+            Self::Path(path) => path,
+            Self::Fd(_) => unreachable!("PathOrFileDescriptor::path() on Fd variant"),
+        }
+    }
+
+    /// Unwrap the `Fd` arm. Panics on `Path`.
+    #[inline]
+    pub fn fd(&self) -> bun_sys::Fd {
+        match self {
+            Self::Fd(fd) => *fd,
+            Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on Path variant"),
+        }
+    }
+
+    pub fn hash(&self) -> u64 {
+        match self {
+            Self::Path(path) => bun_wyhash::hash(path.slice()),
+            Self::Fd(fd) => {
+                // SAFETY: `Fd` is POD; reinterpret as bytes for hashing.
+                let bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        (fd as *const bun_sys::Fd).cast::<u8>(),
+                        core::mem::size_of::<bun_sys::Fd>(),
+                    )
+                };
+                bun_wyhash::hash(bytes)
+            }
+        }
+    }
+}

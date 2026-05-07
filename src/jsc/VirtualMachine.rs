@@ -5881,6 +5881,127 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js()
 }
 
+
+/// Spec PluginRunner.zig:121 `onResolveJSC`.
+///
+/// LAYERING: moved DOWN from `bun_bundler_jsc::PluginRunner` so
+/// `resolve_maybe_needs_trailing_slash` can consult `Bun.plugin()` resolvers
+/// without a `bun_jsc → bun_bundler_jsc` cycle. The body only touches
+/// `JSGlobalObject`/`JSValue`/`bun_string::String`, all of which live at this
+/// tier; `bun_bundler_jsc` re-exports this fn for its own callers.
+pub fn plugin_runner_on_resolve_jsc(
+    global: &JSGlobalObject,
+    namespace: bun_string::String,
+    specifier: bun_string::String,
+    importer: bun_string::String,
+    target: crate::BunPluginTarget,
+) -> JsResult<Option<ErrorableString>> {
+    use crate::StringJsc as _;
+    let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
+        if namespace.length() > 0 && !namespace.eql_comptime(b"file") {
+            namespace
+        } else {
+            bun_string::String::static_(b"")
+        },
+        specifier,
+        importer,
+        target,
+    )?
+    else {
+        return Ok(None);
+    };
+    if !on_resolve_plugin.is_object() {
+        return Ok(None);
+    }
+    let Some(path_value) = on_resolve_plugin.get(global, b"path")? else {
+        return Ok(None);
+    };
+    if path_value.is_empty_or_undefined_or_null() {
+        return Ok(None);
+    }
+    if !path_value.is_string() {
+        return Ok(Some(ErrorableString::err(
+            bun_core::err!(JSErrorObject),
+            bun_string::String::static_(b"Expected \"path\" to be a string in onResolve plugin")
+                .to_error_instance(global),
+        )));
+    }
+
+    let file_path = path_value.to_bun_string(global)?;
+
+    if file_path.length() == 0 {
+        return Ok(Some(ErrorableString::err(
+            bun_core::err!(JSErrorObject),
+            bun_string::String::static_(
+                b"Expected \"path\" to be a non-empty string in onResolve plugin",
+            )
+            .to_error_instance(global),
+        )));
+    } else if file_path.eql_comptime(b".")
+        || file_path.eql_comptime(b"..")
+        || file_path.eql_comptime(b"...")
+        || file_path.eql_comptime(b" ")
+    {
+        return Ok(Some(ErrorableString::err(
+            bun_core::err!(JSErrorObject),
+            bun_string::String::static_(b"\"path\" is invalid in onResolve plugin")
+                .to_error_instance(global),
+        )));
+    }
+    let user_namespace: bun_string::String = 'brk: {
+        if let Some(namespace_value) = on_resolve_plugin.get(global, b"namespace")? {
+            if !namespace_value.is_string() {
+                return Ok(Some(ErrorableString::err(
+                    bun_core::err!(JSErrorObject),
+                    bun_string::String::static_(b"Expected \"namespace\" to be a string")
+                        .to_error_instance(global),
+                )));
+            }
+
+            let namespace_str = namespace_value.to_bun_string(global)?;
+            if namespace_str.length() == 0 {
+                break 'brk bun_string::String::static_(b"file");
+            }
+            if namespace_str.eql_comptime(b"file") {
+                break 'brk bun_string::String::static_(b"file");
+            }
+            if namespace_str.eql_comptime(b"bun") {
+                break 'brk bun_string::String::static_(b"bun");
+            }
+            if namespace_str.eql_comptime(b"node") {
+                break 'brk bun_string::String::static_(b"node");
+            }
+            break 'brk namespace_str;
+        }
+        break 'brk bun_string::String::static_(b"file");
+    };
+
+    // Our slow way of cloning the string into memory owned by JSC.
+    use std::io::Write as _;
+    let mut combined_string: Vec<u8> = Vec::new();
+    write!(&mut combined_string, "{}:{}", user_namespace, file_path).expect("unreachable");
+    let out_ = bun_string::String::borrow_utf8(&combined_string);
+    let jsval = match out_.to_js(global) {
+        Ok(v) => v,
+        Err(_) => {
+            return Ok(Some(ErrorableString::err(
+                bun_core::err!(JSError),
+                global.try_take_exception().unwrap_or(JSValue::UNDEFINED),
+            )));
+        }
+    };
+    let out = match jsval.to_bun_string(global) {
+        Ok(v) => v,
+        Err(_) => {
+            return Ok(Some(ErrorableString::err(
+                bun_core::err!(JSError),
+                global.try_take_exception().unwrap_or(JSValue::UNDEFINED),
+            )));
+        }
+    };
+    Ok(Some(ErrorableString::ok(out)))
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/VirtualMachine.zig (~3840 lines)

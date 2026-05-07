@@ -14,106 +14,11 @@ use bun_wyhash::hash;
 use crate::webcore::{Blob, Request, Response};
 use crate::node::util::validators;
 
-// ─── b2-blocked stubs ─────────────────────────────────────────────────────
-// `SliceWithUnderlyingString` lives in `bun_str::lib_draft_b1.rs`, not yet
-// re-exported from the active `bun_str`. Stubbed with the field/method
-// surface this file touches so the enum variants type-check; method bodies
-// that USE it stay ``-gated below.
-// TODO(b2-blocked): swap to `pub use bun_str::SliceWithUnderlyingString;`.
-#[derive(Default)]
-pub struct SliceWithUnderlyingString {
-    pub utf8: ZigStringSlice,
-    pub underlying: bun_str::String,
-}
-impl SliceWithUnderlyingString {
-    pub fn slice(&self) -> &[u8] { self.utf8.slice() }
-    pub fn deinit(&self) {}
-    pub fn to_thread_safe(&mut self) {}
+// LAYERING: `SliceWithUnderlyingString` is the canonical `bun_string`
+// type; the previous local stub existed only because it wasn't yet
+// re-exported from the active `bun_str`.
+pub use bun_str::SliceWithUnderlyingString;
 
-    /// `SliceWithUnderlyingString.dupeRef` — bump the underlying refcount and
-    /// return a shallow copy that shares the same backing storage. The utf8
-    /// view is left empty (callers in node_fs only use this on the path that
-    /// re-derives the slice from `underlying`).
-    pub fn dupe_ref(&self) -> SliceWithUnderlyingString {
-        SliceWithUnderlyingString {
-            utf8: ZigStringSlice::default(),
-            underlying: self.underlying.dupe_ref(),
-        }
-    }
-    /// `SliceWithUnderlyingString.reportExtraMemory` — tell JSC about the
-    /// owned-bytes allocation so the GC heuristic can account for it.
-    #[inline]
-    pub fn report_extra_memory(&self, _vm: &jsc::VM) {
-        // TODO(b2-blocked): bun_jsc::VM::deprecated_report_extra_memory.
-    }
-    /// `SliceWithUnderlyingString.isWTFAllocated` — true when the utf8 slice
-    /// borrows directly from a WTF::StringImpl.
-    #[inline]
-    pub fn is_wtf_allocated(&self) -> bool {
-        matches!(self.utf8, ZigStringSlice::WTF { .. })
-    }
-
-    /// `string_jsc.sliceWithUnderlyingStringTransferToJS` — hand this slice to
-    /// JS, consuming both the utf8 buffer and the underlying `bun.String` ref.
-    pub fn transfer_to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        use bun_str::Tag;
-        if matches!(self.underlying.tag(), Tag::Dead | Tag::Empty) && !self.utf8.slice().is_empty() {
-            // Zig: `if (this.utf8.allocator.get()) |_|` — heap-owned bytes can
-            // be donated to JSC without a copy.
-            if matches!(self.utf8, ZigStringSlice::Owned(_)) {
-                debug_assert!(
-                    !matches!(self.utf8, ZigStringSlice::WTF { .. }),
-                    "WTF-backed slice should never reach the owned-transfer path",
-                );
-                // E0509: ZigStringSlice has Drop, so destructuring-move is forbidden;
-                // `into_vec()` moves out the owned buffer (no copy for Owned).
-                let bytes =
-                    core::mem::replace(&mut self.utf8, ZigStringSlice::default()).into_vec();
-                if let Ok(Some(utf16)) = strings::to_utf16_alloc(&bytes, false, false) {
-                    drop(bytes);
-                    let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    return Ok(jsc::zig_string::to_external_u16(
-                        utf16.as_ptr(),
-                        utf16.len(),
-                        global_object,
-                    ));
-                }
-                // All-ASCII (or UTF-16 conversion declined): hand the Latin-1
-                // bytes to JSC; ownership transfers via the external-string
-                // finalizer (mimalloc-backed Vec).
-                let bytes = core::mem::ManuallyDrop::new(bytes);
-                // SAFETY: `bytes` is leaked into JSC; ptr/len remain valid for
-                // the lifetime of the external string.
-                let slice = unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
-                return Ok(jsc::zig_string::ZigString::init(slice).to_external_value(global_object));
-            }
-
-            // Borrowed/WTF-backed: copy into a fresh JS string, then release.
-            let result = jsc::bun_string_jsc::create_utf8_for_js(global_object, self.utf8.slice());
-            self.utf8 = ZigStringSlice::default();
-            return result;
-        }
-
-        self.utf8 = ZigStringSlice::default();
-        jsc::bun_string_jsc::transfer_to_js(&mut self.underlying, global_object)
-    }
-
-    /// `bun.SliceWithUnderlyingString.transcodeFromOwnedSlice` — take ownership
-    /// of `bytes` and (eventually) transcode per `encoding` into a backing
-    /// `bun.String`. Upstream `bun_str` does not yet expose this; for now keep
-    /// the bytes in `utf8` so `read_file`'s emptiness check and later
-    /// `transfer_to_js` still see the data.
-    // TODO(b2-blocked): wire to `webcore::encoding::to_bun_string_from_owned_slice`
-    // once the runtime↔webcore dep cycle is broken.
-    pub fn transcode_from_owned_slice(bytes: Box<[u8]>, _encoding: Encoding) -> Self {
-        Self {
-            utf8: ZigStringSlice::init_owned(bytes.into_vec()),
-            underlying: bun_str::String::default(),
-        }
-    }
-}
-
-// `bun.jsc.MarkedArrayBuffer` (the `Buffer` payload).
 pub use jsc::MarkedArrayBuffer as Buffer;
 
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
@@ -1014,111 +919,58 @@ where
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum PathLike {
-    String(bun_str::PathString),
-    Buffer(Buffer),
-    SliceWithUnderlyingString(SliceWithUnderlyingString),
-    ThreadsafeString(SliceWithUnderlyingString),
-    EncodedSlice(ZigStringSlice),
+// LAYERING: single nominal `PathLike`/`PathOrFileDescriptor` live in
+// `bun_jsc::node_path` so `bun_jsc::webcore_types::store::File::pathlike`
+// and the `Store`/`Blob` constructors here share one type. This module
+// re-exports them and layers the JS-argument-parsing helpers via the
+// `PathLikeExt` / `PathOrFdExt` extension traits.
+pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
+
+
+/// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
+pub trait PathLikeExt {
+    fn deinit(&self);
+    fn deinit_and_unprotect(&self);
+    fn slice_z_with_force_copy<'a, const FORCE: bool>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr where Self: Sized;
+    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr where Self: Sized;
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr where Self: Sized;
+    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ where Self: Sized;
+    fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ where Self: Sized;
+    fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>> where Self: Sized;
+    fn from_js_with_allocator(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Option<PathLike>> where Self: Sized;
+    fn from_bun_string(
+        global: &JSGlobalObject,
+        str: &bun_str::String,
+        will_be_async: bool,
+    ) -> JsResult<PathLike> where Self: Sized;
+    fn dupe(&self) -> Self;
 }
 
-// Zig `PathLike` is bitwise-copy; provide a manual Clone that is safe under
-// the variant payloads' Rust ownership rules. `Buffer`'s backing
-// `MarkedArrayBuffer` lives in `bun_jsc` (no `Clone` derive) but its fields
-// (`ArrayBuffer` is `Copy`, `owns_buffer: bool`) are themselves `Copy`, so we
-// reconstruct a non-owning view. `EncodedSlice` allocates an owned copy so the
-// clone outlives the original's borrow.
-impl Clone for PathLike {
-    fn clone(&self) -> Self {
-        match self {
-            Self::String(s) => Self::String(*s),
-            Self::Buffer(b) => Self::Buffer(Buffer {
-                buffer: b.buffer,
-                owns_buffer: false,
-            }),
-            Self::SliceWithUnderlyingString(s) => Self::SliceWithUnderlyingString(s.dupe_ref()),
-            Self::ThreadsafeString(s) => Self::ThreadsafeString(s.dupe_ref()),
-            Self::EncodedSlice(s) => {
-                Self::EncodedSlice(ZigStringSlice::init_owned(s.slice().to_vec()))
-            }
-        }
-    }
+/// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
+pub trait PathOrFdExt {
+    fn dupe(&self) -> Self;
+    fn path(&self) -> &PathLike;
+    fn fd(&self) -> Fd;
+    fn estimated_size(&self) -> usize;
+    fn hash(&self) -> u64;
+    fn deinit(&self);
+    fn deinit_and_unprotect(&self);
+    fn from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Option<PathOrFileDescriptor>> where Self: Sized;
 }
 
-// Gated: SliceWithUnderlyingString/ZigStringSlice deinit() are stubbed.
-// TODO(b2-blocked): un-gate once bun_str::SliceWithUnderlyingString is real.
-
-impl Drop for PathLike {
-    fn drop(&mut self) {
-        match self {
-            Self::String(_) | Self::Buffer(_) => {}
-            // TODO(port): if SliceWithUnderlyingString / ZigStringSlice gain Drop, these become implicit.
-            Self::SliceWithUnderlyingString(str) => str.deinit(),
-            Self::ThreadsafeString(str) => str.deinit(),
-            // `ZigStringSlice` already releases its WTF ref / owned buffer in
-            // its own `Drop`; nothing to do here.
-            Self::EncodedSlice(_) => {}
-        }
-    }
-}
-
-impl PathLike {
-    /// Zig parity: `pathlike == .string`.
-    #[inline]
-    pub fn is_string(&self) -> bool {
-        matches!(self, Self::String(_))
-    }
-
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        match self {
-            Self::String(str) => str.slice(),
-            Self::Buffer(str) => str.slice(),
-            Self::SliceWithUnderlyingString(str) => str.slice(),
-            Self::ThreadsafeString(str) => str.slice(),
-            Self::EncodedSlice(str) => str.slice(),
-        }
-    }
-
-    pub fn estimated_size(&self) -> usize {
-        match self {
-            Self::String(s) => s.estimated_size(),
-            Self::Buffer(b) => b.slice().len(),
-            Self::ThreadsafeString(_) | Self::SliceWithUnderlyingString(_) => 0,
-            Self::EncodedSlice(s) => s.slice().len(),
-        }
-    }
-}
-
-impl Default for PathLike {
-    #[inline]
-    fn default() -> Self {
-        Self::EncodedSlice(ZigStringSlice::EMPTY)
-    }
-}
-
-impl PathLike {
+impl PathLikeExt for PathLike {
     /// Explicit cleanup hook (Zig parity). Ownership is on `Drop`; this is a
     /// no-op so call sites that spell `path.deinit()` keep compiling.
     #[inline]
-    pub fn deinit(&self) {}
+    fn deinit(&self) {}
 
-    pub fn to_thread_safe(&mut self) {
-        match self {
-            Self::SliceWithUnderlyingString(s) => {
-                s.to_thread_safe();
-                // PORT NOTE: reshaped for borrowck
-                let slice_with_underlying_string = core::mem::take(s);
-                *self = Self::ThreadsafeString(slice_with_underlying_string);
-            }
-            Self::Buffer(b) => {
-                b.buffer.value.protect();
-            }
-            _ => {}
-        }
-    }
-
-    pub fn deinit_and_unprotect(&self) {
+    fn deinit_and_unprotect(&self) {
         // Alternate cleanup path (unprotects JS-side buffers).
         // PORT NOTE: Zig consumes `self`; Rust call sites pass `&self` /
         // `&mut self` interchangeably, so take by reference and rely on Drop
@@ -1138,7 +990,7 @@ impl PathLike {
     // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
     // Rust const-generics can't change return mutability; we always return `&ZStr`.
     // The single force=true caller (if any) needs `&mut ZStr` — handle in Phase B.
-    pub fn slice_z_with_force_copy<'a, const FORCE: bool>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
+    fn slice_z_with_force_copy<'a, const FORCE: bool>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
         let sliced = self.slice();
 
         #[cfg(windows)]
@@ -1204,17 +1056,17 @@ impl PathLike {
     }
 
     #[inline]
-    pub fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
+    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
         self.slice_z_with_force_copy::<false>(buf)
     }
 
     #[inline]
-    pub fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr {
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr {
         strings::paths::to_w_path(buf, self.slice())
     }
 
     #[inline]
-    pub fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ {
+    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ {
         #[cfg(windows)]
         {
             return self.slice_w(buf);
@@ -1226,7 +1078,7 @@ impl PathLike {
     }
 
     #[inline]
-    pub fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ {
+    fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ {
         #[cfg(windows)]
         {
             let s = self.slice();
@@ -1271,11 +1123,11 @@ impl PathLike {
         }
     }
 
-    pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>> {
+    fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>> {
         Self::from_js_with_allocator(ctx, arguments)
     }
 
-    pub fn from_js_with_allocator(
+    fn from_js_with_allocator(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Option<PathLike>> {
@@ -1359,7 +1211,7 @@ impl PathLike {
         }
     }
 
-    pub fn from_bun_string(
+    fn from_bun_string(
         global: &JSGlobalObject,
         str: &bun_str::String,
         will_be_async: bool,
@@ -1406,7 +1258,25 @@ impl PathLike {
             Ok(Self::EncodedSlice(utf8))
         }
     }
+    fn dupe(&self) -> Self {
+        match self {
+            Self::String(s) => Self::String(*s),
+            // SAFETY: bitwise copy mirrors Zig's by-value union semantics. The
+            // wrapped types are POD-ish handles (JS-rooted buffer / WTF ref);
+            // a real ref-bump belongs here once those types expose `dupe()`.
+            // TODO(port): switch to `b.dupe()` / `s.dupe_ref()` when available.
+            Self::Buffer(b) => Self::Buffer(unsafe { core::ptr::read(b) }),
+            Self::SliceWithUnderlyingString(s) => {
+                Self::SliceWithUnderlyingString(unsafe { core::ptr::read(s) })
+            }
+            Self::ThreadsafeString(s) => {
+                Self::ThreadsafeString(unsafe { core::ptr::read(s) })
+            }
+            Self::EncodedSlice(s) => Self::EncodedSlice(unsafe { core::ptr::read(s) }),
+        }
+    }
 }
+
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1583,14 +1453,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum PathOrFileDescriptor {
-    Fd(Fd),
-    Path(PathLike),
-}
 
-impl Default for PathOrFileDescriptor {
-    fn default() -> Self { Self::Fd(Fd::INVALID) }
-}
 
 impl Clone for PathOrFileDescriptor {
     fn clone(&self) -> Self {
@@ -1623,46 +1486,21 @@ impl PathOrFileDescriptorSerializeTag {
 // callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
 // bumped where the underlying type supports it; otherwise we bitwise-copy
 // (matching Zig semantics) and leave proper ref-counting to a later pass.
-impl PathLike {
-    pub fn dupe(&self) -> Self {
-        match self {
-            Self::String(s) => Self::String(*s),
-            // SAFETY: bitwise copy mirrors Zig's by-value union semantics. The
-            // wrapped types are POD-ish handles (JS-rooted buffer / WTF ref);
-            // a real ref-bump belongs here once those types expose `dupe()`.
-            // TODO(port): switch to `b.dupe()` / `s.dupe_ref()` when available.
-            Self::Buffer(b) => Self::Buffer(unsafe { core::ptr::read(b) }),
-            Self::SliceWithUnderlyingString(s) => {
-                Self::SliceWithUnderlyingString(unsafe { core::ptr::read(s) })
-            }
-            Self::ThreadsafeString(s) => {
-                Self::ThreadsafeString(unsafe { core::ptr::read(s) })
-            }
-            Self::EncodedSlice(s) => Self::EncodedSlice(unsafe { core::ptr::read(s) }),
-        }
-    }
-}
 
-impl PathOrFileDescriptor {
+
+impl PathOrFdExt for PathOrFileDescriptor {
     #[inline]
-    pub fn dupe(&self) -> Self {
+    fn dupe(&self) -> Self {
         match self {
             Self::Fd(fd) => Self::Fd(*fd),
             Self::Path(p) => Self::Path(p.dupe()),
         }
     }
-}
-
-// Drop: unref()s the path string if it is a PathLike (via PathLike's Drop).
-// Does nothing for file descriptors, **does not** close file descriptors.
-// (No explicit `impl Drop` needed — field drop of PathLike handles it.)
-
-impl PathOrFileDescriptor {
     /// Unwrap the `Path` arm. Panics on `Fd` (mirrors Zig's
     /// `pathlike.path` direct field access, which is only used after the
     /// caller has matched on the tag).
     #[inline]
-    pub fn path(&self) -> &PathLike {
+    fn path(&self) -> &PathLike {
         match self {
             Self::Path(path) => path,
             Self::Fd(_) => unreachable!("PathOrFileDescriptor::path() on Fd variant"),
@@ -1672,21 +1510,21 @@ impl PathOrFileDescriptor {
     /// Unwrap the `Fd` arm. Panics on `Path` (mirrors Zig's
     /// `pathlike.fd` direct field access).
     #[inline]
-    pub fn fd(&self) -> Fd {
+    fn fd(&self) -> Fd {
         match self {
             Self::Fd(fd) => *fd,
             Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on Path variant"),
         }
     }
 
-    pub fn estimated_size(&self) -> usize {
+    fn estimated_size(&self) -> usize {
         match self {
             Self::Path(path) => path.estimated_size(),
             Self::Fd(_) => 0,
         }
     }
 
-    pub fn hash(&self) -> u64 {
+    fn hash(&self) -> u64 {
         match self {
             Self::Path(path) => hash(path.slice()),
             Self::Fd(fd) => {
@@ -1701,32 +1539,20 @@ impl PathOrFileDescriptor {
             }
         }
     }
-}
-
-// Gated: bodies call JSC methods (`arguments.next()`, `Fd::from_js_validated`,
-// `path.to_thread_safe()` reaches `.protect()`).
-// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
-
-impl PathOrFileDescriptor {
-    pub fn to_thread_safe(&mut self) {
-        if let Self::Path(path) = self {
-            path.to_thread_safe();
-        }
-    }
 
     /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
-    pub fn deinit(&self) {
+    fn deinit(&self) {
         if let Self::Path(path) = self { path.deinit(); }
     }
 
-    pub fn deinit_and_unprotect(&self) {
+    fn deinit_and_unprotect(&self) {
         match self {
             Self::Path(path) => path.deinit_and_unprotect(),
             Self::Fd(_) => {}
         }
     }
 
-    pub fn from_js(
+    fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Option<PathOrFileDescriptor>> {
@@ -1746,14 +1572,19 @@ impl PathOrFileDescriptor {
     }
 }
 
-impl fmt::Display for PathOrFileDescriptor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Path(p) => write!(f, "{}", bstr::BStr::new(p.slice())),
-            Self::Fd(fd) => write!(f, "{:?}", fd),
-        }
-    }
-}
+
+// Drop: unref()s the path string if it is a PathLike (via PathLike's Drop).
+// Does nothing for file descriptors, **does not** close file descriptors.
+// (No explicit `impl Drop` needed — field drop of PathLike handles it.)
+
+
+
+// Gated: bodies call JSC methods (`arguments.next()`, `Fd::from_js_validated`,
+// `path.to_thread_safe()` reaches `.protect()`).
+// TODO(b2-blocked): un-gate once bun_jsc method surface lands.
+
+
+
 
 // ──────────────────────────────────────────────────────────────────────────
 

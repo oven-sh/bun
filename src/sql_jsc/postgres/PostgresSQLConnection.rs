@@ -304,6 +304,22 @@ impl PostgresSQLConnection {
     }
 
     pub fn on_auto_flush(&mut self) -> bool {
+        <Self as HasAutoFlush>::on_auto_flush(self)
+    }
+}
+
+impl HasAutoFlush for PostgresSQLConnection {
+    fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: `this` is the live `*mut PostgresSQLConnection` registered
+        // with the deferred-task queue; the queue runs on the JS thread with
+        // exclusive access.
+        let this = unsafe { &mut *this };
+        this.on_auto_flush_impl()
+    }
+}
+
+impl PostgresSQLConnection {
+    fn on_auto_flush_impl(&mut self) -> bool {
         if self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
             debug!("onAutoFlush: has backpressure");
             self.auto_flusher.registered = false;
@@ -687,7 +703,7 @@ impl PostgresSQLConnection {
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
-            let event_loop = unsafe { self.vm() }.event_loop();
+            let event_loop = unsafe { self.vm().event_loop_mut() };
             event_loop.enter();
             let mut js_error = value.to_error().unwrap_or(value);
             if js_error.is_empty() {
@@ -741,7 +757,7 @@ impl PostgresSQLConnection {
             self.clean_up_requests(None);
             self.update_has_pending_activity();
         } else {
-            let event_loop = unsafe { self.vm() }.event_loop();
+            let event_loop = unsafe { self.vm().event_loop_mut() };
             event_loop.enter();
             self.poll_ref.unref(self.vm_ctx());
 
@@ -872,7 +888,7 @@ impl PostgresSQLConnection {
         // route through the raw VM pointer.
         let vm: *mut VirtualMachine = self.vm;
         // SAFETY: `vm` is the live VM singleton stored in this connection.
-        let event_loop = unsafe { &mut *vm }.event_loop();
+        let event_loop = unsafe { (*vm).event_loop_mut() };
         event_loop.enter();
 
         self.flush_data();
@@ -896,7 +912,7 @@ impl PostgresSQLConnection {
         // because it captures &mut self alongside the body.
 
         // SAFETY: `vm` is the live VM singleton stored in this connection.
-        let event_loop = unsafe { &mut *vm }.event_loop();
+        let event_loop = unsafe { (*vm).event_loop_mut() };
         event_loop.enter();
         SocketMonitor::read(data);
         // reset the head to the last message so remaining reflects the right amount of bytes

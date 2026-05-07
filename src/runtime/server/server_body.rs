@@ -1907,11 +1907,15 @@ where
             self.config.on_request = new_config.on_request.take();
         }
         // Zig server.zig:1108: `if (this.config.onNodeHTTPRequest != new_config.onNodeHTTPRequest)`
-        // — swaps unconditionally (including clearing to .zero when the reload
-        // config omits the handler) so subsequent `on_web_socket_upgrade` /
+        // — swap on any change, *including* clearing to `.zero` when the reload
+        // config omits the handler, so subsequent `on_web_socket_upgrade` /
         // `set_routes` stop routing through the node:http path. `take()` yields
         // `None` when the new config omitted it; assignment drops the old Strong.
-        self.config.on_node_http_request = new_config.on_node_http_request.take();
+        if self.config.on_node_http_request.as_ref().map(Strong::get)
+            != new_config.on_node_http_request.as_ref().map(Strong::get)
+        {
+            self.config.on_node_http_request = new_config.on_node_http_request.take();
+        }
         if new_config
             .on_error
             .as_ref()

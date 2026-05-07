@@ -136,21 +136,21 @@ unsafe extern "C" {
 
 // ───────────────────────────── title ─────────────────────────────
 
-/// Heap-owned backing for `crate::cli::Bun__Node__ProcessTitle` when it was set
-/// via JS (`process.title = ...`). The CLI may also point that static at a
-/// slice borrowing process-lifetime argv storage; that case is *not* tracked
-/// here so dropping this never frees argv. The mutex guards *both* this owned
-/// box and reads/writes of `crate::cli::Bun__Node__ProcessTitle`.
-static PROCESS_TITLE: parking_lot::Mutex<Option<Box<[u8]>>> = parking_lot::Mutex::new(None);
+/// Guards reads/writes of `crate::cli::Bun__Node__ProcessTitle`. The static
+/// itself owns the `Box<[u8]>`; this mutex only provides exclusion between
+/// `get_title`/`set_title` (Zig: `var title_mutex = bun.Mutex{}`).
+static TITLE_MUTEX: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 #[unsafe(export_name = "Bun__Process__getTitle")]
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
-    let _guard = PROCESS_TITLE.lock();
-    // SAFETY: PROCESS_TITLE lock held; Bun__Node__ProcessTitle is the static guarded by it
-    let str_ = unsafe { crate::cli::Bun__Node__ProcessTitle };
+    let _guard = TITLE_MUTEX.lock();
+    // SAFETY: TITLE_MUTEX held; the static is only mutated under this lock or
+    // during single-threaded CLI startup, so `&raw const` + shared read is sound.
+    let str_ = unsafe { (*(&raw const crate::cli::Bun__Node__ProcessTitle)).as_deref() }
+        .unwrap_or(b"bun");
     // SAFETY: title is a valid out-param provided by C++ caller
     unsafe {
-        *title = BunString::clone_utf8(str_.unwrap_or(b"bun"));
+        *title = BunString::clone_utf8(str_);
     }
 }
 
@@ -161,25 +161,18 @@ pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mu
     // returning. `String` is `Copy`, so read it out by value and let
     // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
     let newvalue = bun_str::OwnedString::new(unsafe { *newvalue });
-    let mut owned = PROCESS_TITLE.lock();
+    let _guard = TITLE_MUTEX.lock();
 
     // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
     // the Zig OOM-throw path is unreachable here.
     let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
-    // SAFETY: PROCESS_TITLE lock held. The `&'static [u8]` published into
-    // `Bun__Node__ProcessTitle` borrows `*owned`; readers under the mutex never
-    // observe a stale borrow because we publish the slice *before* swapping the
-    // owned box, and the old box is dropped only after the slice no longer
-    // points at it.
+    // Zig: `if (old) |slice| allocator.free(slice); Bun__Node__ProcessTitle = new_title;`
+    // — assigning into the `Option<Box<[u8]>>` static drops the previous box.
+    // SAFETY: TITLE_MUTEX held; we are the exclusive writer.
     unsafe {
-        let slice: &'static [u8] = core::mem::transmute::<&[u8], &'static [u8]>(&new_title[..]);
-        crate::cli::Bun__Node__ProcessTitle = Some(slice);
+        crate::cli::Bun__Node__ProcessTitle = Some(new_title);
     }
-    // Zig: `if (old) |slice| allocator.free(slice)` — drop the previous
-    // heap-owned title (if any). Argv-borrowed initial titles are not in
-    // PROCESS_TITLE so are correctly left alone.
-    *owned = Some(new_title);
 }
 
 // ───────────────────────────── execArgv ─────────────────────────────

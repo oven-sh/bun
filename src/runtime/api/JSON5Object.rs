@@ -80,16 +80,12 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     let input: BlobOrStringOrBuffer = match BlobOrStringOrBuffer::from_js(global, input_value)? {
         Some(v) => v,
-        None => 'input: {
-            let str = input_value.to_bun_string(global)?;
-            // PORT NOTE: Zig's `str.toSlice(allocator)` is a `SliceWithUnderlyingString`
-            // bundling the (possibly-transcoded) UTF-8 view with its backing
-            // `bun.String` ref. The local `types::SliceWithUnderlyingString` stub
-            // exposes the same field shape.
-            let utf8 = str.to_utf8_without_ref();
-            break 'input BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(
-                SliceWithUnderlyingString { utf8, underlying: str },
-            ));
+        None => {
+            let mut str = input_value.to_bun_string(global)?;
+            // `String::to_slice` consumes `str` (mem::replace to EMPTY) and bundles
+            // the UTF-8 view with its backing ref — equivalent to Zig's
+            // `str.toSlice(allocator)` followed by `defer str.deref()`.
+            BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(str.to_slice()))
         }
     };
 
@@ -226,7 +222,7 @@ impl Stringifier {
 
         if unwrapped.is_big_int() {
             return Err(global
-                .throw("JSON5.stringify cannot serialize BigInt")
+                .throw(format_args!("JSON5.stringify cannot serialize BigInt"))
                 .into());
         }
 
@@ -247,7 +243,7 @@ impl Stringifier {
         let was_present = self.visiting.insert(unwrapped, ()).is_some();
         if was_present {
             return Err(global
-                .throw("Converting circular structure to JSON5")
+                .throw(format_args!("Converting circular structure to JSON5"))
                 .into());
         }
         // PORT NOTE: reshaped for borrowck — Zig used `defer visiting.remove`;
@@ -524,7 +520,7 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/JSON5Object.zig (433 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      parse() arena/ASTMemoryAllocator threading + JSPropertyIterator options API need Phase B wiring; `defer visiting.remove` reshaped for borrowck (manual remove, no scopeguard). Several upstream methods shimmed locally pending un-gate (throw_stack_overflow, unwrap_boxed_primitive, put_may_be_index, String::char_at/substring_with_len).
+//   confidence: high
+//   notes:      `defer visiting.remove` reshaped for borrowck (manual remove,
+//               no scopeguard). Upstream shims dissolved into bun_jsc / bun_str.
 // ──────────────────────────────────────────────────────────────────────────

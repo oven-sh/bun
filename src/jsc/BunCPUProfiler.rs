@@ -176,11 +176,13 @@ fn build_output_path(
 
     // Append directory if specified
     if !config.dir.is_empty() {
-        path.join(&[config.dir]);
+        // PORT NOTE: AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable
+        // (Zig call is infallible). See paths/Path.rs `options::Result` note.
+        path.join(&[config.dir]).expect("unreachable");
     }
 
     // Append filename
-    path.append(filename);
+    path.append(filename).expect("unreachable");
 
     Ok(())
 }

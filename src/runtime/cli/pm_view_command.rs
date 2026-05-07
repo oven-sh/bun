@@ -1,4 +1,4 @@
-use bun_core::{Global, Output};
+use bun_core::{prettyln, Global, Output};
 use bun_core::fmt as bun_fmt;
 use bun_http as http;
 use bun_install::PackageManager;
@@ -187,7 +187,7 @@ pub fn view(
     let res = match req.send_sync() {
         Ok(r) => r,
         Err(err) => {
-            Output::err(err, "view request failed to send", format_args!(""));
+            Output::err(err, "view request failed to send", ());
             Global::crash();
         }
     };

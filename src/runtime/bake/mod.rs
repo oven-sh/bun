@@ -414,19 +414,15 @@ impl Framework {
                 *path = Cow::Owned(p.text.to_vec());
             }
             Err(err) => {
-                // SAFETY: `Resolver.log` is a `*mut Log` JSC_BORROW set at init
-                // (LIFETIMES.tsv); valid for the resolver's lifetime.
-                let log = unsafe { &mut *r.log };
-                bun_core::handle_oom(log.add_error_fmt(
-                    None,
-                    bun_logger::Loc::EMPTY,
-                    format_args!(
-                        "Failed to resolve {} for {}: {}",
-                        bstr::BStr::new(path),
-                        bstr::BStr::new(desc),
-                        err,
-                    ),
-                ));
+                // Spec bake.zig:422 routes through `bun.Output.err` (stderr), not
+                // `r.log`. The "Errors written into r.log" doc on `Framework.resolve`
+                // refers to entries the resolver itself pushed; this top-level
+                // "Failed to resolve" line goes to the terminal.
+                bun_core::Output::err(
+                    err,
+                    "Failed to resolve '{s}' for framework ({s})",
+                    (bstr::BStr::new(path), bstr::BStr::new(desc)),
+                );
                 *had_errors = true;
             }
         }

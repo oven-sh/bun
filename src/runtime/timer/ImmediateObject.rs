@@ -149,7 +149,6 @@ impl ImmediateObject {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/timer/ImmediateObject.zig (106 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      .classes.ts payload + intrusive RC; internals is MaybeUninit + out-param init (reshape to `-> Self` in Phase B); sibling-module paths (EventLoopTimer/ID/Kind) need Phase-B fixup
+//   confidence: high
+//   notes:      .classes.ts payload + intrusive RC; internals is MaybeUninit + out-param init
 // ──────────────────────────────────────────────────────────────────────────

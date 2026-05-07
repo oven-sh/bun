@@ -4,31 +4,6 @@ use bun_str::strings;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local shim — upstream `JSGlobalObject.rs` impl block is still
-// an inherent method on `bun_jsc::JSGlobalObject`.
-// ──────────────────────────────────────────────────────────────────────────
-trait JSGlobalObjectEncoderExt {
-    fn throw_not_enough_arguments(
-        &self,
-        name_: &str,
-        expected: usize,
-        got: usize,
-    ) -> JsResult<JSValue>;
-}
-impl JSGlobalObjectEncoderExt for JSGlobalObject {
-    fn throw_not_enough_arguments(
-        &self,
-        name_: &str,
-        expected: usize,
-        got: usize,
-    ) -> JsResult<JSValue> {
-        Err(self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        )))
-    }
-}
-
 #[derive(Default)]
 #[bun_jsc::JsClass]
 pub struct TextEncoderStreamEncoder {

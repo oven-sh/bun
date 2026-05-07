@@ -87,22 +87,27 @@ impl PackageManifestMap {
         Ok(())
     }
 
-    pub fn by_name_hash(
+    /// # Safety
+    /// See [`by_name_hash_allow_expired`](Self::by_name_hash_allow_expired).
+    pub unsafe fn by_name_hash(
         &mut self,
-        pm: &mut PackageManager,
+        pm: *mut PackageManager,
         scope: &npm::registry::Scope,
         name_hash: PackageNameHash,
         cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        self.by_name_hash_allow_expired(
-            pm,
-            scope,
-            name_hash,
-            None,
-            cache_behavior,
-            needs_extended_manifest,
-        )
+        // SAFETY: forwarded to caller.
+        unsafe {
+            self.by_name_hash_allow_expired(
+                pm,
+                scope,
+                name_hash,
+                None,
+                cache_behavior,
+                needs_extended_manifest,
+            )
+        }
     }
 
     /// Memory-only lookup — equivalent to Zig

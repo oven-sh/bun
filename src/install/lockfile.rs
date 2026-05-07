@@ -1535,20 +1535,19 @@ impl Lockfile {
                     // `manifests` and `lockfile` are non-overlapping fields; nothing
                     // below resizes/relocates `manifests` while `manifest` is held.
                     let manager_ptr: *mut PackageManager = manager;
+                    let cache_ctx = unsafe { &mut *manager_ptr }.manifest_disk_cache_ctx();
                     let scope = unsafe { &(*manager_ptr).options }.scope_for_package_name(
                         pkg_name.slice(self.buffers.string_bytes.as_slice()),
                     );
-                    // SAFETY: `manifests` projected from `manager_ptr`; `pm`
-                    // routed raw and only dereferenced for disjoint fields.
-                    let Some(manifest) = (unsafe {
-                        (*manager_ptr).manifests.by_name_hash(
-                            manager_ptr,
-                            scope,
-                            pkg_name_hash,
-                            Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
-                            false,
-                        )
-                    }) else {
+                    // SAFETY: `manifests` projected from `manager_ptr`; the
+                    // call holds only that disjoint field.
+                    let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
+                        cache_ctx,
+                        scope,
+                        pkg_name_hash,
+                        Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
+                        false,
+                    ) else {
                         continue;
                     };
 

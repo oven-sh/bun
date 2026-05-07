@@ -119,7 +119,7 @@ impl IOReader {
         }
         #[cfg(windows)]
         {
-            reader.source = Some(bun_io::Source::open_file(fd));
+            reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
         }
         let this = std::sync::Arc::new(IOReader {
             reader: UnsafeCell::new(reader),

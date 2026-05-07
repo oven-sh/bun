@@ -182,20 +182,18 @@ pub fn populate_manifest_cache(
 
                 // SAFETY: `scope_for_package_name` borrows only `options`;
                 // `manifests` is a disjoint field projected from the same raw
-                // provenance root. `by_name` takes `pm` as a raw pointer and
-                // dereferences only fields disjoint from `manifests` (see its
-                // safety doc), so no borrow stack is invalidated.
+                // provenance root. `by_name`'s `pm`-derived reads are hoisted
+                // into the by-value `cache_ctx`, so the call holds only
+                // `&mut manifests`.
                 let scope: *const crate::npm::registry::Scope =
                     unsafe { &(*manager_ptr).options }.scope_for_package_name(pkg_name_slice);
-                let cached = unsafe {
-                    (*manager_ptr).manifests.by_name(
-                        manager_ptr,
-                        &*scope,
-                        pkg_name_slice,
-                        ManifestLoad::LoadFromMemoryFallbackToDisk,
-                        needs_extended_manifest,
-                    )
-                };
+                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                    cache_ctx,
+                    unsafe { &*scope },
+                    pkg_name_slice,
+                    ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    needs_extended_manifest,
+                );
                 if cached.is_none() {
                     start_manifest_task(
                         unsafe { &mut *manager_ptr },
@@ -235,15 +233,13 @@ pub fn populate_manifest_cache(
                     // SAFETY: see disjoint-field note on the `.All` arm above.
                     let scope: *const crate::npm::registry::Scope =
                         unsafe { &(*manager_ptr).options }.scope_for_package_name(package_name);
-                    let cached = unsafe {
-                        (*manager_ptr).manifests.by_name(
-                            manager_ptr,
-                            &*scope,
-                            package_name,
-                            ManifestLoad::LoadFromMemoryFallbackToDisk,
-                            needs_extended_manifest,
-                        )
-                    };
+                    let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                        cache_ctx,
+                        unsafe { &*scope },
+                        package_name,
+                        ManifestLoad::LoadFromMemoryFallbackToDisk,
+                        needs_extended_manifest,
+                    );
                     if cached.is_none() {
                         start_manifest_task(
                             unsafe { &mut *manager_ptr },

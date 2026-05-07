@@ -338,14 +338,57 @@ impl ShellMkdirTask {
 
     /// Spec: mkdir.zig `runFromThreadPool`.
     pub fn run_from_thread_pool(this: *mut ShellMkdirTask) {
+        use bun_paths::{platform, resolve_path, Platform};
         // SAFETY: `this` is a live Box::into_raw'd task.
         let this = unsafe { &mut *this };
-        // Join cwd + filepath to get an absolute path.
-        // TODO(b2-blocked): bun_paths::join_z + NodeFS::mkdir_recursive_impl —
-        // the actual mkdir is done by the node:fs port. Stubbed: record an
-        // ENOSYS-style error so behaviour is observable.
-        let _ = (&this.filepath, &this.cwd_path, this.opts);
-        // Bounce-back is posted by `shell_task_trampoline`.
+
+        // We have to give an absolute path to our mkdir implementation for it
+        // to work with cwd.
+        let filepath: &bun_str::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
+            // Owned `Vec<u8>`; ensure NUL-terminated.
+            if this.filepath.last() != Some(&0) {
+                this.filepath.push(0);
+            }
+            // SAFETY: NUL byte just guaranteed at the end.
+            unsafe { bun_str::ZStr::from_raw(this.filepath.as_ptr(), this.filepath.len() - 1) }
+        } else {
+            resolve_path::join_z::<platform::Auto>(&[&this.cwd_path, &this.filepath])
+        };
+
+        let mut node_fs = NodeFS::default();
+        let args = fs_args::Mkdir {
+            path: PathLike::String(bun_string::PathString::init(filepath.as_bytes())),
+            recursive: this.opts.parents,
+            mode: fs_args::Mkdir::DEFAULT_MODE,
+            always_return_none: true,
+        };
+
+        if this.opts.parents {
+            let vtable = MkdirVerboseVTable {
+                inner: &mut this.created_directories,
+                active: this.opts.verbose,
+            };
+            if let Err(e) = node_fs.mkdir_recursive_impl(&args, vtable) {
+                this.err = Some(e.with_path(filepath.as_bytes()));
+                core::hint::black_box(&node_fs);
+            }
+        } else {
+            match node_fs.mkdir_non_recursive(&args) {
+                Ok(_) => {
+                    if this.opts.verbose {
+                        this.created_directories.extend_from_slice(filepath.as_bytes());
+                        this.created_directories.push(b'\n');
+                    }
+                }
+                Err(e) => {
+                    this.err = Some(e.with_path(filepath.as_bytes()));
+                    core::hint::black_box(&node_fs);
+                }
+            }
+        }
+        // Bounce-back to the main thread is posted by `shell_task_trampoline`
+        // via `ShellTask::on_finish::<Self>` (handles both JS and mini event
+        // loops).
     }
 
     pub fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &mut Interpreter) {

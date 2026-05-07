@@ -891,7 +891,7 @@ pub fn bun_canonicalize_ip(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/dns_jsc/cares_jsc.zig (612 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      bun_dns::Address/sockaddr types and JSObject::create_with builder are guessed; comptime lookup_name demoted to runtime &'static [u8].
+//   confidence: high
+//   todos:      3
+//   notes:      comptime lookup_name demoted to runtime &'static [u8]; @typeInfo struct_any_reply field loop expanded by hand — keep in lockstep with c_ares::struct_any_reply.
 // ──────────────────────────────────────────────────────────────────────────

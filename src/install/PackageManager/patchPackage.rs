@@ -101,6 +101,9 @@ pub fn do_patch_commit(
     let argument: &'static [u8] = manager.options.positionals[1];
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
+    // The cached id (if any) was computed against `manager.lockfile`; this query
+    // runs against the freshly-loaded `lockfile` local, so drop the cache first.
+    manager.root_package_id.id = None;
     let workspace_package_id = manager.root_package_id.get(&lockfile, manager.workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
     // PORT NOTE: reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
@@ -662,6 +665,9 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     let mut win_normalizer = PathBuffer::uninit();
 
     let workspace_name_hash = manager.workspace_name_hash;
+    // Drop any id cached against a pre-clean lockfile so the lookup runs fresh
+    // against the post-install `manager.lockfile`.
+    manager.root_package_id.id = None;
     let workspace_package_id = manager.root_package_id.get(&manager.lockfile, workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
     // PORT NOTE: reshaped for borrowck — owned buffer kept so `argument` can borrow it.

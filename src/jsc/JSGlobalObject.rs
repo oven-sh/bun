@@ -383,8 +383,7 @@ impl JSGlobalObject {
     }
 
     pub fn throw_invalid_scrypt_params(&self) -> JsError {
-        // SAFETY: FFI — BoringSSL error queue is thread-local; no preconditions.
-        let err = unsafe { bun_boringssl::c::ERR_peek_last_error() };
+        let err = bun_boringssl::c::ERR_peek_last_error();
         if err != 0 {
             let mut buf = [0u8; 256];
             // SAFETY: FFI — `buf` is a 256-byte stack buffer; `len` matches its capacity;

@@ -264,8 +264,8 @@ pub mod ssl_wrapper {
             pub(super) fn BIO_ctrl_pending(bio: *const BIO) -> usize;
             pub(super) fn BIO_s_mem() -> *const BIO_METHOD;
             pub(super) fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
-            // err.h
-            pub(super) fn ERR_clear_error();
+            // err.h — thread-local queue, no preconditions.
+            pub(super) safe fn ERR_clear_error();
         }
     }
 
@@ -618,7 +618,7 @@ pub mod ssl_wrapper {
             if ret < 0 {
                 // SAFETY: ssl is still valid.
                 let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), ret) };
-                unsafe { boring_sys::ERR_clear_error() };
+                boring_sys::ERR_clear_error();
 
                 if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL {
                     self.flags.set_fatal_error(true);
@@ -725,7 +725,7 @@ pub mod ssl_wrapper {
             if written <= 0 {
                 // SAFETY: ssl is still valid.
                 let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), written) };
-                unsafe { boring_sys::ERR_clear_error() };
+                boring_sys::ERR_clear_error();
 
                 if err == boring_sys::SSL_ERROR_WANT_READ {
                     // we wanna read/write
@@ -838,7 +838,7 @@ pub mod ssl_wrapper {
             if result <= 0 {
                 // SAFETY: ssl is still valid.
                 let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
-                unsafe { boring_sys::ERR_clear_error() };
+                boring_sys::ERR_clear_error();
                 if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                     // Remotely-Initiated Shutdown
                     // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
@@ -913,7 +913,7 @@ pub mod ssl_wrapper {
                 if just_read <= 0 {
                     // SAFETY: ssl is still valid.
                     let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
-                    unsafe { boring_sys::ERR_clear_error() };
+                    boring_sys::ERR_clear_error();
 
                     if err != boring_sys::SSL_ERROR_WANT_READ && err != boring_sys::SSL_ERROR_WANT_WRITE {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {

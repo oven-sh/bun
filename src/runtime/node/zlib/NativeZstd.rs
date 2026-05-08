@@ -241,8 +241,7 @@ impl Context {
         match self.mode {
             NodeMode::ZSTD_COMPRESS => {
                 self.pledged_src_size = pledged_src_size;
-                // SAFETY: FFI call with no preconditions.
-                let state = unsafe { c::ZSTD_createCCtx() };
+                let state = c::ZSTD_createCCtx();
                 if state.is_null() {
                     return Error::init(
                         c"Could not initialize zstd instance".as_ptr(),
@@ -253,8 +252,7 @@ impl Context {
                 self.state = Some(state.cast());
                 // SAFETY: state is non-null (checked above).
                 let result = unsafe { c::ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size as _) };
-                // SAFETY: ZSTD_isError is a pure fn on usize.
-                if unsafe { c::ZSTD_isError(result) } > 0 {
+                if c::ZSTD_isError(result) > 0 {
                     // SAFETY: state is a valid CCtx allocated above.
                     let _ = unsafe { c::ZSTD_freeCCtx(state) };
                     self.state = None;
@@ -267,8 +265,7 @@ impl Context {
                 Error::OK
             }
             NodeMode::ZSTD_DECOMPRESS => {
-                // SAFETY: FFI call with no preconditions.
-                let state = unsafe { c::ZSTD_createDCtx() };
+                let state = c::ZSTD_createDCtx();
                 if state.is_null() {
                     return Error::init(
                         c"Could not initialize zstd instance".as_ptr(),
@@ -290,8 +287,7 @@ impl Context {
                 let result = unsafe {
                     c::ZSTD_CCtx_setParameter(self.state_ptr().cast(), key, value as c_int)
                 };
-                // SAFETY: ZSTD_isError is a pure fn on usize.
-                if unsafe { c::ZSTD_isError(result) } > 0 {
+                if c::ZSTD_isError(result) > 0 {
                     return Error::init(c"Setting parameter failed".as_ptr(), -1, c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr());
                 }
                 Error::OK
@@ -301,8 +297,7 @@ impl Context {
                 let result = unsafe {
                     c::ZSTD_DCtx_setParameter(self.state_ptr().cast(), key, value as c_int)
                 };
-                // SAFETY: ZSTD_isError is a pure fn on usize.
-                if unsafe { c::ZSTD_isError(result) } > 0 {
+                if c::ZSTD_isError(result) > 0 {
                     return Error::init(c"Setting parameter failed".as_ptr(), -1, c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr());
                 }
                 Error::OK
@@ -378,15 +373,13 @@ impl Context {
 
     pub fn get_error_info(&mut self) -> Error {
         // PORT NOTE: reshaped `defer this.remaining = 0;` — compute result, then clear, then return.
-        // SAFETY: ZSTD_getErrorCode is a pure fn on usize.
-        let err = unsafe { c::ZSTD_getErrorCode(self.remaining as usize) };
+        let err = c::ZSTD_getErrorCode(self.remaining as usize);
         let result = if err == 0 {
             Error::OK
         } else {
             Error {
                 err: err as c_int,
-                // SAFETY: ZSTD_getErrorString returns a static NUL-terminated string for any code.
-                msg: unsafe { c::ZSTD_getErrorString(err) },
+                msg: c::ZSTD_getErrorString(err),
                 code: match err {
                     c::ZSTD_error_no_error => c"ZSTD_error_no_error",
                     c::ZSTD_error_GENERIC => c"ZSTD_error_GENERIC",

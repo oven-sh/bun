@@ -228,6 +228,7 @@ pub fn compress(dest: &mut [u8], src: &[u8], level: Option<i32>) -> Result {
             dest.len(),
             src.as_ptr().cast::<c_void>(),
             src.len(),
+            // Not redundant_closure: extern "C" fn items don't implement FnOnce.
             level.unwrap_or_else(|| c::ZSTD_defaultCLevel()),
         )
     };

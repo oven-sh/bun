@@ -78,8 +78,7 @@ impl SASL {
         self.salted_password_created = true;
         let out = &mut self.salted_password_bytes;
         out.fill(0);
-        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
-        unsafe { boringssl::ERR_clear_error() };
+        boringssl::ERR_clear_error();
         // SAFETY: password/salt/out are valid for the given lengths;
         // `EVP_sha256()` returns a static EVP_MD singleton.
         let rc = unsafe {

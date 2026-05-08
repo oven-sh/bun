@@ -40,7 +40,7 @@ unsafe extern "C" {
     pub safe fn BrotliDecoderTakeOutput(state: &mut BrotliDecoder, size: &mut usize) -> *const u8;
     pub safe fn BrotliDecoderIsUsed(state: &BrotliDecoder) -> c_int;
     pub safe fn BrotliDecoderIsFinished(state: &BrotliDecoder) -> c_int;
-    pub fn BrotliDecoderGetErrorCode(state: *const BrotliDecoder) -> BrotliDecoderErrorCode2;
+    pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
     pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
     pub safe fn BrotliDecoderVersion() -> u32;
 }
@@ -130,7 +130,7 @@ impl BrotliDecoder {
     }
 
     pub fn get_error_code(state: &BrotliDecoder) -> BrotliDecoderErrorCode {
-        // SAFETY: state is a valid &BrotliDecoder; BrotliDecoderErrorCode2 is a superset of BrotliDecoderErrorCode discriminants
+        // SAFETY: BrotliDecoderErrorCode2 is a superset of BrotliDecoderErrorCode discriminants (both repr(i32))
         unsafe { core::mem::transmute::<i32, BrotliDecoderErrorCode>(BrotliDecoderGetErrorCode(state) as i32) }
     }
 
@@ -412,10 +412,6 @@ impl BrotliEncoder {
 
     // https://github.com/google/brotli/blob/2ad58d8603294f5ee33d23bb725e0e6a17c1de50/go/cbrotli/writer.go#L23-L40
     pub fn compress_stream<'a>(state: &'a mut BrotliEncoder, op: BrotliEncoderOperation, data: &[u8]) -> CompressionResult<'a> {
-        // PORT NOTE: reshaped for borrowck — drive FFI via raw ptr so `output`
-        // can borrow the encoder's internal buffer for `'a` while we still
-        // query has_more_output afterward (matching Zig call order).
-        let state: *mut BrotliEncoder = state;
         let mut available_in = data.len();
         let mut next_in: *const u8 = data.as_ptr();
 
@@ -423,7 +419,7 @@ impl BrotliEncoder {
 
         let mut result = CompressionResult::default();
 
-        // SAFETY: state is a valid *mut BrotliEncoder for 'a; in/out pointers are valid;
+        // SAFETY: state is a valid &mut BrotliEncoder; in/out pointers are valid;
         // next_out is null (we use take_output below); total_out is null (unused)
         result.success = unsafe {
             BrotliEncoderCompressStream(state, op, &raw mut available_in, &raw mut next_in, &raw mut available_out, core::ptr::null_mut(), core::ptr::null_mut()) > 0
@@ -431,8 +427,7 @@ impl BrotliEncoder {
 
         if result.success {
             let mut size: usize = 0;
-            // SAFETY: state is a valid non-null *mut BrotliEncoder for 'a
-            let ptr = BrotliEncoderTakeOutput(unsafe { &mut *state }, &mut size);
+            let ptr = BrotliEncoderTakeOutput(state, &mut size);
             if !ptr.is_null() {
                 // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
                 // valid until the next encoder call (bounded by 'a)
@@ -440,8 +435,7 @@ impl BrotliEncoder {
             }
         }
 
-        // SAFETY: state is a valid non-null *mut BrotliEncoder for 'a
-        result.has_more = BrotliEncoderHasMoreOutput(unsafe { &*state }) > 0;
+        result.has_more = BrotliEncoderHasMoreOutput(state) > 0;
 
         result
     }

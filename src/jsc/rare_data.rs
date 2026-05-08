@@ -642,9 +642,7 @@ impl RareData {
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
-        // SAFETY: BoringSSL is linked into the binary; ENGINE_new returns a
-        // fresh non-null handle (mirrors Zig `BoringSSL.ENGINE_new().?`).
-        *self.boring_ssl_engine.get_or_insert_with(|| unsafe { boring::ENGINE_new() })
+        *self.boring_ssl_engine.get_or_insert_with(|| boring::ENGINE_new())
     }
 
     pub fn default_csrf_secret(&mut self) -> &[u8] {

@@ -337,11 +337,9 @@ impl CryptoHasher {
             input.slice(),
             &mut output_digest_buf,
         ) else {
-            // SAFETY: BoringSSL FFI; no preconditions.
-            let err = unsafe { boring_ssl::ERR_get_error() };
+            let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
-            // SAFETY: BoringSSL FFI; no preconditions.
-            unsafe { boring_ssl::ERR_clear_error() };
+            boring_ssl::ERR_clear_error();
             return Err(global.throw_value(instance));
         };
         encoding.encode_with_max_size(
@@ -390,11 +388,9 @@ impl CryptoHasher {
             input.slice(),
             output_digest_slice,
         ) else {
-            // SAFETY: BoringSSL FFI; no preconditions.
-            let err = unsafe { boring_ssl::ERR_get_error() };
+            let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
-            // SAFETY: BoringSSL FFI; no preconditions.
-            unsafe { boring_ssl::ERR_clear_error() };
+            boring_ssl::ERR_clear_error();
             return Err(global.throw_value(instance));
         };
 
@@ -504,12 +500,10 @@ impl CryptoHasher {
                     Some(h) => h,
                     None => {
                         if !global.has_exception() {
-                            // SAFETY: BoringSSL FFI; no preconditions.
-                            let err = unsafe { boring_ssl::ERR_get_error() };
+                            let err = boring_ssl::ERR_get_error();
                             if err != 0 {
                                 let instance = create_crypto_error(global, err);
-                                // SAFETY: BoringSSL FFI; no preconditions.
-                                unsafe { boring_ssl::ERR_clear_error() };
+                                boring_ssl::ERR_clear_error();
                                 return Err(global.throw_value(instance));
                             } else {
                                 return Err(global
@@ -578,12 +572,10 @@ impl CryptoHasher {
         match this {
             CryptoHasher::Evp(inner) => {
                 inner.update(buffer.slice());
-                // SAFETY: BoringSSL FFI; no preconditions.
-                let err = unsafe { boring_ssl::ERR_get_error() };
+                let err = boring_ssl::ERR_get_error();
                 if err != 0 {
                     let instance = create_crypto_error(global, err);
-                    // SAFETY: BoringSSL FFI; no preconditions.
-                    unsafe { boring_ssl::ERR_clear_error() };
+                    boring_ssl::ERR_clear_error();
                     return Err(global.throw_value(instance));
                 }
             }
@@ -593,12 +585,10 @@ impl CryptoHasher {
                 };
 
                 hmac.update(buffer.slice());
-                // SAFETY: BoringSSL FFI; no preconditions.
-                let err = unsafe { boring_ssl::ERR_get_error() };
+                let err = boring_ssl::ERR_get_error();
                 if err != 0 {
                     let instance = create_crypto_error(global, err);
-                    // SAFETY: BoringSSL FFI; no preconditions.
-                    unsafe { boring_ssl::ERR_clear_error() };
+                    boring_ssl::ERR_clear_error();
                     return Err(global.throw_value(instance));
                 }
             }
@@ -631,11 +621,9 @@ impl CryptoHasher {
                 break 'brk CryptoHasher::Hmac(Some(match hmac.copy() {
                     Ok(h) => h,
                     Err(_) => {
-                        // SAFETY: BoringSSL FFI; no preconditions.
-                        let code = unsafe { boring_ssl::ERR_get_error() };
+                        let code = boring_ssl::ERR_get_error();
                         let err = create_crypto_error(global, code);
-                        // SAFETY: BoringSSL FFI; no preconditions.
-                        unsafe { boring_ssl::ERR_clear_error() };
+                        boring_ssl::ERR_clear_error();
                         return Err(global.throw_value(err));
                     }
                 }));

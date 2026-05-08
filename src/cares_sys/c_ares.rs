@@ -773,7 +773,9 @@ impl Channel {
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         if let Some(err) = Error::get(unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) }) {
-            ares_library_cleanup();
+            // SAFETY: init failed before any channel was registered; we hold the
+            // library_init reference taken above and no other thread is in c-ares.
+            unsafe { ares_library_cleanup() };
             return Some(err);
         }
 
@@ -1003,7 +1005,10 @@ unsafe extern "C" {
         arealloc: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     ) -> c_int;
     pub safe fn ares_library_initialized() -> c_int;
-    pub safe fn ares_library_cleanup();
+    // NOT safe: per ares_library_cleanup(3) this is not thread-safe — must only
+    // be called after all threads using c-ares have terminated; calling it while
+    // a Channel is live or another thread is in c-ares is UB.
+    pub fn ares_library_cleanup();
     pub fn ares_version(version: *mut c_int) -> *const u8;
     pub fn ares_init(channelptr: *mut *mut Channel) -> c_int;
     pub fn ares_init_options(channelptr: *mut *mut Channel, options: *mut Options, optmask: c_int) -> c_int;

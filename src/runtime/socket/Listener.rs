@@ -650,8 +650,7 @@ impl Listener {
                             crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
                         ));
                     }
-                    // SAFETY: FFI; ERR_get_error reads the thread-local BoringSSL error queue.
-                    let code = unsafe { boring_sys::ERR_get_error() };
+                    let code = boring_sys::ERR_get_error();
                     return Err(global.throw_value(
                         crate::crypto::boringssl_jsc::err_to_js(global, code),
                     ));

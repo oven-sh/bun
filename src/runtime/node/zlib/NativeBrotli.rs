@@ -407,7 +407,7 @@ impl Context {
                 // SAFETY: d was just written by the line above.
                 if unsafe { self.last_result.d } == c::BrotliDecoderResult::err {
                     // SAFETY: state is a live decoder.
-                    self.error_ = unsafe { c::BrotliDecoderGetErrorCode(self.state_ptr().cast()) };
+                    self.error_ = c::BrotliDecoderGetErrorCode(unsafe { &*self.state_ptr().cast::<c::BrotliDecoder>() });
                 }
             }
             _ => unreachable!(),

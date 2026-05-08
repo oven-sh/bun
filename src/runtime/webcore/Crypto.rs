@@ -186,8 +186,7 @@ fn throw_invalid_parameter(global: &JSGlobalObject) -> JsError {
 // the RangeError path. `message` was `[:0]const u8` comptime + `fmt: anytype` → fold into
 // `core::fmt::Arguments`.
 fn throw_invalid_params(global: &JSGlobalObject, args: core::fmt::Arguments<'_>) -> JsError {
-    // SAFETY: ERR_clear_error has no preconditions.
-    unsafe { bun_boringssl_sys::ERR_clear_error() };
+    bun_boringssl_sys::ERR_clear_error();
     global
         .err(bun_jsc::ErrorCode::CRYPTO_INVALID_SCRYPT_PARAMS, args)
         .throw()

@@ -158,7 +158,10 @@ impl ImmediateObject {
     pub unsafe fn run_immediate_task(this: *mut Self, vm: *mut VirtualMachine) -> bool {
         // SAFETY: per fn contract — `this` is live; `internals` is an embedded
         // field. Do NOT form `&mut *this` (the body may `deref()` and free).
-        unsafe { (*this).internals.run_immediate_task(vm) }
+        // `run_immediate_task` takes `*mut Self` (noalias re-entrancy).
+        unsafe {
+            TimerObjectInternals::run_immediate_task(core::ptr::addr_of_mut!((*this).internals), vm)
+        }
     }
 
     #[bun_jsc::host_fn(method)]

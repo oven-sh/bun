@@ -2,18 +2,20 @@ use core::ffi::CStr;
 
 use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Dirname {
     state: State,
+    buf: Vec<u8>,
 }
 
 #[derive(Default)]
 enum State {
     #[default]
     Idle,
-    WaitingIo,
+    Err,
     Done,
 }
 
@@ -21,35 +23,43 @@ impl Dirname {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
         let args = Builtin::of(interp, cmd).args_slice();
         if args.is_empty() {
-            return Self::write(interp, cmd, IoKind::Stderr, b"usage: dirname string\n", 1);
+            return Self::fail(interp, cmd, b"usage: dirname string\n");
         }
-        // SAFETY: argv entries are NUL-terminated.
-        let path = unsafe { CStr::from_ptr(args[0]) }.to_bytes();
-        let dir = bun_paths::dirname_simple(path);
-        let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
-        let mut out = dir.to_vec();
-        out.push(b'\n');
-        Self::write(interp, cmd, IoKind::Stdout, &out, 0)
+
+        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+        let mut buf = Vec::new();
+        for arg in args {
+            // SAFETY: argv entries are NUL-terminated.
+            let path = unsafe { CStr::from_ptr(*arg) }.to_bytes();
+            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
+            let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
+            buf.extend_from_slice(dir);
+            buf.push(b'\n');
+        }
+
+        Self::state_mut(interp, cmd).state = State::Done;
+        if let Some(safeguard) = stdout_needs_io {
+            Self::state_mut(interp, cmd).buf = buf;
+            let owned = Self::state_mut(interp, cmd).buf.clone();
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::of_mut(interp, cmd)
+                .stdout
+                .enqueue(child, &owned, safeguard);
+        }
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        Builtin::done(interp, cmd, 0)
     }
 
-    fn write(
-        interp: &mut Interpreter,
-        cmd: NodeId,
-        io_kind: IoKind,
-        buf: &[u8],
-        exit: crate::shell::ExitCode,
-    ) -> Yield {
-        let needs_io = match io_kind {
-            IoKind::Stdout => Builtin::of(interp, cmd).stdout.needs_io().is_some(),
-            _ => Builtin::of(interp, cmd).stderr.needs_io().is_some(),
-        };
-        if needs_io {
-            // TODO(b2-blocked): IOWriter::enqueue
-            Self::state_mut(interp, cmd).state = State::WaitingIo;
-            return Yield::suspended();
+    fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
+        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            Self::state_mut(interp, cmd).state = State::Err;
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::of_mut(interp, cmd)
+                .stderr
+                .enqueue(child, msg, safeguard);
         }
-        let _ = Builtin::write_no_io(interp, cmd, io_kind, buf);
-        Builtin::done(interp, cmd, exit)
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
+        Builtin::done(interp, cmd, 1)
     }
 
     pub fn on_io_writer_chunk(
@@ -58,8 +68,16 @@ impl Dirname {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, if err.is_some() { 1 } else { 0 })
+        if err.is_some() {
+            Self::state_mut(interp, cmd).state = State::Err;
+            return Builtin::done(interp, cmd, 1);
+        }
+        let exit = match Self::state_mut(interp, cmd).state {
+            State::Done => 0,
+            State::Err => 1,
+            State::Idle => unreachable!("Dirname.onIOWriterChunk: idle"),
+        };
+        Builtin::done(interp, cmd, exit)
     }
 
     #[inline]

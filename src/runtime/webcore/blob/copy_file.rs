@@ -996,7 +996,7 @@ impl ReadWriteLoop {
         // PORT NOTE: reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
         let cap = self.read_buf.capacity();
         self.uv_buf = libuv::uv_buf_t::init_raw(self.read_buf.as_mut_ptr(), cap);
-        let loop_ = this.event_loop.virtual_machine.unwrap().as_ref().event_loop_handle.unwrap();
+        let loop_ = this.event_loop.uv_loop();
 
         // This io_request is used for both reading and writing.
         // For now, we don't start reading the next chunk until
@@ -1092,7 +1092,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
     unsafe { (*req).deinit() };
     let rc2 = libuv::uv_fs_write(
-        event_loop.virtual_machine.unwrap().as_ref().event_loop_handle.unwrap(),
+        event_loop.uv_loop(),
         &mut this.io_request,
         destination_fd.uv(),
         core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
@@ -1151,7 +1151,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         let prev = this.read_write_loop.uv_buf.slice();
         this.read_write_loop.uv_buf = libuv::uv_buf_t::init(&prev[wrote as usize..]);
         let rc2 = libuv::uv_fs_write(
-            this.event_loop.virtual_machine.unwrap().as_ref().event_loop_handle.unwrap(),
+            this.event_loop.uv_loop(),
             &mut this.io_request,
             destination_fd.uv(),
             core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
@@ -1431,7 +1431,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
             }
         };
-        let loop_ = self.event_loop.virtual_machine.unwrap().as_ref().event_loop_handle.unwrap();
+        let loop_ = self.event_loop.uv_loop();
         self.io_request.data = core::ptr::from_mut(self).cast::<c_void>();
 
         let rc = libuv::uv_fs_copyfile(
@@ -1497,7 +1497,7 @@ impl<'a> CopyFileWindows<'a> {
                     .pathlike
                     .path()
                     .slice_z(&mut pathbuf);
-                let loop_ = self.event_loop.virtual_machine.unwrap().as_ref().event_loop_handle.unwrap();
+                let loop_ = self.event_loop.uv_loop();
                 self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
                 self.io_request = unsafe { core::mem::zeroed::<libuv::fs_t>() };

@@ -4124,7 +4124,7 @@ impl BunXFastPath {
             arguments_len: i,
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,
-            cli_context: ctx,
+            cli_context: ::core::ptr::from_mut(ctx),
             environment,
         };
 

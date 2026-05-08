@@ -102,9 +102,11 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
     // Windows `time_like::TimeLike` is `f64` seconds (libuv's `uv_fs_futime`
     // takes doubles directly). The few callers that round-trip through
     // `sys::TimeLike` (e.g. `lutimes` ENOENT fallback to `utimens`) need the
-    // `{sec, nsec}` split.
-    let sec = t.trunc();
-    sys::TimeLike { sec: sec as i64, nsec: ((t - sec) * 1e9) as i64 }
+    // `{sec, nsec}` split. Use `floor` so `nsec` stays in `[0, 1e9)` for
+    // negative non-integer `t` (e.g. `-1.5` → `{-2, 500_000_000}`, not
+    // `{-1, -500_000_000}` which `trunc` would yield).
+    let sec = t.floor();
+    sys::TimeLike { sec: sec as i64, nsec: ((t - sec) * 1e9).round() as i64 }
 }
 
 // Local namespace shim: dependents in this file spell `ConcurrentTask::create*`
@@ -1718,7 +1720,15 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
         let mut buf = OSPathBuffer::uninit();
         #[cfg(windows)]
-        let normdest: &OSPathSliceZ = match sys::normalize_path_windows(FD::INVALID, dest.as_slice(), &mut buf[..]) {
+        let normdest: &OSPathSliceZ = match sys::normalize_path_windows_opts(
+            FD::INVALID,
+            dest.as_slice(),
+            &mut buf[..],
+            // node_fs.zig:861 `.{ .add_nt_prefix = false }` — `normdest` feeds
+            // `mkdirRecursiveOSPath` / `CopyFileW` which expect Win32 paths,
+            // not `\??\` NT object paths.
+            sys::NormalizePathWindowsOpts { add_nt_prefix: false },
+        ) {
             Err(err) => { this_ref.finish_concurrently(Err(err)); return false; }
             Ok(n) => n,
         };

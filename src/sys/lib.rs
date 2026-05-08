@@ -4678,6 +4678,17 @@ impl Default for NtCreateFileOptions {
     }
 }
 
+/// sys.zig:985 `normalizePathWindows` options.
+#[cfg(windows)]
+#[derive(Copy, Clone)]
+pub struct NormalizePathWindowsOpts {
+    pub add_nt_prefix: bool,
+}
+#[cfg(windows)]
+impl Default for NormalizePathWindowsOpts {
+    fn default() -> Self { Self { add_nt_prefix: true } }
+}
+
 /// sys.zig:1129 `normalizePathWindows` — convert a (possibly relative) path
 /// into an NT object path suitable for `NtCreateFile` against `dir_fd`.
 /// PORT NOTE: u16-only here; the u8 entry points pre-convert via
@@ -4688,14 +4699,42 @@ pub fn normalize_path_windows<'a>(
     path: &[u16],
     buf: &'a mut [u16],
 ) -> Maybe<&'a bun_core::WStr> {
+    normalize_path_windows_opts(dir_fd, path, buf, NormalizePathWindowsOpts::default())
+}
+
+#[cfg(windows)]
+pub fn normalize_path_windows_opts<'a>(
+    dir_fd: Fd,
+    path: &[u16],
+    buf: &'a mut [u16],
+    opts: NormalizePathWindowsOpts,
+) -> Maybe<&'a bun_core::WStr> {
     use bun_core::WStr;
     let too_long = || Error::from_code(E::ENAMETOOLONG, Tag::open);
 
     if bun_paths::is_absolute_windows_wtf16(path) {
-        // Absolute → add `\??\` (idempotent if already present), normalize
-        // separators/`..` and NUL-terminate.
-        let nt = bun_str::strings::paths::to_nt_path16(buf, path);
-        return Ok(nt);
+        if opts.add_nt_prefix {
+            // Absolute → add `\??\` (idempotent if already present), normalize
+            // separators/`..` and NUL-terminate.
+            let nt = bun_str::strings::paths::to_nt_path16(buf, path);
+            return Ok(nt);
+        }
+        // sys.zig:1056 `.{ .add_nt_prefix = false }` — produce a Win32 path
+        // (no `\??\` object prefix) for callers that feed kernel32 APIs
+        // (CreateDirectoryW / CopyFileW). With .add_nt_prefix = false the
+        // normalizer can still grow the input by one u16 (trailing `\` after a
+        // bare UNC volume name) plus the NUL terminator.
+        if path.len() > buf.len().saturating_sub(2) { return Err(too_long()); }
+        let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
+            u16,
+            /*ALLOW_ABOVE_ROOT*/ false,
+            /*PRESERVE_TRAILING_SLASH*/ false,
+            /*ZERO_TERMINATE*/ true,
+            /*ADD_NT_PREFIX*/ false,
+        >(path, buf, b'\\' as u16, |c| c == b'\\' as u16 || c == b'/' as u16);
+        let len = norm.len();
+        // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
+        return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
     }
 
     // Relative path with no separators or `.` can be passed straight through

@@ -1285,7 +1285,19 @@ type CommandContext<'a> = bun_options_types::Context::Context<'a>;
 #[cfg(feature = "shim_standalone")]
 type CommandContext<'a> = core::marker::PhantomData<&'a ()>; // unused in standalone
 
-pub struct FromBunRunContext<'a> {
+// Zig stores `cli_context: CommandContext` where `CommandContext = *Command.Context`
+// — a raw pointer copied by value. Mirror that with `*mut ContextData` so reading
+// the field through `&self` (the `BunCtx` impl is on `&FromBunRunContext` and the
+// trait method takes `&self`, i.e. two layers of `&`) does not retag the pointee
+// to SharedReadOnly. Storing `&'a mut ContextData` and casting `*const→*mut` in
+// the accessor would violate Stacked Borrows the moment `Run.boot` writes through
+// it.
+#[cfg(not(feature = "shim_standalone"))]
+type CommandContextPtr = *mut bun_options_types::Context::ContextData;
+#[cfg(feature = "shim_standalone")]
+type CommandContextPtr = (); // unused in standalone
+
+pub struct FromBunRunContext {
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
     pub base_path: *mut u16,
     pub base_path_len: usize,
@@ -1300,12 +1312,12 @@ pub struct FromBunRunContext<'a> {
     /// A pointer to a function that can launch `Run.boot`
     pub direct_launch_with_bun_js: fn(&mut [u16], CommandContext<'_>),
     /// Command.Context
-    pub cli_context: CommandContext<'a>,
+    pub cli_context: CommandContextPtr,
     /// Passed directly to CreateProcessW's lpEnvironment with CREATE_UNICODE_ENVIRONMENT
     pub environment: Option<*const u16>,
 }
 
-impl<'a> BunCtx for &FromBunRunContext<'a> {
+impl BunCtx for &FromBunRunContext {
     fn base_path(&self) -> *mut u16 { self.base_path }
     fn base_path_len(&self) -> usize { self.base_path_len }
     fn arguments(&self) -> &[u16] {
@@ -1315,15 +1327,15 @@ impl<'a> BunCtx for &FromBunRunContext<'a> {
     fn handle(&self) -> HANDLE { self.handle }
     fn force_use_bun(&self) -> bool { self.force_use_bun }
     fn direct_launch_with_bun_js(&self, wpath: &mut [u16]) {
-        // Zig stores `cli_context: *Command.Context` (raw pointer) and passes it
-        // by value; reborrow through a raw pointer here to keep `BunCtx` taking
-        // `&self` (it is also implemented for `()` and `&FromBunShellContext`,
-        // neither of which can be `&mut`).
-        // SAFETY: `cli_context` is a `&mut ContextData` the caller threaded
-        // through `FromBunRunContext`; it is exclusively owned for the duration
-        // of `try_startup_from_bun_js` and not aliased while `launcher` runs.
-        let ctx: CommandContext<'_> = unsafe { &mut *(self.cli_context as *const _ as *mut _) };
-        (self.direct_launch_with_bun_js)(wpath, ctx)
+        // SAFETY: `cli_context` was initialized from the caller's
+        // `&mut ContextData` (run_command.rs `core::ptr::from_mut(ctx)`); the
+        // raw `*mut` is `Copy` through `&self` without retag and retains the
+        // Unique provenance. It is exclusively owned for the duration of
+        // `try_startup_from_bun_js` and not aliased while `launcher` runs.
+        #[cfg(not(feature = "shim_standalone"))]
+        (self.direct_launch_with_bun_js)(wpath, unsafe { &mut *self.cli_context });
+        #[cfg(feature = "shim_standalone")]
+        { let _ = wpath; unreachable!() }
     }
     fn environment(&self) -> Option<*const u16> { self.environment }
 }
@@ -1337,7 +1349,7 @@ impl<'a> BunCtx for &FromBunRunContext<'a> {
 /// this returns void, to which the caller should still try invoking the exe directly. This
 /// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
 #[cfg(not(feature = "shim_standalone"))]
-pub fn try_startup_from_bun_js(context: FromBunRunContext<'_>) {
+pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     debug_assert!(!unsafe {
         bun_core::ffi::slice(context.base_path, context.base_path_len)
     }

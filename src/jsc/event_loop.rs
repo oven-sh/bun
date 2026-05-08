@@ -578,6 +578,22 @@ impl EventLoop {
         }
     }
 
+    /// Walk `self.virtual_machine.event_loop_handle` via raw-pointer
+    /// projection without materializing a `&VirtualMachine` (the VM may be
+    /// mutably borrowed elsewhere on the JS thread when libuv completion
+    /// callbacks reach for the loop). Mirrors Zig
+    /// `this.event_loop.virtual_machine.event_loop_handle.?`.
+    #[inline]
+    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
+        let vm = self.virtual_machine.expect("virtual_machine").as_ptr();
+        // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
+        // owning per-thread singleton; non-null and live for the VM lifetime.
+        // `addr_of!` projects to the field place without forming an
+        // intermediate `&VirtualMachine` that would assert no-alias.
+        unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }
+            .expect("event_loop_handle")
+    }
+
     pub fn usockets_loop(&self) -> *mut uws::Loop {
         // Spec event_loop.zig:359-365 unwraps `.?` (panic on null). Preserve
         // that fail-fast contract — callers immediately materialize `&mut *`,

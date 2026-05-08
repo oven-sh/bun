@@ -1218,7 +1218,7 @@ impl SourceMapDataTask {
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
-        SourceMapData::compute_line_offsets(ctx, unsafe { &*worker.arena }, task.source_index);
+        SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
         worker.unget();
     }
 
@@ -1805,12 +1805,12 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `self.graph` columns are stable heap allocations valid for
         // the duration of this call; the printer only reads from them.
         let ts_enums: &js_ast::ast::ast::TsEnumsMap =
-            unsafe { &*(&raw const self.graph.ts_enums) };
+            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
         let line_offset_table: &bun_sourcemap::line_offset_table::List = unsafe {
             &*(&raw const self.graph.files.items_line_offset_table()[source_index.get() as usize])
         };
         let mangled_props: &MangledProps =
-            unsafe { &*(&raw const self.mangled_props) };
+            unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
 
         let print_options = js_printer::Options {
             bundling: true,

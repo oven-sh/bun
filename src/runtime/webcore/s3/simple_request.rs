@@ -574,8 +574,8 @@ pub fn execute_simple_s3_request(
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
     // passed raw slices with the same ownership contract.
-    let url = URL::parse(unsafe { &*(&raw const *task.sign_result.url) });
-    let headers_buf: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(task.headers.buf.as_slice()) };
+    let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let headers_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     // SAFETY (lifetime extension): unlike the borrows above, `body` is NOT stored in the task —
     // it is caller-owned (e.g. multipart upload part data / multipart_upload_list). The Zig source
     // (.zig:431) passes the caller's slice directly with the same implicit contract: every call
@@ -583,9 +583,9 @@ pub fn execute_simple_s3_request(
     // lifetime-extension pattern, retained verbatim to match Zig semantics.
     // TODO(port): take body as `*const [u8]` in AsyncHTTP::init (or store an owned copy on the
     // task) to drop the `'static` pretence.
-    let body: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(options.body) };
+    let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(options.body) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(URL::parse(unsafe { &*(&raw const *task.proxy_url) }))
+        Some(URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.proxy_url) }))
     } else {
         None
     };

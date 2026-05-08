@@ -94,7 +94,7 @@ pub fn post_process_js_chunk(
     };
 
     // SAFETY: worker.arena is set in Worker::init() before any task runs.
-    let worker_arena: &Arena = unsafe { &*worker.arena };
+    let worker_arena: &Arena = worker.arena();
 
     {
         // PORT NOTE: Zig builds one `print_options` and passes it by-value twice.
@@ -1281,7 +1281,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
     let import_records: &'a [ImportRecord] =
-        unsafe { &*std::ptr::from_ref::<[ImportRecord]>(ast_view.import_records.slice()) };
+        unsafe { bun_ptr::detach_lifetime(ast_view.import_records.slice()) };
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(

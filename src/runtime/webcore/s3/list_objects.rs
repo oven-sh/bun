@@ -2,21 +2,21 @@ use std::borrow::Cow;
 
 use bun_jsc::bun_string_jsc::{create_utf8_for_js, from_js as bstr_from_js};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_ptr::RawSlice;
 use bun_str::{self as bstr, strings, ZigStringSlice as Utf8Slice};
 
 pub struct S3ListObjectsOptions {
-    // TODO(port): self-referential — these view fields borrow from the
-    // corresponding `_field: Utf8Slice` below. In Zig the slice and its
-    // backing storage are separate; in Rust callers should read
-    // `self._field.as_ref().map(|s| s.slice())` instead. Kept as raw
-    // pointers to preserve field order/structure for Phase-B diffing.
-    pub continuation_token: Option<*const [u8]>,
-    pub delimiter: Option<*const [u8]>,
-    pub encoding_type: Option<*const [u8]>,
+    // Self-referential views: these borrow from the corresponding
+    // `_field: Utf8Slice` below. In Zig the slice and its backing storage are
+    // separate fields; `RawSlice` encodes the non-owning contract so callers
+    // read `.as_deref()` instead of open-coding `unsafe { &*p }`.
+    pub continuation_token: Option<RawSlice<u8>>,
+    pub delimiter: Option<RawSlice<u8>>,
+    pub encoding_type: Option<RawSlice<u8>>,
     pub fetch_owner: Option<bool>,
     pub max_keys: Option<i64>,
-    pub prefix: Option<*const [u8]>,
-    pub start_after: Option<*const [u8]>,
+    pub prefix: Option<RawSlice<u8>>,
+    pub start_after: Option<RawSlice<u8>>,
 
     // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigString.Slice owns or
     // ref-holds its backing WTFStringImpl; model as 'static here and let
@@ -717,7 +717,7 @@ pub fn get_list_objects_options_from_js(
             // TODO(port): bun_str::String tag accessors (Empty/Dead)
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.continuation_token = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
+                list_objects_options.continuation_token = Some(RawSlice::new(slice.slice()));
                 list_objects_options._continuation_token = Some(slice);
             }
         }
@@ -729,7 +729,7 @@ pub fn get_list_objects_options_from_js(
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.delimiter = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
+                list_objects_options.delimiter = Some(RawSlice::new(slice.slice()));
                 list_objects_options._delimiter = Some(slice);
             }
         }
@@ -741,7 +741,7 @@ pub fn get_list_objects_options_from_js(
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.encoding_type = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
+                list_objects_options.encoding_type = Some(RawSlice::new(slice.slice()));
                 list_objects_options._encoding_type = Some(slice);
             }
         }
@@ -765,7 +765,7 @@ pub fn get_list_objects_options_from_js(
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.prefix = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
+                list_objects_options.prefix = Some(RawSlice::new(slice.slice()));
                 list_objects_options._prefix = Some(slice);
             }
         }
@@ -777,7 +777,7 @@ pub fn get_list_objects_options_from_js(
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.start_after = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
+                list_objects_options.start_after = Some(RawSlice::new(slice.slice()));
                 list_objects_options._start_after = Some(slice);
             }
         }

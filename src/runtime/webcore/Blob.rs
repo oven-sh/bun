@@ -1294,8 +1294,8 @@ impl BlobExt for Blob {
                 self.content_type_or_mime_type(),
                 // SAFETY: option-wrapped raw `*const [u8]` borrowed back; the
                 // backing storage is owned by `aws_options` which outlives this call.
-                aws_options.content_disposition.map(|p| unsafe { &*p }),
-                aws_options.content_encoding.map(|p| unsafe { &*p }),
+                aws_options.content_disposition.as_deref(),
+                aws_options.content_encoding.as_deref(),
                 proxy_url,
                 aws_options.request_payer,
                 None,
@@ -4095,8 +4095,8 @@ fn write_file_with_empty_source_to_destination(
                 destination_blob.content_type_or_mime_type(),
                 // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                 // on `aws_options`, which outlives this call.
-                aws_options.content_disposition.map(|p| unsafe { &*p }),
-                aws_options.content_encoding.map(|p| unsafe { &*p }),
+                aws_options.content_disposition.as_deref(),
+                aws_options.content_encoding.as_deref(),
                 aws_options.acl,
                 proxy_url,
                 aws_options.storage_class,
@@ -4300,8 +4300,8 @@ pub fn write_file_with_source_destination(
                             destination_blob.content_type_or_mime_type(),
                             // SAFETY: `*const [u8]` borrows from sibling `_*_slice`
                             // fields on `aws_options`, which outlives this call.
-                            aws_options.content_disposition.map(|p| unsafe { &*p }),
-                            aws_options.content_encoding.map(|p| unsafe { &*p }),
+                            aws_options.content_disposition.as_deref(),
+                            aws_options.content_encoding.as_deref(),
                             proxy_url,
                             aws_options.request_payer,
                             None,
@@ -4349,8 +4349,8 @@ pub fn write_file_with_source_destination(
                         destination_blob.content_type_or_mime_type(),
                         // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                         // on `aws_options`, which outlives this call.
-                        aws_options.content_disposition.map(|p| unsafe { &*p }),
-                        aws_options.content_encoding.map(|p| unsafe { &*p }),
+                        aws_options.content_disposition.as_deref(),
+                        aws_options.content_encoding.as_deref(),
                         aws_options.acl,
                         proxy_url,
                         aws_options.storage_class,
@@ -4386,8 +4386,8 @@ pub fn write_file_with_source_destination(
                         destination_blob.content_type_or_mime_type(),
                         // SAFETY: `*const [u8]` borrows from sibling `_*_slice` fields
                         // on `aws_options`, which outlives this call.
-                        aws_options.content_disposition.map(|p| unsafe { &*p }),
-                        aws_options.content_encoding.map(|p| unsafe { &*p }),
+                        aws_options.content_disposition.as_deref(),
+                        aws_options.content_encoding.as_deref(),
                         proxy_url,
                         aws_options.request_payer,
                         None,
@@ -4598,8 +4598,8 @@ pub fn write_file_internal(
                                 // SAFETY: `*const [u8]` borrows from sibling
                                 // `_*_slice` fields on `aws_options`, which
                                 // outlives this call.
-                                aws_options.content_disposition.map(|p| unsafe { &*p }),
-                                aws_options.content_encoding.map(|p| unsafe { &*p }),
+                                aws_options.content_disposition.as_deref(),
+                                aws_options.content_encoding.as_deref(),
                                 proxy_url,
                                 aws_options.request_payer,
                                 None,

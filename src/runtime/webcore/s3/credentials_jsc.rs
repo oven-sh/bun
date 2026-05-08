@@ -258,7 +258,7 @@ pub fn get_credentials_with_options(
                                     "contentDisposition must not contain newline characters (CR/LF)"
                                 )));
                             }
-                            new_credentials.content_disposition = Some(std::ptr::from_ref::<[u8]>(slice));
+                            new_credentials.content_disposition = Some(bun_ptr::RawSlice::new(slice));
                         }
                         str.deref();
                     } else {
@@ -280,7 +280,7 @@ pub fn get_credentials_with_options(
                                     "type must not contain newline characters (CR/LF)"
                                 )));
                             }
-                            new_credentials.content_type = Some(std::ptr::from_ref::<[u8]>(slice));
+                            new_credentials.content_type = Some(bun_ptr::RawSlice::new(slice));
                         }
                         str.deref();
                     } else {
@@ -302,7 +302,7 @@ pub fn get_credentials_with_options(
                                     "contentEncoding must not contain newline characters (CR/LF)"
                                 )));
                             }
-                            new_credentials.content_encoding = Some(std::ptr::from_ref::<[u8]>(slice));
+                            new_credentials.content_encoding = Some(bun_ptr::RawSlice::new(slice));
                         }
                         str.deref();
                     } else {

@@ -48,6 +48,7 @@ bun_io.workspace = true
 bun_js_parser.workspace = true
 bun_js_printer.workspace = true
 bun_logger.workspace = true
+bun_ptr.workspace = true
 bun_lolhtml_sys.workspace = true
 bun_md.workspace = true
 bun_options_types.workspace = true

@@ -89,7 +89,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
 
     // SAFETY: `worker.arena` is set in `Worker::create` to point at the
     // worker-owned bump arena; lives for the worker's lifetime.
-    let arena: &Arena = unsafe { &*worker.arena };
+    let arena: &Arena = worker.arena();
 
     let value = match task_callback(task, &mut log, arena) {
         Ok(success) => ResultValue::Success(success),

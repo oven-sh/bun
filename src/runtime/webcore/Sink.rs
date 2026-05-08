@@ -669,12 +669,18 @@ pub trait JsSinkType: Sized {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
-    /// `JSSink.getThis` — recover `*mut JSSink<T>` from `callframe.this()` or
+    /// `JSSink.getThis` — recover `&mut JSSink<T>` from `callframe.this()` or
     /// throw the appropriate detached/cast-failed error.
-    fn get_this(
+    ///
+    /// Returns an unbounded `&'a mut`: the sink lives in the GC heap behind
+    /// the JS wrapper cell (allocated in `js_construct`, freed by codegen
+    /// `finalize`), so its lifetime is independent of `global`/`frame`. Host
+    /// fns are single-threaded and synchronous — only one `&mut JSSink<T>` per
+    /// `this` is live for the body of each host call.
+    fn get_this<'a>(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<*mut JSSink<T>> {
+    ) -> crate::webcore::jsc::JsResult<&'a mut JSSink<T>> {
         use crate::webcore::jsc::JsError;
         // SAFETY: FFI call into generated C++ sink glue.
         let raw = unsafe { T::from_js_extern(frame.this()) };
@@ -685,7 +691,9 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             ))),
             from_js_result::CAST_FAILED => Err(bun_jsc::ErrorCode::INVALID_THIS
                 .throw(global, format_args!("Expected {}", T::NAME))),
-            ptr => Ok(ptr as *mut JSSink<T>),
+            // SAFETY: codegen returns a non-null `*mut JSSink<T>` for live
+            // wrappers; see fn doc for the `'a` justification.
+            ptr => Ok(unsafe { &mut *(ptr as *mut JSSink<T>) }),
         }
     }
 
@@ -729,7 +737,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         use crate::webcore::jsc::JSValue;
         bun_core::mark_binding!();
         // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = unsafe { &mut *Self::get_this(global, frame)? };
+        let this = Self::get_this(global, frame)?;
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -816,9 +824,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        let this_ptr = Self::get_this(global, frame)?;
-        // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = unsafe { &mut *this_ptr };
+        let this = Self::get_this(global, frame)?;
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -853,7 +859,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         bun_core::mark_binding!();
 
         // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = unsafe { &mut *Self::get_this(global, frame)? };
+        let this = Self::get_this(global, frame)?;
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -886,7 +892,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         bun_core::mark_binding!();
 
         // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = unsafe { &mut *Self::get_this(global, frame)? };
+        let this = Self::get_this(global, frame)?;
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -1230,7 +1236,7 @@ macro_rules! js_sink {
                 }
             }
 
-            fn get_this(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<*mut ThisSink> {
+            fn get_this<'a>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<&'a mut ThisSink> {
                 // SAFETY: FFI call.
                 let raw = unsafe { from_js_extern(frame.this()) };
                 match raw {
@@ -1244,7 +1250,9 @@ macro_rules! js_sink {
                     from_js_result::CAST_FAILED => global
                         .err(::bun_jsc::ErrorCode::INVALID_THIS, concat!("Expected ", $abi_name))
                         .throw(),
-                    ptr => Ok(ptr as *mut ThisSink),
+                    // SAFETY: codegen returns a non-null `*mut ThisSink` for live
+                    // wrappers; GC-heap-owned, lifetime independent of args.
+                    ptr => Ok(unsafe { &mut *(ptr as *mut ThisSink) }),
                 }
             }
 
@@ -1254,7 +1262,7 @@ macro_rules! js_sink {
             pub fn write(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
                 // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = unsafe { &mut *get_this(global, frame)? };
+                let this = get_this(global, frame)?;
 
                 if let Some(err) = this.sink.get_pending_error() {
                     return global.throw_value(err);
@@ -1337,7 +1345,7 @@ macro_rules! js_sink {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
 
                 // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = unsafe { &mut *get_this(global, frame)? };
+                let this = get_this(global, frame)?;
 
                 if let Some(err) = this.sink.get_pending_error() {
                     return global.throw_value(err);
@@ -1456,7 +1464,7 @@ macro_rules! js_sink {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
 
                 // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = unsafe { &mut *get_this(global, frame)? };
+                let this = get_this(global, frame)?;
 
                 if let Some(err) = this.sink.get_pending_error() {
                     return global.throw_value(err);
@@ -1480,7 +1488,7 @@ macro_rules! js_sink {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
 
                 // SAFETY: get_this returns a live ThisSink* on Ok.
-                let this = unsafe { &mut *get_this(global, frame)? };
+                let this = get_this(global, frame)?;
 
                 if let Some(err) = this.sink.get_pending_error() {
                     return global.throw_value(err);

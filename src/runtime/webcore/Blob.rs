@@ -3542,12 +3542,14 @@ impl FormDataContext<'_> {
                                     let js_err = err.to_js(global_this);
                                     let _ = global_this.throw_value(js_err);
                                 }
-                                Ok(result) => {
-                                    // PORT NOTE: Zig handed `result.buffer.allocator`
-                                    // to the joiner so it freed in-place.
-                                    // `StringOrBuffer::slice()` borrows; clone into
-                                    // the joiner so `result` can drop normally.
+                                Ok(mut result) => {
                                     joiner.push_cloned(result.slice());
+                                    // StringOrBuffer::Drop is a no-op for Buffer; release
+                                    // the readFile allocation explicitly (Zig handed its
+                                    // allocator to the joiner instead).
+                                    if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
+                                        buf.destroy();
+                                    }
                                 }
                             }
                         }

@@ -593,10 +593,19 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     // user/HOME than the build runs under, so the target may be missing
     // even though `rustup target add` ran at image-build time. Idempotent;
     // chained at the ninja-shell level (no nested quoting).
+    //
+    // The `||` fallback repairs a partially-installed pinned toolchain (no
+    // distributable manifest, so `target add` errors with `Missing manifest
+    // in toolchain '<channel>-<host>'`). Same pattern as `rust_build_cross`
+    // in rust.ts — see the comment there.
     const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
+    const cargoCrossRepair =
+      cfg.rustToolchain !== undefined
+        ? ` || ${stream} $env ${rustup} toolchain install ${cfg.rustToolchain} --force --profile minimal --component rust-src --target $rust_target`
+        : "";
     n.rule("dep_cargo_cross", {
       command:
-        `${stream} $env ${rustup} target add $rust_target && ` +
+        `${stream} $env ${rustup} target add $rust_target${cargoCrossRepair} && ` +
         `${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`,
       description: "cargo $name ($rust_target)",
       restat: true,

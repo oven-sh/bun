@@ -731,6 +731,10 @@ pub mod command {
             (*CONTEXT_DATA.get()).assume_init_mut()
         };
         GLOBAL_CLI_CTX.store(ctx_ptr, core::sync::atomic::Ordering::Release);
+        // Publish to the lower-tier accessor so crates below `bun_runtime`
+        // (e.g. `bun_jsc`) can read parsed runtime options without a cycle.
+        // SAFETY: single-threaded CLI startup; `ctx_ptr` is process-lifetime.
+        unsafe { bun_options_types::Context::set_global(ctx_ptr) };
 
         if USES_GLOBAL_OPTIONS[cmd] {
             // SAFETY: just initialized above; single-threaded.

@@ -1868,6 +1868,13 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_resolved_path).write(bun_string::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
+            // Spec VirtualMachine.zig:154 — `= std.math.maxInt(u32)`. Left at the
+            // zeroed default this aliases `hot_reload_counter`'s initial 0, so a
+            // watcher event that races the very first entry-point load makes
+            // `reload()` think the rejection was already reported and proceed
+            // (replacing `pending_internal_promise`) instead of deferring,
+            // dropping the error on the floor.
+            addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());

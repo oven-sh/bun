@@ -1724,7 +1724,7 @@ impl NodeHTTPResponse {
     pub fn finalize(self: Box<Self>) {
         // Refcounted: release the JS wrapper's +1; allocation may outlive this
         // call if other refs remain, so hand ownership back to the raw refcount.
-        Box::leak(self).deref();
+        bun_core::heap::release(self).deref();
     }
 
     /// Called by intrusive RefCount when count reaches zero.

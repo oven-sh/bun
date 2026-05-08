@@ -3233,7 +3233,7 @@ impl<'a> HTTPClient<'a> {
             // the cloned response can be stored in `HTTPResponseMetadata`.
             // Reclaimed by `Drop for HTTPResponseMetadata` (mirrors Zig
             // `deinit` freeing `response.headers.list`).
-            let headers_buf = Box::leak(
+            let headers_buf = bun_core::heap::release(
                 vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
             );
             let cloned_response = response.clone(headers_buf, &mut builder);

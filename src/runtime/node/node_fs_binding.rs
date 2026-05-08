@@ -154,7 +154,7 @@ impl Binding {
             let vm_node_fs = unsafe { vm.as_ref() }.node_fs;
             if vm_node_fs == Some((&raw const self.node_fs).cast_mut().cast()) {
                 // VM-owned singleton — keep alive.
-                let _ = Box::leak(self);
+                let _ = bun_core::heap::release(self);
                 return;
             }
         }

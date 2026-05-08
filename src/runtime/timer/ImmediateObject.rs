@@ -190,7 +190,7 @@ impl ImmediateObject {
         // Refcounted via `internals`: `internals.finalize()` derefs the
         // intrusive count; allocation may outlive this call if other refs
         // remain, so hand ownership back to the raw refcount.
-        Box::leak(self).internals.finalize()
+        bun_core::heap::release(self).internals.finalize()
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -1279,7 +1279,7 @@ impl Subprocess<'_> {
         // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
         // allocation may outlive this call if other refs remain, so hand
         // ownership back to the raw refcount.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer

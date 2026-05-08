@@ -216,7 +216,7 @@ impl ResolveMessage {
         // TODO(port): `toExternalValue` transfers ownership of `text` to JSC; ensure
         // `ZigString::to_external_value` consumes the Vec without double-free.
         let leaked = text.into_boxed_slice();
-        let mut str = ZigString::init(Box::leak(leaked));
+        let mut str = ZigString::init(bun_core::heap::release(leaked));
         str.set_output_encoding();
         str.to_external_value(global)
     }

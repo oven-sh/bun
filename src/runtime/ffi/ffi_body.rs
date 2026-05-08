@@ -333,7 +333,7 @@ impl FFI {
         // reachable from JS after the wrapper is GC'd; teardown is owned by
         // `close()`. Under the `Box<Self>` finalize contract an empty body would
         // drop, so leak the allocation back to preserve the spec'd no-op.
-        let _ = Box::leak(self);
+        let _ = bun_core::heap::release(self);
     }
 
     /// `.classes.ts` declares `noConstructor: true`; the `JsClass` macro still

@@ -92,7 +92,7 @@ impl JSMySQLQuery {
         // Refcounted: release the JS wrapper's +1; allocation may outlive this
         // call if other refs remain, so hand ownership back to the raw refcount
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         this.this_value.finalize();
         this.deref();
     }

@@ -2264,7 +2264,7 @@ impl BlobExt for Blob {
         // `deref` calls `deinit()` (which `drop(heap::take)`s if heap-allocated)
         // when the count reaches zero. Refcounted: hand ownership back to the
         // raw refcount.
-        Blob__deref(Box::leak(self));
+        Blob__deref(bun_core::heap::release(self));
     }
 
     fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob {

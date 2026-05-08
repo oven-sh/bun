@@ -2189,7 +2189,7 @@ impl AttributeIterator {
         // Refcounted: release the JS wrapper's +1. Hand ownership back to the
         // raw refcount FIRST so a panic in detach() leaks instead of UAF-ing
         // siblings.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         this.detach();
         Self::deref(this);
     }

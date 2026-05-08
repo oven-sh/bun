@@ -52,6 +52,26 @@ pub fn leak<T: ?Sized>(boxed: Box<T>) -> *mut T {
     Box::into_raw(boxed)
 }
 
+/// Give up our owning `Box<T>` and return a `&'static mut T` whose backing
+/// allocation's lifetime is now managed by **something other than this scope**:
+///
+///   - an intrusive refcount on the payload (the trailing `deref()` / `unref()`
+///     reclaims via `Box::from_raw` once the count hits zero),
+///   - a JSC `ExternalStringImpl` / `MarkedArrayBuffer` that owns the bytes and
+///     frees them on GC,
+///   - a `WeakPtr` table that may have outstanding aliases,
+///   - an enqueued work-pool task that reclaims in its `destroy()` / `run()`.
+///
+/// This is **`Box::leak` by another name** — the machine code is identical — but
+/// the call site reads as "ownership handed off to <named owner>", not "leaked".
+/// Use this (with a comment naming the owner) instead of a bare `Box::leak`
+/// whenever the allocation *is* reclaimed, just not here. A bare `Box::leak`
+/// should be reserved for genuine process-lifetime statics that are never freed.
+#[inline(always)]
+pub fn release<'a, T: ?Sized + 'a>(boxed: Box<T>) -> &'a mut T {
+    Box::leak(boxed)
+}
+
 /// Reclaim ownership of a heap allocation previously produced by [`alloc`] /
 /// [`leak`] (or any `Box::into_raw`).
 ///

@@ -2130,7 +2130,7 @@ impl PipeReader {
                 // by the JSC ArrayBuffer destructor). `Box::leak` is the safe
                 // spelling of `into_raw` + `from_raw_parts_mut` — this is an
                 // FFI hand-off, not a leak.
-                let slice: &'static mut [u8] = Box::leak(core::mem::take(bytes));
+                let slice: &'static mut [u8] = bun_core::heap::release(core::mem::take(bytes));
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
             }

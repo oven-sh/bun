@@ -2470,7 +2470,7 @@ where
         httplog!("finalize");
         // `deinit_if_we_can` may defer the actual free (pending requests still
         // hold a ref), so hand ownership back to the raw teardown path.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         this.js_value.finalize();
         this.deinit_if_we_can();
     }

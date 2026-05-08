@@ -357,13 +357,12 @@ const Linux = struct {
     }
 };
 
+const w32 = if (Environment.isWindows) std.os.windows else struct {};
+const libuv = if (Environment.isWindows) bun.windows.libuv else struct {};
+const win_externs = if (Environment.isWindows) @import("../windows_sys/externs.zig") else struct {};
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-
 const jsc = bun.jsc;
-
-const w32 = if (Environment.isWindows) std.os.windows else struct {};
-const libuv = if (Environment.isWindows) bun.windows.libuv else struct {};
-const win_externs = if (Environment.isWindows) @import("../windows_sys/externs.zig") else struct {};

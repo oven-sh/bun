@@ -13,7 +13,7 @@
 //   Linux:   stress-ng --vm 1 --vm-bytes 90% -t 30
 //   Windows: Sysinternals testlimit -d, or a tight allocator loop in another process
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux } from "harness";
 
 const flagOn = {

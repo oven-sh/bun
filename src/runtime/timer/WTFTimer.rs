@@ -67,8 +67,8 @@ pub extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
 impl WTFTimer {
     /// Spec WTFTimer.zig `run` — fire the underlying `RunLoop::TimerBase`,
     /// removing `self` from the timer heap first if it's currently scheduled.
-    /// Installed into [`bun_jsc::event_loop::RUN_WTF_TIMER_HOOK`] by
-    /// [`crate::dispatch::install_dispatch_hooks`].
+    /// Reached from `bun_jsc::event_loop` via `__bun_run_wtf_timer`
+    /// (definer in [`crate::dispatch`]).
     ///
     /// # Safety
     /// `this` was published by [`WTFTimer::update`] into

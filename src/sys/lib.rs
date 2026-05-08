@@ -5487,9 +5487,9 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
 
 /// sys.zig:2992 — fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
-/// (`bun.getFdPathW`) re-export this. Accepts a bare `&mut [u16]` so the
-/// `__bun_fd_path_w` link-time hook (raw ptr+cap) can call through without a
-/// `WPathBuffer` newtype.
+/// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at
+/// `bun_core::fd_path_raw_w` for T0/T1 callers that cannot depend on this
+/// crate.
 #[cfg(windows)]
 pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
     crate::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), out).map_err(|e| {

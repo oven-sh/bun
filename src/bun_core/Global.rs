@@ -48,13 +48,6 @@ pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<c_void> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-unsafe extern "Rust" {
-    /// `bun.jsc.Node.FSEvents.closeAndWait()` — flush the macOS FSEvents
-    /// CFRunLoop thread before process exit (spec `Global.zig:220`). Body is
-    /// `#[no_mangle]` in `bun_runtime::node::fs_events`; link-time resolved.
-    fn __bun_fs_events_close_and_wait();
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE-IN: crash_handler primitives (CYCLEBREAK §→core, from ptr/safety/collections/sys)
 // StoredTrace + dump_stack_trace + panicking state are pure data + libc; the
@@ -715,11 +708,10 @@ pub static Bun__userAgent: SyncCStr =
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {
-    // `bun.jsc.Node.FSEvents.closeAndWait()` — link-time `extern "Rust"`
-    // defined in `bun_runtime::node::fs_events` (CYCLEBREAK).
-    // SAFETY: link-time extern; no preconditions.
-    unsafe { __bun_fs_events_close_and_wait() };
-
+    // `bun.jsc.Node.FSEvents.closeAndWait()` (spec `Global.zig:220`) registers
+    // itself via `add_exit_callback` the first time an FSEvents loop is
+    // created — see `bun_runtime::node::fs_events::watch`. No cross-crate
+    // extern needed; storage (the exit-callback list) lives here.
     run_exit_callbacks();
     Output::flush();
     core::hint::black_box(Bun__atexit as unsafe extern "C" fn(ExitFn));

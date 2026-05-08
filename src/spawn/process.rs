@@ -226,12 +226,10 @@ impl Process {
 /// Convert an `EventLoopHandle` to the aio-level `EventLoopCtx`.
 ///
 /// `Mini` constructs the ctx directly from the published vtable. `Js` defers
-/// to the `GET_VM_CTX_HOOK` global (registered by `crate::init()`) since
+/// to `bun_aio::__bun_get_vm_ctx` (link-time, definer in `bun_runtime`) since
 /// the JS event-loop ctx vtable lives in `bun_jsc` (T6) and bun_runtime is the
 /// only crate that sees both. Per-thread there is exactly one JS event loop,
-/// so the hook lookup is equivalent to dispatching on `owner`.
-// TODO(port): once a `JS_EVENT_LOOP_CTX_VTABLE` static lands in bun_runtime,
-// build the ctx from `owner` directly instead of the global hook.
+/// so the global lookup is equivalent to dispatching on `owner`.
 #[inline]
 pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_aio::EventLoopCtx {
     match handle {

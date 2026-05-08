@@ -538,7 +538,7 @@ impl S3Credentials {
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get*().rare_data().aws_cache().
-                // Runtime registers AWS_CACHE_{GET,SET}_HOOK; null hook = cache miss.
+                // Reached via `__bun_s3_aws_cache_get` (definer in `bun_jsc::rare_data`).
                 if let Some(cached) = aws_cache_get(date_result.numeric_day, key) {
                     break 'brk_sign cached;
                 }

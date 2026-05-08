@@ -628,7 +628,7 @@ mod mini_ctx {
 }
 
 /// `&'static EventLoopCtxVTable` for the `MiniEventLoop` arm. Exposed so
-/// `bun_runtime` can register it in `bun_aio::GET_VM_CTX_HOOK`.
+/// `bun_runtime::__bun_get_vm_ctx` can return it for `AllocatorType::Mini`.
 pub static MINI_EVENT_LOOP_CTX_VTABLE: &bun_aio::EventLoopCtxVTable = &mini_ctx::VTABLE;
 
 impl<'a> MiniEventLoop<'a> {

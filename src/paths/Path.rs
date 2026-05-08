@@ -668,15 +668,12 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             Kind::Any => {}
         }
 
-        // CYCLEBREAK: `getFdPath`/`getFdPathW` are syscalls living in `bun_sys`
-        // (T1 sibling), which `bun_paths` cannot depend on. Route through
-        // `bun_core::__bun_fd_path` / `__bun_fd_path_w` — declared
-        // `extern "Rust"` in bun_core, defined `#[no_mangle]` in bun_sys,
-        // link-time resolved (>0 = units written, <0 = error).
+        // `getFdPath`/`getFdPathW` are libc/kernel32-only, so the bodies live
+        // in `bun_core::fd_path_raw[_w]` (T0). >0 = units written, <0 = error.
         // PORT NOTE: Zig `fd.getFdPath(this._buf.pooled)` dispatches on the
         // pooled buffer's element type (u8 → readlink/F_GETPATH, u16 →
         // GetFinalPathNameByHandleW). Rust monomorphizes eagerly, so we
-        // TypeId-dispatch to the matching hook.
+        // TypeId-dispatch on the buffer element type.
         use core::any::TypeId;
         let mut this = Self::init();
 
@@ -685,11 +682,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let buf: &mut [u8] =
                 unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
 
-            // SAFETY: buf is valid for buf.len() writable bytes; link-time
-            // extern defined in `bun_sys::fd`.
-            let n = unsafe { bun_core::__bun_fd_path(fd, buf.as_mut_ptr(), buf.len()) };
+            // SAFETY: buf is valid for buf.len() writable bytes.
+            let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
             if n < 0 {
-                return Err(bun_core::Error::from_errno(9)); // EBADF — hook surfaces no errno
+                return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
             }
             let raw = &buf[..n as usize];
             let trimmed = trim_input(TrimInputKind::Abs, raw);
@@ -700,11 +696,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let buf: &mut [u16] =
                 unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
 
-            // SAFETY: buf is valid for buf.len() writable u16 units; link-time
-            // extern defined in `bun_sys::fd`.
-            let n = unsafe { bun_core::__bun_fd_path_w(fd, buf.as_mut_ptr(), buf.len()) };
+            // SAFETY: buf is valid for buf.len() writable u16 units.
+            let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
             if n < 0 {
-                return Err(bun_core::Error::from_errno(9)); // EBADF — hook surfaces no errno
+                return Err(bun_core::Error::from_errno(9)); // EBADF — fd_path_raw surfaces no errno
             }
             let raw = &buf[..n as usize];
             let trimmed = trim_input(TrimInputKind::Abs, raw);

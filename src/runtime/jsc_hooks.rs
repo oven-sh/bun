@@ -756,7 +756,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // Spec event_loop.zig:368-376. The swap + drain loop is now un-gated in
-    // `bun_jsc::event_loop` (per-task body dispatched via `RUN_IMMEDIATE_HOOK`),
+    // `bun_jsc::event_loop` (per-task body dispatched via `__bun_run_immediate_task`),
     // so `immediate_tasks` after this call reflects next-tick immediates and
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
@@ -4916,13 +4916,6 @@ pub fn __bun_uws_parse_date(value: &[u8]) -> Option<u64> {
     }
 }
 
-/// `bun_core::__bun_fs_events_close_and_wait` body — declared `extern "Rust"`
-/// in `bun_core::Global`. Spec `Global.zig:220`:
-/// `bun.jsc.Node.FSEvents.closeAndWait()`.
-#[unsafe(no_mangle)]
-pub fn __bun_fs_events_close_and_wait() {
-    crate::node::fs_events::close_and_wait();
-}
 
 /// `bun_event_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for
 /// `AbstractVM::JsKind`'s `get_vm()`. Zig: `jsc.VirtualMachine.get()` inline.

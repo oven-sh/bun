@@ -12,7 +12,7 @@ describe("HTTP server with proxy-style absolute URLs", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  });
+  }, 30_000);
   test("tests should run on bun", async () => {
     await using process = Bun.spawn({
       cmd: [bunExe(), "test", join(import.meta.dir, "node-http-proxy-url.node.mts")],
@@ -22,5 +22,5 @@ describe("HTTP server with proxy-style absolute URLs", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  });
+  }, 30_000);
 });

@@ -2943,12 +2943,12 @@ impl Timespec {
 
     /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
     /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
-    /// monotonic clock directly. Mocked-time hook installed by bun_jsc at
-    /// startup via `set_now_hook`.
+    /// monotonic clock directly. Test-runner fake-timers write the mocked
+    /// nanosecond value via `mock_time::set` / `mock_time::clear`.
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
-            if let Some(hook) = NOW_HOOK.load() { return hook(); }
+            if let Some(ns) = mock_time::get() { return Timespec::from_ns(ns); }
         }
         Self::now_real()
     }
@@ -2985,21 +2985,32 @@ pub mod timespec_mode {
     pub type Mode = super::TimespecMockMode;
 }
 
-/// Mocked-time injection hook (set by bun_jsc when `useFakeTimers` is active).
-struct NowHookSlot(core::sync::atomic::AtomicPtr<()>);
-impl NowHookSlot {
-    const fn new() -> Self { Self(core::sync::atomic::AtomicPtr::new(core::ptr::null_mut())) }
-    fn load(&self) -> Option<fn() -> Timespec> {
-        let p = self.0.load(AOrdering::Relaxed);
-        if p.is_null() { None } else { Some(unsafe { core::mem::transmute::<*mut (), fn() -> Timespec>(p) }) }
+/// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
+/// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`.
+/// Sentinel `i64::MIN` ⇒ not mocked.
+pub mod mock_time {
+    use core::sync::atomic::{AtomicI64, Ordering};
+
+    static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
+
+    /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
+    #[inline] pub fn set(ns: i64) { MOCKED_TIME_NS.store(ns, Ordering::Relaxed); }
+    /// Clear the mocked time so `Timespec::now(AllowMockedTime)` reads the
+    /// real clock again.
+    #[inline] pub fn clear() { MOCKED_TIME_NS.store(i64::MIN, Ordering::Relaxed); }
+    /// Current mocked time, or `None` if not mocked.
+    #[inline] pub fn get() -> Option<i64> {
+        let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
+        if v == i64::MIN { None } else { Some(v) }
     }
 }
-static NOW_HOOK: NowHookSlot = NowHookSlot::new();
-pub fn set_timespec_now_hook(hook: Option<fn() -> Timespec>) {
-    NOW_HOOK.0.store(
-        hook.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
-        AOrdering::Relaxed,
-    );
+
+impl Timespec {
+    /// Construct from a signed nanosecond count.
+    #[inline]
+    pub const fn from_ns(ns: i64) -> Timespec {
+        Timespec { sec: ns / Self::NS_PER_S, nsec: ns % Self::NS_PER_S }
+    }
 }
 
 // ── f16 ───────────────────────────────────────────────────────────────────
@@ -3043,62 +3054,28 @@ impl core::fmt::Display for f16 {
 }
 
 // ── perf ──────────────────────────────────────────────────────────────────
-// Port of `bun.perf` (src/perf/perf.zig). Real impl wires to OS-native
-// signpost/ftrace and is gated behind a runtime env-var check; T0 ships the
-// `Disabled` arm only so `let _tracer = bun_core::perf::trace("X")` compiles
-// and is a no-op. The macOS `OSLog`/Linux `ftrace` backends live in `bun_sys`
-// (higher tier) and are wired in via `set_backend` at init — §Dispatch hook
-// pattern (low tier defines `static HOOK`, high tier writes it).
+// Port of `bun.perf` (src/perf/perf.zig). T0 ships the `Disabled` arm only so
+// `let _tracer = bun_core::perf::trace("X")` compiles and is a zero-cost
+// no-op. Callers that need real signpost/ftrace spans use the `bun_perf`
+// crate's enum-based `trace(PerfEvent::X)` directly — that crate owns the
+// platform backends (OSLog/ftrace) without any T0 hook indirection.
 pub mod perf {
-    use core::sync::atomic::{AtomicPtr, Ordering};
-
     /// Opaque per-span state returned by `trace()`. `end()` is idempotent;
     /// `Drop` calls it so `let _t = trace("x");` works as a scope guard.
     #[must_use = "bind to a local (`let _t = perf::trace(..)`) so the span has nonzero duration"]
-    pub struct Ctx {
-        end: Option<unsafe fn(*mut core::ffi::c_void)>,
-        data: *mut core::ffi::c_void,
-    }
+    pub struct Ctx(());
     impl Ctx {
-        pub const DISABLED: Ctx = Ctx { end: None, data: core::ptr::null_mut() };
-        #[inline]
-        pub fn end(&mut self) {
-            if let Some(f) = self.end.take() {
-                // SAFETY: backend produced `data` paired with `end`.
-                unsafe { f(self.data) };
-            }
-        }
+        pub const DISABLED: Ctx = Ctx(());
+        #[inline] pub fn end(&mut self) {}
     }
-    impl Drop for Ctx { #[inline] fn drop(&mut self) { self.end(); } }
+    impl Drop for Ctx { #[inline] fn drop(&mut self) {} }
 
-    type BeginFn = unsafe fn(name: &'static str) -> Ctx;
-    static BACKEND: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+    #[inline] pub fn is_enabled() -> bool { false }
 
+    /// `bun.perf.trace("Event.name")`. T0 callers get a no-op span; real
+    /// instrumentation lives in `bun_perf::trace(PerfEvent)`.
     #[inline]
-    pub fn is_enabled() -> bool { !BACKEND.load(Ordering::Relaxed).is_null() }
-
-    /// Installed once at startup by `bun_sys::perf::init()`.
-    pub fn set_backend(begin: Option<BeginFn>) {
-        BACKEND.store(
-            begin.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
-            Ordering::Release,
-        );
-    }
-
-    /// `bun.perf.trace("Event.name")`. When no backend is registered (the
-    /// common case — Instruments/ftrace not attached), this is a single
-    /// relaxed-load + branch.
-    #[inline]
-    pub fn trace(name: &'static str) -> Ctx {
-        let p = BACKEND.load(Ordering::Relaxed);
-        if p.is_null() {
-            return Ctx::DISABLED;
-        }
-        // SAFETY: `p` was stored from a `BeginFn` in `set_backend`.
-        let begin: BeginFn = unsafe { core::mem::transmute::<*mut (), BeginFn>(p) };
-        // SAFETY: backend contract — `name` is `'static`.
-        unsafe { begin(name) }
-    }
+    pub fn trace(_name: &'static str) -> Ctx { Ctx::DISABLED }
 }
 
 // ── form_data ─────────────────────────────────────────────────────────────

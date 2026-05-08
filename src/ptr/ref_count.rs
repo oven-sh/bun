@@ -39,22 +39,23 @@ use std::collections::HashMap;
 type ArrayHashMap<K, V> = HashMap<K, V>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Debug-hook (CYCLEBREAK §Debug-hook registration): set by
-// `bun_runtime::init()` → `crash_handler::dump_stack_trace`. Null = no-op.
+// Debug stack dump — calls straight into bun_core (T0 owns the std::backtrace
+// fallback). Crash-report symbolication lives in bun_crash_handler and is
+// invoked from there directly when needed.
 // ──────────────────────────────────────────────────────────────────────────
-
-/// fn-ptr signature: `unsafe fn(trace: *const StoredTrace /* null = current */, ret_addr: usize)`
-pub static DUMP_STACK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 #[inline]
 fn dump_stack_hook(trace: *const StoredTrace, ret_addr: usize) {
-    let p = DUMP_STACK.load(Ordering::Relaxed);
-    if p.is_null() {
-        return;
+    if trace.is_null() {
+        bun_core::dump_current_stack_trace(
+            if ret_addr == 0 { None } else { Some(ret_addr) },
+            bun_core::DumpStackTraceOptions::default(),
+        );
+    } else {
+        // SAFETY: caller passes a live `StoredTrace`.
+        let stored = unsafe { &*trace };
+        bun_core::dump_stack_trace(&stored.trace(), bun_core::DumpStackTraceOptions::default());
     }
-    // SAFETY: `bun_runtime::init()` stores a fn-ptr matching this signature.
-    let f: unsafe fn(*const StoredTrace, usize) = unsafe { core::mem::transmute(p) };
-    unsafe { f(trace, ret_addr) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

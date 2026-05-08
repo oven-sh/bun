@@ -132,35 +132,36 @@ pub mod waiter_thread_flag {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `PR_SET_PDEATHSIG` default hook — `spawn_process_posix` consults this when
-// `PosixSpawnOptions::linux_pdeathsig` is `None`. The decision needs
-// thread-identity state owned by `bun_aio::ParentDeathWatchdog`, so the
-// higher tier installs a function pointer here at startup; the default is
-// "no".
+// `PR_SET_PDEATHSIG` default — `spawn_process_posix` consults this when
+// `PosixSpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
+// tier that reads it); `bun_aio::ParentDeathWatchdog::enable()` flips it on
+// from the main thread. `PR_SET_PDEATHSIG` is *thread*-scoped in the kernel,
+// so the default only applies when spawning from the same thread that armed
+// the watchdog (a `Bun.spawn` from a JS Worker would otherwise kill the child
+// on `worker.terminate()`).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod pdeathsig {
-    use core::sync::atomic::{AtomicPtr, Ordering};
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::OnceLock;
+    use std::thread::ThreadId;
 
-    type Hook = fn() -> bool;
+    static DEFAULT_PDEATHSIG_ON_LINUX: AtomicBool = AtomicBool::new(false);
+    static INSTALL_THREAD: OnceLock<ThreadId> = OnceLock::new();
 
-    static HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
-    /// Installed by `bun_aio::ParentDeathWatchdog::install()`.
-    pub fn set_hook(f: Hook) {
-        HOOK.store(f as *mut (), Ordering::Release);
+    /// Arm the default. Records the calling thread so `should_default` only
+    /// returns `true` for spawns issued from that thread (matches Zig
+    /// `ParentDeathWatchdog` semantics). Idempotent.
+    pub fn set_default(enabled: bool) {
+        if enabled {
+            let _ = INSTALL_THREAD.set(std::thread::current().id());
+        }
+        DEFAULT_PDEATHSIG_ON_LINUX.store(enabled, Ordering::Release);
     }
 
     #[inline]
     pub(crate) fn should_default() -> bool {
-        let p = HOOK.load(Ordering::Acquire);
-        if p.is_null() {
-            return false;
-        }
-        // SAFETY: `p` was stored from a `fn() -> bool` in `set_hook`; fn
-        // pointers are word-sized and `*mut ()` round-trips them on every
-        // supported target.
-        let f: Hook = unsafe { core::mem::transmute::<*mut (), Hook>(p) };
-        f()
+        DEFAULT_PDEATHSIG_ON_LINUX.load(Ordering::Acquire)
+            && INSTALL_THREAD.get().copied() == Some(std::thread::current().id())
     }
 }
 

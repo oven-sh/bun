@@ -395,6 +395,10 @@ impl FileSystem {
             }
         };
 
+        // Publish to T0 storage so `bun_sys` / display paths can read the cwd
+        // without an upward dep on the resolver.
+        bun_core::set_top_level_dir(top_level_dir);
+
         // SAFETY: matches Zig global singleton init pattern
         unsafe {
             if !INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire) || FORCE {

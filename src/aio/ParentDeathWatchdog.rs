@@ -213,10 +213,10 @@ pub fn enable() {
             return;
         }
         let _ = INSTALL_THREAD_ID.set(std::thread::current().id());
-        // Let `bun_spawn_sys::spawn_process_posix` consult our thread-scoped
-        // policy when defaulting `linux_pdeathsig` — the -sys crate has no
-        // `bun_aio` dep, so it calls back through this hook.
-        bun_spawn_sys::pdeathsig::set_hook(should_default_spawn_pdeathsig);
+        // Let `bun_spawn_sys::spawn_process_posix` default `linux_pdeathsig`
+        // for children spawned from this thread. Storage lives in spawn_sys
+        // (lowest tier that reads it); we just flip the flag.
+        bun_spawn_sys::pdeathsig::set_default(true);
         // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
         // nested bun) inherits no-orphans mode without the parent having to thread
         // the flag through. No-op if we got here via the env var.

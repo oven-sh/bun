@@ -15,22 +15,37 @@ use crate::{USE_MIMALLOC, debug_allocator_data}; // B-1 stubs (real consts ungat
 use crate::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Debug-hook registration (CYCLEBREAK §Debug-hook)
-// Low tier defines the hook; bun_runtime::init() writes the fn-ptr.
+// Process-wide top-level directory (cwd at startup). Storage lives at T0 so
+// `bun_sys::File::read_from_user_input` reads it directly; the resolver's
+// `FileSystem::init` writes it once via `set_top_level_dir`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Set by `bun_crash_handler` at startup. No-op if null.
-pub static RESET_SEGV: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+static TOP_LEVEL_DIR: parking_lot::RwLock<&'static [u8]> =
+    parking_lot::RwLock::new(b".");
+
+/// Record the top-level directory (interned `'static` slice). Idempotent;
+/// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
+#[inline]
+pub fn set_top_level_dir(dir: &'static [u8]) {
+    *TOP_LEVEL_DIR.write() = dir;
+}
+
+/// Top-level directory recorded at startup (defaults to `"."`).
+#[inline]
+pub fn top_level_dir() -> &'static [u8] {
+    *TOP_LEVEL_DIR.read()
+}
+
+/// Set by `bun_crash_handler::init()` once it has installed its segfault
+/// handlers. `raise_ignoring_panic_handler` consults this to decide whether
+/// the crash signals need resetting to `SIG_DFL` before re-raising.
+pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "Rust" {
     /// `bun.jsc.Node.FSEvents.closeAndWait()` — flush the macOS FSEvents
     /// CFRunLoop thread before process exit (spec `Global.zig:220`). Body is
     /// `#[no_mangle]` in `bun_runtime::node::fs_events`; link-time resolved.
     fn __bun_fs_events_close_and_wait();
-    /// `bun.crash_handler.dumpStackTrace` — symbolicating dumper. Body is
-    /// `#[no_mangle]` in `bun_crash_handler`; link-time resolved.
-    fn __bun_dump_stack_trace(trace: &StackTrace<'_>, limits: &DumpStackTraceOptions);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -119,17 +134,27 @@ impl Default for DumpStackTraceOptions {
 }
 pub type DumpOptions = DumpStackTraceOptions;
 
-/// Zig: `crash_handler.dumpStackTrace`. Forwards to the symbolicating dumper
-/// in `bun_crash_handler` via a link-time `extern "Rust"`.
+/// Zig: `crash_handler.dumpStackTrace`. T0 fallback prints raw return
+/// addresses (no symbolication). Crash-report paths that need llvm-symbolizer
+/// / pdb-addr2line call `bun_crash_handler::dump_stack_trace` directly — that
+/// crate sits above us so it owns the rich impl without a hook.
 pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     crate::output::flush();
-    // SAFETY: link-time extern; `trace`/`limits` borrowed for the call.
-    unsafe { __bun_dump_stack_trace(trace, &limits) }
+    let n = trace.index.min(trace.instruction_addresses.len()).min(limits.frame_count);
+    for &addr in &trace.instruction_addresses[..n] {
+        if addr == 0 { break; }
+        eprintln!("    at 0x{addr:x}");
+    }
 }
 
+/// Capture and dump the current call stack. Uses `std::backtrace` so the
+/// output is symbolicated when debug info is available, without needing
+/// `bun_crash_handler` (the rich llvm-symbolizer path lives there for crash
+/// reports specifically).
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
-    let stored = StoredTrace::capture(first_address);
-    dump_stack_trace(&stored.trace(), limits);
+    crate::output::flush();
+    let _ = (first_address, limits);
+    eprintln!("{}", std::backtrace::Backtrace::force_capture());
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────
@@ -578,11 +603,21 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     Output::flush();
     Output::source::stdio::restore();
 
-    // clear segfault handler — via debug-hook (CYCLEBREAK pattern 3).
-    // SAFETY: hook is either null (no-op) or a valid `fn()` written by crash_handler init.
-    let hook = RESET_SEGV.load(Ordering::Relaxed);
-    if !hook.is_null() {
-        unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };
+    // Clear the crash handler's segfault hooks so the re-raised signal goes to
+    // SIG_DFL instead of recursing into the panic handler. Storage moved down
+    // from `bun_crash_handler` — it sets `CRASH_HANDLER_INSTALLED` on init and
+    // we do the libc reset ourselves (no fn-ptr hook).
+    #[cfg(unix)]
+    if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+        // SAFETY: zeroed sigaction with SIG_DFL is a valid disposition.
+        unsafe {
+            let mut act: libc::sigaction = core::mem::zeroed();
+            act.sa_sigaction = libc::SIG_DFL;
+            libc::sigemptyset(&raw mut act.sa_mask);
+            for &s in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
+                let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
+            }
+        }
     }
 
     // clear signal handler

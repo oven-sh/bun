@@ -9,7 +9,6 @@ use bun_logger as logger;
 use bun_logger::fs;
 use bun_string::strings;
 
-use crate::defines_table as table;
 use crate::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING as global_no_side_effect_function_calls_safe_for_to_string,
     GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES as global_no_side_effect_property_accesses,
@@ -20,15 +19,15 @@ use crate::defines_table::{
 // `RawDefines` / `UserDefines` / `UserDefinesArray` are canonical in
 // `bun_js_parser::defines` (lower tier) so the parser's `P.define: &'a Define`
 // and `BundleOptions.define: Box<Define>` are the *same* nominal type. This
-// crate adds the table-backed `init` / json-parse / dotenv-vtable bodies that
-// need `defines_table` / `bun_interchange` / `bun_dotenv` (all tiered above
-// js_parser) via the `DefineExt` / `DefineDataExt` extension traits below, and
-// registers the `PURE_GLOBAL_IDENTIFIER_LOOKUP` hook so the parser-side
-// `for_identifier` falls back to the comptime map.
+// crate adds the json-parse / dotenv-vtable bodies that need
+// `bun_interchange` / `bun_dotenv` (tiered above js_parser) via the
+// `DefineExt` / `DefineDataExt` extension traits below. The pure-global table
+// moved down to `bun_js_parser::defines_table`, so `for_identifier` reads it
+// directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
     are_parts_equal, Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines,
-    UserDefines, UserDefinesArray, PURE_GLOBAL_IDENTIFIER_LOOKUP,
+    UserDefines, UserDefinesArray,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`
@@ -167,13 +166,8 @@ pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineSt
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Extension impls — bodies that need `defines_table` / `bun_interchange`.
+// Extension impls — bodies that need `bun_interchange`.
 // ══════════════════════════════════════════════════════════════════════════
-
-/// Hook body for `bun_js_parser::defines::PURE_GLOBAL_IDENTIFIER_LOOKUP`.
-fn pure_global_identifier_lookup(name: &[u8]) -> Option<&'static IdentifierDefine> {
-    table::PURE_GLOBAL_IDENTIFIER_MAP.get(name).map(|id| id.value())
-}
 
 /// Extension surface for the canonical `Define` (which lives in `bun_js_parser`).
 /// Separate trait so the table-dependent `init` / `insert_global` stay in this
@@ -225,11 +219,6 @@ impl DefineExt for Define {
         drop_debugger: bool,
         omit_unused_global_calls: bool,
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
-        // Register the table-fallback hook so the parser-side `for_identifier`
-        // matches Zig behavior. Idempotent — `OnceLock::set` is a no-op after
-        // the first call.
-        let _ = PURE_GLOBAL_IDENTIFIER_LOOKUP.set(pure_global_identifier_lookup);
-
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
@@ -509,8 +498,7 @@ const NAN_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
 // PORT STATUS
 //   source:     src/bundler/defines.zig (429 lines)
 //   confidence: medium
-//   notes:      B-3 — type defs moved DOWN to bun_js_parser::defines; this file
-//               keeps the table-backed init + json-parse + dotenv vtable that
-//               need higher-tier deps. `for_identifier` table fallback wired
-//               via PURE_GLOBAL_IDENTIFIER_LOOKUP hook.
+//   notes:      B-3 — type defs + pure-global table moved DOWN to
+//               bun_js_parser; this file keeps the json-parse + dotenv vtable
+//               that need higher-tier deps.
 // ──────────────────────────────────────────────────────────────────────────

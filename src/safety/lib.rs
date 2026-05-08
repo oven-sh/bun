@@ -24,10 +24,6 @@ pub mod thread_id;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-/// Erased signature: `unsafe fn(trace: &bun_core::StoredTrace)`.
-/// Provider: `bun_crash_handler::dump_stack_trace` (frame_count=10, stop_at_jsc_llint=true).
-pub static DUMP_STACK: AtomicPtr<()> = AtomicPtr::new(null_mut());
-
 /// Erased signature: `unsafe fn(alloc: bun_alloc::StdAllocator) -> bool`.
 ///
 /// Provider (registered by `bun_runtime::init()`) folds the higher-tier
@@ -41,16 +37,15 @@ pub static ALLOC_HAS_PTR: AtomicPtr<()> = AtomicPtr::new(null_mut());
 /// Provider: `bun_runtime::allocators::mimalloc_arena::is_instance`.
 pub static IS_MIMALLOC_ARENA: AtomicPtr<()> = AtomicPtr::new(null_mut());
 
-/// Call through `DUMP_STACK` if registered; no-op otherwise.
+/// Dump a captured trace via the T0 fallback (raw addresses / std::backtrace).
+/// Crash-report symbolication lives in `bun_crash_handler` and is invoked
+/// from there directly.
 #[inline]
 pub fn dump_stored_trace(trace: &bun_core::StoredTrace) {
-    let p = DUMP_STACK.load(Ordering::Relaxed);
-    if p.is_null() {
-        return;
-    }
-    // SAFETY: `bun_runtime::init()` stores a fn ptr with this exact signature.
-    let f: unsafe fn(&bun_core::StoredTrace) = unsafe { core::mem::transmute(p) };
-    unsafe { f(trace) };
+    bun_core::dump_stack_trace(
+        &trace.trace(),
+        bun_core::DumpStackTraceOptions { frame_count: 10, stop_at_jsc_llint: true, ..Default::default() },
+    );
 }
 
 /// Call through an allocator-predicate hook if registered; `false` otherwise.

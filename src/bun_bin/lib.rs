@@ -104,8 +104,7 @@ pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
-    // TODO(phase-c): `ParentDeathWatchdog::install()` lives in `bun_spawn`;
-    // wire once that crate is in the dep graph.
+    bun_aio::ParentDeathWatchdog::install();
 
     // 6. Push high-tier allocator vtable addresses into the
     //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch

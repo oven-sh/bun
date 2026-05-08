@@ -44,6 +44,12 @@ function tripleOs(triple: string): "linux" | "darwin" | "windows" | "freebsd" {
  * name and let PATH resolve it if someone actually cross-links.
  */
 function linkerFor(triple: string, cfg: Config): string {
+  // android needs the NDK sysroot/runtimes; musl needs a different libc/sysroot.
+  // The host's gnu clang++ (`cfg.cxx`) isn't a valid driver for either even on a
+  // linux host, so fall back to the conventional driver name (PATH-resolved) —
+  // matches the foreign-OS case below. `cargo check` never links, and the ninja
+  // build sets the linker via `CARGO_TARGET_<T>_LINKER` env anyway.
+  if (triple.includes("android") || triple.includes("musl")) return "clang++";
   return tripleOs(triple) === cfg.host.os ? cfg.cxx : "clang++";
 }
 

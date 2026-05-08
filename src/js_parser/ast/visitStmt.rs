@@ -185,8 +185,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PORT NOTE: Zig evaluates lhs before rhs at the call site; preserve that order
         // (`module_exports` builds via `new_expr`, `visit_expr` mutates parser state).
         let lhs = p.module_exports(stmt.loc);
-        let rhs = p.visit_expr(data.value);
-        stmts.push(Stmt::assign(lhs, rhs));
+        p.visit_expr(&mut data.value);
+        stmts.push(Stmt::assign(lhs, data.value));
         p.record_usage(p.module_ref);
         Ok(())
     }
@@ -430,7 +430,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
-                *expr = p.visit_expr(*expr);
+                p.visit_expr(expr);
                 p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
@@ -1261,7 +1261,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             };
         }
 
-        data.value = p.visit_expr(data.value);
+        p.visit_expr(&mut data.value);
 
         // Zig: defer p.stmt_expr_value = .{ .e_missing = .{} };
         // PORT NOTE: restructured — restored at every return below.
@@ -1382,7 +1382,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn s_throw(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Throw) -> Result<(), Error> {
-        data.value = p.visit_expr(data.value);
+        p.visit_expr(&mut data.value);
         stmts.push(*stmt);
         Ok(())
     }
@@ -1409,8 +1409,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        if let Some(val) = data.value {
-            data.value = Some(p.visit_expr(val));
+        if let Some(val) = data.value.as_mut() {
+            p.visit_expr(val);
 
             // "return undefined;" can safely just always be "return;"
             if let Some(v) = data.value {
@@ -1465,7 +1465,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn s_with(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::With) -> Result<(), Error> {
-        data.value = p.visit_expr(data.value);
+        p.visit_expr(&mut data.value);
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc).expect("unreachable");
 
@@ -1485,7 +1485,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn s_while(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::While) -> Result<(), Error> {
-        data.test_ = p.visit_expr(data.test_);
+        p.visit_expr(&mut data.test_);
         data.body = p.visit_loop_body(data.body);
 
         data.test_ = SideEffects::simplify_boolean(p, data.test_);
@@ -1500,7 +1500,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn s_do_while(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::DoWhile) -> Result<(), Error> {
         data.body = p.visit_loop_body(data.body);
-        data.test_ = p.visit_expr(data.test_);
+        p.visit_expr(&mut data.test_);
 
         data.test_ = SideEffects::simplify_boolean(p, data.test_);
         stmts.push(*stmt);
@@ -1510,7 +1510,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn s_if(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::If) -> Result<(), Error> {
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
-        data.test_ = p.visit_expr(data.test_);
+        p.visit_expr(&mut data.test_);
         p.in_branch_condition = prev_in_branch;
 
         if p.options.features.minify_syntax {
@@ -1633,9 +1633,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             data.init = Some(p.visit_for_loop_init(initst, false));
         }
 
-        if let Some(test_) = data.test_ {
-            let visited = p.visit_expr(test_);
-            data.test_ = Some(SideEffects::simplify_boolean(p, visited));
+        if let Some(mut test_) = data.test_ {
+            p.visit_expr(&mut test_);
+            data.test_ = Some(SideEffects::simplify_boolean(p, test_));
 
             let result = SideEffects::to_boolean(p, &data.test_.unwrap().data);
             if result.ok && result.value && result.side_effects == SideEffects::NoSideEffects {
@@ -1643,8 +1643,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        if let Some(update) = data.update {
-            data.update = Some(p.visit_expr(update));
+        if let Some(update) = data.update.as_mut() {
+            p.visit_expr(update);
         }
 
         data.body = p.visit_loop_body(data.body);
@@ -1674,7 +1674,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
             // Zig: defer p.popScope(); — restructured: pop at end of block
             let _ = p.visit_for_loop_init(data.init, true);
-            data.value = p.visit_expr(data.value);
+            p.visit_expr(&mut data.value);
             data.body = p.visit_loop_body(data.body);
 
             // Check for a variable initializer
@@ -1717,7 +1717,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
         // Zig: defer p.popScope();
         let _ = p.visit_for_loop_init(data.init, true);
-        data.value = p.visit_expr(data.value);
+        p.visit_expr(&mut data.value);
         data.body = p.visit_loop_body(data.body);
 
         if let StmtData::SLocal(_) = data.init.data {
@@ -1846,7 +1846,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn s_switch(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Switch) -> Result<(), Error> {
-        data.test_ = p.visit_expr(data.test_);
+        p.visit_expr(&mut data.test_);
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc).expect("unreachable");
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
@@ -1854,8 +1854,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // SAFETY: arena-owned slice valid for 'a.
             let cases = unsafe { data.cases.slice_mut() };
             for i in 0..cases.len() {
-                if let Some(val) = cases[i].value {
-                    cases[i].value = Some(p.visit_expr(val));
+                if let Some(val) = cases[i].value.as_mut() {
+                    p.visit_expr(val);
                     // TODO: error messages
                     // Check("case", *c.Value, c.Value.Loc)
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
@@ -1941,7 +1941,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if let Some(enum_value) = value.value {
                 next_numeric_value = None;
 
-                let visited = p.visit_expr(enum_value);
+                let mut visited = enum_value;
+                p.visit_expr(&mut visited);
 
                 // "See through" any wrapped comments
                 let underlying_value = if let js_ast::ExprData::EInlinedEnum(ie) = visited.data {

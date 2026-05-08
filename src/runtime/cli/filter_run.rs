@@ -11,7 +11,7 @@ use bun_core::{Global, Output};
 use bun_io::{BufferedReader, ReadState};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
-use bun_resolver::package_json::{DependencyMap, IncludeDependencies, IncludeScripts};
+use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_str::{strings, ZStr};
 use bun_sys as sys;
@@ -25,7 +25,9 @@ struct ScriptConfig {
     script_name: Box<[u8]>,
     script_content: Box<[u8]>,
     combined: &'static ZStr, // TODO(port): lifetime — points into leaked copy_script buffer
-    deps: DependencyMap,
+    // Owned dep names; `DependencyMap.source_buf` would dangle once the
+    // parsed `PackageJSON` (which owns the file bytes) drops.
+    deps: Vec<Box<[u8]>>,
 
     // $PATH must be set per script because it contains
     // node_modules/.bin
@@ -826,13 +828,22 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
             let combined = unsafe { ZStr::from_raw(interned.as_ptr(), combined_len) };
 
+            let dep_source_buf = pkgjson.dependencies.source_buf;
+            let deps: Vec<Box<[u8]>> = pkgjson
+                .dependencies
+                .map
+                .keys()
+                .iter()
+                .map(|k| Box::<[u8]>::from(k.slice(dep_source_buf)))
+                .collect();
+
             scripts.push(ScriptConfig {
                 package_json_path: package_json_path.clone(),
                 package_name: Box::<[u8]>::from(&pkgjson.name[..]),
                 script_name: Box::<[u8]>::from(*name),
                 script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
                 combined,
-                deps: pkgjson.dependencies.clone(),
+                deps,
                 PATH: Box::<[u8]>::from(&path_var[..]),
                 elide_count: ctx.bundler_options.elide_lines,
             });
@@ -975,16 +986,10 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     }
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
     for handle in state.handles.iter_mut() {
-        // PORT NOTE: `ArrayHashMap::iterator` takes `&mut self` but `config` is a
-        // shared borrow into `scripts`. We only need read access to the keys, so
-        // copy the `&ScriptConfig` out (refs are `Copy`) and iterate `.keys()`
-        // instead — avoids the `&T -> &mut T` cast Zig allowed via aliased `*const`.
         let config = handle.config;
-        let source_buf = config.deps.source_buf;
-        for key in config.deps.map.keys() {
-            let name = key.slice(source_buf);
+        for name in &config.deps {
             // is it a workspace dependency?
-            if let Some(pkgs) = map.get(name) {
+            if let Some(pkgs) = map.get(&**name) {
                 for &dep in pkgs {
                     // SAFETY: dep points into state.handles which is stable for the run.
                     unsafe { (*dep).dependents.push(std::ptr::from_mut(handle)) };

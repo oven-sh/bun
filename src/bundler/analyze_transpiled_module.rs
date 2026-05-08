@@ -137,21 +137,22 @@ impl From<ModuleInfoError> for bun_core::Error {
     }
 }
 
-/// All slice fields are **self-referential** raw views into `owner`
+/// All slice fields are **self-referential** views into `owner`
 /// (`Owner::AllocatedSlice`) or into the parent `ModuleInfo`'s `Vec` storage
-/// (`Owner::ModuleInfo`). They are stored as raw fat pointers because Rust
-/// references cannot express the self-borrow, and the non-`u8` element types
-/// were `align(1)` slices in Zig (i.e. not naturally aligned).
+/// (`Owner::ModuleInfo`). They are stored as [`bun_ptr::RawSlice`] (raw fat
+/// pointers) because Rust references cannot express the self-borrow, and the
+/// non-`u8` element types were `align(1)` slices in Zig (i.e. not naturally
+/// aligned).
 ///
 /// TODO(port): element reads of `strings_lens` / `requested_modules_*` /
 /// `buffer` must use `read_unaligned` — the backing bytes are 1-byte aligned.
 pub struct ModuleInfoDeserialized {
-    pub strings_buf: *const [u8],
-    pub strings_lens: *const [u32],
-    pub requested_modules_keys: *const [StringID],
-    pub requested_modules_values: *const [FetchParameters],
-    pub buffer: *const [StringID],
-    pub record_kinds: *const [RecordKind],
+    pub strings_buf: bun_ptr::RawSlice<u8>,
+    pub strings_lens: bun_ptr::RawSlice<u32>,
+    pub requested_modules_keys: bun_ptr::RawSlice<StringID>,
+    pub requested_modules_values: bun_ptr::RawSlice<FetchParameters>,
+    pub buffer: bun_ptr::RawSlice<StringID>,
+    pub record_kinds: bun_ptr::RawSlice<RecordKind>,
     pub flags: Flags,
     pub owner: Owner,
 }
@@ -167,11 +168,11 @@ pub enum Owner {
 
 impl ModuleInfoDeserialized {
     // ── safe accessors ───────────────────────────────────────────────────
-    // All `*const [T]` fields are non-null self-referential views into
-    // `self.owner` (see struct docs). They are initialized in every
-    // constructor (`create` / `into_deserialized`), the backing allocation is
-    // immutable and outlives `&self`, and no `&mut` alias to that storage is
-    // ever handed out — so materialising `&[T]` for `'_ self` is sound.
+    // All slice fields are non-null self-referential views into `self.owner`
+    // (see struct docs). They are initialized in every constructor (`create` /
+    // `into_deserialized`), the backing allocation is immutable and outlives
+    // `&self`, and no `&mut` alias to that storage is ever handed out — so
+    // materialising `&[T]` for `'_ self` (via `RawSlice::slice`) is sound.
     //
     // Alignment caveat: when `owner == AllocatedSlice`, the non-`u8` element
     // types were `align(1)` in the Zig serialization. Supported targets
@@ -180,33 +181,27 @@ impl ModuleInfoDeserialized {
 
     #[inline]
     pub fn strings_buf(&self) -> &[u8] {
-        // SAFETY: see block comment above.
-        unsafe { &*self.strings_buf }
+        self.strings_buf.slice()
     }
     #[inline]
     pub fn strings_lens(&self) -> &[u32] {
-        // SAFETY: see block comment above.
-        unsafe { &*self.strings_lens }
+        self.strings_lens.slice()
     }
     #[inline]
     pub fn requested_modules_keys(&self) -> &[StringID] {
-        // SAFETY: see block comment above.
-        unsafe { &*self.requested_modules_keys }
+        self.requested_modules_keys.slice()
     }
     #[inline]
     pub fn requested_modules_values(&self) -> &[FetchParameters] {
-        // SAFETY: see block comment above.
-        unsafe { &*self.requested_modules_values }
+        self.requested_modules_values.slice()
     }
     #[inline]
     pub fn buffer(&self) -> &[StringID] {
-        // SAFETY: see block comment above.
-        unsafe { &*self.buffer }
+        self.buffer.slice()
     }
     #[inline]
     pub fn record_kinds(&self) -> &[RecordKind] {
-        // SAFETY: see block comment above.
-        unsafe { &*self.record_kinds }
+        self.record_kinds.slice()
     }
 
     /// Consumes the heap allocation containing `self` (and, for
@@ -303,13 +298,16 @@ impl ModuleInfoDeserialized {
         // Disarm the errdefer: ownership moves into the result.
         let duped_raw = scopeguard::ScopeGuard::into_inner(guard);
 
+        // SAFETY: all six views point into `duped_raw` (the boxed allocation
+        // moved into `owner` below); they stay valid and at a stable address
+        // for the lifetime of every `RawSlice` copied from this struct.
         Ok(Box::new(ModuleInfoDeserialized {
-            strings_buf,
-            strings_lens,
-            requested_modules_keys,
-            requested_modules_values,
-            buffer,
-            record_kinds,
+            strings_buf: unsafe { bun_ptr::RawSlice::from_raw(strings_buf) },
+            strings_lens: unsafe { bun_ptr::RawSlice::from_raw(strings_lens) },
+            requested_modules_keys: unsafe { bun_ptr::RawSlice::from_raw(requested_modules_keys) },
+            requested_modules_values: unsafe { bun_ptr::RawSlice::from_raw(requested_modules_values) },
+            buffer: unsafe { bun_ptr::RawSlice::from_raw(buffer) },
+            record_kinds: unsafe { bun_ptr::RawSlice::from_raw(record_kinds) },
             flags,
             owner: Owner::AllocatedSlice { slice: duped_raw },
         }))
@@ -437,13 +435,16 @@ impl ModuleInfoExt for ModuleInfo {
             f.set(Flags::HAS_TLA, view.flags.has_tla);
             flags = f;
         }
+        // SAFETY: all six views point into the `Box<ModuleInfo>`'s vectors,
+        // moved into `owner` below; they stay valid and stable for the
+        // lifetime of every `RawSlice` copied from this struct.
         Box::new(ModuleInfoDeserialized {
-            strings_buf,
-            strings_lens,
-            requested_modules_keys: rm_keys,
-            requested_modules_values: rm_values,
-            buffer,
-            record_kinds,
+            strings_buf: unsafe { bun_ptr::RawSlice::from_raw(strings_buf) },
+            strings_lens: unsafe { bun_ptr::RawSlice::from_raw(strings_lens) },
+            requested_modules_keys: unsafe { bun_ptr::RawSlice::from_raw(rm_keys) },
+            requested_modules_values: unsafe { bun_ptr::RawSlice::from_raw(rm_values) },
+            buffer: unsafe { bun_ptr::RawSlice::from_raw(buffer) },
+            record_kinds: unsafe { bun_ptr::RawSlice::from_raw(record_kinds) },
             flags,
             owner: Owner::ModuleInfo(bun_core::heap::into_raw(self)),
         })

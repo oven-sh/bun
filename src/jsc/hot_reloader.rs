@@ -413,7 +413,10 @@ static CLEAR_SCREEN: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
-    pub ctx: *mut Ctx,
+    /// BACKREF to the owning context (Bundler / VM transpiler store) that
+    /// created this reloader. Set once at init and never reassigned; the
+    /// context outlives the reloader (and every `Task` it spawns).
+    pub ctx: bun_ptr::BackRef<Ctx>,
     pub verbose: bool,
     pub pending_count: AtomicU32,
 
@@ -546,7 +549,7 @@ where
         // SAFETY: BACKREF — reloader outlives every Task; `addr_of!` avoids
         // forming `&NewHotReloader`. `ctx` is set once at init and never
         // mutated, so a racy raw read of the pointer value is fine.
-        unsafe { *core::ptr::addr_of!((*self.reloader).ctx) }
+        unsafe { (*core::ptr::addr_of!((*self.reloader).ctx)).as_ptr() }
     }
 
     pub fn append(&mut self, id: u32) {
@@ -662,8 +665,10 @@ where
         verbose: bool,
         clear_screen_flag: bool,
     ) -> Box<Watcher> {
+        // SAFETY: `ctx` is the live owning context; it outlives the reloader
+        // and every Task spawned from it (BACKREF).
         let reloader = bun_core::heap::into_raw(Box::new(Self {
-            ctx,
+            ctx: unsafe { bun_ptr::BackRef::from_raw(ctx) },
             verbose: cfg!(feature = "debug_logs") || verbose,
             pending_count: AtomicU32::new(0),
             main: MainFile::default(),
@@ -705,8 +710,8 @@ where
     }
 
     pub fn event_loop(&self) -> *mut EventLoopType {
-        // SAFETY: ctx outlives reloader (BACKREF).
-        unsafe { (*self.ctx).event_loop() }
+        // `ctx` is a BACKREF that outlives the reloader.
+        self.ctx.event_loop()
     }
 
     pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
@@ -731,7 +736,8 @@ where
         }
 
         let reloader = bun_core::heap::into_raw(Box::new(Self {
-            ctx: this,
+            // SAFETY: `this` is the live owning context; it outlives the reloader.
+            ctx: unsafe { bun_ptr::BackRef::from_raw(this) },
             verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
@@ -786,8 +792,9 @@ where
         // PORT NOTE: Zig branched three ways on `@TypeOf(this.ctx.bun_watcher)`
         // (ImportWatcher / Option / bare). Folded into `HotReloaderCtx::bun_watcher_mut`;
         // each impl picks the right unwrap.
-        // SAFETY: ctx outlives reloader (BACKREF).
-        unsafe { (*self.ctx).bun_watcher_mut() }
+        // SAFETY: `&mut` through the BACKREF — ctx outlives the reloader and
+        // no other borrow of it is live here.
+        unsafe { self.ctx.get_mut() }.bun_watcher_mut()
     }
 
     #[inline(never)]
@@ -906,13 +913,12 @@ where
                         // on windows we receive file events for all items affected by a directory change
                         // so we only need to clear the directory cache. all other effects will be handled
                         // by the file events
-                        // SAFETY: ctx outlives reloader (BACKREF).
-                        let _ = unsafe {
-                            (*self.ctx)
-                                .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(
-                                    file_path,
-                                ))
-                        };
+                        // SAFETY: `&mut` through the BACKREF (Zig held `*Ctx`);
+                        // ctx outlives the reloader.
+                        let _ = unsafe { &mut *self.ctx.as_ptr() }
+                            .bust_dir_cache(strings::paths::without_trailing_slash_windows_path(
+                                file_path,
+                            ));
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -1041,12 +1047,11 @@ where
                             }
                         }
 
-                        // SAFETY: ctx outlives reloader (BACKREF).
-                        let _ = unsafe {
-                            (*self.ctx).bust_dir_cache(
-                                strings::paths::without_trailing_slash_windows_path(file_path),
-                            )
-                        };
+                        // SAFETY: `&mut` through the BACKREF (Zig held `*Ctx`);
+                        // ctx outlives the reloader.
+                        let _ = unsafe { &mut *self.ctx.as_ptr() }.bust_dir_cache(
+                            strings::paths::without_trailing_slash_windows_path(file_path),
+                        );
 
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
@@ -1069,8 +1074,8 @@ where
                                     continue;
                                 }
 
-                                // SAFETY: ctx outlives reloader (BACKREF).
-                                let loader = unsafe { (*self.ctx).get_loaders() }
+                                // `ctx` is a BACKREF that outlives the reloader.
+                                let loader = self.ctx.get_loaders()
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
                                     .unwrap_or(bun_bundler::options::Loader::File);

@@ -2691,6 +2691,36 @@ pub(crate) struct PackageRelative {
 }
 
 impl<'a> Path<'a> {
+    /// Erase the borrow lifetime — Phase-A storage types (`ImportRecord.path`,
+    /// `TranspileExtra.path`, `Graph.input_files`) are pinned to
+    /// `Path<'static>` until the arena lifetime is re-threaded crate-wide.
+    ///
+    /// # Safety
+    /// Every borrowed slice in `self` (text/pretty/namespace and the
+    /// `PathName` sub-slices) must outlive every read through the returned
+    /// `Path<'static>`. In practice callers feed arena-/BSSStringList-owned
+    /// bytes that live for the bundle pass or the process.
+    #[inline]
+    pub unsafe fn into_static(self) -> Path<'static> {
+        use bun_collections::detach_lifetime as d;
+        // SAFETY: caller contract — see fn doc.
+        unsafe {
+            Path {
+                pretty: d(self.pretty),
+                text: d(self.text),
+                namespace: d(self.namespace),
+                name: PathName {
+                    base: d(self.name.base),
+                    dir: d(self.name.dir),
+                    ext: d(self.name.ext),
+                    filename: d(self.name.filename),
+                },
+                is_disabled: self.is_disabled,
+                is_symlink: self.is_symlink,
+            }
+        }
+    }
+
     pub const EMPTY: Path<'static> = Path {
         pretty: b"",
         text: b"",

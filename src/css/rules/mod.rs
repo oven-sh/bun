@@ -201,45 +201,42 @@ pub(super) mod dc {
         }
     }
 
-    /// `'bump`-erasure adaptor for [`decl_block`].
+    /// `'bump`-erasure for the arena reference.
     ///
     /// SAFETY: `DeclarationBlock<'static>` is the crate-wide `'bump`-erasure
     /// placeholder until `CssRule<'bump, R>` re-threads the arena lifetime
     /// (see `style.rs` struct PORT NOTE). `bumpalo::Vec` is invariant in
-    /// `'bump`, so the input reborrow and the output both require the same
-    /// erasure. Both sides point into the same arena that owns the source
-    /// block; lifetimes re-thread together when the rule structs grow a
-    /// real `'bump` parameter — at which point all callers move back to
-    /// [`decl_block`] and this helper is deleted.
+    /// `'bump`, so any `DeclarationBlock<'static>` constructor must observe a
+    /// `&'static Arena`. The arena outlives every rule that borrows it (it
+    /// owns them); lifetimes re-thread together when the rule structs grow a
+    /// real `'bump` parameter — at which point this helper and both callers
+    /// below collapse to plain `decl_block` / `new_in`.
+    #[inline(always)]
+    unsafe fn arena_static(bump: &Arena) -> &'static Arena {
+        // SAFETY: see fn doc — `'bump`-erasure placeholder.
+        unsafe { &*core::ptr::from_ref(bump) }
+    }
+
+    /// `'bump`-erasure adaptor for [`decl_block`]. See [`arena_static`].
     #[inline]
     pub fn decl_block_static(
         this: &crate::DeclarationBlock<'static>,
         bump: &Arena,
     ) -> crate::DeclarationBlock<'static> {
-        unsafe {
-            core::mem::transmute::<crate::DeclarationBlock<'_>, crate::DeclarationBlock<'static>>(
-                decl_block(this, core::mem::transmute::<&Arena, &'static Arena>(bump)),
-            )
-        }
+        // SAFETY: `'bump`-erasure placeholder — see `arena_static`.
+        decl_block(this, unsafe { arena_static(bump) })
     }
 
     /// Empty `DeclarationBlock<'static>` — Zig spec writes `css.DeclarationBlock{}`.
     ///
-    /// SAFETY: same `'bump`-erasure rationale as [`decl_block_static`]. Exists
-    /// so call-sites that need an empty block (rules.zig:363
-    /// `nested_rule.declarations = .{}`) route through ONE centralized erasure
-    /// helper instead of open-coding `unsafe { &*(bump as *const _) }`
-    /// (PORTING.md §Forbidden). Delete with `decl_block_static` once
+    /// Exists so call-sites that need an empty block (rules.zig:363
+    /// `nested_rule.declarations = .{}`) route through ONE centralized
+    /// erasure helper. Delete with `decl_block_static` once
     /// `CssRule<'bump, R>` re-threads the arena lifetime.
     #[inline]
     pub fn decl_block_empty_static(bump: &Arena) -> crate::DeclarationBlock<'static> {
-        unsafe {
-            core::mem::transmute::<crate::DeclarationBlock<'_>, crate::DeclarationBlock<'static>>(
-                crate::DeclarationBlock::new_in(
-                    core::mem::transmute::<&Arena, &'static Arena>(bump),
-                ),
-            )
-        }
+        // SAFETY: `'bump`-erasure placeholder — see `arena_static`.
+        crate::DeclarationBlock::new_in(unsafe { arena_static(bump) })
     }
 
     /// `'bump`-erasure adaptor for `&mut DeclarationHandler<'_>`.

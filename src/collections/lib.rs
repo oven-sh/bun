@@ -139,6 +139,11 @@ pub use string_map::StringMap;
 // Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).
 pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
+// Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
+// crates that already depend on `bun_collections` (logger, css, js_parser,
+// crash_handler, watcher, http_types) can route the borrowck-dodge through
+// one centralised `unsafe fn` instead of open-coding the lifetime cast.
+pub use bun_ptr::{detach_lifetime, detach_ref, RawSlice};
 
 /// `bun.SmallList` — small-buffer-optimised list. The implementation lives in
 /// `bun_css::small_list` (it predates this crate and pulling it down would

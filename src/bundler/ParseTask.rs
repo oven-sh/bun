@@ -2285,8 +2285,7 @@ fn run_with_source_code(
     // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
     // a worker-owned `Transpiler` that outlives the parse.
     // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
-    opts.allow_unresolved =
-        unsafe { core::mem::transmute::<&options::AllowUnresolved, &'static _>(&topts.allow_unresolved) };
+    opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
     // `Transpiler.macro_context` is `Option<bun_js_parser::Macro::MacroContext>`
     // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
     // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
@@ -2408,14 +2407,8 @@ fn run_with_source_code(
             }),
         };
         // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
-        // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow;
-        // the `transmute` only narrows the concrete `&'static Framework` to the
-        // trait-level `&'static _` expected by `opts.framework`.
-        unsafe {
-            core::mem::transmute::<&js_parser::options::Framework, &'static _>(
-                bump.alloc(projected),
-            )
-        }
+        // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow.
+        unsafe { bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected)) }
     });
 
     opts.ignore_dce_annotations =

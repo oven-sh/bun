@@ -33,7 +33,7 @@ pub enum Decompressor {
 #[inline(always)]
 unsafe fn erase<'a>(s: &'a [u8]) -> &'static [u8] {
     // SAFETY: caller upholds the invariant documented above.
-    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(s) }
+    unsafe { bun_ptr::detach_lifetime(s) }
 }
 
 /// Erase the lifetime of a mutable Vec borrow.

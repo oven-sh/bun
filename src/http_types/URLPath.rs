@@ -183,7 +183,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     unsafe fn extend(s: &[u8]) -> &'static [u8] {
         // SAFETY: caller upholds that `s` outlives all uses of the returned URLPath
         // (points into threadlocal scratch or the caller's input slice).
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+        unsafe { bun_collections::detach_lifetime(s) }
     }
 
     // SAFETY: every slice passed to `extend` below borrows either the caller's

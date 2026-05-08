@@ -1194,9 +1194,12 @@ impl RadioChoice for ProjectTemplateChoice {
         }
     }
     fn from_index(i: usize) -> Self {
-        debug_assert!(i < Self::COUNT);
-        // SAFETY: caller guarantees i < COUNT; #[repr(u8)] with contiguous discriminants 0..COUNT
-        unsafe { core::mem::transmute::<u8, Self>(u8::try_from(i).expect("int cast")) }
+        match i {
+            0 => Self::Blank,
+            1 => Self::React,
+            2 => Self::Library,
+            _ => unreachable!("RadioChoice index"),
+        }
     }
     fn to_index(self) -> usize {
         self as usize
@@ -1222,9 +1225,12 @@ impl RadioChoice for ReactTemplateChoice {
         }
     }
     fn from_index(i: usize) -> Self {
-        debug_assert!(i < Self::COUNT);
-        // SAFETY: caller guarantees i < COUNT; #[repr(u8)] with contiguous discriminants 0..COUNT
-        unsafe { core::mem::transmute::<u8, Self>(u8::try_from(i).expect("int cast")) }
+        match i {
+            0 => Self::Default,
+            1 => Self::Tailwind,
+            2 => Self::ShadcnTailwind,
+            _ => unreachable!("RadioChoice index"),
+        }
     }
     fn to_index(self) -> usize {
         self as usize

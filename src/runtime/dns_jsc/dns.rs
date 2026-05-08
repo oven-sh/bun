@@ -2401,7 +2401,7 @@ pub mod internal {
         }
 
         // SAFETY: every slot 0..count was written above
-        let mut results: Box<[ResultEntry]> = unsafe { core::mem::transmute(results) };
+        let mut results: Box<[ResultEntry]> = unsafe { results.assume_init() };
 
         // sort (interleave ipv4 and ipv6)
         let mut want = netc::AF_INET6 as usize;
@@ -3540,7 +3540,7 @@ impl Resolver {
         let this: *mut Self = self;
         // PORT NOTE: caller (`dispatch.rs::fire_timer`) hands us the event-loop's
         // local `ElTimespec`; `add_timer` works in `bun_core::timespec`. Same
-        // `{ sec: i64, nsec: i64 }` layout — convert by field, not transmute.
+        // `{ sec: i64, nsec: i64 }` layout — convert field-by-field.
         let now = bun::timespec { sec: now.sec, nsec: now.nsec };
         let uws_loop = vm.uws_loop();
         // PORT NOTE: reshaped for borrowck — `defer!`'s closure captures by

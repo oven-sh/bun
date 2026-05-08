@@ -423,7 +423,7 @@ impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader 
 impl colon_list_type::ColonListValue for &'static [u8] {
     fn resolve_value(input: &[u8]) -> Result<Self, bun_core::Error> {
         // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
-        Ok(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(input) })
+        Ok(unsafe { bun_ptr::detach_lifetime(input) })
     }
 }
 

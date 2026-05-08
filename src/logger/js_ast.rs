@@ -351,7 +351,7 @@ pub mod E {
             if self.is_utf8() {
                 // SAFETY: `self.data` is arena-owned with the same lifetime as
                 // `bump` (Zig invariant); reborrowed under `'b`.
-                Ok(unsafe { core::mem::transmute::<&[u8], &'b [u8]>(self.data) })
+                Ok(unsafe { bun_collections::detach_lifetime(self.data) })
             } else {
                 let v = strings::to_utf8_alloc(self.slice16());
                 Ok(bump.alloc_slice_copy(&v))

@@ -254,6 +254,10 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
     unsafe { &mut *core::ptr::from_mut::<T>(r) }
 }
 
+/// Shorter alias for [`detach_lifetime_ref`] — two workstreams converged on
+/// slightly different names; both are kept so callers from either land cleanly.
+pub use detach_lifetime_ref as detach_ref;
+
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
 /// Runtime sibling of `bun_js_parser::StoreSlice<T>` for `*const [T]` struct

@@ -2674,11 +2674,7 @@ impl<'a> BundleV2<'a> {
         // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
         // outlives the bundle pass; erase the arena lifetime back to the resolver's
         // `Path<'static>` alias so `path` doesn't keep `self` borrowed.
-        path = unsafe {
-            core::mem::transmute::<Fs::Path<'_>, Fs::Path<'static>>(
-                self.path_with_pretty_initialized(path, target)?,
-            )
-        };
+        path = unsafe { self.path_with_pretty_initialized(path, target)?.into_static() };
         path.assert_pretty_is_valid();
         // PORT NOTE: Zig's `var path = result.path()` is a `*Fs.Path` *into*
         // `result.path_pair`, so the `path.* = pathWithPrettyInitialized(...)`

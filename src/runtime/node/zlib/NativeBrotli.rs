@@ -142,11 +142,7 @@ impl NativeBrotli {
             // .callback = undefined — overwritten before WorkPool::schedule()
             task: WorkPoolTask { node: Default::default(), callback: noop_task_callback },
         });
-        // SAFETY: mode_int is 8 or 9, both valid NodeMode discriminants.
-        ptr.stream.mode = unsafe {
-            core::mem::transmute::<u8, bun_zlib::NodeMode>(u8::try_from(mode_int).expect("int cast"))
-        };
-        // TODO(port): NodeMode repr width — confirm #[repr(u8)] vs wider.
+        ptr.stream.mode = bun_zlib::NodeMode::from_int(mode_int as u8);
         Ok(ptr)
     }
 

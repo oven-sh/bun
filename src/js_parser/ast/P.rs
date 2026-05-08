@@ -4405,9 +4405,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // lifetime params yet). The parser-supplied path borrows arena-owned 'a bytes
         // which outlive the import_records list (both dropped with the parser arena),
         // so the lifetime extension is sound here. Round-E threads `'a` through
-        // `bun_options_types::ImportRecord` and removes this transmute.
+        // `bun_options_types::ImportRecord` and removes this erasure.
         // SAFETY: see above — arena 'a outlives every ImportRecord stored in self.import_records.
-        let path: fs::Path<'static> = unsafe { core::mem::transmute::<fs::Path<'a>, fs::Path<'static>>(path) };
+        let path: fs::Path<'static> = unsafe { path.into_static() };
         // No `impl Default for ImportRecord` (range/path/kind have no Zig defaults) —
         // spell out the optional fields with their Zig field-defaults explicitly.
         self.import_records.push(ImportRecord {
@@ -5838,7 +5838,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // borrow lifetime to satisfy `handle_identifier`'s
                 // `Option<&'a [u8]>` param.
                 let original_name: &'a [u8] =
-                    unsafe { core::mem::transmute::<&[u8], &'a [u8]>(original_name) };
+                    unsafe { bun_collections::detach_lifetime(original_name) };
                 return self.handle_identifier(
                     loc,
                     id,

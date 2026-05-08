@@ -1096,7 +1096,7 @@ pub fn panic_impl(msg: &[u8], error_return_trace: Option<&StackTrace>, begin_add
         } else {
             // TODO(port): lifetime — Zig borrows msg; erased to &'static for the noreturn path.
             // SAFETY: process is about to abort; the borrow is never invalidated.
-            CrashReason::Panic(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(msg) })
+            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
         },
         error_return_trace,
         Some(begin_addr.unwrap_or_else(|| debug::return_address())),
@@ -2906,7 +2906,7 @@ pub extern "C" fn Bun__crashHandler(message_ptr: *const u8, message_len: usize) 
     let msg = unsafe { core::slice::from_raw_parts(message_ptr, message_len) };
     crash_handler(
         // SAFETY: noreturn — see panic_impl note
-        CrashReason::Panic(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(msg) }),
+        CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) }),
         None,
         Some(debug::return_address()),
     );
@@ -2920,7 +2920,7 @@ pub extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
         let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
         // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
         CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(unsafe {
-            core::mem::transmute::<&[u8], &'static [u8]>(s)
+            bun_collections::detach_lifetime(s)
         }))));
     } else {
         debug_assert!(matches!(CURRENT_ACTION.with(|c| c.get()), Some(Action::Dlopen(_))));

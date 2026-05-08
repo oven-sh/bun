@@ -4931,8 +4931,9 @@ impl SystemError {
     /// The inverse in `bun.sys.Error.toSystemError()`.
     #[inline]
     pub fn get_errno(&self) -> E {
-        // SAFETY: errno is stored negated; -errno is a valid `E` discriminant.
-        unsafe { core::mem::transmute::<i32, E>(self.errno * -1) }
+        // errno is stored negated; route through the checked from_raw decoder
+        // (RUST_PATTERNS.md §18) instead of width-punning into the enum.
+        E::from_raw((-self.errno) as u16)
     }
 
     pub fn deref(&self) {

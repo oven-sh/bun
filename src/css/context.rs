@@ -115,7 +115,7 @@ impl<'a> PropertyHandlerContext<'a> {
     /// lifetime erasure.
     #[inline]
     fn bump_static(&self) -> &'static Bump {
-        unsafe { core::mem::transmute::<&Bump, &'static Bump>(self.arena) }
+        unsafe { bun_collections::detach_ref(self.arena) }
     }
 
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.

@@ -2344,9 +2344,9 @@ impl<'a> Installer<'a> {
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
     ) {
-        buf.append(NODE_MODULES_BUN.as_bytes());
         buf.append_fmt(format_args!(
-            "/{}",
+            "{}/{}",
+            NODE_MODULES_BUN,
             store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
         ));
     }
@@ -2461,9 +2461,9 @@ impl<'a> Installer<'a> {
                 buf.append(b"node_modules");
             }
             _ => {
-                buf.append(NODE_MODULES_BUN.as_bytes());
                 buf.append_fmt(format_args!(
-                    "/{}/node_modules",
+                    "{}/{}/node_modules",
+                    NODE_MODULES_BUN,
                     store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
                 ));
             }

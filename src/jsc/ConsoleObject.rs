@@ -4943,14 +4943,8 @@ pub mod formatter {
                         let count_without_children =
                             props_iter.len - usize::from(children_prop.is_some());
 
-                        // PORT NOTE: Zig reads `props_iter.i` (the post-yield
-                        // counter) directly off the iterator struct. The Rust
-                        // `JSPropertyIterator` keeps that field private, so we
-                        // mirror it locally — incremented on every successful
-                        // yield, exactly as `JSPropertyIterator.zig:next` does.
-                        let mut props_i: usize = 0;
                         while let Some(prop) = props_iter.next()? {
-                            props_i += 1;
+                            let props_i = props_iter.i as usize;
                             if prop.eql_comptime("children") {
                                 continue;
                             }

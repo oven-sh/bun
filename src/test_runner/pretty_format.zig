@@ -326,7 +326,7 @@ pub const JestPrettyFormat = struct {
             }
 
             pub inline fn canHaveCircularReferences(tag: Tag) bool {
-                return tag == .Array or tag == .Object or tag == .Map or tag == .Set;
+                return tag == .Array or tag == .Object or tag == .Map or tag == .Set or tag == .JSX;
             }
 
             const Result = struct {
@@ -1534,13 +1534,12 @@ pub const JestPrettyFormat = struct {
                         }
                     }
 
-                    if (try value.get(this.globalThis, "props")) |props| {
+                    if (if (try value.get(this.globalThis, "props")) |props| props.getObject() else null) |props_obj| {
+                        const props = props_obj.toJS();
                         const prev_quote_strings = this.quote_strings;
                         defer this.quote_strings = prev_quote_strings;
                         this.quote_strings = true;
 
-                        // SAFETY: JSX props are always an object.
-                        const props_obj = props.getObject().?;
                         var props_iter = try jsc.JSPropertyIterator(.{
                             .skip_empty_name = true,
                             .include_value = true,

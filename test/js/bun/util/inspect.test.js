@@ -772,3 +772,40 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("JSX element", () => {
+  it("handles circular key", () => {
+    const elem = {
+      $$typeof: Symbol.for("react.element"),
+      type: "div",
+      key: null,
+      ref: null,
+      props: { children: [] },
+    };
+    elem.key = elem;
+    expect(Bun.inspect(elem)).toContain("[Circular]");
+  });
+
+  it("handles circular children", () => {
+    const elem = {
+      $$typeof: Symbol.for("react.element"),
+      type: "div",
+      key: null,
+      ref: null,
+      props: {},
+    };
+    elem.props.children = elem;
+    expect(Bun.inspect(elem)).toContain("[Circular]");
+  });
+
+  it("handles non-object props", () => {
+    const elem = {
+      $$typeof: Symbol.for("react.element"),
+      type: "div",
+      key: null,
+      ref: null,
+      props: 123,
+    };
+    expect(Bun.inspect(elem)).toBe("<div />");
+  });
+});

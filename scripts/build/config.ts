@@ -165,6 +165,8 @@ export interface Config {
   ranlib: string | undefined;
   /** ld.lld on linux, lld-link on windows. May be empty on darwin (clang invokes ld). */
   ld: string;
+  /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
+  rustLlvmVersion: string | undefined;
   strip: string;
   /** darwin-only. */
   dsymutil: string | undefined;
@@ -306,6 +308,17 @@ export interface Toolchain {
   ar: string;
   ranlib: string | undefined;
   ld: string;
+  /**
+   * rustc's bundled lld (`<sysroot>/lib/rustlib/<host>/bin/gcc-ld/ld.lld` on
+   * unix, `.../bin/rust-lld.exe` on Windows). Used as `ld` for cross-language
+   * LTO when rustc's LLVM is newer than clang's — LLVM bitcode is only
+   * forward-compatible, so clang's lld can't read newer rust bitcode but
+   * rust-lld can read clang's older bitcode. undefined when rustc isn't
+   * installed or doesn't ship the rust-lld component.
+   */
+  rustLld: string | undefined;
+  /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
+  rustLlvmVersion: string | undefined;
   strip: string;
   dsymutil: string | undefined;
   zig: string;
@@ -602,6 +615,31 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lto = false;
   }
 
+  // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
+  // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
+  // forward-compatible only (newer reader, older writer), so when rustc's
+  // bundled LLVM is ahead of clang's, clang's ld.lld rejects the rust .o
+  // files ("Unknown attribute kind"). rust-lld is built against rustc's
+  // LLVM, so it reads both rustc's bitcode (same version) and clang's
+  // (older, hence readable). Swap it in as `ld` for the whole build —
+  // it's a stock lld, just newer, so non-LTO objects and nested cmake
+  // deps link the same as before.
+  //
+  // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
+  // branch self-obsoletes once clang's LLVM catches up to rustc's.
+  let ld = toolchain.ld;
+  const clangMajor = majorOf(toolchain.clangVersion);
+  const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
+  if (
+    lto &&
+    toolchain.rustLld !== undefined &&
+    clangMajor !== undefined &&
+    rustLlvmMajor !== undefined &&
+    rustLlvmMajor > clangMajor
+  ) {
+    ld = toolchain.rustLld;
+  }
+
   // PGO: paths resolved to absolute. generate/use are mutually exclusive.
   const pgoGenerate = partial.pgoGenerate ? resolve(partial.pgoGenerate) : undefined;
   const pgoUse = partial.pgoUse ? resolve(partial.pgoUse) : undefined;
@@ -810,7 +848,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangVersion: toolchain.clangVersion,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
-    ld: toolchain.ld,
+    ld,
+    rustLlvmVersion: toolchain.rustLlvmVersion,
     strip: toolchain.strip,
     dsymutil: toolchain.dsymutil,
     zig: toolchain.zig,
@@ -991,6 +1030,17 @@ export function findRepoRoot(): string {
  * matters more than the ~20ms spawn. Git's plumbing has edge cases
  * (packed-refs, worktrees, symbolic refs) that rev-parse handles for free.
  */
+/**
+ * Parse the major component out of an X.Y.Z version string.
+ * Returns undefined for undefined/unparseable input so callers can
+ * compare without `!` assertions.
+ */
+function majorOf(version: string | undefined): number | undefined {
+  if (version === undefined) return undefined;
+  const m = version.match(/^(\d+)\./);
+  return m ? Number(m[1]) : undefined;
+}
+
 /**
  * Read `channel` from `rust-toolchain.toml`. Passed as `RUSTUP_TOOLCHAIN` to
  * cargo invocations so vendored Rust deps and the workspace staticlib are

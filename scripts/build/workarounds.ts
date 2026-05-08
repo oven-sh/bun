@@ -75,6 +75,26 @@ export const workarounds: Workaround[] = [
     },
     cleanup: `Delete scripts/build/shims/asan-dyld-shim.c, scripts/build/shims.ts, the emitShims() calls in bun.ts, registerShimRules in rules.ts, and this entry.`,
   },
+  {
+    id: "rust-lld-for-crosslang-lto",
+    issue: "https://rustc-dev-guide.rust-lang.org/backend/updating-llvm.html",
+    description:
+      "rustc's bundled LLVM is newer than clang's, so clang's ld.lld can't read " +
+      "-Clinker-plugin-lto bitcode (forward-compatible only). Link with rust-lld instead.",
+    applies: cfg => cfg.lto && cfg.rustLlvmVersion !== undefined && cfg.clangVersion !== undefined,
+    expectedToBeFixed: cfg => {
+      // Obsolete once clang's LLVM major catches up to (or passes) rustc's —
+      // at that point clang's own ld.lld reads rustc's bitcode and the
+      // rust-lld swap in resolveConfig() never fires.
+      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
+      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
+      return clangMajor >= rustMajor;
+    },
+    cleanup:
+      `Delete the rust-lld swap block in resolveConfig() (config.ts), findRustLld() and its call ` +
+      `in resolveLlvmToolchain() (tools.ts), the rustLld/rustLlvmVersion fields on Toolchain/Config, ` +
+      `and this entry.`,
+  },
 ];
 
 /**

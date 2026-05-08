@@ -208,13 +208,21 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //
     // Bitcode-format compatibility: lld must be able to read rustc's bitcode.
     // LLVM bitcode is forward-compatible (newer reads older), so this works
-    // when the linker's LLVM ≥ rustc's bundled LLVM. If clang's lld is older
-    // than rustc's LLVM and the link fails with "Invalid bitcode version",
-    // either bump clang or point `cfg.lld` at rustc's bundled `rust-lld`
-    // (`$(rustc --print sysroot)/lib/rustlib/<host>/bin/rust-lld`) — see
-    // workarounds.ts for the auto-fallback.
+    // when the linker's LLVM ≥ rustc's bundled LLVM. resolveConfig() swaps
+    // `cfg.ld` to rustc's bundled rust-lld when rustc's LLVM major is ahead
+    // of clang's — see workarounds.ts "rust-lld-for-crosslang-lto".
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
+    // C++ is built with -fwhole-program-vtables, which sets the
+    // EnableSplitLTOUnit module flag in every bitcode module's summary index.
+    // lld reads that flag from the SUMMARY (not the module-flags metadata)
+    // and errors with "inconsistent LTO Unit splitting" if any bitcode input
+    // disagrees. So Rust bitcode must (a) carry a summary index and (b) set
+    // the flag to 1 in it. -Zsplit-lto-unit handles (b); for (a), see the
+    // CARGO_PROFILE_RELEASE_LTO override below — `lto = "fat"` makes rustc
+    // pre-merge all crates into one summary-less blob, which lld then reads
+    // as EnableSplitLTOUnit=0.
+    rustflags.push("-Zsplit-lto-unit");
     // Any cdylib/staticlib in the dep graph (lol_html_c_api) gets linked by
     // rustc itself; default `cc` driver picks BFD `/usr/bin/ld` which doesn't
     // understand `-plugin-opt`. Force lld so the bitcode link goes through
@@ -237,6 +245,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // across worktrees; rustup's directory walk could otherwise resolve a
   // different worktree's `rust-toolchain.toml`.
   if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
+  if (cfg.lto) {
+    // The workspace `[profile.release]` sets `lto = "fat"` so non-LTO release
+    // builds (where the rust .a is linked as native code) still get
+    // intra-Rust inlining. With `-Clinker-plugin-lto` that pre-merge is
+    // wasted work — the linker re-merges everything anyway — and it strips
+    // the per-module summary index lld needs for the EnableSplitLTOUnit
+    // consistency check (see -Zsplit-lto-unit above). Override to `off` so
+    // each crate's bitcode reaches lld with its summary intact.
+    env.CARGO_PROFILE_RELEASE_LTO = "off";
+  }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   // ─── Emit build node ───

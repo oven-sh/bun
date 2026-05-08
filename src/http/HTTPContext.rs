@@ -876,23 +876,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ssl_config: cfg,
                     ..Default::default()
                 });
-                // Spec HTTPContext.zig:824 — `client.pending_h2 = pc` stores a
-                // *borrowed* backref into the Vec-owned allocation so
-                // `resolvePendingH2` (http.zig:2101) can dispatch coalesced
-                // waiters once ALPN resolves. Ownership stays with
-                // `pending_h2_connects`.
-                //
-                // TODO(port): retype `HTTPClient.pending_h2` (lib.rs) to
-                // `Option<NonNull<h2::PendingConnect>>` (matching Zig
-                // `?*H2.PendingConnect`) and write
-                //   `client.pending_h2 = Some(NonNull::from(&mut *pc));`
-                // here. The previous `Box::from_raw` + `mem::forget(.take())`
-                // dance was a no-op (left the field None) and used a
-                // §Forbidden pattern; it has been removed. Until the field is
-                // retyped, the backref cannot be stored without aliasing a
-                // `Box` (double-free on `HTTPClient::drop`), so the leader's
-                // h2-coalescing resolution remains blocked on that retype.
-                let _ = NonNull::from(&mut *pc); // backref target (see TODO above)
+                // `client.pending_h2 = pc` stores a *borrowed* backref into the
+                // Vec-owned allocation so `resolve_pending_h2` can dispatch
+                // coalesced waiters once ALPN resolves. Ownership stays with
+                // `pending_h2_connects`; the Box address is stable across the
+                // Vec push.
+                client.pending_h2 = Some(NonNull::from(&mut *pc));
                 self.pending_h2_connects.push(pc);
             }
         }

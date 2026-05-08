@@ -522,8 +522,9 @@ pub struct HTTPClient<'a> {
     pub h3: Option<NonNull<h3::Stream>>,
     /// Set while this request is the leader of a fresh TLS connect that other
     /// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
-    /// is known or the connect fails.
-    pub pending_h2: Option<Box<h2::PendingConnect>>,
+    /// is known or the connect fails. Backref into the owning
+    /// `HTTPContext.pending_h2_connects` Vec — not an owned Box.
+    pub pending_h2: Option<NonNull<h2::PendingConnect>>,
     pub signals: Signals,
     pub async_http_id: u32,
     pub hostname: Option<&'a [u8]>,
@@ -3033,10 +3034,17 @@ impl<'a> HTTPClient<'a> {
     /// The leader of a coalesced cold connect has learned the ALPN outcome (or
     /// failed). Dispatch every waiter accordingly.
     fn resolve_pending_h2(&mut self, mut resolution: PendingH2Resolution<'_>) {
-        let Some(pc) = self.pending_h2.take() else { return };
-        // SAFETY: get_ssl_ctx returns a thread-owned non-null context.
-        let _owned = h2::PendingConnect::unregister_from(&raw const *pc, unsafe { &mut *self.get_ssl_ctx::<true>() });
-        // pc / _owned drop at scope exit (was `defer pc.deinit()`)
+        let Some(pc_ptr) = self.pending_h2.take() else { return };
+        // SAFETY: get_ssl_ctx returns a thread-owned non-null context. `pc_ptr`
+        // is a backref into that context's `pending_h2_connects` Vec, set in
+        // `HTTPContext::connect`; unregister_from swaps the owning Box out so
+        // we can iterate and drop it here.
+        let Some(pc) =
+            h2::PendingConnect::unregister_from(pc_ptr.as_ptr(), unsafe { &mut *self.get_ssl_ctx::<true>() })
+        else {
+            return;
+        };
+        // pc drops at scope exit (was `defer pc.deinit()`)
 
         for waiter_ptr in pc.waiters.iter() {
             // SAFETY: waiters are live HTTPClients pinned in their AsyncHTTP slots

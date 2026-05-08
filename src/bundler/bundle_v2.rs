@@ -3184,19 +3184,19 @@ impl<'a> BundleV2<'a> {
                 let astr = |s: &[u8]| -> &'static [u8] { unsafe { interned_slice(s) } };
 
                 let client_path = server.new_expr(E::EString {
-                    data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, source_id).as_bytes())).into(),
+                    data: astr(alloc.alloc_slice_copy(format!("{}S{:08}", bun_core::fmt::hex_int_lower::<16>(self.unique_key), source_id).as_bytes())).into(),
                     ..Default::default()
                 });
                 let ssr_path = server.new_expr(E::EString {
-                    data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, ssr_index).as_bytes())).into(),
+                    data: astr(alloc.alloc_slice_copy(format!("{}S{:08}", bun_core::fmt::hex_int_lower::<16>(self.unique_key), ssr_index).as_bytes())).into(),
                     ..Default::default()
                 });
 
                 debug_assert_eq!(keys.len(), client_manifest_items.len());
                 for (export_name_string, client_item) in keys.iter().zip(client_manifest_items.iter_mut()) {
                     let server_key_string = astr(alloc.alloc_slice_copy(format!(
-                        "{:x}S{:08}#{}",
-                        self.unique_key, source_id, bstr::BStr::new(export_name_string)
+                        "{}S{:08}#{}",
+                        bun_core::fmt::hex_int_lower::<16>(self.unique_key), source_id, bstr::BStr::new(export_name_string)
                     ).as_bytes()));
                     let export_name = server.new_expr(E::EString { data: astr(export_name_string).into(), ..Default::default() });
 
@@ -5906,8 +5906,8 @@ impl<'a> BundleV2<'a> {
             interned_slice(
                 self.arena()
                     .alloc_str(&format!(
-                        "{:x}H{:08}",
-                        self.unique_key,
+                        "{}H{:08}",
+                        bun_core::fmt::hex_int_lower::<16>(self.unique_key),
                         self.graph.html_imports.server_source_indices.len(),
                     ))
                     .as_bytes(),

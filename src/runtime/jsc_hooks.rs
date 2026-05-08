@@ -277,13 +277,10 @@ unsafe fn init_runtime_state(
         // and hence `vm.transpiler` — is done).
         let arena: &'static bun_alloc::Arena =
             unsafe { &*(&raw const *(*state).transpiler_arena) };
-        // TODO(b2): `env_loader_` — spec VirtualMachine.zig:1244 passes
-        // `opts.env_loader` so a worker VM inherits its parent's
-        // `DotEnv.Loader` (set at VirtualMachine.zig:1415/1513). The minimal
-        // `InitOptions` stub (VirtualMachine.rs:78) has no `env_loader` field
-        // yet; passing `None` silently falls back to `dot_env::instance()`.
-        // Thread `_opts.env_loader` here once the stub widens.
-        match bun_bundler::Transpiler::init(arena, log, args, None) {
+        // Spec VirtualMachine.zig:1244 — forward `opts.env_loader` so the VM
+        // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
+        // `NODE_ENV=test` into it after init).
+        match bun_bundler::Transpiler::init(arena, log, args, opts.env_loader.map(|p| p.as_ptr())) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
                 // field is zero-init'd uninhabited memory (never dropped).

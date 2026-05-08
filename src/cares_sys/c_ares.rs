@@ -710,6 +710,11 @@ pub struct Channel {
     _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
+// Load-bearing: `ares_cancel`/`ares_process_fd` are declared `safe fn(&mut Channel)`
+// on the basis that re-entrant callbacks re-deriving `&mut Channel` from a raw
+// pointer cannot conflict because `Channel` claims zero bytes. If this type ever
+// gains a non-ZST field, those signatures must revert to `unsafe fn(*mut Channel)`.
+const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 
 /// Implemented by the type that owns a `*mut Channel` and receives socket-
 /// state callbacks. Zig: `Container.onDNSSocketState` + `this.channel = ch`.

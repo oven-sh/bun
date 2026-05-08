@@ -644,8 +644,11 @@ impl RareData {
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
         // PORT NOTE: Zig spec is `ENGINE_new().?` (panic on null). We cache the
         // raw result; `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here
-        // degrades to "no engine" rather than crashing.
-        *self.boring_ssl_engine.get_or_insert_with(|| boring::ENGINE_new())
+        // degrades to "no engine" rather than crashing. Debug-assert to surface
+        // the divergence without altering release behavior.
+        let ptr = *self.boring_ssl_engine.get_or_insert_with(|| boring::ENGINE_new());
+        debug_assert!(!ptr.is_null(), "ENGINE_new returned null");
+        ptr
     }
 
     pub fn default_csrf_secret(&mut self) -> &[u8] {

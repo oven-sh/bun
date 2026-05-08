@@ -1805,6 +1805,19 @@ where
         self.writer.print_slice(str);
     }
 
+    /// Fixed-size raw write into pre-reserved space (mirrors Zig's
+    /// `p.writer.reserve(N) ...; p.writer.advance(N)` open-code on the
+    /// number/identifier hot path). Skips the short-write/error bookkeeping
+    /// in `print_slice`.
+    #[inline(always)]
+    fn print_reserved_n<const N: usize>(&mut self, bytes: &[u8; N]) {
+        let buf = self.writer.reserve(N as u64).expect("unreachable");
+        // SAFETY: `reserve(N)` returned a writable region of at least `N` bytes
+        // disjoint from `bytes` (writer-owned vs. caller stack).
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, N); }
+        self.writer.advance(N as u64);
+    }
+
     /// Polymorphic print: bytes or single char.
     pub fn print(&mut self, str: impl PrintArg) {
         str.print_into(&mut self.writer);
@@ -2392,19 +2405,19 @@ where
                 11..=99 => {
                     let mut tmp = [0u8; 2];
                     format_unsigned_integer_between::<2>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 100 => self.print(b"100"),
                 101..=999 => {
                     let mut tmp = [0u8; 3];
                     format_unsigned_integer_between::<3>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 1000 => self.print(b"1000"),
                 1001..=9999 => {
                     let mut tmp = [0u8; 4];
                     format_unsigned_integer_between::<4>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 10000 => self.print(b"1e4"),
                 100000 => self.print(b"1e5"),
@@ -2415,32 +2428,32 @@ where
                 10001..=99999 => {
                     let mut tmp = [0u8; 5];
                     format_unsigned_integer_between::<5>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 100001..=999999 => {
                     let mut tmp = [0u8; 6];
                     format_unsigned_integer_between::<6>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 1_000_001..=9_999_999 => {
                     let mut tmp = [0u8; 7];
                     format_unsigned_integer_between::<7>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 10_000_001..=99_999_999 => {
                     let mut tmp = [0u8; 8];
                     format_unsigned_integer_between::<8>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 100_000_001..=999_999_999 => {
                     let mut tmp = [0u8; 9];
                     format_unsigned_integer_between::<9>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 1_000_000_001..=9_999_999_999 => {
                     let mut tmp = [0u8; 10];
                     format_unsigned_integer_between::<10>(&mut tmp, val);
-                    self.print(&tmp);
+                    self.print_reserved_n(&tmp);
                 }
                 _ => { let _ = self.fmt(format_args!("{}", val)); }
             }
@@ -6032,18 +6045,24 @@ where
                     }
                     _ => {
                         self.print(b"\\u");
+                        let buf_ptr = self.writer.reserve(4).expect("unreachable");
                         let mut tmp = [0u8; 4];
                         let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                        self.print(&tmp[..len]);
+                        // SAFETY: reserved 4 bytes; `len <= 4`; `tmp` is stack-local.
+                        unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf_ptr, len); }
+                        self.writer.advance(len as u64);
                     }
                 }
                 continue;
             }
 
             {
+                let buf_ptr = self.writer.reserve(4).expect("unreachable");
                 let mut tmp = [0u8; 4];
                 let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                self.print(&tmp[..len]);
+                // SAFETY: reserved 4 bytes; `len <= 4`; `tmp` is stack-local.
+                unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf_ptr, len); }
+                self.writer.advance(len as u64);
             }
         }
         Ok(())

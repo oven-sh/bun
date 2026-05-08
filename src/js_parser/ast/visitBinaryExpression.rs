@@ -656,11 +656,8 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
 
         Expr {
             loc: v.loc,
-            // `e_ptr` is `&raw mut *v.e` (non-null `&'arena mut E::Binary`); same
-            // arena slot Zig threads as `*E.Binary`.
-            data: ExprData::EBinary(StoreRef::from_non_null(
-                core::ptr::NonNull::new(e_ptr).expect("e_ptr from &mut"),
-            )),
+            // `v.e: &'arena mut E::Binary` — same arena slot Zig threads as `*E.Binary`.
+            data: ExprData::EBinary(StoreRef::from_non_null(core::ptr::NonNull::from(&mut *v.e))),
         }
     }
 

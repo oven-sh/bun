@@ -3139,17 +3139,27 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         loc: logger::Loc,
     ) -> Result<usize, bun_core::Error> {
         let parent: *mut Scope = self.current_scope;
-        // `current_scope` is arena-owned and non-null after `init()`.
-        let parent_nn = NonNull::new(parent).expect("current_scope non-null after init()");
+        debug_assert!(!parent.is_null(), "current_scope non-null after init()");
+        // SAFETY: `current_scope` is arena-owned and non-null after `init()`.
+        let parent_nn = unsafe { NonNull::new_unchecked(parent) };
         let arena = self.arena;
-        let scope: &mut Scope = arena.alloc(Scope {
+        // Coerce the arena `&mut Scope` to a raw pointer immediately so the
+        // SharedRW tag is the one stored in `parent.children` / `current_scope`
+        // / `scopes_in_order`. Deriving `scope_nn` from a `&mut` reborrow and
+        // then writing through the original `&mut` would pop `scope_nn`'s tag
+        // off the borrow stack (Stacked Borrows).
+        let scope_ptr: *mut Scope = arena.alloc(Scope {
             kind: KIND,
             label_ref: None,
             parent: Some(parent_nn),
             generated: Default::default(),
             ..Default::default()
         });
-        let scope_nn = NonNull::from(&mut *scope);
+        // SAFETY: `arena.alloc` returns `&mut Scope` (non-null, arena-owned for `'a`).
+        let scope_nn = unsafe { NonNull::new_unchecked(scope_ptr) };
+        // SAFETY: fresh arena allocation; the `&mut` is a child of `scope_ptr`'s
+        // SharedRW tag and may be freely popped without invalidating `scope_nn`.
+        let scope = unsafe { &mut *scope_ptr };
 
         // SAFETY: arena-owned Scope; `parent != scope` (fresh alloc) so the two
         // `&mut` do not alias.
@@ -3157,7 +3167,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         VecExt::append(&mut parent_mut.children, scope_nn)?;
         scope.strict_mode = parent_mut.strict_mode;
 
-        self.current_scope = scope_nn.as_ptr();
+        self.current_scope = scope_ptr;
 
         if KIND == js_ast::scope::Kind::With {
             // "with" statements change the default from ESModule to CommonJS at runtime.
@@ -3212,7 +3222,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // Remember the length in case we call popAndDiscardScope() later
         let scope_index = self.scopes_in_order.len();
-        self.scopes_in_order.push(Some(ScopeOrder::new(loc, scope)));
+        self.scopes_in_order.push(Some(ScopeOrder::new(loc, scope_ptr)));
         // Output.print("\nLoc: {d}\n", .{loc.start});
         Ok(scope_index)
     }

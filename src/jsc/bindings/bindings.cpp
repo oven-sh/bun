@@ -6419,6 +6419,52 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     return JSC::JSValue::encode(result);
 }
 
+// Evaluate a short expression for tab-completion purposes. Unlike
+// Bun__REPL__evaluate, this does NOT set `_error` on exception and does NOT
+// surface the exception to the caller — it just returns `undefined`. The
+// caller is expected to have extracted a simple, side-effect-unlikely
+// expression from the current line.
+extern "C" JSC::EncodedJSValue Bun__REPL__evaluateForCompletion(
+    JSC::JSGlobalObject* globalObject,
+    const unsigned char* sourcePtr,
+    size_t sourceLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    if (sourceLen == 0) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    JSC::SourceCode sourceCode = JSC::makeSource(
+        source,
+        JSC::SourceOrigin {},
+        JSC::SourceTaintedOrigin::Untainted,
+        "[repl-completion]"_s,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+
+    WTF::NakedPtr<JSC::Exception> evalException;
+    JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);
+
+    if (evalException) {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    if (scope.exception()) {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    if (!result) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    return JSC::JSValue::encode(result);
+}
+
 // REPL completion function - gets completions for a partial property access
 // Returns an array of completion strings, or undefined if no completions
 extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(

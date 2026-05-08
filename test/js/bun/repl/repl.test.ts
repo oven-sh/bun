@@ -1029,6 +1029,74 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  test("tab completes property access on string literal", async () => {
+    // Regression test for #30379: `'abc'.s` + TAB was listing globals
+    // (setTimeout, structuredClone, etc.) instead of String.prototype methods.
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send("'abc'.s");
+      await waitFor("'abc'.s");
+      send("\t");
+      // slice is a String.prototype method — should appear
+      await waitFor("slice");
+      const output = allOutput();
+      expect(output).toMatch(/\bslice\b/);
+      expect(output).toMatch(/\bsplit\b/);
+      expect(output).toMatch(/\bstartsWith\b/);
+      // Globals from the original bug report must NOT appear as completions here
+      expect(output).not.toMatch(/\bsetImmediate\b/);
+      expect(output).not.toMatch(/\bstructuredClone\b/);
+    });
+  });
+
+  test("tab completes property access on identifier chain", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("Math.P");
+      await waitFor("Math.P");
+      send("\t"); // PI is the only Math.P* — should auto-complete
+      await waitFor("Math.PI");
+    });
+  });
+
+  test("tab completes property access on array literal", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send("[1,2,3].fi");
+      await waitFor("[1,2,3].fi");
+      send("\t");
+      await waitFor("filter");
+      const output = allOutput();
+      // Array.prototype methods, not globals
+      expect(output).toMatch(/\bfilter\b/);
+      expect(output).toMatch(/\bfind\b/);
+    });
+  });
+
+  test("tab completion does not evaluate function calls", async () => {
+    // Safety: `f().x` must not actually invoke `f`. We detect the call site
+    // and fall back to global completion.
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Set up a side-effect counter and a function that bumps it.
+      send("globalThis.__tabCallCount = 0\n");
+      await waitFor(/0\r\n/);
+      send("function bumpTab(){ globalThis.__tabCallCount++; return {}; }\n");
+      await waitFor("bumpTab");
+
+      // Trigger tab completion on a function-call expression — bumpTab() must
+      // NOT run. Completion falls back to globals since it's unsafe to eval.
+      send("bumpTab().m");
+      await waitFor("bumpTab().m");
+      send("\t");
+      await waitFor("bumpTab().module"); // fell back to global `module`
+      send("\x03"); // cancel line
+
+      // Print the side-effect count — if 0, completion didn't evaluate.
+      send("'CALLS=' + globalThis.__tabCallCount\n");
+      await waitFor('"CALLS=0"');
+      const output = allOutput();
+      expect(output).toContain('"CALLS=0"');
+      expect(output).not.toContain('"CALLS=1"');
+    });
+  });
+
   test(".editor mode collects lines until Ctrl+D", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send(".editor\n");

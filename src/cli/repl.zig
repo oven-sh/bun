@@ -32,6 +32,12 @@ extern fn Bun__REPL__getCompletions(
     prefixPtr: [*]const u8,
     prefixLen: usize,
 ) jsc.JSValue;
+
+extern fn Bun__REPL__evaluateForCompletion(
+    globalObject: *jsc.JSGlobalObject,
+    sourcePtr: [*]const u8,
+    sourceLen: usize,
+) jsc.JSValue;
 // ============================================================================
 // Constants
 // ============================================================================
@@ -1910,6 +1916,197 @@ fn handleCtrlC(self: *Repl) void {
     self.refreshLine();
 }
 
+const CompletionSplit = struct {
+    /// Expression to the left of the final `.` — evaluated to get the
+    /// completion target. Empty means "use the global object".
+    target: []const u8,
+    /// Identifier-prefix being completed (possibly empty).
+    prefix: []const u8,
+};
+
+/// Walk backward from the end of `line` to find the completion prefix and, if
+/// the prefix is preceded by a `.`, the target expression whose properties we
+/// want to complete against.
+///
+/// Accepted shapes for the target expression (conservative — anything else
+/// yields an empty target so completion falls back to the global scope):
+///   - bare identifier chains: `foo`, `foo.bar`, `foo.bar.baz`
+///   - optional chaining:      `foo?.bar`   (the `?` is dropped before eval)
+///   - bracket element access: `foo[0]`, `foo['x']`, `arr[i].bar`
+///   - parenthesized exprs:    `(expr)`, `(expr).bar`
+///   - string literals:        `'abc'`, `"abc"`, `` `abc` ``
+///   - numeric literals:       `123`, `1.5`  (via the identifier scan)
+///
+/// Rejected (target set to empty): function calls `f().x`, template literals
+/// containing `${...}`, anything involving operators like `+ - * ?` outside of
+/// optional-chain or balanced brackets/parens, comments, unterminated strings.
+fn findCompletionTarget(line: []const u8) CompletionSplit {
+    // 1. Walk back over identifier chars for the prefix.
+    var word_start: usize = line.len;
+    while (word_start > 0) {
+        const c = line[word_start - 1];
+        if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '$') break;
+        word_start -= 1;
+    }
+    const prefix = line[word_start..];
+
+    // 2. Must be preceded by `.` to have a target.
+    if (word_start == 0 or line[word_start - 1] != '.') {
+        return .{ .target = "", .prefix = prefix };
+    }
+
+    // Reject `..` (spread / rest / invalid) — this is not a property access.
+    if (word_start >= 2 and line[word_start - 2] == '.') {
+        return .{ .target = "", .prefix = prefix };
+    }
+
+    // 3. Walk back from just before the `.` to find the start of the target
+    // expression. The target is a chain of tokens (identifier, bracket access,
+    // paren group, string literal) optionally separated by `.` / `?.`. Any
+    // unrecognized char ends the walk.
+    var end: usize = word_start - 1; // position of the split `.`
+    var i: usize = end;
+
+    // Handle optional chaining at the split point: `foo?.b` — the `.` at
+    // word_start - 1 is preceded by `?`. Back `end` up past the `?` so the
+    // target doesn't include it.
+    if (i > 0 and line[i - 1] == '?') {
+        end = i - 1;
+        i = end;
+    }
+
+    while (i > 0) {
+        const last = line[i - 1];
+
+        if (isIdentContinue(last)) {
+            // Identifier or number literal. Consume while identifier-continue.
+            var j = i;
+            while (j > 0 and isIdentContinue(line[j - 1])) : (j -= 1) {}
+            i = j;
+        } else if (last == ']') {
+            // Balanced `[...]`. Safe regardless of what precedes it.
+            i = matchBracketBackward(line, i, '[', ']') orelse {
+                return .{ .target = "", .prefix = prefix };
+            };
+        } else if (last == ')') {
+            // Balanced `(...)`. If preceded by ident/`]`/`)` it would be a
+            // function call — unsafe for completion.
+            const start = matchBracketBackward(line, i, '(', ')') orelse {
+                return .{ .target = "", .prefix = prefix };
+            };
+            if (start > 0) {
+                const before = line[start - 1];
+                if (isIdentContinue(before) or before == ']' or before == ')') {
+                    return .{ .target = "", .prefix = prefix };
+                }
+            }
+            i = start;
+        } else if (last == '\'' or last == '"' or last == '`') {
+            // String literal. Match to the opening quote.
+            i = matchStringBackward(line, i, last) orelse {
+                return .{ .target = "", .prefix = prefix };
+            };
+        } else {
+            break;
+        }
+
+        // Consume an optional separator before the next token:
+        //   `.`      plain member access
+        //   `?.`     optional chaining
+        // `[` and `(` don't need a separator — they bind directly.
+        if (i == 0) break;
+        const sep = line[i - 1];
+        if (sep == '.') {
+            if (i >= 2 and line[i - 2] == '.') {
+                // `..` — spread/rest, not a member access.
+                return .{ .target = "", .prefix = prefix };
+            }
+            if (i >= 2 and line[i - 2] == '?') {
+                // `?.` — optional chaining. Swallow both chars and continue.
+                i -= 2;
+                continue;
+            }
+            i -= 1;
+            continue;
+        }
+        // No separator — adjacent token (e.g. `foo[0]` where `[` binds to `foo`).
+        // Continue the loop to consume the next leftward token only if the
+        // current char could start such a token; otherwise stop.
+        if (isIdentContinue(sep) or sep == ']' or sep == ')' or sep == '\'' or sep == '"' or sep == '`') {
+            continue;
+        }
+        break;
+    }
+
+    const target = line[i..end];
+
+    if (target.len == 0) {
+        return .{ .target = "", .prefix = prefix };
+    }
+
+    return .{ .target = target, .prefix = prefix };
+}
+
+inline fn isIdentContinue(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_' or c == '$';
+}
+
+/// Given `line[0..end]` where `line[end - 1]` is the closing bracket, find the
+/// position of the matching opening bracket. Returns the index of the opener
+/// (so `line[opener..end]` is the full bracketed span). Skips over string
+/// literals to avoid mismatching brackets inside them.
+fn matchBracketBackward(line: []const u8, end: usize, open: u8, close: u8) ?usize {
+    if (end == 0 or line[end - 1] != close) return null;
+    var depth: usize = 1;
+    var i: usize = end - 1;
+    while (i > 0) {
+        i -= 1;
+        const c = line[i];
+        if (c == '\'' or c == '"' or c == '`') {
+            // Skip over a string literal — treat it opaquely so quotes inside
+            // can't mis-pair the enclosing bracket.
+            i = matchStringBackward(line, i + 1, c) orelse return null;
+            // `i` is now the position of the opening quote. The `while` header
+            // will decrement it on the next iteration.
+        } else if (c == close) {
+            depth += 1;
+        } else if (c == open) {
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return null;
+}
+
+/// Given `line[0..end]` where `line[end - 1]` is the closing quote, find the
+/// position of the matching opening quote. Returns the index of the opener
+/// (so `line[opener..end]` is the full quoted span including both quotes).
+/// Refuses template literals that contain `${` (can't be safely evaluated).
+fn matchStringBackward(line: []const u8, end: usize, quote: u8) ?usize {
+    if (end == 0 or line[end - 1] != quote) return null;
+    var i: usize = end - 1; // position of the closing quote
+    while (i > 0) {
+        i -= 1;
+        if (line[i] == quote) {
+            // Count preceding backslashes to detect escape.
+            var bs: usize = 0;
+            var k: usize = i;
+            while (k > 0 and line[k - 1] == '\\') : (k -= 1) bs += 1;
+            if (bs % 2 == 0) {
+                // Unescaped. For template literals, verify there's no `${`.
+                if (quote == '`') {
+                    var j = i + 1;
+                    while (j + 1 < end - 1) : (j += 1) {
+                        if (line[j] == '$' and line[j + 1] == '{') return null;
+                    }
+                }
+                return i;
+            }
+        }
+    }
+    return null;
+}
+
 fn handleTab(self: *Repl) void {
     const line = self.line_editor.getLine();
 
@@ -1947,20 +2144,26 @@ fn handleTab(self: *Repl) void {
         return;
     };
 
-    // Find the word being completed
-    var word_start: usize = line.len;
-    while (word_start > 0) {
-        const c = line[word_start - 1];
-        if (!std.ascii.isAlphanumeric(c) and c != '_' and c != '$') break;
-        word_start -= 1;
-    }
+    // Find the word being completed and any target expression preceding it.
+    // For `'abc'.s`, prefix = "s" and target = "'abc'". For plain `s`, target
+    // is empty so we fall back to completing against the global object.
+    const split = findCompletionTarget(line);
+    const prefix = split.prefix;
+    const word_start = line.len - prefix.len;
 
-    const prefix = line[word_start..];
+    // Evaluate the target expression (if any) to get the completion target.
+    // Uses Bun__REPL__evaluateForCompletion which swallows exceptions and
+    // does NOT touch the REPL's `_error` variable.
+    const target: jsc.JSValue = if (split.target.len > 0)
+        Bun__REPL__evaluateForCompletion(global, split.target.ptr, split.target.len)
+    else
+        .js_undefined;
 
-    // Get completions from global object
+    // Get completions. If target is undefined/null, the C++ binding will fall
+    // back to the global object.
     const completions = Bun__REPL__getCompletions(
         global,
-        .js_undefined,
+        target,
         prefix.ptr,
         prefix.len,
     );

@@ -3617,7 +3617,7 @@ pub mod c {
     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))]
     pub use libc::{sysctlbyname, getloadavg, sockaddr_dl};
     #[cfg(unix)]
-    pub use super::UTIME_NOW;
+    pub use super::{UTIME_NOW, UTIME_OMIT};
     /// `std.c.fd_t` / `std.posix.fd_t` — native fd backing int (c_int on POSIX,
     /// HANDLE on Windows). Use `bun_sys::Fd` everywhere else; this raw alias
     /// exists only for direct libc FFI (e.g. `socketpair`).
@@ -3688,8 +3688,9 @@ pub mod c {
         // <string.h> Apple extensions
         memset_pattern4, memset_pattern8, memset_pattern16,
     };
-    // `UTIME_NOW`/`UTIME_OMIT` — already re-exported via `pub use super::UTIME_NOW`
-    // (top-level `#[cfg(unix)]` consts cast `libc::UTIME_NOW`/`_OMIT` to i64).
+    // `UTIME_NOW`/`UTIME_OMIT` — already re-exported via
+    // `pub use super::{UTIME_NOW, UTIME_OMIT}` above (top-level `#[cfg(unix)]`
+    // consts cast `libc::UTIME_NOW`/`_OMIT` to i64).
     /// `PROCESSOR_CPU_LOAD_INFO_COUNT` — sizeof(processor_cpu_load_info)/sizeof(natural_t).
     /// Not bound by `libc`; <mach/processor_info.h>.
     #[cfg(target_os = "macos")]

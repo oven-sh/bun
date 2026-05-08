@@ -1933,9 +1933,9 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
             unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
         )
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: see on_write. Shared-only read of event_loop_handle.
-        unsafe { (*this).event_loop_handle.r#loop().cast() }
+        unsafe { (*this).event_loop_handle.r#loop() }
     }
 }
 

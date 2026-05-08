@@ -534,7 +534,7 @@ enum DeferredError {
 }
 
 // Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
-// `static mut` + `Box::leak`. `ZBox` is the sanctioned owned-ZStr type
+// `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type
 // (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 static CACHED_DEFAULT_SYSTEM_LIBRARY_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
@@ -3024,7 +3024,7 @@ impl fmt::Display for ToJSFormatter<'_> {
 struct CompilerRT;
 
 // Process-lifetime singleton — PORTING.md §Forbidden: use OnceLock, never
-// `static mut` + `Box::leak`.
+// `static mut` + leak.
 static COMPILER_RT_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 
 struct CompilerRtSources;

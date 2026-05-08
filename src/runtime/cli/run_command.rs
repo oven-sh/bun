@@ -70,24 +70,11 @@ macro_rules! path_literal {
 
 /// Process-lifetime arena for the runner's `Transpiler`. Zig passed
 /// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
-/// `&'static Arena` per PORTING.md §AST crates. `bun_alloc::Arena` (=
-/// `bumpalo::Bump`) is `!Sync`, so `OnceLock`/`LazyLock` cannot hold it
-/// directly — guard a `RacyCell<MaybeUninit>` with `Once` so the allocation
-/// happens exactly once (PORTING.md §Forbidden bars `Box::leak` per call).
+/// `&'static Arena` per PORTING.md §AST crates. Route through the shared
+/// `cli::cli_arena()` (a `LazyLock` — `MimallocArena` is `Sync`).
+#[inline]
 fn runner_arena() -> &'static bun_alloc::Arena {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
-    // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
-    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
-        bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
-    ONCE.call_once(|| {
-        // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
-    });
-    // SAFETY: initialized exactly once above. `configure_env_for_run` is only
-    // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
-    // never observed concurrently.
-    unsafe { (*ARENA.get()).assume_init_ref() }
+    crate::cli::cli_arena()
 }
 
 // Passthrough-arg shell escaping (run_command.zig:233-239 → shell.zig
@@ -948,11 +935,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 path = bstr::BStr::new(&escaped_path),
                 period = bstr::BStr::new(&escaped_period),
             );
-            // PORT NOTE: process-lifetime (runner never returns) — leak both
-            // the script bytes and the synthetic entry path so the `Source`
-            // stored in the VM can backref into them (Zig: `allocPrint` +
-            // `dupe` + never-free).
-            let cron_script: &'static [u8] = Box::leak(cron_script.into_bytes().into_boxed_slice());
+            // PORT NOTE: process-lifetime (runner never returns) — store both
+            // the script bytes and the synthetic entry path in the runner arena
+            // so the `Source` stored in the VM can backref into them (Zig:
+            // `allocPrint` + `dupe` + never-free).
+            let cron_script: &'static [u8] =
+                runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
             let mut cwd_buf = PathBuffer::uninit();
@@ -961,7 +949,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
             eval_path.extend_from_slice(cwd_bytes);
             eval_path.extend_from_slice(EVAL_TRIGGER);
-            let heap_entry: &'static [u8] = Box::leak(eval_path.into_boxed_slice());
+            let heap_entry: &'static [u8] = runner_arena().alloc_slice_copy(&eval_path);
 
             vm.module_loader.eval_source =
                 Some(Box::new(bun_logger::Source::init_path_string(heap_entry, cron_script)));
@@ -1759,8 +1747,8 @@ impl RunCommand {
             target_path_buffer[total] = 0;
 
             // Zig: `allocator.dupeZ` — process-lifetime, never freed. Park the
-            // bytes in the per-process `runner_arena()` instead of `Box::leak`
-            // (PORTING.md §Forbidden bars per-call `Box::leak`).
+            // bytes in the per-process `runner_arena()` instead of leaking
+            // (PORTING.md §Forbidden bars per-call leaks).
             let stored: &'static [u8] =
                 runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
             // SAFETY: `stored[total] == 0` (written above before the copy);
@@ -3956,7 +3944,7 @@ impl RunCommand {
             .collect();
         strings::sort_asc(&mut all_keys);
         // Park the owning maps in the runner arena (process-lifetime) so the
-        // `'static` slices above remain valid without `Box::leak`/`mem::forget`.
+        // `'static` slices above remain valid without leaking/forgetting.
         let _ = runner_arena().alloc(results);
         shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
         shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(

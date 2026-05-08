@@ -2418,7 +2418,7 @@ pub enum ParseFlagResult {
 /// caller's `fmt_error_arena` add the prefix once. This diverges from Zig's
 /// observable doubled output; update Zig (or any snapshot tests asserting the
 /// doubled message) rather than reproducing the duplication here. Reproducing
-/// it would require runtime allocation (`Box::leak` is forbidden — see
+/// it would require runtime allocation (leaking is forbidden — see
 /// PORTING.md §Forbidden) since Rust can't comptime-concat a non-const arg.
 #[inline]
 pub const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {

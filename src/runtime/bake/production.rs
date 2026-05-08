@@ -62,7 +62,7 @@ fn side_name(s: bun_bundler::options::Side) -> &'static str {
 
 /// Process-lifetime backing storage for the dotenv singleton (mirrors Zig's
 /// `allocator.create(DotEnv.Map)` + `allocator.create(DotEnv.Loader)` that are
-/// never freed). PORTING.md §Forbidden bans `Box::leak`; `OnceLock` owns the
+/// never freed). PORTING.md §Forbidden bans leaking; `OnceLock` owns the
 /// allocation instead. `Loader` self-borrows `Map`, so both live in one cell.
 struct DotenvSingleton {
     map: UnsafeCell<dotenv::Map>,
@@ -436,7 +436,7 @@ pub fn build_with_vm(
 
     // this is probably wrong
     // PORT NOTE: process-lifetime dotenv singleton owned via `OnceLock`
-    // (PORTING.md §Forbidden: no `Box::leak`). `Loader` self-borrows `Map`,
+    // (PORTING.md §Forbidden: no leaking). `Loader` self-borrows `Map`,
     // so both live in `DOTENV_SINGLETON`.
     let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
         map: UnsafeCell::new(dotenv::Map::init()),

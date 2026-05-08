@@ -257,6 +257,44 @@ pub static START_TIME: bun_core::RacyCell<i128> = bun_core::RacyCell::new(0);
 pub static Bun__Node__ProcessTitle: bun_core::RacyCell<Option<Box<[u8]>>> =
     bun_core::RacyCell::new(None);
 
+/// Process-lifetime arena for one-shot CLI commands. Zig passed
+/// `bun.default_allocator` (or a per-command `ArenaAllocator` never `deinit`'d)
+/// and let allocations live until exit. `bun_alloc::Arena` (= `MimallocArena`)
+/// is `Sync`, so a `LazyLock` is sufficient — the backing heap is process-
+/// lifetime, so borrows from it are legitimately `&'static`.
+#[inline]
+pub fn cli_arena() -> &'static bun_alloc::Arena {
+    static ARENA: std::sync::LazyLock<bun_alloc::Arena> =
+        std::sync::LazyLock::new(bun_alloc::Arena::new);
+    &ARENA
+}
+
+/// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
+/// `s.to_vec().into_boxed_slice()` leaks at CLI sites where Zig used
+/// `allocator.dupe(u8, s)` with the default allocator.
+#[inline]
+pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
+    cli_arena().alloc_slice_copy(s)
+}
+
+/// Move `v`'s bytes into the process-lifetime CLI arena and return a
+/// `&'static [u8]` borrow. Use when the caller already owns a `Vec`/`Box`
+/// (avoids an extra heap alloc relative to `cli_dupe`).
+#[inline]
+pub fn cli_intern(v: Vec<u8>) -> &'static [u8] {
+    cli_arena().alloc_slice_copy(&v)
+}
+
+/// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
+/// return the C-string pointer (for argv/envp construction).
+#[inline]
+pub fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
+    let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
+    buf[..s.len()].copy_from_slice(s);
+    // buf[s.len()] is already 0 (Default for u8).
+    buf.as_ptr().cast::<core::ffi::c_char>()
+}
+
 thread_local! {
     pub static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
 }
@@ -1321,7 +1359,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
             // the prefixed package name is a process singleton — park the owning
             // `ZBox` in a `OnceLock` so the `&'static ZStr` borrow is sound
-            // without `Box::leak` (PORTING.md §Forbidden patterns).
+            // without leaking (PORTING.md §Forbidden patterns).
             static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> =
                 std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;

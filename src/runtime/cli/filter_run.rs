@@ -814,18 +814,19 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             }
             copy_script.push(0);
 
-            // TODO(port): in Zig, `script_content` and `combined` both alias `copy_script.items`.
-            // Here we leak `copy_script` and derive raw slices; revisit ownership in Phase B.
-            let leaked = Box::leak(copy_script.into_boxed_slice());
-            let combined_len = leaked.len() - 1;
-            // SAFETY: leaked[combined_len] == 0 written above
-            let combined = unsafe { ZStr::from_raw(leaked.as_ptr(), combined_len) };
+            // PORT NOTE: in Zig, `script_content` and `combined` both alias
+            // `copy_script.items`. Route through the process-lifetime CLI arena
+            // and derive the `ZStr` from the arena slice.
+            let interned: &'static [u8] = crate::cli::cli_dupe(&copy_script);
+            let combined_len = interned.len() - 1;
+            // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
+            let combined = unsafe { ZStr::from_raw(interned.as_ptr(), combined_len) };
 
             scripts.push(ScriptConfig {
                 package_json_path: package_json_path.clone(),
                 package_name: Box::<[u8]>::from(&pkgjson.name[..]),
                 script_name: Box::<[u8]>::from(*name),
-                script_content: Box::<[u8]>::from(&leaked[0..len_command_only]),
+                script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
                 combined,
                 deps: pkgjson.dependencies.clone(),
                 PATH: Box::<[u8]>::from(&path_var[..]),

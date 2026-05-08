@@ -253,10 +253,10 @@ impl UpgradeCommand {
         }
 
         // PORT NOTE: reshaped for borrowck — write into a local Vec instead of static buf.
-        // `AsyncHTTP::init_sync` wants `URL<'static>` / `&'static [u8]`, so the
-        // backing buffers are leaked (matches the Zig original which used
-        // module-level static buffers).
-        let url_buf: &mut Vec<u8> = Box::leak(Box::new(Vec::new()));
+        // `AsyncHTTP::init_sync` wants `URL<'static>` / `&'static [u8]`, so back
+        // the buffers in the process-lifetime CLI arena (matches the Zig
+        // original which used module-level static buffers).
+        let url_buf: &'static mut Vec<u8> = crate::cli::cli_arena().alloc(Vec::new());
         write!(
             url_buf,
             "https://{}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
@@ -300,8 +300,9 @@ impl UpgradeCommand {
 
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
 
-        let metadata_body = Box::leak(Box::new(MutableString::init(2048)?));
-        let headers_buf: &'static [u8] = Box::leak(headers_buf.into_boxed_slice());
+        let metadata_body: &'static mut MutableString =
+            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+        let headers_buf: &'static [u8] = crate::cli::cli_dupe(&headers_buf);
 
         // ensure very stable memory address
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
@@ -338,9 +339,9 @@ impl UpgradeCommand {
         let source = logger::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
         initialize_store();
         // PORT NOTE: `JSON::parse_utf8` needs a bump arena; this is a one-shot
-        // CLI path so leak it (Zig used the global Expr/Stmt store which is
-        // process-lifetime anyway).
-        let bump: &'static Bump = Box::leak(Box::new(Bump::new()));
+        // CLI path so use the process-lifetime CLI arena (Zig used the global
+        // Expr/Stmt store which is process-lifetime anyway).
+        let bump: &'static Bump = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, &mut log, bump) {
             Ok(e) => e,
             Err(err) => {
@@ -586,9 +587,8 @@ impl UpgradeCommand {
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
         let mut env_loader: DotEnv::Loader = {
-            let map = Box::new(DotEnv::Map::init());
-            DotEnv::Loader::init(Box::leak(map))
-            // TODO(port): Zig leaks the map; ownership unclear
+            // Zig leaks the map; allocate in the process-lifetime CLI arena.
+            DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
         };
         env_loader.load_process()?;
 
@@ -694,9 +694,9 @@ impl UpgradeCommand {
             // SAFETY: see above.
             unsafe { (*progress).unit = Progress::Unit::Bytes };
             unsafe { (*refresher).refresh() };
-            // TODO(port): Zig leaks this allocation intentionally
-            let zip_file_buffer =
-                Box::leak(Box::new(MutableString::init(version.size.max(1024) as usize)?));
+            // Zig leaks this allocation intentionally — store in CLI arena.
+            let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
+                .alloc(MutableString::init(version.size.max(1024) as usize)?);
 
             let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
                 HTTP::Method::GET,

@@ -286,26 +286,18 @@ pub fn run_as_coordinator(
 /// forwarded.
 fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
     // Zig `[:null]?[*:0]const u8` — null-sentinel slice of C-string pointers.
-    // String storage was arena-owned in Zig; here strings are leaked/boxed.
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // String storage was arena-owned in Zig; route through the process-lifetime
+    // CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
     let opts = &ctx.test_options;
 
-    // Helper: format → NUL-terminated, return raw ptr. Ownership TODO above.
+    // Helper: format → NUL-terminated, return raw ptr (arena-owned).
     let print_z = |args: core::fmt::Arguments<'_>| -> Result<*const c_char, bun_core::Error> {
         let mut buf = Vec::<u8>::new();
         buf.write_fmt(args).map_err(|_| bun_core::err!("FormatFailed"))?;
-        buf.push(0);
-        // TODO(port): leaks — was arena-backed
-        Ok(Box::leak(buf.into_boxed_slice()).as_ptr().cast::<c_char>())
+        Ok(crate::cli::cli_dupe_z(&buf))
     };
-    let dupe_z = |s: &[u8]| -> *const c_char {
-        let mut buf = Vec::with_capacity(s.len() + 1);
-        buf.extend_from_slice(s);
-        buf.push(0);
-        // TODO(port): leaks — was arena-backed
-        Box::leak(buf.into_boxed_slice()).as_ptr().cast::<c_char>()
-    };
+    let dupe_z = |s: &[u8]| -> *const c_char { crate::cli::cli_dupe_z(s) };
     let lit = |s: &'static [u8]| -> *const c_char { s.as_ptr().cast::<c_char>() };
 
     argv.push(

@@ -925,8 +925,12 @@ impl TaskContext for BlobContext {
                         unsafe { (*blob_ptr).to_js(global) }
                     }
                     BlobOutputType::Bytes => {
-                        // Ownership transfers to JSC's deallocator.
-                        JSValue::create_buffer(global, Box::leak(data.into_boxed_slice()))
+                        // Ownership transfers to JSC's `MarkedArrayBuffer_deallocator`.
+                        // SAFETY: `Box::into_raw` hands off the allocation; freed by
+                        // the JSC deallocator on GC.
+                        JSValue::create_buffer(global, unsafe {
+                            &mut *Box::into_raw(data.into_boxed_slice())
+                        })
                     }
                 }))
             }
@@ -942,10 +946,11 @@ impl TaskContext for BlobContext {
                 BlobOutputType::Bytes => {
                     let dup = self.store.shared_view().to_vec();
                     // TODO(port): Zig matched OOM here and rejected; Rust Vec aborts on OOM.
-                    PromiseResult::Resolve(JSValue::create_buffer(
-                        global,
-                        Box::leak(dup.into_boxed_slice()),
-                    ))
+                    // SAFETY: `Box::into_raw` hands off the allocation; freed by
+                    // JSC's `MarkedArrayBuffer_deallocator` on GC.
+                    PromiseResult::Resolve(JSValue::create_buffer(global, unsafe {
+                        &mut *Box::into_raw(dup.into_boxed_slice())
+                    }))
                 }
             }),
         }

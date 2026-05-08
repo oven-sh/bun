@@ -374,10 +374,10 @@ impl UpdateInteractiveCommand {
                 // PORT NOTE: Zig `Expr.init(E.String, …).clone(allocator)`
                 // duplicates the string into a non-Store allocation; the Rust
                 // `E::EString.data: &'static [u8]` requires a process-lifetime
-                // slice, so leak the freshly-duped buffer (matches
+                // slice, so route through the CLI arena (matches
                 // PackageJSONEditor.rs `leak_str`).
-                let leaked: &'static [u8] = Box::leak(version_with_prefix);
-                let new_expr = Expr::init(E::EString::init(leaked), version_query.expr.loc);
+                let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
+                let new_expr = Expr::init(E::EString::init(interned), version_query.expr.loc);
                 dep_obj
                     .put(&bump, &update.name, new_expr)
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
@@ -2266,13 +2266,13 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
     4
 }
 
-/// Leak a freshly-allocated byte buffer to obtain a `'static` slice for
-/// storage in `E::EString.data` (the AST `Str` alias is `&'static [u8]` until
-/// Phase B threads `'bump`). Mirrors Zig's `allocator.dupe(u8, ...)` against
-/// the leaked-singleton `manager.allocator`. See PackageJSONEditor.rs.
+/// Dupe a byte buffer into the process-lifetime CLI arena to obtain a
+/// `'static` slice for storage in `E::EString.data` (the AST `Str` alias is
+/// `&'static [u8]` until Phase B threads `'bump`). Mirrors Zig's
+/// `allocator.dupe(u8, ...)` against the singleton `manager.allocator`.
 #[inline]
 fn leak_dup(bytes: &[u8]) -> &'static [u8] {
-    Box::leak(Box::<[u8]>::from(bytes))
+    crate::cli::cli_dupe(bytes)
 }
 
 /// Edit catalog definitions in package.json
@@ -2384,7 +2384,7 @@ fn update_default_catalog(
             if let Some(e_str) = existing_prop.data.e_string() {
                 let original_version = e_str.data;
                 version_with_prefix =
-                    Box::leak(preserve_version_prefix(original_version, new_version)?);
+                    crate::cli::cli_dupe(&preserve_version_prefix(original_version, new_version)?);
             }
         }
 
@@ -2475,7 +2475,7 @@ fn update_named_catalog(
             if let Some(e_str) = existing_prop.data.e_string() {
                 let original_version = e_str.data;
                 version_with_prefix =
-                    Box::leak(preserve_version_prefix(original_version, new_version)?);
+                    crate::cli::cli_dupe(&preserve_version_prefix(original_version, new_version)?);
             }
         }
 

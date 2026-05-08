@@ -71,7 +71,7 @@ pub use bun_options_types::schema::api::CssInJsBehavior;
 pub use bun_paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
-// renamer — Phase-A draft in `renamer.rs`. The five former `Box::leak` sites
+// renamer — Phase-A draft in `renamer.rs`. The five former leak sites
 // have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
 // renamed-name strings are arena-owned and typed `*const [u8]` (PORTING.md §Allocators).
 // Phase B threads the AST `'bump` lifetime to replace the raw pointers.

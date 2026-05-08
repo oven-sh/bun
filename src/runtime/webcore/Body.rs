@@ -2239,7 +2239,7 @@ impl<'a> ValueBufferer<'a> {
                 (self.on_finished_buffering)(self.ctx, data.buf, None, true);
                 if data.is_temporary {
                     // SAFETY: `is_temporary` ⇒ every producer leaks a `Box<[u8]>`
-                    // (read_file.rs: `Vec::into_boxed_slice` → `Box::leak`), so the
+                    // (read_file.rs: `Vec::into_boxed_slice` → leak), so the
                     // allocation layout is exactly `(ptr, len)`. Reclaim via
                     // `Box::from_raw` — `Vec::from_raw_parts(ptr, len, len)` would be
                     // UB if any producer's underlying capacity ever exceeded `len`.

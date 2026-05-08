@@ -54,8 +54,16 @@ mod EventLoop {
 // PORT NOTE: the per-file parse arena is held as `bump: &'static Bump` (the
 // worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
-// borrows directly. No erasure helper is needed; `StoreStr::new` covers the
-// remaining AST-string sites (`E::String.data`, `FileLoaderHash.key`).
+// borrows directly. The one remaining non-arena erasure site is
+// `Source.contents` (borrows `task.stage`-owned bytes); keep a named helper so
+// the audit grep for `leak_static` stays honest until `Source<'arena>` is
+// threaded through `Success`/`Graph`.
+#[inline(always)]
+fn leak_static(s: &[u8]) -> &'static [u8] {
+    // Routed through `StoreStr` so the lifetime erasure goes through one
+    // audited unsafe (`StoreStr::slice`) instead of an open-coded `transmute`.
+    ast::StoreStr::new(s).slice()
+}
 
 // CYCLEBREAK FORWARD_DECL bridges: `JSBundlerPlugin` / `FileMap` are opaque
 // `[u8; 0]` in `bundle_v2.rs`; the real bodies live in T6 (`jsc::api::JSBundler`).
@@ -2235,10 +2243,9 @@ fn run_with_source_code(
         // PORT NOTE: `entry.contents` is owned by `task.stage` (written back by
         // the caller after parse — see `ParseTask::run`). `Source` is stored in
         // `Success` which lives no longer than the `ParseTask` itself, so this
-        // borrow is sound. Routed through the audited `StoreStr` arena-erasure
-        // path (single `from_raw_parts` in `StoreStr::slice`); replace with
-        // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
-        contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
+        // borrow is sound. Replace with `Source<'arena>` once that lifetime is
+        // threaded through `Success`/`Graph`.
+        contents: std::borrow::Cow::Borrowed(leak_static(entry_contents)),
         contents_is_recycled: false,
         ..Default::default()
     };

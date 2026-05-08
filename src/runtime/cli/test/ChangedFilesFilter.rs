@@ -124,13 +124,13 @@ pub fn filter<'a>(
     //
     // PORT NOTE: `BundleV2::scan_module_graph_from_cli` takes
     // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
-    // are leaked for process lifetime. The Zig original does the same — see
-    // the comment after the call about intentionally leaving the
-    // ThreadLocalArena and worker pool alive.
-    let arena: &'static Arena = Box::leak(Box::new(Arena::new()));
-    let log = Box::leak(Box::new(logger::Log::new()));
+    // are process-lifetime. The Zig original does the same — see the comment
+    // after the call about intentionally leaving the ThreadLocalArena and
+    // worker pool alive. Route through the shared CLI arena.
+    let arena: &'static Arena = crate::cli::cli_arena();
+    let log: &'static mut logger::Log = arena.alloc(logger::Log::new());
 
-    let scan_transpiler = Box::leak(Box::new(
+    let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
         match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
             Ok(t) => t,
             Err(err) => {
@@ -141,7 +141,7 @@ pub fn filter<'a>(
                 Global::exit(1);
             }
         },
-    ));
+    );
     scan_transpiler.options.target = bun_bundler::options::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
@@ -383,14 +383,17 @@ pub fn init_watch_trigger() {
             fresh
         };
 
-        let set = Box::leak(Box::new(StringSet::new()));
+        // Process-lifetime singletons — store in the CLI arena so the borrows
+        // are legitimately `&'static`.
+        let arena = crate::cli::cli_arena();
+        let set: &'static mut StringSet = arena.alloc(StringSet::new());
         // Written once on the main thread before the watcher thread starts;
         // after that only the watcher thread touches these. See doc on
         // `hot_reloader::WATCH_CHANGED_PATHS`.
         // SAFETY: single-threaded init; trigger-file slot has no concurrent reader yet.
         unsafe {
             jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE
-                .write(Some(Box::leak(Box::new(path)).as_zstr()));
+                .write(Some(arena.alloc(path).as_zstr()));
         }
         jsc::hot_reloader::WATCH_CHANGED_PATHS
             .store(std::ptr::from_mut::<StringSet>(set), core::sync::atomic::Ordering::Release);

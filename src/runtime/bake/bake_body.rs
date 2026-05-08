@@ -1514,7 +1514,7 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
         // `runtimeEmbedFile` (bun.zig:2938) returns `[:0]const u8` from a
         // `bun.once`-guarded static — read once per process, never freed.
         // Mirror that with a per-side `OnceLock` holding the NUL-terminated
-        // copy. PORTING.md §Forbidden bans `Box::leak` for `&'static`; this
+        // copy. PORTING.md §Forbidden bans leaking for `&'static`; this
         // is the sanctioned process-lifetime-singleton pattern instead.
         // TODO(port): add a `runtime_embed_file_z!` to bun_core that yields
         // `&'static ZStr` directly so the second copy goes away.

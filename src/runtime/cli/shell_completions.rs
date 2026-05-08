@@ -50,7 +50,7 @@ impl Shell {
 // PORT NOTE: Zig fields are `[]const []const u8` (borrowed views into either a
 // stack array or arena-allocated storage). `Cow` lets `RunCommand::completions`
 // hand back arena-backed `'static` borrows while `bun_getcompletes` supplies an
-// owned `Vec` for the `a` (add-completions) branch — no `Box::leak`.
+// owned `Vec` for the `a` (add-completions) branch — no leaking.
 pub struct ShellCompletions {
     pub commands: std::borrow::Cow<'static, [&'static [u8]]>,
     pub descriptions: std::borrow::Cow<'static, [&'static [u8]]>,

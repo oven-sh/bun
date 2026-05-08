@@ -335,7 +335,7 @@ pub struct Features<'a> {
     /// Zig: `*const bun.StringSet = &empty_bundler_feature_flags`. `None` ≡ the
     /// empty static set. Owned `Box` (not `&'a` / `&'static`) per PORTING.md
     /// §Forbidden — the Zig caller frees it on `BundleOptions` teardown, so
-    /// Rust must too; never `Box::leak`.
+    /// Rust must too; never leak.
     pub bundler_feature_flags: Option<Box<StringSet>>,
 
     /// REPL mode: transforms code for interactive evaluation
@@ -392,7 +392,7 @@ impl Features<'_> {
         // Zig returns `*const bun.StringSet` heap-allocated via `arena.create`,
         // and the caller frees it on `BundleOptions` teardown. Empty path returns
         // `None` (≡ the static empty). Owned `Box` per PORTING.md §Forbidden — never
-        // `Box::leak`.
+        // leaking.
         if feature_flags.is_empty() {
             return None;
         }

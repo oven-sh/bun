@@ -107,18 +107,17 @@ impl BuildCommand {
             }
         }
 
-        // PORT NOTE: `Transpiler::init` now takes an arena. Process-lifetime;
-        // owned by a `Box` and leaked into `'static` because the transpiler
-        // borrows it for `'a` and `exec` never returns until process exit
-        // (`exit_or_watch` diverges).
-        let arena: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
+        // PORT NOTE: `Transpiler::init` now takes an arena. Process-lifetime —
+        // `exec` never returns until process exit (`exit_or_watch` diverges),
+        // so use the shared CLI arena instead of allocating a fresh one.
+        let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
         // PORT NOTE: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
         // borrows the transpiler for its full lifetime — dropck then rejects a
         // stack local because the borrow would still be live in its destructor.
-        // Leak to `'static` (same rationale as `arena` above; `exec` diverges).
-        let this_transpiler: &mut transpiler::Transpiler<'static> = Box::leak(Box::new(
-            transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
-        ));
+        // Allocate in the process-lifetime arena (same rationale as `arena`;
+        // `exec` diverges so this is never dropped).
+        let this_transpiler: &mut transpiler::Transpiler<'static> =
+            arena.alloc(transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?);
         if let Some(fetch) = fetcher.as_deref() {
             this_transpiler.options.entry_points = fetch.entry_points.clone();
             // resolver.opts is a distinct subset type; entry_points / IMRE live

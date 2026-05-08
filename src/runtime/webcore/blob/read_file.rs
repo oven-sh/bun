@@ -547,7 +547,10 @@ impl ReadFile {
         // Zig hands `buffer.items` as a raw slice with `is_temporary = true`;
         // receiver takes ownership. Normalize to `Box<[u8]>` so every consumer
         // can reclaim via `Box::from_raw` with a matching layout.
-        let buf_slice = Box::leak(buf.into_boxed_slice());
+        // SAFETY: `Box::into_raw` hands off the allocation; reclaimed via
+        // `Box::from_raw` in the `is_temporary` consumer (Body.rs / Blob.rs).
+        let buf_slice: &'static mut [u8] =
+            unsafe { &mut *Box::into_raw(buf.into_boxed_slice()) };
         cb(
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {
@@ -1010,7 +1013,9 @@ impl<'a> ReadFileUV<'a> {
             // whose `cap > len` would be a layout-mismatched dealloc.
             let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
-                buf: Box::leak(boxed),
+                // SAFETY: `Box::into_raw` hands off the allocation; reclaimed
+                // via `Box::from_raw` in the `is_temporary` consumer.
+                buf: unsafe { &mut *Box::into_raw(boxed) },
                 total_size: this_box.total_size,
                 is_temporary: true,
             })

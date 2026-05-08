@@ -85,7 +85,7 @@ pub struct RuntimeState {
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
     /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
-    /// `Box::leak`'d per-VM (PORTING.md §Forbidden: `Box::leak` only for true
+    /// leaked per-VM (PORTING.md §Forbidden: leaking only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
     pub transpiler_arena: Box<bun_alloc::Arena>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
@@ -398,9 +398,9 @@ unsafe fn configure_debugger(
             }
         }
         CliDebugger::Enable(enable) => {
-            // Argv-derived; lives for process lifetime in spec.
-            let path_or_port: &'static [u8] =
-                Box::leak(enable.path_or_port.to_vec().into_boxed_slice());
+            // Argv-derived; lives for process lifetime in spec — dupe into the
+            // process-lifetime CLI arena.
+            let path_or_port: &'static [u8] = crate::cli::cli_dupe(&enable.path_or_port);
             Some(Debugger {
                 path_or_port: Some(path_or_port),
                 from_environment_variable: unix,
@@ -4467,7 +4467,7 @@ unsafe fn _resolve<'a>(
         // PORT NOTE: Zig duped into `bun.default_allocator`; the caller now
         // `bun.String.cloneUTF8`s `ret_path` unconditionally (spec :2015), so
         // returning the borrowed slice is sufficient and avoids the leak
-        // (PORTING.md §Forbidden: `Box::leak`).
+        // (PORTING.md §Forbidden (leaking)).
         *ret_path = specifier;
         return Ok(());
     }

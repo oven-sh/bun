@@ -423,7 +423,7 @@ pub mod Runtime {
         /// `None` ≡ the empty static set (contributes nothing to the hash).
         /// Owned `Box` (not `&'static`) per PORTING.md §Forbidden — the Zig
         /// caller frees it on `BundleOptions` teardown, so Rust must too;
-        /// `Box::leak`-ing to satisfy a `&'static` would be an unbounded leak
+        /// Leaking to satisfy a `&'static` would be an unbounded leak
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
@@ -492,7 +492,7 @@ pub mod Runtime {
         pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<Box<StringSet>> {
             // Zig returns `*const bun.StringSet` heap-allocated via `arena.create`, and
             // the caller frees it on `BundleOptions` teardown. Empty path returns `None`
-            // (≡ static empty). Owned `Box` per PORTING.md §Forbidden — never `Box::leak`.
+            // (≡ static empty). Owned `Box` per PORTING.md §Forbidden — never leak.
             if feature_flags.is_empty() {
                 return None;
             }

@@ -1794,7 +1794,7 @@ impl TestCommand {
             .collect();
 
         // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
-        // §Forbidden bans `Box::leak`; keep an owned `Box` local — `exec()` never
+        // §Forbidden bans leaking; keep an owned `Box` local — `exec()` never
         // returns before process exit, so the heap allocation outlives all
         // raw-pointer observers (e.g. `Jest::RUNNER` below).
         let mut reporter: Box<CommandLineReporter> = Box::new(CommandLineReporter {
@@ -2062,7 +2062,7 @@ impl TestCommand {
             };
 
             // PORT NOTE: Zig used `vm.allocator.dupe` (arena-scoped). PORTING.md
-            // §Forbidden bans `Box::leak` to satisfy a borrow — own the joined
+            // §Forbidden bans leaking to satisfy a borrow — own the joined
             // path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;
             let dir_to_scan: &[u8] = 'brk: {

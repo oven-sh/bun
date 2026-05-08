@@ -88,9 +88,11 @@ impl<T> StoreRef<T> {
     /// no paired `destroy`. Prefer `from_bump` for arena-backed nodes.
     #[inline]
     pub fn from_box(b: Box<T>) -> Self {
-        // SAFETY: `Box::into_raw` yields a non-null, aligned, exclusively-
-        // owned pointer. No `&'static mut` is forged (avoids asserting a
-        // Stacked-Borrows uniqueness tag for the program lifetime).
+        // `Box::into_raw` → `NonNull`: expresses an FFI-style ownership hand-
+        // off (the allocation is intentionally process-lifetime; `StoreRef`
+        // never reconstitutes the `Box`). No `&'static mut` is forged, so no
+        // aliasing hazard at use sites — deref goes through `as_ptr()`.
+        // SAFETY: `Box::into_raw` never returns null.
         StoreRef(unsafe { NonNull::new_unchecked(Box::into_raw(b)) })
     }
     #[inline]
@@ -1168,7 +1170,7 @@ macro_rules! impl_into_expr_data_inline {
 }
 // Thread-local bump arena backing `into_data_store` for boxed payloads.
 // Mirrors Zig's thread-local `Expr.Data.Store` slab; bulk-freed via
-// `Expr::data_store_reset()`. PORTING.md §Forbidden — no `Box::leak`.
+// `Expr::data_store_reset()` (PORTING.md §Forbidden — owned, not leaked).
 std::thread_local! {
     static DATA_STORE: core::cell::RefCell<Bump> =
         core::cell::RefCell::new(Bump::new());

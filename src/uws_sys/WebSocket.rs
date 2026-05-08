@@ -2,6 +2,7 @@ use core::ffi::{c_int, c_uint, c_ushort, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate as uws;
+use crate::thunk;
 use crate::{Opcode, Request, SendStatus, Socket, WebSocketUpgradeContext, uws_res};
 use crate::app::uws_app_t;
 
@@ -545,14 +546,8 @@ where
         opcode: Opcode,
     ) {
         let ws = Self::make_ws(raw_ws);
-        let this = unsafe { ws.as_::<T>() }.unwrap();
-        let msg: &[u8] = if length > 0 {
-            // SAFETY: uWS guarantees `message` is valid for `length` bytes.
-            unsafe { core::slice::from_raw_parts(message, length) }
-        } else {
-            b""
-        };
-        this.on_message(ws, msg, opcode);
+        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
+        unsafe { ws.as_::<T>().unwrap().on_message(ws, thunk::c_slice(message, length), opcode) };
     }
 
     pub unsafe extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
@@ -563,26 +558,14 @@ where
 
     pub unsafe extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
-        let this = unsafe { ws.as_::<T>() }.unwrap();
-        let msg: &[u8] = if length > 0 {
-            // SAFETY: uWS guarantees `message` is valid for `length` bytes.
-            unsafe { core::slice::from_raw_parts(message, length) }
-        } else {
-            b""
-        };
-        this.on_ping(ws, msg);
+        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
+        unsafe { ws.as_::<T>().unwrap().on_ping(ws, thunk::c_slice(message, length)) };
     }
 
     pub unsafe extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
-        let this = unsafe { ws.as_::<T>() }.unwrap();
-        let msg: &[u8] = if length > 0 {
-            // SAFETY: uWS guarantees `message` is valid for `length` bytes.
-            unsafe { core::slice::from_raw_parts(message, length) }
-        } else {
-            b""
-        };
-        this.on_pong(ws, msg);
+        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
+        unsafe { ws.as_::<T>().unwrap().on_pong(ws, thunk::c_slice(message, length)) };
     }
 
     pub unsafe extern "C" fn on_close(
@@ -592,14 +575,8 @@ where
         length: usize,
     ) {
         let ws = Self::make_ws(raw_ws);
-        let this = unsafe { ws.as_::<T>() }.unwrap();
-        let msg: &[u8] = if length > 0 && !message.is_null() {
-            // SAFETY: uWS guarantees `message` is valid for `length` bytes when non-null.
-            unsafe { core::slice::from_raw_parts(message, length) }
-        } else {
-            b""
-        };
-        this.on_close(ws, code, msg);
+        // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid when non-null.
+        unsafe { ws.as_::<T>().unwrap().on_close(ws, code, thunk::c_slice(message, length)) };
     }
 
     pub unsafe extern "C" fn on_upgrade(
@@ -609,17 +586,18 @@ where
         context: *mut WebSocketUpgradeContext,
         id: usize,
     ) {
-        // SAFETY: `ptr` is the *Server passed to uws_ws() at registration time.
-        let server = unsafe { &mut *ptr.cast::<Server>() };
-        server.on_websocket_upgrade(
-            res.cast::<uws::NewAppResponse<SSL>>(),
-            // SAFETY: uWS passes non-null req/context valid for the duration of
-            // the upgrade callback.
-            unsafe { &mut *req },
-            // SAFETY: see above.
-            unsafe { &mut *context },
-            id,
-        );
+        // SAFETY: `ptr` is the *Server passed to uws_ws() at registration time;
+        // uWS passes non-null req/context valid for the duration of the upgrade
+        // callback.
+        unsafe {
+            let Some(server) = thunk::user_mut::<Server>(ptr) else { return };
+            server.on_websocket_upgrade(
+                res.cast::<uws::NewAppResponse<SSL>>(),
+                thunk::handle_mut(req),
+                thunk::handle_mut(context),
+                id,
+            );
+        }
     }
 
     pub fn apply(behavior: WebSocketBehavior) -> WebSocketBehavior {

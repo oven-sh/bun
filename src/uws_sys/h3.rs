@@ -8,6 +8,7 @@ use core::ptr;
 
 use crate::response::{State, WriteResult};
 use crate::socket_context::BunSocketContextOptions;
+use crate::thunk;
 use crate::SocketAddress;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -117,7 +118,6 @@ impl Request {
     where
         H: Fn(&mut Ctx, &[u8], &[u8]) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn each<Ctx, H>(
             n: *const u8,
             nl: usize,
@@ -127,18 +127,12 @@ impl Request {
         ) where
             H: Fn(&mut Ctx, &[u8], &[u8]) + Copy + 'static,
         {
-            // SAFETY: H is a ZST (asserted at compile time above), so any bit
-            // pattern (i.e. zero bits) is a valid value.
-            let cb: H = unsafe { core::mem::zeroed() };
-            // SAFETY: ud is the `ctx` pointer we passed below; non-null by caller contract.
-            // The iteration is synchronous and uws holds no other reference into Ctx, so
-            // this is the unique live `&mut Ctx` for the duration of the callback.
-            let ctx = unsafe { &mut *ud.cast::<Ctx>() };
-            // SAFETY: uws passes (ptr,len) pairs valid for the duration of this callback.
-            let name = unsafe { core::slice::from_raw_parts(n, nl) };
-            // SAFETY: see above.
-            let value = unsafe { core::slice::from_raw_parts(v, vl) };
-            cb(ctx, name, value);
+            // SAFETY: synchronous header iteration — `ud` is the unique `&mut Ctx`
+            // we registered, (ptr,len) pairs valid for this call, `H` is a ZST.
+            unsafe {
+                let Some(ctx) = thunk::user_mut::<Ctx>(ud) else { return };
+                thunk::zst::<H>()(ctx, thunk::c_slice(n, nl), thunk::c_slice(v, vl));
+            }
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ctx forwarded opaquely
         unsafe { c::uws_h3_req_for_each_header(self, each::<Ctx, H>, ctx.cast()) }
@@ -293,25 +287,15 @@ impl Response {
     where
         H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn cb<UD, H>(r: *mut Response, off: u64, p: *mut c_void) -> bool
         where
             H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
         {
-            if p.is_null() {
-                // null should always be treated as a no-op, there's no case where it should have any effect.
-                return true;
+            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
+            unsafe {
+                let Some(ud) = thunk::user_mut::<UD>(p) else { return true };
+                thunk::zst::<H>()(ud, off, thunk::handle_mut(r))
             }
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `r` is a live H3 response (opaque ZST handle) for the duration of the
-            // callback; uws hands it to exactly one callback at a time.
-            let res = unsafe { &mut *r };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above. The
-            // callback fires from the uws event loop with no other Rust `&mut UD` live.
-            let ud = unsafe { &mut *p.cast::<UD>() };
-            // PERF(port): was @call(.always_inline)
-            handler(ud, off, res)
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
         unsafe { c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast()) }
@@ -324,25 +308,15 @@ impl Response {
     where
         H: Fn(&mut UD, &mut Response) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
             H: Fn(&mut UD, &mut Response) + Copy + 'static,
         {
-            if p.is_null() {
-                // null should always be treated as a no-op, there's no case where it should have any effect.
-                return;
+            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
+            unsafe {
+                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                thunk::zst::<H>()(ud, thunk::handle_mut(r));
             }
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `r` is a live H3 response (opaque ZST handle) for the duration of the
-            // callback; uws hands it to exactly one callback at a time.
-            let res = unsafe { &mut *r };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above. The
-            // callback fires from the uws event loop with no other Rust `&mut UD` live.
-            let ud = unsafe { &mut *p.cast::<UD>() };
-            // PERF(port): was @call(.always_inline)
-            handler(ud, res);
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
         unsafe { c::uws_h3_res_on_aborted(self, Some(cb::<UD, H>), ud.cast()) }
@@ -355,25 +329,15 @@ impl Response {
     where
         H: Fn(&mut UD, &mut Response) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
             H: Fn(&mut UD, &mut Response) + Copy + 'static,
         {
-            if p.is_null() {
-                // null should always be treated as a no-op, there's no case where it should have any effect.
-                return;
+            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
+            unsafe {
+                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                thunk::zst::<H>()(ud, thunk::handle_mut(r));
             }
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `r` is a live H3 response (opaque ZST handle) for the duration of the
-            // callback; uws hands it to exactly one callback at a time.
-            let res = unsafe { &mut *r };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above. The
-            // callback fires from the uws event loop with no other Rust `&mut UD` live.
-            let ud = unsafe { &mut *p.cast::<UD>() };
-            // PERF(port): was @call(.always_inline)
-            handler(ud, res);
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
         unsafe { c::uws_h3_res_on_timeout(self, Some(cb::<UD, H>), ud.cast()) }
@@ -386,7 +350,6 @@ impl Response {
     where
         H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn cb<UD, H>(
             r: *mut Response,
             chunk_ptr: *const u8,
@@ -396,26 +359,12 @@ impl Response {
         ) where
             H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
         {
-            if p.is_null() {
-                // null should always be treated as a no-op, there's no case where it should have any effect.
-                return;
+            // SAFETY: uWS callback contract — `r` live, `chunk_ptr[..len]` valid,
+            // `p` is the registered `*mut UD`.
+            unsafe {
+                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                thunk::zst::<H>()(ud, thunk::handle_mut(r), thunk::c_slice(chunk_ptr, len), last);
             }
-            let chunk: &[u8] = if len > 0 {
-                // SAFETY: chunk_ptr/len come from uws and are valid for this call.
-                unsafe { core::slice::from_raw_parts(chunk_ptr, len) }
-            } else {
-                b""
-            };
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `r` is a live H3 response (opaque ZST handle) for the duration of the
-            // callback; uws hands it to exactly one callback at a time.
-            let res = unsafe { &mut *r };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above. The
-            // callback fires from the uws event loop with no other Rust `&mut UD` live.
-            let ud = unsafe { &mut *p.cast::<UD>() };
-            // PERF(port): was @call(.always_inline)
-            handler(ud, res, chunk, last);
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
         unsafe { c::uws_h3_res_on_data(self, Some(cb::<UD, H>), ud.cast()) }
@@ -519,21 +468,16 @@ impl App {
     where
         H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
             H: Fn(&mut UD, &mut Request, &mut Response) + Copy + 'static,
         {
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `res`/`req` are live H3 handles (opaque ZSTs, disjoint allocations)
-            // for the duration of the callback; uws dispatches each request to one handler.
-            let (res, req) = unsafe { (&mut *res, &mut *req) };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null by caller contract.
-            // The handler fires from the uws event loop with no other Rust `&mut UD` live.
-            let ud = unsafe { &mut *p.cast::<UD>() };
-            // PERF(port): was @call(.always_inline)
-            handler(ud, req, res);
+            // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
+            // `p` is the registered `*mut UD` (non-null by route registration).
+            unsafe {
+                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
+            }
         }
         // PERF(port): was comptime enum dispatch — profile in Phase B
         let f = match which {
@@ -623,20 +567,16 @@ impl App {
     where
         H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn cb<UD, H>(ls: *mut ListenSocket, p: *mut c_void)
         where
             H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
         {
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null by caller contract.
-            // uws invokes this once during listen setup with no other Rust `&mut UD` live.
-            let ud = unsafe { &mut *p.cast::<UD>() };
-            // SAFETY: `ls`, when non-null, is a live listen-socket handle for the duration of the callback.
-            let ls = unsafe { ls.as_mut() };
-            // PERF(port): was @call(.always_inline)
-            handler(ud, ls);
+            // SAFETY: uWS callback contract — `p` is the registered `*mut UD`;
+            // `ls` (when non-null) is a live listen-socket for this call.
+            unsafe {
+                let Some(ud) = thunk::user_mut::<UD>(p) else { return };
+                thunk::zst::<H>()(ud, ls.as_mut());
+            }
         }
         // SAFETY: self is a live FFI handle; config fields valid; trampoline is `extern "C"`
         unsafe {

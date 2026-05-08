@@ -31,7 +31,7 @@ const RETRY_ERRNO: Int = E::EAGAIN as Int;
 
 const TODO_ERRNO: Int = Int::MAX - 1;
 
-pub type Int = u16;
+pub(crate) type Int = u16;
 
 /// TODO: convert to function
 // TODO(port): was `pub const oom` in Zig; Box<[u8]> fields prevent a true `const` item.

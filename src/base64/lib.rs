@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![warn(unreachable_pub)]
 use std::sync::LazyLock;
 

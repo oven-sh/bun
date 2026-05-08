@@ -657,47 +657,41 @@ fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> J
 mod js {
     use bun_jsc::{JSGlobalObject, JSValue};
 
+    // `safe fn` to match the `safe fn …CachedValue` declarations
+    // `generate-classes.ts` emits in `generated_classes.rs` (avoids
+    // `clashing_extern_declarations`).
     unsafe extern "C" {
-        fn NativeBrotliPrototype__writeCallbackSetCachedValue(
+        safe fn NativeBrotliPrototype__writeCallbackSetCachedValue(
             this_value: JSValue,
             global: *mut JSGlobalObject,
             value: JSValue,
         );
-        fn NativeBrotliPrototype__writeCallbackGetCachedValue(this_value: JSValue) -> JSValue;
-        fn NativeBrotliPrototype__errorCallbackSetCachedValue(
+        safe fn NativeBrotliPrototype__writeCallbackGetCachedValue(this_value: JSValue) -> JSValue;
+        safe fn NativeBrotliPrototype__errorCallbackSetCachedValue(
             this_value: JSValue,
             global: *mut JSGlobalObject,
             value: JSValue,
         );
-        fn NativeBrotliPrototype__errorCallbackGetCachedValue(this_value: JSValue) -> JSValue;
+        safe fn NativeBrotliPrototype__errorCallbackGetCachedValue(this_value: JSValue) -> JSValue;
     }
 
     #[inline]
     pub fn write_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue) {
-        // SAFETY: FFI into generated C++ JSNativeBrotli; `this_value` is a live
-        // JSNativeBrotli wrapper and `global` outlives this call.
-        unsafe {
-            NativeBrotliPrototype__writeCallbackSetCachedValue(this_value, global.as_mut_ptr(), cb)
-        }
+        NativeBrotliPrototype__writeCallbackSetCachedValue(this_value, global.as_mut_ptr(), cb)
     }
     #[inline]
     pub fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
-        // SAFETY: FFI into generated C++ JSNativeBrotli; `this_value` is a live wrapper.
-        let v = unsafe { NativeBrotliPrototype__writeCallbackGetCachedValue(this_value) };
+        let v = NativeBrotliPrototype__writeCallbackGetCachedValue(this_value);
         if v.is_empty() { None } else { Some(v) }
     }
     #[inline]
     pub fn error_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
-        // SAFETY: FFI into generated C++ JSNativeBrotli; `this_value` is a live wrapper.
-        let v = unsafe { NativeBrotliPrototype__errorCallbackGetCachedValue(this_value) };
+        let v = NativeBrotliPrototype__errorCallbackGetCachedValue(this_value);
         if v.is_empty() { None } else { Some(v) }
     }
     #[inline]
     pub fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue) {
-        // SAFETY: FFI into generated C++ JSNativeBrotli; `this_value` is a live wrapper.
-        unsafe {
-            NativeBrotliPrototype__errorCallbackSetCachedValue(this_value, global.as_mut_ptr(), cb)
-        }
+        NativeBrotliPrototype__errorCallbackSetCachedValue(this_value, global.as_mut_ptr(), cb)
     }
 }
 

@@ -226,8 +226,8 @@ impl TopExceptionScope {
             }
             #[cfg(any(debug_assertions, bun_asan))]
             self.assertion_failure(e);
-            // Unconditionally panicking here is worse for our users.
-            let _ = e;
+            // In release we deliberately fall through and return `Ok` — an
+            // unconditional panic here is worse for our users.
         }
         Ok(())
     }

@@ -143,22 +143,24 @@ pub mod JSH2FrameParser {
     // `H2FrameParser__getConstructor` — emitted by generate-classes.ts
     // (`symbolName(typeName, "getConstructor")`). `jsc.conv` = sysv64 on
     // win-x64, C otherwise.
+    // `*mut JSGlobalObject` to match `generated_classes.rs` (avoids
+    // `clashing_extern_declarations`).
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "H2FrameParser__getConstructor"]
-        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "H2FrameParser__getConstructor"]
-        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
 
     /// Lazily fetch the JS constructor from `globalObject` (Zig:
     /// `JSH2FrameParser.getConstructor`).
     #[inline]
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        __get_constructor(global)
+        __get_constructor(global.as_mut_ptr())
     }
 }
 // ──────────────────────────────────────────────────────────────────────────

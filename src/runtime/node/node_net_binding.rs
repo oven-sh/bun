@@ -105,10 +105,12 @@ pub use self::{BlockList as block_list, SocketAddress as socket_address};
 #[allow(non_snake_case)]
 pub fn SocketAddress(global: &JSGlobalObject) -> JSValue {
     unsafe extern "C" {
+        // `*mut JSGlobalObject` to match `generated_classes.rs` / the
+        // `#[bun_jsc::JsClass]` macro (avoids `clashing_extern_declarations`).
         #[link_name = "SocketAddress__getConstructor"]
-        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
-    __get_constructor(global)
+    __get_constructor(global.as_mut_ptr())
 }
 
 // Zig: `pub const BlockList = jsc.Codegen.JSBlockList.getConstructor;`
@@ -116,9 +118,9 @@ pub fn SocketAddress(global: &JSGlobalObject) -> JSValue {
 pub fn BlockList(global: &JSGlobalObject) -> JSValue {
     unsafe extern "C" {
         #[link_name = "BlockList__getConstructor"]
-        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
-    __get_constructor(global)
+    __get_constructor(global.as_mut_ptr())
 }
 
 #[bun_jsc::host_fn]

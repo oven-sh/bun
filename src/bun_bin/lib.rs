@@ -115,7 +115,6 @@ pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
 
     // 7. CLI dispatch.
     bun_runtime::cli::Cli::start();
-    Global::exit(0);
-    // Unreachable — Global::exit never returns. Satisfies the `c_int` return.
-    0
+    // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
+    Global::exit(0)
 }

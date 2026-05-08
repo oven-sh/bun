@@ -570,9 +570,9 @@ pub mod strings {
         len
     }
 
-    /// Port of `copyUTF16IntoUTF8` — encode UTF-16 into a fixed-size UTF-8 buffer
-    /// (WTF-8 semantics: unpaired surrogates pass through). Returns units read /
-    /// bytes written. Caller is responsible for sizing `buf`.
+    /// Port of `copyUTF16IntoUTF8` — encode UTF-16 into a fixed-size UTF-8 buffer.
+    /// Unpaired surrogates are replaced with U+FFFD (matches `utf16CodepointWithFFFD`).
+    /// Returns units read / bytes written. Caller is responsible for sizing `buf`.
     pub fn copy_utf16_into_utf8(buf: &mut [u8], utf16: &[u16]) -> EncodeIntoResult {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
@@ -592,7 +592,7 @@ pub mod strings {
                 return EncodeIntoResult { read: utf16.len() as u32, written: r.count as u32 };
             }
         }
-        // Scalar WTF-8 path (handles unpaired surrogates + partial-buffer fill).
+        // Scalar path (handles unpaired surrogates + partial-buffer fill).
         let mut read = 0usize;
         let mut written = 0usize;
         let mut tmp = [0u8; 4];
@@ -603,8 +603,10 @@ pub mod strings {
                     let lo = utf16[read + 1] as u32;
                     if (0xDC00..=0xDFFF).contains(&lo) {
                         (0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00), 2)
-                    } else { (unit, 1) }
-                } else { (unit, 1) }
+                    } else { (0xFFFD, 1) }
+                } else { (0xFFFD, 1) }
+            } else if (0xDC00..=0xDFFF).contains(&unit) {
+                (0xFFFD, 1)
             } else { (unit, 1) };
             let n = encode_wtf8_rune(&mut tmp, cp);
             if written + n > buf.len() { break; }

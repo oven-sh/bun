@@ -13,11 +13,11 @@
 //! Zig builds a separate `index_header` (open-addressed `hash → entry_index`
 //! table) once `len > 8` so lookups stay O(1). This port mirrors that with a
 //! lazily-built `hashbrown::HashTable<u32>` keyed by the cached u32 hash:
-//! linear scan below the threshold, indexed lookup above it. The index is
-//! dropped (not patched) on the rare reorder paths (`swap_remove`, `sort`,
-//! `pop`, …) and rebuilt on the next lookup — the bundler hot path is
-//! write-once / read-many, so the rebuild cost is negligible and the
-//! invalidation keeps every mutation site trivially correct.
+//! linear scan below the threshold, indexed lookup above it. Point removals
+//! (`pop`, `swap_remove`) patch the index in place (O(1), matching Zig's
+//! `removeFromIndexByIndex`); wholesale permutations (`sort`,
+//! `ordered_remove`) drop and immediately rebuild it so lookups never
+//! silently degrade to O(n).
 
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
@@ -257,10 +257,11 @@ pub struct ArrayHashMap<K, V, C = AutoContext> {
     keys: Vec<K>,
     values: Vec<V>,
     hashes: Vec<u32>,
-    /// Lazily-built `hash → entry index` accelerator. `None` below
-    /// [`INDEX_THRESHOLD`] entries or after a reorder/remove until the next
-    /// lookup rebuilds it. Stores `u32` indices; the table is hashed by
-    /// [`spread_hash`] of `self.hashes[i]` so lookups never re-hash `K`.
+    /// `hash → entry index` accelerator. `None` below [`INDEX_THRESHOLD`]
+    /// entries. Stores `u32` indices; the table is hashed by [`spread_hash`]
+    /// of `self.hashes[i]` so lookups never re-hash `K`. Kept in sync with
+    /// the column vecs by every mutation path (patched on point removal,
+    /// rebuilt on permutation).
     index: Option<hashbrown::HashTable<u32>>,
     ctx: C,
     // Zig `pointer_stability: std.debug.SafetyLock` — debug-only re-entrancy
@@ -336,13 +337,14 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
     }
 
     /// Zig: `pop()` — remove and return the last entry in insertion order, or
-    /// `None` when empty. O(1); no rehash needed (the removed slot is the tail).
+    /// `None` when empty. O(1); patches the index in place (Zig
+    /// `removeFromIndexByIndex`) so subsequent lookups stay O(1).
     pub fn pop(&mut self) -> Option<KV<K, V>> {
         let key = self.keys.pop()?;
         // SAFETY: keys/values/hashes always share the same length.
         let value = self.values.pop().unwrap();
-        self.hashes.pop();
-        self.drop_index();
+        let h = self.hashes.pop().unwrap();
+        self.index_remove_tail(self.keys.len(), h);
         Some(KV { key, value })
     }
 
@@ -440,13 +442,20 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
     /// any tail) and release excess capacity. Insertion order is preserved, so
     /// no rehash of the surviving prefix is needed.
     pub fn shrink_and_free(&mut self, new_len: usize) {
+        // Drop tail index slots first (Zig: removeFromIndexByIndex loop), so
+        // the surviving accelerator stays valid for O(1) lookups.
+        if self.index.is_some() {
+            for i in new_len..self.hashes.len() {
+                let h = self.hashes[i];
+                self.index_remove_tail(i, h);
+            }
+        }
         self.keys.truncate(new_len);
         self.values.truncate(new_len);
         self.hashes.truncate(new_len);
         self.keys.shrink_to_fit();
         self.values.shrink_to_fit();
         self.hashes.shrink_to_fit();
-        self.drop_index();
     }
 
     /// Debug-only: assert no in-flight `GetOrPutResult` borrows when an
@@ -543,24 +552,23 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
             return index
                 .find(spread_hash(h), |&i| {
                     let i = i as usize;
-                    // SAFETY: every `i` stored in `self.index` was pushed by
-                    // `push_entry`/`rebuild_index` with `i < self.hashes.len()`
-                    // (== `self.keys.len()`), and every path that shrinks or
-                    // permutes those vecs first calls `drop_index()`. Going
-                    // through raw pointers (not `self.hashes[i]`) sidesteps an
-                    // overlapping-borrow false positive: `index` already
-                    // borrows `self`.
+                    // SAFETY: bounds-check elision on the hot probe path.
+                    // Every `i` stored in `self.index` satisfies
+                    // `i < self.hashes.len() == self.keys.len()` — it was
+                    // inserted by `push_entry`/`rebuild_index` with that
+                    // bound, and every path that shrinks or permutes those
+                    // vecs either patches the index in place
+                    // (`index_swap_remove`/`index_remove_tail`) or calls
+                    // `drop_index()` first.
                     unsafe { *hashes.add(i) == h && eq(&*keys.add(i), i) }
                 })
                 .map(|&i| i as usize);
         }
-        // Below the index threshold (or just after a reorder dropped the
-        // index): hash-prefiltered linear scan. `hashes.len()` ≤ 8 here in the
-        // steady state, so this is a single cache line.
+        // Below the index threshold: hash-prefiltered linear scan.
+        // `hashes.len()` ≤ 8 here, so this is a single cache line; the bounds
+        // check on `keys[i]` is not worth eliding.
         for (i, &stored) in self.hashes.iter().enumerate() {
-            // SAFETY: `keys.len() == hashes.len()` is a struct invariant
-            // upheld by every mutation path.
-            if stored == h && eq(unsafe { self.keys.get_unchecked(i) }, i) {
+            if stored == h && eq(&self.keys[i], i) {
                 return Some(i);
             }
         }
@@ -607,13 +615,47 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.index = Some(table);
     }
 
-    /// Invalidate the accelerator. Called by every operation that removes or
-    /// permutes entries; the next insert past the threshold rebuilds it.
-    /// Cheaper than patching in place for the rare-mutation / heavy-lookup
-    /// shape the bundler exhibits, and trivially correct.
+    /// Invalidate the accelerator. Called by operations that permute entry
+    /// indices wholesale (`sort`, `re_index`, bulk `set_entries_len`); paired
+    /// with an immediate `rebuild_index()` when the map is past the threshold
+    /// so subsequent lookups never silently fall back to O(n) linear scan.
+    /// Point removals (`pop`/`swap_remove`) instead patch the index in place
+    /// — see [`index_remove_tail`]/[`index_swap_remove`].
     #[inline]
     fn drop_index(&mut self) {
         self.index = None;
+    }
+
+    /// Remove the index slot pointing at `tail` (the just-popped last entry).
+    /// O(1); mirrors Zig `removeFromIndexByIndex` for the `pop`/`shrink` path.
+    #[inline]
+    fn index_remove_tail(&mut self, tail: usize, tail_hash: u32) {
+        let Some(index) = self.index.as_mut() else { return };
+        if let Ok(slot) = index.find_entry(spread_hash(tail_hash), |&i| i as usize == tail) {
+            slot.remove();
+        }
+    }
+
+    /// Patch the index after a `Vec::swap_remove(removed)`: drop the slot for
+    /// `removed`, then retarget the slot that still says `old_last` (the
+    /// pre-swap tail index, == `self.keys.len()` post-swap) to `removed`.
+    /// O(1); mirrors Zig `removeFromIndexByIndex` + `updateEntryIndex`.
+    #[inline]
+    fn index_swap_remove(&mut self, removed: usize, removed_hash: u32) {
+        let Some(index) = self.index.as_mut() else { return };
+        if let Ok(slot) = index.find_entry(spread_hash(removed_hash), |&i| i as usize == removed) {
+            slot.remove();
+        }
+        let old_last = self.keys.len();
+        if old_last != removed {
+            // The element now at `removed` carried its hash with it.
+            let moved_hash = self.hashes[removed];
+            if let Some(slot) =
+                index.find_mut(spread_hash(moved_hash), |&i| i as usize == old_last)
+            {
+                *slot = removed as u32;
+            }
+        }
     }
 
     /// Zig `ArrayHashMap.sort` — stable in-place sort of keys/values/hashes by
@@ -640,6 +682,7 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
             });
         }
         // Apply permutation in-place via cycle-following swaps.
+        let had_index = self.index.is_some();
         self.drop_index();
         let mut visited = vec![false; len];
         for start in 0..len {
@@ -658,6 +701,9 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
                 self.hashes.swap(i, j);
                 i = j;
             }
+        }
+        if had_index {
+            self.rebuild_index();
         }
     }
 
@@ -687,8 +733,8 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
     pub fn swap_remove_at(&mut self, index: usize) -> (K, V) {
         let k = self.keys.swap_remove(index);
         let v = self.values.swap_remove(index);
-        self.hashes.swap_remove(index);
-        self.drop_index();
+        let h = self.hashes.swap_remove(index);
+        self.index_swap_remove(index, h);
         (k, v)
     }
 
@@ -815,10 +861,7 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
 
     pub fn swap_remove(&mut self, key: &K) -> bool {
         let Some(i) = self.get_index(key) else { return false };
-        self.keys.swap_remove(i);
-        self.values.swap_remove(i);
-        self.hashes.swap_remove(i);
-        self.drop_index();
+        self.swap_remove_at(i);
         true
     }
 
@@ -826,9 +869,7 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
     /// or `None` if `key` was not present.
     pub fn fetch_swap_remove(&mut self, key: &K) -> Option<(K, V)> {
         let i = self.get_index(key)?;
-        self.hashes.swap_remove(i);
-        self.drop_index();
-        Some((self.keys.swap_remove(i), self.values.swap_remove(i)))
+        Some(self.swap_remove_at(i))
     }
 
     /// Zig: `orderedRemove` — preserves insertion order of remaining entries.
@@ -844,7 +885,14 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
         let i = self.get_index(key)?;
         self.keys.remove(i);
         self.hashes.remove(i);
+        // Ordered remove shifts every index ≥ i; rebuild rather than patching
+        // each slot. Immediate rebuild keeps subsequent lookups O(1) (Zig
+        // patches in place; this is the simpler-correct equivalent for the
+        // rare ordered path).
         self.drop_index();
+        if self.keys.len() > INDEX_THRESHOLD {
+            self.rebuild_index();
+        }
         Some(self.values.remove(i))
     }
 
@@ -908,10 +956,7 @@ impl<'a, K, V, C> OccupiedEntry<'a, K, V, C> {
         core::mem::replace(&mut self.map.values[self.idx], value)
     }
     pub fn swap_remove(self) -> V {
-        self.map.keys.swap_remove(self.idx);
-        self.map.hashes.swap_remove(self.idx);
-        self.map.drop_index();
-        self.map.values.swap_remove(self.idx)
+        self.map.swap_remove_at(self.idx).1
     }
 }
 

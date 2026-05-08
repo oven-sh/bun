@@ -523,7 +523,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && p.lexer.token != T::TLessThan
                         && !opts.is_generator
                         && !opts.is_async
-                        && !js_lexer::Keywords.contains_key(name);
+                        && js_lexer::keyword(name).is_none();
 
                     if is_shorthand_property {
                         if (p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent

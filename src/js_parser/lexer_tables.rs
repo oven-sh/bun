@@ -172,18 +172,14 @@ impl T {
 /// branch when `len > 10`.
 #[inline]
 pub fn keyword(s: &[u8]) -> Option<T> {
-    /// Reinterpret `s` as `&[u8; $n]` (length already checked by the outer
+    /// View `s` as `&[u8; $n]` (length already checked by the outer
     /// `match s.len()`), then match literal byte arrays. Matching on a
     /// fixed-size array lets LLVM lower each arm to a wide integer compare
-    /// instead of a `memcmp` call.
+    /// instead of a `memcmp` call. `try_into().unwrap()` is safe and the
+    /// length check folds away against the just-matched discriminant.
     macro_rules! by_len {
         ($n:literal: $($lit:literal => $tok:expr,)*) => {{
-            debug_assert_eq!(s.len(), $n);
-            // SAFETY: the enclosing `match s.len()` arm guarantees
-            // `s.len() == $n`, so `s.as_ptr()` addresses at least `$n`
-            // initialized bytes and the `[u8; $n]` view is in-bounds and
-            // properly aligned (alignment of `[u8; N]` is 1).
-            let arr: &[u8; $n] = unsafe { &*(s.as_ptr() as *const [u8; $n]) };
+            let arr: &[u8; $n] = s.try_into().unwrap();
             match arr {
                 $($lit => Some($tok),)*
                 _ => None,
@@ -254,10 +250,7 @@ pub fn keyword(s: &[u8]) -> Option<T> {
 pub fn is_strict_mode_reserved_word(s: &[u8]) -> bool {
     macro_rules! by_len {
         ($n:literal: $($lit:literal,)*) => {{
-            debug_assert_eq!(s.len(), $n);
-            // SAFETY: enclosing `match s.len()` arm guarantees `s.len() == $n`;
-            // see `keyword()` for the full invariant.
-            let arr: &[u8; $n] = unsafe { &*(s.as_ptr() as *const [u8; $n]) };
+            let arr: &[u8; $n] = s.try_into().unwrap();
             matches!(arr, $($lit)|*)
         }};
     }

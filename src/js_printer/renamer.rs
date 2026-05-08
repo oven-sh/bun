@@ -428,7 +428,7 @@ impl MinifyRenamer {
                         }
                     }
                     symbol::SlotNamespace::Label => {
-                        while js_lexer::Keywords.contains_key(name_buf.as_slice()) {
+                        while js_lexer::keyword(name_buf.as_slice()).is_some() {
                             name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
                             next_name += 1;
                         }

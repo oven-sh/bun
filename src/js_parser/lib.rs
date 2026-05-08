@@ -2141,7 +2141,7 @@ pub mod defines_full_draft {
             // check for nested identifiers
             let mut is_ident = true;
             for part in value_str.split(|&c| c == b'.') {
-                if !js_lexer::is_identifier(part) || js_lexer::Keywords.contains_key(part) {
+                if !js_lexer::is_identifier(part) || js_lexer::keyword(part).is_some() {
                     is_ident = false;
                     break;
                 }

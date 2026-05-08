@@ -557,31 +557,6 @@ impl Map {
         }
     }
 
-    /// `get_unchecked` returning the raw `*mut Symbol` for callers that need
-    /// to interleave writes with other `&self` accesses (union-find path
-    /// compression, `assign_chunk_index`). See [`Map::get`] for the
-    /// provenance argument.
-    ///
-    /// # Safety
-    /// Same preconditions as [`Map::get_unchecked`]. Additionally, callers
-    /// must not materialize overlapping `&mut Symbol` and must not reallocate
-    /// either the outer or the addressed inner Vec while the pointer is live.
-    #[inline]
-    pub unsafe fn get_unchecked_mut(&self, ref_: Ref) -> *mut Symbol {
-        let src = ref_.source_index() as usize;
-        let idx = ref_.inner_index() as usize;
-        debug_assert!(!ref_.is_source_contents_slice());
-        debug_assert!(src < self.symbols_for_source.len());
-        // SAFETY: caller contract (see above). `cast_mut()` on the outer
-        // `as_ptr()` preserves the Vec heap allocation's root provenance (no
-        // `&` intermediate), so writes through the result are sound.
-        unsafe {
-            let inner: *mut List = self.symbols_for_source.as_ptr().cast_mut().add(src);
-            debug_assert!(idx < (*inner).len());
-            (*inner).as_mut_ptr().add(idx)
-        }
-    }
-
     pub fn init(source_count: usize) -> Map {
         // Zig: `arena.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
         // Per PORTING.md §Allocators (non-arena path), use Vec → Vec.

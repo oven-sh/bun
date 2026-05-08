@@ -538,8 +538,8 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     }
 
     /// Type-erased accessor for the embedded debug tracker. Exposed (rather
-    /// than the private `debug` field) so [`impl_thread_safe_any_ref_counted!`]
-    /// can hand-impl [`AnyRefCounted::rc_debug_data`] from outside this crate.
+    /// than the private `debug` field) so `#[derive(ThreadSafeRefCounted)]`
+    /// can emit [`AnyRefCounted::rc_debug_data`] from outside this crate.
     #[cfg(debug_assertions)]
     #[doc(hidden)]
     #[inline]
@@ -663,56 +663,11 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 
 // A blanket `impl<T: ThreadSafeRefCounted> AnyRefCounted for T` would overlap
 // with the `RefCounted` blanket above (Rust forbids overlapping blanket impls).
-// Instead, thread-safe hosts opt in explicitly via this macro — equivalent to
-// the blanket impl, expanded per-type.
+// Instead, thread-safe hosts opt in via `#[derive(ThreadSafeRefCounted)]`,
+// which emits the per-type `AnyRefCounted` impl alongside the trait impl.
 //
 // Zig: `RefPtr` reflected on `@FieldType(T, "ref_count")` to accept either
-// mixin; this macro is the manual half of that dispatch.
-/// Implements [`AnyRefCounted`] for a type that already implements
-/// [`ThreadSafeRefCounted`], delegating to its embedded [`ThreadSafeRefCount`].
-#[macro_export]
-macro_rules! impl_thread_safe_any_ref_counted {
-    ($T:ty) => {
-        impl $crate::AnyRefCounted for $T {
-            type DestructorCtx = ();
-
-            #[inline]
-            unsafe fn rc_ref(this: *mut Self) {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe { $crate::ThreadSafeRefCount::<Self>::ref_(this) }
-            }
-            #[inline]
-            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe { $crate::ThreadSafeRefCount::<Self>::deref(this) }
-            }
-            #[inline]
-            unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
-                        .has_one_ref()
-                }
-            }
-            #[inline]
-            unsafe fn rc_assert_no_refs(this: *const Self) {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
-                        .assert_no_refs()
-                }
-            }
-            #[cfg(debug_assertions)]
-            #[inline]
-            unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn $crate::ref_count::DebugDataOps {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this)).debug_data_ptr()
-                }
-            }
-        }
-    };
-}
+// mixin; the derive is the manual half of that dispatch.
 
 // ──────────────────────────────────────────────────────────────────────────
 // RefPtr

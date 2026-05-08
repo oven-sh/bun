@@ -15,7 +15,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, WorkPool, WorkPoolTask,
 };
 use bun_paths::resolve_path::{self as Path, platform};
-use bun_ptr::{RefPtr, ThreadSafeRefCount, ThreadSafeRefCounted};
+use bun_ptr::{RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_str::strings;
 use bun_sys::{self, PosixStat};
@@ -44,6 +44,8 @@ fn stat_to_js_stats(
 }
 
 /// This is a singleton struct that contains the timer used to schedule re-stat calls.
+#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct StatWatcherScheduler {
     current_interval: AtomicI32,
     task: WorkPoolTask,
@@ -58,21 +60,6 @@ pub struct StatWatcherScheduler {
 
     ref_count: ThreadSafeRefCount<StatWatcherScheduler>,
 }
-
-impl ThreadSafeRefCounted for StatWatcherScheduler {
-    fn debug_name() -> &'static str {
-        "StatWatcherScheduler"
-    }
-    unsafe fn get_ref_count(this: *mut Self) -> *mut ThreadSafeRefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self) {
-        // SAFETY: refcount hit 0; allocation came from RefPtr::new (heap::alloc).
-        unsafe { Self::deinit(this) };
-    }
-}
-bun_ptr::impl_thread_safe_any_ref_counted!(StatWatcherScheduler);
 
 type WatcherQueue = UnboundedQueue<StatWatcher>;
 
@@ -390,6 +377,8 @@ impl StatWatcherScheduler {
 
 // TODO: make this a top-level struct
 #[bun_jsc::JsClass(no_constructor)]
+#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct StatWatcher {
     pub next: *mut StatWatcher, // INTRUSIVE link for UnboundedQueue
 
@@ -420,21 +409,6 @@ pub struct StatWatcher {
 }
 
 pub type Scheduler = StatWatcherScheduler;
-
-impl ThreadSafeRefCounted for StatWatcher {
-    fn debug_name() -> &'static str {
-        "StatWatcher"
-    }
-    unsafe fn get_ref_count(this: *mut Self) -> *mut ThreadSafeRefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self) {
-        // SAFETY: refcount hit 0; allocation came from heap::alloc in `init`.
-        unsafe { Self::deinit(this) };
-    }
-}
-bun_ptr::impl_thread_safe_any_ref_counted!(StatWatcher);
 
 /// `jsc.Codegen.JSStatWatcher` — cached-value accessors generated from
 /// `.classes.ts`. The C++ symbols are emitted by `generate-classes.ts`; this

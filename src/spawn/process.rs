@@ -164,6 +164,12 @@ impl ProcessExitHandler {
     }
 }
 
+// bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
+// via @fieldParentPtr in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
+// keep the embedded count; the derive emits `ThreadSafeRefCounted` +
+// `AnyRefCounted`. Default `destructor` (`heap::take`) applies — `Drop` below
+// handles `poller.deinit()`.
+#[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct Process {
     pub pid: PidT,
     pub pidfd: PidFdType,
@@ -173,20 +179,6 @@ pub struct Process {
     pub exit_handler: ProcessExitHandler,
     pub sync: bool,
     pub event_loop: EventLoopHandle,
-}
-
-// bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
-// via @fieldParentPtr in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
-// keep the embedded count and impl `bun_ptr::ThreadSafeRefCounted`.
-impl bun_ptr::ThreadSafeRefCounted for Process {
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::ThreadSafeRefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Process.
-        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
-    }
-    unsafe fn destructor(this: *mut Self) {
-        // SAFETY: refcount hit 0; allocation came from heap::alloc in init_posix/spawn.
-        unsafe { drop(bun_core::heap::take(this)) };
-    }
 }
 
 impl Drop for Process {

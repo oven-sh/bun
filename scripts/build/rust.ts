@@ -199,6 +199,23 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Zsanitizer=address");
     rustflags.push("--cfg=bun_asan");
   }
+  if (cfg.lto) {
+    // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
+    // so the final lld `-flto=full` link sees through Rust↔C++ call edges.
+    // `linker-plugin-lto` supersedes Cargo's `[profile.release] lto="fat"`
+    // (cargo skips its own LTO pass and defers to the linker), so there's no
+    // double-LTO cost.
+    //
+    // Bitcode-format compatibility: lld must be able to read rustc's bitcode.
+    // LLVM bitcode is forward-compatible (newer reads older), so this works
+    // when the linker's LLVM ≥ rustc's bundled LLVM. If clang's lld is older
+    // than rustc's LLVM and the link fails with "Invalid bitcode version",
+    // either bump clang or point `cfg.lld` at rustc's bundled `rust-lld`
+    // (`$(rustc --print sysroot)/lib/rustlib/<host>/bin/rust-lld`) — see
+    // workarounds.ts for the auto-fallback.
+    rustflags.push("-Clinker-plugin-lto");
+    rustflags.push("-Cembed-bitcode=yes");
+  }
 
   // ─── Environment ───
   const env: Record<string, string> = {

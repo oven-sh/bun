@@ -120,6 +120,32 @@ exclude = ["vendor"]
 version = "0.0.0"
 edition = "2024"
 
+# ─── Release optimization ───────────────────────────────────────────────────
+# Zig's release build is one compilation unit with whole-program optimization.
+# Cargo's defaults (lto=false, codegen-units=16) leave us at ~105 crates × 16
+# CGUs ≈ 1680 separately-optimized units with NO cross-crate inlining beyond
+# `#[inline]`-annotated leaf fns. `lto = "fat"` + `codegen-units = 1` collapses
+# the whole Rust crate graph into one LLVM module, matching Zig's shape.
+#
+# `panic = "unwind"` is kept (NOT abort) — `host_fn::*` and the bundler thread
+# wrap entry points in `catch_unwind` to convert panics into JS errors / clean
+# thread teardown instead of taking the process down.
+#
+# Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
+# `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it
+# requires the *linker's* LLVM to be ≥ rustc's bundled LLVM, so the build
+# points `-fuse-ld` at rustc's `rust-lld` rather than clang's when enabled.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+# Fast-iteration release build for local benching when fat LTO's link time
+# (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.
+[profile.release-dev]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [workspace.lints.clippy]
 # Prefer `.cast::<T>()` / `.cast_const()` / `.cast_mut()` / `ptr::from_ref` /
 # `ptr::from_mut` over `as *const T` / `as *mut T`. The method forms cannot

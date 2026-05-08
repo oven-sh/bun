@@ -135,11 +135,13 @@ impl Touch {
                 let opts = Self::state_mut(interp, cmd).opts;
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
                 let evtloop = Builtin::event_loop(interp, cmd);
+                let interp_ptr: *mut Interpreter = interp;
                 for i in args_start..argc {
                     let p = Builtin::of(interp, cmd).args_slice()[i];
                     // SAFETY: argv entries are NUL-terminated.
                     let path = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
-                    let task = ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop);
+                    let task =
+                        ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
                     // SAFETY: freshly Box::into_raw'd.
                     unsafe { ShellTask::schedule(task) };
                 }
@@ -289,15 +291,18 @@ impl ShellTouchTask {
         filepath: Vec<u8>,
         cwd_path: Vec<u8>,
         evtloop: EventLoopHandle,
+        interp: *mut Interpreter,
     ) -> *mut ShellTouchTask {
-        Box::into_raw(Box::new(ShellTouchTask {
+        let mut task = Box::new(ShellTouchTask {
             cmd,
             opts,
             filepath,
             cwd_path,
             err: None,
             task: ShellTask::new(evtloop),
-        }))
+        });
+        task.task.interp = interp;
+        Box::into_raw(task)
     }
 
     /// Spec: touch.zig `runFromThreadPool`. utimes() the path; on ENOENT

@@ -889,6 +889,21 @@ pub enum SocketUnion {
 }
 
 impl SendQueue {
+    /// Safe `&dyn SendQueueOwner` accessor — wraps the per-use raw deref +
+    /// autoref for `&self`-taking trait methods (`kind`, `this_jsvalue`,
+    /// `global_this`). The owner embeds this
+    /// `SendQueue` inline, so the formed `&Owner` overlaps `self` — but the
+    /// caller already holds at most `&SendQueue` here (shared/shared), so
+    /// there is no exclusive alias. NOT for `handle_ipc_*` (those take
+    /// `&mut dyn`; see field doc).
+    #[inline]
+    fn owner_ref(&self) -> &dyn SendQueueOwner {
+        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it;
+        // `owner` is set in `init()` / by the embedder before first use and
+        // never null afterward.
+        unsafe { &*self.owner }
+    }
+
     pub fn init(mode: Mode, owner: *mut dyn SendQueueOwner, socket: SocketUnion) -> Self {
         log!("SendQueue#init");
         Self {
@@ -1542,9 +1557,8 @@ impl SendQueue {
         // raw pointer everywhere). The owner (Subprocess / IPCInstance)
         // outlives this SendQueue and the JSGlobalObject is heap-allocated by
         // JSC for the VM's lifetime.
-        // SAFETY: BACKREF through owner trait object — pointer is non-null and
-        // live for the VM's lifetime.
-        crate::GlobalRef::from(unsafe { &*(*self.owner).global_this() })
+        // SAFETY: `global_this()` returns the live VM-lifetime global.
+        crate::GlobalRef::from(unsafe { &*self.owner_ref().global_this() })
     }
 
     #[cfg(windows)]
@@ -1802,9 +1816,8 @@ fn handle_ipc_message(
                 // Get file descriptor and clear it
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
-                // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
-                let target: JSValue = match unsafe { (*send_queue.owner).kind() } {
-                    SendQueueOwnerKind::Subprocess => unsafe { (*send_queue.owner).this_jsvalue() },
+                let target: JSValue = match send_queue.owner_ref().kind() {
+                    SendQueueOwnerKind::Subprocess => send_queue.owner_ref().this_jsvalue(),
                     SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
                 };
 

@@ -305,7 +305,7 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue {
+        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
             let _ = self.drain_microtasks();
         }
 
@@ -331,7 +331,7 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        let inside_deferred = self.vm_ref().is_inside_deferred_task_queue;
+        let inside_deferred = self.vm_ref().is_inside_deferred_task_queue.get();
         let result = if allow_drain_microtask && count == 1 && !inside_deferred {
             self.drain_microtasks()
         } else {
@@ -366,10 +366,9 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         jsc_vm: *mut jsc::VM,
     ) -> Result<(), JsTerminated> {
-        let vm = self.vm();
         // During spawnSync, the isolated event loop shares the same VM/GlobalObject.
         // Draining microtasks would execute user JavaScript, which must not happen.
-        if self.vm_ref().suppress_microtask_drain {
+        if self.vm_ref().suppress_microtask_drain.get() {
             return Ok(());
         }
 
@@ -382,11 +381,11 @@ impl EventLoop {
             DrainMicrotasksResult::JsTerminated => return Err(JsTerminated::JSTerminated),
         }
 
-        // SAFETY: `vm` is the live owning VM.
-        unsafe { (*vm).is_inside_deferred_task_queue = true };
+        // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
+        // overlap `&mut self: EventLoop`, which is a value field of the VM).
+        self.vm_ref().is_inside_deferred_task_queue.set(true);
         self.deferred_tasks.run();
-        // SAFETY: `vm` is the live owning VM.
-        unsafe { (*vm).is_inside_deferred_task_queue = false };
+        self.vm_ref().is_inside_deferred_task_queue.set(false);
 
         // PORT NOTE: spec event_loop.zig:144-146 guards on `event_loop_handle != null`
         // but then calls `this.virtual_machine.uwsLoop().drainQuicIfNecessary()`.
@@ -406,16 +405,16 @@ impl EventLoop {
     }
 
     pub fn drain_microtasks(&mut self) -> Result<(), JsTerminated> {
-        // PORT NOTE: reshaped for borrowck — capture raw ptrs before &mut self call.
-        let global = self.global.unwrap().as_ptr();
+        // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
+        // global borrow detaches from `&self` and survives the `&mut self` call.
+        let global = self.vm_ref().global();
         let jsc_vm = self.vm_ref().jsc_vm;
-        // SAFETY: `global` is set during VM init and outlives EventLoop.
-        self.drain_microtasks_with_global(unsafe { &*global }, jsc_vm)
+        self.drain_microtasks_with_global(global, jsc_vm)
     }
 
     // should be called after exit()
     pub fn maybe_drain_microtasks(&mut self) {
-        if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue {
+        if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get() {
             let _ = self.drain_microtasks();
         }
     }
@@ -616,8 +615,9 @@ impl EventLoop {
         self.tick_concurrent();
         self.process_gc_timer();
 
-        // PORT NOTE: reshaped for borrowck — capture raw ptr; deref per use.
-        let global = self.global.unwrap().as_ptr();
+        // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
+        // global borrow detaches from `&self` and survives the `&mut self` call.
+        let global = self.vm_ref().global();
         let global_vm = self.vm_ref().jsc_vm;
 
         loop {
@@ -627,8 +627,7 @@ impl EventLoop {
                 self.global_ref().handle_rejected_promises();
             }
             // Zig while-else: else branch runs whenever the condition becomes false.
-            // SAFETY: `global` outlives EventLoop (set during VM init).
-            if self.drain_microtasks_with_global(unsafe { &*global }, global_vm).is_err()
+            if self.drain_microtasks_with_global(global, global_vm).is_err()
                 || scope.has_exception()
             {
                 self.entered_event_loop_count -= 1;
@@ -661,17 +660,15 @@ impl EventLoop {
         self.tick_concurrent();
 
         let vm = self.vm();
-        // SAFETY: `vm` is the VM that owns `self`; field reads/writes only.
-        let prev = unsafe { (*vm).suppress_microtask_drain };
-        // SAFETY: see above.
-        unsafe { (*vm).suppress_microtask_drain = true };
+        // `Cell` swap through `&VirtualMachine` — no `&mut VM` formed (would
+        // overlap `&mut self: EventLoop`, which is a value field of the VM).
+        let prev = self.vm_ref().suppress_microtask_drain.replace(true);
 
         while self.tick_with_count(vm) > 0 {
             self.tick_concurrent();
         }
 
-        // SAFETY: see above.
-        unsafe { (*vm).suppress_microtask_drain = prev };
+        self.vm_ref().suppress_microtask_drain.set(prev);
         // PORT NOTE: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
     }
 
@@ -994,8 +991,7 @@ impl EventLoop {
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
-    // SAFETY: event_loop() returns a non-null raw pointer into the owning VM.
-    let event_loop = unsafe { &*vm_ref.event_loop() };
+    let event_loop = vm_ref.event_loop_shared();
     let result = JSValue::create_empty_object(global_object, 3);
     result.put(global_object, b"activeTasks", JSValue::js_number(vm_ref.active_tasks as f64));
     result.put(
@@ -1298,7 +1294,7 @@ pub fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
 
 #[unsafe(no_mangle)]
 pub fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
-    core::mem::replace(&mut vm_from_ptr(vm).suppress_microtask_drain, v)
+    vm_from_ptr(vm).suppress_microtask_drain.replace(v)
 }
 
 // ported from: src/jsc/event_loop.zig

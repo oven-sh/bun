@@ -1192,8 +1192,7 @@ impl WebWorker {
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM
             // re-sets it for the JSC VM teardown.
-            // SAFETY: `vm.jsc_vm` valid for VM lifetime.
-            unsafe { (*vm.jsc_vm).clear_has_termination_request() };
+            vm.jsc_vm().clear_has_termination_request();
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
@@ -1425,10 +1424,10 @@ fn on_unhandled_rejection(
     // promise-rejection path in `spin()` (line ~1044) gets there even sooner:
     // `uncaught_exception` returns `handled == false`, so `spin()` calls
     // `return self.shutdown()` directly — same observable ordering as Zig.
-    // SAFETY: `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it
-    // via `global_object`); `notify_need_termination` is documented
-    // thread-safe (VMTraps).
-    unsafe { (*vm.jsc_vm.cast_const()).notify_need_termination() };
+    // `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it via
+    // `global_object`); `notify_need_termination` is documented thread-safe
+    // (VMTraps).
+    vm.jsc_vm().notify_need_termination();
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

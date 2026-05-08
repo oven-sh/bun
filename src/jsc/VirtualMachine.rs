@@ -333,9 +333,14 @@ pub struct VirtualMachine {
     #[cfg(not(debug_assertions))]
     pub debug_thread_id: (),
 
-    pub is_inside_deferred_task_queue: bool,
-    /// When true, drainMicrotasksWithGlobal is suppressed.
-    pub suppress_microtask_drain: bool,
+    /// `Cell` so [`EventLoop`] (a value field of this struct) can flip the flag
+    /// through `vm_ref()` (`&VirtualMachine`) without forming an overlapping
+    /// `&mut VirtualMachine` while `&mut EventLoop` is live. Zero-valid
+    /// (`Cell<bool>` is `repr(transparent)` over `bool`).
+    pub is_inside_deferred_task_queue: core::cell::Cell<bool>,
+    /// When true, drainMicrotasksWithGlobal is suppressed. `Cell` for the same
+    /// reason as [`Self::is_inside_deferred_task_queue`].
+    pub suppress_microtask_drain: core::cell::Cell<bool>,
 
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: bool,
@@ -638,8 +643,13 @@ impl VirtualMachine {
         VMHolder::VM.set(Some(vm));
     }
 
+    /// Returns `&'static` so callers can hold the global across `&mut self`
+    /// reborrows (`JSGlobalObject` is a separate JSC heap allocation, so no
+    /// overlap with `VirtualMachine` storage). Same `'static`-on-the-JS-thread
+    /// contract as [`JSGlobalObject::bun_vm`] — the global lives for the VM
+    /// lifetime, and the VM is the per-thread singleton.
     #[inline]
-    pub fn global(&self) -> &JSGlobalObject {
+    pub fn global(&self) -> &'static JSGlobalObject {
         // SAFETY: `global` is set during init and live for the VM lifetime.
         unsafe { &*self.global }
     }
@@ -669,6 +679,15 @@ impl VirtualMachine {
         // SAFETY: `event_loop` points at a sibling field of this VM; non-null
         // after `init()`; single-JS-thread invariant per `unsafe impl Sync`.
         unsafe { &mut *self.event_loop }
+    }
+
+    /// Safe `&EventLoop` accessor — shared variant of [`Self::event_loop_mut`].
+    /// Prefer when only reading event-loop fields (queue lengths, pending
+    /// refs) to avoid minting an unnecessary `&mut`.
+    #[inline]
+    pub fn event_loop_shared(&self) -> &EventLoop {
+        // SAFETY: see `event_loop_mut`.
+        unsafe { &*self.event_loop }
     }
 
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
@@ -904,8 +923,7 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
-        // SAFETY: event_loop points at sibling field
-        let el = unsafe { &*self.event_loop };
+        let el = self.event_loop_shared();
         // SAFETY: event_loop_handle is live for the VM lifetime when set.
         let active = self
             .event_loop_handle
@@ -920,8 +938,7 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
-        // SAFETY: event_loop points at sibling field
-        let el = unsafe { &*self.event_loop };
+        let el = self.event_loop_shared();
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
@@ -2879,8 +2896,7 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:234 `getDevServerAsyncLocalStorage`.
     pub fn get_dev_server_async_local_storage(&mut self) -> JsResult<Option<JSValue>> {
         let global = self.global;
-        // SAFETY: `global` is valid for VM lifetime.
-        let global_ref = unsafe { &*global };
+        let global_ref = self.global();
         let jsvalue = jsc::from_js_host_call(global_ref, || unsafe {
             Bake__getAsyncLocalStorage(global)
         })?;
@@ -3219,10 +3235,9 @@ impl VirtualMachine {
             crate::js_promise::Status::Rejected => {
                 if self.pending_internal_promise_reported_at != self.hot_reload_counter {
                     self.pending_internal_promise_reported_at = self.hot_reload_counter;
-                    // PORT NOTE: reshaped for borrowck — capture raw before &mut self call.
-                    let global = self.global;
-                    // SAFETY: `global` valid for VM lifetime.
-                    let global_ref = unsafe { &*global };
+                    // `global()` is `&'static`, so it survives the `&mut self`
+                    // call below.
+                    let global_ref = self.global();
                     // SAFETY: `promise` is a live JSC heap cell.
                     let result = unsafe { (*promise).result(global_ref.vm()) };
                     let promise_js = JSValue::from_cell(promise);
@@ -4270,10 +4285,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_side_effects: bool,
     ) {
-        // SAFETY: `self.global` is valid for VM lifetime.
-        // SAFETY: `global` is set during init; lifetime detached so `&mut self`
-        // can be reborrowed for `print_errorlike_object` below.
-        let mut formatter = crate::console_object::Formatter::new(unsafe { &*self.global });
+        let mut formatter = crate::console_object::Formatter::new(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -4556,9 +4568,7 @@ impl VirtualMachine {
         // post-print stack/exception_list block at the tail instead of via a
         // drop guard (the body has no early-`?` returns once the AggregateError
         // branch is taken).
-        let global = self.global;
-        // SAFETY: `global` valid for VM lifetime.
-        let global_ref = unsafe { &*global };
+        let global_ref = self.global();
 
         if value.is_aggregate_error(global_ref) {
             // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
@@ -4770,8 +4780,7 @@ impl VirtualMachine {
         global_object: &JSGlobalObject,
         exception: &Exception,
     ) -> JSValue {
-        // SAFETY: per-thread VM.
-        let jsc_vm = unsafe { &mut *global_object.bun_vm_ptr() };
+        let jsc_vm = global_object.bun_vm().as_mut();
         let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
         JSValue::UNDEFINED
     }
@@ -4929,12 +4938,9 @@ impl VirtualMachine {
         source_code_slice: &mut Option<bun_string::ZigStringSlice>,
         allow_source_code_preview: bool,
     ) {
-        // NOTE: cannot use `self.global()` — its return borrows `&self`, but the
-        // body below needs `&mut self` (Tail guard, source-map resolution) while
-        // `global` stays live. Raw-deref the field so the borrow is on the
-        // pointee (VM-lifetime) instead.
-        // SAFETY: `global` valid for VM lifetime.
-        let global = unsafe { &*self.global };
+        // `global()` returns `&'static`, so the borrow detaches from `&self`
+        // and survives the `&mut self` reborrows below.
+        let global = self.global();
         error_instance.to_zig_exception(global, exception);
         let mut enable_source_code_preview = allow_source_code_preview
             && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
@@ -5268,11 +5274,7 @@ impl VirtualMachine {
         allow_side_effects: bool,
         allow_ansi_color: bool,
     ) -> Result<(), bun_core::Error> {
-        // SAFETY: `global` valid for VM lifetime.
-        let mut default_formatter =
-            // SAFETY: `global` set during init; lifetime detached so
-            // `&mut self` can be reborrowed below.
-            crate::console_object::Formatter::new(unsafe { &*self.global });
+        let mut default_formatter = crate::console_object::Formatter::new(self.global());
         let f = formatter.unwrap_or(&mut default_formatter);
         self.print_error_instance_body(
             zig_exception,
@@ -5507,10 +5509,8 @@ impl VirtualMachine {
         // NOTE: cannot use `self.global()` — `global_ref` outlives a
         // `&mut self` recursion (`print_error_instance_js`) and is passed to
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
-        // borrow. Raw-deref the field so the borrow is on the pointee instead.
-        // SAFETY: `self.global` valid for VM lifetime; lifetime detached so
-        // `&mut self` can be reborrowed for `print_error_instance_js` below.
-        let global_ref = unsafe { &*self.global };
+        // borrow. `global()` returns `&'static` so the borrow detaches.
+        let global_ref = self.global();
         // PORT NOTE: Zig keeps a borrowed `[]const u8` whose backing
         // `bun.String` is `defer .deref()`-ed; hold the owning `bun_string::String`
         // alongside the slice so the latin1 view stays live for this fn.

@@ -3846,77 +3846,34 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
-        // Dispatch to the loop that *owns* `BundleV2` (Zig: `switch (this.loop().*)`).
-        // For `Bun.build` this is a Mini loop running on the bundler thread, so
-        // `on_load` must land there — not on the JS plugin loop — or it will
-        // mutate `graph` / allocate from `graph.heap` off-thread.
-        let any_loop = self
-            .r#loop()
-            .expect("BundleV2.linker.loop must be set before plugins run");
-        // SAFETY: BACKREF — `any_loop` outlives this bundle pass.
-        match unsafe { &mut *any_loop.as_ptr() } {
-            bun_event_loop::AnyEventLoop::Js { owner } => {
-                // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
-                unsafe {
-                    bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
-                        *owner,
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                            std::ptr::from_mut(load),
-                            on_load_from_js_loop_raw,
-                        ),
-                    );
-                }
-            }
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
+        // CYCLEBREAK GENUINE: `linker.r#loop` is an erased `Option<NonNull<()>>`;
+        // the Js/Mini discriminant is owned by T6. With a JS completion task we
+        // can route through its event loop; otherwise (CLI/Mini) call inline.
+        if self.completion.is_some() {
+            self.enqueue_on_js_loop_for_plugins(
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                     std::ptr::from_mut(load),
-                    on_load_mini,
-                    core::mem::offset_of!(jsc_api::JSBundler::Load, task),
-                );
-            }
+                    on_load_from_js_loop_raw,
+                ),
+            );
+        } else {
+            Self::on_load(load, self);
         }
     }
 
     pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
-        // See `on_load_async` — must dispatch on the bundler's own loop.
-        let any_loop = self
-            .r#loop()
-            .expect("BundleV2.linker.loop must be set before plugins run");
-        // SAFETY: BACKREF — `any_loop` outlives this bundle pass.
-        match unsafe { &mut *any_loop.as_ptr() } {
-            bun_event_loop::AnyEventLoop::Js { owner } => {
-                // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
-                unsafe {
-                    bun_event_loop::any_event_loop::js::enqueue_task_concurrent(
-                        *owner,
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                            std::ptr::from_mut(resolve),
-                            on_resolve_from_js_loop_raw,
-                        ),
-                    );
-                }
-            }
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
+        // CYCLEBREAK GENUINE: see `on_load_async`.
+        if self.completion.is_some() {
+            self.enqueue_on_js_loop_for_plugins(
+                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                     std::ptr::from_mut(resolve),
-                    on_resolve_mini,
-                    core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
-                );
-            }
+                    on_resolve_from_js_loop_raw,
+                ),
+            );
+        } else {
+            Self::on_resolve(resolve, self);
         }
     }
-}
-
-fn on_load_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
-    // SAFETY: callback contract — `load` is the ctx passed to
-    // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
-    // mini loop's `tick` supplies as ParentContext.
-    BundleV2::on_load(unsafe { &mut *load }, unsafe { &mut *this });
-}
-
-fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
-    // SAFETY: see `on_load_mini`.
-    BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
 }
 
 pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {

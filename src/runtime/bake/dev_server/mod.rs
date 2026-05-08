@@ -468,14 +468,14 @@ impl HotReloadEvent {
                         };
                         it = next;
 
-                        // SAFETY: `source_file_path` is a live IncrementalGraph key slice
-                        // (BORROWED per `Dep` doc); `specifier` points into the dep's owned
-                        // `Box<[u8]>`, neither of which is mutated until after `resolve` returns.
+                        // `specifier` points into the dep's owned `Box<[u8]>`, which is
+                        // not mutated until after `resolve` returns.
+                        // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
                         let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    unsafe { &*source_file_path },
+                                    source_file_path.slice(),
                                 ),
                                 unsafe { &*specifier },
                                 bun_options_types::ImportKind::Stmt,
@@ -488,8 +488,7 @@ impl HotReloadEvent {
                             // cached, anyways.
                             // PORT NOTE: inlined `append_file` body for disjoint borrow
                             // (`self.dirs.keys()` is held immutably across this loop).
-                            // SAFETY: server_graph keys not mutated between lookup and here.
-                            bun_core::handle_oom(self.files.get_or_put(unsafe { &*source_file_path }));
+                            bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
                             // rebuild a new linked list for unaffected files
@@ -1066,10 +1065,11 @@ pub mod directory_watch_store {
     pub struct Dep {
         pub next: Option<u32>,
         /// The file used. BORROWED slice into `IncrementalGraph.bundled_files`
-        /// key storage; compared by *pointer identity* (Zig: `dep.source_file_path.ptr == file_path.ptr`).
-        // SAFETY: lifetime tied to `IncrementalGraph` key storage; cleared via
-        // `removeDependenciesForFile` before the graph frees the key.
-        pub source_file_path: *const [u8],
+        /// key storage; compared by *pointer identity* (Zig:
+        /// `dep.source_file_path.ptr == file_path.ptr`). The graph calls
+        /// `removeDependenciesForFile` before freeing the key, so the slice
+        /// outlives every read — `RawSlice` invariant.
+        pub source_file_path: bun_ptr::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
         pub specifier: Box<[u8]>,
     }
@@ -1077,7 +1077,7 @@ pub mod directory_watch_store {
         fn default() -> Self {
             Dep {
                 next: None,
-                source_file_path: std::ptr::from_ref::<[u8]>(&[]),
+                source_file_path: bun_ptr::RawSlice::EMPTY,
                 specifier: Box::default(),
             }
         }
@@ -1276,7 +1276,7 @@ impl DirectoryWatchStore {
         // SAFETY: `dev` is the heap-allocated DevServer; `graph_safety_lock` is
         // disjoint from `directory_watchers`. RAII guard unlocks on drop.
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
-        let owned_file_path: *const [u8] = match renderer {
+        let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => unsafe { &mut (*dev).client_graph }
                 .insert_empty(import_source, FileKind::Unknown)?
                 .key,
@@ -1298,7 +1298,7 @@ impl DirectoryWatchStore {
     fn insert(
         &mut self,
         dir_name_to_watch: &[u8],
-        file_path: *const [u8],
+        file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
@@ -1311,8 +1311,7 @@ impl DirectoryWatchStore {
             DevServer,
             "DirectoryWatchStore.insert({}, {}, {})",
             bun_core::fmt::quote(dir_name_to_watch),
-            // SAFETY: file_path is a live IncrementalGraph key slice.
-            bun_core::fmt::quote(unsafe { &*file_path }),
+            bun_core::fmt::quote(file_path.slice()),
             bun_core::fmt::quote(specifier),
         );
 
@@ -1484,10 +1483,10 @@ impl DirectoryWatchStore {
             let mut it: Option<u32> = Some(self.watches.values()[watch_index].first_dep);
             while let Some(index) = it {
                 let dep_next = self.dependencies[index as usize].next;
-                let dep_ptr = self.dependencies[index as usize].source_file_path;
+                let dep_path = self.dependencies[index as usize].source_file_path;
                 it = dep_next;
-                // SAFETY: `source_file_path` is a raw fat ptr stored for identity comparison only.
-                if unsafe { (*dep_ptr).as_ptr() } == file_path.as_ptr() {
+                // Pointer-identity comparison (Zig: `dep.source_file_path.ptr == file_path.ptr`).
+                if dep_path.slice().as_ptr() == file_path.as_ptr() {
                     self.free_dependency_index(index);
                 } else {
                     self.dependencies[index as usize].next = new_chain;

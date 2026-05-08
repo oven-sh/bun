@@ -267,12 +267,12 @@ impl FilterSet {
 }
 
 pub struct PackageFilterIterator {
-    // TODO(port): lifetime — `patterns` and `root_dir` borrow from the caller in Zig. Phase-A
-    // rule forbids struct lifetimes; stored as raw slices, callers must keep them alive for the
-    // iterator's lifetime. Revisit in Phase B (likely `<'a>` on the struct).
-    patterns: *const [Box<[u8]>],
+    // `patterns` and `root_dir` borrow from the caller (Zig: `[]const u8`).
+    // Callers keep them alive for the iterator's lifetime — `RawSlice`
+    // invariant. Revisit in Phase B (likely `<'a>` on the struct).
+    patterns: bun_ptr::RawSlice<Box<[u8]>>,
     pattern_idx: usize,
-    root_dir: *const [u8],
+    root_dir: bun_ptr::RawSlice<u8>,
 
     walker: MaybeUninit<GlobWalker>,
     iter: MaybeUninit<GlobWalkerIterator>,
@@ -284,10 +284,10 @@ impl PackageFilterIterator {
     pub fn init(patterns: &[Box<[u8]>], root_dir: &[u8]) -> Result<PackageFilterIterator, bun_core::Error> {
         // TODO(port): narrow error set (Zig signature was `!PackageFilterIterator` but body is infallible)
         Ok(PackageFilterIterator {
-            // SAFETY: caller keeps `patterns`/`root_dir` alive for the iterator's lifetime (see TODO above).
-            patterns: std::ptr::from_ref::<[Box<[u8]>]>(patterns),
+            // Caller keeps `patterns`/`root_dir` alive for the iterator's lifetime — `RawSlice` invariant.
+            patterns: bun_ptr::RawSlice::new(patterns),
             pattern_idx: 0,
-            root_dir: std::ptr::from_ref::<[u8]>(root_dir),
+            root_dir: bun_ptr::RawSlice::new(root_dir),
             walker: MaybeUninit::uninit(),
             iter: MaybeUninit::uninit(),
             valid: false,
@@ -313,12 +313,11 @@ impl PackageFilterIterator {
 
     fn init_walker(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        // SAFETY: pattern_idx < patterns.len() checked by caller; patterns slice kept alive by caller.
-        let pattern: &[u8] = unsafe { &(&*self.patterns)[self.pattern_idx] };
+        // pattern_idx < patterns.len() checked by caller.
+        let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
         // PERF(port): Zig created an `ArenaAllocator` here and handed it to the walker (which takes
         // ownership). bun_glob's Rust API copies `pattern`/`cwd` internally.
-        // SAFETY: root_dir slice kept alive by caller.
-        let cwd: &[u8] = unsafe { &*self.root_dir };
+        let cwd: &[u8] = self.root_dir.slice();
         // `try (try ...).unwrap()`: outer `?` is the Zig `!`, inner converts `Maybe(Self)` to `!Self`.
         let walker = GlobWalker::init_with_cwd(
             pattern,

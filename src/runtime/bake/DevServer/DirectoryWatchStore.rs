@@ -141,7 +141,7 @@ impl DirectoryWatchStore {
         let dev = self.owner();
         // TODO(port): graph_safety_lock — assuming RAII guard semantics in Rust port.
         let _guard = dev.graph_safety_lock.lock();
-        let owned_file_path: *const [u8] = match renderer {
+        let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             BakeGraph::Client => {
                 dev.client_graph
                     .insert_empty(import_source, dev_server::FileKind::Unknown)?
@@ -167,7 +167,7 @@ impl DirectoryWatchStore {
     fn insert(
         &mut self,
         dir_name_to_watch: &[u8],
-        file_path: *const [u8],
+        file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
     ) -> Result<(), InsertError> {
         debug_assert!(!specifier.is_empty());
@@ -176,8 +176,7 @@ impl DirectoryWatchStore {
         // not overlap subsequent self.* field accesses (Zig has no borrowck here).
         let dev: *mut DevServer = self.owner();
 
-        // SAFETY: file_path is a live IncrementalGraph key slice for the duration of this call.
-        let file_path_slice = unsafe { &*file_path };
+        let file_path_slice = file_path.slice();
         bun_output::scoped_log!(
             DevServer,
             "DirectoryWatchStore.insert({}, {}, {})",
@@ -418,10 +417,10 @@ impl DirectoryWatchStore {
             let mut it: Option<DepIndex> = Some(self.watches.values()[watch_index].first_dep);
             while let Some(index) = it {
                 let dep_next = self.dependencies[index.get()].next;
-                let dep_ptr = self.dependencies[index.get()].source_file_path;
+                let dep_path = self.dependencies[index.get()].source_file_path;
                 it = dep_next;
-                // SAFETY: source_file_path is a raw fat ptr stored for identity comparison only.
-                if unsafe { (*dep_ptr).as_ptr() } == file_path.as_ptr() {
+                // Pointer-identity comparison (Zig: `dep.source_file_path.ptr == file_path.ptr`).
+                if dep_path.slice().as_ptr() == file_path.as_ptr() {
                     // Zig: bun.handleOom(store.freeDependencyIndex(...))
                     self.free_dependency_index(index).expect("OOM");
                 } else {
@@ -476,11 +475,11 @@ impl Default for Entry {
 
 pub struct Dep {
     pub next: Option<DepIndex>,
-    /// The file used
-    // TODO(port): lifetime — borrowed from IncrementalGraph.bundled_files key;
-    // compared by pointer identity. Stored as raw fat ptr to avoid a struct
-    // lifetime param in Phase A.
-    pub source_file_path: *const [u8],
+    /// The file used. Borrowed from `IncrementalGraph.bundled_files` key
+    /// (compared by pointer identity); the graph calls
+    /// `remove_dependencies_for_file` before freeing the key, so the slice
+    /// outlives every read — `RawSlice` invariant.
+    pub source_file_path: bun_ptr::RawSlice<u8>,
     /// The specifier that failed. Before running re-build, it is resolved for, as
     /// creating an unrelated file should not re-emit another error. Allocated memory
     pub specifier: Box<[u8]>,
@@ -491,7 +490,7 @@ impl Default for Dep {
     fn default() -> Self {
         Self {
             next: None,
-            source_file_path: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
+            source_file_path: bun_ptr::RawSlice::EMPTY,
             specifier: Box::default(),
         }
     }

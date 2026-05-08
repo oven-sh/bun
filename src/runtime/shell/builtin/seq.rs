@@ -20,9 +20,10 @@ pub struct Seq {
     start: f32,
     end: f32,
     increment: f32,
-    /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals.
-    separator: *const [u8],
-    terminator: *const [u8],
+    /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals;
+    /// argv outlives the builtin — `RawSlice` invariant.
+    separator: bun_ptr::RawSlice<u8>,
+    terminator: bun_ptr::RawSlice<u8>,
     fixed_width: bool,
 }
 
@@ -34,8 +35,8 @@ impl Default for Seq {
             start: 1.0,
             end: 1.0,
             increment: 1.0,
-            separator: std::ptr::from_ref::<[u8]>(b"\n"),
-            terminator: std::ptr::from_ref::<[u8]>(b""),
+            separator: bun_ptr::RawSlice::new(b"\n"),
+            terminator: bun_ptr::RawSlice::EMPTY,
             fixed_width: false,
         }
     }
@@ -64,12 +65,12 @@ impl Seq {
                 let next = Builtin::of(interp, cmd).args_slice()[idx];
                 // SAFETY: argv entries are NUL-terminated.
                 let bytes = unsafe { CStr::from_ptr(next) }.to_bytes();
-                Self::state_mut(interp, cmd).separator = std::ptr::from_ref::<[u8]>(bytes);
+                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(bytes);
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-s") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).separator = &raw const arg[2..];
+                Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(&arg[2..]);
                 idx += 1;
                 continue;
             }
@@ -81,12 +82,12 @@ impl Seq {
                 let next = Builtin::of(interp, cmd).args_slice()[idx];
                 // SAFETY: argv entries are NUL-terminated.
                 let bytes = unsafe { CStr::from_ptr(next) }.to_bytes();
-                Self::state_mut(interp, cmd).terminator = std::ptr::from_ref::<[u8]>(bytes);
+                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(bytes);
                 idx += 1;
                 continue;
             }
             if arg.starts_with(b"-t") && arg.len() > 2 {
-                Self::state_mut(interp, cmd).terminator = &raw const arg[2..];
+                Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(&arg[2..]);
                 idx += 1;
                 continue;
             }
@@ -176,21 +177,17 @@ impl Seq {
         // number directly when !needs_io; we buffer once for simplicity.
         let (start, end, incr, sep, term) = {
             let me = Self::state_mut(interp, cmd);
-            // SAFETY: separator/terminator borrow argv (outlives the builtin)
-            // or are 'static literals.
-            (me.start, me.end, me.increment, unsafe { &*me.separator }, unsafe {
-                &*me.terminator
-            })
+            (me.start, me.end, me.increment, me.separator, me.terminator)
         };
         let mut out = Vec::new();
         let mut current = start;
         while if incr > 0.0 { current <= end } else { current >= end } {
             // TODO(port): verify Rust `{}` f32 formatting matches Zig `{d}`.
             let _ = write!(&mut out, "{}", current);
-            out.extend_from_slice(sep);
+            out.extend_from_slice(sep.slice());
             current += incr;
         }
-        out.extend_from_slice(term);
+        out.extend_from_slice(term.slice());
 
         Self::state_mut(interp, cmd).state = State::Done;
         if needs_io {

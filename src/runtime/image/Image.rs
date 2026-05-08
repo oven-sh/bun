@@ -728,7 +728,7 @@ impl Image {
                             // unpinned in `then()` via `Input::release()`.
                             let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
                             Ok(Input {
-                                bytes: std::ptr::from_ref::<[u8]>(bytes),
+                                bytes: bun_ptr::RawSlice::new(bytes),
                                 pinned: v,
                                 ..Default::default()
                             })
@@ -739,7 +739,7 @@ impl Image {
             }
             // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
             // Strong while pending_tasks > 0 (see `schedule()`).
-            Source::Owned(b) => Ok(Input { bytes: std::ptr::from_ref::<[u8]>(b.as_slice()), ..Default::default() }),
+            Source::Owned(b) => Ok(Input { bytes: bun_ptr::RawSlice::new(b.as_slice()), ..Default::default() }),
             Source::Path(p) => Ok(Input { path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())), ..Default::default() }),
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
@@ -1331,9 +1331,9 @@ pub struct PipelineTask<'a> {
 /// Bytes for the worker. `.pinned` is the JS ArrayBuffer/view to unpin in
 /// `then()` — `.zero` for owned/path sources (nothing to unpin).
 pub struct Input {
-    // TODO(port): lifetime — borrows pinned ArrayBuffer or `image.source.owned`;
-    // raw `*const [u8]` because the owning `Image` is held via BACKREF.
-    bytes: *const [u8],
+    // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
+    // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
+    bytes: bun_ptr::RawSlice<u8>,
     // TODO(port): lifetime — borrows `image.source.path` (NUL-terminated).
     path: Option<*const ZStr>,
     /// JS value to `unpinArrayBuffer` in `then()`. `.zero` for sources
@@ -1346,7 +1346,7 @@ pub struct Input {
 impl Default for Input {
     fn default() -> Self {
         Self {
-            bytes: std::ptr::from_ref::<[u8]>(&[]),
+            bytes: bun_ptr::RawSlice::EMPTY,
             path: None,
             pinned: JSValue::ZERO,
             copied: None,
@@ -1359,8 +1359,7 @@ impl Input {
         if let Some(c) = &self.copied {
             return c.as_slice();
         }
-        // SAFETY: see field doc — pinned/owned for the task's lifetime.
-        unsafe { &*self.bytes }
+        self.bytes.slice()
     }
     fn release(mut self) {
         if !self.pinned.is_empty() {

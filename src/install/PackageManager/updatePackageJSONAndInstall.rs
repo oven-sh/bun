@@ -407,6 +407,17 @@ fn update_package_json_and_install_with_manager_with_updates(
     // must store an *owning* copy to avoid a dangling borrow. PERF(port): one extra
     // alloc+copy vs Zig's single dupe — profile in Phase B.
     current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
+    // PORT NOTE: Zig edited `current_package_json.root` in place above; we edited a
+    // promoted T4 copy (`current_package_json_root`). Re-parse the printed source so
+    // the cached T2 AST (consumed by `FolderResolver` for workspace members during
+    // `install_with_manager`) reflects the new dependency list.
+    if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
+        Output::pretty_errorln(format_args!(
+            "package.json failed to parse due to error {}",
+            err.name(),
+        ));
+        Global::crash();
+    }
 
     // may or may not be the package json we are editing
     let top_level_dir_without_trailing_slash =

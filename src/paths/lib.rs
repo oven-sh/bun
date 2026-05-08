@@ -479,14 +479,28 @@ pub mod fs {
             INSTANCE.get().unwrap()
         }
 
+        /// Zig has a single mutable `Fs.FileSystem.instance.top_level_dir` that
+        /// `PackageManager.init` reassigns after walking up to the workspace
+        /// root. The port split that global across tiers; the canonical
+        /// writable storage lives in `bun_core::TOP_LEVEL_DIR` (updated by
+        /// `bun_resolver::FileSystem::set_top_level_dir`). Delegate the read
+        /// there so `Path::init_top_level_dir` observes the post-chdir value
+        /// instead of the `OnceLock` snapshot taken at process start.
         #[inline]
         pub fn top_level_dir(&self) -> &[u8] {
-            self.top_level_dir.as_bytes()
+            let d = bun_core::top_level_dir();
+            // Fallback to the seeded value only if `bun_core` was never set
+            // (unit tests that init this module directly).
+            if d == b"." {
+                self.top_level_dir.as_bytes()
+            } else {
+                d
+            }
         }
 
         /// Zig: `topLevelDirWithoutTrailingSlash`.
         pub fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
-            let d = self.top_level_dir.as_bytes();
+            let d = self.top_level_dir();
             if d.len() > 1 && d.last() == Some(&crate::SEP) {
                 &d[..d.len() - 1]
             } else {

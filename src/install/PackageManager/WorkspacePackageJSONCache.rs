@@ -52,6 +52,25 @@ impl Default for MapEntry {
     }
 }
 
+impl MapEntry {
+    /// Re-parse `self.source.contents` into `self.root`.
+    ///
+    /// PORT NOTE: Zig's `updatePackageJSONAndInstall` edits `current_package_json.root`
+    /// in place (single `js_ast.Expr` type), so the cached AST observed by
+    /// `FolderResolver` for workspace members reflects the pre-install edits.
+    /// In Rust the editor operates on a higher-tier `bun_js_parser::Expr` copy
+    /// (see PORT NOTE (layering) at the conversion site), leaving this T2
+    /// `root` stale. After writing the printed JSON back into `source.contents`
+    /// the caller invokes this to restore the Zig invariant `root == parse(source)`.
+    pub fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
+        let json_bump = bun_alloc::Arena::new();
+        let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
+        self.root = bun_core::handle_oom(parsed.root.deep_clone());
+        self.json_arena = json_bump;
+        Ok(())
+    }
+}
+
 pub type Map = StringHashMap<MapEntry>;
 
 // PORT NOTE: Zig `JSON.parsePackageJSONUTF8WithOpts` takes `comptime opts:

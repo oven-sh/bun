@@ -1641,9 +1641,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
                 }
-                if let Some(mut sb) = nprop.class_static_block {
-                    // SAFETY: arena-owned.
-                    let sb = unsafe { sb.as_mut() };
+                if let Some(sb) = nprop.class_static_block_mut() {
                     p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
                 }
             }

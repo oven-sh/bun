@@ -871,6 +871,18 @@ impl Rope {
         self.next = rope;
         Ok(rope)
     }
+
+    /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
+    /// the pointee is a bump allocation valid until arena reset. Centralises
+    /// the one `unsafe` so the `set_rope`/`get_or_put_*`/`get_rope` walkers
+    /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
+    #[inline]
+    pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
+        // SAFETY: `next` is either null or a bump-arena allocation valid until
+        // arena reset (Zig: `?*Rope`). Read-only borrow; no `&mut` alias is
+        // outstanding at any caller (the chain is fully built before walking).
+        unsafe { self.next.cast_const().as_ref() }
+    }
 }
 
 // thiserror is not a dep of this crate; hand-roll Error+Display.
@@ -966,22 +978,20 @@ impl Object {
         if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::ast::expr::Data::EArray(mut array) => {
-                    if rope.next.is_null() {
+                    let Some(next) = rope.next_ref() else {
                         return Err(SetError::Clobber);
-                    }
+                    };
                     if let Some(last) = array.items.last() {
                         if let crate::ast::expr::Data::EObject(mut obj) = last.data {
-                            // SAFETY: rope.next is non-null (checked above) and arena-owned.
-                            return obj.get_or_put_object(unsafe { &*rope.next }, _bump);
+                            return obj.get_or_put_object(next, _bump);
                         }
                         return Err(SetError::Clobber);
                     }
                     return Err(SetError::Clobber);
                 }
                 crate::ast::expr::Data::EObject(mut object) => {
-                    if !rope.next.is_null() {
-                        // SAFETY: rope.next is non-null and arena-owned.
-                        return object.get_or_put_object(unsafe { &*rope.next }, _bump);
+                    if let Some(next) = rope.next_ref() {
+                        return object.get_or_put_object(next, _bump);
                     }
                     return Ok(existing);
                 }
@@ -989,12 +999,11 @@ impl Object {
             }
         }
 
-        if !rope.next.is_null() {
+        if let Some(next) = rope.next_ref() {
             let obj = Expr::init(Object::default(), rope.head.loc);
-            // SAFETY: rope.next is non-null and arena-owned.
             let out = match obj.data {
                 crate::ast::expr::Data::EObject(mut o) => {
-                    o.get_or_put_object(unsafe { &*rope.next }, _bump)?
+                    o.get_or_put_object(next, _bump)?
                 }
                 _ => unreachable!(),
             };
@@ -1056,20 +1065,19 @@ impl Object {
         if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::ast::expr::Data::EArray(mut array) => {
-                    if rope.next.is_null() {
+                    let Some(next) = rope.next_ref() else {
                         array.push(bump, value)?;
                         return Ok(());
-                    }
+                    };
 
                     if let Some(last) = array.items.last_mut() {
                         if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
                             return Err(SetError::Clobber);
                         }
-                        // SAFETY: rope.next is non-null (checked above) and arena-owned.
                         last.data
                             .e_object_mut()
                             .unwrap()
-                            .set_rope(unsafe { &*rope.next }, bump, value)?;
+                            .set_rope(next, bump, value)?;
                         return Ok(());
                     }
 
@@ -1077,9 +1085,8 @@ impl Object {
                     return Ok(());
                 }
                 crate::ast::expr::Data::EObject(mut object) => {
-                    if !rope.next.is_null() {
-                        // SAFETY: rope.next is non-null and arena-owned.
-                        object.set_rope(unsafe { &*rope.next }, bump, value)?;
+                    if let Some(next) = rope.next_ref() {
+                        object.set_rope(next, bump, value)?;
                         return Ok(());
                     }
 
@@ -1092,13 +1099,12 @@ impl Object {
         }
 
         let mut value_ = value;
-        if !rope.next.is_null() {
+        if let Some(next) = rope.next_ref() {
             let mut obj = Expr::init(Object::default(), rope.head.loc);
-            // SAFETY: rope.next is non-null and arena-owned.
             obj.data
                 .e_object_mut()
                 .unwrap()
-                .set_rope(unsafe { &*rope.next }, bump, value)?;
+                .set_rope(next, bump, value)?;
             value_ = obj;
         }
 
@@ -1122,30 +1128,28 @@ impl Object {
         if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::ast::expr::Data::EArray(mut array) => {
-                    if rope.next.is_null() {
+                    let Some(next) = rope.next_ref() else {
                         return Ok(existing);
-                    }
+                    };
 
                     if let Some(last) = array.items.last_mut() {
                         if !matches!(last.data, crate::ast::expr::Data::EObject(_)) {
                             return Err(SetError::Clobber);
                         }
-                        // SAFETY: rope.next is non-null (checked above) and arena-owned.
                         return last
                             .data
                             .e_object_mut()
                             .unwrap()
-                            .get_or_put_array(unsafe { &*rope.next }, bump);
+                            .get_or_put_array(next, bump);
                     }
 
                     return Err(SetError::Clobber);
                 }
                 crate::ast::expr::Data::EObject(mut object) => {
-                    if rope.next.is_null() {
+                    let Some(next) = rope.next_ref() else {
                         return Err(SetError::Clobber);
-                    }
-                    // SAFETY: rope.next is non-null and arena-owned.
-                    return object.get_or_put_array(unsafe { &*rope.next }, bump);
+                    };
+                    return object.get_or_put_array(next, bump);
                 }
                 _ => {
                     return Err(SetError::Clobber);
@@ -1153,14 +1157,13 @@ impl Object {
             }
         }
 
-        if !rope.next.is_null() {
+        if let Some(next) = rope.next_ref() {
             let mut obj = Expr::init(Object::default(), rope.head.loc);
-            // SAFETY: rope.next is non-null and arena-owned.
             let out = obj
                 .data
                 .e_object_mut()
                 .unwrap()
-                .get_or_put_array(unsafe { &*rope.next }, bump)?;
+                .get_or_put_array(next, bump)?;
             VecExt::append(&mut self.properties, G::Property {
                 key: Some(rope.head),
                 value: Some(obj),

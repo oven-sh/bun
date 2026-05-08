@@ -2881,28 +2881,37 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     fn hoist_symbols(&mut self, scope: *mut js_ast::Scope) {
         // SAFETY: scope is arena-owned and valid for the parser 'a lifetime; the
-        // visit pass is single-threaded so no aliasing &mut is outstanding.
-        if !unsafe { &*scope }.kind_stops_hoisting() {
+        // visit pass is single-threaded so no aliasing &mut is outstanding. Read
+        // the immutable bits we need (kind/parent/strict_mode/members snapshot)
+        // through a single shared borrow up front; the only later access to
+        // `*scope` is the `&mut (*scope).generated` push and the post-loop
+        // `children` walk, each re-derived from the raw pointer so no `&` is
+        // live across the `&mut`.
+        let scope_ref = unsafe { &*scope };
+        if !scope_ref.kind_stops_hoisting() {
             let arena = self.arena;
             // PORT NOTE: Zig captured `var symbols = p.symbols.items;` and asserted it
             // wasn't resized; we re-borrow `self.symbols` after each `new_symbol` call.
 
             // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
-            if let Some(scope_parent) = unsafe { &*scope }.parent {
+            if let Some(scope_parent) = scope_ref.parent {
+                let scope_strict_mode = scope_ref.strict_mode;
                 // PORT NOTE: reshaped for borrowck — Zig iterated `scope.members` while
                 // pushing to `scope.generated` and inserting into ancestor scopes' members.
                 // The loop never inserts into `scope.members` itself (only ancestors), so
                 // snapshotting `(name_ptr, Member)` pairs up front is semantically identical
                 // and lets us re-borrow `*scope` mutably inside the body.
                 let member_snapshot: BumpVec<'a, (js_ast::StoreStr, js_ast::scope::Member)> = {
-                    // SAFETY: see above.
-                    let members = &unsafe { &*scope }.members;
+                    let members = &scope_ref.members;
                     let mut v = BumpVec::with_capacity_in(members.count(), arena);
                     for (k, m) in members.iter() {
                         v.push((js_ast::StoreStr::new(k.as_ref()), *m));
                     }
                     v
                 };
+                // `scope_ref` must not outlive the `&mut *scope` write inside the loop
+                // (Stacked Borrows): drop the shared borrow now and re-derive per use.
+                let _ = scope_ref;
 
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
                     let mut symbol_idx = value.ref_.inner_index() as usize;
@@ -2944,8 +2953,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                     if self.will_use_renamer() && self.symbols[symbol_idx].kind == js_ast::symbol::Kind::HoistedFunction {
                         // Block-level function declarations behave like "let" in strict mode
-                        // SAFETY: see above.
-                        if unsafe { &*scope }.strict_mode != js_ast::StrictModeKind::SloppyMode {
+                        if scope_strict_mode != js_ast::StrictModeKind::SloppyMode {
                             continue;
                         }
 
@@ -4987,8 +4995,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // arena-owned `StoreSlice<Property>` valid for parser 'a; no aliasing &mut outstanding
         for property in class.properties.iter() {
             if property.kind == js_ast::g::PropertyKind::ClassStaticBlock {
-                // SAFETY: arena-owned ClassStaticBlock valid for 'a.
-                let csb = unsafe { property.class_static_block.unwrap().as_ref() };
+                let csb = property.class_static_block_ref().unwrap();
                 if !self.stmts_can_be_removed_if_unused_without_dce_check(csb.stmts.slice()) {
                     return false;
                 }
@@ -5956,11 +5963,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         use js_ast::g::PropertyKind;
         match stmtorexpr {
             js_ast::StmtOrExpr::Stmt(stmt) => {
-                // SAFETY: every call site is the visitStmt s_class branch.
-                let s_class_ptr: *mut S::Class = stmt.data.s_class().unwrap().as_ptr();
+                // Every call site is the visitStmt s_class branch. `StoreRef` gives us
+                // safe `Deref`/`DerefMut` into the arena-owned `S::Class`; each access
+                // below materialises a fresh short-lived borrow, so the `&mut self`
+                // helper calls in between never overlap an outstanding `&mut G::Class`.
+                let mut s_class: crate::ast::StoreRef<S::Class> = stmt.data.s_class().unwrap();
 
                 // Standard decorator lowering path (for both JS and TS files)
-                if unsafe { &*s_class_ptr }.class.should_lower_standard_decorators {
+                if s_class.class.should_lower_standard_decorators {
                     // PORT NOTE: Zig `lowerStandardDecoratorsStmt` returns `[]Stmt`; the
                     // round-E Rust stub takes an out-param Vec instead. Wrap to keep
                     // this function's `[]Stmt` contract.
@@ -5970,15 +5980,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 if !TYPESCRIPT {
-                    if !unsafe { &*s_class_ptr }.class.has_decorators {
+                    if !s_class.class.has_decorators {
                         return self.arena.alloc_slice_copy(&[stmt]);
                     }
                 }
-                // SAFETY: arena-owned StoreRef; parser holds exclusive access during visit.
-                // Raw ptr (re-borrowed per use) so calls to `&mut self` helpers below
-                // don't alias an outstanding `&mut G::Class`.
-                let class: *mut G::Class = unsafe { &raw mut (*s_class_ptr).class };
-                let mut constructor_function: Option<*mut E::Function> = None;
+                let mut constructor_function: Option<crate::ast::StoreRef<E::Function>> = None;
 
                 let mut static_decorators = BumpVec::<Stmt>::new_in(self.arena);
                 let mut instance_decorators = BumpVec::<Stmt>::new_in(self.arena);
@@ -5986,7 +5992,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
-                for prop in unsafe { (*class).properties.slice_mut() }.iter_mut() {
+                for prop in s_class.class.properties.slice_mut().iter_mut() {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = prop.value {
@@ -5995,7 +6001,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     let is_constructor = matches!(prop.key, Some(k) if matches!(k.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"constructor")));
 
                                     if is_constructor {
-                                        constructor_function = Some(func.as_ptr());
+                                        constructor_function = Some(func);
                                     }
 
                                     // arena-owned `StoreSlice<Arg>` valid for parser 'a.
@@ -6006,8 +6012,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                             let args = ExprNodeList::from_bump_slice(args);
                                             let call = self.call_runtime(arg_decorator.loc, b"__legacyDecorateParamTS", args);
                                             let decorators = if is_constructor {
-                                                // SAFETY: re-borrow arena class; no other &mut outstanding.
-                                                unsafe { &mut (*class).ts_decorators }
+                                                // `prop` borrows the (separate) properties arena
+                                                // slice, not the `S::Class` allocation, so this
+                                                // fresh `DerefMut` does not alias it.
+                                                &mut s_class.class.ts_decorators
                                             } else {
                                                 &mut prop.ts_decorators
                                             };
@@ -6034,8 +6042,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             self.new_expr(E::Null {}, loc)
                         };
 
-                        // SAFETY: re-borrow arena class.
-                        let class_name = unsafe { (*class).class_name }.unwrap();
+                        let class_name = s_class.class.class_name.unwrap();
                         let class_ref = class_name.ref_.expect("infallible: ref bound");
                         let target: Expr;
                         if prop.flags.contains(Flags::Property::IsStatic) {
@@ -6089,8 +6096,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                         let mut target: Expr;
                         if prop.flags.contains(Flags::Property::IsStatic) {
-                            // SAFETY: re-borrow arena class.
-                            let class_name = unsafe { (*class).class_name }.unwrap();
+                            let class_name = s_class.class.class_name.unwrap();
                             let class_ref = class_name.ref_.expect("infallible: ref bound");
                             self.record_usage(class_ref);
                             target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
@@ -6132,20 +6138,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     class_properties.push(core::mem::take(prop));
                 }
 
-                // SAFETY: re-borrow arena class.
-                unsafe { (*class).properties = crate::StoreSlice::new_mut(class_properties.into_bump_slice_mut()) };
+                s_class.class.properties = crate::StoreSlice::new_mut(class_properties.into_bump_slice_mut());
 
                 if !instance_members.is_empty() {
                     if constructor_function.is_none() {
                         // PORT NOTE: Zig `Property.List.fromList(class.properties)` re-wraps the
                         // freshly-installed slice and inserts at index 0. We rebuild instead
                         // (Property is not Clone in Rust).
-                        let old_props: crate::StoreSlice<G::Property> = unsafe { (*class).properties };
+                        let old_props: crate::StoreSlice<G::Property> = s_class.class.properties;
                         let old_len = old_props.len();
                         let mut properties = BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.arena);
                         let mut constructor_stmts = BumpVec::<Stmt>::new_in(self.arena);
 
-                        if unsafe { (*class).extends }.is_some() {
+                        if s_class.class.extends.is_some() {
                             let target = self.new_expr(E::Super {}, stmt.loc);
                             let arguments_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str).expect("unreachable");
                             VecExt::append(&mut self.current_scope_mut().generated, arguments_ref).expect("oom");
@@ -6187,10 +6192,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             properties.push(core::mem::take(old));
                         }
 
-                        unsafe { (*class).properties = crate::StoreSlice::new_mut(properties.into_bump_slice_mut()) };
+                        s_class.class.properties = crate::StoreSlice::new_mut(properties.into_bump_slice_mut());
                     } else {
-                        // SAFETY: arena-owned E.Function node valid for 'a.
-                        let cf = unsafe { &mut *constructor_function.unwrap() };
+                        let mut cf = constructor_function.unwrap();
                         // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
                         let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
                         let mut constructor_stmts =
@@ -6222,7 +6226,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                 let mut stmts_count: usize =
                     1 + static_members.len() + instance_decorators.len() + static_decorators.len();
-                if unsafe { (*class).ts_decorators.len_u32() } > 0 {
+                if s_class.class.ts_decorators.len_u32() > 0 {
                     stmts_count += 1;
                 }
                 let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.arena);
@@ -6230,14 +6234,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 stmts.extend_from_slice(&static_members);
                 stmts.extend_from_slice(&instance_decorators);
                 stmts.extend_from_slice(&static_decorators);
-                if unsafe { (*class).ts_decorators.len_u32() } > 0 {
-                    let mut array: Vec<Expr> = unsafe { &mut (*class).ts_decorators }.move_to_list_managed();
+                if s_class.class.ts_decorators.len_u32() > 0 {
+                    let mut array: Vec<Expr> = s_class.class.ts_decorators.move_to_list_managed();
 
                     if self.options.features.emit_decorator_metadata {
                         if let Some(cf) = constructor_function {
                             // design:paramtypes
-                            // SAFETY: arena-owned E.Function node valid for 'a.
-                            let constructor_args: &[G::Arg] = unsafe { &*cf }.func.args.slice();
+                            let constructor_args: &[G::Arg] = cf.func.args.slice();
                             let args1 = if !constructor_args.is_empty() {
                                 let param_array = self.arena.alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
@@ -6255,8 +6258,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
                     }
 
-                    // SAFETY: re-borrow arena class.
-                    let class_name = unsafe { (*class).class_name }.unwrap();
+                    let class_name = s_class.class.class_name.unwrap();
                     let class_ref = class_name.ref_.expect("infallible: ref bound");
                     let array_items = ExprNodeList::move_from_list(array);
                     let array_expr = self.new_expr(E::Array { items: array_items, ..Default::default() }, stmt.loc);

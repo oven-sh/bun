@@ -676,9 +676,7 @@ impl Expr {
         if let Some(existing) = self.get(&rope.head.data.as_e_string().unwrap().data) {
             match &existing.data {
                 Data::EArray(array) => {
-                    if !rope.next.is_null() {
-                        // SAFETY: `rope.next` is a non-null arena-owned `*mut Rope`.
-                        let next: &E::Rope = unsafe { &*rope.next };
+                    if let Some(next) = rope.next_ref() {
                         let mut array = *array;
                         if let Some(end) = array.items.last() {
                             return end.get_rope(next);
@@ -687,9 +685,7 @@ impl Expr {
                     return Some(E::RopeQuery { expr: existing, rope });
                 }
                 Data::EObject(_) => {
-                    if !rope.next.is_null() {
-                        // SAFETY: `rope.next` is a non-null arena-owned `*mut Rope`.
-                        let next: &E::Rope = unsafe { &*rope.next };
+                    if let Some(next) = rope.next_ref() {
                         if let Some(end) = existing.get_rope(next) {
                             return Some(end);
                         }

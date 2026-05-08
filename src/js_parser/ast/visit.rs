@@ -875,7 +875,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // defer { p.pop_scope(); p.enclosing_class_keyword = old_enclosing_class_keyword; }
             // — manual restore at block end below; no early returns in this block.
 
-            let mut constructor_function: Option<*mut E::Function> = None;
+            let mut constructor_function: Option<crate::ast::StoreRef<E::Function>> = None;
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
@@ -892,9 +892,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         should_replace_this_with_class_name_ref: false,
                         ..Default::default()
                     };
-                    // SAFETY: class_static_block is `Some(NonNull<ClassStaticBlock>)` here
-                    // (PropertyKind::ClassStaticBlock guarantees it); arena-owned for 'a.
-                    let csb = unsafe { property.class_static_block.unwrap().as_mut() };
+                    // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
+                    let csb = property.class_static_block_mut().unwrap();
                     self.push_scope_for_visit_pass(ScopeKind::ClassStaticInit, csb.loc)
                         .expect("unreachable");
 
@@ -952,7 +951,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.
 
-                let mut constructor_function_: Option<*mut E::Function> = None;
+                let mut constructor_function_: Option<crate::ast::StoreRef<E::Function>> = None;
 
                 let mut name_to_keep: Option<&'a [u8]> = None;
                 if is_private {
@@ -968,14 +967,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 } else if property.flags.contains(flags::Property::IsMethod) {
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if let (Some(value), Some(key)) = (property.value, property.key) {
-                            if let (ExprData::EFunction(mut e_func), ExprData::EString(e_str)) =
+                            if let (ExprData::EFunction(e_func), ExprData::EString(e_str)) =
                                 (value.data, key.data)
                             {
                                 if e_str.eql_comptime(b"constructor") {
                                     // PORT NOTE: Zig keeps a `*E.Function` into property.value's
-                                    // arena slot, then re-reads it after visit_expr overwrites the
-                                    // value below. We mirror via raw ptr.
-                                    constructor_function_ = Some(&raw mut *e_func);
+                                    // arena slot, then re-reads it after visit_expr overwrites
+                                    // the value below. `StoreRef` carries the same arena pointer.
+                                    constructor_function_ = Some(e_func);
                                     constructor_function = constructor_function_;
                                 }
                             }
@@ -1006,8 +1005,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if constructor_function_.is_some() {
                             if let Some(value) = property.value {
-                                if let ExprData::EFunction(mut e_func) = value.data {
-                                    constructor_function = Some(&raw mut *e_func);
+                                if let ExprData::EFunction(e_func) = value.data {
+                                    constructor_function = Some(e_func);
                                 }
                             }
                         }
@@ -1044,13 +1043,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // note: our version assumes useDefineForClassFields is true
             if Self::IS_TYPESCRIPT_ENABLED {
-                if let Some(constructor) = constructor_function {
-                    // SAFETY: `constructor` is a `StoreRef<E::Function>` arena slot captured
-                    // from `class.properties[i].value.data` above; arena-owned for 'a, and the
+                if let Some(mut constructor) = constructor_function {
+                    // `constructor` is a `StoreRef<E::Function>` arena slot captured from
+                    // `class.properties[i].value.data` above; arena-owned for 'a, and the
                     // per-property `&mut [Property]` borrow has been released. Moving the
                     // `Property` structs below does not invalidate this pointer (it points to
                     // a separate Store allocation, not into the Property slice itself).
-                    let func_args: crate::StoreSlice<G::Arg> = unsafe { (*constructor).func.args };
+                    let func_args: crate::StoreSlice<G::Arg> = constructor.func.args;
                     let mut to_add: usize = 0;
                     for arg in func_args.iter() {
                         if arg.is_typescript_ctor_field
@@ -1063,8 +1062,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // if this is an expression, we can move statements after super() because there will be 0 decorators
                     let mut super_index: Option<usize> = None;
                     if class.extends.is_some() {
-                        // SAFETY: see `constructor` SAFETY note above.
-                        let body_stmts = unsafe { (*constructor).func.body.stmts }.slice();
+                        let body_stmts = constructor.func.body.stmts.slice();
                         for (index, stmt) in body_stmts.iter().enumerate() {
                             let is_super = match &stmt.data {
                                 StmtData::SExpr(se) => match &se.value.data {
@@ -1085,8 +1083,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     if to_add > 0 {
                         // to match typescript behavior, we also must prepend to the class body
-                        // SAFETY: see `constructor` SAFETY note above.
-                        let old_body: &[Stmt] = unsafe { (*constructor).func.body.stmts }.slice();
+                        let old_body: &[Stmt] = constructor.func.body.stmts.slice();
                         let mut stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_body.len() + to_add,
                             self.arena,
@@ -1175,10 +1172,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         class.properties = crate::StoreSlice::from_bump(class_body);
-                        // SAFETY: see `constructor` SAFETY note at top of this block.
-                        unsafe {
-                            (*constructor).func.body.stmts = crate::StoreSlice::from_bump(stmts);
-                        }
+                        constructor.func.body.stmts = crate::StoreSlice::from_bump(stmts);
                     }
                 }
             }

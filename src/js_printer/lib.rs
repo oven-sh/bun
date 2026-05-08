@@ -2342,8 +2342,7 @@ where
             if item.kind == G::PropertyKind::ClassStaticBlock {
                 self.print(b"static");
                 self.print_space();
-                // SAFETY: arena-owned ClassStaticBlock; outlives the print pass.
-                let csb = unsafe { item.class_static_block.as_ref().unwrap().as_ref() };
+                let csb = item.class_static_block_ref().unwrap();
                 self.print_block(csb.loc, csb.stmts.slice(), None, TopLevel::init(IsTopLevel::No));
                 self.print_newline();
                 continue;

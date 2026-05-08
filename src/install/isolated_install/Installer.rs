@@ -133,7 +133,12 @@ impl<'a> Installer<'a> {
     #[allow(clippy::mut_from_ref)]
     pub fn manager_mut(&self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`. Caller must be
-        // on the main thread (only main mutates `PackageManager`).
+        // on the main thread (only main mutates `PackageManager`; `Task::run`
+        // / `Task::callback` on the pool read via the raw field, never this
+        // accessor). A `debug_assert!(is_main_thread())` is deferred until
+        // `bun_crash_handler::cli_state::set_main_thread_id` is actually
+        // wired at startup — today the sentinel is never set, so the assert
+        // would fire unconditionally.
         unsafe { &mut *self.manager }
     }
 

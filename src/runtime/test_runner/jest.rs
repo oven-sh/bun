@@ -192,11 +192,7 @@ impl<'a> TestRunner<'a> {
             return;
         }
         let _ = vm;
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "remove_active_timeout before init_runtime_state");
-        // SAFETY: per-thread `RuntimeState`; `All::remove` re-derefs the timer
-        // per-field, so no `&mut` to `active_file` is held across the call.
-        unsafe { (*state).timer.remove(&raw mut active_file.timer) };
+        bun_test::vm_timer().remove(&raw mut active_file.timer);
     }
 
     pub fn has_test_filter(&self) -> bool {

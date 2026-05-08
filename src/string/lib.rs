@@ -1868,24 +1868,11 @@ pub mod zig_string {
     }
 }
 
-/// `bun.schema.api.StringPointer` — `(offset, length)` into an external buffer.
-/// Widely used as a flat span descriptor (lockfile, HTTP headers, etc.).
-#[repr(C)]
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct StringPointer {
-    pub offset: u32,
-    pub length: u32,
-}
-
-impl StringPointer {
-    /// View into `buf[offset .. offset+length]`.
-    #[inline]
-    pub fn slice(self, buf: &[u8]) -> &[u8] {
-        &buf[self.offset as usize..self.offset as usize + self.length as usize]
-    }
-    #[inline]
-    pub fn is_empty(self) -> bool { self.length == 0 }
-}
+/// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
+/// (lowest tier); re-exported here so existing `bun_string::StringPointer`
+/// callers (FFI sigs in `bun_jsc::FetchHeaders`, lockfile, sourcemap) keep
+/// resolving.
+pub use bun_core::StringPointer;
 
 pub use path_string::PathString;
 pub use mutable_string::MutableString;

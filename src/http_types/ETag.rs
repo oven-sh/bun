@@ -99,16 +99,10 @@ pub fn if_none_match(
 //   - `to_fetch_headers`         — extension-trait in bun_http_jsc
 // ═══════════════════════════════════════════════════════════════════════
 
-/// `bun.schema.api.StringPointer` — inlined to avoid a same-tier dep on
-/// `options_types` (T3). Layout MUST match
-/// `extern struct { offset: u32, length: u32 }` (asserted in Zig:
-/// `@alignOf == @alignOf(u32)`, `@sizeOf == @sizeOf(u64)`).
-#[repr(C)]
-#[derive(Copy, Clone, Default, Debug)]
-pub struct StringPointer {
-    pub offset: u32,
-    pub length: u32,
-}
+/// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
+/// (T0, already a dep). Re-exported so `HeaderEntry`'s field type and
+/// `bun_http::headers::api::StringPointer` keep resolving.
+pub use bun_core::StringPointer;
 
 #[derive(Copy, Clone, Default)]
 pub struct HeaderEntry {

@@ -1817,6 +1817,11 @@ pub struct StringBuilder {
     pub ptr: Option<Box<[u8]>>,
 }
 
+/// `bun.schema.api.StringPointer` — `(offset, length)` span into an external
+/// buffer. Canonical definition; re-exported by `bun_string`, `bun_http_types`,
+/// and `bun_url` (formerly each had a structurally-identical copy). Layout MUST
+/// match `extern struct { offset: u32, length: u32 }` — C++ (`WebCore::FetchHeaders`)
+/// and on-disk formats (lockfile, npm manifest cache) read it directly.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct StringPointer { pub offset: u32, pub length: u32 }
@@ -1824,6 +1829,7 @@ impl StringPointer {
     #[inline] pub fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
         &buf[self.offset as usize..(self.offset + self.length) as usize]
     }
+    #[inline] pub fn is_empty(self) -> bool { self.length == 0 }
 }
 
 impl StringBuilder {

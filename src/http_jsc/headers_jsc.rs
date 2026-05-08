@@ -5,7 +5,6 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_http::Headers;
-use bun_http_types::ETag::{StringPointer as HeaderStringPointer};
 use bun_jsc::{CallFrame, FetchHeaders, JSGlobalObject, JSValue, JsResult};
 use bun_string::{StringPointer, ZigString};
 
@@ -14,8 +13,8 @@ use bun_string::{StringPointer, ZigString};
 /// PORT NOTE: `FetchHeaders` (opaque C++ handle) was moved into `bun_jsc`, so
 /// the prior dep-cycle on `bun_runtime` no longer applies. The C++ side
 /// receives raw `StringPointer` column pointers; `bun_http_types` and
-/// `bun_string` define the same `#[repr(C)] {u32 offset; u32 length}` layout,
-/// asserted below.
+/// `bun_string` both re-export the canonical `bun_core::StringPointer`, so no
+/// layout cast is needed.
 pub fn to_fetch_headers(
     this: &Headers,
     global: &JSGlobalObject,
@@ -24,22 +23,17 @@ pub fn to_fetch_headers(
     if this.entries.len() == 0 {
         return Ok(FetchHeaders::create_empty());
     }
-    // Layout parity between the two `StringPointer` newtypes (both `u32×2`).
-    const _: () = assert!(
-        core::mem::size_of::<HeaderStringPointer>() == core::mem::size_of::<StringPointer>()
-            && core::mem::align_of::<HeaderStringPointer>() == core::mem::align_of::<StringPointer>()
-    );
-    // SAFETY: column type for both fields is `HeaderStringPointer` (see
+    // SAFETY: column type for both fields is `StringPointer` (see
     // `HeaderEntry::FIELD_SIZES`); `items` returns `&[F]` over live storage.
-    let names: &[HeaderStringPointer] =
-        unsafe { this.entries.items::<"name", HeaderStringPointer>() };
-    let values: &[HeaderStringPointer] =
-        unsafe { this.entries.items::<"value", HeaderStringPointer>() };
+    let names: &[StringPointer] =
+        unsafe { this.entries.items::<"name", StringPointer>() };
+    let values: &[StringPointer] =
+        unsafe { this.entries.items::<"value", StringPointer>() };
     FetchHeaders::create(
         global,
         // PORT NOTE: C++ side reads only; cast_mut() is safe (no mutation).
-        names.as_ptr().cast_mut().cast::<StringPointer>(),
-        values.as_ptr().cast_mut().cast::<StringPointer>(),
+        names.as_ptr().cast_mut(),
+        values.as_ptr().cast_mut(),
         // Spec headers_jsc.zig:12 uses `ZigString.fromBytes` (scans for
         // non-ASCII and tags UTF-8); `init` would leave the buffer Latin-1
         // and mojibake any UTF-8 header value bytes ≥0x80.

@@ -1,9 +1,8 @@
 use bun_picohttp as picohttp;
 
-// `bun.schema.api.StringPointer` lives in bun_http_types (inlined there to
-// avoid a cross-tier dep on options_types). Same #[repr(C)] u32×2 layout.
-// Public: downstream crates (e.g. bun_install::NetworkTask) build raw `Entry`
-// records and need the field type — mirrors `bun.schema.api.StringPointer`.
+// `bun.schema.api.StringPointer` — canonical type is `bun_core::StringPointer`;
+// `bun_http_types` re-exports it. Public: downstream crates (e.g.
+// bun_install::NetworkTask) build raw `Entry` records and need the field type.
 pub mod api {
     pub use bun_http_types::ETag::StringPointer;
 }

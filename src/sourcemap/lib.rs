@@ -759,13 +759,6 @@ pub mod SerializedSourceMap {
         pub bytes: &'static [u8],
     }
 
-    // TODO(b2-blocked): bun_string::StringPointer::slice — local helper until
-    // the method lands on `StringPointer` in bun_string.
-    #[inline]
-    fn sp_slice(sp: StringPointer, buf: &[u8]) -> &[u8] {
-        &buf[sp.offset as usize..][..sp.length as usize]
-    }
-
     impl SerializedSourceMap {
         #[inline]
         pub fn header(self) -> Header {
@@ -841,7 +834,7 @@ pub mod SerializedSourceMap {
                 // pointer is into the mmapped `'static` blob. Read unaligned
                 // per Zig's `[]align(1) const StringPointer`.
                 let sp = unsafe { compressed_codes.add(index).read_unaligned() };
-                let compressed_file = sp_slice(sp, self.map.bytes);
+                let compressed_file = sp.slice(self.map.bytes);
                 let size = bun_zstd::get_decompressed_size(compressed_file);
 
                 let mut bytes = vec![0u8; size];

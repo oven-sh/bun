@@ -248,6 +248,40 @@ pub struct RunResult {
 /// is NUL-terminated, the array is NULL-terminated, and env entries are
 /// flattened to `KEY=VALUE\0`.
 pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
+    // `std.process.Child.spawnPosix` resolves `argv[0]` against `$PATH` (it
+    // calls `posix.execvpeZ_expandArg0`). `process::sync::spawn` below execs
+    // via `execve` (no PATH search), so do the lookup here. Use the *child's*
+    // env PATH — that's what Zig's expandArg0 walks.
+    let mut argv0_buf = bun_core::PathBuffer::uninit();
+    let mut argv0_storage: Option<Box<[u8]>> = None;
+    'argv0: {
+        let Some(&first) = opts.argv.first() else { break 'argv0 };
+        // Only PATH-search bare names — Zig's expandArg0 expands only when no
+        // separator is present.
+        if first.iter().any(|&b| b == b'/') {
+            break 'argv0;
+        }
+        #[cfg(windows)]
+        if first.iter().any(|&b| b == b'\\') {
+            break 'argv0;
+        }
+        let path = opts
+            .env_map
+            .get("PATH")
+            .map(|s| s.as_bytes())
+            .unwrap_or(b"");
+        let Some(resolved) = bun_which::which(&mut argv0_buf, path, b"", first) else {
+            break 'argv0;
+        };
+        // Own a NUL-terminated copy so the pointer outlives the spawn call.
+        let mut owned = Vec::with_capacity(resolved.len() + 1);
+        owned.extend_from_slice(resolved.as_bytes());
+        owned.push(0);
+        argv0_storage = Some(owned.into_boxed_slice());
+    }
+    let argv0_ptr: Option<*const c_char> =
+        argv0_storage.as_deref().map(|s| s.as_ptr().cast::<c_char>());
+
     // ── envp: HashMap<String,String> → `[*:null]?[*:0]const u8` ──
     // Own the `KEY=VALUE\0` backing storage in `env_buf`; `envp` points into it
     // and is kept alive for the duration of the `sync::spawn` call.
@@ -273,6 +307,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         stdin: process::sync::SyncStdio::Ignore,
         stdout: process::sync::SyncStdio::Buffer,
         stderr: process::sync::SyncStdio::Buffer,
+        argv0: argv0_ptr,
         ..Default::default()
     };
 

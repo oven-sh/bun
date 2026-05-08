@@ -2113,13 +2113,12 @@ impl Package<u64> {
                     match &dependencies_q.expr.data {
                         ExprData::EArray(arr) => {
                             if !group.behavior.is_workspace() {
-                                let _ = log.add_error_fmt(
+                                let _ = logger::add_error_pretty!(
+                                    log,
                                     source,
                                     dependencies_q.loc,
-                                    format_args!(
-                                        "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
-                                        bstr::BStr::new(group.prop)
-                                    ),
+                                    "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                                    bstr::BStr::new(group.prop)
                                 );
                                 return Err(bun_core::err!("InvalidPackageJSON"));
                             }
@@ -2179,14 +2178,13 @@ impl Package<u64> {
                             for item in obj.properties.slice() {
                                 let key = item.key.expect("infallible: prop has key").as_utf8().unwrap();
                                 let Some(value) = item.value.expect("infallible: prop has value").as_utf8() else {
-                                    let _ = log.add_error_fmt(
+                                    let _ = logger::add_error_pretty!(
+                                        log,
                                         source,
                                         item.value.expect("infallible: prop has value").loc,
                                         // TODO: what if we could comptime call the syntax highlighter
-                                        format_args!(
-                                            "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
-                                            bstr::BStr::new(group.prop)
-                                        ),
+                                        "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                                        bstr::BStr::new(group.prop)
                                     );
                                     return Err(bun_core::err!("InvalidPackageJSON"));
                                 };
@@ -2207,22 +2205,20 @@ impl Package<u64> {
                         }
                         _ => {
                             if group.behavior.is_workspace() {
-                                let _ = log.add_error_fmt(
+                                let _ = logger::add_error_pretty!(
+                                    log,
                                     source,
                                     dependencies_q.loc,
                                     // TODO: what if we could comptime call the syntax highlighter
-                                    format_args!(
-                                        "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
-                                    ),
+                                    "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
                                 );
                             } else {
-                                let _ = log.add_error_fmt(
+                                let _ = logger::add_error_pretty!(
+                                    log,
                                     source,
                                     dependencies_q.loc,
-                                    format_args!(
-                                        "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
-                                        bstr::BStr::new(group.prop)
-                                    ),
+                                    "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                                    bstr::BStr::new(group.prop)
                                 );
                             }
                             return Err(bun_core::err!("InvalidPackageJSON"));

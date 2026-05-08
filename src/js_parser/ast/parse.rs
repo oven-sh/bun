@@ -363,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.allow_in = old_allow_in;
         Ok(ExprListLoc {
             // SAFETY: bump-arena slice; ExprNodeList wraps it as Borrowed (no growth/free).
-            list: unsafe { ExprNodeList::from_bump_slice(args.into_bump_slice_mut()) },
+            list: ExprNodeList::from_bump_slice(args.into_bump_slice_mut()),
             loc: close_paren_loc,
         })
     }
@@ -599,7 +599,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return Ok(p.new_expr(
                 E::Call {
                     target: async_expr,
-                    args: unsafe { ExprNodeList::from_bump_slice(items) },
+                    args: ExprNodeList::from_bump_slice(items),
                     ..Default::default()
                 },
                 loc,
@@ -1259,7 +1259,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // SAFETY: bump-arena slice; DeclList wraps it as Borrowed (no growth/free).
-        Ok(unsafe { G::DeclList::from_bump_slice(decls.into_bump_slice_mut()) })
+        Ok(G::DeclList::from_bump_slice(decls.into_bump_slice_mut()))
     }
 
     pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {

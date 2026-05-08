@@ -218,13 +218,10 @@ impl Binding {
         match binding.data {
             B::BMissing(_) => Expr { data: ExprData::EMissing(E::Missing {}), loc },
             B::BIdentifier(b) => {
-                // SAFETY: `b` is a bump-arena pointer valid for the parser's `'a`.
-                let b = unsafe { &*b };
                 wrapper.wrap_identifier(ctx, loc, b.r#ref)
             }
             B::BArray(b) => {
-                // SAFETY: arena-owned `b::Array` valid for `'a`; single-threaded parser.
-                let b = unsafe { &*b };
+                let b = b.get();
                 let bump = wrapper.arena();
                 let items = b.items();
                 let len = items.len();
@@ -247,7 +244,7 @@ impl Binding {
                     E::Array {
                         // SAFETY: `exprs` was bump-allocated; `from_bump_slice` records
                         // Borrowed origin so no growth/free is attempted.
-                        items: unsafe { ExprNodeList::from_bump_slice(exprs.into_bump_slice_mut()) },
+                        items: ExprNodeList::from_bump_slice(exprs.into_bump_slice_mut()),
                         is_single_line: b.is_single_line,
                         ..Default::default()
                     },
@@ -255,8 +252,7 @@ impl Binding {
                 )
             }
             B::BObject(b) => {
-                // SAFETY: arena-owned `b::Object` valid for `'a`; single-threaded parser.
-                let b = unsafe { &*b };
+                let b = b.get();
                 let bump = wrapper.arena();
                 let props_in = b.properties();
                 let mut properties =
@@ -278,9 +274,8 @@ impl Binding {
                 Expr::init(
                     E::Object {
                         // SAFETY: bump-allocated slice; Borrowed origin, never grown/freed.
-                        properties: unsafe {
-                            G::PropertyList::from_bump_slice(properties.into_bump_slice_mut())
-                        },
+                        properties: 
+                            G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()),
                         is_single_line: b.is_single_line,
                         ..Default::default()
                     },

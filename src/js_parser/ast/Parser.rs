@@ -565,7 +565,7 @@ impl<'a> Parser<'a> {
         if !runtime_api_call.is_empty() {
             let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| expr);
             // SAFETY: arena slice outlives the returned `Ast`; Vec::Borrowed → no-op Drop.
-            let args = unsafe { Vec::from_bump_slice(args_slice) };
+            let args = Vec::from_bump_slice(args_slice);
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }
 
@@ -1370,9 +1370,8 @@ impl<'a> Parser<'a> {
                                         // SAFETY: borrow the arena/Vec-backed records as a
                                         // Vec view (matches `P::to_ast`); `p` is dropped
                                         // immediately after this return so no double-ownership.
-                                        import_records: unsafe {
-                                            Vec::from_bump_slice(p.import_records.items_mut())
-                                        },
+                                        import_records: 
+                                            Vec::from_bump_slice(p.import_records.items_mut()),
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),
@@ -1554,9 +1553,8 @@ impl<'a> Parser<'a> {
                         return Ok(js_ast::Result::Ast(js_ast::Ast {
                             // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
                             // SAFETY: see note on the matching arm above.
-                            import_records: unsafe {
-                                Vec::from_bump_slice(p.import_records.items_mut())
-                            },
+                            import_records: 
+                                Vec::from_bump_slice(p.import_records.items_mut()),
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),
                             named_exports: core::mem::take(&mut p.named_exports),

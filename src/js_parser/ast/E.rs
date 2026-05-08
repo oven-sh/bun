@@ -1634,10 +1634,10 @@ impl EString {
         }
         self.rope_len += other.rope_len;
 
-        // SAFETY: caller contract — `other` lives in the AST Store/arena and
-        // outlives the next reset; capturing its address as a `StoreRef` is the
-        // Zig `*E.String` semantics.
-        let other_ref = unsafe { StoreRef::from_raw(std::ptr::from_mut::<EString>(other)) };
+        // Caller contract — `other` lives in the AST Store/arena and outlives
+        // the next reset; capturing its address as a `StoreRef` is the Zig
+        // `*E.String` semantics.
+        let other_ref = StoreRef::from_bump(other);
         if self.next.is_none() {
             self.next = Some(other_ref);
             self.end = Some(other_ref);
@@ -1667,12 +1667,9 @@ impl EString {
                 let node = unsafe { &mut *current };
                 match node.next {
                     Some(next) => {
-                        // SAFETY: `Store::append` never returns null (slab arena).
-                        let new_next = unsafe {
-                            StoreRef::from_raw(crate::ast::expr::data::Store::append(
-                                next.get().shallow_clone(),
-                            ))
-                        };
+                        let new_next = crate::ast::expr::data::Store::append(
+                            next.get().shallow_clone(),
+                        );
                         node.next = Some(new_next);
                         current = new_next.as_ptr();
                     }
@@ -1853,12 +1850,10 @@ impl Template {
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
             // we only fold utf-8/ascii for now
-            // SAFETY: `self` is Store/arena-allocated (Zig: `*Template`); capturing its
+            // `self` is Store/arena-allocated (Zig: `*Template`); capturing its
             // address as a `StoreRef` mirrors `.{ .e_template = self }`.
             return Expr {
-                data: crate::ast::expr::Data::ETemplate(unsafe {
-                    StoreRef::from_raw(std::ptr::from_mut::<Template>(self))
-                }),
+                data: crate::ast::expr::Data::ETemplate(StoreRef::from_bump(self)),
                 loc,
             };
         }

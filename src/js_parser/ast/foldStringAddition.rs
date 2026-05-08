@@ -9,8 +9,7 @@ use crate::ast::expr::{data, Data, PrimitiveType};
 
 #[inline]
 fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
-    // SAFETY: data::Store::append never returns null (slab/arena arena).
-    unsafe { StoreRef::from_raw(data::Store::append(s)) }
+    data::Store::append(s)
 }
 
 /// Zig `E.String.push` — link `other` onto `lhs`'s rope tail.

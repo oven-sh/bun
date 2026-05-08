@@ -381,14 +381,7 @@ impl SideEffects {
                         // PORT NOTE: G::Property is not Copy (Vec ts_decorators
                         // field). The Zig spec does an in-place struct copy; here we
                         // swap so the kept property lands at `end` without cloning.
-                        if end != j {
-                            // SAFETY: both indices < len; arena-owned slice is never
-                            // dropped, so leaving the skipped tail in any order is sound.
-                            unsafe {
-                                let base = e_object.properties.slice_mut().as_mut_ptr();
-                                core::ptr::swap(base.add(end), base.add(j));
-                            }
-                        }
+                        e_object.properties.slice_mut().swap(end, j);
                         end += 1;
                     }
                     e_object.properties.shrink_retaining_capacity(end);
@@ -542,16 +535,12 @@ impl SideEffects {
                 decls.push(G::Decl { binding, value: None });
             }
             ast::binding::Data::BArray(array) => {
-                // SAFETY: `array` is an arena-owned `*mut B::Array` valid while the AST is live.
-                let items = unsafe { &*array }.items.slice();
-                for item in items {
+                for item in array.items.slice() {
                     Self::find_identifiers(item.binding, decls);
                 }
             }
             ast::binding::Data::BObject(obj) => {
-                // SAFETY: `obj` is an arena-owned `*mut B::Object` valid while the AST is live.
-                let properties = unsafe { &*obj }.properties.slice();
-                for item in properties {
+                for item in obj.properties.slice() {
                     Self::find_identifiers(item.value, decls);
                 }
             }

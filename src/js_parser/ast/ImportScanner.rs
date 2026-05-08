@@ -597,8 +597,7 @@ impl<'a> ImportScanner<'a> {
                             if let js_ast::ExprData::EIdentifier(id) = val.data {
                                 // Is this import statement unused?
                                 if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
-                                    // SAFETY: arena-owned `*mut B::Identifier` valid for 'p.
-                                    let b_id_ref = unsafe { (*b_id).r#ref };
+                                    let b_id_ref = b_id.r#ref;
                                     if p.symbols[b_id_ref.inner_index() as usize]
                                         .use_count_estimate
                                         == 0
@@ -637,7 +636,7 @@ impl<'a> ImportScanner<'a> {
                         export_default_args[1] = expr;
                         // SAFETY: bump-allocated slice; lives for the AST arena's lifetime.
                         let args =
-                            unsafe { js_ast::ExprNodeList::from_bump_slice(export_default_args) };
+                            js_ast::ExprNodeList::from_bump_slice(export_default_args);
                         let value = p.call_runtime(expr.loc, b"__exportDefault", args);
                         stmt = p.s(
                             S::SExpr { value, does_not_affect_tree_shaking: false },

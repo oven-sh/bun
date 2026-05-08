@@ -2217,8 +2217,7 @@ pub mod defines_full_draft {
             J::EUndefined(_) => expr::Data::EUndefined(E::Undefined {}),
             J::EMissing(_) => expr::Data::EMissing(E::Missing {}),
             J::EString(s) => {
-                // SAFETY: `s` is a live arena `StoreRef` from `parse_env_json`.
-                let src = unsafe { &*s.as_ptr() };
+                let src = s.get();
                 let item = bump.alloc(E::String {
                     data: src.data.into(),
                     is_utf16: src.is_utf16,
@@ -2227,8 +2226,7 @@ pub mod defines_full_draft {
                 expr::Data::EString(StoreRef::from_bump(item))
             }
             J::EArray(a) => {
-                // SAFETY: `a` is a live arena `StoreRef` from `parse_env_json`.
-                let src = unsafe { &*a.as_ptr() };
+                let src = a.get();
                 let mut items =
                     Vec::<expr::Expr>::init_capacity(src.items.len_u32() as usize)?;
                 for it in src.items.slice() {
@@ -2248,8 +2246,7 @@ pub mod defines_full_draft {
                 expr::Data::EArray(StoreRef::from_bump(item))
             }
             J::EObject(o) => {
-                // SAFETY: `o` is a live arena `StoreRef` from `parse_env_json`.
-                let src = unsafe { &*o.as_ptr() };
+                let src = o.get();
                 let mut properties = Vec::<G::Property>::init_capacity(
                     src.properties.len_u32() as usize,
                 )?;

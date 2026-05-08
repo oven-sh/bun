@@ -1254,8 +1254,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     fn is_binding_used(&mut self, binding: Binding, default_export_ref: Ref) -> bool {
         match binding.data {
             js_ast::b::B::BIdentifier(ident) => {
-                // SAFETY: arena-owned `*mut Identifier` valid for parser 'a; no aliasing &mut.
-                let ident = unsafe { &*ident };
+                let ident = ident.get();
                 if default_export_ref.eql(ident.r#ref) {
                     return true;
                 }
@@ -1273,8 +1272,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 symbol.use_count_estimate > 0
             }
             js_ast::b::B::BArray(array) => {
-                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
-                let array = unsafe { &*array };
                 for item in array.items.slice() {
                     if self.is_binding_used(item.binding, default_export_ref) {
                         return true;
@@ -1283,8 +1280,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 false
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
-                let obj = unsafe { &*obj };
                 for prop in obj.properties.slice() {
                     if self.is_binding_used(prop.value, default_export_ref) {
                         return true;
@@ -1541,22 +1536,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         match binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(ident) => {
-                // SAFETY: arena-owned `*mut Identifier` valid for parser 'a; no aliasing &mut.
-                let ident = unsafe { &*ident };
+                let ident = ident.get();
                 // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                 let name: &'a [u8] = self.symbols[ident.r#ref.inner_index() as usize].original_name.slice();
                 self.record_export(binding.loc, name, ident.r#ref).expect("unreachable");
             }
             js_ast::b::B::BArray(array) => {
-                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
-                let array = unsafe { &*array };
                 for prop in array.items.slice() {
                     self.record_exported_binding(prop.binding);
                 }
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
-                let obj = unsafe { &*obj };
                 for prop in obj.properties.slice() {
                     self.record_exported_binding(prop.value);
                 }
@@ -3857,8 +3847,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         match binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(id) => {
-                // SAFETY: arena-owned `*mut Identifier` valid for parser 'a.
-                let id = unsafe { &*id };
+                let id = id.get();
                 // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                 let name = self.symbols[id.r#ref.inner_index() as usize].original_name.slice();
                 exported_members.put(
@@ -3869,15 +3858,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 self.ref_to_ts_namespace_member.insert(id.r#ref, js_ast::ts::Data::Property);
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
-                let obj = unsafe { &*obj };
                 for prop in obj.properties.slice() {
                     self.define_exported_namespace_binding(exported_members, prop.value)?;
                 }
             }
             js_ast::b::B::BArray(obj) => {
-                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
-                let obj = unsafe { &*obj };
                 for prop in obj.items.slice() {
                     self.define_exported_namespace_binding(exported_members, prop.binding)?;
                 }
@@ -3937,8 +3922,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 match &decl.binding.data {
                     js_ast::b::B::BIdentifier(ident) => {
                         let r = js_lexer::range_of_identifier(self.source, decl.binding.loc);
-                        // SAFETY: B::Identifier is arena-allocated; valid for 'a.
-                        let ident_ref = unsafe { &**ident }.r#ref;
+                        let ident_ref = ident.r#ref;
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let name = self.symbols[ident_ref.inner_index() as usize].original_name.slice();
                         self.log().add_range_error_fmt(
@@ -4334,20 +4318,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(bind) => {
                 if !opts.is_typescript_declare || (opts.is_namespace_scope && opts.is_export) {
-                    // SAFETY: B::Identifier payload is arena-allocated; valid for 'a.
-                    let bind = unsafe { &mut **bind };
                     bind.r#ref = self.declare_symbol(kind, binding.loc, self.load_name_from_ref(bind.r#ref))?;
                 }
             }
             js_ast::b::B::BArray(bind) => {
-                // SAFETY: B::Array payload + items slice are arena-allocated; valid for 'a.
-                for item in unsafe { (**bind).items_mut() }.iter_mut() {
+                for item in bind.items_mut().iter_mut() {
                     self.declare_binding(kind, &mut item.binding, opts).expect("unreachable");
                 }
             }
             js_ast::b::B::BObject(bind) => {
-                // SAFETY: B::Object payload + properties slice are arena-allocated; valid for 'a.
-                for prop in unsafe { (**bind).properties_mut() }.iter_mut() {
+                for prop in bind.properties_mut().iter_mut() {
                     self.declare_binding(kind, &mut prop.value, opts).expect("unreachable");
                 }
             }
@@ -4703,8 +4683,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
         match binding.data {
             js_ast::b::B::BArray(bi) => {
-                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
-                let bi = unsafe { &*bi };
                 for item in bi.items.slice() {
                     if !self.binding_can_be_removed_if_unused_without_dce_check(item.binding) {
                         return false;
@@ -4717,8 +4695,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
             }
             js_ast::b::B::BObject(bi) => {
-                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
-                let bi = unsafe { &*bi };
                 for property in bi.properties.slice() {
                     if !property.flags.contains(Flags::Property::IsSpread)
                         && !self.expr_can_be_removed_if_unused_without_dce_check(&property.key)
@@ -5585,21 +5561,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         match binding.data {
             js_ast::b::B::BMissing(_) => {}
             js_ast::b::B::BIdentifier(ident) => {
-                // SAFETY: arena-owned `*mut Identifier` valid for parser 'a; no aliasing &mut.
-                let ident = unsafe { &*ident };
                 // RefRefMap derefs to std::collections::HashMap; Zig `put(arena, k, v)` → insert.
                 self.is_exported_inside_namespace.insert(ident.r#ref, r#ref);
             }
             js_ast::b::B::BArray(array) => {
-                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
-                let array = unsafe { &*array };
                 for item in array.items.slice() {
                     self.mark_exported_binding_inside_namespace(r#ref, item.binding);
                 }
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
-                let obj = unsafe { &*obj };
                 for item in obj.properties.slice() {
                     self.mark_exported_binding_inside_namespace(r#ref, item.value);
                 }
@@ -6024,7 +5994,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                             let arg0 = self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc);
                                             let args = self.arena.alloc_slice_copy(&[arg0, *arg_decorator]);
                                             // SAFETY: arena-owned slice; never grown after wrapping.
-                                            let args = unsafe { ExprNodeList::from_bump_slice(args) };
+                                            let args = ExprNodeList::from_bump_slice(args);
                                             let call = self.call_runtime(arg_decorator.loc, b"__legacyDecorateParamTS", args);
                                             let decorators = if is_constructor {
                                                 // SAFETY: re-borrow arena class; no other &mut outstanding.
@@ -6086,11 +6056,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         full.extend_from_slice(prop.ts_decorators.slice());
                         full.extend_from_slice(&array);
                         // SAFETY: arena slice handed to a non-growing list.
-                        let full_items = unsafe { ExprNodeList::from_bump_slice(full.into_bump_slice_mut()) };
+                        let full_items = ExprNodeList::from_bump_slice(full.into_bump_slice_mut());
                         let array_expr = self.new_expr(E::Array { items: full_items, ..Default::default() }, loc);
                         let args_slice = self.arena.alloc_slice_copy(&[array_expr, target, descriptor_key, descriptor_kind]);
                         // SAFETY: arena slice; never grown.
-                        let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
+                        let args = ExprNodeList::from_bump_slice(args_slice);
 
                         let decorator = self.call_runtime(prop.key.expect("infallible: prop has key").loc, b"__legacyDecorateClassTS", args);
                         let decorator_stmt = self.s(S::SExpr { value: decorator, ..Default::default() }, decorator.loc);
@@ -6268,7 +6238,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     param_array[i] = self.serialize_metadata(ca.ts_metadata.clone()).expect("unreachable");
                                 }
                                 // SAFETY: arena slice; never grown.
-                                let items = unsafe { ExprNodeList::from_bump_slice(param_array) };
+                                let items = ExprNodeList::from_bump_slice(param_array);
                                 self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY)
                             } else {
                                 self.new_expr(E::Array { items: ExprNodeList::default(), ..Default::default() }, logger::Loc::EMPTY)
@@ -6276,7 +6246,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             let label = self.new_expr(E::EString::from_static(b"design:paramtypes"), logger::Loc::EMPTY);
                             let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
                             // SAFETY: arena slice; never grown.
-                            let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
+                            let args = ExprNodeList::from_bump_slice(args_slice);
                             array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
                         }
                     }
@@ -6289,7 +6259,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let args_slice = self.arena.alloc_slice_copy(&[array_expr, class_ident]);
                     // SAFETY: arena slice; never grown.
-                    let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
+                    let args = ExprNodeList::from_bump_slice(args_slice);
 
                     let lhs = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let rhs = self.call_runtime(stmt.loc, b"__legacyDecorateClassTS", args);
@@ -6325,7 +6295,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let value = $value;
                 let args = self.arena.alloc_slice_copy(&[label, value]);
                 // SAFETY: arena slice; never grown.
-                let args = unsafe { ExprNodeList::from_bump_slice(args) };
+                let args = ExprNodeList::from_bump_slice(args);
                 array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
             }};
         }
@@ -6349,7 +6319,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
                             // SAFETY: arena slice; never grown.
-                            let items = unsafe { ExprNodeList::from_bump_slice(args_array) };
+                            let items = ExprNodeList::from_bump_slice(args_array);
                             let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
                         }
@@ -6391,7 +6361,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
                             // SAFETY: arena slice; never grown.
-                            let items = unsafe { ExprNodeList::from_bump_slice(args_array) };
+                            let items = ExprNodeList::from_bump_slice(args_array);
                             let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
                         }
@@ -6652,14 +6622,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 decls.push(G::Decl { binding, value: None });
             }
             js_ast::b::B::BArray(arr) => {
-                // SAFETY: arena-owned `*mut B::Array` valid for parser 'a.
-                for item in unsafe { &*arr }.items().iter() {
+                for item in arr.items().iter() {
                     Self::extract_decls_for_binding(item.binding, decls).expect("unreachable");
                 }
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut B::Object` valid for parser 'a.
-                for prop in unsafe { &*obj }.properties().iter() {
+                for prop in obj.properties().iter() {
                     Self::extract_decls_for_binding(prop.value, decls).expect("unreachable");
                 }
             }
@@ -7306,11 +7274,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             // field assignment.
                             core::mem::forget(core::mem::replace(
                                 &mut part.import_record_indices,
-                                unsafe {
-                                    Vec::from_bump_slice(
-                                        arena.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
-                                    )
-                                },
+                                Vec::from_bump_slice(
+                                    arena.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
+                                ),
                             ));
                         } else {
                             part.import_record_indices
@@ -8049,9 +8015,8 @@ impl LowerUsingDeclarationsContext {
                     ]);
                     // SAFETY: bump-arena slice valid for 'a; ExprNodeList::from_bump_slice
                     // marks origin Borrowed so Drop is a no-op.
-                    decl.value = Some(p.call_runtime(value_loc, b"__using", unsafe {
-                        ExprNodeList::from_bump_slice(args)
-                    }));
+                    decl.value = Some(p.call_runtime(value_loc, b"__using", 
+                        ExprNodeList::from_bump_slice(args)));
                 }
             }
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
@@ -8124,8 +8089,7 @@ impl LowerUsingDeclarationsContext {
                         let mut any_ident = false;
                         for decl in local.decls.slice() {
                             if let js_ast::b::B::BIdentifier(identifier) = decl.binding.data {
-                                // SAFETY: arena-owned `*mut B::Identifier` valid for 'a; no aliasing &mut.
-                                let id_ref = unsafe { &*identifier }.r#ref;
+                                let id_ref = identifier.r#ref;
                                 exports.push(js_ast::ClauseItem {
                                     name: LocRef { loc: decl.binding.loc, ref_: Some(id_ref) },
                                     alias: p.symbols[id_ref.inner_index() as usize].original_name,
@@ -8188,7 +8152,7 @@ impl LowerUsingDeclarationsContext {
                 p.new_expr(E::Identifier { ref_: has_err_ref, ..Default::default() }, loc),
             ]);
             // SAFETY: bump-arena slice valid for 'a; Borrowed origin → no-op Drop.
-            p.call_runtime(loc, b"__callDispose", unsafe { ExprNodeList::from_bump_slice(args) })
+            p.call_runtime(loc, b"__callDispose", ExprNodeList::from_bump_slice(args))
         };
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {

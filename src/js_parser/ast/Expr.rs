@@ -308,9 +308,7 @@ impl Expr {
                 if array.items.len_u32() == 0 {
                     return None;
                 }
-                // SAFETY: StoreRef points into the AST arena; deref to an unbounded
-                // ('static) borrow so the iterator is decoupled from the local.
-                Some(ArrayIterator { array: unsafe { &*array.as_ptr() }, index: 0 })
+                Some(ArrayIterator { array: array.get(), index: 0 })
             }
             _ => None,
         }
@@ -1043,8 +1041,7 @@ macro_rules! impl_into_expr_data_boxed {
             impl IntoExprData for E::$ty {
                 #[inline]
                 fn into_data_store(self) -> Data {
-                    // SAFETY: Store::append never returns null.
-                    Data::$variant(unsafe { StoreRef::from_raw(data::Store::append(self)) })
+                    Data::$variant(data::Store::append(self))
                 }
                 #[inline]
                 fn into_data_alloc(self, bump: &Bump) -> Data {
@@ -1156,8 +1153,7 @@ impl IntoExprData for E::EString {
                 debug_assert!(self.data.as_ptr() as usize > 0);
             }
         }
-        // SAFETY: Store::append never returns null.
-        Data::EString(unsafe { StoreRef::from_raw(data::Store::append(self)) })
+        Data::EString(data::Store::append(self))
     }
     fn into_data_alloc(self, bump: &Bump) -> Data {
         #[cfg(debug_assertions)]
@@ -1176,7 +1172,7 @@ impl IntoExprData for E::EString {
 impl IntoExprData for &E::EString {
     #[inline]
     fn into_data_store(self) -> Data {
-        Data::EString(unsafe { StoreRef::from_raw(data::Store::append(self.shallow_clone())) })
+        Data::EString(data::Store::append(self.shallow_clone()))
     }
     #[inline]
     fn into_data_alloc(self, bump: &Bump) -> Data {
@@ -3290,16 +3286,16 @@ pub mod data {
         }
 
         #[inline]
-        pub fn append<T>(value: T) -> *mut T {
+        pub fn append<T>(value: T) -> crate::ast::StoreRef<T> {
             let ma = memory_allocator();
             if !ma.is_null() {
                 // SAFETY: ASTMemoryAllocator is set by the owning scope and outlives this call.
-                return unsafe { &*ma }.append(value).as_ptr();
+                return unsafe { &*ma }.append(value);
             }
             Disabler::assert();
             // SAFETY: assert() guarantees instance is non-null on this thread; slab
             // returns stable addresses until reset().
-            Backing::append(unsafe { &mut *instance() }, value).as_ptr()
+            crate::ast::StoreRef::from_non_null(Backing::append(unsafe { &mut *instance() }, value))
         }
     }
 }

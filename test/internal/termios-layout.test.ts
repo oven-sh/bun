@@ -10,8 +10,8 @@
 // c_cc[VLNEXT] and toggles ECHO via bun.sys.tcsetattr, then reads both
 // back via bun.sys.tcgetattr. That round-trip holds iff the Zig struct
 // agrees with libc's on this platform.
-import { expect, test } from "bun:test";
 import { termiosLayout } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { isPosix } from "harness";
 
 test.skipIf(!isPosix)("bun.sys.termios matches the host libc's struct termios", () => {

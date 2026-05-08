@@ -2092,9 +2092,6 @@ impl TestCommand {
         }
 
         let mut all_test_files = scanner.take_found_test_files().expect("oom");
-        // Scanner discovery order depends on hash-map / readdir iteration order;
-        // sort so run order (and --bail, JUnit output) is deterministic.
-        all_test_files.sort_by(|a, b| strings::order(a.slice(), b.slice()));
         // Snapshot the count before `test_files` mutably borrows `all_test_files`
         // so the watcher-enable check below can read it without reborrowing.
         let all_test_files_count = all_test_files.len();

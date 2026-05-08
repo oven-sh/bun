@@ -62,57 +62,84 @@ async function zshAvailable(): Promise<boolean> {
 }
 
 // Drive zsh tab completion by spawning an embedded zsh via zpty, sending a
-// command line followed by a literal TAB, and returning the resulting line
-// from the inner shell's terminal buffer. Assertions check that the line
-// contains the expected completion (e.g. a common-prefix auto-completion).
-async function zshCompleteLine(cwd: string, line: string): Promise<string> {
-  // We spawn zsh -c with a script that uses zpty to start ANOTHER
-  // interactive zsh, feeds it setup commands (waiting for an echoed marker
-  // between each stage so we never race), then writes `<line><TAB>` and
-  // reads the terminal buffer back.
-  const escapeSq = (s: string) => s.replace(/'/g, `'\\''`);
+// command line followed by a literal TAB, and returning the terminal buffer
+// up to the point where `expected` appears (success) or a BEL byte appears
+// (zsh's "no match" signal — also a terminal state, just a failing one).
+// This is poll-until-seen, not sleep-based, so it's fast in the common case
+// and robust under CI load.
+async function zshCompleteLine(cwd: string, line: string, expected: string): Promise<string> {
+  // Outer zsh uses zpty to drive an inner interactive zsh, feeds setup
+  // commands (each emitting a marker so we can synchronise on it), then
+  // writes `<line><TAB>` and polls the pty buffer until `expected` or a
+  // bell arrives.
   const script = [
     "emulate -L zsh",
+    // Needed for `[0-9;]#m` (zsh "zero or more") in the ANSI-stripping glob.
+    "setopt extendedglob",
     "zmodload zsh/zpty",
-    // wait_for <marker>: read zpty output until <marker> appears or 5s
-    // elapses. This replaces sleep-based waits with deterministic
-    // synchronisation on echoed markers.
+    // wait_for <needle> [timeout]: read zpty S until <needle> appears in
+    // the accumulated buffer, with a poll interval. `zpty -r -t` on a
+    // non-blocking pty returns immediately when there's no data, so we
+    // sleep between polls to avoid pegging a core.
     `wait_for() {
-        local needle="$1" timeout=\${2:-5} buf='' chunk
+        local needle="$1" timeout=\${2:-10} buf='' chunk
         local start=$SECONDS
         while (( SECONDS - start < timeout )); do
-            if zpty -r -t S chunk 0.05 2>/dev/null; then
+            if zpty -r -t S chunk 2>/dev/null; then
                 buf+="$chunk"
-                [[ "$buf" == *$needle* ]] && return 0
+                [[ "$buf" == *$needle* ]] && { printf '%s' "$buf"; return 0; }
+            else
+                sleep 0.02
             fi
         done
+        printf '%s' "$buf"
         return 1
     }`,
     "zpty -b S zsh -i -f",
-    // Configure the inner shell, emitting a marker after each stage so
-    // we know when it's done.
-    "zpty -w S 'PS1=\"\"; autoload -Uz compinit && compinit -u; echo __INIT__'",
-    "wait_for __INIT__ || { echo >&2 'inner zsh setup timed out'; exit 1; }",
-    `zpty -w S 'cd ${escapeSq(cwd)}; source ${escapeSq(ZSH_COMPLETION)}; echo __LOADED__'`,
-    "wait_for __LOADED__ || { echo >&2 'completion load timed out'; exit 1; }",
+    // Set up the inner shell. `compinit -D` skips writing `~/.zcompdump`
+    // so tests running concurrently never race on that file.
+    "zpty -w S 'PS1=\"\"; autoload -Uz compinit && compinit -D; echo __INIT__'",
+    "wait_for __INIT__ >/dev/null || { echo >&2 'inner zsh setup timed out'; exit 1; }",
+    // `zpty -w` takes the argument verbatim as what to type at the inner
+    // shell's prompt. We wrap the argument in single quotes (escaping
+    // inner single quotes via the standard `'\''` dance) and sq() does
+    // that for us. The inner `cd` and `source` commands then quote the
+    // path values themselves.
+    `zpty -w S ${sq("cd " + sq(cwd) + "; source " + sq(ZSH_COMPLETION) + "; echo __LOADED__")}`,
+    "wait_for __LOADED__ >/dev/null || { echo >&2 'completion load timed out'; exit 1; }",
     "zpty -w S 'bindkey \"^I\" expand-or-complete; setopt no_always_last_prompt no_list_beep; echo __BOUND__'",
-    "wait_for __BOUND__ || { echo >&2 'bindkey timed out'; exit 1; }",
-    // Drain any remaining stdout now that we're past setup.
-    "while zpty -r -t S junk 0.05 2>/dev/null; do :; done",
-    // Literal tab at the end triggers `expand-or-complete`, which will
-    // either auto-complete the common prefix or stay put (ring the bell).
-    `zpty -n -w S '${escapeSq(line)}\t'`,
-    // Give zsh a moment to process the TAB and emit its response. zpty
-    // has no "done" signal, so we give it a fixed window to flush; the
-    // inner zsh is already warm from compinit at this point, so 500ms
-    // is plenty for a single completion lookup.
-    "sleep 0.5",
-    "local out=''",
-    "local chunk",
-    'while zpty -r -t S chunk 0.2 2>/dev/null; do out+="$chunk"; done',
+    "wait_for __BOUND__ >/dev/null || { echo >&2 'bindkey timed out'; exit 1; }",
+    // Drain anything remaining from setup.
+    "while zpty -r -t S junk 2>/dev/null; do :; done",
+    // Literal tab triggers `expand-or-complete`. It either moves the
+    // buffer past `<line>` (success) or rings the bell (BEL = 0x07) when
+    // there's no match.
+    `zpty -n -w S ${sq(line + "\t")}`,
+    // Poll until either the expected substring or a BEL appears — that's
+    // our "I'm done" signal, replacing a fixed sleep. 4s upper bound
+    // keeps us well under bun:test's default 5s test timeout even under
+    // CI load; the common case is <1s.
+    //
+    // We strip ANSI escape sequences from the accumulated buffer BEFORE
+    // matching the needle because zsh's list-colors can insert colour
+    // codes between individual characters of the completed token (e.g.
+    // `foo\x1b[32m\x1b[39m-`), which would prevent a naive substring
+    // check from matching.
+    `local needle=${sq(expected)}`,
+    `local out='' visible chunk start=$SECONDS`,
+    "while (( SECONDS - start < 4 )); do",
+    "    if zpty -r -t S chunk 2>/dev/null; then",
+    '        out+="$chunk"',
+    `        visible=\${out//\$'\\x1b'\\[[0-9;]#m/}`,
+    // $'\a' is the BEL byte (0x07). Zsh rings this on a failed completion.
+    `        [[ "$visible" == *$'\\a'* ]] && break`,
+    '        [[ "$visible" == *$needle* ]] && break',
+    "    else",
+    "        sleep 0.02",
+    "    fi",
+    "done",
     "zpty -d S",
-    // Strip ANSI colour escape sequences emitted by list-colors.
-    `printf '%s' "$out" | sed $'s/\\x1b\\\\[[0-9;]*m//g'`,
+    `printf '%s' "$visible"`,
   ].join("\n");
   await using proc = Bun.spawn({
     cmd: ["zsh", "-c", script],
@@ -122,15 +149,17 @@ async function zshCompleteLine(cwd: string, line: string): Promise<string> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) {
-    throw new Error(`zsh driver exited with code ${exitCode}`);
+    throw new Error(`zsh driver exited with code ${exitCode}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
   }
   return stdout;
 }
 
 describe.skipIf(isWindows)("shell completions", () => {
-  describe("bash (completions/bun.bash)", () => {
+  // Every test here spawns its own short-lived subprocess into its own
+  // tempDir — no shared state, so we prefer concurrent per CLAUDE.md.
+  describe.concurrent("bash (completions/bun.bash)", () => {
     // Regression for #30386: `bun myscript.ts foo<TAB>` did nothing. When
     // the first word after `bun` isn't a recognised subcommand, the
     // `case ${COMP_WORDS[1]} in ... *)` fallback in completions/bun.bash
@@ -172,12 +201,13 @@ describe.skipIf(isWindows)("shell completions", () => {
     });
   });
 
-  describe("zsh (completions/bun.zsh)", () => {
+  describe.concurrent("zsh (completions/bun.zsh)", () => {
     // The bug in #30386 was reported against zsh on macOS; the fix mirrors
     // the bash one by adding a `*)` default branch to the `case $line[1]`
     // dispatch. The observable fix: typing `bun myscript.ts foo<TAB>`
     // now auto-completes to `foo-` (the common prefix of the matching
-    // files). Before the fix, the buffer stays at `foo`.
+    // files). Before the fix, the buffer stays at `foo` and zsh rings
+    // the bell (BEL byte in the pty output).
     test("completes files for `bun <script> <arg><TAB>`", async () => {
       if (!(await zshAvailable())) return;
       using dir = tempDir("bun-complete-zsh-30386", {
@@ -185,7 +215,7 @@ describe.skipIf(isWindows)("shell completions", () => {
         "foo-file.txt": "",
         "foo-bar.txt": "",
       });
-      const out = await zshCompleteLine(String(dir), "bun myscript.ts foo");
+      const out = await zshCompleteLine(String(dir), "bun myscript.ts foo", "bun myscript.ts foo-");
       expect(out).toContain("bun myscript.ts foo-");
     });
 
@@ -199,12 +229,12 @@ describe.skipIf(isWindows)("shell completions", () => {
         "foo-file.txt": "",
         "foo-bar.txt": "",
       });
-      const out = await zshCompleteLine(String(dir), "bun run myscript.ts foo");
+      const out = await zshCompleteLine(String(dir), "bun run myscript.ts foo", "bun run myscript.ts foo-");
       expect(out).toContain("bun run myscript.ts foo-");
     });
   });
 
-  describe("syntax", () => {
+  describe.concurrent("syntax", () => {
     // Catch-all: every shell completion script must parse cleanly.
     // Prevents future edits from breaking the scripts at source-load time.
     test("bun.bash parses", async () => {

@@ -101,10 +101,7 @@ pub fn do_patch_commit(
     let argument: &'static [u8] = manager.options.positionals[1];
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
-    // Query the freshly-loaded lockfile directly; the `root_package_id` memo
-    // may still hold an id computed against `manager.lockfile`.
-    let workspace_package_id = lockfile.get_workspace_package_id(manager.workspace_name_hash);
-    manager.root_package_id.id = Some(workspace_package_id);
+    let workspace_package_id = manager.root_package_id.get(&lockfile, manager.workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
     // PORT NOTE: reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
     let argument_owned: Option<Box<[u8]>>;
@@ -665,10 +662,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     let mut win_normalizer = PathBuffer::uninit();
 
     let workspace_name_hash = manager.workspace_name_hash;
-    // Query the post-install lockfile directly; the `root_package_id` memo may
-    // have been seeded against a pre-clean lockfile during the install pass.
-    let workspace_package_id = manager.lockfile.get_workspace_package_id(workspace_name_hash);
-    manager.root_package_id.id = Some(workspace_package_id);
+    let workspace_package_id = manager.root_package_id.get(&manager.lockfile, workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
     // PORT NOTE: reshaped for borrowck — owned buffer kept so `argument` can borrow it.
     let argument_owned: Option<Box<[u8]>>;

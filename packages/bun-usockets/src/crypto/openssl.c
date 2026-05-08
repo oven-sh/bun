@@ -828,7 +828,19 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
         return 1;
       }
       if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        return force_fast_shutdown ? 1 : 0;
+        /* The close_notify could not be flushed (BIO write failed: kernel
+         * buffer full or peer already gone). There is no retry path —
+         * SSL_SENT_SHUTDOWN is already set, so on_writable/on_data
+         * short-circuit through is_shut_down and never re-dispatch the
+         * alert. Returning 0 here would keep s->ssl (and BoringSSL's
+         * write_buffer holding the encoded alert) alive until the next
+         * socket event, which may never arrive — observed as an LSan
+         * leak in node-https-checkServerIdentity.test.ts when the child
+         * exits right after server.close(). The deferred-close contract
+         * documented in us_internal_ssl_close only applies to the
+         * SSL_shutdown()==0 case where the alert *was* flushed; here it
+         * never went out, so close now. */
+        return 1;
       }
       s->ssl_fatal_error = 1;
       return 1;

@@ -506,7 +506,12 @@ fn wrap_rules_with_conditions(
                     continue;
                 } else {
                     // Generate "@layer foo;" instead of "@layer foo {}"
-                    ast.rules.v = Default::default();
+                    // `ast.rules.v` may be the shallow-copied / offset-resliced
+                    // header aliasing the source stylesheet's buffer (see the
+                    // `ptr::read` / `Vec::from_raw_parts` above) — dropping it
+                    // would free into another allocation. Zig's `= .{}` is a
+                    // bitwise overwrite; mirror that by leaking the header.
+                    core::mem::forget(core::mem::take(&mut ast.rules.v));
                     do_block_rule = false;
                 }
             }

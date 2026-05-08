@@ -2013,16 +2013,33 @@ impl<'a> PackageInstall<'a> {
         // to cache_dir, then resolve its canonical path.
         // PORT NOTE: reshaped from an IIFE — returning a borrow of `to_buf` from an
         // `FnMut` closure is rejected by borrowck, so inline the open/getFdPath/close.
+        // PORT NOTE: Zig `std.fs.Dir.realpath` returns std-style error names
+        // (`error.FileNotFound`, `error.AccessDenied`, …), not raw errno tags.
+        // `bun_sys::Error::into()` would yield `ENOENT`/`EACCES`, so map the
+        // openat errno to the std name to preserve the user-visible error tag
+        // (test/cli/install/bun-link.test.ts asserts on `FileNotFound:`).
+        let realpath_err = |e: bun_sys::Error| -> bun_core::Error {
+            use sys::E;
+            match e.get_errno() {
+                E::ENOENT => bun_core::err!("FileNotFound"),
+                E::EACCES => bun_core::err!("AccessDenied"),
+                E::ENOTDIR => bun_core::err!("NotDir"),
+                E::ENAMETOOLONG => bun_core::err!("NameTooLong"),
+                E::ELOOP => bun_core::err!("SymLinkLoop"),
+                E::ENOMEM => bun_core::err!("SystemResources"),
+                _ => e.into(),
+            }
+        };
         let to_path: &[u8] = {
             let fd = match sys::openat(self.cache_dir.fd(), symlinked_path, sys::O::RDONLY, 0) {
                 Ok(fd) => fd,
-                Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
+                Err(err) => return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None),
             };
             let res = sys::get_fd_path(fd, &mut to_buf);
             fd.close();
             match res {
                 Ok(s) => &*s,
-                Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
+                Err(err) => return InstallResult::fail(realpath_err(err), Step::LinkingDependency, None),
             }
         };
         let to_path_len = to_path.len();

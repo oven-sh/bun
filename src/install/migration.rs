@@ -123,7 +123,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             Err(e) => {
                 match e {
                     MigratePnpmLockfileError::PnpmLockfileTooOld => {
-                        Output::pretty_errorln("<red><b>warning<r><d>:<r> pnpm-lock.yaml version is too old (< v7)\n\nPlease upgrade using 'pnpm install --lockfile-only' first, then try again.");
+                        Output::pretty_errorln("<red><b>warning<r><d>:<r> pnpm-lock.yaml version is too old (\\< v7)\n\nPlease upgrade using 'pnpm install --lockfile-only' first, then try again.");
                     }
                     MigratePnpmLockfileError::NonExistentWorkspaceDependency => {
                         Output::warn("Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>");

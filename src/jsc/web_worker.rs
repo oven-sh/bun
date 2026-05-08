@@ -208,7 +208,7 @@ unsafe extern "C" {
     fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
     // API lock as a raw FFI call with NO RAII guard — see PORT NOTE there.
-    fn JSC__VM__getAPILock(vm: *mut jsc::VM);
+    safe fn JSC__VM__getAPILock(vm: &jsc::VM);
     fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: *const JSGlobalObject);
     fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: *const JSGlobalObject);
     fn WebWorker__dispatchError(
@@ -765,8 +765,8 @@ impl WebWorker {
         // memory is UB under Rust's validity rules even when never
         // dereferenced. The raw FFI call has no such reference to leak.
         // SAFETY: `global` is the live worker global published in start_vm;
-        // `vm_ptr()` returns the valid `JSC::VM*` it was created with.
-        unsafe { JSC__VM__getAPILock((&*global).vm_ptr()) };
+        // `vm()` returns the valid `JSC::VM` it was created with.
+        JSC__VM__getAPILock(unsafe { (*global).vm() });
         self.spin();
     }
 

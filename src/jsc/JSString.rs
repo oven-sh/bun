@@ -25,24 +25,24 @@ pub struct JSString {
 // covers zero bytes and C++ mutating the underlying GC cell does not violate
 // Rust's aliasing rules.
 unsafe extern "C" {
-    fn JSC__JSString__toObject(this: *const JSString, global: *const JSGlobalObject) -> *mut JSObject;
-    fn JSC__JSString__toZigString(
-        this: *const JSString,
-        global: *const JSGlobalObject,
-        zig_str: *mut ZigString,
+    fn JSC__JSString__toObject(this: &JSString, global: &JSGlobalObject) -> *mut JSObject;
+    safe fn JSC__JSString__toZigString(
+        this: &JSString,
+        global: &JSGlobalObject,
+        zig_str: &mut ZigString,
     );
-    fn JSC__JSString__eql(
-        this: *const JSString,
-        global: *const JSGlobalObject,
-        other: *const JSString,
+    safe fn JSC__JSString__eql(
+        this: &JSString,
+        global: &JSGlobalObject,
+        other: &JSString,
     ) -> bool;
     fn JSC__JSString__iterator(
-        this: *const JSString,
-        global_object: *const JSGlobalObject,
+        this: &JSString,
+        global_object: &JSGlobalObject,
         iter: *mut c_void,
     );
-    fn JSC__JSString__length(this: *const JSString) -> usize;
-    fn JSC__JSString__is8Bit(this: *const JSString) -> bool;
+    safe fn JSC__JSString__length(this: &JSString) -> usize;
+    safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
 }
 
 impl JSString {
@@ -58,9 +58,7 @@ impl JSString {
     }
 
     pub fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
-        // SAFETY: `self`/`global` are valid opaque GC-cell handles; `zig_str` is a
-        // uniquely-borrowed out-param.
-        unsafe { JSC__JSString__toZigString(self, global, zig_str) }
+        JSC__JSString__toZigString(self, global, zig_str)
     }
 
     pub fn ensure_still_alive(&self) {
@@ -113,8 +111,7 @@ impl JSString {
     }
 
     pub fn eql(&self, global: &JSGlobalObject, other: &JSString) -> bool {
-        // SAFETY: `self`/`global`/`other` are valid opaque GC-cell handles.
-        unsafe { JSC__JSString__eql(self, global, other) }
+        JSC__JSString__eql(self, global, other)
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: *mut c_void) {
@@ -124,13 +121,11 @@ impl JSString {
     }
 
     pub fn length(&self) -> usize {
-        // SAFETY: self is a valid JSString cell.
-        unsafe { JSC__JSString__length(self) }
+        JSC__JSString__length(self)
     }
 
     pub fn is_8bit(&self) -> bool {
-        // SAFETY: self is a valid JSString cell.
-        unsafe { JSC__JSString__is8Bit(self) }
+        JSC__JSString__is8Bit(self)
     }
 }
 

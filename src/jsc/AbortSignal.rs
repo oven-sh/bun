@@ -25,38 +25,45 @@ pub struct AbortSignal {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `AbortSignal` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST
+// handles, so `&AbortSignal` is ABI-identical to a non-null `AbortSignal*`
+// and C++ mutating through it (refcount, listener list, abort flag) is
+// interior mutation invisible to Rust. Shims that take only such handles +
+// scalars are declared `safe fn`; those that take an opaque `*mut c_void` ctx
+// or out-param keep raw pointers and stay `unsafe fn`.
 unsafe extern "C" {
-    fn WebCore__AbortSignal__aborted(arg0: *mut AbortSignal) -> bool;
-    fn WebCore__AbortSignal__abortReason(arg0: *mut AbortSignal) -> JSValue;
+    safe fn WebCore__AbortSignal__aborted(arg0: &AbortSignal) -> bool;
+    safe fn WebCore__AbortSignal__abortReason(arg0: &AbortSignal) -> JSValue;
     fn WebCore__AbortSignal__addListener(
-        arg0: *mut AbortSignal,
+        arg0: &AbortSignal,
         arg1: *mut c_void,
         arg_fn2: Option<unsafe extern "C" fn(*mut c_void, JSValue)>,
     ) -> *mut AbortSignal;
-    fn WebCore__AbortSignal__cleanNativeBindings(arg0: *mut AbortSignal, arg1: *mut c_void);
-    fn WebCore__AbortSignal__create(arg0: *mut JSGlobalObject) -> JSValue;
-    fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
-    fn WebCore__AbortSignal__ref(arg0: *mut AbortSignal) -> *mut AbortSignal;
-    fn WebCore__AbortSignal__toJS(arg0: *mut AbortSignal, arg1: *mut JSGlobalObject) -> JSValue;
-    fn WebCore__AbortSignal__unref(arg0: *mut AbortSignal);
+    fn WebCore__AbortSignal__cleanNativeBindings(arg0: &AbortSignal, arg1: *mut c_void);
+    safe fn WebCore__AbortSignal__create(arg0: &JSGlobalObject) -> JSValue;
+    safe fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
+    safe fn WebCore__AbortSignal__ref(arg0: &AbortSignal) -> *mut AbortSignal;
+    safe fn WebCore__AbortSignal__toJS(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
+    safe fn WebCore__AbortSignal__unref(arg0: &AbortSignal);
     // `*mut Timeout` is round-tripped opaquely through C++ (stored from
     // `AbortSignal__Timeout__create`, never dereferenced on the C++ side), so
     // the non-`repr(C)` interior of `EventLoopTimer` is irrelevant to FFI.
     #[allow(improper_ctypes)]
-    fn WebCore__AbortSignal__getTimeout(arg0: *mut AbortSignal) -> *mut Timeout;
-    fn WebCore__AbortSignal__signal(
-        arg0: *mut AbortSignal,
-        arg1: *mut JSGlobalObject,
+    safe fn WebCore__AbortSignal__getTimeout(arg0: &AbortSignal) -> *mut Timeout;
+    safe fn WebCore__AbortSignal__signal(
+        arg0: &AbortSignal,
+        arg1: &JSGlobalObject,
         arg2: CommonAbortReason,
     );
-    fn WebCore__AbortSignal__incrementPendingActivity(arg0: *mut AbortSignal);
-    fn WebCore__AbortSignal__decrementPendingActivity(arg0: *mut AbortSignal);
-    fn WebCore__AbortSignal__reasonIfAborted(
-        arg0: *mut AbortSignal,
-        arg1: *mut JSGlobalObject,
-        arg2: *mut u8,
+    safe fn WebCore__AbortSignal__incrementPendingActivity(arg0: &AbortSignal);
+    safe fn WebCore__AbortSignal__decrementPendingActivity(arg0: &AbortSignal);
+    safe fn WebCore__AbortSignal__reasonIfAborted(
+        arg0: &AbortSignal,
+        arg1: &JSGlobalObject,
+        arg2: &mut u8,
     ) -> JSValue;
-    fn WebCore__AbortSignal__new(arg0: *mut JSGlobalObject) -> *mut AbortSignal;
+    safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
 }
 
 /// Trait expressing the Zig `comptime cb: *const fn (*Context, JSValue) void`
@@ -84,48 +91,40 @@ impl AbortSignal {
         callback: unsafe extern "C" fn(*mut c_void, JSValue),
     ) -> &AbortSignal {
         // SAFETY: self is a live WebCore::AbortSignal; addListener returns self.
-        unsafe { &*WebCore__AbortSignal__addListener(self.as_mut_ptr(), ctx, Some(callback)) }
+        unsafe { &*WebCore__AbortSignal__addListener(self, ctx, Some(callback)) }
     }
 
     pub fn clean_native_bindings(&self, ctx: *mut c_void) {
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__cleanNativeBindings(self.as_mut_ptr(), ctx) }
+        // SAFETY: `ctx` is an opaque round-trip pointer; C++ never dereferences it as Rust data.
+        unsafe { WebCore__AbortSignal__cleanNativeBindings(self, ctx) }
     }
 
     pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {
         bun_analytics::features::abort_signal.fetch_add(1, Ordering::Relaxed);
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__signal(self.as_mut_ptr(), global_object.as_ptr(), reason) }
+        WebCore__AbortSignal__signal(self, global_object, reason)
     }
 
     pub fn pending_activity_ref(&self) {
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__incrementPendingActivity(self.as_mut_ptr()) }
+        WebCore__AbortSignal__incrementPendingActivity(self)
     }
 
     pub fn pending_activity_unref(&self) {
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__decrementPendingActivity(self.as_mut_ptr()) }
+        WebCore__AbortSignal__decrementPendingActivity(self)
     }
 
     /// This function is not threadsafe. aborted is a boolean, not an atomic!
     pub fn aborted(&self) -> bool {
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__aborted(self.as_mut_ptr()) }
+        WebCore__AbortSignal__aborted(self)
     }
 
     /// This function is not threadsafe. JSValue cannot safely be passed between threads.
     pub fn abort_reason(&self) -> JSValue {
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__abortReason(self.as_mut_ptr()) }
+        WebCore__AbortSignal__abortReason(self)
     }
 
     pub fn reason_if_aborted(&self, global: &JSGlobalObject) -> Option<AbortReason> {
         let mut reason: u8 = 0;
-        // SAFETY: `reason` is a valid out-param; self/global are live.
-        let js_reason = unsafe {
-            WebCore__AbortSignal__reasonIfAborted(self.as_mut_ptr(), global.as_ptr(), &raw mut reason)
-        };
+        let js_reason = WebCore__AbortSignal__reasonIfAborted(self, global, &mut reason);
         if reason > 0 {
             debug_assert!(js_reason.is_undefined());
             // C++ guarantees `reason` is a valid CommonAbortReason discriminant when > 0.
@@ -142,13 +141,11 @@ impl AbortSignal {
     }
 
     pub fn ref_(&self) -> *mut AbortSignal {
-        // SAFETY: thin FFI forward; increments C++ intrusive refcount.
-        unsafe { WebCore__AbortSignal__ref(self.as_mut_ptr()) }
+        WebCore__AbortSignal__ref(self)
     }
 
     pub fn unref(&self) {
-        // SAFETY: thin FFI forward; decrements C++ intrusive refcount.
-        unsafe { WebCore__AbortSignal__unref(self.as_mut_ptr()) }
+        WebCore__AbortSignal__unref(self)
     }
 
     pub fn detach(&self, ctx: *mut c_void) {
@@ -157,27 +154,23 @@ impl AbortSignal {
     }
 
     pub fn from_js(value: JSValue) -> Option<*mut AbortSignal> {
-        // SAFETY: thin FFI forward.
-        let ptr = unsafe { WebCore__AbortSignal__fromJS(value) };
+        let ptr = WebCore__AbortSignal__fromJS(value);
         if ptr.is_null() { None } else { Some(ptr) }
         // TODO(port): lifetime — returned ptr is borrowed from the JS wrapper;
         // valid only while the JSValue is reachable.
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__toJS(self.as_mut_ptr(), global.as_ptr()) }
+        WebCore__AbortSignal__toJS(self, global)
     }
 
     pub fn create(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__create(global.as_ptr()) }
+        WebCore__AbortSignal__create(global)
     }
 
     pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
         crate::mark_binding!();
-        // SAFETY: thin FFI forward; returns a freshly-ref'd signal.
-        unsafe { WebCore__AbortSignal__new(global.as_ptr()) }
+        WebCore__AbortSignal__new(global)
     }
 
     /// Returns a borrowed handle to the internal Timeout, or null.
@@ -190,11 +183,11 @@ impl AbortSignal {
     /// to `this` for the duration (e.g., `this.ref_(); defer this.unref();`) and avoid
     /// caching the pointer across turns.
     pub fn get_timeout(&self) -> Option<&Timeout> {
-        // SAFETY: thin FFI forward; returned Timeout is owned by `self` and valid
-        // while `self` is held (see doc comment).
         // TODO(port): lifetime — callers that run/cancel/deinit need `*mut`; revisit
         // whether `&mut Timeout` (or raw ptr) is the right shape once call sites port.
-        let ptr = unsafe { WebCore__AbortSignal__getTimeout(self.as_mut_ptr()) };
+        let ptr = WebCore__AbortSignal__getTimeout(self);
+        // SAFETY: returned Timeout is owned by `self` and valid while `self` is held
+        // (see doc comment).
         NonNull::new(ptr).map(|p| unsafe { p.as_ref() })
     }
 

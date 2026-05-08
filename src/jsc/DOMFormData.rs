@@ -14,10 +14,10 @@ pub struct DOMFormData {
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     fn WebCore__DOMFormData__cast_(js_value0: JSValue, arg1: *mut VM) -> *mut DOMFormData;
-    fn WebCore__DOMFormData__create(arg0: *mut JSGlobalObject) -> JSValue;
-    fn WebCore__DOMFormData__createFromURLQuery(
-        arg0: *mut JSGlobalObject,
-        arg1: *const ZigString,
+    safe fn WebCore__DOMFormData__create(arg0: &JSGlobalObject) -> JSValue;
+    safe fn WebCore__DOMFormData__createFromURLQuery(
+        arg0: &JSGlobalObject,
+        arg1: &ZigString,
     ) -> JSValue;
     fn WebCore__DOMFormData__toQueryString(
         arg0: *mut DOMFormData,
@@ -25,10 +25,10 @@ unsafe extern "C" {
         arg2: unsafe extern "C" fn(arg0: *mut c_void, arg1: *mut ZigString),
     );
     fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
-    fn WebCore__DOMFormData__append(
-        arg0: *mut DOMFormData,
-        arg1: *const ZigString,
-        arg2: *const ZigString,
+    safe fn WebCore__DOMFormData__append(
+        arg0: &mut DOMFormData,
+        arg1: &ZigString,
+        arg2: &ZigString,
     );
     fn WebCore__DOMFormData__appendBlob(
         arg0: *mut DOMFormData,
@@ -37,7 +37,7 @@ unsafe extern "C" {
         arg3: *mut c_void,
         arg4: *const ZigString,
     );
-    fn WebCore__DOMFormData__count(arg0: *mut DOMFormData) -> usize;
+    safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
 
     // Declared in the Zig but never called (WebCore__DOMFormData__toQueryString is used instead).
     // Kept for symbol parity.
@@ -53,16 +53,11 @@ unsafe extern "C" {
 
 impl DOMFormData {
     pub fn create(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is an opaque FFI handle; `as_ptr()` is the sanctioned
-        // &JSGlobalObject → *mut conversion (no Rust-owned memory is aliased).
-        // FFI does not retain the pointer.
-        unsafe { WebCore__DOMFormData__create(global.as_ptr()) }
+        WebCore__DOMFormData__create(global)
     }
 
     pub fn create_from_url_query(global: &JSGlobalObject, query: &ZigString) -> JSValue {
-        // SAFETY: both pointers are valid for the duration of the call; C++ only
-        // reads `query` (bindings.cpp: `toString(*arg1)`), never writes.
-        unsafe { WebCore__DOMFormData__createFromURLQuery(global.as_ptr(), query) }
+        WebCore__DOMFormData__createFromURLQuery(global, query)
     }
 
     // PORT NOTE: Zig's `comptime Ctx: type, ctx: Ctx, comptime callback: fn(Ctx, ZigString)`
@@ -98,9 +93,7 @@ impl DOMFormData {
     }
 
     pub fn append(&mut self, name_: &ZigString, value_: &ZigString) {
-        // SAFETY: C++ only reads the ZigString params via `toStringCopy(*arg)`
-        // (bindings.cpp); does not mutate or retain them.
-        unsafe { WebCore__DOMFormData__append(self, name_, value_) }
+        WebCore__DOMFormData__append(self, name_, value_)
     }
 
     pub fn append_blob(
@@ -118,8 +111,7 @@ impl DOMFormData {
     }
 
     pub fn count(&mut self) -> usize {
-        // SAFETY: self is a valid opaque handle.
-        unsafe { WebCore__DOMFormData__count(self) }
+        WebCore__DOMFormData__count(self)
     }
 
     // PORT NOTE: Zig's `comptime Context: type, ctx: *Context, comptime callback_wrapper`

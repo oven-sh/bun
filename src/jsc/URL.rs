@@ -19,26 +19,31 @@ pub struct URL {
 // PORT NOTE: getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
 // WTF::URL on read. `JSGlobalObject` is an opaque FFI handle whose state Rust never
 // observes directly, so it is passed `*const` per the JSGlobalObject.rs convention.
+// Getters take `&URL` (non-null `*const URL` at the C ABI; BunString.cpp never
+// mutates the WTF::URL on read). `&mut String` for the in/out params is
+// ABI-identical to non-null `*mut String`. `URL__deinit` consumes the C++
+// allocation and `URL__originLength` takes a (ptr,len) pair, so those keep
+// raw pointers and stay `unsafe fn`.
 unsafe extern "C" {
-    fn URL__fromJS(value: JSValue, global: *const JSGlobalObject) -> *mut URL;
-    fn URL__fromString(input: *mut String) -> *mut URL;
-    fn URL__protocol(url: *const URL) -> String;
-    fn URL__href(url: *const URL) -> String;
-    fn URL__username(url: *const URL) -> String;
-    fn URL__password(url: *const URL) -> String;
-    fn URL__search(url: *const URL) -> String;
-    fn URL__host(url: *const URL) -> String;
-    fn URL__hostname(url: *const URL) -> String;
-    fn URL__port(url: *const URL) -> u32;
+    safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
+    safe fn URL__fromString(input: &mut String) -> *mut URL;
+    safe fn URL__protocol(url: &URL) -> String;
+    safe fn URL__href(url: &URL) -> String;
+    safe fn URL__username(url: &URL) -> String;
+    safe fn URL__password(url: &URL) -> String;
+    safe fn URL__search(url: &URL) -> String;
+    safe fn URL__host(url: &URL) -> String;
+    safe fn URL__hostname(url: &URL) -> String;
+    safe fn URL__port(url: &URL) -> u32;
     fn URL__deinit(url: *mut URL);
-    fn URL__pathname(url: *const URL) -> String;
-    fn URL__getHrefFromJS(value: JSValue, global: *const JSGlobalObject) -> String;
-    fn URL__getHref(input: *mut String) -> String;
-    fn URL__getFileURLString(input: *mut String) -> String;
-    fn URL__getHrefJoin(base: *mut String, relative: *mut String) -> String;
-    fn URL__pathFromFileURL(input: *mut String) -> String;
-    fn URL__hash(url: *const URL) -> String;
-    fn URL__fragmentIdentifier(url: *const URL) -> String;
+    safe fn URL__pathname(url: &URL) -> String;
+    safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> String;
+    safe fn URL__getHref(input: &mut String) -> String;
+    safe fn URL__getFileURLString(input: &mut String) -> String;
+    safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
+    safe fn URL__pathFromFileURL(input: &mut String) -> String;
+    safe fn URL__hash(url: &URL) -> String;
+    safe fn URL__fragmentIdentifier(url: &URL) -> String;
 
     fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
 }
@@ -46,47 +51,39 @@ unsafe extern "C" {
 impl URL {
     /// Includes the leading '#'.
     pub fn hash(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__hash(self) }
+        URL__hash(self)
     }
 
     /// Exactly the same as hash, excluding the leading '#'.
     pub fn fragment_identifier(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__fragmentIdentifier(self) }
+        URL__fragmentIdentifier(self)
     }
 
     pub fn href_from_string(str: String) -> String {
         let mut input = str;
-        // SAFETY: input lives for the duration of the call
-        unsafe { URL__getHref(&raw mut input) }
+        URL__getHref(&mut input)
     }
 
     pub fn join(base: String, relative: String) -> String {
         let mut base_str = base;
         let mut relative_str = relative;
-        // SAFETY: locals live for the duration of the call
-        unsafe { URL__getHrefJoin(&raw mut base_str, &raw mut relative_str) }
+        URL__getHrefJoin(&mut base_str, &mut relative_str)
     }
 
     pub fn file_url_from_string(str: String) -> String {
         let mut input = str;
-        // SAFETY: input lives for the duration of the call
-        unsafe { URL__getFileURLString(&raw mut input) }
+        URL__getFileURLString(&mut input)
     }
 
     pub fn path_from_file_url(str: String) -> String {
         let mut input = str;
-        // SAFETY: input lives for the duration of the call
-        unsafe { URL__pathFromFileURL(&raw mut input) }
+        URL__pathFromFileURL(&mut input)
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
     /// If it fails, the tag is marked Dead
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
-        // SAFETY: global is a valid opaque JSGlobalObject*; any C++-side mutation (throw
-        // scope) is invisible to Rust through this zero-sized opaque handle.
-        let result = unsafe { URL__getHrefFromJS(value, global) };
+        let result = URL__getHrefFromJS(value, global);
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -94,9 +91,7 @@ impl URL {
     }
 
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<URL>>> {
-        // SAFETY: global is a valid opaque JSGlobalObject*; any C++-side mutation (throw
-        // scope) is invisible to Rust through this zero-sized opaque handle.
-        let result = unsafe { URL__fromJS(value, global) };
+        let result = URL__fromJS(value, global);
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -109,35 +104,29 @@ impl URL {
 
     pub fn from_string(str: String) -> Option<NonNull<URL>> {
         let mut input = str;
-        // SAFETY: input lives for the duration of the call
-        NonNull::new(unsafe { URL__fromString(&raw mut input) })
+        NonNull::new(URL__fromString(&mut input))
     }
     // TODO(port): from_js/from_string/from_utf8 return an owned C++ heap pointer that
     // the caller must destroy(). Consider an RAII wrapper in Phase B instead of NonNull<URL>.
 
     pub fn protocol(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__protocol(self) }
+        URL__protocol(self)
     }
 
     pub fn href(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__href(self) }
+        URL__href(self)
     }
 
     pub fn username(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__username(self) }
+        URL__username(self)
     }
 
     pub fn password(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__password(self) }
+        URL__password(self)
     }
 
     pub fn search(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__search(self) }
+        URL__search(self)
     }
 
     /// Returns the host WITHOUT the port.
@@ -149,8 +138,7 @@ impl URL {
     /// URL("http://example.com:8080").host() => "example.com"
     /// ```
     pub fn host(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__host(self) }
+        URL__host(self)
     }
 
     /// Returns the host WITH the port.
@@ -162,15 +150,13 @@ impl URL {
     /// URL("http://example.com:8080").hostname() => "example.com:8080"
     /// ```
     pub fn hostname(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__hostname(self) }
+        URL__hostname(self)
     }
 
     /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
     /// is guaranteed to be within the `u16` range.
     pub fn port(&self) -> u32 {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__port(self) }
+        URL__port(self)
     }
 
     // PORT NOTE: kept as explicit destroy (not Drop) — URL is an opaque #[repr(C)] FFI
@@ -181,8 +167,7 @@ impl URL {
     }
 
     pub fn pathname(&self) -> String {
-        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
-        unsafe { URL__pathname(self) }
+        URL__pathname(self)
     }
 
     pub fn origin_from_slice(slice: &[u8]) -> Option<&[u8]> {

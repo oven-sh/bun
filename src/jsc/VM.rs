@@ -5,42 +5,52 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::{Exception, ExceptionValidationScope, JSGlobalObject, JSValue, JsError};
 
 // TODO(port): move to <jsc>_sys
+//
+// All JSC__VM__* shims take only a `JSC::VM*` (and at most a
+// `JSGlobalObject*` / `JSC::Exception*` / scalar). `VM` and `JSGlobalObject`
+// are opaque `UnsafeCell`-backed ZST handles, so `&VM` is ABI-identical to a
+// non-null `VM*` and the C++ side mutating through it does not violate Rust
+// aliasing (interior mutability; zero Rust-visible bytes). Declaring the
+// params as references and the fns as `safe fn` moves the validity proof into
+// the type signature and removes the per-call-site `unsafe { }` wrappers.
+// `holdAPILock` keeps a raw `*mut c_void` ctx (opaque round-trip; C++ never
+// dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {
-    fn JSC__VM__deinit(vm: *mut VM, global_object: *mut JSGlobalObject);
-    fn JSC__VM__setControlFlowProfiler(vm: *mut VM, enabled: bool);
-    fn JSC__VM__isJITEnabled() -> bool;
-    fn JSC__VM__hasExecutionTimeLimit(vm: *mut VM) -> bool;
+    safe fn JSC__VM__deinit(vm: &VM, global_object: &JSGlobalObject);
+    safe fn JSC__VM__setControlFlowProfiler(vm: &VM, enabled: bool);
+    safe fn JSC__VM__isJITEnabled() -> bool;
+    safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
     fn JSC__VM__holdAPILock(
-        this: *mut VM,
+        this: &VM,
         ctx: *mut c_void,
         callback: extern "C" fn(ctx: *mut c_void),
     );
-    fn JSC__VM__getAPILock(vm: *mut VM);
-    fn JSC__VM__releaseAPILock(vm: *mut VM);
-    fn JSC__VM__reportExtraMemory(vm: *mut VM, size: usize);
-    fn JSC__VM__deleteAllCode(vm: *mut VM, global_object: *mut JSGlobalObject);
-    fn JSC__VM__shrinkFootprint(vm: *mut VM);
-    fn JSC__VM__runGC(vm: *mut VM, sync: bool) -> usize;
-    fn JSC__VM__heapSize(vm: *mut VM) -> usize;
-    fn JSC__VM__collectAsync(vm: *mut VM);
-    fn JSC__VM__setExecutionForbidden(vm: *mut VM, forbidden: bool);
-    fn JSC__VM__setExecutionTimeLimit(vm: *mut VM, timeout: f64);
-    fn JSC__VM__clearExecutionTimeLimit(vm: *mut VM);
-    fn JSC__VM__executionForbidden(vm: *mut VM) -> bool;
-    fn JSC__VM__notifyNeedTermination(vm: *mut VM);
-    fn JSC__VM__notifyNeedWatchdogCheck(vm: *mut VM);
-    fn JSC__VM__notifyNeedDebuggerBreak(vm: *mut VM);
-    fn JSC__VM__notifyNeedShellTimeoutCheck(vm: *mut VM);
-    fn JSC__VM__isEntered(vm: *mut VM) -> bool;
-    fn JSC__VM__isTerminationException(vm: *mut VM, exception: *const Exception) -> bool;
-    fn JSC__VM__hasTerminationRequest(vm: *mut VM) -> bool;
-    fn JSC__VM__clearHasTerminationRequest(vm: *mut VM);
-    fn JSC__VM__throwError(vm: *mut VM, global_object: *mut JSGlobalObject, value: JSValue);
-    fn JSC__VM__releaseWeakRefs(vm: *mut VM);
-    fn JSC__VM__drainMicrotasks(vm: *mut VM);
-    fn JSC__VM__externalMemorySize(vm: *mut VM) -> usize;
-    fn JSC__VM__blockBytesAllocated(vm: *mut VM) -> usize;
-    fn JSC__VM__performOpportunisticallyScheduledTasks(vm: *mut VM, until: f64);
+    safe fn JSC__VM__getAPILock(vm: &VM);
+    safe fn JSC__VM__releaseAPILock(vm: &VM);
+    safe fn JSC__VM__reportExtraMemory(vm: &VM, size: usize);
+    safe fn JSC__VM__deleteAllCode(vm: &VM, global_object: &JSGlobalObject);
+    safe fn JSC__VM__shrinkFootprint(vm: &VM);
+    safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
+    safe fn JSC__VM__heapSize(vm: &VM) -> usize;
+    safe fn JSC__VM__collectAsync(vm: &VM);
+    safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
+    safe fn JSC__VM__setExecutionTimeLimit(vm: &VM, timeout: f64);
+    safe fn JSC__VM__clearExecutionTimeLimit(vm: &VM);
+    safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
+    safe fn JSC__VM__notifyNeedTermination(vm: &VM);
+    safe fn JSC__VM__notifyNeedWatchdogCheck(vm: &VM);
+    safe fn JSC__VM__notifyNeedDebuggerBreak(vm: &VM);
+    safe fn JSC__VM__notifyNeedShellTimeoutCheck(vm: &VM);
+    safe fn JSC__VM__isEntered(vm: &VM) -> bool;
+    safe fn JSC__VM__isTerminationException(vm: &VM, exception: &Exception) -> bool;
+    safe fn JSC__VM__hasTerminationRequest(vm: &VM) -> bool;
+    safe fn JSC__VM__clearHasTerminationRequest(vm: &VM);
+    safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
+    safe fn JSC__VM__releaseWeakRefs(vm: &VM);
+    safe fn JSC__VM__drainMicrotasks(vm: &VM);
+    safe fn JSC__VM__externalMemorySize(vm: &VM) -> usize;
+    safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
+    safe fn JSC__VM__performOpportunisticallyScheduledTasks(vm: &VM, until: f64);
 }
 
 /// Opaque handle to a `JSC::VM`.
@@ -64,36 +74,32 @@ impl VM {
 
     // PORT NOTE: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
     pub fn deinit(&self, global_object: &JSGlobalObject) {
-        // SAFETY: self and global_object are valid live JSC objects.
-        unsafe { JSC__VM__deinit(self.as_mut_ptr(), global_object.as_mut_ptr()) }
+        JSC__VM__deinit(self, global_object)
     }
 
     pub fn set_control_flow_profiler(&self, enabled: bool) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__setControlFlowProfiler(self.as_mut_ptr(), enabled) }
+        JSC__VM__setControlFlowProfiler(self, enabled)
     }
 
     pub fn is_jit_enabled() -> bool {
-        // SAFETY: pure query, no preconditions.
-        unsafe { JSC__VM__isJITEnabled() }
+        JSC__VM__isJITEnabled()
     }
 
     pub fn has_execution_time_limit(&self) -> bool {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__hasExecutionTimeLimit(self.as_mut_ptr()) }
+        JSC__VM__hasExecutionTimeLimit(self)
     }
 
     /// deprecated in favor of `get_api_lock` to avoid an annoying callback wrapper
     #[deprecated = "use get_api_lock"]
     pub fn hold_api_lock(&self, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void)) {
-        // SAFETY: self is a valid VM; callback is a valid C fn pointer.
-        unsafe { JSC__VM__holdAPILock(self.as_mut_ptr(), ctx, callback) }
+        // SAFETY: `ctx` is an opaque round-trip pointer; C++ only forwards it to
+        // `callback` and never dereferences it as Rust data.
+        unsafe { JSC__VM__holdAPILock(self, ctx, callback) }
     }
 
     /// See `JSLock.h` in WebKit for more detail on how the API lock prevents races.
     pub fn get_api_lock(&self) -> Lock<'_> {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__getAPILock(self.as_mut_ptr()) }
+        JSC__VM__getAPILock(self);
         Lock { vm: self }
     }
 
@@ -104,8 +110,7 @@ impl VM {
 
     pub fn report_extra_memory(&self, size: usize) {
         crate::mark_binding!();
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__reportExtraMemory(self.as_mut_ptr(), size) }
+        JSC__VM__reportExtraMemory(self, size)
     }
 
     /// Alias retained for parity with the Zig comment naming this the
@@ -117,48 +122,39 @@ impl VM {
     }
 
     pub fn delete_all_code(&self, global_object: &JSGlobalObject) {
-        // SAFETY: self and global_object are valid live JSC objects.
-        unsafe { JSC__VM__deleteAllCode(self.as_mut_ptr(), global_object.as_mut_ptr()) }
+        JSC__VM__deleteAllCode(self, global_object)
     }
 
     pub fn shrink_footprint(&self) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__shrinkFootprint(self.as_mut_ptr()) }
+        JSC__VM__shrinkFootprint(self)
     }
 
     pub fn run_gc(&self, sync: bool) -> usize {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__runGC(self.as_mut_ptr(), sync) }
+        JSC__VM__runGC(self, sync)
     }
 
     pub fn heap_size(&self) -> usize {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__heapSize(self.as_mut_ptr()) }
+        JSC__VM__heapSize(self)
     }
 
     pub fn collect_async(&self) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__collectAsync(self.as_mut_ptr()) }
+        JSC__VM__collectAsync(self)
     }
 
     pub fn set_execution_forbidden(&self, forbidden: bool) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__setExecutionForbidden(self.as_mut_ptr(), forbidden) }
+        JSC__VM__setExecutionForbidden(self, forbidden)
     }
 
     pub fn set_execution_time_limit(&self, timeout: f64) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__setExecutionTimeLimit(self.as_mut_ptr(), timeout) }
+        JSC__VM__setExecutionTimeLimit(self, timeout)
     }
 
     pub fn clear_execution_time_limit(&self) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__clearExecutionTimeLimit(self.as_mut_ptr()) }
+        JSC__VM__clearExecutionTimeLimit(self)
     }
 
     pub fn execution_forbidden(&self) -> bool {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__executionForbidden(self.as_mut_ptr()) }
+        JSC__VM__executionForbidden(self)
     }
 
     // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
@@ -166,48 +162,38 @@ impl VM {
 
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notify_need_termination(&self) {
-        // SAFETY: self is a valid VM; documented thread-safe on the C++ side.
-        unsafe { JSC__VM__notifyNeedTermination(self.as_mut_ptr()) }
+        JSC__VM__notifyNeedTermination(self)
     }
 
     /// Fires NeedWatchdogCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notify_need_watchdog_check(&self) {
-        // SAFETY: self is a valid VM; documented thread-safe on the C++ side.
-        unsafe { JSC__VM__notifyNeedWatchdogCheck(self.as_mut_ptr()) }
+        JSC__VM__notifyNeedWatchdogCheck(self)
     }
 
     /// Fires NeedDebuggerBreak Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notify_need_debugger_break(&self) {
-        // SAFETY: self is a valid VM; documented thread-safe on the C++ side.
-        unsafe { JSC__VM__notifyNeedDebuggerBreak(self.as_mut_ptr()) }
+        JSC__VM__notifyNeedDebuggerBreak(self)
     }
 
     /// Fires NeedShellTimeoutCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub fn notify_need_shell_timeout_check(&self) {
-        // SAFETY: self is a valid VM; documented thread-safe on the C++ side.
-        unsafe { JSC__VM__notifyNeedShellTimeoutCheck(self.as_mut_ptr()) }
+        JSC__VM__notifyNeedShellTimeoutCheck(self)
     }
 
     pub fn is_entered(&self) -> bool {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__isEntered(self.as_mut_ptr()) }
+        JSC__VM__isEntered(self)
     }
 
     pub fn is_termination_exception(&self, exception: &Exception) -> bool {
-        // SAFETY: self and exception are valid live JSC objects. The C++ impl
-        // (`JSC::VM::isTerminationException`) only reads `exception`, so passing
-        // a `*const` derived from `&Exception` is sound.
-        unsafe { JSC__VM__isTerminationException(self.as_mut_ptr(), exception) }
+        JSC__VM__isTerminationException(self, exception)
     }
 
     pub fn has_termination_request(&self) -> bool {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__hasTerminationRequest(self.as_mut_ptr()) }
+        JSC__VM__hasTerminationRequest(self)
     }
 
     pub fn clear_has_termination_request(&self) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__clearHasTerminationRequest(self.as_mut_ptr()) }
+        JSC__VM__clearHasTerminationRequest(self)
     }
 
     #[track_caller]
@@ -216,8 +202,7 @@ impl VM {
         let scope =
             ExceptionValidationScope::new(&mut scope_storage, global_object, core::panic::Location::caller());
         scope.assert_no_exception();
-        // SAFETY: self and global_object are valid; value is a live JSValue on this VM.
-        unsafe { JSC__VM__throwError(self.as_mut_ptr(), global_object.as_mut_ptr(), value) }
+        JSC__VM__throwError(self, global_object, value);
         scope.assert_exception_presence_matches(true);
         // Zig: `defer scope.deinit()` — `ExceptionValidationScope` has no `Drop`, destroy explicitly.
         // SAFETY: scope was initialized via `ExceptionValidationScope::new` above and not yet destroyed.
@@ -226,30 +211,25 @@ impl VM {
     }
 
     pub fn release_weak_refs(&self) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__releaseWeakRefs(self.as_mut_ptr()) }
+        JSC__VM__releaseWeakRefs(self)
     }
 
     pub fn drain_microtasks(&self) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__drainMicrotasks(self.as_mut_ptr()) }
+        JSC__VM__drainMicrotasks(self)
     }
 
     pub fn external_memory_size(&self) -> usize {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__externalMemorySize(self.as_mut_ptr()) }
+        JSC__VM__externalMemorySize(self)
     }
 
     /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function
     /// This is faster than checking the heap size
     pub fn block_bytes_allocated(&self) -> usize {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__blockBytesAllocated(self.as_mut_ptr()) }
+        JSC__VM__blockBytesAllocated(self)
     }
 
     pub fn perform_opportunistically_scheduled_tasks(&self, until: f64) {
-        // SAFETY: self is a valid VM.
-        unsafe { JSC__VM__performOpportunisticallyScheduledTasks(self.as_mut_ptr(), until) }
+        JSC__VM__performOpportunisticallyScheduledTasks(self, until)
     }
 
     /// Raw `*mut VM` for FFI. Sound for callees that mutate: `VM` contains
@@ -279,8 +259,7 @@ impl<'a> Lock<'a> {
 
 impl Drop for Lock<'_> {
     fn drop(&mut self) {
-        // SAFETY: lock was acquired via JSC__VM__getAPILock on this VM.
-        unsafe { JSC__VM__releaseAPILock(self.vm.as_mut_ptr()) }
+        JSC__VM__releaseAPILock(self.vm)
     }
 }
 

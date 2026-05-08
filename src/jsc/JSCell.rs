@@ -37,8 +37,7 @@ impl JSCell {
         // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
         // TODO(port): Zig wraps the extern result in @enumFromInt but the fn return type is `u8`;
         // likely intended to return `JSType` — verify in Phase B.
-        // SAFETY: plain FFI getter.
-        unsafe { JSC__JSCell__getType(self) }
+        JSC__JSCell__getType(self)
     }
 
     pub fn to_js(&self) -> JSValue {
@@ -70,7 +69,7 @@ unsafe extern "C" {
     // casting it via `@enumFromInt` we can ensure our `JSType` enum matches
     // WebKit's. This protects us from possible future breaking changes made
     // when upgrading WebKit.
-    fn JSC__JSCell__getType(this: *const JSCell) -> u8;
+    safe fn JSC__JSCell__getType(this: &JSCell) -> u8;
 }
 
 // ported from: src/jsc/JSCell.zig

@@ -1034,7 +1034,7 @@ impl VirtualMachine {
         // on this stack frame for the duration of the FFI call, which invokes
         // `call` exactly once before returning.
         unsafe {
-            JSC__VM__holdAPILock(self.jsc_vm, (&raw mut t).cast(), call::<F, R>);
+            JSC__VM__holdAPILock(&*self.jsc_vm, (&raw mut t).cast(), call::<F, R>);
         }
         // SAFETY: `call` wrote `t.result` exactly once above.
         unsafe { t.result.assume_init() }
@@ -1772,8 +1772,7 @@ unsafe extern "C" {
         worker_ptr: *mut c_void,
     ) -> *mut JSGlobalObject;
     fn Bun__loadHTMLEntryPoint(global: *mut JSGlobalObject) -> *mut JSInternalPromise;
-    fn JSC__VM__executionForbidden(vm: *mut VM) -> bool;
-    fn JSC__VM__holdAPILock(vm: *mut VM, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void));
+    fn JSC__VM__holdAPILock(vm: &VM, ctx: *mut c_void, callback: extern "C" fn(ctx: *mut c_void));
     fn NodeModuleModule__callOverriddenRunMain(global: *mut JSGlobalObject, argv1: JSValue) -> JSValue;
     fn JSC__JSInternalPromise__resolvedPromise(global: *mut JSGlobalObject, value: JSValue) -> *mut JSInternalPromise;
 }

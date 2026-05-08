@@ -101,25 +101,21 @@ impl JSGlobalObject {
     }
 
     pub fn throw_stack_overflow(&self) -> JsError {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__throwStackOverflow(self) };
+        JSGlobalObject__throwStackOverflow(self);
         JsError::Thrown
     }
 
     pub fn throw_out_of_memory(&self) -> JsError {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__throwOutOfMemoryError(self) };
+        JSGlobalObject__throwOutOfMemoryError(self);
         JsError::Thrown
     }
 
     pub fn create_out_of_memory_error(&self) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__createOutOfMemoryError(self) }
+        JSGlobalObject__createOutOfMemoryError(self)
     }
 
     pub fn throw_out_of_memory_value(&self) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__throwOutOfMemoryError(self) };
+        JSGlobalObject__throwOutOfMemoryError(self);
         JSValue::ZERO
     }
 
@@ -137,8 +133,7 @@ impl JSGlobalObject {
         // C++ `Bun__gregorianDateTimeToMS` is `[[ZIG_EXPORT(check_slow)]]`; the Zig codegen
         // wrapper checks for a pending exception and returns `error.JSError`. Route through
         // `from_js_host_call_generic` so a thrown exception surfaces as `Err(JsError::Thrown)`.
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args are by value.
-        crate::from_js_host_call_generic(self, || unsafe {
+        crate::from_js_host_call_generic(self, || {
             Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, true)
         })
     }
@@ -154,8 +149,7 @@ impl JSGlobalObject {
         millisecond: i32,
     ) -> JsResult<f64> {
         crate::mark_binding();
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; all integer args are by value.
-        crate::from_js_host_call_generic(self, || unsafe {
+        crate::from_js_host_call_generic(self, || {
             Bun__gregorianDateTimeToMS(self, year, month, day, hour, minute, second, millisecond, false)
         })
     }
@@ -198,19 +192,16 @@ impl JSGlobalObject {
 
     #[inline]
     pub fn request_termination(&self) {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__requestTermination(self) }
+        JSGlobalObject__requestTermination(self)
     }
 
     #[inline]
     pub fn clear_termination_exception(&self) {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__clearTerminationException(self) }
+        JSGlobalObject__clearTerminationException(self)
     }
 
     pub fn set_time_zone(&self, time_zone: &ZigString) -> bool {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; `time_zone` borrow outlives the call.
-        unsafe { JSGlobalObject__setTimeZone(self, time_zone) }
+        JSGlobalObject__setTimeZone(self, time_zone)
     }
 
     #[inline]
@@ -370,10 +361,9 @@ impl JSGlobalObject {
     /// `bun_string::String` is `Copy` and has no `Drop`, so a bare `BunString`
     /// here would leak (Zig spec does `defer actual_string_value.deref()`).
     pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<OwnedString> {
-        // SAFETY: FFI — `global` is a valid JSGlobalObject*; JSValue is passed by value.
         // `errdefer str.deref()` → wrapping immediately in OwnedString releases the
         // +1 ref on the early-return path below.
-        let str = OwnedString::new(unsafe { Bun__ErrorCode__determineSpecificType(global, value) });
+        let str = OwnedString::new(Bun__ErrorCode__determineSpecificType(global, value));
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -580,10 +570,7 @@ impl JSGlobalObject {
     pub fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
         self.vm().collect_async();
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        crate::from_js_host_call_generic(self, || unsafe {
-            JSC__JSGlobalObject__reload(self)
-        })
+        crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__reload(self))
     }
 
     pub fn run_on_load_plugins(
@@ -833,16 +820,13 @@ impl JSGlobalObject {
         code: JSValue,
         ctor: JSValue,
     ) -> JsResult<()> {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue args are passed by value
-        // and rooted on the caller's stack for the duration of the call.
-        crate::from_js_host_call_generic(self, || unsafe {
+        crate::from_js_host_call_generic(self, || {
             Bun__Process__emitWarning(self, warning, type_, code, ctor)
         })
     }
 
     pub fn queue_microtask_job(&self, function: JSValue, first: JSValue, second: JSValue) {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue args are passed by value.
-        unsafe { JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second) }
+        JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
     pub fn throw_value(&self, value: JSValue) -> JsError {
@@ -918,27 +902,22 @@ impl JSGlobalObject {
         if cfg!(debug_assertions) {
             debug_assert!(error_array.is_array());
         }
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; `error_array`/`message` are
-        // by-value; C++ consumes `message` (BunString) by value.
-        crate::from_js_host_call(self, || unsafe {
+        crate::from_js_host_call(self, || {
             JSC__JSGlobalObject__createAggregateErrorWithArray(self, error_array, message, JSValue::UNDEFINED)
         })
     }
 
     pub fn generate_heap_snapshot(&self) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSC__JSGlobalObject__generateHeapSnapshot(self) }
+        JSC__JSGlobalObject__generateHeapSnapshot(self)
     }
 
     // DEPRECATED - use TopExceptionScope to check for exceptions and signal exceptions by returning JSError
     pub fn has_exception(&self) -> bool {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__hasException(self) }
+        JSGlobalObject__hasException(self)
     }
 
     pub fn clear_exception(&self) {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__clearException(self) }
+        JSGlobalObject__clearException(self)
     }
 
     /// Clear the currently active exception off the VM unless it is a
@@ -950,8 +929,7 @@ impl JSGlobalObject {
     ///
     /// It is safe to call this function when no exception is present.
     pub fn clear_exception_except_termination(&self) -> bool {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__clearExceptionExceptTermination(self) }
+        JSGlobalObject__clearExceptionExceptTermination(self)
     }
 
     /// Clears the current exception and returns that value. Requires compile-time
@@ -990,8 +968,7 @@ impl JSGlobalObject {
     }
 
     pub fn try_take_exception(&self) -> Option<JSValue> {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        let value = unsafe { JSGlobalObject__tryTakeException(self) };
+        let value = JSGlobalObject__tryTakeException(self);
         if value.is_empty() {
             return None;
         }
@@ -1024,20 +1001,17 @@ impl JSGlobalObject {
     /// (e.g. [`JSValue::as_exception`]). C++ does not write through it.
     #[inline]
     pub fn vm_ptr(&self) -> *mut VM {
-        // SAFETY: JSC guarantees the VM outlives the global object.
-        unsafe { JSC__JSGlobalObject__vm(self) }
+        JSC__JSGlobalObject__vm(self)
     }
 
     pub fn delete_module_registry_entry(&self, name_: &ZigString) -> JsResult<()> {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; `name_` borrow outlives the call.
-        crate::from_js_host_call_generic(self, || unsafe {
+        crate::from_js_host_call_generic(self, || {
             JSC__JSGlobalObject__deleteModuleRegistryEntry(self, name_)
         })
     }
 
     fn bun_vm_unsafe(&self) -> *mut c_void {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSC__JSGlobalObject__bunVM(self) }
+        JSC__JSGlobalObject__bunVM(self)
     }
 
     /// Raw-pointer variant of [`Self::bun_vm`]. Returns the FFI
@@ -1111,40 +1085,33 @@ impl JSGlobalObject {
         // own exceptions; the only thing that escapes is a TerminationException
         // (worker terminate() or process.exit()), and the request flag may
         // already be cleared by the time we observe it. Nothing actionable here.
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ catches/reports its own exceptions.
-        let _ = crate::from_js_host_call_generic(self, || unsafe {
+        let _ = crate::from_js_host_call_generic(self, || {
             JSC__JSGlobalObject__handleRejectedPromises(self)
         });
     }
 
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue passed by value.
-        unsafe { ZigGlobalObject__readableStreamToArrayBuffer(self, value) }
+        ZigGlobalObject__readableStreamToArrayBuffer(self, value)
     }
 
     pub fn readable_stream_to_bytes(&self, value: JSValue) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue passed by value.
-        unsafe { ZigGlobalObject__readableStreamToBytes(self, value) }
+        ZigGlobalObject__readableStreamToBytes(self, value)
     }
 
     pub fn readable_stream_to_text(&self, value: JSValue) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue passed by value.
-        unsafe { ZigGlobalObject__readableStreamToText(self, value) }
+        ZigGlobalObject__readableStreamToText(self, value)
     }
 
     pub fn readable_stream_to_json(&self, value: JSValue) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue passed by value.
-        unsafe { ZigGlobalObject__readableStreamToJSON(self, value) }
+        ZigGlobalObject__readableStreamToJSON(self, value)
     }
 
     pub fn readable_stream_to_blob(&self, value: JSValue) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue passed by value.
-        unsafe { ZigGlobalObject__readableStreamToBlob(self, value) }
+        ZigGlobalObject__readableStreamToBlob(self, value)
     }
 
     pub fn readable_stream_to_form_data(&self, value: JSValue, content_type: JSValue) -> JSValue {
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; JSValue args passed by value.
-        unsafe { ZigGlobalObject__readableStreamToFormData(self, value, content_type) }
+        ZigGlobalObject__readableStreamToFormData(self, value, content_type)
     }
 
     /// Returns a freshly-created `napi_env` owned by this global, for use by
@@ -1152,8 +1119,7 @@ impl JSGlobalObject {
     /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
     /// callers in `bun_runtime` cast to `*mut NapiEnv`.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
-        // SAFETY: C++ returns a non-null, freshly-created NapiEnv owned by the global.
-        unsafe { ZigGlobalObject__makeNapiEnvForFFI(self) }
+        ZigGlobalObject__makeNapiEnvForFFI(self)
     }
 
     #[inline]
@@ -1395,8 +1361,7 @@ impl JSGlobalObject {
     }
 
     pub fn get_module_registry_map(global: &JSGlobalObject) -> *mut c_void {
-        // SAFETY: FFI — `global` is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { Zig__GlobalObject__getModuleRegistryMap(global) }
+        Zig__GlobalObject__getModuleRegistryMap(global)
     }
 
     pub fn reset_module_registry_map(global: &JSGlobalObject, map: *mut c_void) -> bool {
@@ -1443,10 +1408,7 @@ impl JSGlobalObject {
     }
 
     pub fn script_execution_context_identifier(&self) -> ScriptExecutionContextIdentifier {
-        // SAFETY: ScriptExecutionContextIdentifier is #[repr(transparent)] u32.
-        ScriptExecutionContextIdentifier(unsafe {
-            ScriptExecutionContextIdentifier__forGlobalObject(self)
-        })
+        ScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier__forGlobalObject(self))
     }
 
     pub const EXTERN: [&'static str; 3] = ["create", "getModuleRegistryMap", "resetModuleRegistryMap"];
@@ -1577,13 +1539,18 @@ pub extern "C" fn Zig__GlobalObject__onCrash() {
 // ──────────────────────────────────────────────────────────────────────────────
 // extern "C" declarations
 // ──────────────────────────────────────────────────────────────────────────────
+// `safe fn`: parameters are either value types (`JSValue`, scalars) or Rust
+// references (`&JSGlobalObject`, `&ZigString`) which are ABI-identical to
+// non-null pointers and carry the validity guarantee the C++ side requires.
+// Functions taking nullable raw pointers / `(ptr,len)` pairs / opaque ctx that
+// the C++ side dereferences stay `unsafe` and are wrapped at the call site.
 unsafe extern "C" {
-    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
-    fn JSGlobalObject__throwOutOfMemoryError(this: *const JSGlobalObject);
-    fn JSGlobalObject__createOutOfMemoryError(this: *const JSGlobalObject) -> JSValue;
+    safe fn JSGlobalObject__throwStackOverflow(this: &JSGlobalObject);
+    safe fn JSGlobalObject__throwOutOfMemoryError(this: &JSGlobalObject);
+    safe fn JSGlobalObject__createOutOfMemoryError(this: &JSGlobalObject) -> JSValue;
 
-    fn Bun__gregorianDateTimeToMS(
-        this: *const JSGlobalObject,
+    safe fn Bun__gregorianDateTimeToMS(
+        this: &JSGlobalObject,
         year: i32,
         month: i32,
         day: i32,
@@ -1606,7 +1573,7 @@ unsafe extern "C" {
         weekday: *mut i32,
     );
 
-    fn Bun__ErrorCode__determineSpecificType(global: *const JSGlobalObject, value: JSValue) -> BunString;
+    safe fn Bun__ErrorCode__determineSpecificType(global: &JSGlobalObject, value: JSValue) -> BunString;
 
     fn Bun__runOnLoadPlugins(
         global: *const JSGlobalObject,
@@ -1622,7 +1589,7 @@ unsafe extern "C" {
         target: BunPluginTarget,
     ) -> JSValue;
 
-    fn JSC__JSGlobalObject__reload(this: *const JSGlobalObject);
+    safe fn JSC__JSGlobalObject__reload(this: &JSGlobalObject);
 
     fn JSC__JSGlobalObject__queueMicrotaskCallback(
         this: *const JSGlobalObject,
@@ -1630,16 +1597,16 @@ unsafe extern "C" {
         function: unsafe extern "C" fn(*mut c_void),
     );
 
-    fn Bun__Process__emitWarning(
-        global_object: *const JSGlobalObject,
+    safe fn Bun__Process__emitWarning(
+        global_object: &JSGlobalObject,
         warning: JSValue,
         type_: JSValue,
         code: JSValue,
         ctor: JSValue,
     );
 
-    fn JSC__JSGlobalObject__queueMicrotaskJob(
-        this: *const JSGlobalObject,
+    safe fn JSC__JSGlobalObject__queueMicrotaskJob(
+        this: &JSGlobalObject,
         function: JSValue,
         first: JSValue,
         second: JSValue,
@@ -1651,39 +1618,39 @@ unsafe extern "C" {
         len: usize,
         message: *const bun_string::ZigString,
     ) -> JSValue;
-    fn JSC__JSGlobalObject__createAggregateErrorWithArray(
-        global: *const JSGlobalObject,
+    safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
+        global: &JSGlobalObject,
         error_array: JSValue,
         message: BunString,
         options: JSValue,
     ) -> JSValue;
-    fn JSC__JSGlobalObject__generateHeapSnapshot(this: *const JSGlobalObject) -> JSValue;
+    safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;
 
-    fn JSC__JSGlobalObject__handleRejectedPromises(this: *const JSGlobalObject);
+    safe fn JSC__JSGlobalObject__handleRejectedPromises(this: &JSGlobalObject);
 
-    fn ZigGlobalObject__readableStreamToArrayBuffer(this: *const JSGlobalObject, value: JSValue) -> JSValue;
-    fn ZigGlobalObject__readableStreamToBytes(this: *const JSGlobalObject, value: JSValue) -> JSValue;
-    fn ZigGlobalObject__readableStreamToText(this: *const JSGlobalObject, value: JSValue) -> JSValue;
-    fn ZigGlobalObject__readableStreamToJSON(this: *const JSGlobalObject, value: JSValue) -> JSValue;
-    fn ZigGlobalObject__readableStreamToFormData(
-        this: *const JSGlobalObject,
+    safe fn ZigGlobalObject__readableStreamToArrayBuffer(this: &JSGlobalObject, value: JSValue) -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToBytes(this: &JSGlobalObject, value: JSValue) -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToText(this: &JSGlobalObject, value: JSValue) -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue) -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToFormData(
+        this: &JSGlobalObject,
         value: JSValue,
         content_type: JSValue,
     ) -> JSValue;
-    fn ZigGlobalObject__readableStreamToBlob(this: *const JSGlobalObject, value: JSValue) -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue) -> JSValue;
 
-    fn ZigGlobalObject__makeNapiEnvForFFI(this: *const JSGlobalObject) -> *mut c_void;
+    safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 
-    fn JSC__JSGlobalObject__bunVM(this: *const JSGlobalObject) -> *mut c_void;
-    fn JSC__JSGlobalObject__vm(this: *const JSGlobalObject) -> *mut VM;
-    fn JSC__JSGlobalObject__deleteModuleRegistryEntry(this: *const JSGlobalObject, name_: *const ZigString);
-    fn JSGlobalObject__clearException(this: *const JSGlobalObject);
-    fn JSGlobalObject__clearExceptionExceptTermination(this: *const JSGlobalObject) -> bool;
-    fn JSGlobalObject__clearTerminationException(this: *const JSGlobalObject);
-    fn JSGlobalObject__hasException(this: *const JSGlobalObject) -> bool;
-    fn JSGlobalObject__setTimeZone(this: *const JSGlobalObject, time_zone: *const ZigString) -> bool;
-    fn JSGlobalObject__tryTakeException(this: *const JSGlobalObject) -> JSValue;
-    fn JSGlobalObject__requestTermination(this: *const JSGlobalObject);
+    safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
+    safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> *mut VM;
+    safe fn JSC__JSGlobalObject__deleteModuleRegistryEntry(this: &JSGlobalObject, name_: &ZigString);
+    safe fn JSGlobalObject__clearException(this: &JSGlobalObject);
+    safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
+    safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
+    safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
+    safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &ZigString) -> bool;
+    safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
+    safe fn JSGlobalObject__requestTermination(this: &JSGlobalObject);
 
     fn Zig__GlobalObject__create(
         console: *mut c_void,
@@ -1698,10 +1665,10 @@ unsafe extern "C" {
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
 
-    fn Zig__GlobalObject__getModuleRegistryMap(global: *const JSGlobalObject) -> *mut c_void;
+    safe fn Zig__GlobalObject__getModuleRegistryMap(global: &JSGlobalObject) -> *mut c_void;
     fn Zig__GlobalObject__resetModuleRegistryMap(global: *const JSGlobalObject, map: *mut c_void) -> bool;
 
-    fn ScriptExecutionContextIdentifier__forGlobalObject(global: *const JSGlobalObject) -> u32;
+    safe fn ScriptExecutionContextIdentifier__forGlobalObject(global: &JSGlobalObject) -> u32;
 }
 
 // ported from: src/jsc/JSGlobalObject.zig

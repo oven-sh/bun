@@ -62,25 +62,19 @@ impl From<ScanImportsAndExportsError> for bun_core::Error {
     }
 }
 
-/// Build a `*mut [T]` column pointer from a cached `MultiArrayList::Slice`.
-/// SoA columns are disjoint by construction; the backing buffer is never
-/// reallocated for the lifetime of the slice (no `append`/`resize` here),
-/// so dereferencing distinct columns simultaneously is sound.
-macro_rules! col_ptr {
-    ($slice:ident, $field:ident, $ty:ty) => {{
-        let len = $slice.len();
-        // SAFETY: `$ty` is exactly the column type for `$field`; the derive
-        // guarantees the field-enum ↔ type pairing.
-        let p: *mut $ty = unsafe { $slice.items_raw::<{ ::core::stringify!($field) }, $ty>() };
-        core::ptr::slice_from_raw_parts_mut(p, len)
-    }};
-}
-
 /// Short-lived `&mut [T]` deref of a column pointer at a single use site.
+///
+/// The column pointers in this file are populated once via `split_mut` and
+/// immediately decayed to `*mut [T]` so the body can interleave reads with
+/// `&mut LinkerContext` calls (steps 3–5). SoA columns are disjoint and the
+/// backing `MultiArrayList`s never reallocate inside this function, so
+/// re-borrowing here is sound. Round 2 of RUST_IDIOMS_AUDIT.md §3 retires
+/// these once `generate_code_for_lazy_export` / `match_imports_with_exports_for_file`
+/// / `create_wrapper_for_file` / `do_step5` are reshaped to free fns.
 macro_rules! col {
     ($p:expr) => {
-        // SAFETY: see `col_ptr!`. Caller ensures no aliasing `&mut` to the
-        // same column is live across this deref.
+        // SAFETY: see module note above; no aliasing `&mut` to the same
+        // column is live across this deref.
         unsafe { &mut *$p }
     };
 }
@@ -88,7 +82,7 @@ macro_rules! col {
 /// Short-lived `&[T]` deref of a column pointer.
 macro_rules! col_ref {
     ($p:expr) => {
-        // SAFETY: see `col_ptr!`.
+        // SAFETY: see `col!`.
         unsafe { &*$p }
     };
 }
@@ -106,56 +100,70 @@ pub fn scan_imports_and_exports(
 
     // ── cache SoA column base pointers ────────────────────────────────────
     // `MultiArrayList` never reallocates inside this function (only column
-    // *element* contents grow, e.g. `Vec<Part>::append`). So these raw
-    // column pointers are valid for the whole body.
-    let ast = this.graph.ast.slice();
-    let meta = this.graph.meta.slice();
-    let files = this.graph.files.slice();
+    // *element* contents grow, e.g. `Vec<Part>::append`). One `split_mut` per
+    // list yields every column as `&mut [T]`; immediately decay to `*mut [T]`
+    // so steps 3–5 can still call `&mut this` methods between column accesses.
     // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the
     // lifetime of the link step.
-    let parse_graph = unsafe { &*this.parse_graph };
-    let input = parse_graph.input_files.slice();
+    let parse_graph = unsafe { &mut *this.parse_graph };
 
-    let import_records_list: *mut [ImportRecordList] =
-        col_ptr!(ast, import_records, ImportRecordList);
-    let exports_kind: *mut [ExportsKind] = col_ptr!(ast, exports_kind, ExportsKind);
-    let entry_point_kinds: *mut [EntryPoint::Kind] =
-        col_ptr!(files, entry_point_kind, EntryPoint::Kind);
-    let named_imports: *mut [NamedImports] = col_ptr!(ast, named_imports, NamedImports);
-    let named_exports: *mut [NamedExports] = col_ptr!(ast, named_exports, NamedExports);
-    let flags: *mut [js_meta::Flags] = col_ptr!(meta, flags, js_meta::Flags);
-    let ast_flags_list: *mut [AstFlags] = col_ptr!(ast, flags, AstFlags);
-    let export_star_import_records: *mut [&'static [u32]] =
-        col_ptr!(ast, export_star_import_records, &'static [u32]);
-    let exports_refs: *mut [Ref] = col_ptr!(ast, exports_ref, Ref);
-    let module_refs: *mut [Ref] = col_ptr!(ast, module_ref, Ref);
-    let wrapper_refs: *mut [Ref] = col_ptr!(ast, wrapper_ref, Ref);
-    let parts_list: *mut [PartList] = col_ptr!(ast, parts, PartList);
+    use bun_js_parser::ast::bundled_ast::CssCol;
+    let import_records_list: *mut [ImportRecordList];
+    let exports_kind: *mut [ExportsKind];
+    let entry_point_kinds: *mut [EntryPoint::Kind];
+    let named_imports: *mut [NamedImports];
+    let named_exports: *mut [NamedExports];
+    let flags: *mut [js_meta::Flags];
+    let ast_flags_list: *mut [AstFlags];
+    let export_star_import_records: *mut [Box<[u32]>];
+    let exports_refs: *mut [Ref];
+    let module_refs: *mut [Ref];
+    let wrapper_refs: *mut [Ref];
+    let parts_list: *mut [PartList];
     // Zig: `[]?*bun.css.BundlerStyleSheet` — element is a *mutable* nullable
     // pointer (matches `BundledAst.css: Option<*mut BundlerStyleSheet>`).
-    use bun_js_parser::ast::bundled_ast::CssCol;
-    let css_asts: *mut [CssCol] = col_ptr!(ast, css, CssCol);
+    let css_asts: *mut [CssCol];
+    let input_files: *mut [Source];
+    let loaders: *mut [Loader];
+    let resolved_exports: *mut [ResolvedExports];
+    let resolved_export_stars: *mut [ExportData];
+    let imports_to_bind_list: *mut [RefImportData];
+    let wrapper_part_indices: *mut [Index];
+    let sorted_aliases: *mut [Box<[Box<[u8]>]>];
+    let cjs_export_copies: *mut [Box<[Ref]>];
+    let entry_point_part_indices: *mut [Index];
+    {
+        let ast = this.graph.ast.split_mut();
+        let meta = this.graph.meta.split_mut();
+        let files = this.graph.files.split_mut();
+        let input = parse_graph.input_files.split_mut();
 
-    let input_files: *mut [Source] = col_ptr!(input, source, Source);
-    let loaders: *mut [Loader] = col_ptr!(input, loader, Loader);
+        import_records_list = ast.import_records;
+        exports_kind = ast.exports_kind;
+        named_imports = ast.named_imports;
+        named_exports = ast.named_exports;
+        ast_flags_list = ast.flags;
+        export_star_import_records = ast.export_star_import_records;
+        exports_refs = ast.exports_ref;
+        module_refs = ast.module_ref;
+        wrapper_refs = ast.wrapper_ref;
+        parts_list = ast.parts;
+        css_asts = ast.css;
 
-    let resolved_exports: *mut [ResolvedExports] =
-        col_ptr!(meta, resolved_exports, ResolvedExports);
-    let resolved_export_stars: *mut [ExportData] =
-        col_ptr!(meta, resolved_export_star, ExportData);
-    let imports_to_bind_list: *mut [RefImportData] =
-        col_ptr!(meta, imports_to_bind, RefImportData);
-    let wrapper_part_indices: *mut [Index] =
-        col_ptr!(meta, wrapper_part_index, Index);
-    let sorted_aliases: *mut [Box<[Box<[u8]>]>] = col_ptr!(
-        meta,
-        sorted_and_filtered_export_aliases,
-        Box<[Box<[u8]>]>
-    );
-    let cjs_export_copies: *mut [Box<[Ref]>] =
-        col_ptr!(meta, cjs_export_copies, Box<[Ref]>);
-    let entry_point_part_indices: *mut [Index] =
-        col_ptr!(meta, entry_point_part_index, Index);
+        entry_point_kinds = files.entry_point_kind;
+
+        input_files = input.source;
+        loaders = input.loader;
+
+        flags = meta.flags;
+        resolved_exports = meta.resolved_exports;
+        resolved_export_stars = meta.resolved_export_star;
+        imports_to_bind_list = meta.imports_to_bind;
+        wrapper_part_indices = meta.wrapper_part_index;
+        sorted_aliases = meta.sorted_and_filtered_export_aliases;
+        cjs_export_copies = meta.cjs_export_copies;
+        entry_point_part_indices = meta.entry_point_part_index;
+    }
 
     // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
     // In Rust `this.graph.symbols` is the same storage, so no copy-back needed.
@@ -330,12 +338,15 @@ pub fn scan_imports_and_exports(
         {
             let _trace = perf::trace("Bundler.WrapDependencies");
             let mut dependency_wrapper = DependencyWrapper {
-                flags,
-                import_records: import_records_list,
-                exports_kind,
-                entry_point_kinds,
+                // SAFETY: column ptrs from `split_mut`; this block holds no
+                // other borrow into ast/meta/files and makes no `&mut this`
+                // calls, so the reborrows are exclusive for the block.
+                flags: unsafe { &mut *flags },
+                import_records: unsafe { &*import_records_list },
+                exports_kind: unsafe { &mut *exports_kind },
+                entry_point_kinds: unsafe { &*entry_point_kinds },
                 export_star_map: HashMap::default(),
-                export_star_records: export_star_import_records,
+                export_star_records: unsafe { &*export_star_import_records },
                 output_format,
             };
             // PORT NOTE: `defer dependency_wrapper.export_star_map.deinit()` → Drop handles it.
@@ -345,15 +356,15 @@ pub fn scan_imports_and_exports(
                 let id = source_index as usize;
 
                 // does it have a JS AST?
-                if !(id < col_ref!(import_records_list).len()) {
+                if !(id < dependency_wrapper.import_records.len()) {
                     continue;
                 }
 
-                if col_ref!(flags)[id].wrap != WrapKind::None {
+                if dependency_wrapper.flags[id].wrap != WrapKind::None {
                     dependency_wrapper.wrap(source_index);
                 }
 
-                if col_ref!(export_star_import_records)[id].len() > 0 {
+                if dependency_wrapper.export_star_records[id].len() > 0 {
                     dependency_wrapper.export_star_map.clear();
                     let _ = dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
                 }
@@ -364,14 +375,19 @@ pub fn scan_imports_and_exports(
                 // method, whatever it is, will need to invoke the wrapper. Note that
                 // this can include entry points (e.g. an entry point that imports a file
                 // that imports that entry point).
-                for record in col_ref!(import_records_list)[id].slice() {
-                    if record.source_index.is_valid() {
-                        if col_ref!(exports_kind)[record.source_index.get() as usize]
-                            == ExportsKind::Cjs
-                        {
-                            dependency_wrapper.wrap(record.source_index.get());
-                        }
-                    }
+                // PORT NOTE: collect-then-wrap so the `&mut dependency_wrapper`
+                // call does not overlap the shared `import_records` borrow.
+                let to_wrap: Vec<u32> = dependency_wrapper.import_records[id]
+                    .slice()
+                    .iter()
+                    .filter(|r| r.source_index.is_valid())
+                    .map(|r| r.source_index.get())
+                    .filter(|&si| {
+                        dependency_wrapper.exports_kind[si as usize] == ExportsKind::Cjs
+                    })
+                    .collect();
+                for si in to_wrap {
+                    dependency_wrapper.wrap(si);
                 }
             }
         }
@@ -447,7 +463,7 @@ pub fn scan_imports_and_exports(
 
                 if col_ref!(named_imports)[source_index].count() > 0 {
                     this.match_imports_with_exports_for_file(
-                        // SAFETY: `named_imports` is a `col_ptr!` raw column;
+                        // SAFETY: `named_imports` is a raw column ptr;
                         // pass the element by raw `*const` so no `&mut`
                         // protector spans the `&mut this` call (the callee
                         // re-reads this same column via `self.graph.ast`).
@@ -1143,23 +1159,22 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DependencyWrapper — port of the inner Zig struct. Holds raw column ptrs
-// (not `&mut [T]`) so `wrap()` can recurse without borrowck conflicts.
+// DependencyWrapper — port of the inner Zig struct.
 // ──────────────────────────────────────────────────────────────────────────
-struct DependencyWrapper {
-    flags: *mut [js_meta::Flags],
-    exports_kind: *mut [ExportsKind],
-    import_records: *mut [ImportRecordList],
+struct DependencyWrapper<'a> {
+    flags: &'a mut [js_meta::Flags],
+    exports_kind: &'a mut [ExportsKind],
+    import_records: &'a [ImportRecordList],
     export_star_map: HashMap<IndexInt, ()>,
-    entry_point_kinds: *mut [EntryPoint::Kind],
-    export_star_records: *mut [&'static [u32]],
+    entry_point_kinds: &'a [EntryPoint::Kind],
+    export_star_records: &'a [Box<[u32]>],
     output_format: options::Format,
 }
 
-impl DependencyWrapper {
+impl DependencyWrapper<'_> {
     fn has_dynamic_exports_due_to_export_star(&mut self, source_index: IndexInt) -> bool {
         // Terminate the traversal now if this file already has dynamic exports
-        let export_kind = col_ref!(self.exports_kind)[source_index as usize];
+        let export_kind = self.exports_kind[source_index as usize];
         match export_kind {
             ExportsKind::Cjs | ExportsKind::EsmWithDynamicFallback => return true,
             _ => {}
@@ -1174,14 +1189,13 @@ impl DependencyWrapper {
             return false;
         }
 
-        for id in col_ref!(self.export_star_records)[source_index as usize].iter() {
-            let record = &col_ref!(self.import_records)[source_index as usize].slice()[*id as usize];
-
+        for id in self.export_star_records[source_index as usize].iter() {
             // This file has dynamic exports if the exported imports are from a file
             // that either has dynamic exports directly or transitively by itself
             // having an export star from a file with dynamic exports.
-            let kind = col_ref!(self.entry_point_kinds)[source_index as usize];
-            let rec_source_index = record.source_index;
+            let kind = self.entry_point_kinds[source_index as usize];
+            let rec_source_index =
+                self.import_records[source_index as usize].slice()[*id as usize].source_index;
             if (rec_source_index.is_invalid()
                 && (!kind.is_entry_point()
                     || !self.output_format.keep_es6_import_export_syntax()))
@@ -1189,7 +1203,7 @@ impl DependencyWrapper {
                     && rec_source_index.get() != source_index
                     && self.has_dynamic_exports_due_to_export_star(rec_source_index.get()))
             {
-                col!(self.exports_kind)[source_index as usize] = ExportsKind::EsmWithDynamicFallback;
+                self.exports_kind[source_index as usize] = ExportsKind::EsmWithDynamicFallback;
                 return true;
             }
         }
@@ -1198,7 +1212,7 @@ impl DependencyWrapper {
     }
 
     fn wrap(&mut self, source_index: IndexInt) {
-        let mut flag = col_ref!(self.flags)[source_index as usize];
+        let mut flag = self.flags[source_index as usize];
 
         if flag.did_wrap_dependencies {
             return;
@@ -1212,15 +1226,15 @@ impl DependencyWrapper {
 
         // This module must be wrapped
         if flag.wrap == WrapKind::None {
-            flag.wrap = match col_ref!(self.exports_kind)[source_index as usize] {
+            flag.wrap = match self.exports_kind[source_index as usize] {
                 ExportsKind::Cjs => WrapKind::Cjs,
                 _ => WrapKind::Esm,
             };
         }
-        col!(self.flags)[source_index as usize] = flag;
+        self.flags[source_index as usize] = flag;
 
         // PORT NOTE: reshaped for borrowck — collect indices before recursive call.
-        let to_wrap: Vec<u32> = col_ref!(self.import_records)[source_index as usize]
+        let to_wrap: Vec<u32> = self.import_records[source_index as usize]
             .slice()
             .iter()
             .filter(|r| r.source_index.is_valid())
@@ -1241,7 +1255,7 @@ struct ExportStarContext {
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
-    export_star_records: *mut [&'static [u32]],
+    export_star_records: *mut [Box<[u32]>],
 }
 
 impl ExportStarContext {
@@ -1406,7 +1420,7 @@ mod __css_validation {
         import_records_list: *mut [ImportRecordList],
         input_files: *mut [Source],
     ) {
-        // SAFETY: column ptrs valid per `col_ptr!` invariants; `css_asts[id]`
+        // SAFETY: column ptrs valid — see `col!` note; `css_asts[id]`
         // checked Some by caller. The pointer in the column was produced from
         // an arena-allocated `BundlerStyleSheet` (see `BundledAst.css`). We
         // only *read* the AST here, and `other_css_ast` below may alias the
@@ -1426,7 +1440,7 @@ mod __css_validation {
                 if !record.source_index.is_valid() {
                     continue;
                 }
-                // SAFETY: column ptr valid per `col_ptr!` invariants; element is an
+                // SAFETY: column ptr valid — see `col!` note; element is an
                 // arena `*mut BundlerStyleSheet` (see `BundledAst.css`). Read-only;
                 // may alias `css_ast` if a file composes from itself (both `&`).
                 let Some(other_css_ast) =
@@ -1617,7 +1631,7 @@ mod __css_validation {
                                 if record.source_index.is_invalid() {
                                     continue;
                                 }
-                                // SAFETY: see `col_ptr!` invariants on `all_css_asts`;
+                                // SAFETY: see `col!` note on `all_css_asts`;
                                 // element is an arena `*mut BundlerStyleSheet`.
                                 // Read-only deref — recursion may revisit the same
                                 // allocation as `ast`, so bind shared.
@@ -1699,15 +1713,14 @@ mod __css_validation {
 
         // PERF(port): was stack-fallback arena (1024 bytes) — profile.
         // SAFETY: parse_graph backref valid for link step.
-        let parse_graph = unsafe { &*this.parse_graph };
-        let input = parse_graph.input_files.slice();
+        let parse_graph = unsafe { &mut *this.parse_graph };
         let mut visitor = Visitor {
             visited: ArrayHashMap::<logger::Ref, ()>::default(),
             properties: StringArrayHashMap::<PropertyInFile>::default(),
             all_import_records: import_records_list,
             all_css_asts,
             all_symbols: &this.graph.symbols,
-            all_sources: col_ptr!(input, source, Source),
+            all_sources: parse_graph.input_files.split_mut().source,
             log: this.log,
         };
         for local in root_css_ast.local_scope.values() {

@@ -42,70 +42,39 @@ pub fn compute_cross_chunk_dependencies(
         // PORT NOTE: Zig heap-allocated this via c.arena().create() and destroyed it at
         // scope end; in Rust we construct on the stack and let it drop.
         //
-        // PORT NOTE: reshaped for borrowck — Zig's `c.graph.ast.items(.field)` returns
-        // independent column slices; in Rust the typed `items_*()` accessors all borrow
-        // `&c.graph.ast` (and `_mut()` borrows `&mut`). Snapshot the SoA `Slice` value and
-        // pull raw column pointers via `items_raw` (the documented escape hatch in
-        // `bun_collections::multi_array_list::Slice`), matching `scanImportsAndExports.rs`.
-        // `ctx` / `symbols` / `chunks` are likewise stored as raw pointers so the struct
-        // does not hold a borrow on `c` or `chunks` across the `each_ptr` call.
-        let ast = c.graph.ast.slice();
-        let meta = c.graph.meta.slice();
-        let files = c.graph.files.slice();
-        let (ast_len, meta_len, files_len) = (ast.len(), meta.len(), files.len());
+        // `ctx` / `symbols` / `chunks` are stored as raw pointers so the struct does not
+        // hold a borrow on `c` or `chunks` across the `each_ptr` call. Take them before
+        // `split_mut` borrows `&mut c.graph.{ast,meta,files}`.
+        // SAFETY: lifetime-erase the `*const LinkerContext<'_>` so the struct's `'a`
+        // (which ties only the local SoA-column borrows) is not forced to equal the
+        // LinkerContext's invariant `'_`.
+        let ctx_ptr = std::ptr::from_ref::<LinkerContext<'_>>(c).cast::<LinkerContext<'static>>();
+        let symbols_ptr: *const _ = &raw const c.graph.symbols;
+        let parse_graph = c.parse_graph;
 
-        macro_rules! col {
-            ($slice:ident, $len:ident, $field:ident, $ty:ty) => {
-                // SAFETY: `$ty` is exactly the column type for `$field` (derive-guaranteed
-                // pairing); SoA columns are disjoint and the backing buffer is never
-                // reallocated during `walk`.
-                unsafe {
-                    core::slice::from_raw_parts::<'_, $ty>(
-                        $slice.items_raw::<{ ::core::stringify!($field) }, $ty>(),
-                        $len,
-                    )
-                }
-            };
-        }
-        macro_rules! col_mut {
-            ($slice:ident, $len:ident, $field:ident, $ty:ty) => {
-                // SAFETY: see `col!`; exclusive access to this column for the scope.
-                unsafe {
-                    core::slice::from_raw_parts_mut::<'_, $ty>(
-                        $slice.items_raw::<{ ::core::stringify!($field) }, $ty>(),
-                        $len,
-                    )
-                }
-            };
-        }
+        let ast = c.graph.ast.split_mut();
+        let meta = c.graph.meta.split_mut();
+        let files = c.graph.files.split_mut();
 
         let mut cross_chunk_dependencies = CrossChunkDependencies {
             chunks: std::ptr::from_ref::<[Chunk]>(chunks),
             chunk_meta: &mut chunk_metas,
-            parts: col!(ast, ast_len, parts, Vec<Part>),
-            import_records: col_mut!(ast, ast_len, import_records, Vec<ImportRecord>),
-            flags: col!(meta, meta_len, flags, js_meta::Flags),
-            entry_point_chunk_indices: col!(files, files_len, entry_point_chunk_index, IndexInt),
-            imports_to_bind: col!(meta, meta_len, imports_to_bind, RefImportData),
-            wrapper_refs: col!(ast, ast_len, wrapper_ref, Ref),
-            exports_refs: col!(ast, ast_len, exports_ref, Ref),
-            sorted_and_filtered_export_aliases: col!(
-                meta,
-                meta_len,
-                sorted_and_filtered_export_aliases,
-                Box<[Box<[u8]>]>
-            ),
-            resolved_exports: col!(meta, meta_len, resolved_exports, ResolvedExports),
-            // SAFETY: lifetime-erase the `*const LinkerContext<'_>` so the
-            // struct's `'a` (which now ties only the local SoA-column borrows)
-            // is not forced to equal the LinkerContext's invariant `'_`.
-            ctx: std::ptr::from_ref::<LinkerContext<'_>>(c).cast::<LinkerContext<'static>>(),
-            symbols: &raw const c.graph.symbols,
+            parts: ast.parts,
+            import_records: ast.import_records,
+            flags: meta.flags,
+            entry_point_chunk_indices: files.entry_point_chunk_index,
+            imports_to_bind: meta.imports_to_bind,
+            wrapper_refs: ast.wrapper_ref,
+            exports_refs: ast.exports_ref,
+            sorted_and_filtered_export_aliases: meta.sorted_and_filtered_export_aliases,
+            resolved_exports: meta.resolved_exports,
+            ctx: ctx_ptr,
+            symbols: symbols_ptr,
         };
 
         // SAFETY: `parse_graph` backref valid for the link pass.
         unsafe {
-            (*(*c.parse_graph).pool.as_ref().worker_pool).each_ptr(
+            (*(*parse_graph).pool.as_ref().worker_pool).each_ptr(
                 &mut cross_chunk_dependencies,
                 |deps: &&mut CrossChunkDependencies<'_>, chunk: *mut Chunk, idx: usize| {
                     // SAFETY: each_ptr partitions `chunks` by index; `walk` only mutates

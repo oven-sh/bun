@@ -493,12 +493,14 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     {
                         let ref_ = stable_ref.r#ref;
                         let original_name = c.graph.symbols.get_const(ref_).unwrap().original_name.slice();
+                        // The alias is stored on the chunk (`exports_to_other_chunks`,
+                        // `cross_chunk_suffix_stmts`) and read later in postProcessJSChunk,
+                        // so it must live in the linker arena — `r`'s internal arena is
+                        // reset per chunk and dropped at the end of this block.
                         let alias: js_ast::StoreStr = if c.options.minify_identifiers {
-                            // PORT NOTE: `next_minified_name` returns an owned Vec; leak into
-                            // the arena so the alias lifetime matches Zig's arena dupe.
                             js_ast::StoreStr::new(c.arena().alloc_slice_copy(&r.next_minified_name().expect("OOM")))
                         } else {
-                            js_ast::StoreStr::new(r.next_renamed_name(original_name))
+                            js_ast::StoreStr::new(c.arena().alloc_slice_copy(r.next_renamed_name(original_name)))
                         };
 
                         *clause_item = js_ast::ClauseItem {

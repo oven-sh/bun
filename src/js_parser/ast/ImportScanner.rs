@@ -326,10 +326,13 @@ impl<'a> ImportScanner<'a> {
                     if p.options.bundle {
                         if st.star_name_loc.is_some() && existing_count > 0 {
                             let existing = existing_items.unwrap();
-                            // PERF(port): was arena alloc + defer free for scratch sort buffer
+                            // Map keys are Box<[u8]> that drop with the parser; copy into the
+                            // AST arena so the *const [u8] stored on NamedImport / NamespaceAlias
+                            // stays valid through linking and printing.
+                            let arena = p.arena;
                             let mut sorted: Vec<&[u8]> = Vec::with_capacity(existing_count);
                             for alias in existing.keys() {
-                                sorted.push(&**alias);
+                                sorted.push(arena.alloc_slice_copy(alias));
                             }
                             strings::sort_desc(&mut sorted);
                             handle_oom(p.named_imports.ensure_unused_capacity(sorted.len()));

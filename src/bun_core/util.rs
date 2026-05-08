@@ -1536,25 +1536,32 @@ impl StackCheck {
         remaining > threshold
     }
 
-    /// Port of Zig `@frameAddress()`. Reads the frame-pointer register so the
-    /// result is on the real machine stack — taking the address of a local
-    /// lands on ASAN's heap-backed fake stack when use-after-return detection
-    /// is on, which makes the comparison against `cached_stack_end` useless.
+    /// Approximate the current stack position. Reads the stack-pointer
+    /// register so the result is on the real machine stack — taking the
+    /// address of a local lands on ASAN's heap-backed fake stack when
+    /// use-after-return detection is on, which makes the comparison against
+    /// `cached_stack_end` useless.
+    ///
+    /// Zig uses `@frameAddress()` (rbp/x29), but Zig builds always keep frame
+    /// pointers. Rust release builds omit them, leaving rbp/x29 as a
+    /// general-purpose register with arbitrary contents — reading it there
+    /// makes `is_safe_to_recurse()` spuriously fail at depth 0. The stack
+    /// pointer is always valid and is what we actually want to measure.
     #[inline(always)]
     fn frame_address() -> usize {
         #[cfg(target_arch = "x86_64")]
         {
-            let fp: usize;
-            // SAFETY: reading rbp is side-effect-free.
-            unsafe { core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags)) };
-            fp
+            let sp: usize;
+            // SAFETY: reading rsp is side-effect-free.
+            unsafe { core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags)) };
+            sp
         }
         #[cfg(target_arch = "aarch64")]
         {
-            let fp: usize;
-            // SAFETY: reading x29 (fp) is side-effect-free.
-            unsafe { core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags)) };
-            fp
+            let sp: usize;
+            // SAFETY: reading sp is side-effect-free.
+            unsafe { core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags)) };
+            sp
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {

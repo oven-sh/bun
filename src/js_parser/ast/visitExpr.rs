@@ -195,8 +195,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let result = p.find_symbol(expr.loc, name).expect("unreachable");
 
-        e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
+        // Order matters: assigning a fresh `Ref` clears the packed user-bit
+        // flags (intentional — the parse-time ref carries no flags), so set
+        // `ref_` first, then derive the visit-time flags into the user bits.
         e_.ref_ = result.r#ref;
+        e_.set_must_keep_due_to_with_stmt(result.is_inside_with_scope);
 
         // Handle assigning to a constant
         if in_.assign_target != js_ast::AssignTarget::None {
@@ -291,12 +294,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 // Copy the side effect flags over in case this expression is unused
                 if def.can_be_removed_if_unused() {
-                    e_.can_be_removed_if_unused = true;
+                    e_.set_can_be_removed_if_unused(true);
                 }
                 if def.call_can_be_unwrapped_if_unused() == E::CallUnwrap::IfUnused
                     && !p.options.ignore_dce_annotations
                 {
-                    e_.call_can_be_unwrapped_if_unused = true;
+                    e_.set_call_can_be_unwrapped_if_unused(true);
                 }
 
                 // If the user passed --drop=console, drop all property accesses to console.
@@ -1717,7 +1720,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // borrow doesn't overlap the `e_.can_be_unwrapped_if_unused = …` write below.
         match e_.target.data {
             Data::EIdentifier(ident) => {
-                if ident.call_can_be_unwrapped_if_unused
+                if ident.call_can_be_unwrapped_if_unused()
                     && e_.can_be_unwrapped_if_unused == E::CallUnwrap::Never
                 {
                     e_.can_be_unwrapped_if_unused = E::CallUnwrap::IfUnused;

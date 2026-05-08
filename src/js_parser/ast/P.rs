@@ -1739,7 +1739,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 return self.new_expr(
-                    E::ImportIdentifier { ref_: ident.ref_, was_originally_identifier: true },
+                    E::ImportIdentifier::new(ident.ref_, true),
                     loc,
                 );
             }
@@ -1748,7 +1748,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
             return self.new_expr(
-                E::ImportIdentifier { ref_, was_originally_identifier: opts.was_originally_identifier() },
+                E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
                 loc,
             );
         }
@@ -4521,12 +4521,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let value = self.handle_identifier(
             loc,
-            E::Identifier {
-                ref_: result.r#ref,
-                must_keep_due_to_with_stmt: result.is_inside_with_scope,
-                can_be_removed_if_unused: true,
-                ..Default::default()
-            },
+            E::Identifier::init(result.r#ref)
+                .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
+                .with_can_be_removed_if_unused(true),
             Some(parts[0]),
             IdentifierOpts::new().with_was_originally_identifier(true),
         );
@@ -5051,7 +5048,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::ExprData::EIdentifier(ex) => {
                 debug_assert!(!ex.ref_.is_source_contents_slice()); // was not visited
 
-                if ex.must_keep_due_to_with_stmt {
+                if ex.must_keep_due_to_with_stmt() {
                     return false;
                 }
 
@@ -5074,7 +5071,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // incorrect but proper TDZ analysis is very complicated and would have to
                 // be very conservative, which would inhibit a lot of optimizations of code
                 // inside closures. This may need to be revisited if it proves problematic.
-                if ex.can_be_removed_if_unused
+                if ex.can_be_removed_if_unused()
                     || self.symbols[ex.ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Unbound
                 {
                     return true;
@@ -5372,12 +5369,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.record_usage(ref_);
         self.handle_identifier(
             loc,
-            E::Identifier {
-                ref_,
-                can_be_removed_if_unused: true,
-                call_can_be_unwrapped_if_unused: true,
-                ..Default::default()
-            },
+            E::Identifier::init(ref_)
+                .with_can_be_removed_if_unused(true)
+                .with_call_can_be_unwrapped_if_unused(true),
             None,
             IdentifierOpts::new().with_was_originally_identifier(true),
         )
@@ -5791,7 +5785,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn runtime_identifier(&mut self, loc: logger::Loc, name: &'static [u8]) -> Expr {
         let ref_ = self.runtime_identifier_ref(loc, name);
         self.record_usage(ref_);
-        self.new_expr(E::ImportIdentifier { ref_, was_originally_identifier: false }, loc)
+        self.new_expr(E::ImportIdentifier::new(ref_, false), loc)
     }
 
     pub fn call_runtime(&mut self, loc: logger::Loc, name: &'static [u8], args: ExprNodeList) -> Expr {

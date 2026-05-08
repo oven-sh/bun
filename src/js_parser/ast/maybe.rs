@@ -620,11 +620,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     p.record_usage(ref_);
 
                                     return Some(p.new_expr(
-                                        E::CommonJSExportIdentifier {
+                                        // Record this as from module.exports
+                                        E::CommonJSExportIdentifier::new(
                                             ref_,
-                                            // Record this as from module.exports
-                                            base: E::CommonJSExportIdentifierBase::ModuleDotExports,
-                                        },
+                                            E::CommonJSExportIdentifierBase::ModuleDotExports,
+                                        ),
                                         name_loc,
                                     ));
                                 } else if p.options.features.commonjs_at_runtime

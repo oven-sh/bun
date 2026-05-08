@@ -1098,47 +1098,41 @@ impl_into_expr_data_inline! {
     RequireString => ERequireString,
 }
 
-// E::Identifier — Zig copies fields explicitly (normalization)
+// E::Identifier — Zig copies fields explicitly (normalization). With the
+// packed-flag layout the struct is a single `Ref`, so the copy is trivial.
 impl IntoExprData for E::Identifier {
+    #[inline]
     fn into_data_store(self) -> Data {
-        Data::EIdentifier(E::Identifier {
-            ref_: self.ref_,
-            must_keep_due_to_with_stmt: self.must_keep_due_to_with_stmt,
-            can_be_removed_if_unused: self.can_be_removed_if_unused,
-            call_can_be_unwrapped_if_unused: self.call_can_be_unwrapped_if_unused,
-        })
+        Data::EIdentifier(self)
     }
+    #[inline]
     fn into_data_alloc(self, _bump: &Bump) -> Data {
-        self.into_data_store()
+        Data::EIdentifier(self)
     }
 }
 
 impl IntoExprData for E::ImportIdentifier {
+    #[inline]
     fn into_data_store(self) -> Data {
-        Data::EImportIdentifier(E::ImportIdentifier {
-            ref_: self.ref_,
-            was_originally_identifier: self.was_originally_identifier,
-        })
+        Data::EImportIdentifier(self)
     }
+    #[inline]
     fn into_data_alloc(self, _bump: &Bump) -> Data {
-        self.into_data_store()
+        Data::EImportIdentifier(self)
     }
 }
 
 impl IntoExprData for E::CommonJSExportIdentifier {
+    #[inline]
     fn into_data_store(self) -> Data {
-        Data::ECommonjsExportIdentifier(E::CommonJSExportIdentifier {
-            ref_: self.ref_,
-            base: self.base,
-        })
+        Data::ECommonjsExportIdentifier(self)
     }
+    #[inline]
     fn into_data_alloc(self, _bump: &Bump) -> Data {
         // Zig's allocate() variant only sets .ref; init() also sets .base.
-        // We follow init() semantics here (superset).
-        Data::ECommonjsExportIdentifier(E::CommonJSExportIdentifier {
-            ref_: self.ref_,
-            ..Default::default()
-        })
+        // We follow init() semantics here (superset) — packed layout makes
+        // both a single-word copy regardless.
+        Data::ECommonjsExportIdentifier(self)
     }
 }
 
@@ -1826,21 +1820,20 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// Zig: `bun.assert_eql(@sizeOf(Data), 24)` (Expr.zig:2189). The largest inline
-// payloads are `E::Identifier` / `E::ImportIdentifier` / `E::CommonJSExportIdentifier`
-// at 16 bytes (Ref u64 + bool flags); with the repr(Rust) discriminant that
-// rounds to 24. All `StoreRef<T>` variants are `#[repr(transparent)] NonNull<T>`
-// (8 bytes, niche-carrying), so the discriminant cannot grow the union past
-// the inline-identifier ceiling. `Expr` = `Data` (24, align 8) + `Loc` (i32) →
-// 28 → 32 after tail padding, matching Zig.
+// Zig: `bun.assert_eql(@sizeOf(Data), 24)` (Expr.zig:2189). Rust packs the
+// identifier-family flags into `Ref`'s spare bits (see `E::Identifier` doc),
+// so every inline payload is ≤ 8 bytes; with the repr(Rust) discriminant
+// that rounds to 16. `Expr` = `Data` (16, align 8) + `Loc` (i32) → 20 → 24
+// after tail padding — 25% smaller than the Zig layout, which is the
+// structural noalias-shrink win this port targets.
 //
 // The `Option<Data>` assert proves Rust's niche optimization fires: the enum
 // has spare discriminant values (47 variants < 256, and every pointer variant
 // contributes a NonNull niche), so `None` packs into an unused bit-pattern
 // rather than adding a word. If a future variant adds `#[repr(C)]`/`#[repr(u32)]`
 // or a nullable `*mut T` payload, this assert catches the size regression.
-const _: () = assert!(core::mem::size_of::<Data>() == 24); // Do not increase the size of Expr
-const _: () = assert!(core::mem::size_of::<Expr>() == 32);
+const _: () = assert!(core::mem::size_of::<Data>() == 16); // Do not increase the size of Expr
+const _: () = assert!(core::mem::size_of::<Expr>() == 24);
 const _: () = assert!(
     core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),
     "expr::Data lost its niche — check for #[repr] or nullable-ptr payload"
@@ -1849,13 +1842,15 @@ const _: () = assert!(
     core::mem::size_of::<Option<Expr>>() == core::mem::size_of::<Expr>(),
     "Expr lost its niche — Option<Expr> is used in G::Property/B::Property/etc."
 );
-// Inline-payload ceilings (regress these and `Data` grows past 24):
-const _: () = assert!(core::mem::size_of::<E::Identifier>() <= 16);
-const _: () = assert!(core::mem::size_of::<E::ImportIdentifier>() <= 16);
-const _: () = assert!(core::mem::size_of::<E::CommonJSExportIdentifier>() <= 16);
+// Inline-payload ceilings (regress any of these and `Data` grows past 16):
+const _: () = assert!(core::mem::size_of::<E::Identifier>() == 8);
+const _: () = assert!(core::mem::size_of::<E::ImportIdentifier>() == 8);
+const _: () = assert!(core::mem::size_of::<E::CommonJSExportIdentifier>() == 8);
+const _: () = assert!(core::mem::size_of::<E::PrivateIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::Number>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::Special>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::RequireString>() <= 8);
+const _: () = assert!(core::mem::size_of::<E::NewTarget>() <= 8);
 const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::size_of::<usize>());
 
 // Zig field-style union accessors (`data.e_string`, `data.e_object`). The

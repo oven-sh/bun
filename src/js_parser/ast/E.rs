@@ -382,45 +382,84 @@ pub struct Function {
     pub func: G::Fn,
 }
 
+/// 8-byte identifier expression payload. The three side-effect flags are packed
+/// into `Ref`'s user-bit lane (bits 28..31, masked out of `Ref` identity) so
+/// this — the most common `expr::Data` variant — fits in a single word, which
+/// is what pulls `expr::Data` down to 16 bytes / `Expr` to 24. The Zig layout
+/// stores them as discrete bools (16B with padding); the Rust port exploits
+/// `noalias` + smaller nodes for the structural perf win.
+///
+/// `ref_` remains a public field so the ~100 existing `id.ref_` /
+/// `Identifier { ref_, ..Default::default() }` sites stay untouched; flag
+/// access goes through the accessor methods below. Assigning a fresh `Ref` to
+/// `ref_` clears the flags (intentional — the only writer, `visit_expr`'s
+/// `e_identifier`, sets `ref_` first then re-derives the flags).
 #[derive(Clone, Copy)]
 pub struct Identifier {
     pub ref_: Ref,
-
-    /// If we're inside a "with" statement, this identifier may be a property
-    /// access. In that case it would be incorrect to remove this identifier since
-    /// the property access may be a getter or setter with side effects.
-    pub must_keep_due_to_with_stmt: bool,
-
-    /// If true, this identifier is known to not have a side effect (i.e. to not
-    /// throw an exception) when referenced. If false, this identifier may or
-    /// not have side effects when referenced. This is used to allow the removal
-    /// of known globals such as "Object" if they aren't used.
-    pub can_be_removed_if_unused: bool,
-
-    /// If true, this identifier represents a function that, when called, can be
-    /// unwrapped if the resulting value is unused. Unwrapping means discarding
-    /// the call target but keeping any arguments with side effects.
-    pub call_can_be_unwrapped_if_unused: bool,
 }
 impl Default for Identifier {
+    #[inline]
     fn default() -> Self {
-        Self {
-            ref_: Ref::NONE,
-            must_keep_due_to_with_stmt: false,
-            can_be_removed_if_unused: false,
-            call_can_be_unwrapped_if_unused: false,
-        }
+        Self { ref_: Ref::NONE }
     }
 }
 impl Identifier {
     #[inline]
-    pub fn init(ref_: Ref) -> Identifier {
-        Identifier {
-            ref_,
-            must_keep_due_to_with_stmt: false,
-            can_be_removed_if_unused: false,
-            call_can_be_unwrapped_if_unused: false,
-        }
+    pub const fn init(ref_: Ref) -> Identifier {
+        Identifier { ref_ }
+    }
+
+    /// If we're inside a "with" statement, this identifier may be a property
+    /// access. In that case it would be incorrect to remove this identifier since
+    /// the property access may be a getter or setter with side effects.
+    #[inline]
+    pub const fn must_keep_due_to_with_stmt(self) -> bool {
+        self.ref_.user_bit(0)
+    }
+    #[inline]
+    pub fn set_must_keep_due_to_with_stmt(&mut self, v: bool) {
+        self.ref_.set_user_bit(0, v);
+    }
+
+    /// If true, this identifier is known to not have a side effect (i.e. to not
+    /// throw an exception) when referenced. If false, this identifier may or may
+    /// not have side effects when referenced. This is used to allow the removal
+    /// of known globals such as "Object" if they aren't used.
+    #[inline]
+    pub const fn can_be_removed_if_unused(self) -> bool {
+        self.ref_.user_bit(1)
+    }
+    #[inline]
+    pub fn set_can_be_removed_if_unused(&mut self, v: bool) {
+        self.ref_.set_user_bit(1, v);
+    }
+
+    /// If true, this identifier represents a function that, when called, can be
+    /// unwrapped if the resulting value is unused. Unwrapping means discarding
+    /// the call target but keeping any arguments with side effects.
+    #[inline]
+    pub const fn call_can_be_unwrapped_if_unused(self) -> bool {
+        self.ref_.user_bit(2)
+    }
+    #[inline]
+    pub fn set_call_can_be_unwrapped_if_unused(&mut self, v: bool) {
+        self.ref_.set_user_bit(2, v);
+    }
+
+    // Builder-style — replaces the Zig `.{ .ref = r, .can_be_removed = true }`
+    // struct-init pattern at the handful of sites that set flags up front.
+    #[inline]
+    pub const fn with_must_keep_due_to_with_stmt(self, v: bool) -> Self {
+        Self { ref_: self.ref_.with_user_bit(0, v) }
+    }
+    #[inline]
+    pub const fn with_can_be_removed_if_unused(self, v: bool) -> Self {
+        Self { ref_: self.ref_.with_user_bit(1, v) }
+    }
+    #[inline]
+    pub const fn with_call_can_be_unwrapped_if_unused(self, v: bool) -> Self {
+        Self { ref_: self.ref_.with_user_bit(2, v) }
     }
 }
 
@@ -443,32 +482,66 @@ impl Identifier {
 /// "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
 /// "{x: importedNamespace.x}". This separate type forces code to opt-in to
 /// doing this instead of opt-out.
+/// 8-byte import-identifier payload — `was_originally_identifier` rides in
+/// `Ref` user bit 0 (see `Identifier` doc for the packing rationale).
 #[derive(Clone, Copy)]
 pub struct ImportIdentifier {
     pub ref_: Ref,
+}
+impl Default for ImportIdentifier {
+    #[inline]
+    fn default() -> Self {
+        Self { ref_: Ref::NONE }
+    }
+}
+impl ImportIdentifier {
+    #[inline]
+    pub const fn new(ref_: Ref, was_originally_identifier: bool) -> Self {
+        Self { ref_: ref_.with_user_bit(0, was_originally_identifier) }
+    }
 
     /// If true, this was originally an identifier expression such as "foo". If
     /// false, this could potentially have been a member access expression such
     /// as "ns.foo" off of an imported namespace object.
-    pub was_originally_identifier: bool,
-}
-impl Default for ImportIdentifier {
-    fn default() -> Self {
-        Self { ref_: Ref::NONE, was_originally_identifier: false }
+    #[inline]
+    pub const fn was_originally_identifier(self) -> bool {
+        self.ref_.user_bit(0)
     }
 }
 
 /// This is a dot expression on exports, such as `exports.<ref>`. It is given
 /// it's own AST node to allow CommonJS unwrapping, in which this can just be
 /// the identifier in the Ref
+/// 8-byte CJS-export-identifier payload — `base` rides in `Ref` user bit 0
+/// (`Exports` = 0, `ModuleDotExports` = 1; see `Identifier` doc for packing
+/// rationale).
 #[derive(Clone, Copy)]
 pub struct CommonJSExportIdentifier {
     pub ref_: Ref,
-    pub base: CommonJSExportIdentifierBase,
 }
 impl Default for CommonJSExportIdentifier {
+    #[inline]
     fn default() -> Self {
-        Self { ref_: Ref::NONE, base: CommonJSExportIdentifierBase::Exports }
+        Self { ref_: Ref::NONE }
+    }
+}
+impl CommonJSExportIdentifier {
+    #[inline]
+    pub const fn new(ref_: Ref, base: CommonJSExportIdentifierBase) -> Self {
+        Self {
+            ref_: ref_.with_user_bit(
+                0,
+                matches!(base, CommonJSExportIdentifierBase::ModuleDotExports),
+            ),
+        }
+    }
+    #[inline]
+    pub const fn base(self) -> CommonJSExportIdentifierBase {
+        if self.ref_.user_bit(0) {
+            CommonJSExportIdentifierBase::ModuleDotExports
+        } else {
+            CommonJSExportIdentifierBase::Exports
+        }
     }
 }
 

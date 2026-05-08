@@ -166,11 +166,11 @@ impl SideEffects {
                 }
             }
             ExprData::EIdentifier(ident) => {
-                if ident.must_keep_due_to_with_stmt {
+                if ident.must_keep_due_to_with_stmt() {
                     return Some(expr);
                 }
 
-                if ident.can_be_removed_if_unused
+                if ident.can_be_removed_if_unused()
                     || p.symbols[ident.ref_.inner_index() as usize].kind != symbol::Kind::Unbound
                 {
                     return None;

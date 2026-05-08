@@ -338,19 +338,44 @@ pub enum RefTag {
     Symbol = 3,
 }
 
-/// Packed-u64 symbol reference: `{inner_index: u31, tag: u2, source_index: u31}`.
+/// Packed-u64 symbol reference: `{inner_index: u28, user: u3, tag: u2, source_index: u31}`.
 ///
-/// Layout matches `src/js_parser/ast/base.zig:Ref` exactly (LSB-first packing) so
-/// `as_u64()` hashes identically to the Zig original.
+/// Layout matches `src/js_parser/ast/base.zig:Ref` LSB-first packing for the
+/// `tag`/`source_index` fields so `as_u64()` hashes identically to the Zig
+/// original for all normally-constructed refs (user bits = 0). The Rust port
+/// steals 3 bits from `inner_index` (Zig u31 → u28, max 268M symbols/file —
+/// three.js peaks at ~50K) so that `E::Identifier` / `E::ImportIdentifier` /
+/// `E::CommonJSExportIdentifier` can pack their boolean side-flags inline,
+/// shrinking `expr::Data` from 24→16 bytes and `Expr` from 32→24. This is the
+/// structural noalias-shrink advantage Rust has over the Zig layout: the
+/// rarely-set flags (`with`-stmt guard, known-pure-global hints) ride in
+/// otherwise-dead bits instead of forcing 8 bytes of struct padding on every
+/// identifier node.
+///
+/// User bits are *not* part of the ref's identity: `eq`/`hash`/`eql`/`as_u64`
+/// all mask them off, so `id.ref_` (which may carry flags) compares/hashes
+/// identically to the symbol-table key it indexes. `pack()` always writes 0
+/// into the user-bit lane, so for every `Ref` constructed via `new`/`init`
+/// the masking is a no-op and hashing is bit-identical to the pre-shrink
+/// layout — preserving output sha-identity.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy)]
 pub struct Ref(u64);
 
-/// Zig `Ref.Int = u31`; we mask to 31 bits in pack/unpack.
+/// Zig `Ref.Int = u31`; we mask to 31 bits for `source_index`, 28 for `inner_index`.
 pub type RefInt = u32;
 
 impl Ref {
     const INNER_MASK: u64 = (1u64 << 31) - 1;
+    /// `inner_index` width — Zig u31, narrowed to u28 to free 3 user bits.
+    /// `debug_assert!` in `pack()` catches any source large enough to overflow
+    /// (would require >268M symbols or a >268MB source-contents-slice offset).
+    const INNER_BITS: u64 = (1u64 << 28) - 1;
+    /// Bits 28..31 — opaque per-node flags (E::Identifier side-effect hints,
+    /// E::ImportIdentifier `was_originally_identifier`, E::CommonJSExportIdentifier
+    /// `base`). Never set by `pack()`; only via `set_user_bit`. Masked out of
+    /// identity (`eq`/`hash`/`as_u64`).
+    const USER_BITS_MASK: u64 = 0b111 << 28;
     const SRC_SHIFT: u32 = 33;
 
     /// Represents a null state without using an extra bit.
@@ -366,14 +391,18 @@ impl Ref {
 
     #[inline]
     const fn pack(inner: u32, tag: RefTag, src: u32) -> Ref {
-        Ref((inner as u64 & Self::INNER_MASK)
+        debug_assert!(
+            (inner as u64) <= Self::INNER_BITS,
+            "Ref.inner_index overflows 28 bits — file has >268M symbols or >268MB source slice",
+        );
+        Ref((inner as u64 & Self::INNER_BITS)
             | ((tag as u64) << 31)
             | ((src as u64 & Self::INNER_MASK) << Self::SRC_SHIFT))
     }
 
     #[inline]
     pub const fn inner_index(self) -> u32 {
-        (self.0 & Self::INNER_MASK) as u32
+        (self.0 & Self::INNER_BITS) as u32
     }
     #[inline]
     pub const fn source_index(self) -> u32 {
@@ -428,14 +457,43 @@ impl Ref {
         )
     }
 
+    /// Identity bits (user/flag lane masked off). For all refs constructed via
+    /// `new`/`init`/`pack` this equals the raw `self.0` (user bits are 0 there),
+    /// so wyhash output is unchanged vs the pre-shrink layout.
     #[inline]
     pub const fn as_u64(self) -> u64 {
-        self.0
+        self.0 & !Self::USER_BITS_MASK
     }
     #[inline]
     pub fn hash64(self) -> u64 {
         // Zig: `bun.hash(&@as([8]u8, @bitCast(key.asU64())))` — wyhash of the 8 bytes.
-        bun_wyhash::hash(&self.0.to_ne_bytes())
+        bun_wyhash::hash(&self.as_u64().to_ne_bytes())
+    }
+
+    // ── User bits (E::Identifier-family side flags) ──────────────────────
+    // Three spare bits at 28..31, freed by narrowing `inner_index` to u28.
+    // These ride along on the inline `pub ref_: Ref` field of identifier
+    // expression nodes so the node fits in 8 bytes (the niche-free size of
+    // every other inline `expr::Data` payload). They are masked out of
+    // identity (eq/hash/as_u64/inner_index) so `id.ref_` remains a valid
+    // symbol-map key regardless of flag state.
+    #[inline]
+    pub const fn user_bit(self, n: u32) -> bool {
+        debug_assert!(n < 3);
+        (self.0 >> (28 + n)) & 1 != 0
+    }
+    #[inline]
+    pub fn set_user_bit(&mut self, n: u32, v: bool) {
+        debug_assert!(n < 3);
+        let bit = 1u64 << (28 + n);
+        self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
+    }
+    #[inline]
+    pub const fn with_user_bit(mut self, n: u32, v: bool) -> Ref {
+        debug_assert!(n < 3);
+        let bit = 1u64 << (28 + n);
+        self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
+        self
     }
     #[inline]
     pub fn hash(self) -> u32 {
@@ -443,7 +501,8 @@ impl Ref {
     }
     #[inline]
     pub const fn eql(self, other: Ref) -> bool {
-        self.0 == other.0
+        // User-bit lane is not part of identity — see type-level doc.
+        (self.0 & !Self::USER_BITS_MASK) == (other.0 & !Self::USER_BITS_MASK)
     }
     /// deprecated alias
     #[inline]
@@ -455,6 +514,25 @@ impl Ref {
 impl Default for Ref {
     fn default() -> Self {
         Ref::NONE
+    }
+}
+
+// Identity excludes the user-bit lane (bits 28..31). For every Ref produced by
+// `pack()` those bits are 0, so this is bit-identical to `#[derive(...)]` on
+// the raw u64 — the mask only matters for `E::Identifier.ref_` & friends where
+// flag bits may be set, and there it ensures `HashMap<Ref, _>` lookups via
+// `id.ref_` resolve to the same bucket as the flag-free symbol-table key.
+impl PartialEq for Ref {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.eql(*other)
+    }
+}
+impl Eq for Ref {}
+impl core::hash::Hash for Ref {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.as_u64().hash(state)
     }
 }
 

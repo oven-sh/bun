@@ -120,6 +120,25 @@ impl<T> StoreRef<T> {
         // SAFETY: StoreRef invariant — points into a live Store/arena block.
         unsafe { self.0.as_ref() }
     }
+    /// Exclusively borrow the pointee for an arbitrary caller-chosen lifetime.
+    ///
+    /// Unlike `DerefMut` (which ties the `&mut T` to `&mut self`), this takes
+    /// `self` by value so the visitor can write `visit_expr(b.left.get_mut())`
+    /// and hand LLVM a function-argument `&mut Expr` carrying `noalias` —
+    /// letting it cache node fields in registers across the recursive call.
+    /// One audited unsafe site replaces the per-callsite raw-ptr deref pattern.
+    ///
+    /// SAFETY: caller must guarantee no other `&`/`&mut` to the same arena
+    /// node is live for `'a`. Holds for the single-threaded parser/visitor
+    /// passes (each AST node has exactly one `StoreRef` parent edge — same
+    /// invariant as the Zig `*T` it ports). Never call on a `StoreRef`
+    /// produced by `from_static`.
+    #[inline(always)]
+    pub unsafe fn get_mut<'a>(mut self) -> &'a mut T {
+        // SAFETY: caller contract above; `StoreRef` invariant guarantees the
+        // pointer is non-null, aligned, and valid until arena reset.
+        unsafe { self.0.as_mut() }
+    }
 }
 impl<T> Clone for StoreRef<T> {
     #[inline]

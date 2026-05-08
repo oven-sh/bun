@@ -226,6 +226,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       codegenInputs: codegen.zigInputs,
       codegenOrderOnly: codegen.zigOrderOnly,
       rustSources: sources.rust,
+      // lol-html is consumed as a path dep of `bun_lolhtml_sys`, not built
+      // into a separate archive — cargo needs `vendor/lolhtml/` on disk
+      // before it resolves the manifest. The `.ref` stamp's content is the
+      // pinned commit, so a bump re-invokes cargo.
+      vendorStamps: depsByName.get("lolhtml")?.outputs ?? [],
     });
   }
 

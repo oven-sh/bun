@@ -142,6 +142,12 @@ export interface RustBuildInputs {
    * re-invoke.
    */
   rustSources: string[];
+  /**
+   * Fetch stamps for vendored Rust crates the workspace consumes as path
+   * dependencies (currently lol-html). Implicit inputs so cargo never runs
+   * before the source tree exists, and so a commit bump re-invokes cargo.
+   */
+  vendorStamps: string[];
 }
 
 /**
@@ -205,8 +211,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   };
   if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;
-  // Pin explicitly so this and the cargo deps (lolhtml) agree on libstd —
-  // see emitCargo for the worktree-symlink hazard this guards against.
+  // Pin the toolchain explicitly. `vendor/` is commonly a symlink shared
+  // across worktrees; rustup's directory walk could otherwise resolve a
+  // different worktree's `rust-toolchain.toml`.
   if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
@@ -219,8 +226,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // (cargo's own fingerprinting then decides what to actually recompile).
     // Codegen `.rs` outputs are side effects of edges in `codegenInputs`,
     // so depending on those orders the codegen step before cargo without
-    // ninja needing to know the `.rs` paths.
-    implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs],
+    // ninja needing to know the `.rs` paths. vendorStamps orders the
+    // lol-html source fetch before cargo resolves the path dep.
+    implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.codegenInputs, ...inputs.vendorStamps],
     orderOnlyInputs: inputs.codegenOrderOnly,
     vars: {
       cwd: cfg.cwd,

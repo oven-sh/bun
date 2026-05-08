@@ -1624,12 +1624,8 @@ impl<'a> Transpiler<'a> {
                 };
 
                 if self.macro_context.is_none() {
-                    // PORT NOTE: at this tier `MacroContext` only carries
-                    // `javascript_object` (the JSC-backed resolver/env/remap
-                    // fields live in `bun_js_parser_jsc`), so `Default` is
-                    // semantically equivalent to Zig's `init(transpiler)` here.
-                    self.macro_context =
-                        Some(js_ast::Macro::MacroContext::default());
+                    let ctx = js_ast::Macro::MacroContext::init(self);
+                    self.macro_context = Some(ctx);
                 }
                 // Spec transpiler.zig:938-940: thread the caller-supplied JS
                 // context into the macro runtime so macros invoked during

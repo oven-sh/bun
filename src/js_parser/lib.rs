@@ -116,80 +116,56 @@ pub mod Macro {
         }
     }
 
-    /// Dispatch signature for `MacroContext::call`.
-    ///
-    /// The real body lives in `bun_js_parser_jsc::Macro` (it touches
-    /// `Transpiler`, `Resolver`, `DotEnv.Loader`, and the JSC VM — all in
-    /// crates that depend on `bun_js_parser`). To break that dep cycle the
-    /// lower-tier `MacroContext` carries a fn-pointer that the `_jsc` crate
-    /// fills in at construction time; the visit pass calls through it via
-    /// `MacroContext::call` so `visitExpr.rs` is a faithful port of
-    /// `visitExpr.zig:415` / `:1443` without an upward import.
-    pub type MacroCallFn = fn(
-        ctx: &mut MacroContext,
-        import_record_path: &[u8],
-        source_dir: &[u8],
-        log: &mut bun_logger::Log,
-        source: &bun_logger::Source,
-        import_range: bun_logger::Range,
-        caller: crate::Expr,
-        function_name: &[u8],
-    ) -> Result<crate::Expr, bun_core::Error>;
-
     /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
     ///
-    /// Real fields (`env`, `macros`, `remap`, `resolver`) reference
-    /// `Transpiler` and JSC types; the higher-tier *_jsc crate owns them
-    /// behind `data` and reads them back inside `call_fn`. `javascript_object`
-    /// is surfaced here so `Transpiler::parse` can thread
-    /// `this_parse.macro_js_ctx` through (spec transpiler.zig:938-940) without
-    /// this crate depending on `bun_jsc::JSValue`.
+    /// Real fields (`env`, `macros`, `remap`, `resolver`, `bump`) reference
+    /// `Transpiler` and JSC types that live in crates which depend on
+    /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
+    /// owns that state behind `data`; the visit pass reaches it via
+    /// link-time-resolved `extern "Rust"` fns so `visitExpr.rs` stays a
+    /// faithful port of `visitExpr.zig:415` / `:1443` without an upward
+    /// import. `javascript_object` is surfaced here so `Transpiler::parse` can
+    /// thread `this_parse.macro_js_ctx` through (spec transpiler.zig:938-940)
+    /// without this crate depending on `bun_jsc::JSValue`.
     pub struct MacroContext {
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
-        /// Set by `bun_js_parser_jsc` at construction; dispatches to the real
-        /// JSC-backed macro runner. See [`MacroCallFn`].
-        pub call_fn: MacroCallFn,
         /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). `call_fn` downcasts this;
+        /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
+        /// (matches Zig's process-lifetime `default_allocator`);
         /// `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
     impl Default for MacroContext {
         #[inline]
         fn default() -> Self {
-            Self {
-                javascript_object: MacroJSCtx::ZERO,
-                call_fn: macro_context_call_unconfigured,
-                data: core::ptr::null_mut(),
-            }
+            Self { javascript_object: MacroJSCtx::ZERO, data: core::ptr::null_mut() }
         }
     }
-    /// Zig leaves `Options.macro_context` `= undefined`; reaching `.call()`
-    /// without the `_jsc` crate having wired a runner is a logic error. Spec
-    /// `Macro.zig`'s `call` returns `error.MacroFailed` for every runner
-    /// failure mode that doesn't carry its own diagnostic, so surface the same
-    /// tag here — the visit pass already handles it (logs "macro threw
-    /// exception" iff nothing else was logged).
-    fn macro_context_call_unconfigured(
-        _ctx: &mut MacroContext,
-        _import_record_path: &[u8],
-        _source_dir: &[u8],
-        _log: &mut bun_logger::Log,
-        _source: &bun_logger::Source,
-        _import_range: bun_logger::Range,
-        _caller: crate::Expr,
-        _function_name: &[u8],
-    ) -> Result<crate::Expr, bun_core::Error> {
-        Err(bun_core::err!("MacroFailed"))
+    unsafe extern "Rust" {
+        /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
+        /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate
+        /// cannot name it (dep-cycle).
+        fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
+        fn __bun_macro_context_call(
+            ctx: &mut MacroContext,
+            import_record_path: &[u8],
+            source_dir: &[u8],
+            log: &mut bun_logger::Log,
+            source: &bun_logger::Source,
+            import_range: bun_logger::Range,
+            caller: crate::Expr,
+            function_name: &[u8],
+        ) -> Result<crate::Expr, bun_core::Error>;
+        fn __bun_macro_context_get_remap(
+            data: *mut core::ffi::c_void,
+            path: &[u8],
+        ) -> Option<&'static MacroRemapEntry>;
     }
     impl MacroContext {
         /// Zig: `pub fn call(self: *MacroContext, import_record_path, source_dir,
         /// log, source, import_range, caller, function_name) !Expr`.
-        ///
-        /// Thin dispatch through [`MacroCallFn`]; the real body is installed
-        /// by `bun_js_parser_jsc::MacroContext::init`.
         #[inline]
         pub fn call(
             &mut self,
@@ -201,44 +177,43 @@ pub mod Macro {
             caller: crate::Expr,
             function_name: &[u8],
         ) -> Result<crate::Expr, bun_core::Error> {
-            (self.call_fn)(
-                self,
-                import_record_path,
-                source_dir,
-                log,
-                source,
-                import_range,
-                caller,
-                function_name,
-            )
+            // SAFETY: link-time-resolved Rust-ABI fn.
+            unsafe {
+                __bun_macro_context_call(
+                    self,
+                    import_record_path,
+                    source_dir,
+                    log,
+                    source,
+                    import_range,
+                    caller,
+                    function_name,
+                )
+            }
         }
         /// Zig: `pub fn init(transpiler: *Transpiler) MacroContext`.
         ///
-        /// Spec body (js_parser_jsc/Macro.zig:22) is straight struct
-        /// construction: `.macros = MacroMap.init(default_allocator)`,
-        /// `.resolver = &transpiler.resolver`, `.env = transpiler.env`,
-        /// `.remap = transpiler.options.macro_remap`, with
-        /// `.javascript_object` left at its field default `JSValue.zero`.
-        ///
-        /// At this tier the JSC-backed fields are owned by
-        /// `bun_js_parser_jsc::MacroContext` (dep-cycle: `Transpiler` /
-        /// `Resolver` / `DotEnv.Loader` live in higher-tier crates that
-        /// already depend on `bun_js_parser`). `_transpiler` stays generic so
-        /// `bun_bundler::Transpiler` callers compile without an upward dep;
-        /// the `_jsc` crate's `init` overwrites `call_fn`/`data` with the
-        /// real runner before any macro can be invoked.
+        /// `T` is always `bun_bundler::Transpiler<'_>`; generic so callers in
+        /// `bun_bundler`/`bun_runtime` compile without `bun_js_parser` taking
+        /// an upward dep on the bundler. The `_jsc` crate reads the concrete
+        /// type back inside `__bun_macro_context_init`.
         #[inline]
-        pub fn init<T>(_transpiler: &mut T) -> Self {
-            Self::default()
+        pub fn init<T>(transpiler: &mut T) -> Self {
+            // SAFETY: link-time-resolved Rust-ABI fn; pointer is valid for the
+            // duration of the call.
+            unsafe { __bun_macro_context_init(transpiler as *mut T as *mut core::ffi::c_void) }
         }
         /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
-        /// The real `MacroContext` (bun_js_parser_jsc) carries a `MacroMap`; this
-        /// lower-tier stub has no remap table, so it always reports "no remap".
-        /// Returns `'static` so callers can keep the (always-`None`) result
-        /// across `&mut self` parser calls without a borrowck conflict.
+        /// Returns `'static` so callers can keep the result across `&mut self`
+        /// parser calls without a borrowck conflict; the table lives in
+        /// `Transpiler.options` which outlives every parse.
         #[inline]
-        pub fn get_remap(&self, _path: &[u8]) -> Option<&'static MacroRemapEntry> {
-            None
+        pub fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
+            if self.data.is_null() {
+                return None;
+            }
+            // SAFETY: link-time-resolved Rust-ABI fn; `data` is non-null.
+            unsafe { __bun_macro_context_get_remap(self.data, path) }
         }
     }
 

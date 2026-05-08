@@ -254,6 +254,76 @@ impl MacroContext {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// Lower-tier bridge (`bun_js_parser::Macro::MacroContext` ⇆ this crate)
+//
+// `bun_js_parser` / `bun_bundler` cannot name `Resolver`/`DotEnv`/JSC types,
+// so the parser-visible `MacroContext` carries an opaque `data` pointer to a
+// boxed instance of this crate's `MacroContext` and dispatches `init`/`call`/
+// `get_remap` through `extern "Rust"` fns resolved at link time. All type
+// erasure is confined to these three bodies.
+// ══════════════════════════════════════════════════════════════════════════
+
+#[unsafe(no_mangle)]
+pub fn __bun_macro_context_init(
+    transpiler: *mut core::ffi::c_void,
+) -> js_ast::Macro::MacroContext {
+    // SAFETY: every caller of `js_ast::Macro::MacroContext::init<T>` passes a
+    // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
+    // runtime so reading it as `'static` is layout-identical. The boxed state
+    // is intentionally leaked — Zig backed it with `default_allocator`
+    // (process-lifetime) and `Transpiler` is bitwise-cloned per worker without
+    // running `Drop` (see `ThreadPool::initialize_transpiler`).
+    let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
+    let data = Box::into_raw(Box::new(MacroContext::init(transpiler)));
+    js_ast::Macro::MacroContext {
+        javascript_object: js_ast::Macro::MacroJSCtx::ZERO,
+        data: data.cast::<core::ffi::c_void>(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_macro_context_call(
+    ctx: &mut js_ast::Macro::MacroContext,
+    import_record_path: &[u8],
+    source_dir: &[u8],
+    log: &mut Log,
+    source: &Source,
+    import_range: Range,
+    caller: Expr,
+    function_name: &[u8],
+) -> Result<Expr, Error> {
+    debug_assert!(!ctx.data.is_null(), "MacroContext.call reached without init");
+    // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
+    // lower-tier handle is uniquely borrowed for this call so no alias exists.
+    let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
+    inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
+    inner.call(
+        import_record_path,
+        source_dir,
+        log,
+        source,
+        import_range,
+        caller,
+        function_name,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_macro_context_get_remap(
+    data: *mut core::ffi::c_void,
+    path: &[u8],
+) -> Option<&'static js_ast::Macro::MacroRemapEntry> {
+    // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
+    // remap table lives in `Transpiler.options` which outlives every parse, so
+    // the `'static` borrow is sound for callers that drop it before the
+    // `Transpiler` does (matches the Zig by-value copy of the map header).
+    let inner = unsafe { &*data.cast::<MacroContext>() };
+    inner
+        .get_remap(path)
+        .map(|e| unsafe { &*(e as *const js_ast::Macro::MacroRemapEntry) })
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // MacroResult
 // ══════════════════════════════════════════════════════════════════════════
 

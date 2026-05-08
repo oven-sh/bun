@@ -634,11 +634,8 @@ impl Worker {
         // `crate::Linker` is still the unit stub `Linker(())` (lib.rs:158); the
         // self-referential resolver backref is wired by `configure_linker` once
         // the real `linker::Linker` lands in the `Transpiler` struct.
-        // PORT NOTE: `js_ast::Macro::MacroContext::init` at this tier only
-        // carries `javascript_object` (the resolver/env/remap backrefs live in
-        // `bun_js_parser_jsc`); `Default` is structurally identical to `init(t)`
-        // here. Swap to `init(t)` once `bun_js_parser_jsc` owns the full type.
-        t.macro_context = Some(js_ast::Macro::MacroContext::default());
+        let macro_ctx = js_ast::Macro::MacroContext::init(t);
+        t.macro_context = Some(macro_ctx);
         // PORT NOTE: `Resolver.caches` is `bun_resolver::cache::Set` (the
         // MOVE_DOWN copy that broke the bundler→resolver cycle), not this
         // crate's `cache::Set` aliased above as `CacheSet`.

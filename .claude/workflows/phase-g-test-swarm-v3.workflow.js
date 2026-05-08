@@ -278,7 +278,7 @@ Return {applied:N, commit}.`,
   // Push branch after each round so commits are durable + orchestrator can merge mid-flight
   await agent(
     `Push shard ${SHARD} branch (round ${round} done). \`git -C ${WT} push origin claude/phase-g-tswarm-s${SHARD} 2>&1 | tail -1\`. Return {ok:true}.`,
-    { label: `push-s${SHARD}-r${round}`, phase: "Apply", model: "haiku" },
+    { label: `push-s${SHARD}-r${round}`, phase: "Apply" },
   );
 
   history.push({

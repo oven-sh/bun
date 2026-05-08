@@ -110,7 +110,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   phase("Build");
   const build = await agent(
     `Wait for builder daemon. **DO NOT run bun bd** — a daemon owns the build. \`mkdir -p ${GDIAG}; for i in $(seq 1 60); do test -f /tmp/mega-diag/.built && break; sleep 5; done; test -f /tmp/mega-diag/.built && tail -3 /tmp/mega-diag/.build.log\`. If build.log shows errors, return {ok:false, errors:"..."}. Else {ok:true}.`,
-    { label: `wait-build-r${round}`, phase: "Build", schema: BUILD_S, model: "haiku" },
+    { label: `wait-build-r${round}`, phase: "Build", schema: BUILD_S },
   );
   if (!build?.ok) {
     await agent(
@@ -220,7 +220,7 @@ Return {accept, corrections:[{src,what,fix,severity}], new_unsafe}.`,
   await agent(`Push: \`git -C /root/bun-5 push origin claude/phase-a-port 2>&1 | tail -1\`. Return ok.`, {
     label: `push-r${round}`,
     phase: "Apply",
-    model: "haiku",
+   
   });
   history.push({ round, passing: survey.passing, total: survey.total, fixed: targets.length });
 }

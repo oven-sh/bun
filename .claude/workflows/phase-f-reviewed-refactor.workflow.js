@@ -121,7 +121,7 @@ Return {applied, files_touched, commit:"<sha>", metric_before, metric_after, not
 1. \`${CHECK_CMD} 2>&1 | grep 'could not compile\\|^error\\['\` → list errors (empty if clean)
 2. \`${SMOKE}\` → capture output
 Return {check_ok, smoke_ok, errors:[...], smoke_output}. DO NOT edit.`,
-    { label: `build-r${round}`, phase: "Build", schema: BUILD_S, model: "haiku" },
+    { label: `build-r${round}`, phase: "Build", schema: BUILD_S },
   );
   if (!build) {
     history.push({ round, error: "build probe failed" });

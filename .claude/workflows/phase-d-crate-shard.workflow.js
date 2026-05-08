@@ -82,7 +82,7 @@ Return {units:[{file, lo?, hi?, n, errfile}], total, dep_broken:[]}. units = ALL
     if (recent.length >= 3 && recent.every(h => h.dep_broken)) {
       return { rounds: round, done: false, bailed: "dep_broken_3x", history, shard: SHARD, crate: CRATE };
     }
-    await agent(`Run \`sleep 120\` then return "ok".`, { label: `backoff-${CRATE}-s${SHARD}`, model: "haiku" });
+    await agent(`Run \`sleep 120\` then return "ok".`, { label: `backoff-${CRATE}-s${SHARD}` });
     continue;
   }
   if (survey.total === 0) return { rounds: round, done: true, history, shard: SHARD, crate: CRATE };

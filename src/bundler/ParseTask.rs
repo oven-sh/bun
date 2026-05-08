@@ -51,15 +51,11 @@ mod EventLoop {
     pub type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
 }
 
-// PORT NOTE: arena-lifetime erasure helper. Slices borrowed from the per-file
-// parse arena (or `Source.contents: Cow<'static,[u8]>`) outlive the link step;
-// see TODO(port): arena lifetime notes throughout. Routed through `StoreStr`
-// so the lifetime erasure goes through one audited unsafe (`StoreStr::slice`)
-// instead of an open-coded `transmute` at every site.
-#[inline(always)]
-fn leak_static(s: &[u8]) -> &'static [u8] {
-    ast::StoreStr::new(s).slice()
-}
+// PORT NOTE: the per-file parse arena is held as `bump: &'static Bump` (the
+// worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
+// so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
+// borrows directly. No erasure helper is needed; `StoreStr::new` covers the
+// remaining AST-string sites (`E::String.data`, `FileLoaderHash.key`).
 
 // CYCLEBREAK FORWARD_DECL bridges: `JSBundlerPlugin` / `FileMap` are opaque
 // `[u8; 0]` in `bundle_v2.rs`; the real bodies live in T6 (`jsc::api::JSBundler`).
@@ -867,7 +863,7 @@ fn get_ast(
             return result;
         }
         Loader::Text => {
-            let root = Expr::init(E::String { data: leak_static(&source.contents).into(), ..Default::default() }, Loc { start: 0 });
+            let root = Expr::init(E::String { data: source.contents().into(), ..Default::default() }, Loc { start: 0 });
             let mut ast = JSAst::init(
                 js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
                     .unwrap(),
@@ -883,7 +879,7 @@ fn get_ast(
                     return Err(err!("ParserError"));
                 }
             };
-            let html: &'static [u8] = leak_static(bump.alloc_slice_copy(&html));
+            let html: &[u8] = bump.alloc_slice_copy(&html);
             let root = Expr::init(E::String { data: html.into(), ..Default::default() }, Loc { start: 0 });
             let mut ast = JSAst::init(
                 js_parser::new_lazy_export_ast(bump, &mut topts.define, opts, log, root, source, b"")?
@@ -904,7 +900,7 @@ fn get_ast(
                 return Err(err!("ParserError"));
             }
 
-            let path_to_use: &'static [u8] = 'brk: {
+            let path_to_use: &[u8] = 'brk: {
                 // Implements embedded sqlite
                 if loader == Loader::SqliteEmbedded {
                     let mut buf = bun_alloc::ArenaString::new_in(bump);
@@ -915,7 +911,7 @@ fn get_ast(
                         source.index.0
                     )
                     .expect("unreachable");
-                    let embedded_path = leak_static(buf.into_bump_str().as_bytes());
+                    let embedded_path = buf.into_bump_str().as_bytes();
                     *unique_key_for_additional_file = FileLoaderHash {
                         key: ast::StoreStr::new(embedded_path),
                         content_hash: ContentHasher::run(&source.contents),
@@ -1007,7 +1003,7 @@ fn get_ast(
                 source.index.0
             )
             .expect("unreachable");
-            let unique_key = leak_static(buf.into_bump_str().as_bytes());
+            let unique_key = buf.into_bump_str().as_bytes();
             // This injects the following code:
             //
             // require(unique_key)
@@ -1223,7 +1219,7 @@ fn get_ast(
             // of the bundle, the key is replaced with the actual URL.
             let content_hash = ContentHasher::run(&source.contents);
 
-            let unique_key: &'static [u8] = if topts.has_dev_server() {
+            let unique_key: &[u8] = if topts.has_dev_server() {
                 // With DevServer, the actual URL is added now, since it can be
                 // known this far ahead of time, and it means the unique key code
                 // does not have to perform an additional pass over files.
@@ -1239,7 +1235,7 @@ fn get_ast(
                     bstr::BStr::new(bun_paths::extension(source.path.text)),
                 )
                 .expect("unreachable");
-                leak_static(buf.into_bump_str().as_bytes())
+                buf.into_bump_str().as_bytes()
             } else {
                 let mut buf = bun_alloc::ArenaString::new_in(bump);
                 write!(
@@ -1249,7 +1245,7 @@ fn get_ast(
                     source.index.0
                 )
                 .expect("unreachable");
-                leak_static(buf.into_bump_str().as_bytes())
+                buf.into_bump_str().as_bytes()
             };
             let root = Expr::init(E::String { data: unique_key.into(), ..Default::default() }, Loc { start: 0 });
             *unique_key_for_additional_file = FileLoaderHash {
@@ -1387,7 +1383,7 @@ fn get_code_for_parse_task_without_plugins(
                 Err(e) => {
                     let source = Source::init_empty_file(
                         // TODO(port): zig duped via log.msgs.arena
-                        leak_static(file_path.text),
+                        file_path.text,
                     );
                     if e == err!("ENOENT") || e == err!("FileNotFound") {
                         let _ = log.add_error_fmt(
@@ -2228,15 +2224,21 @@ fn run_with_source_code(
         // `bun_resolver::fs::Path` (CYCLEBREAK TYPE_ONLY mirror). Construct
         // field-by-field across the type boundary.
         path: bun_logger::fs::Path {
-            text: leak_static(file_path.text),
-            namespace: leak_static(file_path.namespace),
-            name: bun_logger::fs::PathName::init(leak_static(file_path.text)),
-            pretty: leak_static(file_path.pretty),
+            text: file_path.text,
+            namespace: file_path.namespace,
+            name: bun_logger::fs::PathName::init(file_path.text),
+            pretty: file_path.pretty,
             is_disabled: file_path.is_disabled,
             is_symlink: file_path.is_symlink,
         },
         index: bun_logger::Index(task.source_index.get()),
-        contents: std::borrow::Cow::Borrowed(leak_static(entry_contents)),
+        // PORT NOTE: `entry.contents` is owned by `task.stage` (written back by
+        // the caller after parse — see `ParseTask::run`). `Source` is stored in
+        // `Success` which lives no longer than the `ParseTask` itself, so this
+        // borrow is sound. Routed through the audited `StoreStr` arena-erasure
+        // path (single `from_raw_parts` in `StoreStr::slice`); replace with
+        // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
+        contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
         contents_is_recycled: false,
         ..Default::default()
     };
@@ -2274,7 +2276,7 @@ fn run_with_source_code(
     // CYCLEBREAK MOVE_DOWN: `AllowUnresolved` is now the same nominal type on
     // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
     // a worker-owned `Transpiler` that outlives the parse.
-    // SAFETY: ARENA — see `leak_static`; `topts` outlives `opts`.
+    // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
     opts.allow_unresolved =
         unsafe { core::mem::transmute::<&options::AllowUnresolved, &'static _>(&topts.allow_unresolved) };
     // `Transpiler.macro_context` is `Option<bun_js_parser::Macro::MacroContext>`
@@ -2397,8 +2399,10 @@ fn run_with_source_code(
                 }
             }),
         };
-        // SAFETY: ARENA — bump outlives the parse; `'static` erasure per
-        // `leak_static` convention.
+        // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
+        // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow;
+        // the `transmute` only narrows the concrete `&'static Framework` to the
+        // trait-level `&'static _` expected by `opts.framework`.
         unsafe {
             core::mem::transmute::<&js_parser::options::Framework, &'static _>(
                 bump.alloc(projected),
@@ -2585,7 +2589,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
         // both borrowed mutably. Zig (.zig:1369) passes `&this.stage.needs_parse`
         // in-place so the entry's `Contents::Owned` buffer survives in
         // `task.stage` for the bundle's lifetime (Success.source.contents
-        // borrows it via `leak_static`). Take it out, parse, then *write it
+        // borrows it via the arena-erased `StoreStr` path). Take it out, parse, then *write it
         // back* on every path before `break 'value` so dropping the local
         // can't free the buffer underneath the borrowed source.
         let mut entry = match core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode) {

@@ -140,9 +140,8 @@ pub fn write_output_files_to_disk(
         // wires up `code_allocator` it can borrow through `_code_allocator`.
         let _code_allocator = max_heap_allocator.scope();
 
-        let rel_path: &[u8] = chunk.final_rel_path;
         let rel_parent =
-            paths::resolve_path::dirname::<paths::platform::Posix>(rel_path);
+            paths::resolve_path::dirname::<paths::platform::Posix>(&chunk.final_rel_path);
         if !rel_parent.is_empty() {
             if let Err(e) = root_dir.make_path(rel_parent) {
                 c.log
@@ -153,7 +152,7 @@ pub fn write_output_files_to_disk(
                             "{} creating outdir {} while saving chunk {}",
                             e.name(),
                             quote(rel_parent),
-                            quote(chunk.final_rel_path),
+                            quote(&chunk.final_rel_path),
                         ),
                     )
                     .expect("unreachable");
@@ -227,7 +226,7 @@ pub fn write_output_files_to_disk(
                 .path
                 .text
         } else {
-            chunk.final_rel_path
+            &chunk.final_rel_path
         });
 
         match chunk.content.sourcemap(c.options.source_maps) {
@@ -237,7 +236,7 @@ pub fn write_output_files_to_disk(
                     .finalize(&code_result.shifts)
                     .unwrap_or_else(|_| panic!("Failed to allocate memory for external source map"));
                 let source_map_final_rel_path = strings::concat(&[
-                    chunk.final_rel_path,
+                    &chunk.final_rel_path,
                     b".map",
                 ])
                 .unwrap_or_else(|_| panic!("Failed to allocate memory for external source map path"));
@@ -283,7 +282,7 @@ pub fn write_output_files_to_disk(
                             &e,
                             format_args!(
                                 "writing sourcemap for chunk {}",
-                                quote(chunk.final_rel_path)
+                                quote(&chunk.final_rel_path)
                             ),
                         )?;
                         return Err(err!("WriteFailed"));
@@ -353,7 +352,7 @@ pub fn write_output_files_to_disk(
                     let mut fdpath = PathBuffer::uninit();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
-                        bstr::BStr::new(chunk.final_rel_path),
+                        bstr::BStr::new(&chunk.final_rel_path),
                         BYTECODE_EXTENSION,
                     ));
                     source_provider_url.ref_();
@@ -376,7 +375,7 @@ pub fn write_output_files_to_disk(
                                 }
                             ),
                         );
-                        let frp: &[u8] = chunk.final_rel_path;
+                        let frp: &[u8] = &chunk.final_rel_path;
                         fdpath[..frp.len()].copy_from_slice(frp);
                         fdpath[frp.len()..frp.len() + BYTECODE_EXTENSION.len()]
                             .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
@@ -405,7 +404,7 @@ pub fn write_output_files_to_disk(
                                         format_args!(
                                             "{} writing bytecode for chunk {}",
                                             e,
-                                            quote(chunk.final_rel_path),
+                                            quote(&chunk.final_rel_path),
                                         ),
                                     )
                                     .expect("unreachable");
@@ -417,7 +416,7 @@ pub fn write_output_files_to_disk(
                         write!(
                             &mut input_path_buf,
                             "{}{}",
-                            bstr::BStr::new(chunk.final_rel_path),
+                            bstr::BStr::new(&chunk.final_rel_path),
                             BYTECODE_EXTENSION
                         )
                         .expect("unreachable");
@@ -460,13 +459,13 @@ pub fn write_output_files_to_disk(
                 encoding: WriteFileEncoding::Buffer,
                 mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) { 0o755 } else { 0o644 },
                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                file: PathOrFileDescriptor::Path(PathString::init(rel_path)),
+                file: PathOrFileDescriptor::Path(PathString::init(&chunk.final_rel_path)),
             },
         ) {
             Err(e) => {
                 c.log.add_sys_error(
                     &e,
-                    format_args!("writing chunk {}", quote(chunk.final_rel_path)),
+                    format_args!("writing chunk {}", quote(&chunk.final_rel_path)),
                 )?;
                 return Err(err!("WriteFailed"));
             }
@@ -495,7 +494,7 @@ pub fn write_output_files_to_disk(
         };
 
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
-            output_path: Box::<[u8]>::from(chunk.final_rel_path),
+            output_path: chunk.final_rel_path.clone(),
             input_path,
             input_loader: if chunk.entry_point.is_entry_point() {
                 parse_graph.input_files.items_loader()

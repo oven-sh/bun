@@ -1189,7 +1189,8 @@ impl IntoExprData for &E::EString {
 // copied. `Array`/`Object` are deep-walked because their item lists hold T2
 // `Expr` and `G::Property`, not T4's.
 //
-// Boxed payloads are heap-allocated (leaked), NOT placed in the resettable
+// Boxed payloads are heap-allocated via `StoreRef::from_box` (process-lifetime,
+// never dropped), NOT placed in the resettable
 // `data::Store`. The only producers of T2 trees are `WorkspacePackageJSONCache`
 // / `bun pm pkg` / `bun update -i`, all of which mirror Zig's
 // `json.root.deepClone(bun.default_allocator)` — i.e. nodes that must outlive
@@ -1203,7 +1204,7 @@ impl From<logger::js_ast::expr::Data> for Data {
         use logger::js_ast::expr::Data as V;
         #[inline(always)]
         fn leak<T>(v: T) -> StoreRef<T> {
-            StoreRef::from_bump(Box::leak(Box::new(v)))
+            StoreRef::from_box(Box::new(v))
         }
         match d {
             // Shared (re-exported) leaf payloads — identity.

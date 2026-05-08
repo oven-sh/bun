@@ -374,8 +374,8 @@ impl Fs {
     /// PORT NOTE: `arena` is dropped — Zig forwarded it to
     /// `readFileWithHandleAndAllocator`; the only effect was choosing which
     /// heap owns the non-shared-buffer read. The Rust path always allocates
-    /// from the global heap (via `Box::leak`); arena callers can pass through
-    /// the resolver's bump-backed forward-decl instead.
+    /// from the global heap (`Contents::Owned(Vec<u8>)`); arena callers can
+    /// pass through the resolver's bump-backed forward-decl instead.
     pub fn read_file_with_allocator(
         &mut self,
         _fs: &mut fs_mod::FileSystem,

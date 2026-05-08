@@ -1076,10 +1076,12 @@ pub fn generate_entry_point_tail_js<'a>(
                             }
                         }
 
-                        // PORT NOTE: arena-owned `*mut [ClauseItem]` — leak the Vec
-                        // (worker-arena reset frees it in Phase B; for now leak). The leaked
-                        // slice is also iterated below for the synthetic-default-export path.
-                        let items: &mut [js_ast::ClauseItem] = Box::leak(items.into_boxed_slice());
+                        // PORT NOTE: arena-owned `*mut [ClauseItem]` — move the
+                        // collected Vec into the linker arena (Zig used
+                        // `c.arena().alloc`). The arena slice is also iterated
+                        // below for the synthetic-default-export path.
+                        let items: &mut [js_ast::ClauseItem] =
+                            arena.alloc_slice_fill_iter(items.into_iter());
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
                                 items: js_ast::StoreSlice::new_mut(items),

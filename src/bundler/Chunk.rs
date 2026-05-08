@@ -54,7 +54,10 @@ pub struct Chunk {
     // TODO(port): was `= undefined` in Zig (set before use)
     pub entry_bits: AutoBitSet,
 
-    pub final_rel_path: &'static [u8],
+    /// PORT NOTE: Zig stored this as an arena-owned `[]const u8` (linker arena);
+    /// the Rust `Chunk` owns it as a `Box<[u8]>` so dropping the chunk slice
+    /// frees it (matches `c.arena().dupe(u8, ..)` ownership without leaking).
+    pub final_rel_path: Box<[u8]>,
     /// The path template used to generate `final_rel_path`
     pub template: PathTemplate,
 
@@ -80,7 +83,8 @@ pub struct Chunk {
 
     /// Pre-built JSON fragment for this chunk's metafile output entry.
     /// Generated during parallel chunk generation, joined at the end.
-    pub metafile_chunk_json: &'static [u8],
+    /// PORT NOTE: owned `Box<[u8]>` (was arena-owned `[]const u8` in Zig).
+    pub metafile_chunk_json: Box<[u8]>,
 
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
@@ -119,7 +123,7 @@ impl Default for Chunk {
             files_with_parts_in_chunk: ArrayHashMap::new(),
             // Zig: `entry_bits: AutoBitSet = undefined` — static-arm zero init.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
-            final_rel_path: b"",
+            final_rel_path: Box::default(),
             template: PathTemplate::default(),
             cross_chunk_imports: Vec::new(),
             content: Content::default(),
@@ -129,7 +133,7 @@ impl Default for Chunk {
             isolated_hash: u64::MAX,
             renamer: bun_renamer::ChunkRenamer::default(),
             compile_results_for_chunk: Box::default(),
-            metafile_chunk_json: b"",
+            metafile_chunk_json: Box::default(),
             flags: Flags::default(),
         }
     }
@@ -558,7 +562,7 @@ impl IntermediateOutput {
 
                 let mut count: usize = 0;
                 let mut from_chunk_dir =
-                    bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(chunk.final_rel_path);
+                    bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(&chunk.final_rel_path);
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
                 }
@@ -622,9 +626,9 @@ impl IntermediateOutput {
 
                                     &graph.additional_output_files.as_slice()[output_file].dest_path
                                 }
-                                QueryKind::Chunk => chunks[index].final_rel_path,
+                                QueryKind::Chunk => &chunks[index].final_rel_path,
                                 QueryKind::Scb => {
-                                    chunks[entry_point_chunks_for_scb[index] as usize].final_rel_path
+                                    &chunks[entry_point_chunks_for_scb[index] as usize].final_rel_path
                                 }
                                 
                                 QueryKind::HtmlImport => {
@@ -779,7 +783,7 @@ impl IntermediateOutput {
                                         shift.before.advance(piece_chunk.unique_key);
                                     }
 
-                                    break 'brk piece_chunk.final_rel_path;
+                                    break 'brk &piece_chunk.final_rel_path;
                                 }
                                 QueryKind::Scb => 'brk: {
                                     let piece_chunk =
@@ -789,7 +793,7 @@ impl IntermediateOutput {
                                         shift.before.advance(piece_chunk.unique_key);
                                     }
 
-                                    break 'brk piece_chunk.final_rel_path;
+                                    break 'brk &piece_chunk.final_rel_path;
                                 }
                                 
                                 QueryKind::HtmlImport => {

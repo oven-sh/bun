@@ -1449,6 +1449,22 @@ pub mod dispatch {
         ) -> Option<Box<[u8]>>;
     }
 
+    unsafe extern "Rust" {
+        /// Defined `#[no_mangle]` in `bun_jsc::hot_reloader`. Installs a
+        /// `NewHotReloader<BundleV2, AnyEventLoop, true>` watcher on the given
+        /// `BundleV2` (Zig: `Watcher.enableHotModuleReloading(this, null)` in
+        /// `BundleV2.init` — bundle_v2.zig:994). The bundler can't name the
+        /// reloader generic (T6), so this is a definer-prefixed extern hook.
+        fn __bun_jsc_enable_hot_module_reloading_for_bundler(bv2: *mut ());
+    }
+
+    /// `Watcher.enableHotModuleReloading(this, null)` for `bun build --watch`.
+    #[inline]
+    pub fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
+        // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
+        unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2.cast()) }
+    }
+
     /// Bytecode generation entry point for the linker. Mirrors the Zig
     /// `jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
     ///  jsc.initialize(false); jsc.CachedBytecode.generate(...)` sequence.
@@ -2863,7 +2879,9 @@ impl<'a> BundleV2<'a> {
         if cli_watch_flag {
             // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
             // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
-            // and writes `bun_watcher` directly after `init()` returns.
+            // via this extern hook and writes `bun_watcher` (Zig:
+            // `Watcher.enableHotModuleReloading(this, null)` — bundle_v2.zig:994).
+            dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
         }
         // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
 
@@ -3629,6 +3647,16 @@ impl<'a> BundleV2<'a> {
         } else {
             None
         };
+
+        // Under `--watch` the watcher thread holds `*mut BundleV2` (via the
+        // reloader's `ctx`) and dereferences it in `on_file_update` after this
+        // function returns. In Zig the `BundleV2` is arena-allocated and the
+        // arena is never freed (the caller diverges into `exitOrWatch`); in
+        // Rust it's `Box`-allocated, so leak it here to match the spec lifetime.
+        // Bounded leak: the next file change `execve()`s the process anyway.
+        if enable_reloading {
+            core::mem::forget(this);
+        }
 
         // Markdown is generated later in build_command.zig for CLI
         Ok(BuildResult {

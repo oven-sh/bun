@@ -290,6 +290,18 @@ impl HotReloaderEventLoop for EventLoop {
     }
 }
 
+/// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`
+/// (bundle_v2.zig:50). With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` diverges
+/// via `bun_core::reload_process()` before any concurrent task is enqueued, and
+/// in the Zig spec `enqueueTaskConcurrent` is `unreachable` (hot_reloader.zig:161).
+/// `BundleV2` doesn't even define `eventLoop()` — Zig's lazy compilation never
+/// instantiates it. Match that here.
+impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
+    unsafe fn enqueue_task_concurrent(_this: *mut Self, _task: *mut ConcurrentTask) {
+        unreachable!()
+    }
+}
+
 /// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so
 /// `HotReloaderCtx::reload` doesn't need to name the const generics.
 pub trait HotReloadTaskView {
@@ -569,6 +581,8 @@ where
         // Note that we set the count _before_ we reload, so that if we
         // get another hot reload request while we're reloading, we'll
         // still enqueue it.
+        #[cfg(debug_assertions)]
+        eprintln!("[hotdbg] Task::run pending_count={}", self.pending_count().load(Ordering::Relaxed));
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
@@ -578,6 +592,8 @@ where
 
     pub fn enqueue(&mut self) {
         crate::mark_binding!();
+        #[cfg(debug_assertions)]
+        eprintln!("[hotdbg] Task::enqueue count={} pending_count={}", self.count, self.pending_count().load(Ordering::Relaxed));
         if self.count == 0 {
             return;
         }
@@ -1211,6 +1227,155 @@ where
     fn on_error(&mut self, err: bun_sys::Error) {
         Self::on_error(self, err);
     }
+}
+
+// ── `bun build --watch` (Ctx = BundleV2) ─────────────────────────────────
+// Zig: `pub const Watcher = bun.jsc.hot_reloader.NewHotReloader(BundleV2,
+// EventLoop, true)` (bundle_v2.zig:50). `RELOAD_IMMEDIATELY = true` means the
+// watcher thread `execve()`s on the first change (Task::enqueue diverges), so
+// `event_loop()` / `reload()` are never reached; Zig doesn't even define
+// `BundleV2.eventLoop()` (lazy compilation prunes it). The bundler crate (T5)
+// can't name this generic, so it calls in via the `#[no_mangle]` hook below.
+
+impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
+    type EventLoop = bun_event_loop::AnyEventLoop<'static>;
+
+    fn event_loop(&self) -> *mut Self::EventLoop {
+        // Zig: BundleV2 has no `eventLoop()`; with RELOAD_IMMEDIATELY=true the
+        // only caller (`Task::enqueue` post-diverge) is dead code.
+        unreachable!()
+    }
+
+    fn bun_watcher_mut(&mut self) -> &mut Watcher {
+        // Zig: `else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .optional)
+        //          return this.ctx.bun_watcher.?;` (hot_reloader.zig:373).
+        // The handle's `owner` is the `*mut Watcher` we leaked in
+        // `install_bun_watcher` below.
+        let handle = self
+            .bun_watcher
+            .expect("bun_watcher_mut on un-enabled BundleV2 reloader");
+        // SAFETY: `owner` is the `Box<Watcher>` leaked via `into_raw` in
+        // `install_bun_watcher`; live for the process (the BundleV2 itself is
+        // leaked under --watch — see `generate_from_cli`).
+        unsafe { &mut *handle.owner.as_ptr().cast::<Watcher>() }
+    }
+
+    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
+        // RELOAD_IMMEDIATELY=true → `Task::run` is never enqueued.
+        unreachable!()
+    }
+
+    fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        bun_bundler::BundleV2::bust_dir_cache(self, path)
+    }
+
+    fn get_loaders(&self) -> &bun_bundler::options::LoaderHashTable {
+        &self.transpiler.options.loaders
+    }
+
+    fn log_level_at_least_info(&self) -> bool {
+        // Zig: `if (@hasField(Ctx, "log")) … else false` — BundleV2 has no
+        // `log` field (the log is on `transpiler`), so this arm is `false`.
+        false
+    }
+
+    fn is_watcher_enabled(&self) -> bool {
+        // Zig: `else { if (this.bun_watcher != null) return; }`.
+        self.bun_watcher.is_some()
+    }
+
+    fn watcher_top_level_dir(&self) -> &'static [u8] {
+        // SAFETY: `transpiler.fs` is the process-global `FileSystem::instance()`
+        // pointer set during build_command init.
+        unsafe { (*self.transpiler.fs).top_level_dir }
+    }
+
+    fn install_bun_watcher(
+        &mut self,
+        watcher: Box<Watcher>,
+        _reload_immediately: bool,
+    ) -> *mut Watcher {
+        // Zig (the non-ImportWatcher arm, hot_reloader.zig:330):
+        //   this.bun_watcher = Watcher.init(...);
+        //   this.transpiler.resolver.watcher = ResolveWatcher(...).init(this.bun_watcher.?);
+        // The bundler stores the watcher type-erased as a `WatcherHandle`
+        // (`owner` = `*mut Watcher`, `vtable` = `&BUNDLER_WATCHER_VTABLE`) so
+        // `on_load_complete` can `add_file` without naming `bun_watcher::Watcher`.
+        let watcher_ptr: *mut Watcher = bun_core::heap::into_raw(watcher);
+        // SAFETY: `watcher_ptr` is a fresh non-null heap allocation.
+        self.bun_watcher = Some(bun_bundler::dispatch::WatcherHandle {
+            owner: unsafe { core::ptr::NonNull::new_unchecked(watcher_ptr.cast()) },
+            vtable: &BUNDLER_WATCHER_VTABLE,
+        });
+        // SAFETY: `watcher_ptr` was just installed; live for the process.
+        self.transpiler.resolver.watcher =
+            Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        watcher_ptr
+    }
+
+    fn compute_clear_screen(&self) -> bool {
+        // SAFETY: `transpiler.env` is set in `Transpiler::init` and live for the
+        // build (process-lifetime under --watch).
+        !unsafe {
+            (*self.transpiler.env)
+                .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
+        }
+    }
+}
+
+/// `WatcherHandle.vtable` for the `bun build --watch` watcher. The handle's
+/// `owner` is the bare `*mut bun_watcher::Watcher` (not wrapped in
+/// `ImportWatcher`); same shape as bake's `BAKE_WATCHER_VTABLE`.
+static BUNDLER_WATCHER_VTABLE: bun_bundler::dispatch::WatcherVTable =
+    bun_bundler::dispatch::WatcherVTable {
+        add_file: bundler_watcher_add_file,
+    };
+
+unsafe fn bundler_watcher_add_file(
+    watcher: *mut (),
+    fd: bun_sys::Fd,
+    file_path: &[u8],
+    hash: u32,
+    loader: bun_options_types::Loader,
+    dir_fd: bun_sys::Fd,
+    package_json: Option<*const ()>,
+    copy_file_path: bool,
+) -> Result<(), bun_core::Error> {
+    // SAFETY: `watcher` is the `*mut Watcher` registered by `install_bun_watcher`.
+    let w = unsafe { &mut *watcher.cast::<Watcher>() };
+    // SAFETY: `package_json` is an erased `*const PackageJSON` owned by the
+    // resolver's package-json cache (process lifetime); Watcher only stores it.
+    let pj = package_json.map(|p| unsafe { &*p.cast::<bun_watcher::PackageJSON>() });
+    // PORT NOTE: `bun_watcher::Loader` is a `#[repr(transparent)]` u8 newtype
+    // mirroring `bun_options_types::Loader` (`#[repr(u8)]`).
+    let loader = bun_watcher::Loader(loader as u8);
+    let r = if copy_file_path {
+        w.add_file::<true>(fd, file_path, hash, loader, dir_fd, pj)
+    } else {
+        w.add_file::<false>(fd, file_path, hash, loader, dir_fd, pj)
+    };
+    r.map_err(bun_core::Error::from)
+}
+
+/// Zig: `bundle_v2.Watcher = NewHotReloader(BundleV2, EventLoop, true)`
+/// (bundle_v2.zig:50). `'static` because the only caller (`bun build --watch`)
+/// allocates the transpiler from the process-lifetime CLI arena.
+type BundlerWatcher = NewHotReloader<
+    bun_bundler::BundleV2<'static>,
+    bun_event_loop::AnyEventLoop<'static>,
+    true,
+>;
+
+/// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
+/// `cli_watch_flag` is set (bundle_v2.zig:993). Erased via `*mut ()` because
+/// the bundler crate can't name `NewHotReloader`.
+#[unsafe(no_mangle)]
+fn __bun_jsc_enable_hot_module_reloading_for_bundler(bv2: *mut ()) {
+    // SAFETY: `bv2` is the `&mut *Box<BundleV2<'static>>` formed in
+    // `BundleV2::init`; the lifetime is `'static` for the only caller (build
+    // command leaks the CLI arena), and the box is leaked under --watch.
+    let bv2 = bv2.cast::<bun_bundler::BundleV2<'static>>();
+    BundlerWatcher::enable_hot_module_reloading(bv2, None);
 }
 
 pub use crate::MarkedArrayBuffer as Buffer;

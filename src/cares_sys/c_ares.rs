@@ -1855,14 +1855,15 @@ impl Error {
             return None;
         }
         // c-ares returns positive ARES_* codes; Node's wrapper sometimes negates.
-        let n = rc.abs();
+        // `unsigned_abs` avoids the i32::MIN overflow that `.abs()` would hit.
+        let n = rc.unsigned_abs();
         assert!(
-            (1..=ARES_ENOSERVER).contains(&n),
+            (1..=ARES_ENOSERVER as u32).contains(&n),
             "c-ares status {rc} out of range",
         );
         // SAFETY: `n` is in `1..=ARES_ENOSERVER`; `Error` is `#[repr(i32)]` with
         // contiguous discriminants `1..=ARES_ENOSERVER`.
-        Some(unsafe { core::mem::transmute::<i32, Error>(n) })
+        Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
     }
 }
 

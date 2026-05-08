@@ -208,7 +208,13 @@ impl String {
         // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` at comptime.
         struct AssertPtrSized<C>(core::marker::PhantomData<C>);
         impl<C> AssertPtrSized<C> {
-            const OK: () = assert!(core::mem::size_of::<C>() == core::mem::size_of::<*mut c_void>());
+            const OK: () = {
+                assert!(core::mem::size_of::<C>() == core::mem::size_of::<*mut c_void>());
+                // The bit-reinterpret below reads `*mut c_void` out of a stack
+                // slot aligned for `Ctx`; rule out a `Ctx` like `[u8; 8]`
+                // (align 1) which would make that read under-aligned.
+                assert!(core::mem::align_of::<C>() >= core::mem::align_of::<*mut c_void>());
+            };
         }
         let () = AssertPtrSized::<Ctx>::OK;
         debug_assert!(!bytes.is_empty());
@@ -222,7 +228,8 @@ impl String {
         // and later double-freed by the WTF finalizer. Ownership transfers to
         // the external string; suppress the local drop.
         let ctx = core::mem::ManuallyDrop::new(ctx);
-        // SAFETY: Ctx is pointer-sized (asserted); read the bits as *mut c_void.
+        // SAFETY: Ctx is pointer-sized and pointer-aligned (const-asserted
+        // above); read the bits as `*mut c_void`.
         let ctx_erased: *mut c_void =
             unsafe { core::ptr::from_ref::<Ctx>(&*ctx).cast::<*mut c_void>().read() };
         let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, u32)> =

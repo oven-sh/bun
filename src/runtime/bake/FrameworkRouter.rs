@@ -1205,7 +1205,10 @@ impl FrameworkRouter {
 
                 // Must add to this child
                 let mut new_route_index = self.new_route(Route {
-                    part: current_part.to_owned_part(),
+                    // SAFETY: `current_part` borrows from `pattern_string_arena`
+                    // (owned by `self`), which outlives every `Route` stored in
+                    // `self.routes`.
+                    part: unsafe { current_part.to_owned_part() },
                     r#type: ty,
                     parent: route_index.to_optional(),
                     first_child: None,
@@ -1226,7 +1229,10 @@ impl FrameworkRouter {
                 // inserting routes simpler to implement, but could technically be avoided.
                 while let Some(next_part_val) = next_part(&mut static_it, &mut dynamic_it) {
                     let newer_route_index = self.new_route(Route {
-                        part: next_part_val.to_owned_part(),
+                        // SAFETY: `next_part_val` borrows from
+                        // `pattern_string_arena` (owned by `self`), which
+                        // outlives every `Route` stored in `self.routes`.
+                        part: unsafe { next_part_val.to_owned_part() },
                         r#type: ty,
                         parent: new_route_index.to_optional(),
                         first_child: None,
@@ -1288,22 +1294,27 @@ impl FrameworkRouter {
 // Zig stored borrowed slices; here we keep raw slices via the same arena. The
 // `to_owned_part` helper exists to detach the borrow lifetime when stored in `Route`.
 impl<'a> Part<'a> {
-    fn to_owned_part(self) -> Part<'static> {
-        // SAFETY: payload points into pattern_string_arena which lives as long as
-        // FrameworkRouter. We erase the lifetime to store inside `Route`. Phase B
-        // should model this with `'bump`. Variant-by-variant detach (no bitcast).
+    /// Detach the borrow lifetime so this `Part` can be stored in `Route`.
+    ///
+    /// # Safety
+    /// Every payload slice must point into `FrameworkRouter::pattern_string_arena`
+    /// (or other storage that outlives the owning `FrameworkRouter`). Phase B
+    /// should model this with `'bump`.
+    #[allow(unsafe_op_in_unsafe_fn)]
+    unsafe fn to_owned_part(self) -> Part<'static> {
+        // Variant-by-variant detach (no bitcast). `d` stays `unsafe fn` so a
+        // safe-signature wrapper does not hide the lifetime-widen.
         #[inline(always)]
         unsafe fn d(s: &[u8]) -> &'static [u8] {
+            // SAFETY: caller contract on `to_owned_part`.
             unsafe { &*core::ptr::from_ref::<[u8]>(s) }
         }
-        unsafe {
-            match self {
-                Part::Text(s) => Part::Text(d(s)),
-                Part::Param(s) => Part::Param(d(s)),
-                Part::CatchAllOptional(s) => Part::CatchAllOptional(d(s)),
-                Part::CatchAll(s) => Part::CatchAll(d(s)),
-                Part::Group(s) => Part::Group(d(s)),
-            }
+        match self {
+            Part::Text(s) => Part::Text(d(s)),
+            Part::Param(s) => Part::Param(d(s)),
+            Part::CatchAllOptional(s) => Part::CatchAllOptional(d(s)),
+            Part::CatchAll(s) => Part::CatchAll(d(s)),
+            Part::Group(s) => Part::Group(d(s)),
         }
     }
 }

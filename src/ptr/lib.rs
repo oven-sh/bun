@@ -323,6 +323,11 @@ pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
     const {
         assert!(core::mem::size_of::<F>() == core::mem::size_of::<fn()>());
         assert!(core::mem::size_of::<G>() == core::mem::size_of::<fn()>());
+        // `read` below pulls a `G` out of a stack slot aligned for `F`; rule
+        // out under-alignment so the bitcast stays defined even if a caller
+        // smuggles in a non-fn-ptr `Copy` type.
+        assert!(core::mem::align_of::<F>() == core::mem::align_of::<fn()>());
+        assert!(core::mem::align_of::<G>() == core::mem::align_of::<fn()>());
     }
     // SAFETY: caller contract — `F` and `G` are ABI-identical fn pointers.
     // `read` of a pointer-sized `Copy` value through a same-size cast is the

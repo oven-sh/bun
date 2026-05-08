@@ -1,6 +1,7 @@
 use crate::ast::base::{Ref, RefExt as _};
 use crate::ast::binding::Binding;
 use crate::ast::expr::Expr;
+use crate::ast::StoreRef;
 use crate::{flags, ExprNodeIndex};
 // Re-exported so callers can spell `js_ast::b::ArrayBinding` (Zig: `B.Array.Item`).
 pub use crate::ArrayBinding;
@@ -28,11 +29,11 @@ pub use crate::ArrayBinding;
 #[derive(Copy, Clone)]
 pub enum B {
     // let x = ...
-    BIdentifier(*mut Identifier),
+    BIdentifier(StoreRef<Identifier>),
     // let [a, b] = ...
-    BArray(*mut Array),
+    BArray(StoreRef<Array>),
     // let { a, b: c } = ...
-    BObject(*mut Object),
+    BObject(StoreRef<Object>),
     // this is used to represent array holes
     BMissing(Missing),
 }
@@ -44,15 +45,13 @@ impl Default for B {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// Three pointer variants (8-byte payload each) + one ZST → 1-byte
-// discriminant + 8-byte payload = 9, align(8) rounds to 16. `Binding` =
-// `B` (16, align 8) + `Loc` (i32) → 20 → 24. Unlike `expr::Data`/`stmt::Data`
-// these payloads are still raw `*mut T` (nullable, no NonNull niche of their
-// own); `Option<B>` stays 16 only because repr(Rust) exposes the spare tag
-// values as a niche — the assert below locks that in (a `#[repr(u8)]` would
-// drop it). Converting to `StoreRef<T>` (NonNull) is the follow-up that also
-// drops the `unsafe { &*ptr }` boilerplate at ~60 match sites; it does not
-// change these sizes.
+// Three `StoreRef<T>` variants (`#[repr(transparent)] NonNull<T>`, 8-byte
+// payload) + one ZST → 1-byte discriminant + 8-byte payload = 9, align(8)
+// rounds to 16. `Binding` = `B` (16, align 8) + `Loc` (i32) → 20 → 24.
+// Matches `expr::Data`/`stmt::Data`: every pointer payload is non-nullable,
+// so `Option<B>` packs into the same 16 bytes via the NonNull niche (and
+// would continue to even under a future `#[repr(u8)]`, unlike the prior
+// `*mut T` form which relied solely on spare-tag-value niche).
 const _: () = assert!(core::mem::size_of::<B>() == 16);
 const _: () = assert!(core::mem::size_of::<super::binding::Binding>() == 24);
 const _: () = assert!(
@@ -153,16 +152,13 @@ impl B {
         }
         match self {
             B::BIdentifier(id) => {
-                // SAFETY: arena-owned `B::Identifier` valid for parser arena lifetime.
-                let ref_ = unsafe { (**id).r#ref };
-                // SAFETY: `original_name` is an arena-owned slice valid for the
+                let ref_ = id.r#ref;
+                // `original_name` is an arena-owned slice valid for the
                 // parser/AST arena that `symbol_table` borrows from.
                 let original_name = ref_.get_symbol(symbol_table).original_name.slice();
                 raw(hasher, (self.tag(), original_name.len()));
             }
             B::BArray(array) => {
-                // SAFETY: arena-owned `B::Array` valid for parser arena lifetime.
-                let array = unsafe { &**array };
                 raw(hasher, (self.tag(), array.has_spread, array.items().len()));
                 for item in array.items().iter() {
                     raw(hasher, (item.default_value.is_some(),));
@@ -173,8 +169,6 @@ impl B {
                 }
             }
             B::BObject(object) => {
-                // SAFETY: arena-owned `B::Object` valid for parser arena lifetime.
-                let object = unsafe { &**object };
                 raw(hasher, (self.tag(), object.properties().len()));
                 for property in object.properties().iter() {
                     raw(hasher, (property.default_value.is_some(), property.flags));

@@ -1939,7 +1939,7 @@ impl RunCommand {
         ctx: &mut ContextData,
         root_dir_info: *mut DirInfo,
         this_transpiler: &mut Transpiler<'static>,
-        original_path: Option<&mut &[u8]>,
+        original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
     ) -> Result<(), bun_core::Error> {
@@ -1980,22 +1980,19 @@ impl RunCommand {
         _ctx: &mut ContextData,
         package_json_dir: &[u8],
         this_transpiler: &mut Transpiler<'static>,
-        original_path: Option<&mut &[u8]>,
+        original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
     ) -> Result<Vec<u8>, bun_core::Error> {
         // SAFETY: `Transpiler::init` always sets `env` (process-lifetime singleton).
         let env_loader = unsafe { &mut *this_transpiler.env };
-        // PORT NOTE: detach the lifetime — env-map values live for the process
-        // (Zig returned a raw `[]const u8`); the subsequent `&mut` borrow for
-        // `load_node_js_config` would otherwise conflict with `path`/`*op`.
-        let path: &[u8] = match env_loader.get(b"PATH") {
-            // SAFETY: env-map storage is process-lifetime (see DotEnv::Map).
-            Some(p) => unsafe { ::core::slice::from_raw_parts(p.as_ptr(), p.len()) },
-            None => b"",
-        };
+        // Snapshot PATH up front. In Zig the env map stores borrowed slices into
+        // process environ, so the returned `[]const u8` outlives later `put`s; the
+        // Rust map owns `Box<[u8]>` values, so a borrow would dangle once the
+        // caller (`configure_path_for_run`) overwrites PATH. Own a copy instead.
+        let path: Vec<u8> = env_loader.get(b"PATH").map(<[u8]>::to_vec).unwrap_or_default();
         if let Some(op) = original_path {
-            *op = path;
+            *op = path.clone();
         }
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
@@ -2097,7 +2094,7 @@ impl RunCommand {
             ));
             new_path.push(DELIMITER);
 
-            new_path.extend_from_slice(path);
+            new_path.extend_from_slice(&path);
         }
 
         Ok(new_path)
@@ -2475,7 +2472,7 @@ impl RunCommand {
         // fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         let force_using_bun = ctx.debug.run_in_bun;
-        let mut original_path: &[u8] = b"";
+        let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
             ctx,
             root_dir_info,

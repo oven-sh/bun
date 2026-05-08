@@ -578,7 +578,7 @@ impl BunxCommand {
         // PORT NOTE: out-param init — Zig `var this_transpiler: Transpiler = undefined;`.
         let mut this_transpiler_slot =
             ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
-        let mut original_path: &[u8] = b"";
+        let mut original_path: Vec<u8> = Vec::new();
 
         let root_dir_info = Run::configure_env_for_run(
             ctx,
@@ -632,7 +632,7 @@ impl BunxCommand {
         // names without risking a collision with an unrelated binary in the user's
         // system $PATH. A trailing delimiter may remain; `bun.which` tokenizes on the
         // delimiter so empty segments are ignored.
-        let local_bin_dirs: Vec<u8> = if !original_path.is_empty() && strings::ends_with(&path, original_path) {
+        let local_bin_dirs: Vec<u8> = if !original_path.is_empty() && strings::ends_with(&path, &original_path) {
             path[0..path.len() - original_path.len()].to_vec()
         } else {
             path.clone()

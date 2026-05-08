@@ -61,9 +61,9 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Setup GPG
-        uses: crazy-max/ghaction-import-gpg@v5
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
@@ -91,7 +91,7 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           # To workaround issue
           ref: main
@@ -118,9 +118,9 @@ jobs:
         working-directory: packages/bun-types
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: latest
       - name: Setup Bun
@@ -148,14 +148,14 @@ jobs:
           BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
       - name: Release (canary)
         if: ${{ env.BUN_VERSION == 'canary' }}
-        uses: JS-DevTools/npm-publish@v1
+        uses: JS-DevTools/npm-publish@0fd2f4369c5d6bcfcde6091a7c527d810b9b5c3f # v4.1.5
         with:
           package: packages/bun-types/package.json
           token: ${{ secrets.NPM_TOKEN }}
           tag: canary
       - name: Release (latest)
         if: ${{ env.BUN_LATEST == 'true' }}
-        uses: JS-DevTools/npm-publish@v1
+        uses: JS-DevTools/npm-publish@0fd2f4369c5d6bcfcde6091a7c527d810b9b5c3f # v4.1.5
         with:
           package: packages/bun-types/package.json
           token: ${{ secrets.NPM_TOKEN }}
@@ -168,11 +168,11 @@ jobs:
       contents: read
     steps:
       - name: Checkout (DefinitelyTyped)
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: DefinitelyTyped/DefinitelyTyped
       - name: Checkout (bun)
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           path: bun
       - name: Setup Bun
@@ -192,7 +192,7 @@ jobs:
           await file.write(JSON.stringify(json, null, 4) + "\n");
           '
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary'}}
         with:
           token: ${{ secrets.ROBOBUN_TOKEN }}
@@ -229,17 +229,17 @@ jobs:
             suffix: -distroless
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Setup Docker emulator
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
       - id: buildx
         name: Setup Docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
         with:
           platforms: linux/amd64,linux/arm64
       - id: metadata
         name: Setup Docker metadata
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: oven/bun
           flavor: |
@@ -251,12 +251,12 @@ jobs:
             type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
             type=match,pattern=(bun-v)?(canary|\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
       - name: Login to Docker
-        uses: docker/login-action@v3
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Push to Docker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: ./dockerhub/${{ matrix.dir || matrix.variant }}
           platforms: linux/amd64,linux/arm64
@@ -275,24 +275,24 @@ jobs:
     if: ${{ github.event_name == 'release' || github.event.inputs.use-homebrew == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: oven-sh/homebrew-bun
           token: ${{ secrets.ROBOBUN_TOKEN }}
       - id: gpg
         name: Setup GPG
-        uses: crazy-max/ghaction-import-gpg@v5
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@c4e5b1316158f92e3d49443a9d58b31d25ac0f8f # v1.306.0
         with:
           ruby-version: "2.6"
       - name: Update Tap
         run: ruby scripts/release.rb "${{ env.BUN_VERSION }}"
       - name: Commit Tap
-        uses: stefanzweifel/git-auto-commit-action@v4
+        uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
         with:
           commit_options: --gpg-sign=${{ steps.gpg.outputs.keyid }}
           commit_message: Release ${{ env.BUN_VERSION }}
@@ -311,7 +311,7 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -333,7 +333,7 @@ jobs:
     needs: s3
     steps:
       - name: Notify Sentry
-        uses: getsentry/action-release@v1.7.0
+        uses: getsentry/action-release@5657c9e888b4e2cc85f4d29143ea4131fde4a73a # v3.6.0
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
@@ -353,7 +353,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: ${{ env.BUN_LATEST == 'true' }}
       - name: Setup Bun
         uses: ./.github/actions/setup-bun

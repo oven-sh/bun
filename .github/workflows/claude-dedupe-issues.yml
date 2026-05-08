@@ -22,10 +22,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Run Claude Code slash command
-        uses: anthropics/claude-code-base-action@98d41f9809750c4c96f2cd285746ecef889f14bc
+        uses: anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34 # v0.0.63
         env:
           ANTHROPIC_MODEL: claude-opus-4-6[1m]
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

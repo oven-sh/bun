@@ -23,7 +23,7 @@ jobs:
       matrix:
         version: ['14.3']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           sparse-checkout: |
             test/js/bun
@@ -45,7 +45,7 @@ jobs:
           file ./bin/bun
 
       - name: Run in FreeBSD VM
-        uses: vmactions/freebsd-vm@v1
+        uses: vmactions/freebsd-vm@d1e65811565151536c0c894fff74f06351ed26e6 # v1.4.5
         with:
           release: ${{ matrix.version }}
           usesh: true

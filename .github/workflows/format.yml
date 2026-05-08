@@ -22,7 +22,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Configure Git
         run: |
           git config --global core.autocrlf true
@@ -104,4 +104,4 @@ jobs:
       - name: Ban Words
         run: |
           bun ./test/internal/ban-words.test.ts
-      - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27
+      - uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a # v1.3.4

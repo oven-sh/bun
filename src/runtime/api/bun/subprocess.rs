@@ -1081,12 +1081,13 @@ impl Subprocess<'_> {
             // is still running on `pipe`. Detach the signal first and drive the
             // `onStdinDestroyed()` deref ourselves instead; this also leaves
             // `self.stdin` as `.pipe` so reading `.stdin` after exit still
-            // returns the sink.
+            // returns the sink. (Signal back-pointer is the `*mut Subprocess`,
+            // not `&self.stdin` — see `SignalHandler for Subprocess`.)
             if pipe
                 .signal
                 .ptr
                 .map(|p| p.as_ptr().cast_const())
-                == Some(std::ptr::from_ref::<Writable<'_>>(&self.stdin).cast::<c_void>())
+                == Some(std::ptr::from_ref::<Self>(self).cast::<c_void>())
             {
                 // SAFETY: `pipe_ptr` is unique on the mutator thread; Zig mutates
                 // through `*FileSink` here.

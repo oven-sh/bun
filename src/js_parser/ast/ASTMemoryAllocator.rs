@@ -22,11 +22,12 @@ pub struct ASTMemoryAllocator {
     // `init_without_stack`, that routing is lost here; revisit in Phase B.
     arena: Arena,
     previous: *mut ASTMemoryAllocator,
+    previous_logger: *const Arena,
 }
 
 impl Default for ASTMemoryAllocator {
     fn default() -> Self {
-        Self { arena: Arena::new(), previous: ptr::null_mut() }
+        Self { arena: Arena::new(), previous: ptr::null_mut(), previous_logger: ptr::null() }
     }
 }
 
@@ -72,8 +73,11 @@ impl ASTMemoryAllocator {
     }
 
     pub fn push(&mut self) {
+        self.previous_logger = bun_logger::js_ast::data_store_override();
+        let arena: *const Arena = &self.arena;
         stmt::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         expr::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
+        bun_logger::js_ast::set_data_store_override(arena);
     }
 
     pub fn pop(&mut self) {
@@ -81,7 +85,9 @@ impl ASTMemoryAllocator {
         debug_assert!(prev != std::ptr::from_mut::<Self>(self));
         stmt::data::Store::set_memory_allocator(prev);
         expr::data::Store::set_memory_allocator(prev);
+        bun_logger::js_ast::set_data_store_override(self.previous_logger);
         self.previous = ptr::null_mut();
+        self.previous_logger = ptr::null();
     }
 
     pub fn append<T>(&self, value: T) -> crate::ast::StoreRef<T> {

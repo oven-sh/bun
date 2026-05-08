@@ -1199,21 +1199,19 @@ fn data_store_alloc<T>(value: T) -> StoreRef<T> {
 /// `EString::init` — this is arena ownership, not a leak.
 pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
     let ov = DATA_STORE_OVERRIDE.with(|c| c.get());
-    let copied: &[u8] = if !ov.is_null() {
-        // SAFETY: override is installed by an RAII scope that outlives this call.
-        unsafe { &*ov }.alloc_slice_copy(bytes)
-    } else {
-        DATA_STORE.with(|s| {
-            let store = s.borrow();
-            let p: *const [u8] = store.alloc_slice_copy(bytes);
-            // SAFETY: `DATA_STORE` outlives this borrow; pointer stays valid
-            // until `data_store_reset`.
-            unsafe { &*p }
-        })
-    };
-    // SAFETY: erase to match `EString::init`'s `&'static [u8]` field; arena
-    // ownership, freed only on scope drop / `data_store_reset`.
-    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(copied) }
+    if !ov.is_null() {
+        // SAFETY: override is installed by an RAII scope that outlives this
+        // call; the deref's unbounded lifetime widens to `'static` per the
+        // Phase-A `Str` convention (arena ownership, freed on scope drop).
+        return unsafe { &*ov }.alloc_slice_copy(bytes);
+    }
+    DATA_STORE.with(|s| {
+        let store = s.borrow();
+        let copied: &[u8] = store.alloc_slice_copy(bytes);
+        // SAFETY: erase to match `EString::init`'s `&'static [u8]` field;
+        // arena ownership, freed only on `data_store_reset`.
+        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(copied) }
+    })
 }
 
 macro_rules! impl_into_expr_data_boxed {

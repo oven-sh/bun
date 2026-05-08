@@ -43,6 +43,22 @@ impl Default for B {
     }
 }
 
+// ── Layout guards ─────────────────────────────────────────────────────────
+// Three pointer variants (8 bytes each) + one ZST → repr(Rust) packs the
+// discriminant into the pointer word's padding for `B` = 16. `Binding` =
+// `B` (16, align 8) + `Loc` (i32) → 20 → 24. Unlike `expr::Data`/`stmt::Data`
+// these payloads are still raw `*mut T` (no NonNull niche), but the enum
+// itself has spare discriminant values so `Option<B>` stays 16 — the niche
+// assert below locks that in. Converting to `StoreRef<T>` (NonNull) is the
+// follow-up that also drops the `unsafe { &*ptr }` boilerplate at ~60 match
+// sites; it does not change these sizes.
+const _: () = assert!(core::mem::size_of::<B>() == 16);
+const _: () = assert!(core::mem::size_of::<super::binding::Binding>() == 24);
+const _: () = assert!(
+    core::mem::size_of::<Option<B>>() == core::mem::size_of::<B>(),
+    "B lost its niche — check for #[repr] or oversized inline payload"
+);
+
 pub struct Identifier {
     pub r#ref: Ref,
 }

@@ -369,10 +369,30 @@ pub enum Data {
     SLazyExport(StoreRef<expr::Data>),
 }
 
+// ── Layout guards ─────────────────────────────────────────────────────────
+// Zig: `if (@sizeOf(Stmt) > 24) @compileLog(...)` (Stmt.zig:295). Every payload
+// variant is either a `StoreRef<T>` (`#[repr(transparent)] NonNull<T>`, 8 bytes,
+// niche-carrying) or a ZST, so the union is one pointer word and the repr(Rust)
+// discriminant packs alongside it for `Data` = 16. `Stmt` = `Data` (16, align 8)
+// + `Loc` (i32) → 20 → 24 after tail padding. The `Option<Data>` assert proves
+// the niche fires (33 variants < 256 + every pointer variant contributes a
+// NonNull niche), so `Option<Stmt>` / `Option<Data>` add no discriminant word.
+// Adding `#[repr(C)]`/`#[repr(u8)]` to `Data` or a nullable `*mut T` payload
+// would break this — the asserts catch it.
+const _: () = assert!(core::mem::size_of::<Data>() == 16);
 const _: () = assert!(
     core::mem::size_of::<Stmt>() <= 24,
     "Expected Stmt to be <= 24 bytes"
 );
+const _: () = assert!(
+    core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),
+    "stmt::Data lost its niche — check for #[repr] or nullable-ptr payload"
+);
+const _: () = assert!(
+    core::mem::size_of::<Option<Stmt>>() == core::mem::size_of::<Stmt>(),
+    "Stmt lost its niche"
+);
+const _: () = assert!(core::mem::size_of::<StoreRef<S::SExpr>>() == core::mem::size_of::<usize>());
 
 /// Zig: `std.meta.eql(p.loop_body, stmt.data)` (visitStmt.zig) — tag compare,
 /// then payload compare. Payloads here are arena pointers (`StoreRef<T>`) or

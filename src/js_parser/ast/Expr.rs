@@ -1824,10 +1824,38 @@ pub enum Data {
     ENameOfSymbol(StoreRef<E::NameOfSymbol>),
 }
 
-// Zig asserted `@sizeOf(Data) == 24`. With `StoreRef` (NonNull, niche-optimized)
-// payloads + repr(Rust) discriminant this should hold; relaxing to `<= 24`
-// until layout settles.
-const _: () = assert!(core::mem::size_of::<Data>() <= 24); // Do not increase the size of Expr
+// ── Layout guards ─────────────────────────────────────────────────────────
+// Zig: `bun.assert_eql(@sizeOf(Data), 24)` (Expr.zig:2189). The largest inline
+// payloads are `E::Identifier` / `E::ImportIdentifier` / `E::CommonJSExportIdentifier`
+// at 16 bytes (Ref u64 + bool flags); with the repr(Rust) discriminant that
+// rounds to 24. All `StoreRef<T>` variants are `#[repr(transparent)] NonNull<T>`
+// (8 bytes, niche-carrying), so the discriminant cannot grow the union past
+// the inline-identifier ceiling. `Expr` = `Data` (24, align 8) + `Loc` (i32) →
+// 28 → 32 after tail padding, matching Zig.
+//
+// The `Option<Data>` assert proves Rust's niche optimization fires: the enum
+// has spare discriminant values (47 variants < 256, and every pointer variant
+// contributes a NonNull niche), so `None` packs into an unused bit-pattern
+// rather than adding a word. If a future variant adds `#[repr(C)]`/`#[repr(u32)]`
+// or a nullable `*mut T` payload, this assert catches the size regression.
+const _: () = assert!(core::mem::size_of::<Data>() == 24); // Do not increase the size of Expr
+const _: () = assert!(core::mem::size_of::<Expr>() == 32);
+const _: () = assert!(
+    core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),
+    "expr::Data lost its niche — check for #[repr] or nullable-ptr payload"
+);
+const _: () = assert!(
+    core::mem::size_of::<Option<Expr>>() == core::mem::size_of::<Expr>(),
+    "Expr lost its niche — Option<Expr> is used in G::Property/B::Property/etc."
+);
+// Inline-payload ceilings (regress these and `Data` grows past 24):
+const _: () = assert!(core::mem::size_of::<E::Identifier>() <= 16);
+const _: () = assert!(core::mem::size_of::<E::ImportIdentifier>() <= 16);
+const _: () = assert!(core::mem::size_of::<E::CommonJSExportIdentifier>() <= 16);
+const _: () = assert!(core::mem::size_of::<E::Number>() <= 8);
+const _: () = assert!(core::mem::size_of::<E::Special>() <= 8);
+const _: () = assert!(core::mem::size_of::<E::RequireString>() <= 8);
+const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::size_of::<usize>());
 
 // Zig field-style union accessors (`data.e_string`, `data.e_object`). The
 // match arms in this file use these heavily; keeping them as inherent methods

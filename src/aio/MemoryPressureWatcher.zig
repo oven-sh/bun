@@ -154,20 +154,29 @@ const Windows = struct {
     /// NT threadpool thread. The notification handle is *level*-triggered: it
     /// stays signalled while memory remains low, so we registered ONLYONCE and
     /// re-arm from the JS thread after the holdoff.
+    ///
+    /// We do NOT re-check QueryMemoryResourceNotification here: a TOCTOU
+    /// where pressure clears between signal and callback would otherwise
+    /// permanently disarm the watcher (the only re-arm path is via onWake).
+    /// A false-positive respond() once per 30 s holdoff is harmless.
     fn onLowMemoryThreadpool(ctx: ?*anyopaque, _: w32.BOOLEAN) callconv(.winapi) void {
         const s: *State = @ptrCast(@alignCast(ctx.?));
-        var is_low: w32.BOOL = 0;
-        // Spurious wake — re-arm happens from the JS side regardless.
-        if (win_externs.QueryMemoryResourceNotification(s.notification, &is_low) != 0 and is_low == 0) return;
         s.wake.send();
     }
 
     /// JS thread.
     fn onWake(handle: [*c]libuv.uv_async_t) callconv(.c) void {
         const s: *State = @ptrCast(@alignCast(handle.*.data.?));
-        // The ONLYONCE wait has self-completed; drop the stale handle now so
-        // uninstall() during the holdoff doesn't try to UnregisterWaitEx it.
-        s.wait = null;
+        // WT_EXECUTEONLYONCE only stops the callback re-firing; per MSDN the
+        // wait registration must still be UnregisterWaitEx'd to free the NT
+        // threadpool object. Safe to do here: we're on the JS thread (via
+        // uv_async), not inside the WAITORTIMERCALLBACK, so the "no blocking
+        // unregister from the callback" restriction doesn't apply. null
+        // CompletionEvent: the callback that posted us has already returned.
+        if (s.wait) |w| {
+            _ = win_externs.UnregisterWaitEx(w, null);
+            s.wait = null;
+        }
         respond(s.vm, true);
         s.rearm.start(holdoff_ms, 0, onRearm);
         s.rearm.unref();
@@ -227,6 +236,11 @@ const Darwin = struct {
         state = s;
         dispatch_set_context(source, s);
         dispatch_source_set_event_handler_f(source, onPressureDispatch);
+        // dispatch_source_cancel() is async and doesn't interrupt an
+        // in-flight event handler; libdispatch guarantees the cancel handler
+        // runs only after the last event handler has returned, so do the
+        // release+destroy there to avoid a UAF on uninstall.
+        dispatch_source_set_cancel_handler_f(source, onCancelled);
         dispatch_resume(source);
         log("installed (DISPATCH_SOURCE_TYPE_MEMORYPRESSURE)", .{});
     }
@@ -250,7 +264,15 @@ const Darwin = struct {
     fn uninstall() void {
         const s = state orelse return;
         state = null;
+        // Async — release+destroy happen in onCancelled once any in-flight
+        // event handler has drained.
         dispatch_source_cancel(s.source);
+    }
+
+    /// libdispatch worker thread. Runs after the last onPressureDispatch
+    /// has returned, so State is no longer touched concurrently.
+    fn onCancelled(ctx: ?*anyopaque) callconv(.c) void {
+        const s: *State = @ptrCast(@alignCast(ctx.?));
         dispatch_release(s.source);
         bun.destroy(s);
     }
@@ -258,6 +280,7 @@ const Darwin = struct {
     extern "c" const _dispatch_source_type_memorypressure: anyopaque;
     extern "c" fn dispatch_source_create(type: *const anyopaque, handle: usize, mask: c_ulong, queue: ?*anyopaque) ?*anyopaque;
     extern "c" fn dispatch_source_set_event_handler_f(source: *anyopaque, handler: *const fn (?*anyopaque) callconv(.c) void) void;
+    extern "c" fn dispatch_source_set_cancel_handler_f(source: *anyopaque, handler: *const fn (?*anyopaque) callconv(.c) void) void;
     extern "c" fn dispatch_set_context(object: *anyopaque, context: ?*anyopaque) void;
     extern "c" fn dispatch_source_get_data(source: *anyopaque) c_ulong;
     extern "c" fn dispatch_get_global_queue(identifier: c_long, flags: c_ulong) *anyopaque;

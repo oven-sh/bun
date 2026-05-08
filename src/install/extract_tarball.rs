@@ -325,7 +325,7 @@ impl ExtractTarball {
 
                     // SAFETY: write into the full allocated capacity (Zig `allocatedSlice()` equiv).
                     let allocated = unsafe {
-                        core::slice::from_raw_parts_mut(
+                        bun_core::ffi::slice_mut(
                             zlib_pool.list.as_mut_ptr(),
                             zlib_pool.list.capacity(),
                         )

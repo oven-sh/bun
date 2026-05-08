@@ -331,7 +331,7 @@ impl ArrayBuffer {
             _ => panic!("ArrayBuffer::alloc: KIND not implemented"), // Zig: @compileError
         };
         // SAFETY: Bun__alloc*ForCopy writes a valid `len`-byte buffer pointer into ptr_out on success.
-        let slice = unsafe { core::slice::from_raw_parts_mut(ptr_out, len as usize) };
+        let slice = unsafe { bun_core::ffi::slice_mut(ptr_out, len as usize) };
         Ok((buf, slice))
     }
 
@@ -522,6 +522,7 @@ impl ArrayBuffer {
             return &[];
         }
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
+        // Hot path — bare `from_raw_parts` to avoid the helper's redundant null-branch.
         unsafe { core::slice::from_raw_parts(self.ptr, self.byte_len) }
     }
 
@@ -882,7 +883,7 @@ impl MarkedArrayBuffer {
         let len = buf.len();
         let ptr = Box::into_raw(buf).cast::<u8>();
         // SAFETY: ptr/len from Box::into_raw; backed by global mimalloc.
-        let bytes = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
     }
 

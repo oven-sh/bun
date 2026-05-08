@@ -592,7 +592,7 @@ impl NetworkTask {
         let http_proxy = pm.http_proxy(&url);
         // SAFETY: ptr is non-null on both branches above (allocate() or static buf).
         let headers_buf: &'static [u8] = unsafe {
-            core::slice::from_raw_parts(
+            bun_core::ffi::slice(
                 header_builder.content.ptr.unwrap().as_ptr(),
                 header_builder.content.len,
             )
@@ -770,7 +770,7 @@ impl NetworkTask {
 
             // SAFETY: `allocate()` set `content.ptr` to a valid allocation of `len` bytes.
             header_buf = unsafe {
-                core::slice::from_raw_parts(
+                bun_core::ffi::slice(
                     header_builder.content.ptr.unwrap().as_ptr(),
                     header_builder.content.len,
                 )

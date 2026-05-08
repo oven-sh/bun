@@ -168,8 +168,8 @@ unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         };
         // SAFETY: lsquic guarantees name/value point to name_len/value_len bytes
         // valid for the duration of this callback.
-        let name = unsafe { core::slice::from_raw_parts(h.name, h.name_len as usize) };
-        let value = unsafe { core::slice::from_raw_parts(h.value, h.value_len as usize) };
+        let name = unsafe { bun_core::ffi::slice(h.name, h.name_len as usize) };
+        let value = unsafe { bun_core::ffi::slice(h.value, h.value_len as usize) };
         if name.first() == Some(&b':') {
             if name == b":status" {
                 status = core::str::from_utf8(value)
@@ -209,11 +209,9 @@ unsafe extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: 
     let Some(stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; live until on_stream_close clears it.
     let stream = unsafe { &mut *stream.as_ptr() };
-    if len > 0 {
-        // SAFETY: lsquic guarantees `data` points to `len` valid bytes.
-        let slice = unsafe { core::slice::from_raw_parts(data, len as usize) };
-        stream.body_buffer.extend_from_slice(slice);
-    }
+    // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
+    let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
+    stream.body_buffer.extend_from_slice(slice);
     // SAFETY: stream.session is the live owning session.
     unsafe { (*stream.session).deliver(stream, fin != 0) };
 }

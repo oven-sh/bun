@@ -796,7 +796,7 @@ where
         // for `slice.len()` elements; the watcher thread is the sole writer of
         // this column for the loop's duration and no other `&` to it is live.
         let counts: &mut [u32] = unsafe {
-            core::slice::from_raw_parts_mut(
+            bun_core::ffi::slice_mut(
                 slice.items_raw::<"count", u32>(),
                 slice.len(),
             )

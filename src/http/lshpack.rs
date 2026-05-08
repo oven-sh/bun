@@ -84,8 +84,10 @@ impl HPACK {
             return Err(HpackError::EmptyHeaderName);
         }
 
-        // SAFETY: lshpack_wrapper_decode writes valid (ptr, len) pairs into header pointing at a
-        // thread_local buffer that lives until the next decode/encode call on this thread.
+        // SAFETY: lshpack_wrapper_decode writes name/value as offsets into the
+        // thread_local `shared_header_buffer` (set via lsxpack_header_prepare_decode),
+        // so both pointers are provably non-null after a successful decode. Use bare
+        // `from_raw_parts` to avoid a dead null-branch on the per-HTTP/2-header path.
         let (name, value) = unsafe {
             (
                 core::slice::from_raw_parts(header.name, header.name_len),

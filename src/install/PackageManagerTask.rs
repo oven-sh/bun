@@ -139,7 +139,7 @@ impl Id {
         hasher.update(b"@");
         // SAFETY: reading raw bytes of a POD value for hashing (matches Zig `std.mem.asBytes`)
         hasher.update(unsafe {
-            core::slice::from_raw_parts(
+            bun_core::ffi::slice(
                 (&raw const package_version).cast::<u8>(),
                 core::mem::size_of::<semver::Version>(),
             )
@@ -161,7 +161,7 @@ impl Id {
         hasher.update(b"bin-link:");
         // SAFETY: reading raw bytes of a POD value for hashing
         hasher.update(unsafe {
-            core::slice::from_raw_parts(
+            bun_core::ffi::slice(
                 (&raw const package_id).cast::<u8>(),
                 core::mem::size_of::<PackageID>(),
             )

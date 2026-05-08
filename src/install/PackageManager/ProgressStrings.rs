@@ -112,7 +112,7 @@ impl PackageManager {
                 name.len()
             };
             (*node).name =
-                core::slice::from_raw_parts(self.progress_name_buf.as_ptr(), len);
+                bun_core::ffi::slice(self.progress_name_buf.as_ptr(), len);
         }
     }
 

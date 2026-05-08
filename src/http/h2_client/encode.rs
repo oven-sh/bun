@@ -323,7 +323,7 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
                 return;
             }
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
-            let data = unsafe { core::slice::from_raw_parts(data_ptr.add(cursor), data_len) };
+            let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
             // Re-acquire isn't needed — we still hold the lock from line 315; just bump cursor.
             // SAFETY: sb is still locked; buffer fields are accessible.
@@ -392,7 +392,7 @@ pub fn encode_header(
     // offset; mirror with the raw buffer and set_len after.
     // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
     // within the just-reserved capacity; bytes in `[0..len]` are initialized.
-    let buf = unsafe { core::slice::from_raw_parts_mut(encoded.as_mut_ptr(), encoded.capacity()) };
+    let buf = unsafe { bun_core::ffi::slice_mut(encoded.as_mut_ptr(), encoded.capacity()) };
     // SAFETY: sole live borrow of the HPACK table; `buf` aliases only
     // `encode_scratch`, which was moved out of `session` above.
     let written = unsafe { session.hpack() }

@@ -538,7 +538,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
 #[unsafe(no_mangle)]
 pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
-    let str = unsafe { core::slice::from_raw_parts(data, len) };
+    let str = unsafe { bun_core::ffi::slice(data, len) };
     bun_aliases_get(str).is_some()
 }
 

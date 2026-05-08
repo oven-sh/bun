@@ -65,7 +65,7 @@ impl BuildMessage {
         let ptr = Box::into_raw(text.into_boxed_slice()).cast::<u8>();
         // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
         // released by `Box::into_raw`; it stays live until JSC frees it.
-        let mut str = ZigString::init(unsafe { core::slice::from_raw_parts(ptr, len) });
+        let mut str = ZigString::init(unsafe { bun_core::ffi::slice(ptr, len) });
         str.set_output_encoding();
         str.to_external_value(global)
     }

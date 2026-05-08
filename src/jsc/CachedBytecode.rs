@@ -60,7 +60,7 @@ impl CachedBytecode {
             // SAFETY: on success, C++ guarantees both out-params are non-null
             // and the slice is valid for `input_code_size` bytes until deref().
             let slice = unsafe {
-                core::slice::from_raw_parts(input_code_ptr.unwrap().as_ptr(), input_code_size)
+                bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size)
             };
             return Some((slice, this.unwrap()));
         }
@@ -90,7 +90,7 @@ impl CachedBytecode {
             // SAFETY: on success, C++ guarantees both out-params are non-null
             // and the slice is valid for `input_code_size` bytes until deref().
             let slice = unsafe {
-                core::slice::from_raw_parts(input_code_ptr.unwrap().as_ptr(), input_code_size)
+                bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size)
             };
             return Some((slice, this.unwrap()));
         }

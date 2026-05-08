@@ -521,7 +521,7 @@ fn message_with_type_and_level_(
     };
 
     // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
-    let vals_slice = unsafe { core::slice::from_raw_parts(vals, len) };
+    let vals_slice = unsafe { bun_core::ffi::slice(vals, len) };
 
     if message_type == MessageType::Table && len >= 1 {
         // if value is not an object/array/iterable, don't print a table and just print it
@@ -1382,7 +1382,7 @@ pub fn format2(
 ) -> JsResult<()> {
     // SAFETY: caller guarantees `vals` points at `len` valid JSValues on the
     // stack (conservative GC scan covers them).
-    let vals = unsafe { core::slice::from_raw_parts(vals, len) };
+    let vals = unsafe { bun_core::ffi::slice(vals, len) };
 
     if len == 1 {
         // initialized later in this function.
@@ -5517,7 +5517,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
     // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
     let this = unsafe { &mut *vm_console(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't want to store these strings, it will take too much memory
     let counter = this.counts.get_or_put(hash).expect("unreachable");
@@ -5554,7 +5554,7 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
     // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
     let this = unsafe { &mut *vm_console(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
     // we don't delete it because deleting is implemented via tombstoning
     if let Some(v) = this.counts.get_mut(&hash) {
@@ -5577,7 +5577,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
     len: usize,
 ) {
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let id = bun_wyhash::hash(unsafe { core::slice::from_raw_parts(chars, len) });
+    let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
@@ -5604,7 +5604,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     }
 
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { core::slice::from_raw_parts(chars, len) };
+    let slice = unsafe { bun_core::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
     // Zig `fetchPut(id, null)` — replace with `None`, returning the previous.
     let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| {
@@ -5640,7 +5640,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     }
 
     // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { core::slice::from_raw_parts(chars, len) };
+    let slice = unsafe { bun_core::ffi::slice(chars, len) };
     let id = bun_wyhash::hash(slice);
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
@@ -5668,7 +5668,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     let console = unsafe { &mut *vm_console(global) };
     let mut writer = IoWriterAdapter(console.error_writer());
     // SAFETY: caller passes a valid (args, args_len) pair.
-    for &arg in unsafe { core::slice::from_raw_parts(args, args_len) } {
+    for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else { return };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
         if Output::enable_ansi_colors_stderr() {

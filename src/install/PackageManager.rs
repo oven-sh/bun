@@ -1817,7 +1817,7 @@ pub fn init(
         // rebound to the process-lifetime CWD_BUF (it was a transient slice
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
-        fs.set_top_level_dir(core::slice::from_raw_parts(
+        fs.set_top_level_dir(bun_core::ffi::slice(
             CWD_BUF.get().cast::<u8>(),
             tld.len(),
         ));

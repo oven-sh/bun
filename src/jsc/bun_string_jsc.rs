@@ -263,7 +263,7 @@ fn slice_with_underlying_string_to_js_with_options(
                 let zig = ZigString::from_bytes(
                     // SAFETY: `take_owned_raw` returned a leaked, contiguous
                     // mimalloc-owned buffer of `len` bytes.
-                    unsafe { core::slice::from_raw_parts(ptr, len) },
+                    unsafe { bun_core::ffi::slice(ptr, len) },
                 );
                 return Ok(zig.to_external_value(global_object));
             } else {

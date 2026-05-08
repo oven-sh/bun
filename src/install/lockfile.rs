@@ -1491,7 +1491,7 @@ impl Lockfile {
         // SAFETY: `Bin`/`Meta` are the exact column types; `len` rows are
         // initialized; the two columns are non-overlapping allocations.
         let pkg_bins: &mut [crate::bin::Bin] = unsafe {
-            core::slice::from_raw_parts_mut(
+            bun_core::ffi::slice_mut(
                 pkgs.items_raw::<"bin", crate::bin::Bin>(),
                 len,
             )
@@ -1502,7 +1502,7 @@ impl Lockfile {
         let pkg_metas: &mut [self::package::meta::Meta] = if UPDATE_OS_CPU {
             // SAFETY: see above — disjoint column, `len` initialized rows.
             unsafe {
-                core::slice::from_raw_parts_mut(
+                bun_core::ffi::slice_mut(
                     pkgs.items_raw::<"meta", self::package::meta::Meta>(),
                     len,
                 )
@@ -2499,7 +2499,7 @@ impl<'a> StringBuilder<'a> {
         match self.ptr {
             // SAFETY: ptr was set by allocate() to a region of length self.cap inside
             // lockfile.buffers.string_bytes.
-            Some(ptr) => unsafe { core::slice::from_raw_parts(ptr, self.cap) },
+            Some(ptr) => unsafe { bun_core::ffi::slice(ptr, self.cap) },
             None => b"",
         }
     }
@@ -2552,7 +2552,7 @@ impl<'a> StringBuilder<'a> {
         let final_slice = unsafe {
             let dst = self.ptr.unwrap().add(self.len);
             core::ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
-            core::slice::from_raw_parts(dst, slice.len())
+            bun_core::ffi::slice(dst, slice.len())
         };
         self.len += slice.len();
 
@@ -2579,7 +2579,7 @@ impl<'a> StringBuilder<'a> {
             let final_slice = unsafe {
                 let dst = self.ptr.unwrap().add(self.len);
                 core::ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
-                core::slice::from_raw_parts(dst, slice.len())
+                bun_core::ffi::slice(dst, slice.len())
             };
             self.len += slice.len();
 

@@ -2525,7 +2525,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             // writes exactly `wrote <= encode_len` initialized bytes into the
             // spare region, and `set_len` only exposes the initialized prefix.
             let wrote = unsafe {
-                let spare = core::slice::from_raw_parts_mut(
+                let spare = bun_core::ffi::slice_mut(
                     buf.as_mut_ptr().add(old_len),
                     encode_len,
                 );
@@ -3561,7 +3561,7 @@ impl VirtualMachine {
                 // WTF on the JS thread when the impl refcount hits zero, with
                 // `ref_` as ctx.
                 let s = bun_string::String::create_external::<*mut RefString>(
-                    unsafe { core::slice::from_raw_parts(ptr, len) },
+                    unsafe { bun_core::ffi::slice(ptr, len) },
                     true,
                     ref_,
                     free_ref_string,
@@ -4801,7 +4801,7 @@ impl VirtualMachine {
         // the same source); port the straightforward per-frame resolve and
         // leave the cache as `// PERF(port)`.
         // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
-        let frames = unsafe { core::slice::from_raw_parts_mut(frames, frames_count) };
+        let frames = unsafe { bun_core::ffi::slice_mut(frames, frames_count) };
         for frame in frames {
             if frame.position.is_invalid() || frame.remapped {
                 continue;
@@ -4955,7 +4955,7 @@ impl VirtualMachine {
         // backing buffer (ZigStackTrace contract).
         let mut frames_len = exception.stack.frames_len as usize;
         let frames_buf = unsafe {
-            core::slice::from_raw_parts_mut(exception.stack.frames_ptr, frames_len)
+            bun_core::ffi::slice_mut(exception.stack.frames_ptr, frames_len)
         };
 
         if self.hide_bun_stackframes {
@@ -5130,10 +5130,10 @@ impl VirtualMachine {
                 const N: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
                 // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
                 let source_lines = unsafe {
-                    core::slice::from_raw_parts_mut(exception.stack.source_lines_ptr, N)
+                    bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N)
                 };
                 let source_line_numbers = unsafe {
-                    core::slice::from_raw_parts_mut(exception.stack.source_lines_numbers, N)
+                    bun_core::ffi::slice_mut(exception.stack.source_lines_numbers, N)
                 };
                 for s in source_lines.iter_mut() {
                     *s = bun_string::String::empty();
@@ -5378,7 +5378,7 @@ impl VirtualMachine {
         // SAFETY: `source_lines_numbers[..source_lines_len]` is the
         // caller-owned buffer (see ZigStackTrace contract).
         let line_numbers = unsafe {
-            core::slice::from_raw_parts(
+            bun_core::ffi::slice(
                 exception.stack.source_lines_numbers,
                 exception.stack.source_lines_len as usize,
             )
@@ -5460,7 +5460,7 @@ impl VirtualMachine {
                             // SAFETY: `code_string` is moved into
                             // `code_string_guard` and outlives the borrow.
                             let bytes: &[u8] = unsafe {
-                                core::slice::from_raw_parts(
+                                bun_core::ffi::slice(
                                     code_string.latin1().as_ptr(),
                                     code_string.latin1().len(),
                                 )

@@ -24,7 +24,10 @@ impl CallFrame {
     pub fn arguments(&self) -> &[JSValue] {
         // SAFETY: asUnsafeJSValueArray points at the JSC register file; offsets
         // OFFSET_FIRST_ARGUMENT..+argumentsCount() are valid JSValue slots per
-        // JSC CallFrame layout (see asUnsafeJSValueArray doc comment).
+        // JSC CallFrame layout (see asUnsafeJSValueArray doc comment). The base
+        // is derived from `&self` via pointer arithmetic, so it is provably
+        // non-null — use bare `from_raw_parts` to avoid a dead null-branch on
+        // the hottest per-JS-call path.
         unsafe {
             core::slice::from_raw_parts(
                 self.as_unsafe_js_value_array().add(OFFSET_FIRST_ARGUMENT),
@@ -244,7 +247,7 @@ impl<const MAX: usize> Arguments<MAX> {
     pub fn init(i: usize, ptr: *const JSValue) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
         // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
-        args[0..i].copy_from_slice(unsafe { core::slice::from_raw_parts(ptr, i) });
+        args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
         Self { ptr: args, len: i }
     }
 
@@ -252,7 +255,7 @@ impl<const MAX: usize> Arguments<MAX> {
     pub fn init_undef(i: usize, ptr: *const JSValue) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
         // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
-        args[0..i].copy_from_slice(unsafe { core::slice::from_raw_parts(ptr, i) });
+        args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
         Self { ptr: args, len: i }
     }
 
@@ -361,7 +364,7 @@ impl<'a> ArgumentsSlice<'a> {
         // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64);
         // mirrors Zig @ptrCast(slice.ptr).
         let as_values =
-            unsafe { core::slice::from_raw_parts(slice.as_ptr().cast::<JSValue>(), slice.len()) };
+            unsafe { bun_core::ffi::slice(slice.as_ptr().cast::<JSValue>(), slice.len()) };
         Self::init(vm, as_values)
     }
 

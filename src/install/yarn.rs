@@ -892,11 +892,11 @@ pub fn migrate_yarn_lockfile<'a>(
     let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
     let mut dependencies_buf: &mut [Dependency] = unsafe {
         // SAFETY: capacity >= num_deps reserved above
-        core::slice::from_raw_parts_mut(dependencies_base_ptr, num_deps as usize)
+        bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
     };
     let mut resolutions_buf: &mut [PackageID] = unsafe {
         // SAFETY: capacity >= num_deps reserved above
-        core::slice::from_raw_parts_mut(resolutions_base_ptr, num_deps as usize)
+        bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
     };
 
     let mut yarn_entry_to_package_id: Vec<PackageID> =

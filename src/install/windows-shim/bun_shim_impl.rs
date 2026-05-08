@@ -155,7 +155,7 @@ macro_rules! debug {
 
 unsafe fn unicode_string_to_u16<'a>(str: &'a UNICODE_STRING) -> &'a [u16] {
     // SAFETY: caller guarantees UNICODE_STRING.Buffer is valid for Length bytes per Win32 contract.
-    unsafe { core::slice::from_raw_parts(str.Buffer, (str.Length / 2) as usize) }
+    unsafe { bun_core::ffi::slice(str.Buffer, (str.Length / 2) as usize) }
 }
 
 const FILE_GENERIC_READ: u32 =
@@ -241,7 +241,7 @@ impl core::fmt::Display for FailReason {
             // SAFETY: failure_reason_argument is set before InterpreterNotFound is raised.
             let arg = unsafe { FAILURE_REASON_ARGUMENT.read().unwrap() };
             // SAFETY: arg points into FAILURE_REASON_DATA which is a static buffer.
-            let arg_slice = unsafe { core::slice::from_raw_parts(arg.0, arg.1) };
+            let arg_slice = unsafe { bun_core::ffi::slice(arg.0, arg.1) };
             write!(
                 writer,
                 "interpreter executable \"{}\" not found in %PATH%\n\n",
@@ -453,16 +453,16 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     };
     // SAFETY: image_path_ptr is valid for image_path_b_len bytes per UNICODE_STRING / caller contract.
     let image_path_u16: &[u16] =
-        unsafe { core::slice::from_raw_parts(image_path_ptr, image_path_b_len / 2) };
+        unsafe { bun_core::ffi::slice(image_path_ptr, image_path_b_len / 2) };
     let image_path_u8: &[u8] =
-        unsafe { core::slice::from_raw_parts(image_path_ptr.cast::<u8>(), image_path_b_len) };
+        unsafe { bun_core::ffi::slice(image_path_ptr.cast::<u8>(), image_path_b_len) };
 
     let cmd_line_b_len = command_line.Length as usize;
     // SAFETY: CommandLine.Buffer is valid for Length bytes.
     let cmd_line_u16: &[u16] =
-        unsafe { core::slice::from_raw_parts(command_line.Buffer, cmd_line_b_len / 2) };
+        unsafe { bun_core::ffi::slice(command_line.Buffer, cmd_line_b_len / 2) };
     let cmd_line_u8: &[u8] =
-        unsafe { core::slice::from_raw_parts(command_line.Buffer.cast::<u8>(), cmd_line_b_len) };
+        unsafe { bun_core::ffi::slice(command_line.Buffer.cast::<u8>(), cmd_line_b_len) };
 
     debug_assert!((cmd_line_u16.as_ptr() as usize) % 2 == 0); // alignment assumption
 
@@ -599,7 +599,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // SAFETY: arguments slice is valid; reinterpreting [u16] as [u8] is safe (alignment 1).
         unsafe {
             let a = bun_ctx.arguments();
-            core::slice::from_raw_parts(a.as_ptr().cast::<u8>(), a.len() * 2)
+            bun_core::ffi::slice(a.as_ptr().cast::<u8>(), a.len() * 2)
         }
     } else {
         'find_args: {
@@ -677,7 +677,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
         loop {
             if DBG {
-                debug!("1 - {}", fmt16(unsafe { core::slice::from_raw_parts(ptr, 1) }));
+                debug!("1 - {}", fmt16(unsafe { bun_core::ffi::slice(ptr, 1) }));
             }
             // SAFETY: ptr is within buf1 (left > 0 invariant below).
             if unsafe { *ptr } == '\\' as u16 {
@@ -699,7 +699,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // using `inline for` caused comptime issues that made the code much harder to read
         loop {
             if DBG {
-                debug!("2 - {}", fmt16(unsafe { core::slice::from_raw_parts(ptr, 1) }));
+                debug!("2 - {}", fmt16(unsafe { bun_core::ffi::slice(ptr, 1) }));
             }
             if unsafe { *ptr } == '\\' as u16 {
                 // ptr is at the position marked S, so move forward one *character*
@@ -775,7 +775,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         let total = (((read_ptr as usize) - (buf1_u8 as usize)) + read_len) / 2;
         debug!(
             "BufferAfterRead: '{}'",
-            fmt16(unsafe { core::slice::from_raw_parts(buf1_u16, total) })
+            fmt16(unsafe { bun_core::ffi::slice(buf1_u16, total) })
         );
     }
 
@@ -923,7 +923,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     - 2 /* "\"\x00".len */;
                 // SAFETY: buf1_u16 + 4 .. + 4 + len is within buf1; the next char is '"' (asserted in Zig via sentinel slice).
                 let launch_slice = unsafe {
-                    core::slice::from_raw_parts_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len)
+                    bun_core::ffi::slice_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len)
                 };
                 debug_assert_eq!(
                     unsafe { *buf1_u16.add(NT_OBJECT_PREFIX.len() + len) },
@@ -966,14 +966,14 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 - 2 * (NT_OBJECT_PREFIX.len() + 1 /* "\x00".len */);
             // SAFETY: slice within buf1.
             let filename: &[u8] = unsafe {
-                core::slice::from_raw_parts(
+                bun_core::ffi::slice(
                     buf1_u8.add(2 * NT_OBJECT_PREFIX.len()),
                     length_of_filename_u8,
                 )
             };
             // SAFETY: filename has even length (UTF-16); reinterpret as [u16].
             let filename_u16: &[u16] = unsafe {
-                core::slice::from_raw_parts(filename.as_ptr().cast::<u16>(), filename.len() / 2)
+                bun_core::ffi::slice(filename.as_ptr().cast::<u16>(), filename.len() / 2)
             };
             if DBG {
                 debug!("filename and quote: '{}'", fmt16(filename_u16));
@@ -1305,7 +1305,7 @@ impl BunCtx for &FromBunRunContext {
     fn base_path_len(&self) -> usize { self.base_path_len }
     fn arguments(&self) -> &[u16] {
         // SAFETY: caller guarantees arguments is valid for arguments_len.
-        unsafe { core::slice::from_raw_parts(self.arguments, self.arguments_len) }
+        unsafe { bun_core::ffi::slice(self.arguments, self.arguments_len) }
     }
     fn handle(&self) -> HANDLE { self.handle }
     fn force_use_bun(&self) -> bool { self.force_use_bun }
@@ -1326,7 +1326,7 @@ impl BunCtx for &FromBunRunContext {
 #[cfg(not(feature = "shim_standalone"))]
 pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     debug_assert!(!unsafe {
-        core::slice::from_raw_parts(context.base_path, context.base_path_len)
+        bun_core::ffi::slice(context.base_path, context.base_path_len)
     }
     .starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
@@ -1360,7 +1360,7 @@ impl<'a> BunCtx for &FromBunShellContext<'a> {
     fn base_path_len(&self) -> usize { self.base_path_len }
     fn arguments(&self) -> &[u16] {
         // SAFETY: caller guarantees arguments is valid for arguments_len.
-        unsafe { core::slice::from_raw_parts(self.arguments, self.arguments_len) }
+        unsafe { bun_core::ffi::slice(self.arguments, self.arguments_len) }
     }
     fn handle(&self) -> HANDLE { self.handle }
     fn force_use_bun(&self) -> bool { self.force_use_bun }
@@ -1386,7 +1386,7 @@ pub enum ReadWithoutLaunchResult {
 #[cfg(not(feature = "shim_standalone"))]
 pub fn read_without_launch(context: FromBunShellContext<'_>) -> ReadWithoutLaunchResult {
     debug_assert!(!unsafe {
-        core::slice::from_raw_parts(context.base_path, context.base_path_len)
+        bun_core::ffi::slice(context.base_path, context.base_path_len)
     }
     .starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
@@ -1423,7 +1423,7 @@ unsafe fn span_u16(p: *const u16) -> &'static [u16] {
     while unsafe { *p.add(len) } != 0 {
         len += 1;
     }
-    unsafe { core::slice::from_raw_parts(p, len) }
+    unsafe { bun_core::ffi::slice(p, len) }
 }
 
 /// Zig `std.unicode.fmtUtf16Le`.

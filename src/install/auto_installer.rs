@@ -184,7 +184,7 @@ impl hooks::AutoInstaller for PackageManager {
         // SAFETY: the first `total_dependencies_count` spare slots were just
         // initialized with `Dependency::default()` above.
         let mut dependencies: &mut [dependency::Dependency] = unsafe {
-            core::slice::from_raw_parts_mut(
+            bun_core::ffi::slice_mut(
                 spare.as_mut_ptr().cast::<dependency::Dependency>(),
                 total_dependencies_count as usize,
             )

@@ -2231,22 +2231,15 @@ impl<'a> ValueBufferer<'a> {
                 );
             }
             blob::read_file::ReadFileResultType::Result(data) => {
+                // SAFETY: every producer sets `buf = Box::into_raw(v.into_boxed_slice())`
+                // (read_file.rs); reclaim ownership here. Dropped at end of scope.
+                let buf = unsafe { Box::<[u8]>::from_raw(data.buf) };
                 bun_core::scoped_log!(
                     BodyValueBufferer,
                     "onFinishedLoadingFile Data {}",
-                    data.buf.len()
+                    buf.len()
                 );
-                (self.on_finished_buffering)(self.ctx, data.buf, None, true);
-                if data.is_temporary {
-                    // SAFETY: `is_temporary` ⇒ every producer leaks a `Box<[u8]>`
-                    // (read_file.rs: `Vec::into_boxed_slice` → leak), so the
-                    // allocation layout is exactly `(ptr, len)`. Reclaim via
-                    // `Box::from_raw` — `Vec::from_raw_parts(ptr, len, len)` would be
-                    // UB if any producer's underlying capacity ever exceeded `len`.
-                    unsafe {
-                        drop(Box::<[u8]>::from_raw(std::ptr::from_mut::<[u8]>(data.buf)));
-                    }
-                }
+                (self.on_finished_buffering)(self.ctx, &buf, None, true);
             }
         }
     }

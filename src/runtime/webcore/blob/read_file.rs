@@ -46,10 +46,14 @@ macro_rules! log {
 /// Modelled as a trait so each instantiation monomorphizes like the Zig
 /// type-generator did.
 pub trait ReadFileToJs {
+    /// `by` carries the caller's allocation provenance unchanged:
+    /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
+    /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
+    /// otherwise a borrow valid for the call.
     fn call(
         b: &mut Blob,
         g: &JSGlobalObject,
-        by: &mut [u8],
+        by: *mut [u8],
         lifetime: Lifetime,
     ) -> JsResult<JSValue>;
 }
@@ -125,15 +129,17 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
 pub type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType);
 
 pub struct ReadFileRead {
-    pub buf: &'static mut [u8], // TODO(port): lifetime — Zig `[]u8` owned by caller via is_temporary flag
-    pub is_temporary: bool,
+    /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
+    /// (`Vec::into_boxed_slice()` so layout is exactly `(ptr, len)`). Every
+    /// consumer reclaims via `Box::from_raw` — there is no borrow case left
+    /// (Zig's `is_temporary = false` arm is unreachable here; only the two
+    /// finishers below construct this type and both hand off owned bytes).
+    /// Stored as a raw pointer rather than `Box<[u8]>` because the
+    /// `NewReadFileHandler` consumer forwards it straight into
+    /// `to_*_with_bytes::<Temporary>(*mut [u8])`, which itself decides whether
+    /// the bytes are freed locally or transferred to a JSC external string.
+    pub buf: *mut [u8],
     pub total_size: SizeType,
-}
-
-impl Default for ReadFileRead {
-    fn default() -> Self {
-        Self { buf: &mut [], is_temporary: false, total_size: 0 }
-    }
 }
 
 /// Zig: `SystemError.Maybe(ReadFileRead)`
@@ -546,15 +552,12 @@ impl ReadFile {
 
         // Zig hands `buffer.items` as a raw slice with `is_temporary = true`;
         // receiver takes ownership. Normalize to `Box<[u8]>` so every consumer
-        // can reclaim via `Box::from_raw` with a matching layout. `Box::leak`
-        // is the safe spelling of this paired `into_raw`/`from_raw` hand-off.
-        let buf_slice = Box::leak(buf.into_boxed_slice());
+        // can reclaim via `Box::from_raw` with a matching layout.
         cb(
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {
-                buf: buf_slice,
+                buf: Box::into_raw(buf.into_boxed_slice()),
                 total_size,
-                is_temporary: true,
             }),
         );
         Ok(())
@@ -1011,9 +1014,8 @@ impl<'a> ReadFileUV<'a> {
             // whose `cap > len` would be a layout-mismatched dealloc.
             let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
-                buf: Box::leak(boxed),
+                buf: Box::into_raw(boxed),
                 total_size: this_box.total_size,
-                is_temporary: true,
             })
         };
 

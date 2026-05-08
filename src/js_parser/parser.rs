@@ -2181,7 +2181,7 @@ pub struct ImportClause<'a> {
     pub had_type_only_imports: bool,
 }
 
-pub struct PropertyOpts<'a> {
+pub struct PropertyOpts {
     pub async_range: logger::Range,
     pub declare_range: logger::Range,
     pub is_async: bool,
@@ -2193,12 +2193,12 @@ pub struct PropertyOpts<'a> {
     pub class_has_extends: bool,
     pub allow_ts_decorators: bool,
     pub is_ts_abstract: bool,
-    pub ts_decorators: &'a [Expr],
+    pub ts_decorators: ExprNodeList,
     pub has_argument_decorators: bool,
     pub has_class_decorators: bool,
 }
 
-impl<'a> Default for PropertyOpts<'a> {
+impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
             async_range: logger::Range::NONE,
@@ -2210,7 +2210,7 @@ impl<'a> Default for PropertyOpts<'a> {
             class_has_extends: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
-            ts_decorators: &[],
+            ts_decorators: ExprNodeList::default(),
             has_argument_decorators: false,
             has_class_decorators: false,
         }

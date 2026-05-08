@@ -201,7 +201,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         Ok(Some(G::Property {
-            ts_decorators: ExprNodeList::from_slice(opts.ts_decorators)?,
+            ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators)?,
             kind,
             flags: prop_flags,
             key: Some(*key),
@@ -689,7 +689,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 return Ok(Some(G::Property {
-                    ts_decorators: ExprNodeList::from_slice(opts.ts_decorators)?,
+                    ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators)?,
                     kind,
                     flags: prop_flags,
                     key: Some(key),

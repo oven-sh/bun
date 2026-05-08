@@ -208,15 +208,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Parse decorators for this property
             let first_decorator_loc = p.lexer.loc();
             if opts.allow_ts_decorators {
-                let decs = p.parse_type_script_decorators()?;
-                // PORT NOTE: PropertyOpts.ts_decorators is &'a [Expr]; ExprNodeList → slice() then
-                // lifetime-widen (arena-owned).
-                opts.ts_decorators =
-                    unsafe { mem::transmute::<&[Expr], &'a [Expr]>(decs.slice()) };
+                opts.ts_decorators = p.parse_type_script_decorators()?;
                 opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
                 has_decorators = has_decorators || opts.ts_decorators.len() > 0;
-            } else {
-                opts.ts_decorators = &[];
             }
 
             // This property may turn out to be a type in TypeScript, which should be ignored

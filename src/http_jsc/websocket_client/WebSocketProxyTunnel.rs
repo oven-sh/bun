@@ -192,19 +192,19 @@ impl WebSocketProxyTunnel {
         sni_hostname: &[u8],
         reject_unauthorized: bool,
     ) -> Result<NonNull<WebSocketProxyTunnel>, bun_alloc::AllocError> {
-        // TODO(port): const-generic bool → variant selection requires pointer casts in stable Rust;
-        // these casts are identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>, etc).
+        // PORT NOTE: const-generic bool → variant selection. The pointer cast is
+        // identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>,
+        // etc); `assume_ssl`/`assume_tcp` rebuild the handler around the same
+        // `InternalSocket` so no `unsafe` is needed.
         let (upgrade_client, socket) = if SSL {
             (
                 UpgradeClientUnion::Https(upgrade_client.cast::<HttpsUpgradeClient>()),
-                // SAFETY: NewSocketHandler<true> when SSL == true; transmute is identity
-                SocketUnion::Ssl(unsafe { core::mem::transmute_copy(&socket) }),
+                SocketUnion::Ssl(socket.assume_ssl()),
             )
         } else {
             (
                 UpgradeClientUnion::Http(upgrade_client.cast::<HttpUpgradeClient>()),
-                // SAFETY: NewSocketHandler<false> when SSL == false; transmute is identity
-                SocketUnion::Tcp(unsafe { core::mem::transmute_copy(&socket) }),
+                SocketUnion::Tcp(socket.assume_tcp()),
             )
         };
 

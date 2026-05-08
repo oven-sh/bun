@@ -788,10 +788,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                         // SAFETY: session strong ref transferred from pool.
                         // PORT NOTE: `session.socket = sock` — direct field
                         // write; ClientSession.socket is `HTTPSocket<true>`.
-                        unsafe {
-                            (*session.as_ptr()).socket =
-                                core::mem::transmute_copy::<HTTPSocket<SSL>, _>(&sock)
-                        };
+                        unsafe { (*session.as_ptr()).socket = sock.assume_ssl() };
                         Self::tag_as_h2(sock, session.as_ptr());
                         self.register_h2(session.as_ptr());
                         // SAFETY: same as above.

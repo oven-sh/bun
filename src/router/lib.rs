@@ -1662,7 +1662,7 @@ pub mod pattern {
             let mut count: u16 = 0;
             let mut offset: RoutePathInt = 0;
             debug_assert!(!input.is_empty());
-            let mut kind: u8 = Tag::Static as u8;
+            let mut kind = Tag::Static;
             let end = (input.len() - 1) as u32;
             while (offset as u32) < end {
                 let pattern: Pattern = match Pattern::init_unhashed(input, offset) {
@@ -1731,15 +1731,14 @@ pub mod pattern {
                     }
                 };
                 offset = pattern.len;
-                kind = kind.max(pattern.value.tag() as u8);
-                count += u16::from((pattern.value.tag() as u8) > (Tag::Static as u8));
+                let tag = pattern.value.tag();
+                if (tag as u8) > (kind as u8) {
+                    kind = tag;
+                }
+                count += u16::from((tag as u8) > (Tag::Static as u8));
             }
 
-            Some(ValidationResult {
-                param_count: count,
-                // SAFETY: kind only ever assigned from Tag discriminants
-                kind: unsafe { core::mem::transmute::<u8, Tag>(kind) },
-            })
+            Some(ValidationResult { param_count: count, kind })
         }
 
         pub fn eql(a: Pattern, b: Pattern) -> bool {

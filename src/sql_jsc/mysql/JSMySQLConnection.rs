@@ -1060,13 +1060,10 @@ pub struct SocketHandler<const SSL: bool>;
 // Spell out `NewSocketHandler<SSL>` at every use site instead.
 impl<const SSL: bool> SocketHandler<SSL> {
     fn _socket(s: NewSocketHandler<SSL>) -> AnySocket {
-        // SAFETY: `NewSocketHandler<true>` / `NewSocketHandler<false>` have
-        // identical layout (single `InternalSocket` field, no PhantomData on
-        // SSL); transmute reinterprets the const-generic discriminant only.
         if SSL {
-            AnySocket::SocketTls(unsafe { core::mem::transmute::<_, NewSocketHandler<true>>(s) })
+            AnySocket::SocketTls(s.assume_ssl())
         } else {
-            AnySocket::SocketTcp(unsafe { core::mem::transmute::<_, NewSocketHandler<false>>(s) })
+            AnySocket::SocketTcp(s.assume_tcp())
         }
     }
 

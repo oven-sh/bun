@@ -1404,8 +1404,7 @@ pub fn totalmem() -> u64 {
         let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
         // SAFETY: valid out-pointer
         if unsafe { libc::sysinfo(&raw mut info) } == 0 {
-            // SAFETY: same-size POD reinterpret
-            return unsafe { core::mem::transmute::<_, u64>(info.totalram) }.wrapping_mul(info.mem_unit as c_ulong as u64);
+            return (info.totalram as u64).wrapping_mul(info.mem_unit as c_ulong as u64);
         }
         return 0;
     }

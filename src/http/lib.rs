@@ -813,44 +813,29 @@ pub fn configure_http_client_with_alpn(
 
 // ── EntryList column accessors ──────────────────────────────────────────
 // `header_entries.slice().items_name()` was a Zig MultiArrayList convenience.
-// Re-widen the borrow to `'static` so the per-row `header_str()` calls inside
-// `build_request` don't trip borrowck (the underlying buffer is the static
-// `SHARED_REQUEST_HEADERS_BUF` / `self.header_buf` pair).
+// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
+// that need to mutate `header_entries` afterwards copy the index out first.
 trait HeaderEntrySliceColumns {
-    fn items_name(&self) -> &'static [StringPointer];
-    fn items_value(&self) -> &'static [StringPointer];
+    fn items_name(&self) -> &[StringPointer];
+    fn items_value(&self) -> &[StringPointer];
 }
 impl HeaderEntrySliceColumns for bun_collections::multi_array_list::Slice<bun_http_types::ETag::HeaderEntry> {
-    fn items_name(&self) -> &'static [StringPointer] {
-        // SAFETY: StringPointer is POD; the MultiArrayList backing storage outlives every
-        // caller in this file (header_entries is a field of HTTPClient). Lifetime is
-        // erased only to avoid threading `'self` through the Zig-shaped state machine.
-        unsafe {
-            core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<"name", StringPointer>(),
-            )
-        }
+    #[inline]
+    fn items_name(&self) -> &[StringPointer] {
+        self.items::<"name", StringPointer>()
     }
-    fn items_value(&self) -> &'static [StringPointer] {
-        // SAFETY: see items_name()
-        unsafe {
-            core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<"value", StringPointer>(),
-            )
-        }
+    #[inline]
+    fn items_value(&self) -> &[StringPointer] {
+        self.items::<"value", StringPointer>()
     }
 }
 trait HeaderEntryListColumns {
-    fn items_name(&self) -> &'static [StringPointer];
+    fn items_name(&self) -> &[StringPointer];
 }
 impl HeaderEntryListColumns for bun_http_types::ETag::HeaderEntryList {
-    fn items_name(&self) -> &'static [StringPointer] {
-        // SAFETY: see HeaderEntrySliceColumns::items_name()
-        unsafe {
-            core::mem::transmute::<&[StringPointer], &'static [StringPointer]>(
-                self.items::<"name", StringPointer>(),
-            )
-        }
+    #[inline]
+    fn items_name(&self) -> &[StringPointer] {
+        self.items::<"name", StringPointer>()
     }
 }
 
@@ -4364,16 +4349,17 @@ impl<'a> HTTPClient<'a> {
                                 H { name: b"Cookie", hash: *COOKIE_HEADER_HASH },
                             ];
                             for to_remove in headers_to_remove.iter() {
-                                let names = self.header_entries.items_name();
-                                for (i, name_ptr) in names.iter().enumerate() {
-                                    let name = self.header_str(*name_ptr);
-                                    if name.len() == to_remove.name.len() {
-                                        let hash = hash_header_name(name);
-                                        if hash == to_remove.hash {
-                                            self.header_entries.ordered_remove(i);
-                                            break;
-                                        }
-                                    }
+                                let found = self
+                                    .header_entries
+                                    .items_name()
+                                    .iter()
+                                    .position(|name_ptr| {
+                                        let name = self.header_str(*name_ptr);
+                                        name.len() == to_remove.name.len()
+                                            && hash_header_name(name) == to_remove.hash
+                                    });
+                                if let Some(i) = found {
+                                    self.header_entries.ordered_remove(i);
                                 }
                             }
                         }

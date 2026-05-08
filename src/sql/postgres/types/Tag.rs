@@ -331,7 +331,27 @@ pub struct PostgresBinarySingleDimensionArray<T> {
     pub first_value: T,
 }
 
-impl<T: Copy> PostgresBinarySingleDimensionArray<T> {
+/// `@bitCast(@byteSwap(@as(Int, @bitCast(val))))` — wire-order byte swap for
+/// the element types `PostgresBinarySingleDimensionArray` is instantiated with
+/// (`i32` / `f32`; see `byteArrayType`). Replaces the old generic
+/// `byte_swap_same_size` `transmute_copy` shim with safe `to_bits`/`from_bits`.
+pub trait WireByteSwap: Copy {
+    fn wire_byte_swap(self) -> Self;
+}
+impl WireByteSwap for i32 {
+    #[inline]
+    fn wire_byte_swap(self) -> Self { self.swap_bytes() }
+}
+impl WireByteSwap for f32 {
+    #[inline]
+    fn wire_byte_swap(self) -> Self { f32::from_bits(self.to_bits().swap_bytes()) }
+}
+impl WireByteSwap for f64 {
+    #[inline]
+    fn wire_byte_swap(self) -> Self { f64::from_bits(self.to_bits().swap_bytes()) }
+}
+
+impl<T: WireByteSwap> PostgresBinarySingleDimensionArray<T> {
     pub fn slice(&mut self) -> &mut [T] {
         // `len` is server-controlled; callers must validate it against
         // the backing buffer length before calling this.
@@ -354,11 +374,7 @@ impl<T: Copy> PostgresBinarySingleDimensionArray<T> {
                 // Zig: const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
                 //      const swapped = @byteSwap(@as(Int, @bitCast(val)));
                 //      head[i] = @bitCast(swapped);
-                // TODO(port): generic byte-swap over T. Only instantiated for i32/f32 in
-                // practice (see byteArrayType). Phase B: add a `ByteSwap` trait or
-                // monomorphize for i32/f32 explicitly.
-                let swapped: T = byte_swap_same_size(val);
-                *head.add(i) = swapped;
+                *head.add(i) = val.wire_byte_swap();
 
                 current = current.add(1);
             }
@@ -378,35 +394,6 @@ impl<T: Copy> PostgresBinarySingleDimensionArray<T> {
             (*this).len = i32::swap_bytes((*this).len);
             (*this).index = i32::swap_bytes((*this).index);
             this
-        }
-    }
-}
-
-// Helper for `slice()`: bitcast → byte-swap → bitcast, matching Zig's
-// `@bitCast(@byteSwap(@as(Int, @bitCast(val))))` for same-size POD.
-// TODO(port): replace with a sealed trait implemented for i32/f32 (the only T used).
-#[inline]
-unsafe fn byte_swap_same_size<T: Copy>(val: T) -> T {
-    // SAFETY: T is Copy and size_of::<T>() ∈ {2,4,8}; transmute_copy is a same-size
-    // bitcast to/from the matching uN, mirroring Zig `@bitCast(@byteSwap(@bitCast(val)))`.
-    unsafe {
-        match core::mem::size_of::<T>() {
-            4 => {
-                let bits: u32 = core::mem::transmute_copy(&val);
-                let swapped = bits.swap_bytes();
-                core::mem::transmute_copy(&swapped)
-            }
-            8 => {
-                let bits: u64 = core::mem::transmute_copy(&val);
-                let swapped = bits.swap_bytes();
-                core::mem::transmute_copy(&swapped)
-            }
-            2 => {
-                let bits: u16 = core::mem::transmute_copy(&val);
-                let swapped = bits.swap_bytes();
-                core::mem::transmute_copy(&swapped)
-            }
-            _ => unreachable!(),
         }
     }
 }

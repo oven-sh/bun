@@ -88,9 +88,8 @@ pub fn generate_symbol_for_function(
 
             if val.is_any_int() {
                 let int = val.to_int32();
-                if (0..=ABIType::MAX).contains(&int) {
-                    // SAFETY: range-checked above; ABIType is #[repr(i32)]
-                    abi_types.push(unsafe { core::mem::transmute::<i32, ABIType>(int) });
+                if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
+                    abi_types.push(t);
                     // PERF(port): was appendAssumeCapacity
                     continue;
                 } else {
@@ -129,9 +128,8 @@ pub fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, b"returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
-                if (0..=ABIType::MAX).contains(&int) {
-                    // SAFETY: range-checked above; ABIType is #[repr(i32)]
-                    return_type = unsafe { core::mem::transmute::<i32, ABIType>(int) };
+                if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
+                    return_type = t;
                     break 'brk;
                 } else {
                     return Ok(Some(global.create_error_instance(format_args!(

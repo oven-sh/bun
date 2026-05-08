@@ -726,7 +726,7 @@ fn parse_array(
 // PORT NOTE: Zig used `inline ... => |tag|` to capture the comptime tag and call
 // `tag.toJSTypedArrayType()` / `tag.byteArrayType()` / `tag.pgArrayType()` in type
 // position. Those return types, so we monomorphize over the element type here.
-fn from_bytes_typed_array<Elem: Copy>(
+fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     tag: types::Tag,
     bytes: &[u8],
 ) -> Result<SQLDataCell> {

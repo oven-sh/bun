@@ -1302,6 +1302,8 @@ impl Drop for CronRemoveJob {
 // ============================================================================
 
 #[bun_jsc::JsClass(no_constructor)]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::destroy_impl)]
 pub struct CronJob {
     // bun.ptr.RefCount(...) intrusive — keep raw count for IntrusiveRc compat.
     ref_count: Cell<u32>,
@@ -1340,15 +1342,17 @@ pub enum ClearMode {
 /// RAII owner for one intrusive refcount on a [`CronJob`].
 type CronJobDerefOnDrop = bun_ptr::ScopedRef<CronJob>;
 
-// Intrusive refcount (bun.ptr.RefCount).
-bun_ptr::impl_cell_ref_counted! {
-    impl CronJob {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        unsafe fn destroy(this: *mut Self) {
-            // deinit: this_value.deinit() then destroy.
-            // SAFETY: last ref; nobody else holds a pointer.
-            // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on
-            // reassignment handles teardown (JSRef.rs trailer).
+impl CronJob {
+    /// `CellRefCounted::destroy` target (refcount hit zero).
+    ///
+    /// # Safety
+    /// `this` is the sole live owner of its `heap::alloc` allocation.
+    unsafe fn destroy_impl(this: *mut Self) {
+        // deinit: this_value.deinit() then destroy.
+        // SAFETY: last ref; nobody else holds a pointer.
+        // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on
+        // reassignment handles teardown (JSRef.rs trailer).
+        unsafe {
             (*this).this_value = JsRef::empty();
             drop(bun_core::heap::take(this));
         }

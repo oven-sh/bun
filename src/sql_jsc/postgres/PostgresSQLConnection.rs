@@ -82,13 +82,15 @@ impl jsc::JsClass for PostgresSQLConnection {
 use crate::jsc::verify_error_to_js;
 
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct PostgresSQLConnection {
     // TODO(port): bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive refcount;
     // ref()/deref() forward to this. When it hits 0, `deinit` runs and frees the Box.
     pub socket: Socket,
     pub status: Status,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()`
-    // (provided by `impl_cell_ref_counted!` below).
+    // (provided by `#[derive(CellRefCounted)]` above).
     ref_count: Cell<u32>,
 
     pub write_buffer: OffsetByteList,
@@ -193,16 +195,6 @@ impl PostgresSQLConnection {
         unsafe {
             t.cast::<u8>().sub(core::mem::offset_of!(Self, max_lifetime_timer)).cast::<Self>()
         }
-    }
-}
-
-// pub const ref = RefCount.ref; pub const deref = RefCount.deref;
-bun_ptr::impl_cell_ref_counted! {
-    impl PostgresSQLConnection {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: ref_count hit zero; we are the last owner of this
-        // Box-allocated struct.
-        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
 }
 

@@ -50,6 +50,7 @@ impl Socket {
     }
 }
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct ProxyTunnel {
     pub wrapper: Option<ProxyTunnelWrapper>,
     pub shutdown_err: Error,
@@ -94,15 +95,7 @@ impl Drop for ProxyTunnel {
     }
 }
 
-// ─── intrusive refcount (bun.ptr.RefCount) ───────────────────────────────────
-bun_ptr::impl_cell_ref_counted! {
-    impl ProxyTunnel {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: every live ProxyTunnel was created by `start`/`adopt`
-        // (`heap::alloc`); ref_count hitting 0 means no other alias remains.
-        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
-    }
-}
+// ─── intrusive refcount: derived via #[derive(CellRefCounted)] above ─────────
 
 // ─── SSLWrapper callbacks (ctx = *mut HTTPClient) ────────────────────────────
 //

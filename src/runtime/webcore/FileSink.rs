@@ -35,6 +35,8 @@ impl JSValuePromisePtrExt for JSValue {
 // FileSink
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::deinit)]
 pub struct FileSink {
     ref_count: Cell<u32>,
     pub writer: IOWriter,
@@ -68,17 +70,9 @@ pub struct FileSink {
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
-// refcount. `*FileSink` crosses FFI (JSSink wrapper, `@fieldParentPtr`,
-// `asPromisePtr`), so this stays intrusive rather than `Rc<T>`.
-bun_ptr::impl_cell_ref_counted! {
-    impl FileSink {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: refcount hit zero; sole remaining reference. `this` retains
-        // write provenance (no `&self` in the chain) so `deinit` can write
-        // through and `heap::take` can reclaim.
-        unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
-    }
-}
+// refcount derived via #[derive(CellRefCounted)] above. `*FileSink` crosses FFI
+// (JSSink wrapper, `@fieldParentPtr`, `asPromisePtr`), so this stays intrusive
+// rather than `Rc<T>`.
 
 /// RAII owner of one intrusive ref on a `FileSink`. Drops the ref (and frees
 /// the allocation if it was the last) on scope exit. Replaces the Zig

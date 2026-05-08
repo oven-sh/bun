@@ -16,7 +16,8 @@ use proc_macro2::Span;
 use quote::quote;
 use syn::{
     parse::{Parse, ParseStream, Parser},
-    parse_macro_input, Expr, ExprLit, ExprMacro, Lit, LitBool, LitStr, Token,
+    parse_macro_input, Data, DeriveInput, Expr, ExprLit, ExprMacro, Fields, Lit, LitBool, LitStr,
+    Meta, Token,
 };
 
 struct PrettyFmtInput {
@@ -196,4 +197,285 @@ pub fn pretty_fmt(input: TokenStream) -> TokenStream {
         }
         Err(msg) => syn::Error::new_spanned(&fmt, msg).to_compile_error().into(),
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// #[derive(CellRefCounted)] / #[derive(ThreadSafeRefCounted)]
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Replaces the former `impl_cell_ref_counted` declarative macro and
+// the ~80 hand-written `ref_count: Cell<u32>` + `unsafe impl` pairs. The
+// derive locates the intrusive refcount field and emits the trait impl, the
+// `AnyRefCounted` bridge (so `RefPtr`/`ScopedRef` accept the type), and
+// inherent `ref_()`/`deref()` forwarders so existing call sites keep working
+// without importing the trait.
+//
+// Field selection (first match wins):
+//   1. a field annotated `#[ref_count]`
+//   2. a field literally named `ref_count`
+//   3. the unique field whose type's last path segment is `Cell` (or
+//      `AtomicU32`/`ThreadSafeRefCount` for the thread-safe derive)
+//
+// Custom destructor: `#[ref_count(destroy = Self::deinit)]` on the struct
+// routes the trait's `destroy` to that path instead of the default
+// `drop(Box::from_raw(this))`.
+
+/// Locate the refcount field per the rules above. `type_hints` is the list of
+/// last-segment type names to fall back on (e.g. `["Cell"]`).
+fn find_ref_count_field<'a>(
+    fields: &'a Fields,
+    type_hints: &[&str],
+) -> Result<&'a syn::Ident, syn::Error> {
+    let named = match fields {
+        Fields::Named(n) => &n.named,
+        _ => {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "ref-count derive: only named-field structs are supported",
+            ))
+        }
+    };
+
+    // 1. explicit #[ref_count] attr (bare, not the struct-level destroy form)
+    for f in named {
+        if f.attrs.iter().any(|a| a.path().is_ident("ref_count") && matches!(a.meta, Meta::Path(_))) {
+            return Ok(f.ident.as_ref().unwrap());
+        }
+    }
+    // 2. field named `ref_count`
+    for f in named {
+        if f.ident.as_ref().is_some_and(|i| i == "ref_count") {
+            return Ok(f.ident.as_ref().unwrap());
+        }
+    }
+    // 3. unique field whose last type segment matches a hint
+    let mut hit: Option<&syn::Ident> = None;
+    for f in named {
+        if let syn::Type::Path(tp) = &f.ty {
+            if let Some(seg) = tp.path.segments.last() {
+                if type_hints.iter().any(|h| seg.ident == *h) {
+                    if hit.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            &f.ident,
+                            "ref-count derive: multiple candidate fields; annotate one with #[ref_count]",
+                        ));
+                    }
+                    hit = f.ident.as_ref();
+                }
+            }
+        }
+    }
+    hit.ok_or_else(|| {
+        syn::Error::new(
+            Span::call_site(),
+            "ref-count derive: no `ref_count` field found; annotate one with #[ref_count]",
+        )
+    })
+}
+
+/// Parse the optional struct-level `#[ref_count(destroy = path)]` attribute.
+fn find_destroy_path(attrs: &[syn::Attribute]) -> Result<Option<syn::Expr>, syn::Error> {
+    for a in attrs {
+        if !a.path().is_ident("ref_count") {
+            continue;
+        }
+        // Only the list form carries `destroy = …`; a bare `#[ref_count]` on
+        // the struct is meaningless but tolerated.
+        if let Meta::List(_) = &a.meta {
+            let mut out = None;
+            a.parse_nested_meta(|meta| {
+                if meta.path.is_ident("destroy") {
+                    let value: syn::Expr = meta.value()?.parse()?;
+                    out = Some(value);
+                    Ok(())
+                } else {
+                    Err(meta.error("unknown ref_count attribute key"))
+                }
+            })?;
+            return Ok(out);
+        }
+    }
+    Ok(None)
+}
+
+/// `#[derive(CellRefCounted)]` — see module comment above.
+#[proc_macro_derive(CellRefCounted, attributes(ref_count))]
+pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+
+    let fields = match &input.data {
+        Data::Struct(s) => &s.fields,
+        _ => {
+            return syn::Error::new_spanned(name, "CellRefCounted: only structs are supported")
+                .to_compile_error()
+                .into()
+        }
+    };
+
+    let field = match find_ref_count_field(fields, &["Cell"]) {
+        Ok(f) => f,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let destroy = match find_destroy_path(&input.attrs) {
+        Ok(d) => d,
+        Err(e) => return e.to_compile_error().into(),
+    };
+
+    let destroy_impl = destroy.map(|path| {
+        quote! {
+            #[inline]
+            unsafe fn destroy(this: *mut Self) {
+                // SAFETY: trait contract — refcount hit zero, `this` is the
+                // sole live owner of its allocation.
+                #[allow(unused_unsafe)]
+                unsafe { (#path)(this) }
+            }
+        }
+    });
+
+    let expanded = quote! {
+        unsafe impl #impl_g ::bun_ptr::CellRefCounted for #name #ty_g #where_g {
+            #[inline]
+            fn ref_count(&self) -> &::core::cell::Cell<u32> { &self.#field }
+            #destroy_impl
+        }
+        impl #impl_g ::bun_ptr::AnyRefCounted for #name #ty_g #where_g {
+            type DestructorCtx = ();
+            #[inline]
+            unsafe fn rc_ref(this: *mut Self) {
+                // SAFETY: caller contract — `this` is live.
+                let rc = unsafe { <Self as ::bun_ptr::CellRefCounted>::ref_count(&*this) };
+                rc.set(rc.get() + 1);
+            }
+            #[inline]
+            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+                // SAFETY: caller contract — `this` is live.
+                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
+            }
+            #[inline]
+            unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+                // SAFETY: caller contract — `this` is live.
+                unsafe { <Self as ::bun_ptr::CellRefCounted>::ref_count(&*this) }.get() == 1
+            }
+            #[inline]
+            unsafe fn rc_assert_no_refs(this: *const Self) {
+                debug_assert_eq!(
+                    // SAFETY: caller contract — `this` is live.
+                    unsafe { <Self as ::bun_ptr::CellRefCounted>::ref_count(&*this) }.get(),
+                    0,
+                );
+            }
+            #[cfg(debug_assertions)]
+            #[inline]
+            unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
+                ::bun_ptr::ref_count::noop_debug_data()
+            }
+        }
+        // Inherent forwarders so callers don't need the trait in scope.
+        impl #impl_g #name #ty_g #where_g {
+            #[inline]
+            pub fn ref_(&self) {
+                <Self as ::bun_ptr::CellRefCounted>::ref_(self)
+            }
+            /// # Safety
+            /// `this` must point to a live `Self` and the caller must own one
+            /// ref. After this call `this` may be dangling.
+            #[inline]
+            pub unsafe fn deref(this: *mut Self) {
+                // SAFETY: forwarded caller contract.
+                unsafe { <Self as ::bun_ptr::CellRefCounted>::deref(this) }
+            }
+        }
+    };
+    expanded.into()
+}
+
+/// `#[derive(ThreadSafeRefCounted)]` — locates the embedded
+/// `ThreadSafeRefCount<Self>` field and emits the trait impl plus the
+/// `AnyRefCounted` bridge. Custom destructor via `#[ref_count(destroy = …)]`.
+#[proc_macro_derive(ThreadSafeRefCounted, attributes(ref_count))]
+pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+
+    let fields = match &input.data {
+        Data::Struct(s) => &s.fields,
+        _ => {
+            return syn::Error::new_spanned(name, "ThreadSafeRefCounted: only structs are supported")
+                .to_compile_error()
+                .into()
+        }
+    };
+
+    let field = match find_ref_count_field(fields, &["ThreadSafeRefCount", "AtomicU32"]) {
+        Ok(f) => f,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let destroy = match find_destroy_path(&input.attrs) {
+        Ok(d) => d,
+        Err(e) => return e.to_compile_error().into(),
+    };
+
+    let destroy_impl = destroy.map(|path| {
+        quote! {
+            #[inline]
+            unsafe fn destructor(this: *mut Self) {
+                // SAFETY: trait contract — refcount hit zero.
+                #[allow(unused_unsafe)]
+                unsafe { (#path)(this) }
+            }
+        }
+    });
+
+    let expanded = quote! {
+        impl #impl_g ::bun_ptr::ThreadSafeRefCounted for #name #ty_g #where_g {
+            #[inline]
+            unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::ThreadSafeRefCount<Self> {
+                // SAFETY: caller contract — `this` is live; project the field.
+                unsafe { &raw mut (*this).#field }
+            }
+            #destroy_impl
+        }
+        impl #impl_g ::bun_ptr::AnyRefCounted for #name #ty_g #where_g {
+            type DestructorCtx = ();
+            #[inline]
+            unsafe fn rc_ref(this: *mut Self) {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) }
+            }
+            #[inline]
+            unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe { ::bun_ptr::ThreadSafeRefCount::<Self>::deref(this) }
+            }
+            #[inline]
+            unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe {
+                    (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
+                        .has_one_ref()
+                }
+            }
+            #[inline]
+            unsafe fn rc_assert_no_refs(this: *const Self) {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe {
+                    (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
+                        .assert_no_refs()
+                }
+            }
+            #[cfg(debug_assertions)]
+            #[inline]
+            unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn ::bun_ptr::ref_count::DebugDataOps {
+                // SAFETY: caller contract — `this` points to a live Self.
+                unsafe {
+                    (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this)).debug_data_ptr()
+                }
+            }
+        }
+    };
+    expanded.into()
 }

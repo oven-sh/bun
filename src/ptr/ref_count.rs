@@ -107,7 +107,13 @@ pub trait ThreadSafeRefCounted: Sized {
     ///
     /// # Safety
     /// `this` must point to a live `Self` with `raw_count == 0`.
-    unsafe fn destructor(this: *mut Self);
+    #[inline]
+    unsafe fn destructor(this: *mut Self) {
+        // Default: the allocation came from `heap::alloc` / `Box::into_raw`;
+        // reclaim and drop. Override for pooled / arena-backed types.
+        // SAFETY: caller contract — sole owner of a Box-allocated `Self`.
+        drop(unsafe { Box::from_raw(this) });
+    }
 }
 
 /// Unifying trait so `RefPtr<T>` works with either ref-count flavor.
@@ -558,7 +564,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 /// [`ref_count`] and [`destroy`]; the trait provides `ref_()`/`deref()` with
 /// the canonical inc/dec/destroy-at-zero logic.
 ///
-/// Use [`impl_cell_ref_counted!`] to derive this trait together with the
+/// Use `#[derive(CellRefCounted)]` to derive this trait together with the
 /// [`AnyRefCounted`] bridge (so [`RefPtr`] / [`ScopedRef`] accept the type)
 /// and inherent `ref_()`/`deref()` forwarders (so existing call sites that
 /// invoke them as inherent methods keep compiling without importing the
@@ -575,13 +581,21 @@ pub unsafe trait CellRefCounted: Sized {
     /// Locate the embedded `Cell<u32>` refcount field.
     fn ref_count(&self) -> &Cell<u32>;
 
-    /// Called exactly once when the refcount reaches zero. Typically
-    /// `drop(heap::take(this))`.
+    /// Called exactly once when the refcount reaches zero.
+    ///
+    /// The default reclaims the allocation as a `Box<Self>` (i.e.
+    /// `drop(heap::take(this))`); override only when the allocation came from
+    /// somewhere other than `heap::alloc` / `Box::into_raw`, or when extra
+    /// teardown must run before field `Drop` impls.
     ///
     /// # Safety
     /// `this` points to a live `Self` whose refcount just hit zero; no other
     /// alias remains. Callee takes ownership and frees the allocation.
-    unsafe fn destroy(this: *mut Self);
+    #[inline]
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: caller contract — sole owner of a Box-allocated `Self`.
+        drop(unsafe { Box::from_raw(this) });
+    }
 
     /// Increment the intrusive refcount.
     #[inline]
@@ -647,53 +661,19 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
     NOOP.with(|n| n.get() as *mut dyn DebugDataOps)
 }
 
-/// Derive [`CellRefCounted`] + [`AnyRefCounted`] + inherent `ref_()`/`deref()`
-/// forwarders for a type with an intrusive `Cell<u32>` refcount.
-///
-/// ```ignore
-/// bun_ptr::impl_cell_ref_counted! {
-///     impl ProxyTunnel {
-///         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-///         unsafe fn destroy(this: *mut Self) { drop(heap::take(this)) }
-///     }
-/// }
-/// // generic types use square-bracket generics (angle brackets aren't a
-/// // token-tree delimiter so `macro_rules!` can't match them lazily):
-/// bun_ptr::impl_cell_ref_counted! {
-///     impl[const SSL: bool] HTTPContext<SSL> {
-///         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-///         unsafe fn destroy(this: *mut Self) { drop(heap::take(this)) }
-///     }
-/// }
-/// ```
-///
-/// The inherent forwarders mean existing call sites (`x.ref_()`,
-/// `T::deref(p)`) keep compiling without importing the trait.
+/// Deprecated declarative form — superseded by `#[derive(CellRefCounted)]`
+/// (see [`bun_core_macros::CellRefCounted`]). Kept only so out-of-tree call
+/// sites keep compiling during the migration; new code should use the derive.
+#[deprecated = "use #[derive(bun_ptr::CellRefCounted)] instead"]
 #[macro_export]
 macro_rules! impl_cell_ref_counted {
-    // Non-generic entry — forwards to the generic arm with an empty param list.
-    // Uses a `for $T:ty` spelling so the first token after `impl` is never `[`
-    // (which would commit the `:ty` parser to a slice type and hard-error).
     (
-        impl $T:ident {
+        impl $([$($gen:tt)*])? $T:ty {
             fn ref_count(&$self_:ident) -> &Cell<u32> $rc_body:block
             unsafe fn destroy($this:ident: *mut Self) $destroy_body:block
         }
     ) => {
-        $crate::impl_cell_ref_counted! {
-            impl[] $T {
-                fn ref_count(&$self_) -> &Cell<u32> $rc_body
-                unsafe fn destroy($this: *mut Self) $destroy_body
-            }
-        }
-    };
-    (
-        impl [$($gen:tt)*] $T:ty {
-            fn ref_count(&$self_:ident) -> &Cell<u32> $rc_body:block
-            unsafe fn destroy($this:ident: *mut Self) $destroy_body:block
-        }
-    ) => {
-        unsafe impl<$($gen)*> $crate::CellRefCounted for $T {
+        unsafe impl<$($($gen)*)?> $crate::CellRefCounted for $T {
             #[inline]
             fn ref_count(&$self_) -> &::core::cell::Cell<u32> $rc_body
             #[inline]
@@ -703,7 +683,7 @@ macro_rules! impl_cell_ref_counted {
                 unsafe { $destroy_body }
             }
         }
-        impl<$($gen)*> $crate::AnyRefCounted for $T {
+        impl<$($($gen)*)?> $crate::AnyRefCounted for $T {
             type DestructorCtx = ();
             #[inline]
             unsafe fn rc_ref(this: *mut Self) {
@@ -736,7 +716,7 @@ macro_rules! impl_cell_ref_counted {
             }
         }
         // Inherent forwarders so callers don't need the trait in scope.
-        impl<$($gen)*> $T {
+        impl<$($($gen)*)?> $T {
             #[inline]
             pub fn ref_(&self) {
                 <Self as $crate::CellRefCounted>::ref_(self)

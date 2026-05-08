@@ -35,6 +35,7 @@ type u31 = u32;
 #[allow(non_camel_case_types)]
 type u24 = u32;
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
     /// Ref holders: the socket-ext tag while the session is the ActiveSocket
     /// (1), the context's active_h2_sessions registry while listed (1), and
@@ -120,16 +121,6 @@ pub struct ClientSession {
 
 /// RAII guard alias — bumps on construction, derefs on Drop.
 type SessionRefGuard = bun_ptr::ScopedRef<ClientSession>;
-
-// Intrusive refcount (single-thread). `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-bun_ptr::impl_cell_ref_counted! {
-    impl ClientSession {
-        fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: ref_count reached zero; no other holders. Allocated via
-        // `heap::alloc` in `create`.
-        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
-    }
-}
 
 impl ClientSession {
     /// Bump the refcount and return a guard that releases it on Drop, so

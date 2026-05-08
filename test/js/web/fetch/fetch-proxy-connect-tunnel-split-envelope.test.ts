@@ -23,7 +23,7 @@
 // A CONNECT response that arrives in one TCP read does NOT trigger the bug —
 // the buffer stays empty on the first parse. This test forces two separate
 // reads by enabling TCP_NODELAY and pausing between the two writes with a
-// `Bun.sleep(1)` yield so the kernel flushes the first segment and the
+// `Bun.sleep(5)` yield so the kernel flushes the first segment and the
 // fetch client's HTTP thread consumes it before the second segment lands.
 
 import { expect, test } from "bun:test";

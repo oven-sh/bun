@@ -815,12 +815,12 @@ impl PmPkgCommand {
             {
                 return Ok(json_expr.into());
             } else {
-                let data = Box::<[u8]>::from(value);
-                return Ok(Expr::init(E::String::init(&data), Loc::EMPTY));
+                let data: &[u8] = dummy_bump().alloc_slice_copy(value);
+                return Ok(Expr::init(E::String::init(data), Loc::EMPTY));
             }
         } else {
-            let data = Box::<[u8]>::from(value);
-            Ok(Expr::init(E::String::init(&data), Loc::EMPTY))
+            let data: &[u8] = dummy_bump().alloc_slice_copy(value);
+            Ok(Expr::init(E::String::init(data), Loc::EMPTY))
         }
     }
 

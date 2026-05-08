@@ -884,14 +884,16 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   const hashTableScript = resolve(cfg.cwd, "src", "codegen", "create-hash-table.ts");
   const perlScript = resolve(cfg.cwd, "src", "codegen", "create_hash_table");
 
-  // generate-jssink.ts writes JSSink.{cpp,h,lut.txt}, then internally spawns
-  // create-hash-table.ts to convert .lut.txt → .lut.h. So all four are outputs
-  // of this one step (though .lut.txt is really an intermediate — we don't
-  // expose it).
+  // generate-jssink.ts writes JSSink.{cpp,h,lut.txt} + generated_jssink.rs (the
+  // Rust `#[no_mangle]` thunks), then internally spawns create-hash-table.ts to
+  // convert .lut.txt → .lut.h. So all of {cpp,h,lut.h,rs} are outputs of this
+  // one step (.lut.txt is really an intermediate — we don't expose it).
+  const jssinkRs = resolve(cfg.codegenDir, "generated_jssink.rs");
   const outputs = [
     resolve(cfg.codegenDir, "JSSink.cpp"),
     resolve(cfg.codegenDir, "JSSink.h"),
     resolve(cfg.codegenDir, "JSSink.lut.h"),
+    jssinkRs,
   ];
 
   n.build({
@@ -901,7 +903,7 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "JSSink.{cpp,h,lut.h}",
+      desc: "JSSink.{cpp,h,lut.h,rs}",
       args: shJoin(cfg, ["run", script, cfg.codegenDir]),
     },
   });
@@ -909,6 +911,13 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   o.all.push(...outputs);
   o.cppSources.push(outputs[0]!); // .cpp
   o.cppHeaders.push(outputs[1]!, outputs[2]!); // .h + .lut.h
+  // bun_runtime/build.rs panics if generated_jssink.rs is absent, so the
+  // rust_build edge must order after this codegen step — `zigInputs` is the
+  // implicit-dep list the cargo edge consumes (same as generated_host_exports).
+  // Without this, `mode: "rust-only"` (CI's build-rust job, which compiles no
+  // C++ so nothing else pulls JSSink.cpp/.h) never runs this edge and cargo
+  // hits the missing file.
+  o.zigInputs.push(jssinkRs);
 }
 
 /**

@@ -46,7 +46,7 @@ async function run(env: Record<string, string | undefined>, code: string) {
   return { out, debug, stderr, exitCode };
 }
 
-describe("MemoryPressureWatcher", () => {
+describe.concurrent("MemoryPressureWatcher", () => {
   test.skipIf(!isDebug)("respond() runs a sync GC and bumps the analytics counter", async () => {
     // The simulate seam runs the same JS-thread respond() the OS callback would.
     // Heap-size deltas are too noisy to assert on (JSC keeps block capacity

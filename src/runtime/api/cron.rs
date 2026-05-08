@@ -255,7 +255,7 @@ impl CronRegisterJob {
                     && s.state != RegisterState::BootingOut
                 {
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = strings::trim(
+                    let stderr_output: &[u8] = bun_string::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     );
@@ -988,7 +988,7 @@ impl CronRemoveJob {
                     || (cfg!(windows) && s.state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = strings::trim(
+                    let stderr_output: &[u8] = bun_string::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     );

@@ -1941,7 +1941,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uv::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
         unsafe { (*this).event_loop_handle.uv_loop() }
     }

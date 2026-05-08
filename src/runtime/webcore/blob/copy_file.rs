@@ -1241,7 +1241,7 @@ impl<'a> CopyFileWindows<'a> {
         is_reading: bool,
     ) -> bun_sys::Result<Fd> {
         if let PathOrFileDescriptor::Path(path) = pathlike {
-            let fd = match bun_sys::openat_windows_t::<u8>(
+            let fd = match bun_sys::openat_windows_a(
                 Fd::INVALID,
                 path.slice(),
                 if is_reading {
@@ -1553,10 +1553,10 @@ impl<'a> CopyFileWindows<'a> {
 
         let mut node_fs_ = node_fs::NodeFS::default();
         let _ = node_fs_.truncate(
-            node_fs::TruncateArgs {
+            &node_fs::Arguments::Truncate {
                 path: self.destination_file_store.data.as_file().pathlike.clone(),
-                len: i64::try_from(self.size).expect("int cast"),
-                ..Default::default()
+                len: u64::try_from(self.size).expect("int cast"),
+                flags: 0,
             },
             node_fs::Flavor::Sync,
         );

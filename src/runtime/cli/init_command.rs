@@ -1583,17 +1583,14 @@ impl Template {
         #[cfg(windows)]
         {
             if let Some(user) = bun_core::getenv_z_any_case(b"USER") {
-                let mut pathbuf = path_buffer_pool().get();
-                let path = match bun_str::buf_print_z(
+                let mut pathbuf = path_buffer_pool::get();
+                let path = crate::cli::install_completions_command::buf_print_z(
                     &mut *pathbuf,
                     format_args!(
                         "C:\\Users\\{}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
                         bstr::BStr::new(user)
                     ),
-                ) {
-                    Ok(p) => p,
-                    Err(_) => return false,
-                };
+                );
 
                 if bun_sys::exists(path.as_bytes()) {
                     return true;

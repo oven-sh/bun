@@ -816,8 +816,8 @@ impl<'a> Repl<'a> {
         #[cfg(windows)]
         {
             self.original_windows_mode = bun_sys::windows::update_stdio_mode_flags(
-                bun_sys::windows::StdioKind::StdIn,
-                bun_sys::windows::ModeFlags {
+                bun_sys::Stdio::StdIn,
+                bun_sys::windows::UpdateStdioModeFlagsOpts {
                     set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
                         | bun_sys::windows::ENABLE_PROCESSED_INPUT,
                     unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,

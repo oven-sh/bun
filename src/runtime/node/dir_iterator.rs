@@ -804,6 +804,18 @@ pub enum PathType {
     U16,
 }
 
+// On Windows `NewIterator<B>` carries a `where (): SelectImpl<B>` bound (it
+// picks the u8/u16 name buffer type via an associated-type trick); other
+// platforms have no such bound. Propagate the bound to the wrapper only where
+// it exists so the wrapper type-checks everywhere.
+#[cfg(windows)]
+pub struct NewWrappedIterator<const IS_U16: bool>
+where
+    (): platform::SelectImpl<IS_U16>,
+{
+    pub iter: NewIterator<IS_U16>,
+}
+#[cfg(not(windows))]
 pub struct NewWrappedIterator<const IS_U16: bool> {
     pub iter: NewIterator<IS_U16>,
 }

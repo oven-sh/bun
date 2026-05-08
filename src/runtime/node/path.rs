@@ -357,7 +357,7 @@ pub fn posix_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 #[cfg(windows)]
 #[inline]
 fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    strings::without_trailing_slash_windows_path(s)
+    bun_string::immutable::paths::without_trailing_slash_windows_path(s)
 }
 #[cfg(not(windows))]
 #[inline]

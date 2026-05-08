@@ -129,8 +129,7 @@ impl InstallCompletionsCommand {
             &mut bunx_path_buf,
             &[&windows::NT_OBJECT_PREFIX, image_dirname, cmd_suffix],
         )?;
-        // TODO(port): std.os.windows.DeleteFile(.., .{ .dir = null }) — map to bun_sys::windows
-        let _ = windows::delete_file(delete_path, None);
+        let _ = windows::DeleteFileBun(delete_path, windows::DeleteFileOptions::default());
 
         let bunx_path_with_z = strings::concat_buf_t::<u16>(
             &mut bunx_path_buf,
@@ -140,7 +139,7 @@ impl InstallCompletionsCommand {
         let bunx_path = unsafe {
             WStr::from_raw(bunx_path_with_z.as_ptr(), bunx_path_with_z.len() - 1)
         };
-        let _ = windows::delete_file(bunx_path.as_slice(), None);
+        let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
 
         if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), core::ptr::null_mut()) == 0 {
             // if hard link fails, use a cmd script
@@ -701,7 +700,7 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a mut [
 
 /// Like [`buf_print`] but appends a NUL terminator and returns a `&ZStr`.
 /// Mirrors `std.fmt.bufPrintZ(buf, fmt, args) catch unreachable`.
-fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a ZStr {
+pub(crate) fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a ZStr {
     let total = buf.len();
     let mut cursor: &mut [u8] = buf;
     cursor.write_fmt(args).expect("unreachable");

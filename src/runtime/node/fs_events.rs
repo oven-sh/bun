@@ -145,6 +145,7 @@ static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 static FSEVENTS_DEFAULT_LOOP: bun_core::RacyCell<Option<NonNull<FSEventsLoop>>> =
     bun_core::RacyCell::new(None);
 
+#[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
     let ptr = unsafe { bun_sys::c::dlsym(handle, symbol.as_ptr()) };
@@ -153,6 +154,13 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     }
     // SAFETY: caller guarantees T is a fn pointer / data pointer of the symbol's actual type
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
+}
+#[cfg(not(unix))]
+fn dlsym<T>(_handle: *mut c_void, _symbol: &core::ffi::CStr) -> Option<T> {
+    // FSEvents is macOS-only; CoreFoundation/CoreServices loaders below are
+    // gated behind `target_os = "macos"`, so this body is unreachable on
+    // Windows but must still type-check.
+    None
 }
 
 // Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the

@@ -48,8 +48,9 @@ const SURVEY_S = {
       },
     },
     total: { type: "number" },
+    uncovered: { type: "number" },
   },
-  required: ["passing", "failing", "total"],
+  required: ["passing", "failing", "total", "uncovered"],
 };
 const FIX_S = {
   type: "object",
@@ -145,16 +146,26 @@ For each file: rust_rc from results, baseline_rc = parse \`${DIAG}/<slug>.baseli
 
 summary = first 2 ✗ lines from .log (or backtrace tail for crash, or "no output past banner" for real-hang).
 
-Return {passing:N, failing:[{file,diag:"${DIAG}/<slug>.log",kind:"crash|diverge|real-hang",summary}], total:N}. **Only return failing entries that are TRUE divergences.** DO NOT edit src/.`,
+**uncovered** = \`wc -l < ${GDIAG}/all.txt\` minus files probed so far (i.e., files in glob never yet surveyed).
+
+Return {passing:N, failing:[{file,diag:"${DIAG}/<slug>.log",kind:"crash|diverge|real-hang",summary}], total:N, uncovered:N}. **Only return failing entries that are TRUE divergences.** DO NOT edit src/.`,
     { label: `survey-r${round}`, phase: "Survey", schema: SURVEY_S },
   );
   if (!survey) {
     history.push({ round, error: "survey failed" });
     continue;
   }
-  log(`r${round}: ${survey.passing}/${survey.total} passing, ${survey.failing.length} failing`);
-  if (survey.failing.length === 0)
+  log(
+    `r${round}: ${survey.passing}/${survey.total} passing, ${survey.failing.length} failing, ${survey.uncovered ?? "?"} uncovered`,
+  );
+  // Only done when no failures AND no uncovered files remain in the glob.
+  if (survey.failing.length === 0 && (survey.uncovered ?? 1) === 0)
     return { rounds: round, done: true, passing: survey.passing, total: survey.total, history };
+  // No fix targets this round but more files to cover → advance
+  if (survey.failing.length === 0) {
+    history.push({ round, passing: survey.passing, total: survey.total, advanced: true });
+    continue;
+  }
 
   // ── Fix → Review → Apply (pipelined per file, MAX_FIX wide) ──
   const targets = survey.failing.slice(0, MAX_FIX);

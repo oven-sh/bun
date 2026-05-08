@@ -88,8 +88,8 @@ impl HPACK {
         // thread_local buffer that lives until the next decode/encode call on this thread.
         let (name, value) = unsafe {
             (
-                core::slice::from_raw_parts(header.name, header.name_len),
-                core::slice::from_raw_parts(header.value, header.value_len),
+                bun_core::ffi::slice(header.name, header.name_len),
+                bun_core::ffi::slice(header.value, header.value_len),
             )
         };
 

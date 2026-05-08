@@ -460,7 +460,7 @@ pub fn initialize(eval_mode: bool) {
 /// Port of `onJSCInvalidEnvVar` (jsc.zig:254).
 unsafe extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
     // SAFETY: C++ guarantees `name[..len]` is valid for the call.
-    let name = unsafe { core::slice::from_raw_parts(name, len) };
+    let name = unsafe { bun_core::ffi::slice(name, len) };
     bun_core::err_generic!(
         "invalid JSC environment variable\n\n    <b>{}<r>\n\n\
 For a list of options, see this file:\n\n    \

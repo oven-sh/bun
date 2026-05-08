@@ -252,7 +252,7 @@ impl<'a> InternalState<'a> {
                         // SAFETY: write into the full allocated capacity (Zig allocatedSlice equiv).
                         // Bytes past `len` are uninitialized; libdeflate writes them as output.
                         let allocated = unsafe {
-                            core::slice::from_raw_parts_mut(
+                            bun_core::ffi::slice_mut(
                                 body_out_str.list.as_mut_ptr(),
                                 body_out_str.list.capacity(),
                             )

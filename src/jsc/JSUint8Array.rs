@@ -44,7 +44,7 @@ impl JSUint8Array {
             return &mut [];
         }
         // SAFETY: JSC guarantees `p` is valid for `n` bytes while the cell is alive.
-        unsafe { core::slice::from_raw_parts_mut(p, n) }
+        unsafe { bun_core::ffi::slice_mut(p, n) }
     }
 
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);

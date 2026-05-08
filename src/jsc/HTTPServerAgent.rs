@@ -88,7 +88,7 @@ impl Route {
             return &[];
         }
         // SAFETY: param_names points to param_names_len contiguous BunString values
-        unsafe { core::slice::from_raw_parts(self.param_names, self.param_names_len) }
+        unsafe { bun_core::ffi::slice(self.param_names, self.param_names_len) }
     }
 }
 

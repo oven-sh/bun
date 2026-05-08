@@ -1011,7 +1011,7 @@ impl<'a> Linker<'a> {
                 let original_contents = original_contents.into_boxed_slice();
                 break 'brk (
                     // SAFETY: content_to_free outlives content within this fn body
-                    unsafe { core::slice::from_raw_parts(original_contents.as_ptr(), original_contents.len()) },
+                    unsafe { bun_core::ffi::slice(original_contents.as_ptr(), original_contents.len()) },
                     original_contents,
                 );
             }
@@ -1644,7 +1644,7 @@ impl<'a> Linker<'a> {
         let abs_target_buf_ptr: *const u8 = self.abs_target_buf.as_ptr();
         // SAFETY: abs_target_buf is not written between here and use.
         let package_dir =
-            unsafe { core::slice::from_raw_parts(abs_target_buf_ptr, package_dir_len) };
+            unsafe { bun_core::ffi::slice(abs_target_buf_ptr, package_dir_len) };
 
         // SAFETY: tag determines the active union field
         unsafe {

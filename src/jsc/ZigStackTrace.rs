@@ -96,12 +96,12 @@ impl ZigStackTrace {
     pub fn frames(&self) -> &[ZigStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements
         // (populated by C++ via FFI; see ZigException.zig:111).
-        unsafe { core::slice::from_raw_parts(self.frames_ptr, self.frames_len as usize) }
+        unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
     }
 
     pub fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements.
-        unsafe { core::slice::from_raw_parts_mut(self.frames_ptr, self.frames_len as usize) }
+        unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
     }
 
     pub fn source_line_iterator(&self) -> SourceLineIterator<'_> {
@@ -109,7 +109,7 @@ impl ZigStackTrace {
         // SAFETY: source_lines_numbers points to a caller-owned buffer of at least
         // source_lines_len elements (see ZigException.zig:108).
         let nums = unsafe {
-            core::slice::from_raw_parts(self.source_lines_numbers, self.source_lines_len as usize)
+            bun_core::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize)
         };
         for (j, &num) in nums.iter().enumerate() {
             if num >= 0 {
@@ -137,7 +137,7 @@ impl<'a> SourceLineIterator<'a> {
         // SAFETY: source_lines_ptr points to a caller-owned buffer of at least
         // source_lines_len elements; self.i < source_lines_len by construction in
         // source_line_iterator().
-        let lines = unsafe { core::slice::from_raw_parts(self.trace.source_lines_ptr, n) };
+        let lines = unsafe { bun_core::ffi::slice(self.trace.source_lines_ptr, n) };
         for line in lines {
             count += line.length();
         }

@@ -89,7 +89,7 @@ impl TextCodec {
         let name = unsafe { Bun__getCanonicalEncodingName(encoding.as_ptr(), encoding.len(), &raw mut len) }?;
         // SAFETY: C++ returns a pointer into static encoding-name table data, valid for `len` bytes
         // and for the lifetime of the program.
-        Some(unsafe { core::slice::from_raw_parts(name.as_ptr(), len) })
+        Some(unsafe { bun_core::ffi::slice(name.as_ptr(), len) })
     }
 }
 

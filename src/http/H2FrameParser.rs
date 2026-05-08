@@ -173,7 +173,7 @@ impl StreamPriority {
     pub fn from(dst: &mut StreamPriority, src: &[u8]) {
         // SAFETY: StreamPriority is #[repr(C, packed)] POD with size == BYTE_SIZE.
         let bytes = unsafe {
-            core::slice::from_raw_parts_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
+            bun_core::ffi::slice_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
         };
         bytes.copy_from_slice(src);
         // std.mem.byteSwapAllFields(StreamPriority, dst)
@@ -222,7 +222,7 @@ impl FrameHeader {
     pub fn from<const END: bool>(dst: &mut FrameHeader, src: &[u8], offset: usize) {
         // SAFETY: FrameHeader is #[repr(C, packed)] POD with size == BYTE_SIZE.
         let bytes = unsafe {
-            core::slice::from_raw_parts_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
+            bun_core::ffi::slice_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
         };
         bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
@@ -253,7 +253,7 @@ impl SettingsPayloadUnit {
     pub fn from<const END: bool>(dst: &mut SettingsPayloadUnit, src: &[u8], offset: usize) {
         // SAFETY: SettingsPayloadUnit is #[repr(C, packed)] POD with size == BYTE_SIZE.
         let bytes = unsafe {
-            core::slice::from_raw_parts_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
+            bun_core::ffi::slice_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
         };
         bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {

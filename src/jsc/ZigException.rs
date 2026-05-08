@@ -70,7 +70,7 @@ impl ZigException {
 
         // SAFETY: source_lines_ptr[..source_lines_len] is valid per ZigStackTrace contract.
         let lines = unsafe {
-            core::slice::from_raw_parts_mut(
+            bun_core::ffi::slice_mut(
                 self.stack.source_lines_ptr,
                 self.stack.source_lines_len as usize,
             )
@@ -81,7 +81,7 @@ impl ZigException {
 
         // SAFETY: frames_ptr[..frames_len] is valid per ZigStackTrace contract.
         let frames = unsafe {
-            core::slice::from_raw_parts_mut(self.stack.frames_ptr, self.stack.frames_len as usize)
+            bun_core::ffi::slice_mut(self.stack.frames_ptr, self.stack.frames_len as usize)
         };
         for frame in frames {
             frame.deinit();

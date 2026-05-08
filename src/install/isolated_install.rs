@@ -438,7 +438,7 @@ pub fn install_isolated_packages(
                 // on `&mut self`, so go through `items_raw` and rebuild
                 // disjoint `&mut [_]` views.
                 let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
-                    core::slice::from_raw_parts_mut(
+                    bun_core::ffi::slice_mut(
                         nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
                         nodes_slice.len(),
                     )
@@ -509,7 +509,7 @@ pub fn install_isolated_packages(
                     // PORT NOTE: disjoint-column raw views (see above).
                     let nodes_len = nodes_slice.len();
                     let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
-                        core::slice::from_raw_parts_mut(
+                        bun_core::ffi::slice_mut(
                             nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
                             nodes_len,
                         )
@@ -518,7 +518,7 @@ pub fn install_isolated_packages(
                     let node_parent_ids = nodes_slice.items_parent_id();
                     let node_dependencies = nodes_slice.items_dependencies();
                     let node_peers: &mut [store::node::Peers] = unsafe {
-                        core::slice::from_raw_parts_mut(
+                        bun_core::ffi::slice_mut(
                             nodes_slice.items_raw::<"peers", store::node::Peers>(),
                             nodes_len,
                         )
@@ -657,19 +657,19 @@ pub fn install_isolated_packages(
             let nodes_len = nodes_slice.len();
             let node_parent_ids = nodes_slice.items_parent_id();
             let node_dependencies: &mut [Vec<store::node::DependencyIds>] = unsafe {
-                core::slice::from_raw_parts_mut(
+                bun_core::ffi::slice_mut(
                     nodes_slice.items_raw::<"dependencies", Vec<store::node::DependencyIds>>(),
                     nodes_len,
                 )
             };
             let node_peers: &mut [store::node::Peers] = unsafe {
-                core::slice::from_raw_parts_mut(
+                bun_core::ffi::slice_mut(
                     nodes_slice.items_raw::<"peers", store::node::Peers>(),
                     nodes_len,
                 )
             };
             let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
-                core::slice::from_raw_parts_mut(
+                bun_core::ffi::slice_mut(
                     nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
                     nodes_len,
                 )
@@ -992,13 +992,13 @@ pub fn install_isolated_packages(
                         // PORT NOTE: disjoint-column raw views (see above).
                         let entries_len = entries.len();
                         let entry_dependencies: &mut [store::entry::Dependencies] = unsafe {
-                            core::slice::from_raw_parts_mut(
+                            bun_core::ffi::slice_mut(
                                 entries.items_raw::<"dependencies", store::entry::Dependencies>(),
                                 entries_len,
                             )
                         };
                         let entry_parents: &mut [Vec<store::entry::Id>] = unsafe {
-                            core::slice::from_raw_parts_mut(
+                            bun_core::ffi::slice_mut(
                                 entries.items_raw::<"parents", Vec<store::entry::Id>>(),
                                 entries_len,
                             )
@@ -1183,7 +1183,7 @@ pub fn install_isolated_packages(
             // PORT NOTE: disjoint-column raw views (see above).
             let entries_len = entries.len();
             let entry_hashes: &mut [u64] = unsafe {
-                core::slice::from_raw_parts_mut(
+                bun_core::ffi::slice_mut(
                     entries.items_raw::<"entry_hash", u64>(),
                     entries_len,
                 )
@@ -2515,7 +2515,7 @@ pub fn install_isolated_packages(
 #[inline]
 fn bytes_of<T: Copy>(v: &T) -> &[u8] {
     // SAFETY: T is Copy/POD; reading its bytes is sound.
-    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
+    unsafe { bun_core::ffi::slice(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
 }
 
 /// `std.fmt.bytesToHex(.., .lower)`

@@ -148,7 +148,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     // writer aligned the payload to `align_of::<T>()` via `Aligner::write`. Zig
     // used `@alignCast` here with the same precondition.
     let misaligned: &[T] = unsafe {
-        core::slice::from_raw_parts(
+        bun_core::ffi::slice(
             stream.buffer.as_ptr().add(start_pos).cast::<T>(),
             (end_pos - start_pos) / size_of::<T>(),
         )
@@ -182,7 +182,7 @@ where
     // SAFETY: `T` has no uninitialized padding (asserted above in Zig); reading
     // its bytes is sound. Matches `std.mem.sliceAsBytes`.
     let bytes: &[u8] = unsafe {
-        core::slice::from_raw_parts(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
+        bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
     };
 
     let start_pos = stream.get_pos()?;

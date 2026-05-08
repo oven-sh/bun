@@ -1463,7 +1463,7 @@ impl Package<u64> {
         hasher.update(name);
         // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
         hasher.update(unsafe {
-            core::slice::from_raw_parts(
+            bun_core::ffi::slice(
                 (&raw const version).cast::<u8>(),
                 mem::size_of::<SemverVersion>(),
             )
@@ -3029,7 +3029,7 @@ pub mod serializer {
                     let copy = val.copy();
                     // SAFETY: Resolution is #[repr(C)] POD; reading raw bytes is sound.
                     stream.write_all(unsafe {
-                        core::slice::from_raw_parts(
+                        bun_core::ffi::slice(
                             (&raw const copy).cast::<u8>(),
                             mem::size_of_val(&copy),
                         )

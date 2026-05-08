@@ -255,7 +255,7 @@ impl ArrayBuffer {
             return std::io::Cursor::new(&mut [][..]);
         }
         // SAFETY: ptr is non-null (checked above), FFI-backed; caller must keep backing JSValue alive.
-        let slice = unsafe { core::slice::from_raw_parts_mut::<'static, u8>(self.ptr, self.byte_len) };
+        let slice = unsafe { bun_core::ffi::slice_mut::<'static, u8>(self.ptr, self.byte_len) };
         std::io::Cursor::new(slice)
     }
 
@@ -331,7 +331,7 @@ impl ArrayBuffer {
             _ => panic!("ArrayBuffer::alloc: KIND not implemented"), // Zig: @compileError
         };
         // SAFETY: Bun__alloc*ForCopy writes a valid `len`-byte buffer pointer into ptr_out on success.
-        let slice = unsafe { core::slice::from_raw_parts_mut(ptr_out, len as usize) };
+        let slice = unsafe { bun_core::ffi::slice_mut(ptr_out, len as usize) };
         Ok((buf, slice))
     }
 
@@ -522,7 +522,7 @@ impl ArrayBuffer {
             return &[];
         }
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
-        unsafe { core::slice::from_raw_parts(self.ptr, self.byte_len) }
+        unsafe { bun_core::ffi::slice(self.ptr, self.byte_len) }
     }
 
     #[inline]
@@ -532,7 +532,7 @@ impl ArrayBuffer {
         }
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
         // `&mut self` enforces exclusive access to this view.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
+        unsafe { bun_core::ffi::slice_mut(self.ptr, self.byte_len) }
     }
 
     /// The equivalent of
@@ -572,7 +572,7 @@ impl ArrayBuffer {
         // align 1, so any `*mut u8` is a valid `*mut Unaligned<u16>`. `&mut self`
         // enforces exclusive access to this view for the borrow's lifetime.
         let len = self.byte_len / core::mem::size_of::<u16>();
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u16>>(), len) }
+        unsafe { bun_core::ffi::slice_mut(self.ptr.cast::<bun_core::Unaligned<u16>>(), len) }
     }
 
     /// See [`as_u16`]; 4-byte variant.
@@ -591,7 +591,7 @@ impl ArrayBuffer {
         // `*mut u8` is a valid `*mut Unaligned<u32>`. `&mut self` enforces
         // exclusive access to this view.
         let len = self.byte_len / core::mem::size_of::<u32>();
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
+        unsafe { bun_core::ffi::slice_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
     }
 }
 
@@ -882,7 +882,7 @@ impl MarkedArrayBuffer {
         let len = buf.len();
         let ptr = Box::into_raw(buf).cast::<u8>();
         // SAFETY: ptr/len from Box::into_raw; backed by global mimalloc.
-        let bytes = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
     }
 

@@ -887,7 +887,7 @@ impl JSValue {
         // SAFETY: out-params are valid; FFI writes only when returning true.
         if unsafe { JSC__JSValue__getClassInfoName(self, &raw mut ptr, &raw mut len) } {
             // SAFETY: C++ guarantees `ptr[..len]` is a static `ClassInfo::className`.
-            Some(unsafe { core::slice::from_raw_parts(ptr, len) })
+            Some(unsafe { bun_core::ffi::slice(ptr, len) })
         } else {
             None
         }
@@ -1746,7 +1746,7 @@ impl SerializedScriptValue {
         // SAFETY: C++ guarantees `bytes[..size]` is valid for the lifetime of
         // `handle` (until `Bun__SerializedScriptSlice__free`); the returned
         // borrow is tied to `&self` so it cannot outlive `Drop`.
-        unsafe { core::slice::from_raw_parts(self.bytes, self.size) }
+        unsafe { bun_core::ffi::slice(self.bytes, self.size) }
     }
 }
 impl Drop for SerializedScriptValue {

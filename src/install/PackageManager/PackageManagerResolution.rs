@@ -191,7 +191,7 @@ impl PackageManager {
                 // SAFETY: we reserved `total` bytes above; `clone_into` writes at most
                 // `total` bytes (build.len + pre.len) into `available` and advances it.
                 let mut available = unsafe {
-                    core::slice::from_raw_parts_mut(
+                    bun_core::ffi::slice_mut(
                         tags_buf.as_mut_ptr().add(len_before),
                         tags_buf.capacity() - len_before,
                     )

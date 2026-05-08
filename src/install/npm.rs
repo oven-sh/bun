@@ -151,7 +151,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     // SAFETY: `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
     // allocation; `headers` outlives `req`.
     let header_buf: &[u8] = match headers.content.ptr {
-        Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
+        Some(p) => unsafe { bun_core::ffi::slice(p.as_ptr(), headers.content.len) },
         None => b"",
     };
 
@@ -876,7 +876,7 @@ pub mod package_manifest {
         ) -> Result<(), Error> {
             // SAFETY: T is Copy POD; sliceAsBytes equivalent
             let bytes = unsafe {
-                core::slice::from_raw_parts(
+                bun_core::ffi::slice(
                     array.as_ptr().cast::<u8>(),
                     core::mem::size_of_val(array),
                 )
@@ -912,7 +912,7 @@ pub mod package_manifest {
             let result_bytes = &remaining[..byte_len as usize];
             // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
             let result = unsafe {
-                core::slice::from_raw_parts(
+                bun_core::ffi::slice(
                     result_bytes.as_ptr().cast::<T>(),
                     result_bytes.len() / core::mem::size_of::<T>(),
                 )
@@ -941,7 +941,7 @@ pub mod package_manifest {
                 // "pkg"
                 // SAFETY: NpmPackage is #[repr(C)] POD
                 let bytes = unsafe {
-                    core::slice::from_raw_parts(
+                    bun_core::ffi::slice(
                         (&raw const this.pkg).cast::<u8>(),
                         core::mem::size_of::<NpmPackage>(),
                     )
@@ -2156,7 +2156,7 @@ impl PackageManifest {
             None => (b"".as_ptr(), 0usize),
         };
         // SAFETY: builder buffer lives for the rest of this fn; reads only.
-        let string_buf: &[u8] = unsafe { core::slice::from_raw_parts(string_buf_ptr, string_buf_len) };
+        let string_buf: &[u8] = unsafe { bun_core::ffi::slice(string_buf_ptr, string_buf_len) };
 
         // Using `expected_name` instead of the name from the manifest. Custom registries might
         // have a different name than the dependency name in package.json.
@@ -2926,13 +2926,13 @@ impl PackageManifest {
                     // SAFETY: ExternalSlice points into versioned_packages / all_semver_versions
                     // which we own mutably here. @constCast equivalent.
                     let versioned_packages_ = unsafe {
-                        core::slice::from_raw_parts_mut(
+                        bun_core::ffi::slice_mut(
                             versioned_packages.as_mut_ptr().add(release.values.off as usize),
                             len,
                         )
                     };
                     let semver_versions_ = unsafe {
-                        core::slice::from_raw_parts_mut(
+                        bun_core::ffi::slice_mut(
                             all_semver_versions_ptr.add(release.keys.off as usize),
                             len,
                         )
@@ -3000,7 +3000,7 @@ impl PackageManifest {
             if src_len > 0 {
                 // SAFETY: both are POD ExternalString slices
                 let src = unsafe {
-                    core::slice::from_raw_parts(
+                    bun_core::ffi::slice(
                         all_tarball_url_strings.as_ptr().cast::<u8>(),
                         src_len * core::mem::size_of::<ExternalString>(),
                     )
@@ -3008,7 +3008,7 @@ impl PackageManifest {
                 let dst_start = extern_strings_cursor * core::mem::size_of::<ExternalString>();
                 // SAFETY: all_extern_strings owns the buffer
                 let dst = unsafe {
-                    core::slice::from_raw_parts_mut(
+                    bun_core::ffi::slice_mut(
                         all_extern_strings.as_mut_ptr().cast::<u8>().add(dst_start),
                         all_extern_strings.len() * core::mem::size_of::<ExternalString>() - dst_start,
                     )

@@ -2154,7 +2154,7 @@ pub mod IPCHandlers {
                     // SAFETY: returning a sub-slice of the unused-capacity
                     // region; libuv writes into it before notify_written reads.
                     unsafe {
-                        core::slice::from_raw_parts_mut(
+                        bun_core::ffi::slice_mut(
                             available.as_mut_ptr().cast::<u8>(),
                             suggested_size,
                         )
@@ -2168,7 +2168,7 @@ pub mod IPCHandlers {
                     log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
                     // SAFETY: same as above.
                     unsafe {
-                        core::slice::from_raw_parts_mut(
+                        bun_core::ffi::slice_mut(
                             available.as_mut_ptr().cast::<u8>(),
                             suggested_size,
                         )

@@ -86,7 +86,7 @@ pub fn write_request(
             // SAFETY: `lower_base` points to a buffer of `name_bytes` bytes;
             // `lower_len + h.name().len() <= name_bytes` by construction above.
             let dst = unsafe {
-                core::slice::from_raw_parts_mut(lower_base.add(lower_len), h.name().len())
+                bun_core::ffi::slice_mut(lower_base.add(lower_len), h.name().len())
             };
             let _ = strings::copy_lowercase(h.name(), dst);
             lower_len += h.name().len();

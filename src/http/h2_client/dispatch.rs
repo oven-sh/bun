@@ -724,10 +724,10 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         // delivery (it isn't — only ever appended to once per END_HEADERS).
         // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
         let name = unsafe {
-            core::slice::from_raw_parts(bytes.add(b[0] as usize), (b[1] - b[0]) as usize)
+            bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize)
         };
         let value = unsafe {
-            core::slice::from_raw_parts(bytes.add(b[1] as usize), (b[2] - b[1]) as usize)
+            bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize)
         };
         // PERF(port): was appendAssumeCapacity — profile in Phase B
         stream.decoded_headers.push(picohttp::Header::new(name, value));

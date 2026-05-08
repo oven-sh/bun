@@ -893,7 +893,7 @@ fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'
             let sn_slice = unsafe { core::ffi::CStr::from_ptr(sn) }.to_bytes();
             if !sn_slice.is_empty() {
                 // SAFETY: lifetime tied to `client.tls_props`, which outlives this call.
-                return unsafe { core::slice::from_raw_parts(sn_slice.as_ptr(), sn_slice.len()) };
+                return unsafe { bun_core::ffi::slice(sn_slice.as_ptr(), sn_slice.len()) };
             }
         }
     }
@@ -1966,7 +1966,7 @@ impl<'a> HTTPClient<'a> {
                     Ok(()) => {
                         let written = buf_len - cursor.len();
                         // SAFETY: borrows self.request_content_len_buf which lives for self
-                        unsafe { core::slice::from_raw_parts(buf_ptr, written) }
+                        unsafe { bun_core::ffi::slice(buf_ptr, written) }
                     }
                     Err(_) => b"0",
                 };
@@ -3865,7 +3865,7 @@ impl<'a> HTTPClient<'a> {
             // slice from the owning Vec instead so the write has Unique provenance.
             let base = self.state.response_message_buffer.list.as_mut_ptr();
             let off = incoming_data.as_ptr() as usize - base as usize;
-            unsafe { core::slice::from_raw_parts_mut(base.add(off), in_len) }
+            unsafe { bun_core::ffi::slice_mut(base.add(off), in_len) }
         } else {
             small[0..in_len].copy_from_slice(incoming_data);
             &mut small[0..in_len]

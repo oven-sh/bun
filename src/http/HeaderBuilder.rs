@@ -72,7 +72,7 @@ impl HeaderBuilder {
         // HttpClient takes ownership of the buffer or borrows it.
         // SAFETY: content.ptr was set by allocate() and exactly content.len bytes have been written.
         client.header_buf = unsafe {
-            core::slice::from_raw_parts(self.content.ptr.unwrap().as_ptr(), self.content.len)
+            bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len)
         };
     }
 }

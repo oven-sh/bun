@@ -839,6 +839,45 @@ pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'sta
 /// the Zig path (process is about to abort anyway), and the alternative — UB —
 /// is strictly worse.
 pub mod ffi {
+    /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
+    /// boundary (C++ out-params, `extern "C"` callback args, `#[repr(C)]`
+    /// struct fields). Centralizes the one `from_raw_parts` so callers need
+    /// no per-site `unsafe` block, and — unlike a bare `from_raw_parts` —
+    /// tolerates the C convention of `(null, 0)` for an empty slice (Rust
+    /// requires a non-null, aligned pointer even at `len == 0`).
+    ///
+    /// # Safety
+    /// When `len > 0`, `ptr` must be non-null, aligned, and point to `len`
+    /// initialized `T` valid for `'a`. `ptr` may be null only when `len == 0`.
+    #[inline(always)]
+    pub const unsafe fn slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+        if ptr.is_null() {
+            debug_assert!(len == 0);
+            // SAFETY: dangling is non-null + aligned; len 0 needs no backing.
+            unsafe { core::slice::from_raw_parts(core::ptr::NonNull::dangling().as_ptr(), 0) }
+        } else {
+            // SAFETY: caller contract above.
+            unsafe { core::slice::from_raw_parts(ptr, len) }
+        }
+    }
+
+    /// Mutable counterpart of [`slice`]. Same null-at-zero tolerance.
+    ///
+    /// # Safety
+    /// Same as [`slice`], plus the caller must guarantee no other `&`/`&mut`
+    /// to the range is live for `'a`.
+    #[inline(always)]
+    pub const unsafe fn slice_mut<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
+        if ptr.is_null() {
+            debug_assert!(len == 0);
+            // SAFETY: dangling is non-null + aligned; len 0 needs no backing.
+            unsafe { core::slice::from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0) }
+        } else {
+            // SAFETY: caller contract above.
+            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+        }
+    }
+
     #[inline]
     pub fn catch_unwind_ffi<R>(f: impl FnOnce() -> R) -> R {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {

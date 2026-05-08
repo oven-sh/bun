@@ -521,7 +521,7 @@ impl Entry {
                     // WTFString storage; reinterpreting as bytes for pread is sound
                     // (alignment of u8 ≤ u16).
                     let chars_bytes = unsafe {
-                        core::slice::from_raw_parts_mut(
+                        bun_core::ffi::slice_mut(
                             chars.as_mut_ptr().cast::<u8>(),
                             char_len * 2,
                         )
@@ -536,7 +536,7 @@ impl Entry {
                         let utf16 = string.utf16();
                         // SAFETY: same reinterpretation as above, read-only.
                         let utf16_bytes = unsafe {
-                            core::slice::from_raw_parts(utf16.as_ptr().cast::<u8>(), utf16.len() * 2)
+                            bun_core::ffi::slice(utf16.as_ptr().cast::<u8>(), utf16.len() * 2)
                         };
                         if hash(utf16_bytes) != self.metadata.output_hash {
                             return Err(bun_core::err!(InvalidHash));

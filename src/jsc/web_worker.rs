@@ -413,7 +413,7 @@ impl WebWorker {
         }
         // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
         // (BACKREF — kept alive by the owning Worker for `self`'s lifetime).
-        unsafe { core::slice::from_raw_parts(self.argv_ptr, self.argv_len) }
+        unsafe { bun_core::ffi::slice(self.argv_ptr, self.argv_len) }
     }
 
     /// Zig: `worker.execArgv: ?[]const WTFStringImpl` — `None` when
@@ -428,7 +428,7 @@ impl WebWorker {
             return Some(&[]);
         }
         // SAFETY: see `argv()`.
-        Some(unsafe { core::slice::from_raw_parts(self.exec_argv_ptr, self.exec_argv_len) })
+        Some(unsafe { bun_core::ffi::slice(self.exec_argv_ptr, self.exec_argv_len) })
     }
 
     fn set_requested_terminate(&self) -> bool {
@@ -484,7 +484,7 @@ impl WebWorker {
             &[]
         } else {
             // SAFETY: caller passed valid (ptr,len); slice borrowed from C++.
-            unsafe { core::slice::from_raw_parts(preload_modules_ptr, preload_modules_len) }
+            unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) }
         };
 
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);

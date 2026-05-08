@@ -81,7 +81,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             joined[1] = SEP;
             // SAFETY: paths.rel points into joined[2..]; extend the view backward by 2.
             paths.rel = unsafe {
-                core::slice::from_raw_parts(joined.as_ptr(), paths.rel.len() + 2)
+                bun_core::ffi::slice(joined.as_ptr(), paths.rel.len() + 2)
             };
         }
 
@@ -414,10 +414,10 @@ pub fn get_or_put(
         // SAFETY: abs/rel point into `joined` (or a threadlocal buffer) which is mutable here.
         // PORT NOTE: @constCast — rel is always backed by mutable storage.
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            core::slice::from_raw_parts_mut(abs.as_ptr().cast_mut().cast::<u8>(), abs.len())
+            bun_core::ffi::slice_mut(abs.as_ptr().cast_mut().cast::<u8>(), abs.len())
         });
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            core::slice::from_raw_parts_mut(rel.as_ptr().cast_mut(), rel.len())
+            bun_core::ffi::slice_mut(rel.as_ptr().cast_mut(), rel.len())
         });
     }
     let abs_hash = hash(abs.as_bytes());

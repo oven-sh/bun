@@ -594,7 +594,7 @@ impl ClientSession {
         let mut total: usize = 0;
         while total < len {
             // SAFETY: base[total..len] is a subslice of write_buffer.slice().
-            let chunk = unsafe { core::slice::from_raw_parts(base.add(total), len - total) };
+            let chunk = unsafe { bun_core::ffi::slice(base.add(total), len - total) };
             let wrote = self.socket.write(chunk);
             if wrote < 0 {
                 return Err(err!(WriteFailed));
@@ -630,7 +630,7 @@ impl ClientSession {
             // PORT NOTE: reshaped for borrowck — pass raw slice; parse_frames must not retain it.
             // SAFETY: read_buffer is not reallocated during parse_frames (only consumed).
             let buf = unsafe {
-                core::slice::from_raw_parts(self.read_buffer.as_ptr(), self.read_buffer.len())
+                bun_core::ffi::slice(self.read_buffer.as_ptr(), self.read_buffer.len())
             };
             let consumed = dispatch::parse_frames(self, buf);
             let tail = self.read_buffer.len() - consumed;
@@ -734,7 +734,7 @@ impl ClientSession {
         self.read_buffer.extend_from_slice(incoming);
         // SAFETY: see on_data note.
         let buf = unsafe {
-            core::slice::from_raw_parts(self.read_buffer.as_ptr(), self.read_buffer.len())
+            bun_core::ffi::slice(self.read_buffer.as_ptr(), self.read_buffer.len())
         };
         let consumed = dispatch::parse_frames(self, buf);
         let tail = self.read_buffer.len() - consumed;
@@ -1083,7 +1083,7 @@ impl ClientSession {
         // because the slice outlives the call. Cast away to 'static so the
         // pending_response field (Response<'static>) can hold it.
         let headers: &'static [picohttp::Header] = unsafe {
-            core::slice::from_raw_parts(
+            bun_core::ffi::slice(
                 stream.decoded_headers.as_ptr(),
                 stream.decoded_headers.len(),
             )

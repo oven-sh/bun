@@ -230,13 +230,13 @@ pub fn is_no_proxy(
     let vm = VirtualMachine::get();
     // SAFETY: caller (C++) guarantees `hostname_ptr[..hostname_len]` is valid for reads.
     let hostname: Option<&[u8]> = if hostname_len > 0 {
-        Some(unsafe { core::slice::from_raw_parts(hostname_ptr, hostname_len) })
+        Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
     } else {
         None
     };
     // SAFETY: caller (C++) guarantees `host_ptr[..host_len]` is valid for reads.
     let host: Option<&[u8]> = if host_len > 0 {
-        Some(unsafe { core::slice::from_raw_parts(host_ptr, host_len) })
+        Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
     } else {
         None
     };

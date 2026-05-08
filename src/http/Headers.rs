@@ -81,7 +81,7 @@ impl<'a> AnyBlobRef<'a> {
     pub fn content_type(&self) -> &'a [u8] {
         unsafe {
             let (ptr, len) = (self.vtable.content_type)(self.owner);
-            core::slice::from_raw_parts(ptr, len)
+            bun_core::ffi::slice(ptr, len)
         }
     }
 }

@@ -381,7 +381,7 @@ impl<'a> BinLinkingShim<'a> {
         // SAFETY: caller guarantees buf.len() == encoded_length() which is always
         // a multiple of 2; Zig used @alignCast here (callers pass 2-aligned buffers).
         let mut wbuf: &mut [u16] = unsafe {
-            core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u16>(), buf.len() / 2)
+            bun_core::ffi::slice_mut(buf.as_mut_ptr().cast::<u16>(), buf.len() / 2)
         };
 
         wbuf[0..self.bin_path.len()].copy_from_slice(self.bin_path);
@@ -506,7 +506,7 @@ fn reinterpret_slice_u16(bytes: &[u8]) -> &[u16] {
     debug_assert!(bytes.len() % 2 == 0);
     // SAFETY: mirrors `bun.reinterpretSlice(u16, ...)` — caller-guaranteed alignment
     // and even length. TODO(port): replace with bun_core::reinterpret_slice if it exists.
-    unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) }
+    unsafe { bun_core::ffi::slice(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) }
 }
 
 // ported from: src/install/windows-shim/BinLinkingShim.zig

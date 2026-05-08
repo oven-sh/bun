@@ -383,7 +383,7 @@ impl HttpThread {
             // pointer/len before passing &mut client.
             // SAFETY: unix_socket_path borrows storage that outlives this call.
             let path: &[u8] =
-                unsafe { core::slice::from_raw_parts(unix_path.as_ptr(), unix_path.len()) };
+                unsafe { bun_core::ffi::slice(unix_path.as_ptr(), unix_path.len()) };
             return self.context::<IS_SSL>().connect_socket(client, path);
         }
 

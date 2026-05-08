@@ -63,7 +63,7 @@ impl RefString {
         // Zig: `@setRuntimeSafety(false); return this.ptr[0..this.len];`
         // SAFETY: `ptr` points to a live allocation of `len` bytes for the
         // lifetime of `self` (freed only in `destroy`).
-        unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
+        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
     }
 
     pub fn deref(&self) {

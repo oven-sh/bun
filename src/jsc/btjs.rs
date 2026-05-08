@@ -491,7 +491,7 @@ mod zig_std_debug {
                 }
                 // SAFETY: dlpi_phdr points to dlpi_phnum entries.
                 let phdrs =
-                    unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
+                    unsafe { bun_core::ffi::slice(info.dlpi_phdr, info.dlpi_phnum as usize) };
                 for phdr in phdrs {
                     if phdr.p_type != bun_sys::elf::PT_LOAD {
                         continue;
@@ -643,7 +643,7 @@ mod zig_std_debug {
             }
             // SAFETY: dlpi_phdr points to dlpi_phnum entries.
             let phdrs =
-                unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
+                unsafe { bun_core::ffi::slice(info.dlpi_phdr, info.dlpi_phnum as usize) };
             for phdr in phdrs {
                 if phdr.p_type != bun_sys::elf::PT_LOAD {
                     continue;

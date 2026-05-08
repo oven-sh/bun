@@ -42,7 +42,7 @@ export function resolveToolchain(): Toolchain {
   // shadowing). Only needed when cargo builds with the msvc target.
   const msvcLinker = host.os === "windows" ? findMsvcLinker(host.arch) : undefined;
 
-  // esbuild/zig paths are relative to REPO ROOT, not process.cwd() — when
+  // esbuild path is relative to REPO ROOT, not process.cwd() — when
   // ninja's generator rule invokes reconfigure, cwd is the build dir.
   const repoRoot = findRepoRoot();
 
@@ -51,10 +51,6 @@ export function resolveToolchain(): Toolchain {
   // (and the build itself runs `bun install` first via the root install
   // stamp, so this path will exist by the time esbuild rules fire).
   const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? "esbuild.exe" : "esbuild");
-
-  // zig — lives at vendor/zig/, downloaded by the zig_fetch rule.
-  // Same deal: path is deterministic, download happens at build time.
-  const zig = resolve(repoRoot, "vendor", "zig", host.os === "windows" ? "zig.exe" : "zig");
 
   const bun = findBun(host.os);
 
@@ -69,7 +65,6 @@ export function resolveToolchain(): Toolchain {
   return {
     ...llvm,
     cmake,
-    zig,
     bun,
     jsRuntime,
     esbuild,

@@ -1,4 +1,4 @@
-This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Zig with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
+This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Rust with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
 
 ## Building and Running Bun
 

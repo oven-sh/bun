@@ -158,9 +158,9 @@ async function main(): Promise<void> {
       return;
     }
     // FD 3 sideband — only when interactive. stream.ts (wrapping deps +
-    // zig) writes live output there, bypassing ninja's per-job buffering.
+    // cargo) writes live output there, bypassing ninja's per-job buffering.
     // A human watching a terminal wants to see cmake configure spew and
-    // zig progress in real time. A log file (CI) doesn't —
+    // cargo build progress in real time. A log file (CI) doesn't —
     // that live output is noise (hundreds of `-- Looking for header.h`
     // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
     // stdout which ninja buffers per-job: deps stay quiet until they
@@ -343,7 +343,6 @@ function parseArgs(argv: string[]): CliArgs {
   const boolFields = new Set([
     "lto",
     "asan",
-    "zigAsan",
     "assertions",
     "logs",
     "baseline",
@@ -371,7 +370,6 @@ function parseArgs(argv: string[]): CliArgs {
     "cacheDir",
     "nodejsVersion",
     "nodejsAbiVersion",
-    "zigCommit",
     "webkitVersion",
     "pgoGenerate",
     "pgoUse",

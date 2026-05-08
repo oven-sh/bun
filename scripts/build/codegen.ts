@@ -203,7 +203,7 @@ function codegenDirStamp(cfg: Config): string {
 
 /**
  * All codegen outputs, grouped by consumer. Downstream phases (cpp compile,
- * zig build, link) add the appropriate group to their implicit inputs.
+ * rust build, link) add the appropriate group to their implicit inputs.
  */
 export interface CodegenOutputs {
   /** All codegen outputs — use for phony target `codegen`. */
@@ -244,7 +244,7 @@ export interface CodegenOutputs {
   /** The bindgenv2 .cpp outputs (compiled separately from handwritten C++). */
   bindgenV2Cpp: string[];
 
-  /** The bindgenv2 .zig outputs (imported by the zig build). */
+  /** The bindgenv2 .zig outputs (legacy artifacts, retained for reference). */
   bindgenV2Zig: string[];
 
   /**
@@ -758,12 +758,12 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // The script doesn't read it; CMake copy-paste. We skip it.
 
   // CMake only declares bake.client.js and bake.server.js as outputs. The
-  // script also emits bake.error.js (build.zig embeds it). We declare
+  // script also emits bake.error.js (the runtime embeds it). We declare
   // all three.
   //
   // Debug uses order-only deps on these .js files (loaded at runtime,
-  // no need to relink zig on change). Release uses implicit (embedded
-  // via @embedFile, must relink).
+  // no need to relink on change). Release uses implicit (embedded into
+  // the binary, must relink).
   const outputs = [
     resolve(cfg.codegenDir, "bake.client.js"),
     resolve(cfg.codegenDir, "bake.server.js"),
@@ -783,8 +783,8 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  // Debug: read at RUNTIME (not embedded) → zig only needs existence.
-  // Release: embedded via @embedFile → content changes must rebuild zig.
+  // Debug: read at RUNTIME (not embedded) → the build only needs existence.
+  // Release: embedded into the binary → content changes must trigger a relink.
   if (cfg.debug) {
     o.zigOrderOnly.push(...outputs);
   } else {

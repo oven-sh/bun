@@ -2680,28 +2680,6 @@ export function parseAnnotations(content) {
       continue;
     }
 
-    // Zig compiler error (kept for the .zig spec files that remain checked in)
-    // e.g. /path/to/build.zig:8:19: error: ...
-    const zigMessage = line.match(/^(.+\.zig):(\d+):(\d+): (error|warning): (.+)$/);
-    if (zigMessage) {
-      const [, filename, line, column, level] = zigMessage;
-
-      const { match: callStackMatch } = readUntil(/referenced by:/i);
-      if (callStackMatch) {
-        readUntil(/(.+\.zig):(\d+):(\d+)/i, 5);
-      }
-
-      const annotation = parseAnnotation({
-        source: "zig",
-        level,
-        filename,
-        line,
-        column,
-        content: bufferedLines,
-      });
-      annotations.push(annotation);
-    }
-
     const nodeJsError = line.match(/^file:\/\/(.+\.(?:c|m)js):(\d+)/i);
     if (nodeJsError) {
       const [, filename, line] = nodeJsError;

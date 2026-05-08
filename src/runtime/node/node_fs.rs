@@ -98,7 +98,14 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
 }
 #[cfg(windows)]
 #[inline]
-fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike { t }
+fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
+    // Windows `time_like::TimeLike` is `f64` seconds (libuv's `uv_fs_futime`
+    // takes doubles directly). The few callers that round-trip through
+    // `sys::TimeLike` (e.g. `lutimes` ENOENT fallback to `utimens`) need the
+    // `{sec, nsec}` split.
+    let sec = t.trunc();
+    sys::TimeLike { sec: sec as i64, nsec: ((t - sec) * 1e9) as i64 }
+}
 
 // Local namespace shim: dependents in this file spell `ConcurrentTask::create*`
 // (the Zig spelling). The Rust crate exports the *struct* as `ConcurrentTask`
@@ -383,11 +390,11 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
 }
 #[cfg(windows)]
 #[inline]
-fn mkdir_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> { Syscall::mkdir_os_path(path, mode) }
+fn mkdir_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> { let _ = mode; sys::mkdir_w(path) }
 #[cfg(windows)]
 #[inline]
 fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
-    Syscall::openat_os_path(dirfd, path, flags, mode)
+    sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
 type ReadPosition = i64;
@@ -668,7 +675,7 @@ where
                     // SAFETY: identity write — `R == ret::Close == ()` for this `F`.
                     unsafe { core::ptr::write(&mut task.result as *mut Maybe<R> as *mut Maybe<ret::Close>, Ok(())) };
                     let task_ptr: *mut Self = task;
-                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task_ptr));
+                    task.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(task_ptr));
                     return task.promise.value();
                 }
                 // SAFETY: libuv async request.
@@ -723,7 +730,7 @@ where
                     // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
                     unsafe { core::ptr::write(&mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>, Ok(ret::Write { bytes_written: 0 })) };
                     let task_ptr: *mut Self = task;
-                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task_ptr));
+                    task.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(task_ptr));
                     return task.promise.value();
                 }
                 let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -759,7 +766,7 @@ where
         // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
         // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
         let this_ptr: *mut Self = this;
-        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this_ptr));
+        this.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(this_ptr));
     }
 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
@@ -773,7 +780,7 @@ where
         this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
         // No `err.clone()` needed — see `uv_callback` above.
         let this_ptr: *mut Self = this;
-        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this_ptr));
+        this.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(this_ptr));
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -2521,14 +2528,22 @@ pub mod args {
     }
 
     /// Zig: `fn wrapTo(comptime T: type, in: i64) T` where `T` is unsigned.
-    /// Only ever instantiated with `uid_t`/`gid_t` (= `u32`), so drop the
-    /// `num_traits` dependency and hard-code the wrap.
+    /// Only ever instantiated with `uid_t`/`gid_t` — `u32` on POSIX, `u8` on
+    /// Windows (libuv's `uv_uid_t`/`uv_gid_t` are `unsigned char`). Hard-code
+    /// the per-platform wrap rather than pulling `num_traits`.
+    #[cfg(not(windows))]
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
         // Zig spec (node_fs.zig:1586): `@intCast(@mod(in, std.math.maxInt(T)))`
-        // — i.e. modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
+        // — modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
         // and `4294967295 → 0`. Match the spec exactly.
         T::from(in_.rem_euclid(u32::MAX as i64) as u32)
+    }
+    #[cfg(windows)]
+    #[inline]
+    fn wrap_to<T: From<u8>>(in_: i64) -> T {
+        // Same `@mod(in, maxInt(T))` semantics with `T = u8`.
+        T::from(in_.rem_euclid(u8::MAX as i64) as u8)
     }
 
     pub type LChown = Chown;

@@ -342,11 +342,14 @@ pub fn symlink_uv(target: &ZStr, new_path: &ZStr, flags: c_int) -> Result<()> {
     }
 }
 
-pub fn ftruncate(fd: Fd, size: isize) -> Result<()> {
+pub fn ftruncate(fd: Fd, size: i64) -> Result<()> {
+    // Zig spec types `size: isize` (= i64 on every supported Windows target);
+    // accept `i64` directly so this matches the cross-platform `bun_sys::ftruncate`
+    // signature and callers don't need a per-platform `as isize` cast.
     let uv_fd = fd.uv();
     let mut req = uv::fs_t::uninitialized();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
-    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut req, uv_fd, size as i64, None) };
+    let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut req, uv_fd, size, None) };
 
     log!("uv ftruncate({}, {}) = {}", uv_fd, size, rc.int());
     if let Some(errno) = rc.errno() {

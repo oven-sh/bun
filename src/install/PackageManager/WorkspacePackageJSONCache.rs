@@ -151,9 +151,9 @@ impl WorkspacePackageJSONCache {
         }
 
         // Zig: `allocator.dupeZ(u8, path)` — owned NUL-terminated copy reused
-        // both as the map key and the path handed to `File.toSource`. The Rust
-        // `StringHashMap` boxes its own key on insert, so this `ZBox` is only
-        // for the `to_source` call below.
+        // both as the map key and the path handed to `File.toSource`. The
+        // returned `Source` *borrows* its `path` slices from this allocation,
+        // so it must outlive the cached `MapEntry` (forgotten on success below).
         let key = bun_core::ZBox::from_bytes(path);
 
         // MOVE_DOWN: `bun.sys.File.toSource` lives in `bun_logger` (T1 → T2
@@ -161,7 +161,6 @@ impl WorkspacePackageJSONCache {
         let source = match bun_logger::to_source(&key, Default::default()) {
             Ok(s) => s,
             Err(err) => {
-                drop(key);
                 return GetResult::ReadErr(err.into());
             }
         };
@@ -178,6 +177,12 @@ impl WorkspacePackageJSONCache {
                 return GetResult::ParseErr(err);
             }
         };
+
+        // `source.path` borrows from `key`; in Zig the same allocation is
+        // stored as `entry.key_ptr.*` so it lives as long as the map entry.
+        // `StringHashMap` boxes its own key copy, so leak `key` here to keep
+        // the `Source`'s path slices valid for the cache's lifetime.
+        core::mem::forget(key);
 
         let value = MapEntry {
             root: bun_core::handle_oom(parsed.root.deep_clone()),

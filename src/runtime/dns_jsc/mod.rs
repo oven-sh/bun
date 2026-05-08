@@ -10,6 +10,7 @@
 
 #[path = "dns.rs"]
 mod dns_body;
+pub(crate) use dns_body::netc;
 
 #[path = "cares_jsc.rs"]
 pub mod cares_jsc; // c-ares reply struct → JSValue bridges

@@ -364,20 +364,23 @@ pub(crate) mod install {
 #[path = "windows-shim/BinLinkingShim.rs"]
 pub mod _bin_linking_shim;
 // `bun_shim_impl` is a *freestanding Windows PE* (no CRT, raw NT syscalls) —
-// in Zig it is a separate `exe` artifact whose output is `@embedFile`d above;
-// it is never linked into the library. The Rust port lives alongside for
-// reference but is built as its own binary target, not as a `mod` of this lib
-// (it has no `std`, pulls private ntdll surface, and would drag a second
-// `#[global_allocator]` into the crate graph).
-#[cfg(any())]
+// in Zig it is a separate `exe` artifact whose output is `@embedFile`d above.
+// Unlike Zig the Rust port also compiles as a library `mod` (Windows-only) so
+// `run_command.rs` can call `try_startup_from_bun_js` / `FromBunRunContext`
+// directly — the standalone PE entrypoint is gated behind
+// `feature = "shim_standalone"` inside the file, and there is no
+// `#[global_allocator]` in the library configuration.
+#[cfg(windows)]
 #[path = "windows-shim/bun_shim_impl.rs"]
-mod _bun_shim_impl;
+pub mod _bun_shim_impl;
 pub mod windows_shim {
     pub use crate::_bin_linking_shim as bin_linking_shim;
     pub use bin_linking_shim::{
         embedded_executable_data, loose_decode, BinLinkingShim, Decoded, Flags, Shebang,
         EMBEDDED_EXECUTABLE_DATA,
     };
+    #[cfg(windows)]
+    pub use crate::_bun_shim_impl as bun_shim_impl;
 }
 
 #[path = "resolvers/folder_resolver.rs"]

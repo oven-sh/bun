@@ -37,6 +37,14 @@ pub mod kernel32 {
     };
     pub use bun_windows_sys::kernel32::*;
     pub use bun_windows_sys::externs::SetEndOfFile;
+    pub use bun_windows_sys::externs::{GetConsoleMode, SetConsoleMode, GetExitCodeProcess};
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        /// `SetHandleInformation` (handleapi.h). Used by `bun_shim_impl` to
+        /// strip `HANDLE_FLAG_INHERIT` before `CreateProcessW`.
+        pub fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
+    }
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -120,6 +128,9 @@ pub use bun_windows_sys::CHAR;
 pub use bun_windows_sys::BOOL;
 pub use bun_windows_sys::BOOLEAN;
 pub use bun_windows_sys::LPVOID;
+/// `PVOID` (winnt.h) — alias of `LPVOID`. Zig's `std.os.windows` exposes both;
+/// keep the alias so ported callers (`bun_shim_impl`) don't need rewriting.
+pub type PVOID = LPVOID;
 pub use bun_windows_sys::LPCVOID;
 pub use bun_windows_sys::LPWSTR;
 pub use bun_windows_sys::LPCWSTR;
@@ -143,6 +154,10 @@ pub use bun_windows_sys::UNICODE_STRING;
 pub use bun_windows_sys::NTSTATUS;
 pub use bun_windows_sys::NT_SUCCESS;
 pub use bun_windows_sys::STATUS_SUCCESS;
+/// `STARTF_USESTDHANDLES` (winbase.h).
+pub use bun_windows_sys::externs::STARTF_USESTDHANDLES;
+/// `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (consoleapi.h).
+pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 pub const MOVEFILE_COPY_ALLOWED: DWORD = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x1;
 pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
@@ -3543,6 +3558,46 @@ pub mod ntdll_context {
         /// `RtlCaptureContext` (winnt.h / ntdll.dll). Writes the calling
         /// thread's register state into `*ContextRecord`.
         pub fn RtlCaptureContext(ContextRecord: *mut super::CONTEXT);
+    }
+}
+
+/// Minimal `TEB` view (only `ProcessEnvironmentBlock` is read). The full
+/// `_TEB` is enormous; the ported callers (`bun_shim_impl`) only walk
+/// `Teb→Peb→ProcessParameters`, which `bun_core::windows_sys::PebView` already
+/// models — so re-export that and supply a thin `TEB` wrapper around it.
+#[repr(C)]
+pub struct TEB {
+    /// `NT_TIB` is 7 pointers on x64 (`ExceptionList`, `StackBase`,
+    /// `StackLimit`, `SubSystemTib`, `FiberData`/`Version`, `ArbitraryUserPointer`,
+    /// `Self`).
+    _nt_tib: [*mut core::ffi::c_void; 7],
+    pub EnvironmentPointer: *mut core::ffi::c_void,
+    /// `CLIENT_ID` — `{UniqueProcess, UniqueThread}`.
+    _client_id: [*mut core::ffi::c_void; 2],
+    pub ActiveRpcHandle: *mut core::ffi::c_void,
+    pub ThreadLocalStoragePointer: *mut core::ffi::c_void,
+    pub ProcessEnvironmentBlock: *mut PEB,
+    // (fields beyond ProcessEnvironmentBlock are not read here)
+}
+const _: () = assert!(core::mem::offset_of!(TEB, ProcessEnvironmentBlock) == 0x60);
+
+pub use bun_core::windows_sys::PebView as PEB;
+pub use bun_core::windows_sys::ProcessParameters as RTL_USER_PROCESS_PARAMETERS;
+
+/// `std.os.windows.teb()` — `gs:[0x30]` (x64) / `x18` (ARM64).
+#[inline]
+pub unsafe fn teb() -> *mut TEB {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let p: *mut TEB;
+        core::arch::asm!("mov {}, gs:[0x30]", out(reg) p, options(nostack, pure, readonly));
+        p
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        let p: *mut TEB;
+        core::arch::asm!("mov {}, x18", out(reg) p, options(nostack, pure, readonly));
+        p
     }
 }
 

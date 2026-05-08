@@ -411,6 +411,34 @@ pub mod ntdll {
         ) -> NTSTATUS;
         pub fn RtlWakeAddressSingle(Address: *const c_void);
         pub fn RtlWakeAddressAll(Address: *const c_void);
+
+        /// `RtlExitUserProcess` (ntdll). The Win32 `ExitProcess` forwards to
+        /// this; the freestanding `bun_shim_impl` calls it directly to avoid
+        /// linking kernel32 in the standalone PE.
+        pub fn RtlExitUserProcess(ExitStatus: u32) -> !;
+
+        pub fn NtReadFile(
+            FileHandle: HANDLE,
+            Event: HANDLE,
+            ApcRoutine: *mut c_void,
+            ApcContext: *mut c_void,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            Buffer: *mut c_void,
+            Length: ULONG,
+            ByteOffset: *const LARGE_INTEGER,
+            Key: *const ULONG,
+        ) -> NTSTATUS;
+        pub fn NtWriteFile(
+            FileHandle: HANDLE,
+            Event: HANDLE,
+            ApcRoutine: *mut c_void,
+            ApcContext: *mut c_void,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            Buffer: *const c_void,
+            Length: ULONG,
+            ByteOffset: *const LARGE_INTEGER,
+            Key: *const ULONG,
+        ) -> NTSTATUS;
     }
     pub use super::RtlNtStatusToDosError;
 }
@@ -534,6 +562,8 @@ impl NTSTATUS {
     /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /
     /// `RtlWaitOnAddress` when the wait timed out.
     pub const TIMEOUT: NTSTATUS = NTSTATUS(0x0000_0102);
+    /// `STATUS_END_OF_FILE` — `NtReadFile` past EOF.
+    pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
 
     #[inline]
     pub const fn from_raw(raw: u32) -> Self { NTSTATUS(raw) }

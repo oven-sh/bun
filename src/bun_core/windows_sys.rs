@@ -71,6 +71,7 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 /// `UNICODE_STRING` (`ntdef.h`). Mirrors `bun_windows_sys::UNICODE_STRING`;
 /// duplicated here so `bun_core` stays leaf.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct UnicodeString {
     pub Length: u16,
     pub MaximumLength: u16,

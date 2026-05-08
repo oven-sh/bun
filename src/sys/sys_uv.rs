@@ -31,6 +31,12 @@ pub use crate::get_fd_path;
 pub use crate::openat;
 pub use crate::openat_os_path;
 pub use crate::set_file_offset;
+// sys_uv.zig re-exports the bun.sys versions of these (libuv has no
+// equivalent or `bun.sys` already routes through Win32 directly).
+pub use crate::lseek;
+pub use crate::symlink;
+pub use crate::unlinkat;
+pub use crate::unlinkat_with_flags;
 // `mkdir_os_path` lands in B-2; until then route through the UTF-8 wrapper.
 pub use crate::mkdir as mkdir_os_path;
 

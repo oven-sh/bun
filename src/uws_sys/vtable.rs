@@ -29,6 +29,7 @@
 use core::ffi::{c_int, c_void};
 
 use crate::socket_group::VTable;
+use crate::thunk;
 use crate::{us_bun_verify_error_t, us_socket_t, ConnectingSocket};
 
 // TODO(port): Zig uses `@hasDecl(H, "onX")` structural reflection to decide
@@ -151,12 +152,8 @@ impl<H: Handler> Trampolines<H> {
     }
 
     pub extern "C" fn on_open(s: *mut us_socket_t, is_client: c_int, ip: *mut u8, ip_len: c_int) -> *mut us_socket_t {
-        let ip_slice: &[u8] = if !ip.is_null() {
-            // SAFETY: usockets guarantees `ip[0..ip_len]` is valid when non-null.
-            unsafe { core::slice::from_raw_parts(ip, usize::try_from(ip_len).expect("int cast")) }
-        } else {
-            &[]
-        };
+        // SAFETY: usockets guarantees `ip[0..ip_len]` is valid when non-null.
+        let ip_slice: &[u8] = unsafe { thunk::c_slice(ip, usize::try_from(ip_len).expect("int cast")) };
         if H::HAS_EXT {
             H::on_open(Self::ext(s), s, is_client != 0, ip_slice);
         } else {
@@ -167,7 +164,7 @@ impl<H: Handler> Trampolines<H> {
 
     pub extern "C" fn on_data(s: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid.
-        let data_slice = unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("int cast")) };
+        let data_slice = unsafe { thunk::c_slice(data, usize::try_from(len).expect("int cast")) };
         if H::HAS_EXT {
             H::on_data(Self::ext(s), s, data_slice);
         } else {

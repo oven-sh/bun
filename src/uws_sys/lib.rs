@@ -222,6 +222,7 @@ impl WindowsNamedPipe {
 #[path = "us_socket_t.rs"]      pub mod us_socket;
 #[path = "ListenSocket.rs"]     pub mod listen_socket;
 #[path = "SocketContext.rs"]    pub mod socket_context;
+#[path = "thunk.rs"]            pub mod thunk;
 #[path = "vtable.rs"]           pub mod vtable;
 #[path = "Request.rs"]          pub mod request;
 #[path = "Response.rs"]         pub mod response;

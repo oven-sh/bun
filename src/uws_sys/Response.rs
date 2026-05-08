@@ -14,6 +14,7 @@ use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 use bun_core::Fd;
+use crate::thunk;
 use crate::us_socket_t;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
@@ -360,7 +361,6 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             amount: u64,
@@ -369,20 +369,11 @@ impl<const SSL: bool> Response<SSL> {
         where
             H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
         {
-            if data.is_null() {
-                // null should always be treated as a no-op, there's no case where it should have any effect.
-                return true;
-            }
-            // SAFETY: H is a ZST (asserted at compile time above), so any bit
-            // pattern (i.e. zero bits) is a valid value.
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `this` is a live uws_res for the duration of the callback;
-            // no prior Rust `&mut` to it survives (the registering `&mut self`
-            // returned before uWS fires this), and `Response<SSL>` is a
-            // zero-sized opaque so the `&mut` covers no Rust-owned bytes.
-            let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
-            // PERF(port): was @call(.always_inline)
-            handler(data.cast::<U>(), amount, res)
+            // null user-data is always a no-op.
+            if data.is_null() { return true; }
+            // SAFETY: uWS callback contract — `this` is live for the call, `H`
+            // is a ZST handler (asserted in `thunk::zst`).
+            unsafe { thunk::zst::<H>()(data.cast::<U>(), amount, thunk::handle_mut(Response::<SSL>::cast_res(this))) }
         }
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -412,23 +403,17 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             user_data: *mut c_void,
         ) where
             H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
         {
-            if user_data.is_null() {
-                // null should always be treated as a no-op, there's no case where it should have any effect.
-                return;
-            }
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `this` is a live uws_res for the duration of the callback.
-            let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
-            // PERF(port): was @call(.always_inline)
-            handler(user_data.cast::<U>(), res);
+            // null user-data is always a no-op.
+            if user_data.is_null() { return; }
+            // SAFETY: uWS callback contract — `this` is live for the call, `H`
+            // is a ZST handler (asserted in `thunk::zst`).
+            unsafe { thunk::zst::<H>()(user_data.cast::<U>(), thunk::handle_mut(Response::<SSL>::cast_res(this))) }
         }
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -450,23 +435,17 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             user_data: *mut c_void,
         ) where
             H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
         {
-            if user_data.is_null() {
-                // null should always be treated as a no-op, there's no case where it should have any effect.
-                return;
-            }
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `this` is a live uws_res for the duration of the callback.
-            let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
-            // PERF(port): was @call(.always_inline)
-            handler(user_data.cast::<U>(), res);
+            // null user-data is always a no-op.
+            if user_data.is_null() { return; }
+            // SAFETY: uWS callback contract — `this` is live for the call, `H`
+            // is a ZST handler (asserted in `thunk::zst`).
+            unsafe { thunk::zst::<H>()(user_data.cast::<U>(), thunk::handle_mut(Response::<SSL>::cast_res(this))) }
         }
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -493,7 +472,6 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
     {
-        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
         unsafe extern "C" fn handle<U, H, const SSL: bool>(
             this: *mut c::uws_res,
             chunk_ptr: *const u8,
@@ -503,22 +481,18 @@ impl<const SSL: bool> Response<SSL> {
         ) where
             H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
         {
-            if user_data.is_null() {
-                // null should always be treated as a no-op, there's no case where it should have any effect.
-                return;
+            // null user-data is always a no-op.
+            if user_data.is_null() { return; }
+            // SAFETY: uWS callback contract — `this` live, `chunk_ptr[..len]`
+            // valid for the call, `H` is a ZST handler (asserted in `thunk::zst`).
+            unsafe {
+                thunk::zst::<H>()(
+                    user_data.cast::<U>(),
+                    thunk::handle_mut(Response::<SSL>::cast_res(this)),
+                    thunk::c_slice(chunk_ptr, len),
+                    last,
+                )
             }
-            let chunk: &[u8] = if len > 0 {
-                // SAFETY: chunk_ptr/len come from uws and are valid for this call.
-                unsafe { core::slice::from_raw_parts(chunk_ptr, len) }
-            } else {
-                b""
-            };
-            // SAFETY: H is a ZST (asserted at compile time above).
-            let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `this` is a live uws_res for the duration of the callback.
-            let res = unsafe { &mut *Response::<SSL>::cast_res(this) };
-            // PERF(port): was @call(.always_inline)
-            handler(user_data.cast::<U>(), res, chunk, last);
         }
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {

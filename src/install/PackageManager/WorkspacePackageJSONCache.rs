@@ -193,21 +193,8 @@ impl WorkspacePackageJSONCache {
             }
         };
 
-        // Zig: `json.root.deepClone(bun.default_allocator)` — heap-backed so the
-        // cached AST survives any later Store reset. Route the clone into the
-        // per-entry `json_bump` (held below as `json_arena`) for the same
-        // guarantee; otherwise the nodes land in whatever `data_store_override`
-        // / `DATA_STORE` happens to be active and dangle once that is reset.
-        let root = {
-            let prev = bun_logger::js_ast::data_store_override();
-            bun_logger::js_ast::set_data_store_override(&json_bump);
-            let r = bun_core::handle_oom(parsed.root.deep_clone());
-            bun_logger::js_ast::set_data_store_override(prev);
-            r
-        };
-
         let value = MapEntry {
-            root,
+            root: bun_core::handle_oom(parsed.root.deep_clone()),
             source,
             indentation: parsed.indentation,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
@@ -262,18 +249,8 @@ impl WorkspacePackageJSONCache {
             }
         };
 
-        // See `get_with_path` — clone into the per-entry arena so the cached
-        // AST is independent of any thread-local Store reset.
-        let root = {
-            let prev = bun_logger::js_ast::data_store_override();
-            bun_logger::js_ast::set_data_store_override(&json_bump);
-            let r = bun_core::handle_oom(parsed.root.deep_clone());
-            bun_logger::js_ast::set_data_store_override(prev);
-            r
-        };
-
         let value = MapEntry {
-            root,
+            root: bun_core::handle_oom(parsed.root.deep_clone()),
             source: source.clone(),
             indentation: parsed.indentation,
             path_storage: bun_core::ZBox::default(),

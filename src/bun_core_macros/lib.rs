@@ -213,19 +213,20 @@ pub fn pretty_fmt(input: TokenStream) -> TokenStream {
 // Field selection (first match wins):
 //   1. a field annotated `#[ref_count]`
 //   2. a field literally named `ref_count`
-//   3. the unique field whose type's last path segment is `Cell` (or
-//      `AtomicU32`/`ThreadSafeRefCount` for the thread-safe derive)
+//
+// There is no type-based fallback. An earlier draft fell back on "the unique
+// field whose type's last path segment is `Cell`", but that matched any
+// `Cell<_>` (e.g. `Cell<bool>`), turning the helpful "no ref_count field
+// found" diagnostic into a buried type-mismatch inside generated code. The
+// Zig spec (`@FieldType(T, "ref_count")` in src/ptr/ref_count.zig) requires
+// the literal name anyway, so rules 1+2 are sufficient and exhaustive.
 //
 // Custom destructor: `#[ref_count(destroy = Self::deinit)]` on the struct
 // routes the trait's `destroy` to that path instead of the default
 // `drop(Box::from_raw(this))`.
 
-/// Locate the refcount field per the rules above. `type_hints` is the list of
-/// last-segment type names to fall back on (e.g. `["Cell"]`).
-fn find_ref_count_field<'a>(
-    fields: &'a Fields,
-    type_hints: &[&str],
-) -> Result<&'a syn::Ident, syn::Error> {
+/// Locate the refcount field per the rules above.
+fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
     let named = match fields {
         Fields::Named(n) => &n.named,
         _ => {
@@ -248,29 +249,10 @@ fn find_ref_count_field<'a>(
             return Ok(f.ident.as_ref().unwrap());
         }
     }
-    // 3. unique field whose last type segment matches a hint
-    let mut hit: Option<&syn::Ident> = None;
-    for f in named {
-        if let syn::Type::Path(tp) = &f.ty {
-            if let Some(seg) = tp.path.segments.last() {
-                if type_hints.iter().any(|h| seg.ident == *h) {
-                    if hit.is_some() {
-                        return Err(syn::Error::new_spanned(
-                            &f.ident,
-                            "ref-count derive: multiple candidate fields; annotate one with #[ref_count]",
-                        ));
-                    }
-                    hit = f.ident.as_ref();
-                }
-            }
-        }
-    }
-    hit.ok_or_else(|| {
-        syn::Error::new(
-            Span::call_site(),
-            "ref-count derive: no `ref_count` field found; annotate one with #[ref_count]",
-        )
-    })
+    Err(syn::Error::new(
+        Span::call_site(),
+        "ref-count derive: no `ref_count` field found; name it `ref_count` or annotate with #[ref_count]",
+    ))
 }
 
 /// Parse the optional struct-level `#[ref_count(destroy = path)]` attribute.
@@ -314,7 +296,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
         }
     };
 
-    let field = match find_ref_count_field(fields, &["Cell"]) {
+    let field = match find_ref_count_field(fields) {
         Ok(f) => f,
         Err(e) => return e.to_compile_error().into(),
     };
@@ -410,7 +392,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
         }
     };
 
-    let field = match find_ref_count_field(fields, &["ThreadSafeRefCount", "AtomicU32"]) {
+    let field = match find_ref_count_field(fields) {
         Ok(f) => f,
         Err(e) => return e.to_compile_error().into(),
     };

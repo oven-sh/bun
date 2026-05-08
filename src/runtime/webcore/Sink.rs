@@ -69,6 +69,12 @@ impl JsSinkAbi for ArrayBufferSink {
     fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
         array_buffer_sink_abi::ArrayBufferSink__onReady(ptr, amount, offset)
     }
+    fn detach_ptr_extern(ptr: JSValue) {
+        // Spec Sink.zig:259/330 — every JSSink instantiation calls
+        // `${abi}__detachPtr` from `detach`; the trait default no-op was wrong
+        // for ArrayBufferSink (Body::ValueBufferer drop path reaches here).
+        array_buffer_sink_abi::ArrayBufferSink__detachPtr(ptr)
+    }
 }
 
 impl JSSink<ArrayBufferSink> {

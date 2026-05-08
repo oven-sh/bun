@@ -651,7 +651,7 @@ impl JSBundleCompletionTask {
                     };
                     let result = output_file.to_js(Some(&path), global_this);
                     if to_assign_on_sourcemap != JSValue::ZERO {
-                        BuildArtifactPrototype__sourcemapSetCachedValue(
+                        crate::generated_classes::js_BuildArtifact::sourcemap_set_cached(
                             to_assign_on_sourcemap,
                             global_this,
                             result,
@@ -734,11 +734,15 @@ impl JSBundleCompletionTask {
     }
 }
 
-// ─── C++ FFI (codegen) ───────────────────────────────────────────────────────
-// `jsc.conv` — sysv64 on Windows-x64, C elsewhere. These are C++ symbols
-// emitted by `generate-classes.ts` / `BundlerMetafile.cpp`, not Rust symbols,
-// so a local extern block is the correct binding (not a re-declaration of a
-// Rust fn).
+// ─── C++ FFI ─────────────────────────────────────────────────────────────────
+// `jsc.conv` — sysv64 on Windows-x64, C elsewhere. `Bun__setupLazyMetafile` is
+// a hand-written C++ symbol from `BundlerMetafile.cpp` (not codegen-emitted),
+// so a local extern block is the correct binding.
+//
+// NOTE: `BuildArtifactPrototype__sourcemapSetCachedValue` is *not* redeclared
+// here — codegen already provides it (and a safe `sourcemap_set_cached`
+// wrapper) in `crate::generated_classes::js_BuildArtifact`; redeclaring would
+// trip `clashing_extern_declarations` once the param types drift.
 #[cfg(all(windows, target_arch = "x86_64"))]
 unsafe extern "sysv64" {
     safe fn Bun__setupLazyMetafile(
@@ -746,11 +750,6 @@ unsafe extern "sysv64" {
         build_output: JSValue,
         metafile_json_string: JSValue,
         metafile_markdown_string: JSValue,
-    );
-    safe fn BuildArtifactPrototype__sourcemapSetCachedValue(
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
     );
 }
 #[cfg(not(all(windows, target_arch = "x86_64")))]
@@ -760,11 +759,6 @@ unsafe extern "C" {
         build_output: JSValue,
         metafile_json_string: JSValue,
         metafile_markdown_string: JSValue,
-    );
-    safe fn BuildArtifactPrototype__sourcemapSetCachedValue(
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
     );
 }
 

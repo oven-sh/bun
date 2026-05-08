@@ -127,10 +127,14 @@ impl Decompressor {
                 let initial = body_out_str.list.len();
                 // PORT NOTE: Zig `expandToCapacity()` set `len = capacity` so the
                 // zlib output pointers could write into the spare region while
-                // `read_all` later truncated back to `total_out`. The Rust
-                // `ZlibReaderArrayList::read_all` operates on `list_ptr` directly
-                // (reserve + set_len), so we only need to guarantee non-zero
-                // headroom and prime `next_out`/`avail_out`.
+                // `read_all` later truncated back to `total_out`. `read_all`'s
+                // grow-on-avail_out==0 path reads `list_ptr.len()` to compute the
+                // resume offset, so this `set_len(capacity)` is load-bearing —
+                // skipping it leaves `len == initial` and the next grow rewinds
+                // `next_out` to `ptr + initial`, overwriting freshly-inflated
+                // bytes (observed as mid-stream gzip/deflate corruption when a
+                // streamed body chunk decompresses past the reused buffer's
+                // capacity).
                 if body_out_str.list.capacity() == initial {
                     body_out_str.list.reserve(4096);
                 }
@@ -144,6 +148,12 @@ impl Decompressor {
                 // borrows.
                 // SAFETY: see module-level note on lifetime erasure.
                 reader.list_ptr = unsafe { erase_mut(&mut body_out_str.list) };
+                // expandToCapacity:
+                // SAFETY: capacity bytes are allocated; zlib initializes
+                // `[initial, capacity)` before `read_all`'s defer truncates `len`
+                // back to `total_out`, so no uninitialized byte is observed at the
+                // truncated length.
+                unsafe { reader.list_ptr.set_len(reader.list_ptr.capacity()) };
                 // SAFETY: `initial <= len <= capacity`; the offset is within the
                 // allocation and `read_all` only writes into `[initial, capacity)`.
                 reader.zlib.next_out = unsafe { reader.list_ptr.as_mut_ptr().add(initial) };

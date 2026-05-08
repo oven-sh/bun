@@ -1,11 +1,12 @@
 //! Some additional behaviour beyond basic `cd <dir>`:
-//! - `cd` with no args → `$HOME`
-//! - `cd -` → previous cwd
+//! - `cd` by itself or `cd ~` will always put the user in their home directory.
+//! - `cd -` will put the user in the previous directory
 
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
@@ -25,37 +26,96 @@ impl Cd {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
         let args = Builtin::of(interp, cmd).args_slice();
         if args.len() > 1 {
-            return Self::fail(interp, cmd, b"cd: too many arguments\n");
+            return Self::write_stderr_non_blocking(
+                interp,
+                cmd,
+                format_args!("too many arguments\n"),
+            );
         }
 
-        let target: Vec<u8> = if args.is_empty() {
-            // TODO(b2-blocked): ShellExecEnv::get_home_dir() — read $HOME from
-            // export_env. Gated until EnvMap lookup is wired.
-            b"/".to_vec()
-        } else {
+        if args.len() == 1 {
             // SAFETY: argv entries are NUL-terminated.
-            let arg = unsafe { CStr::from_ptr(args[0]) }.to_bytes();
-            if arg == b"-" {
-                Builtin::shell(interp, cmd).prev_cwd().to_vec()
-            } else {
-                arg.to_vec()
+            let first_arg = unsafe { CStr::from_ptr(args[0]) }.to_bytes();
+            match first_arg.first() {
+                Some(b'-') => {
+                    let prev = Builtin::shell(interp, cmd).prev_cwd().to_vec();
+                    if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_prev_cwd() {
+                        return Self::handle_change_cwd_err(interp, cmd, err, &prev);
+                    }
+                }
+                Some(b'~') => {
+                    let homedir = Builtin::shell(interp, cmd).get_homedir();
+                    let target = homedir.slice().to_vec();
+                    homedir.deref();
+                    if let Err(err) =
+                        interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target)
+                    {
+                        return Self::handle_change_cwd_err(interp, cmd, err, &target);
+                    }
+                }
+                _ => {
+                    let target = first_arg.to_vec();
+                    if let Err(err) =
+                        interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target)
+                    {
+                        return Self::handle_change_cwd_err(interp, cmd, err, &target);
+                    }
+                }
             }
-        };
+        }
 
-        // TODO(b2-blocked): ShellExecEnv::change_cwd(target) — resolve relative
-        // to current cwd, openat(O_DIRECTORY), swap cwd_fd. Body gated until
-        // ShellExecEnv lookup is wired.
-        let _ = target;
         Builtin::done(interp, cmd, 0)
     }
 
-    fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
-        if Builtin::of(interp, cmd).stderr.needs_io().is_some() {
-            // TODO(b2-blocked): IOWriter::enqueue
-            Self::state_mut(interp, cmd).state = State::WaitingIo;
-            return Yield::suspended();
+    fn handle_change_cwd_err(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        err: bun_sys::Error,
+        new_cwd: &[u8],
+    ) -> Yield {
+        use bun_sys::E;
+        let errno = err.get_errno();
+        match errno {
+            E::NOTDIR | E::NOENT => Self::write_stderr_non_blocking(
+                interp,
+                cmd,
+                format_args!("not a directory: {}\n", bstr::BStr::new(new_cwd)),
+            ),
+            E::NAMETOOLONG => Self::write_stderr_non_blocking(
+                interp,
+                cmd,
+                format_args!("file name too long\n"),
+            ),
+            _ => {
+                let errmsg = err.msg().unwrap_or_else(|| err.name());
+                Self::write_stderr_non_blocking(
+                    interp,
+                    cmd,
+                    format_args!(
+                        "{}: {}\n",
+                        bstr::BStr::new(errmsg),
+                        bstr::BStr::new(new_cwd),
+                    ),
+                )
+            }
         }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
+    }
+
+    fn write_stderr_non_blocking(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        args: core::fmt::Arguments<'_>,
+    ) -> Yield {
+        Self::state_mut(interp, cmd).state = State::WaitingIo;
+        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::of_mut(interp, cmd)
+                .stderr
+                .enqueue_fmt(child, Some(Kind::Cd), args, safeguard);
+        }
+        let buf = Builtin::fmt_error_arena(interp, cmd, Some(Kind::Cd), args).to_vec();
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
+        Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)
     }
 

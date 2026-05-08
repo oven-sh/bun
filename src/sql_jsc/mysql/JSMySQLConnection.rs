@@ -1097,9 +1097,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.update_reference_type();
     }
 
-    fn on_handshake_<S>(
+    fn on_handshake_(
         this: &mut JSMySQLConnection,
-        _: S,
+        _: NewSocketHandler<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) {
@@ -1119,8 +1119,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     // pub const onHandshake = if (ssl) onHandshake_ else null;
-    // TODO(port): conditional associated const on const-generic bool — Phase B wires this
-    // via the dispatch table (only register on_handshake when SSL == true).
+    pub const ON_HANDSHAKE: Option<
+        fn(&mut JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
+    > = if SSL { Some(Self::on_handshake_) } else { None };
 
     pub fn on_close(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32, _: Option<*mut c_void>) {
         // Zig `defer this.deref();` — releases the socket ref taken in on_open.

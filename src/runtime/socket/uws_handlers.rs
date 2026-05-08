@@ -365,14 +365,81 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
 // no-ops; each consumer type opts in with an `impl` that overrides only the
 // events it actually handles. `api::NewSocket`'s real impl lives in
 // `socket/mod.rs` (bridges to inherent methods).
-// TODO(port): SQL-driver event bodies.
 impl<const SSL: bool> NsSocketEvents<postgres::PostgresSQLConnection, SSL>
     for postgres::postgres_sql_connection::SocketHandler<SSL>
 {
+    fn on_open(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_open(this, s);
+        Ok(())
+    }
+    fn on_data(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>, data: &[u8]) -> bun_jsc::JsResult<()> {
+        Self::on_data(this, s, data);
+        Ok(())
+    }
+    fn on_writable(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_writable(this, s);
+        Ok(())
+    }
+    fn on_close(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>, code: i32, reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> {
+        Self::on_close(this, s, code, reason);
+        Ok(())
+    }
+    fn on_timeout(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_timeout(this, s);
+        Ok(())
+    }
+    fn on_end(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_end(this, s);
+        Ok(())
+    }
+    fn on_connect_error(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>, code: i32) -> bun_jsc::JsResult<()> {
+        Self::on_connect_error(this, s, code);
+        Ok(())
+    }
+    fn on_handshake(this: &mut postgres::PostgresSQLConnection, s: NewSocketHandler<SSL>, ok: i32, err: us_bun_verify_error_t) -> bun_jsc::JsResult<()> {
+        if let Some(f) = Self::ON_HANDSHAKE {
+            f(this, s, ok, err);
+        }
+        Ok(())
+    }
 }
 impl<const SSL: bool> NsSocketEvents<mysql::js_my_sql_connection::JSMySQLConnection, SSL>
     for mysql::js_my_sql_connection::SocketHandler<SSL>
 {
+    fn on_open(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_open(this, s);
+        Ok(())
+    }
+    fn on_data(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>, data: &[u8]) -> bun_jsc::JsResult<()> {
+        Self::on_data(this, s, data);
+        Ok(())
+    }
+    fn on_writable(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_writable(this, s);
+        Ok(())
+    }
+    fn on_close(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>, code: i32, reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> {
+        Self::on_close(this, s, code, reason);
+        Ok(())
+    }
+    fn on_timeout(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_timeout(this, s);
+        Ok(())
+    }
+    fn on_end(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_end(this, s);
+        Ok(())
+    }
+    fn on_connect_error(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>, code: i32) -> bun_jsc::JsResult<()> {
+        Self::on_connect_error(this, s, code);
+        Ok(())
+    }
+    fn on_handshake(this: &mut mysql::js_my_sql_connection::JSMySQLConnection, s: NewSocketHandler<SSL>, ok: i32, err: us_bun_verify_error_t) -> bun_jsc::JsResult<()> {
+        if let Some(f) = Self::ON_HANDSHAKE {
+            f(this, s, ok, err);
+        }
+        Ok(())
+    }
 }
 impl<const SSL: bool> NsSocketEvents<js_valkey::JSValkeyClient, SSL>
     for js_valkey::SocketHandler<SSL>

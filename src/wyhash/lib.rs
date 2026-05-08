@@ -480,6 +480,63 @@ impl core::hash::Hasher for Wyhash {
     }
 }
 
+impl Default for Wyhash {
+    #[inline]
+    fn default() -> Self {
+        Wyhash::init(0)
+    }
+}
+
+/// One-shot `Hasher` for `std::collections::HashMap`. Unlike [`Wyhash`]'s
+/// streaming `Hasher` impl (which buffers into a 48-byte scratch and re-zeroes
+/// it on every `init`/`shallow_copy` — a measurable zero-fill cost the Zig
+/// `= undefined` avoids), this folds each `write` through the stateless
+/// one-shot path seeded by the running hash. Matches Zig's
+/// `std.hash_map.getAutoHashFn` shape: no buffering, no per-key allocation.
+///
+/// Hash values are deterministic across runs (seed 0) but are NOT
+/// bit-identical to Zig's `Wyhash.hash(0, key)` because Rust's `Hash for [T]`
+/// prepends a length prefix; that's fine — these are in-memory tables only
+/// (lockfile/on-disk hashes go through [`Wyhash11`] / [`hash`] directly).
+#[derive(Default, Clone, Copy)]
+pub struct OneShotHasher {
+    hash: u64,
+}
+
+impl core::hash::Hasher for OneShotHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        // Each chunk re-seeds from the previous output, so multi-`write` keys
+        // (e.g. `(&[u8], u32)`) still mix without buffering. For the
+        // overwhelmingly common single-`write` case this is one stateless
+        // wyhash over the slice.
+        self.hash = Wyhash11::hash(self.hash, bytes);
+    }
+    #[inline]
+    fn write_u8(&mut self, n: u8) { self.write_u64(u64::from(n)); }
+    #[inline]
+    fn write_u16(&mut self, n: u16) { self.write_u64(u64::from(n)); }
+    #[inline]
+    fn write_u32(&mut self, n: u32) { self.write_u64(u64::from(n)); }
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        // Cheap diffusion for integer keys / length prefixes — one 128-bit
+        // multiply, same primitive wyhash uses internally (`mum`).
+        self.hash = mum(self.hash ^ n, PRIMES[4]);
+    }
+    #[inline]
+    fn write_usize(&mut self, n: usize) { self.write_u64(n as u64); }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+/// `BuildHasher` for `std::collections::HashMap` so containers can opt out of
+/// SipHash. Deterministic across runs and ~3-5× faster than `RandomState` on
+/// the short identifier keys the parser/printer/renamer churn.
+pub type BuildHasher = core::hash::BuildHasherDefault<OneShotHasher>;
+
 /// `bun.hash(bytes)` — `std.hash.Wyhash` with seed 0.
 #[inline]
 pub fn hash(bytes: &[u8]) -> u64 {

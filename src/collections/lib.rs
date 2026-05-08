@@ -171,7 +171,7 @@ pub struct AutoHashContext;
 
 #[repr(transparent)]
 pub struct HashMap<K, V, C = AutoHashContext> {
-    inner: std::collections::HashMap<K, V>,
+    inner: std::collections::HashMap<K, V, bun_wyhash::BuildHasher>,
     _ctx: core::marker::PhantomData<C>,
 }
 
@@ -182,7 +182,7 @@ impl<K, V, C> Default for HashMap<K, V, C> {
 }
 
 impl<K, V, C> core::ops::Deref for HashMap<K, V, C> {
-    type Target = std::collections::HashMap<K, V>;
+    type Target = std::collections::HashMap<K, V, bun_wyhash::BuildHasher>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
@@ -201,7 +201,10 @@ impl<K, V, C> HashMap<K, V, C> {
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            inner: std::collections::HashMap::with_capacity(capacity),
+            inner: std::collections::HashMap::with_capacity_and_hasher(
+                capacity,
+                bun_wyhash::BuildHasher::default(),
+            ),
             _ctx: core::marker::PhantomData,
         }
     }

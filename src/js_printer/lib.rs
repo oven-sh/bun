@@ -727,19 +727,21 @@ where
     let mut double_cost: usize = 0;
     let mut backtick_cost: usize = 0;
     let mut i: usize = 0;
-    while i < str.len().min(1024) {
-        match str[i].into() {
-            c if c == u32::from(b'\'') => single_cost += 1,
-            c if c == u32::from(b'"') => double_cost += 1,
-            c if c == u32::from(b'`') => backtick_cost += 1,
-            c if c == u32::from(b'\n') => {
+    let n = str.len().min(1024);
+    while i < n {
+        // SAFETY: loop invariant `i < n ≤ str.len()`.
+        match unsafe { *str.get_unchecked(i) }.into() {
+            0x27 /* ' */ => single_cost += 1,
+            0x22 /* " */ => double_cost += 1,
+            0x60 /* ` */ => backtick_cost += 1,
+            0x0A /* \n */ => {
                 single_cost += 1;
                 double_cost += 1;
             }
-            c if c == u32::from(b'\\') => {
+            0x5C /* \\ */ => {
                 i += 1;
             }
-            c if c == u32::from(b'$') => {
+            0x24 /* $ */ => {
                 if i + 1 < str.len() && str[i + 1].into() == u32::from(b'{') {
                     backtick_cost += 1;
                 }
@@ -6466,34 +6468,47 @@ impl<C: WriterContext> Writer<C> {
 
     pub fn advance(&mut self, count: u64) {
         self.ctx.advance_by(count);
-        self.written += i32::try_from(count).expect("int cast");
+        // PERF(port): @intCast — output never approaches 2 GiB; checked add of
+        // a u64→i32 here was a measurable branch in the per-token print path.
+        // Keep Zig's debug-mode @intCast contract without paying for it in release.
+        debug_assert!(count <= i32::MAX as u64);
+        self.written = self.written.wrapping_add(count as i32);
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
         let written = self.written.max(0);
         self.print_slice(bytes);
-        Ok(usize::try_from(self.written).expect("int cast") - usize::try_from(written).expect("int cast"))
+        debug_assert!(self.written >= 0);
+        Ok((self.written as usize).wrapping_sub(written as usize))
     }
 
     #[inline]
     pub fn print_byte(&mut self, b: u8) {
-        let written = match self.ctx.write_byte(b) {
-            Ok(n) => n,
-            Err(err) => { self.orig_err = Some(err); 0 }
-        };
-        self.written += i32::try_from(written).expect("int cast");
-        if written == 0 { self.err = Some(bun_core::err!("WriteFailed")); }
+        match self.ctx.write_byte(b) {
+            Ok(n) => {
+                self.written = self.written.wrapping_add(n as i32);
+                if n == 0 { self.err = Some(bun_core::err!("WriteFailed")); }
+            }
+            Err(err) => {
+                self.orig_err = Some(err);
+                self.err = Some(bun_core::err!("WriteFailed"));
+            }
+        }
     }
 
     #[inline]
     pub fn print_slice(&mut self, s: &[u8]) {
-        let written = match self.ctx.write_all(s) {
-            Ok(n) => n,
-            Err(err) => { self.orig_err = Some(err); 0 }
-        };
-        self.written += i32::try_from(written).expect("int cast");
-        if written < s.len() {
-            self.err = Some(if written == 0 { bun_core::err!("WriteFailed") } else { bun_core::err!("PartialWrite") });
+        match self.ctx.write_all(s) {
+            Ok(n) => {
+                self.written = self.written.wrapping_add(n as i32);
+                if n < s.len() {
+                    self.err = Some(if n == 0 { bun_core::err!("WriteFailed") } else { bun_core::err!("PartialWrite") });
+                }
+            }
+            Err(err) => {
+                self.orig_err = Some(err);
+                self.err = Some(bun_core::err!("WriteFailed"));
+            }
         }
     }
 

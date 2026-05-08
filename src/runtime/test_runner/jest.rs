@@ -191,10 +191,12 @@ impl<'a> TestRunner<'a> {
         {
             return;
         }
-        // TODO(blocked_on: bun_jsc::VirtualMachine::timer): `vm.timer` is a
-        // `()` stub upstream; the real `All::remove` lives in
-        // src/runtime/timer/mod.rs but isn't wired through VirtualMachine yet.
-        let _ = (vm, &mut active_file.timer);
+        let _ = vm;
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "remove_active_timeout before init_runtime_state");
+        // SAFETY: per-thread `RuntimeState`; `All::remove` re-derefs the timer
+        // per-field, so no `&mut` to `active_file` is held across the call.
+        unsafe { (*state).timer.remove(&raw mut active_file.timer) };
     }
 
     pub fn has_test_filter(&self) -> bool {

@@ -245,7 +245,6 @@ pub fn get_http2_common_string(global_object: &JSGlobalObject, hpack_index: u32)
     if hpack_index == 255 {
         return None;
     }
-    // SAFETY: FFI to C++ with valid global object pointer
     let value = JSC__JSGlobalObject__getHTTP2CommonString(global_object, hpack_index);
     if value.is_empty_or_undefined_or_null() {
         return None;
@@ -1359,7 +1358,6 @@ impl SignalRef {
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
         if stream.state != StreamState::CLOSED {
-            // SAFETY: FFI call with valid global object
             let wrapped = Bun__wrapAbortError(&parser.global_this, reason);
             parser.abort_stream(stream, wrapped);
         }
@@ -5327,7 +5325,6 @@ impl H2FrameParser {
                     let signal_ = unsafe { &mut *signal_ptr };
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
-                        // SAFETY: FFI call; global_object is a valid &JSGlobalObject and reason/abort_reason() is rooted on the stack
                         let wrapped = Bun__wrapAbortError(global_object, signal_.abort_reason());
                         this.abort_stream(stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));

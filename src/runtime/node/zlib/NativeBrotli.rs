@@ -635,12 +635,11 @@ unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
 fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
     unsafe extern "C" {
         safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: &JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
+            global: &JSGlobalObject,
+            callback: JSValue,
+        ) -> JSValue;
     }
-    // SAFETY: FFI to JSC binding; global is a valid live JSGlobalObject.
-    AsyncContextFrame__withAsyncContextIfNeeded(&global, callback)
+    AsyncContextFrame__withAsyncContextIfNeeded(global, callback)
 }
 
 // Codegen accessor namespace (JSNativeBrotli generated bindings).

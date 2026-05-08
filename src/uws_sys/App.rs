@@ -368,7 +368,6 @@ impl<const SSL: bool> App<SSL> {
     }
 
     pub fn run(&mut self) {
-        // SAFETY: self is a valid app.
         c::uws_app_run(Self::SSL_FLAG, self.as_raw())
     }
 
@@ -460,7 +459,6 @@ impl<const SSL: bool> App<SSL> {
     }
 
     pub fn constructor_failed(&mut self) -> bool {
-        // SAFETY: self is a valid app.
         c::uws_constructor_failed(Self::SSL_FLAG, self.as_raw())
     }
 

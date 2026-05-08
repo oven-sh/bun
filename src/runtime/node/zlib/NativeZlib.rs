@@ -34,8 +34,7 @@ impl JSValueZlibExt for JSValue {
                 callback: JSValue,
             ) -> JSValue;
         }
-        // SAFETY: FFI into JSC; `global` is live for the call. `*mut` → `*const` coercion.
-        AsyncContextFrame__withAsyncContextIfNeeded(&global, self)
+        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 }
 

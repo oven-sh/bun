@@ -1198,8 +1198,6 @@ fn load_module(
     global: &JSGlobalObject,
     key: JSValue,
 ) -> Result<JSValue, bun_core::Error> {
-    // SAFETY: FFI call; `global` is a live &JSGlobalObject and `key` is a JSValue
-    // held on the stack for the duration of the call.
     let promise_value = BakeLoadModuleByKey(global, key);
     let promise: *mut jsc::JSInternalPromise = match promise_value.as_any_promise().unwrap() {
         AnyPromise::Internal(p) => p,
@@ -1227,10 +1225,7 @@ fn load_module(
     // SAFETY: see above; promise cell is still live (rooted via the module loader).
     match unsafe { (*promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
         Unwrapped::Pending => unreachable!(),
-        Unwrapped::Fulfilled(_) => {
-            // SAFETY: FFI; global live, key stack-held.
-            Ok(BakeGetModuleNamespace(global, key))
-        }
+        Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
         Unwrapped::Rejected(err) => {
             // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
             Err(js_err(unsafe { &*(*vm).global }.throw_value(err)))

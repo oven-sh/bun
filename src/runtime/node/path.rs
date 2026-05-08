@@ -3490,12 +3490,10 @@ pub fn resolve(
         if !is_windows {
             // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
             if paths.is_empty() {
-                // SAFETY: FFI call with valid global object pointer.
                 return Ok(Process__getCachedCwd(global_object));
             }
             // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
             else if paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./") {
-                // SAFETY: FFI call with valid global object pointer.
                 return Ok(Process__getCachedCwd(global_object));
             }
         }

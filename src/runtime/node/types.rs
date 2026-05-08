@@ -733,7 +733,7 @@ impl Encoding {
     }
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: FFI call into WebCore; `Encoding` is `#[repr(u8)]` matching BufferEncodingType.h.
+        // `Encoding` is `#[repr(u8)]` matching BufferEncodingType.h.
         WebCore_BufferEncodingType_toJS(global_object, self)
     }
 }
@@ -1614,7 +1614,6 @@ unsafe extern "C" {
 
 impl Dirent {
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: FFI call.
         Bun__JSDirentObjectConstructor(global)
     }
 

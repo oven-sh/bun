@@ -95,10 +95,8 @@ impl<const BIG: bool> StatType<BIG> {
 
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
         if BIG {
-            // SAFETY: FFI call into JSC binding; `global` is a valid borrow.
             Bun__JSBigIntStatsObjectConstructor(global)
         } else {
-            // SAFETY: FFI call into JSC binding; `global` is a valid borrow.
             Bun__JSStatsObjectConstructor(global)
         }
     }

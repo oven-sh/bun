@@ -26,7 +26,8 @@ impl Timer {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        let t = us_create_timer(loop_, 0, c_uint::try_from(size_of::<T>()).expect("int cast"));
+        // SAFETY: `loop_` is a valid loop pointer.
+        let t = unsafe { us_create_timer(loop_, 0, c_uint::try_from(size_of::<T>()).expect("int cast")) };
         NonNull::new(t).unwrap_or_else(|| {
             // TODO(port): use bun_sys errno accessor instead of std::io
             panic!(
@@ -40,7 +41,8 @@ impl Timer {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        let t = us_create_timer(loop_, 1, c_uint::try_from(size_of::<T>()).expect("int cast"));
+        // SAFETY: `loop_` is a valid loop pointer.
+        let t = unsafe { us_create_timer(loop_, 1, c_uint::try_from(size_of::<T>()).expect("int cast")) };
         NonNull::new(t).unwrap_or_else(|| {
             // TODO(port): use bun_sys errno accessor instead of std::io
             panic!(
@@ -104,7 +106,9 @@ impl Timer {
 }
 
 unsafe extern "C" {
-    pub safe fn us_create_timer(loop_: &mut Loop, fallthrough: i32, ext_size: c_uint) -> *mut Timer;
+    // `Loop` is a sized `#[repr(C)]` mirror (not an opaque ZST) — keep raw `*mut`
+    // so the FFI boundary does not annotate `noalias` over real loop fields.
+    pub fn us_create_timer(loop_: *mut Loop, fallthrough: i32, ext_size: c_uint) -> *mut Timer;
     pub safe fn us_timer_ext(timer: &mut Timer) -> *mut *mut c_void;
     pub fn us_timer_close(timer: *mut Timer, fallthrough: i32);
     pub safe fn us_timer_set(

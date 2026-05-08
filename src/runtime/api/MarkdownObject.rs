@@ -586,7 +586,6 @@ impl<'a> ParseRenderer<'a> {
     /// simple `{ type, props }` object.
     fn create_element(&mut self, type_val: JSValue, props: JSValue) -> JSValue {
         if let Some(version) = self.react_version {
-            // SAFETY: FFI call into JSC bindings; global_object is a live &JSGlobalObject.
             let obj = JSReactElement__create(self.global_object, version, type_val, props);
             self.marked_args.append(obj);
             obj

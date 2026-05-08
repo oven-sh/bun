@@ -36,9 +36,9 @@ use crate::webcore as WebCore;
 // by Timer.rs / udp_socket.rs / node_crypto_binding.rs.
 unsafe extern "C" {
     safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: &JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
+        global: &JSGlobalObject,
+        callback: JSValue,
+    ) -> JSValue;
 }
 trait JSValueSpawnExt {
     fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
@@ -47,7 +47,6 @@ trait JSValueSpawnExt {
 impl JSValueSpawnExt for JSValue {
     #[inline]
     fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: thin FFI forward; allocates a wrapper cell on the JS heap.
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
     #[inline]

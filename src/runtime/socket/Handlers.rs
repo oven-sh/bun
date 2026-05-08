@@ -16,9 +16,9 @@ use super::SocketMode;
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
 unsafe extern "C" {
     safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: &JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
+        global: &JSGlobalObject,
+        callback: JSValue,
+    ) -> JSValue;
 }
 
 /// `bun_jsc::AnyPromise` (the lib.rs stub enum) lacks `resolve`/`reject`; the

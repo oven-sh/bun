@@ -861,11 +861,10 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
 fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
     unsafe extern "C" {
         safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: &JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
+            global: &JSGlobalObject,
+            callback: JSValue,
+        ) -> JSValue;
     }
-    // SAFETY: FFI into JSC; `global` is live for the call.
     AsyncContextFrame__withAsyncContextIfNeeded(global, callback)
 }
 

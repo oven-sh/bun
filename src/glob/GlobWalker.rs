@@ -340,7 +340,7 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub error_on_broken_symlinks: bool,
     pub only_files: bool,
 
-    pub path_buf: PathBuffer,
+    pub path_buf: Box<PathBuffer>,
     // iteration state
     pub workbuf: Vec<WorkItem<A>>,
 
@@ -423,7 +423,7 @@ pub enum IterState<A: Accessor> {
 pub struct Directory<A: Accessor> {
     pub fd: A::Handle,
     pub iter: A::DirIter,
-    pub path: PathBuffer,
+    pub path: Box<PathBuffer>,
     // Zig: `dir_path: [:0]const u8` is a slice into `path` (self-referential).
     // Store the length and reconstruct on demand.
     // TODO(port): self-referential dir_path; Phase B may need Pin or raw-ptr slice.
@@ -586,7 +586,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // `handle_sys_err_with_path` re-borrows `self.walker`.
         let root_path = &root_work_item.path;
         let (path_buf_ptr, root_path_len) = {
-            let path_buf: &mut PathBuffer = &mut self.walker.path_buf;
+            let path_buf: &mut PathBuffer = &mut *self.walker.path_buf;
             if root_path.len() >= path_buf.len() {
                 return Ok(Err(
                     SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open).with_path(root_path),
@@ -676,7 +676,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // PORT NOTE: reshaped for borrowck — Zig set `iter_state = .{ .directory = .{...} }`
         // up front and then mutated `this.iter_state.directory.*` while also borrowing
         // `this.walker`. Build the Directory in a local and assign at the end.
-        let mut dir_path_buf = PathBuffer::uninit();
+        let mut dir_path_buf = Box::new(PathBuffer::uninit());
         let mut dir_path_len: usize = 'dir_path: {
             if ROOT {
                 if !self.walker.absolute {
@@ -710,7 +710,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 let norm = match self.walker.skip_special_components(
                     single,
                     &mut dir_path_len,
-                    &mut dir_path_buf,
+                    &mut *dir_path_buf,
                     &mut had_dot_dot,
                 ) {
                     Err(e) => {
@@ -954,7 +954,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let mut has_dot_dot = false;
                             let active: ComponentSet = {
                                 let walker = &mut *self.walker;
-                                let scratch_path_buf = &mut walker.path_buf;
+                                let scratch_path_buf = &mut *walker.path_buf;
                                 scratch_path_buf[0..work_item.path.len()]
                                     .copy_from_slice(&work_item.path);
                                 scratch_path_buf[work_item.path.len()] = 0;
@@ -1502,7 +1502,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             pattern_components: Vec::new(),
             matched_paths: MatchedMap::default(),
             i: 0,
-            path_buf: PathBuffer::uninit(),
+            path_buf: Box::new(PathBuffer::uninit()),
             workbuf: Vec::new(),
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,

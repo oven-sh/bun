@@ -16,8 +16,9 @@ for d in "${DIRS[@]}"; do
   find "$d" -name '*.test.ts' -o -name '*.test.js' -o -name '*.test.tsx' 2>/dev/null
 done | sort -u > "$DIAG/all.txt"
 
+test -x "$BIN" || { echo "[scoreboard] $BIN not built — aborting" >&2; exit 1; }
 TOTAL=$(wc -l < "$DIAG/all.txt")
-echo "[scoreboard] running $TOTAL files (timeout 15s each, -P32)..." >&2
+echo "[scoreboard] running $TOTAL files (timeout 15s each, -P32, pid-ns isolated)..." >&2
 
 # cgroup: cap memory + pids so a runaway test can't OOM the host or fork-bomb
 CG=/sys/fs/cgroup/bun-scoreboard
@@ -42,8 +43,13 @@ echo $$ > "$CG/cgroup.procs" 2>/dev/null || true
 cat "$DIAG/all.txt" | xargs -P 32 -I{} sh -c '
   slug=$(echo "{}" | tr / _)
   td='"$TMPROOT"'/"$slug"; mkdir -p "$td"
+  # PID namespace: test sees only its own children, so kill(-1)/pkill cannot
+  # touch the host. --mount-proc gives it a clean /proc. --kill-child reaps
+  # everything in the namespace on timeout.
   TMPDIR="$td" TEMP="$td" TMP="$td" \
-    timeout --kill-after=5 15 '"$BIN"' test "{}" > '"$DIAG"'/"$slug".log 2>&1
+    timeout --kill-after=5 15 \
+    unshare --pid --fork --mount-proc --kill-child \
+    '"$BIN"' test "{}" > '"$DIAG"'/"$slug".log 2>&1
   rc=$?
   rm -rf "$td"
   echo "{}|$rc"

@@ -145,7 +145,7 @@ impl CachedBytecode {
 /// Performs the full Zig sequence from `generateChunksInParallel.zig`:
 /// set the thread-local bundler flag, initialize JSC, generate, copy the
 /// bytes into an owned buffer, and release the C++ handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub fn __bun_bundler_generate_cached_bytecode(
     format: Format,
     source: &[u8],

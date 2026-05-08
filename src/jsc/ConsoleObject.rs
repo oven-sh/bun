@@ -3065,68 +3065,56 @@ pub mod formatter {
             }
         }
 
-        pub extern "C" fn for_each(
+        /// Everything `for_each` does *before* recursing into `format()` for
+        /// the property value. Outlined so the recursive frame in `for_each`
+        /// itself carries only `ctx` + the returned `TagResult`, not the
+        /// dozen-plus locals (and their ASAN redzones) needed to write the
+        /// key/comma/indent. Returns `None` to skip the property.
+        #[inline(never)]
+        fn for_each_prelude(
+            ctx: &mut Self,
             global_this: &JSGlobalObject,
-            ctx_ptr: *mut c_void,
             key: *mut ZigString,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
-        ) {
+        ) -> Option<TagResult> {
             // SAFETY: caller passes a valid `*ZigString`.
             let key = unsafe { &*key };
             if key.eql_comptime(b"constructor") {
-                return;
+                return None;
             }
-
-            // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
             if ctx.formatter.failed {
-                return;
+                return None;
             }
 
-            // PORT NOTE: borrowck reshape — `WrappedWriter` mutably borrows
-            // `ctx.formatter.estimated_line_length` and `ctx.writer`, which
-            // conflicts with any whole-`Formatter` `&mut self` call. Snapshot
-            // the scalar fields the body reads so the writer can stay live,
-            // and route line-length bookkeeping through `WrappedWriter`'s own
-            // mirrors (`add_for_new_line`/`reset_line`/`print_comma`/...).
             let disable_inspect_custom = ctx.formatter.disable_inspect_custom;
             let single_line = ctx.formatter.single_line;
             let always_newline_scope = ctx.formatter.always_newline_scope;
             let quote_keys = ctx.formatter.quote_keys;
             let indent = ctx.formatter.indent;
-            // `format` requires a `&'b JSGlobalObject`; the anonymous-lifetime
-            // `global_this` parameter cannot satisfy that, so reuse the
-            // formatter's own handle (same pointer in practice).
-            let format_global = ctx.formatter.global_this;
+
+            let mut opts = TagOptions::HIDE_GLOBAL;
+            if disable_inspect_custom {
+                opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
+            }
+            let tag = Tag::get_advanced(value, global_this, opts).ok()?;
+            if tag.cell.is_hidden() {
+                return None;
+            }
+
+            if ctx.i == 0 {
+                if ctx.handle_first_property(global_this, ctx.parent).is_err() {
+                    return None;
+                }
+            }
 
             let mut writer = WrappedWriter {
                 ctx: &mut *ctx.writer,
                 failed: false,
                 estimated_line_length: &mut ctx.formatter.estimated_line_length,
             };
-
-            let mut opts = TagOptions::HIDE_GLOBAL;
-            if disable_inspect_custom {
-                opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
-            }
-            let Ok(tag) = Tag::get_advanced(value, global_this, opts) else { return };
-
-            if tag.cell.is_hidden() {
-                return;
-            }
-            if ctx.i == 0 {
-                drop(writer);
-                if ctx.handle_first_property(global_this, ctx.parent).is_err() {
-                    return;
-                }
-                writer = WrappedWriter {
-                    ctx: &mut *ctx.writer,
-                    failed: false,
-                    estimated_line_length: &mut ctx.formatter.estimated_line_length,
-                };
-            } else {
+            if ctx.i > 0 {
                 writer.print_comma::<C>();
             }
 
@@ -3156,29 +3144,43 @@ pub mod formatter {
                 tag.cell.is_string_like(),
             );
 
-            // Reseat: `format` needs `&mut Formatter` + `&mut dyn Write`, both
-            // currently held by `writer`.
             let writer_failed = writer.failed;
             drop(writer);
             if writer_failed {
                 ctx.formatter.failed = true;
             }
+            Some(tag)
+        }
+
+        pub extern "C" fn for_each(
+            global_this: &JSGlobalObject,
+            ctx_ptr: *mut c_void,
+            key: *mut ZigString,
+            value: JSValue,
+            is_symbol: bool,
+            is_private_symbol: bool,
+        ) {
+            // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
+            let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
+
+            let Some(tag) =
+                Self::for_each_prelude(ctx, global_this, key, value, is_symbol, is_private_symbol)
+            else {
+                return;
+            };
+
+            // `format` requires a `&'b JSGlobalObject`; the anonymous-lifetime
+            // `global_this` parameter cannot satisfy that, so reuse the
+            // formatter's own handle (same pointer in practice).
+            let format_global = ctx.formatter.global_this;
             let _ = ctx
                 .formatter
                 .format::<C>(tag, &mut *ctx.writer, value, format_global);
-            writer = WrappedWriter {
-                ctx: &mut *ctx.writer,
-                failed: false,
-                estimated_line_length: &mut ctx.formatter.estimated_line_length,
-            };
 
-            if tag.cell.is_string_like() {
-                if C {
-                    writer.write_all(pfmt!("<r>", true).as_bytes());
+            if C && tag.cell.is_string_like() {
+                if ctx.writer.write_all(pfmt!("<r>", true).as_bytes()).is_err() {
+                    ctx.formatter.failed = true;
                 }
-            }
-            if writer.failed {
-                ctx.formatter.failed = true;
             }
         }
     }
@@ -5370,6 +5372,7 @@ pub mod formatter {
             }
         }
 
+        #[inline(always)]
         #[inline(always)]
         pub fn format<const ENABLE_ANSI_COLORS: bool>(
             &mut self,

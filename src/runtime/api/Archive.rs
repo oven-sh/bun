@@ -134,11 +134,9 @@ impl Archive {
         self::write(global, callframe)
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(self: Box<Self>) {
         jsc::mark_binding();
-        // SAFETY: called once by the JSC finalizer on the mutator thread; `this`
-        // was allocated by `heap::alloc` in `constructor`/`create_archive`.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(self);
         // store.deref() happens via Arc<BlobStore>::drop
     }
 

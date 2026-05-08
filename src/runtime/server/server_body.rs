@@ -2466,10 +2466,11 @@ where
 
 
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(self: Box<Self>) {
         httplog!("finalize");
-        // SAFETY: called from JSC finalizer on mutator thread
-        let this = unsafe { &mut *this };
+        // `deinit_if_we_can` may defer the actual free (pending requests still
+        // hold a ref), so hand ownership back to the raw teardown path.
+        let this = Box::leak(self);
         this.js_value.finalize();
         this.deinit_if_we_can();
     }

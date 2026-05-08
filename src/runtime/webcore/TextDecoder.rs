@@ -79,10 +79,8 @@ impl TextDecoder {
         Box::new(init)
     }
 
-    pub fn finalize(this: *mut TextDecoder) {
-        // SAFETY: `this` was produced by heap::alloc in the codegen'd constructor
-        // path; finalize runs on the mutator thread during lazy sweep.
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     #[bun_jsc::host_fn(getter)]

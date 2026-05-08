@@ -740,9 +740,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
     }
 
-    pub fn finalize(this: *mut T) {
-        // SAFETY: called from JSC finalizer on mutator thread; this is valid
-        unsafe { T::deref(this) };
+    pub fn finalize(this: Box<T>) {
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        // SAFETY: `this` was the unique GC-owned m_ctx; `deref` frees on count==0.
+        unsafe { T::deref(Box::into_raw(this)) };
     }
 }
 
@@ -820,8 +822,8 @@ macro_rules! __compression_stream_mixin_reexports {
                 )
             }
             #[inline]
-            pub fn finalize(this: *mut Self) {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::finalize(this)
+            pub fn finalize(self: Box<Self>) {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::finalize(self)
             }
         }
     };

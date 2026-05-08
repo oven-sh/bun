@@ -1481,10 +1481,13 @@ impl CronJob {
         }
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called from JSC finalizer on mutator thread.
-        unsafe { (*this).this_value.finalize() };
-        // SAFETY: `this` is a live Box-allocated CronJob; this releases one ref.
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount
+        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
+        let this = Box::leak(self);
+        this.this_value.finalize();
+        // SAFETY: `this` is a live Box-allocated CronJob; `deref` frees on count==0.
         unsafe { Self::deref(this) };
     }
 

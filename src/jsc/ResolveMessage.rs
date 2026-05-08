@@ -334,15 +334,9 @@ impl ResolveMessage {
         })
     }
 
-    pub extern "C" fn finalize(this: *mut ResolveMessage) {
-        // SAFETY: `this` was allocated via `Box::new` in `JsClass::to_js` and
-        // ownership transferred to the JS wrapper; finalize is called exactly
-        // once on the mutator thread during lazy sweep. Dropping the Box drops
-        // `msg` and the owned `referrer` buffer. (Mirrors the macro-generated
-        // `ResolveMessageClass__finalize`; kept for parity with Zig source.)
-        unsafe {
-            drop(bun_core::heap::take(this));
-        }
+    pub fn finalize(self: Box<Self>) {
+        // Dropping the Box drops `msg` and the owned `referrer` buffer.
+        drop(self);
     }
 }
 

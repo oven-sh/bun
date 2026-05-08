@@ -250,7 +250,7 @@ pub trait BlobExt {
     fn resolve_size(&mut self);
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> where Self: Sized;
-    fn finalize(this: *mut Self) where Self: Sized;
+    fn finalize(self: Box<Self>) where Self: Sized;
     fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob where Self: Sized;
     fn create_with_bytes_and_allocator(
         bytes: Vec<u8>,
@@ -2254,18 +2254,17 @@ impl BlobExt for Blob {
         Ok(Blob::new(blob))
     }
 
-    fn finalize(this: *mut Self) {
-        // SAFETY: called by codegen with a valid heap pointer.
-        let this_ref = unsafe { &mut *this };
+    fn finalize(self: Box<Self>) {
         debug_assert!(
-            this_ref.is_heap_allocated(),
+            self.is_heap_allocated(),
             "`finalize` may only be called on a heap-allocated Blob"
         );
         // PORT NOTE: `Ref::adopt` requires `Blob: ExternalSharedDescriptor`,
         // which is not yet implemented. Decrement the intrusive refcount directly;
         // `deref` calls `deinit()` (which `drop(heap::take)`s if heap-allocated)
-        // when the count reaches zero.
-        Blob__deref(this_ref);
+        // when the count reaches zero. Refcounted: hand ownership back to the
+        // raw refcount.
+        Blob__deref(Box::leak(self));
     }
 
     fn init_with_all_ascii(bytes: Vec<u8>, global_this: &JSGlobalObject, is_all_ascii: bool) -> Blob {

@@ -1936,9 +1936,8 @@ impl BuildArtifact {
         this.sourcemap.get().unwrap_or(JSValue::NULL)
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called by JSC finalizer; this was heap-allocated
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(

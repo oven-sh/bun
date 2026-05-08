@@ -688,22 +688,20 @@ impl FileSystemRouter {
         Ok(JSValue::NULL)
     }
 
-    pub fn finalize(this: *mut FileSystemRouter) {
-        // SAFETY: called by JSC finalizer on the mutator thread; `this` is the m_ctx payload.
-        let this_ref = unsafe { &mut *this };
+    pub fn finalize(mut self: Box<Self>) {
         // PORT NOTE: RefString deref()s — Zig `?.deref()` on each.
-        if let Some(p) = this_ref.asset_prefix.take() {
+        if let Some(p) = self.asset_prefix.take() {
             // SAFETY: `p` is live until this deref.
             unsafe { (*p).deref() };
         }
-        if let Some(p) = this_ref.origin.take() {
+        if let Some(p) = self.origin.take() {
+            // SAFETY: `p` is live until this deref.
             unsafe { (*p).deref() };
         }
-        if let Some(p) = this_ref.base_dir.take() {
+        if let Some(p) = self.base_dir.take() {
+            // SAFETY: `p` is live until this deref.
             unsafe { (*p).deref() };
         }
-        // SAFETY: codegen guarantees `this` was heap-allocated in constructor.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -859,8 +857,10 @@ impl MatchedRoute {
         Ok(zs_to_js(this.route().file_path, global_this))
     }
 
-    pub fn finalize(this: *mut MatchedRoute) {
-        Self::deinit(this);
+    pub fn finalize(self: Box<Self>) {
+        // `deinit` frees the allocation itself; hand ownership back so its
+        // existing raw-ptr teardown path stays intact.
+        Self::deinit(Box::into_raw(self));
     }
 
     #[bun_jsc::host_fn(getter)]

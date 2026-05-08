@@ -745,14 +745,12 @@ impl Listener {
         }
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(mut self: Box<Self>) {
         log!("finalize");
-        // SAFETY: called from JSC finalizer on mutator thread; `this` is the m_ctx payload
-        let this_ref = unsafe { &mut *this };
-        let listener = core::mem::replace(&mut this_ref.listener, ListenerType::None);
+        let listener = core::mem::replace(&mut self.listener, ListenerType::None);
         match listener {
             ListenerType::Uws(socket) => {
-                Self::unlink_unix_socket_path(this_ref);
+                Self::unlink_unix_socket_path(&mut self);
                 // SAFETY: socket is non-null (Uws variant invariant).
                 unsafe { &mut *socket }.close();
             }
@@ -766,7 +764,9 @@ impl Listener {
             ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
         }
-        Self::deinit(this);
+        // `deinit` frees the allocation itself (`heap::take`); hand ownership
+        // back so its existing raw-ptr teardown path stays intact.
+        Self::deinit(Box::into_raw(self));
     }
 
     /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.

@@ -1835,7 +1835,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf;
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
-    SubprocessT::finalize(std::ptr::from_mut::<SubprocessT>(subprocess));
+    // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
+    // above (spawnSync path: never handed to a JS wrapper); reclaim ownership.
+    // `subprocess` (`&mut *subprocess_ptr`) is not used after this line.
+    SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
 
     let sync_value = JSValue::create_empty_object(global_this, 0);
     sync_value.put(global_this, b"exitCode", exit_code);

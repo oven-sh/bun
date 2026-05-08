@@ -173,17 +173,15 @@ impl PostgresSQLQuery {
         Some(target)
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(self: Box<Self>) {
         bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
-        // SAFETY: called from the JSC finalizer on the mutator thread; `this` is the
-        // m_ctx payload and the GC sweep grants exclusive access. We keep the access
-        // raw-pointer-only — no `&Self` is materialized — so the `&mut JsRef` field
-        // projection carries write provenance from `*mut Self`, and the terminal
-        // `deref_` (which may free the allocation) does not dangle any live borrow.
-        unsafe {
-            (*this).this_value.finalize();
-            Self::deref_(this);
-        }
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount
+        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
+        let this = Box::leak(self);
+        this.this_value.finalize();
+        // SAFETY: `this` is the live m_ctx allocation; `deref_` frees on count==0.
+        unsafe { Self::deref_(this) };
     }
 
     pub fn on_write_fail(

@@ -1274,10 +1274,12 @@ impl Subprocess<'_> {
         }
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Subprocess, "finalize");
-        // SAFETY: called from JSC finalizer on the mutator thread; `this` is the m_ctx payload.
-        let this = unsafe { &mut *this };
+        // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
+        // allocation may outlive this call if other refs remain, so hand
+        // ownership back to the raw refcount.
+        let this = Box::leak(self);
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer

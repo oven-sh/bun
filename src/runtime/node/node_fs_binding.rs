@@ -146,23 +146,19 @@ impl Binding {
         Box::new(init)
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called by codegen `finalize()` on the mutator thread with the
-        // `m_ctx` payload pointer; `this` is valid and exclusively owned here.
-        let this_ref = unsafe { &mut *this };
-        if let Some(vm) = this_ref.node_fs.vm {
+    pub fn finalize(self: Box<Self>) {
+        if let Some(vm) = self.node_fs.vm {
             // SAFETY: `vm` is the JSC-owned `VirtualMachine`; live for the
             // process. `node_fs` is a type-erased `*mut NodeFS` (see
             // `RuntimeHooks::create_node_fs`).
             let vm_node_fs = unsafe { vm.as_ref() }.node_fs;
-            if vm_node_fs == Some((&raw const this_ref.node_fs).cast_mut().cast()) {
+            if vm_node_fs == Some((&raw const self.node_fs).cast_mut().cast()) {
+                // VM-owned singleton — keep alive.
+                let _ = Box::leak(self);
                 return;
             }
         }
-
-        // SAFETY: `this` was allocated via `Binding::new` (Box::new) and is
-        // not the VM-owned singleton (checked above); reclaim it.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(self);
     }
 
     #[bun_jsc::host_fn(getter)]

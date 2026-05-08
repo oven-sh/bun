@@ -659,16 +659,15 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(self: Box<Self>) {
         debug!("PostgresSQLConnection finalize");
-        // SAFETY: called on mutator thread during lazy sweep; `this` is valid.
-        // Field access via `(*this)` keeps each `&mut` reborrow scoped to its call
-        // so no protected `&mut Self` is live across the potential dealloc in `deref`.
-        unsafe {
-            (*this).stop_timers();
-            (*this).js_value.finalize();
-        }
-        // SAFETY: `this` is a live Box-allocated connection.
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount
+        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
+        let this = Box::leak(self);
+        this.stop_timers();
+        this.js_value.finalize();
+        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
         unsafe { Self::deref(this) };
     }
 

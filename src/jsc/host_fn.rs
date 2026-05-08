@@ -532,18 +532,34 @@ pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global, this_value))
 }
 
-/// Finalizer: `fn(*mut T)`. The user impl receives the raw pointer (not
-/// `&mut`) so it may `heap::take` / `drop_in_place` without an outstanding
-/// borrow. This wrapper exists to provide the panic barrier; user impls are
-/// safe `pub fn finalize(this: *mut Self)` with an internal
-/// `unsafe { Box::from_raw }` so the generated thunk body contains zero
-/// `unsafe` tokens.
+/// Finalizer: `fn(Box<T>)`. The user impl receives owned `Box<Self>` —
+/// ownership is transferred from the C++ JSCell wrapper's `m_ctx` slot.
+/// This wrapper provides the panic barrier and the single `Box::from_raw`
+/// for the entire generated-classes finalize surface, so the generated thunk
+/// body contains zero `unsafe` tokens and user impls need no
+/// soundness-laundering `unsafe { heap::take(this) }`.
+///
+/// For intrusively-refcounted `T` the JS wrapper holds one of N refs; the
+/// impl MUST `Box::leak`/`Box::into_raw` as its FIRST step (before any
+/// fallible work) so the allocation is not freed by Box drop on panic while
+/// other ref holders still alias it.
 #[inline]
-pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(*mut T)) {
+pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
     // No `JSGlobalObject` in scope to surface the panic as a JS exception, but
     // unwinding through the C++ GC finalizer path is still UB — swallow it.
     // The panic hook (crash_handler) has already logged the message.
-    let _ = catch_panic(|| f(this));
+    let _ = catch_panic(|| {
+        // SAFETY: `this` is the GC-owned `m_ctx` pointer, valid and not
+        // concurrently accessed (mutator-thread sweep). It was produced by
+        // `Box::into_raw` in the construct path (`IntoHostConstructReturn`).
+        // For intrusively-refcounted `T` other native code may hold raw
+        // pointers to the same allocation — see doc comment above re: the
+        // impl's obligation to `Box::leak` before doing fallible work.
+        // Constructing the Box inside the closure preserves the pre-refactor
+        // leak-on-panic failure mode for everything up to this point.
+        let boxed = unsafe { alloc::boxed::Box::from_raw(this) };
+        f(boxed)
+    });
 }
 
 /// Codegen thunk entry for prototype setters.

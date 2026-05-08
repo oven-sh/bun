@@ -119,8 +119,10 @@ impl BlockList {
             / (self.ref_count.load(AtomicOrdering::Acquire).max(1) as usize)
     }
 
-    pub fn finalize(this: *mut Self) {
-        Self::deref(this);
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        Self::deref(Box::into_raw(self));
     }
 
     fn deinit(this: *mut Self) {

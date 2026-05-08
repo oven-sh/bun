@@ -460,12 +460,14 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called from JSC finalize on the mutator thread; `this` is the m_ctx ptr.
-        unsafe {
-            (*this).js_this.finalize();
-            Self::deref_(this);
-        }
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount
+        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
+        let this = Box::leak(self);
+        this.js_this.finalize();
+        // SAFETY: `this` is the live m_ctx allocation; `deref_` frees on count==0.
+        unsafe { Self::deref_(this) };
     }
 
     fn on_stream_pipe(&mut self, mut stream: StreamResult) {

@@ -134,8 +134,9 @@ impl CryptoHasher {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
-        // handle was produced by heap::alloc via getByName/getFromOther
-        CryptoHasher::finalize(handle);
+        // SAFETY: `handle` was produced by heap::alloc via getByName/getFromOther
+        // and ownership is being returned to us.
+        CryptoHasher::finalize(unsafe { Box::from_raw(handle) });
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
@@ -761,11 +762,8 @@ impl CryptoHasher {
     }
 
     /// `.classes.ts` finalize — runs on mutator thread during lazy sweep.
-    pub fn finalize(this: *mut CryptoHasher) {
-        // SAFETY: `this` was allocated via `CryptoHasher::new` (Box::new) and ownership
-        // is being returned to us by the JSC wrapper / extern destroy.
-        let this = unsafe { bun_core::heap::take(this) };
-        match *this {
+    pub fn finalize(self: Box<Self>) {
+        match *self {
             CryptoHasher::Evp(_inner) => {
                 // https://github.com/oven-sh/bun/issues/3250
                 // `inner.deinit()` — handled by Drop on EVP.
@@ -1516,9 +1514,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_slice.as_ref())
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` was allocated via `Box::new` in `constructor`.
-        drop(unsafe { bun_core::heap::take(this) });
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 }
 

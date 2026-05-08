@@ -1473,12 +1473,12 @@ impl UDPSocket {
         })
     }
 
-    pub fn finalize(this: *mut Self) {
-        bun_output::scoped_log!(UdpSocket, "Finalize {:p}", this);
-        // SAFETY: finalize called once by JSC GC with the m_ctx payload.
-        let this_ref = unsafe { &mut *this };
-        this_ref.this_value.finalize();
-        Self::deinit(this);
+    pub fn finalize(mut self: Box<Self>) {
+        bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *self);
+        self.this_value.finalize();
+        // `deinit` frees the allocation itself (`heap::take`); hand ownership
+        // back so its existing raw-ptr teardown path stays intact.
+        Self::deinit(Box::into_raw(self));
     }
 
     fn deinit(this: *mut Self) {

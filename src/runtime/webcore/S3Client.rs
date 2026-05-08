@@ -637,11 +637,8 @@ impl S3Client {
 
     /// Called by the generated JSCell wrapper's `finalize()`. Runs on the
     /// mutator thread during lazy sweep — do not touch JS values here.
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` was produced by `heap::alloc` in the codegen'd
-        // constructor path; we are the unique owner at finalize time. Field
-        // cleanup (the `credentials` deref) happens in `<S3Client as Drop>`.
-        drop(unsafe { bun_core::heap::take(this) });
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // ── Static methods ────────────────────────────────────────────────────

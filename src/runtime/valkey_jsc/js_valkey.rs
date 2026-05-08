@@ -1498,9 +1498,11 @@ impl JSValkeyClient {
         }
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called by codegen finalize on the mutator thread.
-        let this = unsafe { &mut *this };
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: `deref_guard` releases the JS wrapper's +1 at scope end;
+        // allocation may outlive this call if other refs remain, so hand
+        // ownership back to the raw refcount.
+        let this = Box::leak(self);
         let _d = deref_guard(this);
 
         this.stop_timers();

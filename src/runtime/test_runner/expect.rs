@@ -614,17 +614,13 @@ impl Expect {
         Ok(buf)
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called by codegen finalize on mutator thread; `this` is the m_ctx Box payload
-        unsafe {
-            (*this).custom_label.deref();
-            // .zig:331 `if (this.parent) |parent| parent.deref();`
-            // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
-            // so the Box drop below would leak the +1 — release explicitly.
-            if let Some(parent) = (*this).parent.take() {
-                parent.deref();
-            }
-            drop(bun_core::heap::take(this));
+    pub fn finalize(mut self: Box<Self>) {
+        self.custom_label.deref();
+        // .zig:331 `if (this.parent) |parent| parent.deref();`
+        // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
+        // so the Box drop below would leak the +1 — release explicitly.
+        if let Some(parent) = self.parent.take() {
+            parent.deref();
         }
     }
 
@@ -1848,9 +1844,8 @@ pub struct ExpectStatic {
 }
 
 impl ExpectStatic {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     pub fn create(global_this: &JSGlobalObject, flags: Flags) -> JsResult<JSValue> {
@@ -2102,9 +2097,8 @@ pub struct ExpectAnything {
 }
 
 impl ExpectAnything {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -2126,9 +2120,8 @@ pub struct ExpectStringMatching {
 }
 
 impl ExpectStringMatching {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -2158,9 +2151,8 @@ pub struct ExpectCloseTo {
 }
 
 impl ExpectCloseTo {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -2204,9 +2196,8 @@ pub struct ExpectObjectContaining {
 }
 
 impl ExpectObjectContaining {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -2237,9 +2228,8 @@ pub struct ExpectStringContaining {
 }
 
 impl ExpectStringContaining {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -2270,9 +2260,8 @@ pub struct ExpectAny {
 }
 
 impl ExpectAny {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -2323,9 +2312,8 @@ pub struct ExpectArrayContaining {
 }
 
 impl ExpectArrayContaining {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -2360,9 +2348,8 @@ pub struct ExpectCustomAsymmetricMatcher {
 }
 
 impl ExpectCustomAsymmetricMatcher {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
@@ -2565,9 +2552,8 @@ pub struct ExpectMatcherContext {
 }
 
 impl ExpectMatcherContext {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2622,9 +2608,8 @@ impl ExpectMatcherUtils {
         ExpectMatcherUtils {}.to_js(global_this)
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     fn print_value(
@@ -2776,9 +2761,8 @@ impl ExpectMatcherUtils {
 pub struct ExpectTypeOf {}
 
 impl ExpectTypeOf {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: m_ctx Box payload owned by JS wrapper; freed exactly once in finalize
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     pub fn create(global_this: &JSGlobalObject) -> JsResult<JSValue> {

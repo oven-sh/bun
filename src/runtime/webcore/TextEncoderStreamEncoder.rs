@@ -11,10 +11,8 @@ pub struct TextEncoderStreamEncoder {
 }
 
 impl TextEncoderStreamEncoder {
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` was allocated via heap::alloc in `constructor`; codegen calls
-        // finalize exactly once on the mutator thread during lazy sweep.
-        drop(unsafe { bun_core::heap::take(this) });
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits

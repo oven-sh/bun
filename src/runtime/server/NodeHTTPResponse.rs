@@ -1721,9 +1721,10 @@ impl NodeHTTPResponse {
         ret
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called by JSC finalizer on the mutator thread; `this` is the m_ctx payload.
-        unsafe { (*this).deref() };
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        Box::leak(self).deref();
     }
 
     /// Called by intrusive RefCount when count reaches zero.

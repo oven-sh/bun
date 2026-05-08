@@ -1490,12 +1490,12 @@ impl Interpreter {
     /// Spec: interpreter.zig `finalize`. GC finalizer hook — called from the
     /// generated C++ `JSShellInterpreter::~JSShellInterpreter` via
     /// `host_fn::host_fn_finalize`.
-    pub fn finalize(this: *mut Self) {
-        log!("Interpreter(0x{:x}) finalize", this as usize);
-        // SAFETY: `this` is the unique GC-owned `m_ctx` pointer, valid and
-        // not aliased — `JSShellInterpreter::~JSShellInterpreter` is the only
-        // caller. See [`deinit_from_finalizer`](Self::deinit_from_finalizer).
-        unsafe { Self::deinit_from_finalizer(this) };
+    pub fn finalize(self: Box<Self>) {
+        log!("Interpreter(0x{:x}) finalize", &raw const *self as usize);
+        // See [`deinit_from_finalizer`](Self::deinit_from_finalizer).
+        // SAFETY: `self` is the unique GC-owned `m_ctx` payload; round-trip via
+        // raw ptr so `deinit_from_finalizer` can `heap::take` it.
+        unsafe { Self::deinit_from_finalizer(Box::into_raw(self)) };
     }
 
     /// Spec: interpreter.zig `hasPendingActivity`. GC `hasPendingActivity()`.

@@ -610,15 +610,15 @@ impl StatWatcher {
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(self: Box<Self>) {
         log!("Finalize\n");
-        // SAFETY: finalize runs on the mutator thread during lazy sweep; `this`
-        // is the m_ctx payload.
-        let this_ref = unsafe { &mut *this };
-        this_ref.this_value.finalize();
-        this_ref.closed = true;
-        this_ref.scheduler.deref();
-        // but don't deinit until the scheduler drops its reference
+        // Refcounted: hand ownership back to the raw refcount FIRST so a panic
+        // in the work below leaks instead of UAF-ing the scheduler's alias.
+        let this = Box::leak(self);
+        this.this_value.finalize();
+        this.closed = true;
+        this.scheduler.deref();
+        // but don't deinit until the scheduler drops its reference.
         Self::deref(this);
     }
 

@@ -290,14 +290,9 @@ impl Image {
         Ok(img.to_js(global))
     }
 
-    pub fn finalize(this: *mut Image) {
-        // SAFETY: called once by the codegen'd `~JSImage` on the mutator thread
-        // during lazy sweep; `this` was `heap::alloc`'d at construction.
-        unsafe {
-            (*this).this_ref.finalize();
-            // `source` is dropped by `heap::take` below.
-            drop(bun_core::heap::take(this));
-        }
+    pub fn finalize(mut self: Box<Self>) {
+        self.this_ref.finalize();
+        // `source` is dropped by Box drop.
     }
 
     pub fn estimated_size(&self) -> usize {

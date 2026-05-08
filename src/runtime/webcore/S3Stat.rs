@@ -59,17 +59,13 @@ impl S3Stat {
         JSValue::from_date_number(global, self.last_modified)
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` was produced by `heap::alloc` in the codegen'd
-        // wrapper; finalize is called exactly once on the mutator thread.
-        let this = unsafe { bun_core::heap::take(this) };
+    pub fn finalize(self: Box<Self>) {
         // `bun_str::String` is `#[derive(Copy)]` with NO `Drop` impl
         // (src/string/lib.rs), so dropping the Box alone would leak the +1
         // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
         // explicitly, mirroring Zig's `this.etag.deref(); this.contentType.deref();`.
-        this.etag.deref();
-        this.content_type.deref();
-        drop(this);
+        self.etag.deref();
+        self.content_type.deref();
     }
 }
 

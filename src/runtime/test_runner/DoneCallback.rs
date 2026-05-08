@@ -12,19 +12,15 @@ pub struct DoneCallback {
 }
 
 impl DoneCallback {
-    pub fn finalize(this: *mut DoneCallback) {
+    pub fn finalize(mut self: Box<Self>) {
         let _g = group_begin!();
 
-        // SAFETY: `this` was `heap::alloc`'d by `JsClass::to_js` in
-        // `create_unbound`; finalize is called exactly once by JSC lazy sweep.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
         // `RefDataPtr` = `RefPtr<RefData>` has NO `Drop` impl (see
         // src/ptr/ref_count.rs) — must explicitly decrement before the Box
         // frees the allocation. Zig: `if (this.ref) |ref| ref.deref();`.
-        if let Some(r) = boxed.r#ref.take() {
+        if let Some(r) = self.r#ref.take() {
             r.deref();
         }
-        drop(boxed); // == allocator.destroy
     }
 
     pub fn create_unbound(global: &JSGlobalObject) -> JSValue {

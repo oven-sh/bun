@@ -1108,9 +1108,11 @@ pub fn constructor(
     Ok(bun_core::heap::into_raw(this))
 }
 
-    pub fn finalize(this: *mut JSTranspiler) {
-        // SAFETY: called by JSC codegen on the mutator thread with the m_ctx payload.
-        unsafe { <JSTranspiler as bun_ptr::AnyRefCounted>::rc_deref_with_context(this, ()) };
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        // SAFETY: `self` is the live m_ctx payload; `rc_deref` frees on count==0.
+        unsafe { <JSTranspiler as bun_ptr::AnyRefCounted>::rc_deref_with_context(Box::into_raw(self), ()) };
     }
 }
 

@@ -3378,13 +3378,30 @@ pub mod options {
         pub style: crate::package_json::ConditionsMap,
     }
 
-    /// Raw fat pointer into a `Box<[Box<[u8]>]>` owned by `BundleOptions`
-    /// (`extension_order` / `main_field_extension_order` / `main_fields`).
-    /// `Copy` so the Zig save/restore-of-`r.extension_order` pattern survives;
-    /// the pointee is the heap allocation behind a `Box` held by `Resolver.opts`
-    /// for the resolver's whole lifetime, so the address is stable across moves
-    /// of the `Box` itself.
-    pub type ExtensionSlice = *const [Box<[u8]>];
+    /// `Copy` tag selecting one of the extension-order lists owned by
+    /// [`BundleOptions`]. Replaces the previous `*const [Box<[u8]>]`
+    /// self-reference (`Resolver.extension_order` pointing into
+    /// `Resolver.opts`) with a value type — the Zig save/restore pattern
+    /// (`resolver.zig:691-696` etc.) survives unchanged because the tag is
+    /// `Copy`, and the actual slice is resolved on demand via
+    /// [`BundleOptions::ext_order_slice`] / [`Resolver::extension_order`].
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+    pub enum ExtOrder {
+        /// `opts.extension_order.default.default`
+        #[default]
+        DefaultDefault,
+        /// `opts.extension_order.default.esm`
+        DefaultEsm,
+        /// `opts.extension_order.node_modules.default`
+        NodeModulesDefault,
+        /// `opts.extension_order.node_modules.esm`
+        NodeModulesEsm,
+        /// `opts.extension_order.css` (Zig reads `Defaults.CssExtensionOrder` directly)
+        Css,
+        /// `opts.main_field_extension_order` — used when resolving the `"main"`
+        /// package.json field (`resolver.zig:3703,3715,3721`).
+        MainField,
+    }
 
     /// Convert a `&[&[u8]]` default constant into the owned form the resolver
     /// stores. Mirrors `bun_bundler::options::owned_string_list`.
@@ -3397,9 +3414,8 @@ pub mod options {
         pub default: ExtensionOrderGroup,
         pub node_modules: ExtensionOrderGroup,
         /// Not on the bundler-side struct — the spec resolver reads
-        /// `Defaults.CssExtensionOrder` directly. Stored here so the
-        /// `*const [Box<[u8]>]` borrowed by `Resolver.extension_order` has a
-        /// stable owner with the same lifetime as the other groups.
+        /// `Defaults.CssExtensionOrder` directly. Stored here so every
+        /// [`ExtOrder`] tag resolves into storage with the same owner/lifetime.
         pub css: Box<[Box<[u8]>]>,
     }
     pub struct ExtensionOrderGroup {
@@ -3431,18 +3447,41 @@ pub mod options {
         }
     }
     impl ExtensionOrder {
-        /// Port of `options.zig` `ResolveFileExtensions.kind`.
+        /// Port of `options.zig` `ResolveFileExtensions.kind`. Returns the
+        /// [`ExtOrder`] tag; resolve to a slice via
+        /// [`BundleOptions::ext_order_slice`].
         pub fn kind(
             &self,
             kind: bun_options_types::ImportKind,
             is_node_modules: bool,
-        ) -> ExtensionSlice {
+        ) -> ExtOrder {
             use bun_options_types::ImportKind as K;
-            let group = if is_node_modules { &self.node_modules } else { &self.default };
             match kind {
-                K::Url | K::AtConditional | K::At => &raw const *self.css,
-                K::Stmt | K::EntryPointBuild | K::EntryPointRun | K::Dynamic => &raw const *group.esm,
-                _ => &raw const *group.default,
+                K::Url | K::AtConditional | K::At => ExtOrder::Css,
+                K::Stmt | K::EntryPointBuild | K::EntryPointRun | K::Dynamic => {
+                    if is_node_modules { ExtOrder::NodeModulesEsm } else { ExtOrder::DefaultEsm }
+                }
+                _ => {
+                    if is_node_modules { ExtOrder::NodeModulesDefault } else { ExtOrder::DefaultDefault }
+                }
+            }
+        }
+    }
+
+    impl BundleOptions {
+        /// Resolve an [`ExtOrder`] tag to the slice it names inside `self`.
+        /// All targets are `Box<[Box<[u8]>]>` owned by `self` and never
+        /// reallocated after `Resolver::init1`, so the returned borrow is
+        /// stable for the resolver's lifetime.
+        #[inline]
+        pub fn ext_order_slice(&self, tag: ExtOrder) -> &[Box<[u8]>] {
+            match tag {
+                ExtOrder::DefaultDefault => &self.extension_order.default.default,
+                ExtOrder::DefaultEsm => &self.extension_order.default.esm,
+                ExtOrder::NodeModulesDefault => &self.extension_order.node_modules.default,
+                ExtOrder::NodeModulesEsm => &self.extension_order.node_modules.esm,
+                ExtOrder::Css => &self.extension_order.css,
+                ExtOrder::MainField => &self.main_field_extension_order,
             }
         }
     }
@@ -4357,14 +4396,11 @@ pub struct Resolver<'a> {
     pub fs: *mut Fs::FileSystem,
     pub log: *mut logger::Log,
     // allocator dropped — global mimalloc
-    /// PORT NOTE: Zig stores `[]const []const u8` aliasing into `r.opts.extension_order`
-    /// (resolver.zig saves/restores it across nested resolves). Stored as a raw
-    /// fat pointer (`Copy`) because it self-references `self.opts`; the heap
-    /// buffer behind each `Box<[Box<[u8]>]>` is address-stable.
-    /// SAFETY: every value written here points into `self.opts.extension_order`
-    /// (or `.main_field_extension_order` / `.main_fields`), all owned by `self`
-    /// for the resolver's lifetime and never reallocated after `init1`.
-    pub extension_order: options::ExtensionSlice,
+    /// PORT NOTE: Zig stores `[]const []const u8` aliasing into
+    /// `r.opts.extension_order` and saves/restores it across nested resolves.
+    /// Stored as a `Copy` enum tag (no self-reference) and resolved on demand
+    /// via [`Self::extension_order`] / [`options::BundleOptions::ext_order_slice`].
+    pub extension_order: options::ExtOrder,
     pub timer: Timer,
 
     pub care_about_bin_folder: bool,
@@ -4514,6 +4550,29 @@ impl<'a> Resolver<'a> {
         // shared `&` cannot alias-UB with the raw `*mut RealFS` projections
         // used elsewhere because no Unique tag is pushed.
         unsafe { &*self.fs }
+    }
+
+    /// Unique-borrow of the `FileSystem` singleton. Centralizes the
+    /// `unsafe { &mut *self.fs() }` retag for call sites that hold no other
+    /// borrow of `self` across the call. Sites that need `&mut FileSystem`
+    /// while also borrowing a disjoint `self.<field>` (e.g.
+    /// `self.caches.fs.read_file_with_allocator`) cannot route through
+    /// `&mut self` and continue to narrow-retag via the raw [`fs()`](Self::fs)
+    /// accessor — same caveat as [`log_mut`](Self::log_mut).
+    #[inline(always)]
+    pub fn fs_mut(&mut self) -> &mut Fs::FileSystem {
+        // SAFETY: BACKREF — `self.fs` is the never-null process-global
+        // `FileSystem` singleton (set in `init1`); resolver mutex serializes
+        // all mutation across worker clones; `&mut self` rules out
+        // intra-instance aliasing.
+        unsafe { &mut *self.fs }
+    }
+
+    /// Resolve the current [`options::ExtOrder`] tag to the slice it names
+    /// inside `self.opts`. Port of Zig `r.extension_order` field read.
+    #[inline(always)]
+    pub fn extension_order(&self) -> &[Box<[u8]>] {
+        self.opts.ext_order_slice(self.extension_order)
     }
 
     /// Raw-pointer projection to the inner `RealFS` (`self.fs.fs`).
@@ -4704,9 +4763,6 @@ impl<'a> Resolver<'a> {
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
 
-        // Heap behind `Box<[Box<[u8]>]>` is address-stable across the move of
-        // `opts` into the struct below, so taking the pointer here is sound.
-        let extension_order: options::ExtensionSlice = &raw const *opts.extension_order.default.default;
         let care_about_browser_field = opts.target == options::Target::Browser;
         Resolver {
             // allocator dropped
@@ -4720,7 +4776,7 @@ impl<'a> Resolver<'a> {
             timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
             fs: _fs,
             log,
-            extension_order,
+            extension_order: options::ExtOrder::DefaultDefault,
             care_about_browser_field,
             care_about_bin_folder: false,
             care_about_scripts: false,
@@ -4878,13 +4934,13 @@ impl<'a> Resolver<'a> {
         // borrowck so the restore happens explicitly at every return point below.
         self.extension_order = match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
-                &raw const *self.opts.extension_order.css
+                options::ExtOrder::Css
             }
             ast::ImportKind::EntryPointBuild
             | ast::ImportKind::EntryPointRun
             | ast::ImportKind::Stmt
-            | ast::ImportKind::Dynamic => &raw const *self.opts.extension_order.default.esm,
-            _ => &raw const *self.opts.extension_order.default.default,
+            | ast::ImportKind::Dynamic => options::ExtOrder::DefaultEsm,
+            _ => options::ExtOrder::DefaultDefault,
         };
 
         if FeatureFlags::TRACING {
@@ -6092,9 +6148,7 @@ impl<'a> Resolver<'a> {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
-        // SAFETY: process-global `FileSystem` singleton (see `fs()` PORT NOTE); narrow
-        // `&mut` for this call only, dies before the `dir_cache_mut()` borrow below.
-        let first_bust = unsafe { &mut *self.fs() }.fs.bust_entries_cache(path);
+        let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
         bun_core::scoped_log!(Resolver, "Bust {} = {}, {}", bstr::BStr::new(path), first_bust, second_bust);
         first_bust || second_bust
@@ -6275,7 +6329,7 @@ impl<'a> Resolver<'a> {
                         let pkg_dir_info = unsafe { &*pkg_dir_info_ptr };
                         self.extension_order = match kind {
                             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
-                                &raw const *self.opts.extension_order.css
+                                options::ExtOrder::Css
                             }
                             _ => self.opts.extension_order.kind(kind, true),
                         };
@@ -7068,7 +7122,7 @@ impl<'a> Resolver<'a> {
                         return None;
                     }
                 };
-                let extension_order: options::ExtensionSlice = if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
+                let extension_order: options::ExtOrder = if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
                     self.extension_order
                 } else {
                     self.opts.extension_order.kind(kind, resolved_dir_info.is_inside_node_modules())
@@ -7085,8 +7139,7 @@ impl<'a> Resolver<'a> {
                         if ends_with_star {
                             let buf = bufs!(load_as_file);
                             buf[..base.len()].copy_from_slice(base);
-                            // SAFETY: `extension_order` points into `self.opts.extension_order`, owned by `self`.
-                            for ext in unsafe { &*extension_order }.iter() {
+                            for ext in self.opts.ext_order_slice(extension_order).iter() {
                                 let ext: &[u8] = ext;
                                 let file_name = &mut buf[0..base.len() + ext.len()];
                                 file_name[base.len()..].copy_from_slice(ext);
@@ -7124,8 +7177,7 @@ impl<'a> Resolver<'a> {
                                 let index = b"index";
                                 let buf = bufs!(load_as_file);
                                 buf[..index.len()].copy_from_slice(index);
-                                // SAFETY: `extension_order` points into `self.opts.extension_order`, owned by `self`.
-                                for ext in unsafe { &*extension_order }.iter() {
+                                for ext in self.opts.ext_order_slice(extension_order).iter() {
                                     let ext: &[u8] = ext;
                                     let file_name = &mut buf[0..index.len() + ext.len()];
                                     file_name[index.len()..].copy_from_slice(ext);
@@ -8121,7 +8173,7 @@ impl<'a> Resolver<'a> {
             remapped: b"",
             cleaned,
             input_path,
-            extension_order: self.extension_order,
+            extension_order: self.opts.ext_order_slice(self.extension_order),
             map: &package_json.browser_map,
         };
 
@@ -8178,7 +8230,7 @@ impl<'a> Resolver<'a> {
         dir_info: *mut DirInfo::DirInfo,
         _field_rel_path: &[u8],
         field: &[u8],
-        extension_order: options::ExtensionSlice,
+        extension_order: options::ExtOrder,
     ) -> Option<MatchResult> {
         let mut field_rel_path = _field_rel_path;
         // Is this a directory?
@@ -8263,12 +8315,17 @@ impl<'a> Resolver<'a> {
 
     // PORT NOTE: `dir_info` is raw `*mut` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
-    pub fn load_as_index(&mut self, dir_info: *mut DirInfo::DirInfo, extension_order: options::ExtensionSlice) -> Option<MatchResult> {
+    pub fn load_as_index(&mut self, dir_info: *mut DirInfo::DirInfo, extension_order: options::ExtOrder) -> Option<MatchResult> {
         // Try the "index" file with extensions
-        // SAFETY: `extension_order` points into `self.opts`, owned by `self`.
-        for ext in unsafe { &*extension_order }.iter() {
-            let ext: &[u8] = ext;
-            if let Some(result) = self.load_index_with_extension(dir_info, ext) {
+        // PORT NOTE: index by `0..len` so each iteration takes a fresh short
+        // borrow of `self.opts` that ends before `&mut self` is taken by
+        // `load_index_with_extension` (matches `extra_cjs_extensions` loop below).
+        let n = self.opts.ext_order_slice(extension_order).len();
+        for i in 0..n {
+            let ext: *const [u8] = &raw const *self.opts.ext_order_slice(extension_order)[i];
+            // SAFETY: `ext` points into a `Box<[u8]>` owned by `self.opts` and
+            // never mutated while the resolver runs; heap buffer is address-stable.
+            if let Some(result) = self.load_index_with_extension(dir_info, unsafe { &*ext }) {
                 return Some(result);
             }
         }
@@ -8363,7 +8420,7 @@ impl<'a> Resolver<'a> {
         // would alias a live `&mut`. Spec uses raw `*DirInfo`; re-borrow narrowly.
         dir_info: *mut DirInfo::DirInfo,
         path_: &[u8],
-        extension_order: options::ExtensionSlice,
+        extension_order: options::ExtOrder,
     ) -> Option<MatchResult> {
         // In order for our path handling logic to be correct, it must end with a trailing slash.
         let mut path = path_;
@@ -8503,8 +8560,8 @@ impl<'a> Resolver<'a> {
                 let main_field_values = &pkg_json.main_fields;
                 // PORT NOTE: raw fat ptr — borrows `self.opts.main_fields` heap buffer so
                 // the loop body can take `&mut self` without overlapping borrows.
-                let main_field_keys: options::ExtensionSlice = &raw const *self.opts.main_fields;
-                let mf_ext_order: options::ExtensionSlice = &raw const *self.opts.main_field_extension_order;
+                let main_field_keys: *const [Box<[u8]>] = &raw const *self.opts.main_fields;
+                let mf_ext_order = options::ExtOrder::MainField;
                 // Spec resolver.zig compares the *pointer* of `opts.main_fields`
                 // against the per-target default to detect "user did not pass
                 // --main-fields"; the bundler now projects that as an explicit
@@ -8629,7 +8686,7 @@ impl<'a> Resolver<'a> {
         dec_ret!(None);
     }
 
-    pub fn load_as_file(&mut self, path: &[u8], extension_order: options::ExtensionSlice) -> Option<LoadResult> {
+    pub fn load_as_file(&mut self, path: &[u8], extension_order: options::ExtOrder) -> Option<LoadResult> {
         // SAFETY: PORT — RealFS is the global singleton (fs.zig); Zig held a raw
         // pointer here (resolver.zig:3784). Derive provenance from the raw
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
@@ -8724,10 +8781,15 @@ impl<'a> Resolver<'a> {
 
         // Try the path with extensions
         bufs!(load_as_file)[..path.len()].copy_from_slice(path);
-        // SAFETY: `extension_order` points into `self.opts`, owned by `self`.
-        for ext in unsafe { &*extension_order }.iter() {
-            let ext: &[u8] = ext;
-            if let Some(result) = self.load_extension(base, path, ext, entries!()) {
+        // PORT NOTE: index by `0..len` so each iteration takes a fresh short
+        // borrow of `self.opts` that ends before `&mut self` is taken by
+        // `load_extension` (matches `extra_cjs_extensions` loop below).
+        let n = self.opts.ext_order_slice(extension_order).len();
+        for i in 0..n {
+            let ext: *const [u8] = &raw const *self.opts.ext_order_slice(extension_order)[i];
+            // SAFETY: `ext` points into a `Box<[u8]>` owned by `self.opts` and
+            // never mutated while the resolver runs; heap buffer is address-stable.
+            if let Some(result) = self.load_extension(base, path, unsafe { &*ext }, entries!()) {
                 dec_ret!(Some(result));
             }
         }
@@ -9332,7 +9394,7 @@ pub struct BrowserMapPath<'b> {
     pub remapped: &'static [u8],
     pub cleaned: &'b [u8],
     pub input_path: &'b [u8],
-    pub extension_order: crate::options::ExtensionSlice,
+    pub extension_order: &'b [Box<[u8]>],
     pub map: &'b BrowserMap,
 }
 
@@ -9358,8 +9420,7 @@ impl<'b> BrowserMapPath<'b> {
             ext_buf[..cleaned.len()].copy_from_slice(cleaned);
 
             // If that failed, try adding implicit extensions
-            // SAFETY: `extension_order` points into `Resolver.opts`, which outlives this borrow.
-            for ext in unsafe { &*self.extension_order }.iter() {
+            for ext in self.extension_order.iter() {
                 let ext: &[u8] = ext;
                 if cleaned.len() + ext.len() > ext_buf.len() {
                     continue;
@@ -9400,8 +9461,7 @@ impl<'b> BrowserMapPath<'b> {
         if index_path.len() <= ext_buf.len() {
             ext_buf[..index_path.len()].copy_from_slice(index_path);
 
-            // SAFETY: `extension_order` points into `Resolver.opts`, which outlives this borrow.
-            for ext in unsafe { &*self.extension_order }.iter() {
+            for ext in self.extension_order.iter() {
                 let ext: &[u8] = ext;
                 if index_path.len() + ext.len() > ext_buf.len() {
                     continue;

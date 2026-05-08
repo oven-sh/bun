@@ -3105,6 +3105,11 @@ pub mod timespec_mode {
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`.
 /// Sentinel `i64::MIN` ⇒ not mocked.
+///
+/// NOTE: `set`/`clear` have no caller yet — the baseline `set_timespec_now_hook`
+/// was likewise never wired (Zig fake-timers route through the JSC-side
+/// `Date.now` intercept, not `Timespec::now`). Kept as the documented future
+/// entry point for when `test_runner::FakeTimers` lands; not a regression.
 pub mod mock_time {
     use core::sync::atomic::{AtomicI64, Ordering};
 

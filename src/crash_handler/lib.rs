@@ -1197,9 +1197,12 @@ fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> Resul
     Ok(())
 }
 
-#[cfg(windows)]
-static WINDOWS_SEGFAULT_HANDLE: bun_core::RacyCell<Option<bun_sys::windows::HANDLE>> =
-    bun_core::RacyCell::new(None);
+// Windows VEH handle storage lives at T0 (`bun_core::WINDOWS_SEGFAULT_HANDLE`,
+// `AtomicPtr<c_void>`) so `bun_core::raise_ignoring_panic_handler` can remove
+// it before re-raising without an upward dep. Single source of truth — this
+// crate reads/writes/swaps that same atomic; no local mirror (a second copy
+// would go stale after T0's swap-to-null and trip the `debug_assert!(rc != 0)`
+// in `reset_segfault_handler` on a double-remove).
 
 #[cfg(unix)]
 pub fn reset_on_posix() {
@@ -1233,9 +1236,8 @@ pub fn init() {
                     unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
                 >(handle_segfault_windows),
             );
-            WINDOWS_SEGFAULT_HANDLE.write(Some(handle));
-            // Publish to T0 storage so `bun_core::raise_ignoring_panic_handler`
-            // can remove the VEH before re-raising without an upward dep.
+            // Publish to T0 storage (single source of truth — see note above
+            // `reset_on_posix`). `HANDLE` is `*mut c_void`; cast is identity.
             bun_core::WINDOWS_SEGFAULT_HANDLE
                 .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
         }
@@ -1266,10 +1268,14 @@ pub fn reset_segfault_handler() {
 
     #[cfg(windows)]
     {
-        // SAFETY: WINDOWS_SEGFAULT_HANDLE is only mutated on the crash path
-        if let Some(handle) = unsafe { WINDOWS_SEGFAULT_HANDLE.read() } {
+        // Swap-to-null so a concurrent/reentrant reset (or T0's
+        // `raise_ignoring_panic_handler`) can't double-remove the same handle.
+        let handle = bun_core::WINDOWS_SEGFAULT_HANDLE
+            .swap(core::ptr::null_mut(), Ordering::Relaxed);
+        if !handle.is_null() {
+            // SAFETY: handle was returned by AddVectoredExceptionHandler and
+            // not yet removed (atomically claimed via the swap above).
             let rc = unsafe { bun_sys::windows::kernel32::RemoveVectoredExceptionHandler(handle) };
-            unsafe { WINDOWS_SEGFAULT_HANDLE.write(None); }
             debug_assert!(rc != 0);
         }
         return;

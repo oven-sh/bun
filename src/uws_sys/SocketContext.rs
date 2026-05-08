@@ -60,9 +60,13 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
         return None;
     }
     let ft: FILETIME = data.ftLastWriteTime;
-    // FILETIME = 100ns ticks since 1601-01-01. Feed raw ticks as
+    // FILETIME = 100ns ticks since 1601-01-01. Feed raw ticks split as
     // `[sec_field, nsec_field, size]` — the digest only needs *some*
-    // deterministic encoding of mtime, not the POSIX epoch split.
+    // deterministic encoding of mtime, not the libuv POSIX-epoch split the
+    // deleted `__bun_uws_stat_file` produced. The SSL-context cache keyed on
+    // this digest is in-memory process-lifetime only (spec `SocketContext.zig`
+    // — no on-disk persistence), so cross-version byte-compat of the key is
+    // irrelevant; only stability *within* a process matters.
     let ticks = (u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime);
     let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
     Some([(ticks / 10_000_000) as i64, (ticks % 10_000_000) as i64 * 100, size as i64])

@@ -487,23 +487,31 @@ pub mod bake_types {
     /// HERE — no upward link to `bun_runtime`. `bun_runtime::bake` keeps its
     /// own `&'static ZStr` flavour for JSC/C++ handoff; this bundler-side copy
     /// only needs `&[u8]` for the chunk preamble + sourcemap line skip, so the
-    /// NUL-termination dance is unnecessary. PERF(port): `HmrRuntime::init`
-    /// re-counts `\n` on every call (was const-eval in Zig); cold path —
-    /// once per chunk after a full bundle.
+    /// NUL-termination dance is unnecessary. Per-side `OnceLock<HmrRuntime>`
+    /// memoizes the `\n` count (Zig const-eval'd it on the `@embedFile` arm;
+    /// `runtime_embed_file!` already caches the file load, this caches the
+    /// `init` scan so repeat calls are a `Copy`).
     pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-        HmrRuntime::init(match side {
-            Side::Client => bun_core::runtime_embed_file!(
-                bun_core::EmbedKind::CodegenEager,
-                "bake.client.js"
-            )
-            .as_bytes(),
+        static CLIENT: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
+        static SERVER: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
+        match side {
+            Side::Client => *CLIENT.get_or_init(|| {
+                HmrRuntime::init(
+                    bun_core::runtime_embed_file!(
+                        bun_core::EmbedKind::CodegenEager,
+                        "bake.client.js"
+                    )
+                    .as_bytes(),
+                )
+            }),
             // Server runtime is loaded once; non-eager.
-            Side::Server => bun_core::runtime_embed_file!(
-                bun_core::EmbedKind::Codegen,
-                "bake.server.js"
-            )
-            .as_bytes(),
-        })
+            Side::Server => *SERVER.get_or_init(|| {
+                HmrRuntime::init(
+                    bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bake.server.js")
+                        .as_bytes(),
+                )
+            }),
+        }
     }
 
     /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.

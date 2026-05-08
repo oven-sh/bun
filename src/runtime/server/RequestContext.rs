@@ -14,7 +14,7 @@ use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine
 use crate::server::{RangeRequest, ServerLike};
 use crate::webcore::{
     self as WebCore, blob::SizeType as BlobSizeType, body, readable_stream, request, response,
-    AbortSignal, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders, Request, Response,
+    AbortSignal, AnyBlob, ByteStream, CookieMap, FetchHeaders, Request, Response,
 };
 
 /// Q: Why is this needed?
@@ -113,7 +113,10 @@ thread_local! {
 }
 
 pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool> {
-    pub server: Option<*const ThisServer>,
+    /// BACKREF to the embedding `Server` — the server owns this request
+    /// context (allocated from its `HiveArray` pool) and outlives it, so the
+    /// pointee is live for the holder's entire lifetime. `None` once detached.
+    pub server: Option<bun_ptr::BackRef<ThisServer>>,
     pub resp: Option<uws::AnyResponse>,
     /// thread-local default heap allocator
     /// this prevents an extra pthread_getspecific() call which shows up in profiling
@@ -128,9 +131,7 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
     // `shim::signal_release` in `on_abort`/`finalize_without_deinit`.
     pub signal: Option<NonNull<AbortSignal>>,
     pub method: Method,
-    /// Owned `+1` ref on a C++ `CookieMap` (taken in `set_cookies`, released
-    /// when the field is dropped/replaced — `CookieMapRef` handles the unref).
-    pub cookies: Option<CookieMapRef>,
+    pub cookies: Option<*mut CookieMap>,
 
     pub flags: Flags<DEBUG_MODE>,
 
@@ -206,8 +207,10 @@ where
 
     pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
         let server = self.server?;
-        // SAFETY: server is valid while RequestContext is alive (BACKREF)
-        unsafe { (*server).dev_server() }
+        // SAFETY: server is valid while RequestContext is alive (BACKREF);
+        // raw deref keeps the borrow's lifetime unconstrained so it can be
+        // returned as `&'self` (the server outlives `self`).
+        unsafe { (*server.as_ptr()).dev_server() }
     }
 }
 
@@ -479,7 +482,7 @@ where
     /// at construction in `init()` from the `NewServer` that owns the request
     /// pool, never null while the `RequestContext` is live, and the server
     /// outlives every `RequestContext` it allocates. Centralises the
-    /// per-call-site `unsafe { &*self.server.expect(..) }`.
+    /// per-call-site backref deref behind the `bun_ptr::BackRef` field.
     ///
     /// Returned lifetime is **decoupled** from `&self` (unbounded `'r`): the
     /// server is not a sub-field of `RequestContext` (it owns the pool the
@@ -492,14 +495,15 @@ where
         // the pointee `NewServer` outlives this context (it owns the pool).
         // `'r` may exceed `&self` because the server is not borrowed from
         // `*self`; it lives independently and outlives every context.
-        unsafe { &*self.server.expect("infallible: server bound") }
+        let p = self.server.expect("infallible: server bound").as_ptr();
+        unsafe { &*p }
     }
 
     pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
         if let Some(signal) = &self.signal {
             if let Some(server) = self.server {
-                // SAFETY: server is valid while RequestContext is alive (BACKREF)
-                let global = unsafe { (*server.cast_mut()).global_this() };
+                // server is a BACKREF — valid while this RequestContext is alive
+                let global = server.global_this();
                 shim::signal_fire(signal, global, reason);
             }
         }
@@ -532,9 +536,15 @@ where
     }
 
     pub fn set_cookies(&mut self, cookie_map: Option<*mut CookieMap>) {
-        // SAFETY: caller passes a live `CookieMap*` (or None); `new_ref` takes a
-        // ref for storage. Assigning replaces (and so drops/unrefs) the old one.
-        self.cookies = cookie_map.map(|p| CookieMapRef::new_ref(unsafe { &*p }));
+        if let Some(cookies) = self.cookies.take() {
+            // SAFETY: opaque FFI handle with intrusive refcount; we held a ref.
+            unsafe { (*cookies).deref() };
+        }
+        self.cookies = cookie_map;
+        if let Some(cookies) = self.cookies {
+            // SAFETY: caller passes a live CookieMap*; we take a ref for storage.
+            unsafe { (*cookies).ref_() };
+        }
     }
 
     pub fn set_timeout_handler(&mut self) {
@@ -570,8 +580,8 @@ where
         let class_name = value.get_class_info_name().unwrap_or(b"");
 
         if let Some(server) = self.server {
-            // SAFETY: BACKREF
-            let global_this: &JSGlobalObject = unsafe { (*server).global_this() };
+            // server is a BACKREF — valid while this RequestContext is alive
+            let global_this: &JSGlobalObject = server.global_this();
 
             Output::enable_buffering();
             let writer = Output::error_writer();
@@ -723,11 +733,11 @@ where
         }
 
         if let Some(server) = self.server.take() {
-            // SAFETY: BACKREF; pool put + onRequestComplete
-            unsafe {
-                (*server).release_request_context(std::ptr::from_mut::<Self>(self).cast::<c_void>(), HTTP3);
-                (*server.cast_mut()).on_request_complete();
-            }
+            // server is a BACKREF; pool put + onRequestComplete
+            server.release_request_context(std::ptr::from_mut::<Self>(self).cast::<c_void>(), HTTP3);
+            // SAFETY: `&mut` through the backref — the server outlives this
+            // context and no other borrow of it is live here.
+            unsafe { (*server.as_ptr()).on_request_complete() };
         }
     }
 
@@ -1138,7 +1148,7 @@ where
                 resp: Some(resp),
                 req: Some(req),
                 method: resolved_method,
-                server: Some(server),
+                server: NonNull::new(server.cast_mut()).map(bun_ptr::BackRef::from),
                 defer_deinit_until_callback_completes: should_deinit_context,
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
                 request_weakref: request::WeakRef::EMPTY,
@@ -1293,7 +1303,7 @@ where
         self.blob.detach();
         debug_assert!(self.server.is_some());
         // SAFETY: BACKREF
-        let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
+        let global_this = self.server().global_this();
 
         #[cfg(debug_assertions)]
         {
@@ -1313,8 +1323,10 @@ where
 
         self.request_body_readable_stream_ref.deinit();
 
-        // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
-        drop(self.cookies.take());
+        if let Some(cookies) = self.cookies.take() {
+            // SAFETY: opaque FFI handle; release the ref we took in set_cookies.
+            unsafe { (*cookies).deref() };
+        }
 
         if let Some(request) = self.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
@@ -1463,7 +1475,7 @@ where
             return;
         }
         // SAFETY: BACKREF
-        let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
+        let global_this = self.server().global_this();
         let resp = self.resp.expect("infallible: resp bound");
 
         self.blob = AnyBlob::Blob(blob);
@@ -1753,7 +1765,7 @@ where
         let stream = &mut pair.stream;
         debug_assert!(this.server.is_some());
         // SAFETY: BACKREF
-        let global_this = unsafe { (*this.server.expect("infallible: server bound")).global_this() };
+        let global_this = this.server().global_this();
 
         if this.is_aborted_or_ended() {
             stream.cancel(global_this);
@@ -2052,7 +2064,7 @@ where
             // TODO: properly propagate exception upwards
             // SAFETY: BACKREF; see drain_microtasks() re: const→mut cast.
             unsafe {
-                let vm = std::ptr::from_ref::<VirtualMachine>((*self.server.expect("infallible: server bound")).vm()).cast_mut();
+                let vm = std::ptr::from_ref::<VirtualMachine>(self.server().vm()).cast_mut();
                 (*vm).drain_microtasks();
             }
         }
@@ -2072,7 +2084,7 @@ where
             // but we received nothing or the connection was aborted
             if matches!(body, Body::Value::Locked(_)) {
                 // SAFETY: BACKREF
-                let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
+                let global_this = self.server().global_this();
                 body.to_error_instance(
                     Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
                     global_this,
@@ -2111,7 +2123,7 @@ where
             || self.flags.aborted()
             || self.server.is_none()
             // SAFETY: BACKREF, just checked Some
-            || unsafe { (*self.server.expect("infallible: server bound")).terminated() }
+            || self.server().terminated()
     }
 
     pub fn do_render_head_response_after_s3_size_resolved(
@@ -2186,7 +2198,7 @@ where
             return;
         };
         // SAFETY: BACKREF
-        let global_this = unsafe { (*server).global_this() };
+        let global_this = server.global_this();
         // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
         // accessor — `get_fetch_headers()` and `get_init_headers()` alias the
         // same `init.headers` field.
@@ -2487,10 +2499,11 @@ where
             Self::destroy_sink(wrapper_ptr);
         }
 
+        debug_assert!(req.server.is_some());
+        // server is a BACKREF; `global_this()` returns a lifetime decoupled
+        // from `&req`, so it can be held across the `&mut req` reborrow below.
+        let global_this = req.server().global_this();
         if let Some(resp) = req.response_weakref.get() {
-            debug_assert!(req.server.is_some());
-            // SAFETY: BACKREF
-            let global_this = unsafe { (*req.server.expect("infallible: server bound")).global_this() };
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
@@ -2600,7 +2613,7 @@ where
             if let Some(server) = req.server {
                 if !err.is_empty_or_undefined_or_null() {
                     // SAFETY: BACKREF
-                    let server = unsafe { &*server };
+                    let server = &*server;
                     // `run_error_handler` takes `Option<&mut ExceptionList>` where
                     // `ExceptionList = Vec<()>` upstream; once it carries
                     // `Api::JsException`, swap the local back in.
@@ -2675,7 +2688,7 @@ where
         // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
         value.to_blob_if_possible();
         // SAFETY: BACKREF
-        let global_this = unsafe { (*this.server.expect("infallible: server bound")).global_this() };
+        let global_this = this.server().global_this();
         match value {
             Body::Value::Error(err_ref) => {
                 let js_err = err_ref.to_js(global_this);
@@ -2931,7 +2944,7 @@ where
         // borrows are disjoint at runtime; route through a raw ptr to express that.
         let response: *mut Response = self.response_weakref.get().unwrap();
         // SAFETY: BACKREF
-        let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
+        let global_this = self.server().global_this();
         // SAFETY: response_weakref keeps the Response alive for this frame.
         let owned_readable = unsafe { (*response).get_body_readable_stream(global_this) };
         // SAFETY: as above; body_value borrows the Response, disjoint from `self`.
@@ -2984,7 +2997,7 @@ where
             return self.render_production_error(status);
         };
         // SAFETY: BACKREF
-        let server = unsafe { &*server };
+        let server = &*server;
         let global_this = server.global_this();
         // TODO(b2-blocked): DEBUG_MODE branch renders the HTML fallback page via
         // `Api::JsException` + `render_default_error`; gated until bun_schema/
@@ -3039,7 +3052,7 @@ where
         jsc::mark_binding!();
         if let Some(server) = self.server {
             // SAFETY: BACKREF
-            let server = unsafe { &*server };
+            let server = &*server;
             if let Some(on_error) = server.config().on_error.as_ref()
                 && !self.flags.has_called_error_handler()
             {
@@ -3216,15 +3229,19 @@ where
             self.do_write_status(status);
         }
 
-        if let Some(mut cookies) = self.cookies.take() {
+        if let Some(cookies) = self.cookies.take() {
             // SAFETY: BACKREF
-            let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
-            let r = cookies.write(
-                global_this,
-                Self::RESP_KIND,
-                any_response_as_ptr(self.resp.expect("infallible: resp bound")),
-            );
-            // `cookies` drops here, releasing the ref taken in `set_cookies`.
+            let global_this = self.server().global_this();
+            // SAFETY: cookies is a live opaque FFI handle; we held a ref.
+            let r = unsafe {
+                (*cookies).write(
+                    global_this,
+                    Self::RESP_KIND,
+                    any_response_as_ptr(self.resp.expect("infallible: resp bound")),
+                )
+            };
+            // SAFETY: release the ref we took in set_cookies.
+            unsafe { (*cookies).deref() };
             if r.is_err() {
                 return;
             } // TODO: properly propagate exception upwards
@@ -3245,7 +3262,7 @@ where
         // TODO(port): `@hasDecl(ThisServer, "h3AltSvc")` — model as optional trait method.
         if !HTTP3 {
             // SAFETY: BACKREF
-            if let Some(alt) = unsafe { (*self.server.expect("infallible: server bound")).h3_alt_svc() } {
+            if let Some(alt) = self.server().h3_alt_svc() {
                 resp.write_header(b"alt-svc", alt);
             }
         }
@@ -3612,7 +3629,7 @@ where
                     }
                     let mut new_body: Body::Value = Body::Value::Null;
                     // SAFETY: BACKREF
-                    let global_this = unsafe { (*server).global_this() };
+                    let global_this = server.global_this();
                     let _ = Body::Value::resolve(&mut old, &mut new_body, global_this, None); // TODO: properly propagate exception upwards
                     *body = new_body;
                 }

@@ -18,7 +18,7 @@ use bun_jsc::{
     JsError, JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _,
     SystemError, VirtualMachine,
 };
-use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Body, FetchHeaders, Request, Response};
+use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Body, CookieMap, FetchHeaders, Request, Response};
 use crate::webcore::BlobExt;
 use crate::webcore::fetch as Fetch;
 use bun_jsc::Debugger::{AsyncTaskTracker, DebuggerId};
@@ -1898,9 +1898,11 @@ where
             return Ok(JSValue::FALSE);
         }
 
-        // `CookieMapRef` releases the moved-out ref on every exit path of this
-        // scope (including the `?` below) once `cookies_to_write` drops.
-        let mut cookies_to_write = upgrader.cookies.take();
+        let cookies_to_write = upgrader.cookies.take();
+        scopeguard::defer! {
+            // SAFETY: `cookies` is a +1-ref C++ CookieMap; release it.
+            if let Some(c) = cookies_to_write { unsafe { (*c).deref() } }
+        };
 
         // Write status, custom headers, and cookies in one place
         if fetch_headers_to_use.is_some() || cookies_to_write.is_some() {
@@ -1909,8 +1911,9 @@ where
                 // SAFETY: h is a live FetchHeaders (see above).
                 unsafe { (*h).to_uws_response(ResponseKind::from(SSL, false), resp.socket().cast::<c_void>()) };
             }
-            if let Some(c) = cookies_to_write.as_mut() {
-                c.write(global, ResponseKind::from(SSL, false), resp.socket().cast::<c_void>())?;
+            if let Some(c) = cookies_to_write {
+                // SAFETY: c is a live +1-ref CookieMap (taken from upgrader).
+                unsafe { (*c).write(global, ResponseKind::from(SSL, false), resp.socket().cast::<c_void>())? };
             }
         }
 

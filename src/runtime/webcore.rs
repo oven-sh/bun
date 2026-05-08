@@ -42,7 +42,7 @@ pub use s3_stat::S3Stat;
 // lifetime), so the type aliases are lifetime-free and re-exported directly.
 pub use resumable_sink::{ResumableFetchSink, ResumableS3UploadSink, ResumableSinkBackpressure};
 pub use s3_client::S3Client;
-pub use cookie_map::{CookieMap, CookieMapRef};
+pub use cookie_map::CookieMap;
 pub use streams::{NetworkSink, HTTPResponseSink, HTTPSResponseSink, H3ResponseSink, HTTPServerWritable};
 
 #[path = "webcore/ObjectURLRegistry.rs"]

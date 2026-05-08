@@ -525,10 +525,9 @@ pub struct HTTPClient<'a> {
     pub tls_props: Option<ssl_config::SharedPtr>,
     /// The custom SSL context used for this request (None = default context).
     /// Set by HTTPThread.connect() when using custom TLS configs.
-    /// Holds one owned strong ref (taken in `set_custom_ssl_ctx`, released on
-    /// drop). `HttpsContext` is intrusive-refcounted (also recovered from socket
-    /// ext), so this is an `IntrusiveRc`, not an `Arc`.
-    pub custom_ssl_ctx: Option<http_context::HTTPContextRc<true>>,
+    // TODO(port): was Arc<HttpsContext>; HttpsContext is intrusive-refcounted and
+    // recovered from socket ext, so kept raw + manual ref/deref for now.
+    pub custom_ssl_ctx: Option<NonNull<HttpsContext>>,
     pub result_callback: HTTPClientResultCallback,
 
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -539,12 +538,9 @@ pub struct HTTPClient<'a> {
     pub http_proxy: Option<URL<'a>>,
     pub proxy_headers: Option<Headers>,
     pub proxy_authorization: Option<Vec<u8>>,
-    /// Set while this request is tunneling through an HTTP proxy (CONNECT).
-    /// Holds one owned strong ref on the intrusive-refcounted `ProxyTunnel`
-    /// (taken by `ProxyTunnel::start` / `adopt`, released on drop / pool
-    /// hand-off), so this is an `IntrusiveRc`, not an `Arc`. The pointee is
-    /// also recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
-    pub proxy_tunnel: Option<proxy_tunnel::RefPtr>,
+    // TODO(port): ProxyTunnel is intrusive-refcounted (RefPtr); raw NonNull until
+    // bun_ptr::IntrusiveRc<ProxyTunnel> is wired through detach_and_deref.
+    pub proxy_tunnel: Option<NonNull<ProxyTunnel>>,
     /// Set when this request is bound to a stream on an HTTP/2 session.
     /// Owned by the session; cleared by the session when the stream completes.
     pub h2: Option<NonNull<h2::Stream>>,
@@ -589,8 +585,8 @@ impl Drop for HTTPClient<'_> {
         debug_assert!(self.h2.is_none());
         // tls_props: Option<SharedPtr> — Drop releases strong ref.
         if let Some(ctx) = self.custom_ssl_ctx.take() {
-            // Release the strong ref taken in set_custom_ssl_ctx.
-            ctx.deref();
+            // SAFETY: we hold one strong ref taken in set_custom_ssl_ctx.
+            unsafe { HttpsContext::deref(ctx.as_ptr()) };
         }
         self.unix_socket_path = ZigStringSlice::EMPTY;
     }
@@ -1301,31 +1297,22 @@ impl<'a> HTTPClient<'a> {
     }
     #[inline]
     fn proxy_tunnel_mut(&mut self) -> Option<&mut ProxyTunnel> {
-        let raw = self.proxy_tunnel.as_ref().map(|p| p.as_ptr())?;
-        // SAFETY: proxy_tunnel is intrusive-refcounted (we hold a strong ref);
-        // this borrow does not outlive `self` and the tunnel is not dropped
-        // while borrowed.
-        Some(unsafe { &mut *raw })
+        // SAFETY: proxy_tunnel is intrusive-refcounted; this borrow does not
+        // outlive `self` and the tunnel is not dropped while borrowed.
+        self.proxy_tunnel.map(|mut p| unsafe { p.as_mut() })
     }
     /// Detach and release the proxy tunnel if one is attached. Replaces the
     /// open-coded `take → as_mut → shutdown → detach_and_deref` sequence.
     #[inline]
     fn close_proxy_tunnel(&mut self, shutdown: bool) {
-        if let Some(t) = self.proxy_tunnel.take() {
+        if let Some(mut t) = self.proxy_tunnel.take() {
             // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel; the
-            // raw `&mut` does not escape this block. `detach_socket` (formerly
-            // the first half of `detach_and_deref`) must run before the strong
-            // ref is released so a refcount>1 tunnel keeps no dangling socket.
-            unsafe {
-                let tunnel = &mut *t.as_ptr();
-                if shutdown {
-                    tunnel.shutdown();
-                }
-                tunnel.detach_socket();
+            // strong ref we held is released by `detach_and_deref`.
+            let tunnel = unsafe { t.as_mut() };
+            if shutdown {
+                tunnel.shutdown();
             }
-            // Release the strong ref this client held (formerly the `deref`
-            // half of `detach_and_deref`).
-            t.deref();
+            tunnel.detach_and_deref();
         }
     }
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
@@ -1918,7 +1905,7 @@ impl<'a> HTTPClient<'a> {
         // TODO(port): returns raw ptr because the global/Arc lifetimes differ;
         // Phase B should unify behind a borrow.
         if IS_SSL {
-            if let Some(ctx) = self.custom_ssl_ctx.as_ref() {
+            if let Some(ctx) = self.custom_ssl_ctx {
                 return ctx.as_ptr().cast::<GenHttpContext<IS_SSL>>();
             }
             (&raw mut http_thread().https_context).cast::<GenHttpContext<IS_SSL>>()
@@ -1931,10 +1918,10 @@ impl<'a> HTTPClient<'a> {
         // Intrusive-refcounted: this fn takes ownership of one strong ref by
         // bumping it here (matches http.zig:821-825). Callers do NOT pre-bump.
         // SAFETY: ctx points at a live HttpsContext.
-        let new_ref = unsafe { http_context::HTTPContextRc::<true>::init_ref(ctx.as_ptr()) };
-        if let Some(old) = self.custom_ssl_ctx.replace(new_ref) {
-            // Release the ref we previously held.
-            old.deref();
+        unsafe { (*ctx.as_ptr()).ref_() };
+        if let Some(old) = self.custom_ssl_ctx.replace(ctx) {
+            // SAFETY: old points at a live HttpsContext we held a ref on.
+            unsafe { HttpsContext::deref(old.as_ptr()) };
         }
     }
 
@@ -2746,11 +2733,9 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
-                if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
+                if let Some(mut proxy_ptr) = self.proxy_tunnel {
                     // SAFETY: proxy_ptr is a live intrusive-refcounted ProxyTunnel
-                    // (this client holds a strong ref); the raw deref is needed
-                    // because `&mut self` is reborrowed below.
-                    let proxy = unsafe { &mut *proxy_ptr };
+                    let proxy = unsafe { proxy_ptr.as_mut() };
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
                             self.set_timeout(socket, 5);
@@ -2779,11 +2764,9 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyHeaders => {
                 bun_core::scoped_log!(fetch, "send proxy headers");
-                if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
+                if let Some(mut proxy_ptr) = self.proxy_tunnel {
                     // SAFETY: proxy_ptr is a live intrusive-refcounted ProxyTunnel
-                    // (this client holds a strong ref); the raw deref is needed
-                    // because `&mut self` is reborrowed below.
-                    let proxy = unsafe { &mut *proxy_ptr };
+                    let proxy = unsafe { proxy_ptr.as_mut() };
                     self.set_timeout(socket, 5);
                     // PERF(port): was stack-fallback alloc (16KB) — profile in Phase B
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
@@ -3381,7 +3364,9 @@ impl<'a> HTTPClient<'a> {
             // ends on inner-TLS close; ProxyTunnel.onClose fires but the outer
             // socket is still alive. Pooling that dead wrapper would hang the
             // next request (proxy.write() → error.ConnectionClosed, swallowed).
-            let tunnel_poolable = if let Some(t) = self.proxy_tunnel.as_deref() {
+            let tunnel_poolable = if let Some(t) = self.proxy_tunnel {
+                // SAFETY: t is a live intrusive-refcounted ProxyTunnel
+                let t = unsafe { t.as_ref() };
                 self.state.request_stage == RequestStage::Done
                     && t.write_buffer.is_empty()
                     && t.wrapper.as_ref().map(|w| !w.is_shutdown()).unwrap_or(false)
@@ -3394,15 +3379,11 @@ impl<'a> HTTPClient<'a> {
                 && tunnel_poolable
             {
                 bun_core::scoped_log!(fetch, "release socket");
-                // Hand the client's strong ref straight to the pool: `release_socket`
-                // either stores this `RefPtr` in the parked `PooledSocket` or
-                // dereffs it if pooling fails.
                 let tunnel = self.proxy_tunnel.take();
-                if let Some(t) = &tunnel {
+                if let Some(t) = tunnel {
                     // SAFETY: t is a live intrusive-refcounted ProxyTunnel
                     unsafe { (*t.as_ptr()).detach_owner(&*self) };
                 }
-                let had_tunnel = tunnel.is_some();
                 // target_hostname = url.hostname (the CONNECT TCP target at
                 // writeProxyConnect line 346). The SNI override (hostname) is
                 // hashed into proxyAuthHash separately — both must match, but
@@ -3417,9 +3398,9 @@ impl<'a> HTTPClient<'a> {
                         self.connected_url.get_port_auto(),
                         self.tls_props.as_ref(),
                         tunnel,
-                        if had_tunnel { self.url.hostname } else { b"" },
-                        if had_tunnel { self.url.get_port_auto() } else { 0 },
-                        if had_tunnel { self.proxy_auth_hash() } else { 0 },
+                        if tunnel.is_some() { self.url.hostname } else { b"" },
+                        if tunnel.is_some() { self.url.get_port_auto() } else { 0 },
+                        if tunnel.is_some() { self.proxy_auth_hash() } else { 0 },
                         None,
                     );
                 }

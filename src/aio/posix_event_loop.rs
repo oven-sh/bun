@@ -1835,9 +1835,11 @@ pub struct Closer {
     pub task: work_pool::Task,
 }
 
-// SAFETY: `TASK_OFFSET` is `offset_of!(Closer, task)`; `task` is a `work_pool::Task`.
+// SAFETY: `TASK_OFFSET` is `offset_of!(Closer, task)`; `task_mut` returns that
+// same field. `Closer` is `Send` (`Fd` + intrusive `Task` are both `Send`).
 unsafe impl bun_threading::work_pool::OwnedTask for Closer {
     const TASK_OFFSET: usize = core::mem::offset_of!(Closer, task);
+    fn task_mut(&mut self) -> &mut work_pool::Task { &mut self.task }
     fn run(self: Box<Self>) {
         // PORT NOTE: Zig `defer bun.destroy(closer)` — `self` drops at scope exit.
         self.fd.close();

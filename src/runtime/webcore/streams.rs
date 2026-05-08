@@ -688,10 +688,12 @@ impl Pending {
         // `mem::take` already resets `state`/`result`/`future` via `Default`, so the
         // explicit re-assignments are unnecessary here. Zig left `future` untouched —
         // no reader observes it after this.
-        // SAFETY: VM event loop is a singleton; temporary `&mut` is the sole
-        // borrow for the duration of `enqueue_task` (no re-entry into Rust).
+        // VM event loop is a singleton; temporary `&mut` is the sole borrow
+        // for the duration of `enqueue_task` (no re-entry into Rust).
+        // `Task::from_boxed` owns the `Box → *mut` leak; the matching
+        // `heap::take` lives in `run_from_js_thread` (the dispatch arm).
         vm.event_loop_ref()
-            .enqueue_task(bun_event_loop::Task::init(bun_core::heap::leak(clone)));
+            .enqueue_task(bun_event_loop::Task::from_boxed(clone));
     }
 
     pub fn run_from_js_thread(this: *mut Pending) {

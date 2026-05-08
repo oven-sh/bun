@@ -639,9 +639,9 @@ impl FileSystemRouter {
         // leaving the self-ref pointers dangling (ASAN use-after-poison). Hand the
         // existing allocation straight to the C++ wrapper instead — matches Zig's
         // `result.toJS(globalThis)` which forwards the `*MatchedRoute` as-is.
-        // SAFETY: `heap::alloc` yields a uniquely-owned heap payload; ownership
-        // transfers to the GC wrapper (freed via `MatchedRouteClass__finalize`).
-        Ok(unsafe { MatchedRoute::to_js_ptr(bun_core::heap::leak(result), global_this) })
+        // Ownership transfers to the GC wrapper (freed via
+        // `MatchedRouteClass__finalize`); the leak lives once in `to_js_boxed`.
+        Ok(MatchedRoute::to_js_boxed(result, global_this))
     }
 
     #[bun_jsc::host_fn(getter)]

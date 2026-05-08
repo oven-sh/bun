@@ -305,9 +305,9 @@ impl Drop for StringBuilder {
         // SAFETY: ptr came from Box::<[MaybeUninit<u8>]>::new_uninit_slice(self.cap)
         // leaked in init_capacity/allocate; reconstruct to free via global allocator.
         unsafe {
-            drop(Box::<[core::mem::MaybeUninit<u8>]>::from_raw(
+            bun_core::heap::destroy::<[core::mem::MaybeUninit<u8>]>(
                 slice::from_raw_parts_mut(ptr.as_ptr().cast(), self.cap),
-            ));
+            );
         }
     }
 }

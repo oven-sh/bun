@@ -1676,10 +1676,12 @@ pub mod closer {
         task: WorkPoolTask,
     }
 
-    // SAFETY: `TASK_OFFSET` is `offset_of!(Closer, task)`; `task: WorkPoolTask`.
+    // SAFETY: `TASK_OFFSET` is `offset_of!(Closer, task)`; `task_mut` returns
+    // that same field. `Closer` is `Send` (`Fd` + intrusive `Task`).
     #[cfg(not(windows))]
     unsafe impl bun_threading::work_pool::OwnedTask for Closer {
         const TASK_OFFSET: usize = core::mem::offset_of!(Closer, task);
+        fn task_mut(&mut self) -> &mut WorkPoolTask { &mut self.task }
         fn run(self: Box<Self>) {
             use bun_sys::FdExt;
             self.fd.close();

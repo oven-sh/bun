@@ -15,12 +15,22 @@ pub struct WorkPool;
 /// `Box::into_raw`/`from_raw` directly.
 ///
 /// # Safety
-/// `TASK_OFFSET` MUST equal `core::mem::offset_of!(Self, <task field>)` where
-/// the field is of type [`Task`]. Getting this wrong is UB (the shim casts
-/// through it).
-pub unsafe trait OwnedTask: Sized + 'static {
-    /// `core::mem::offset_of!(Self, task)`.
+/// - `TASK_OFFSET` MUST equal `core::mem::offset_of!(Self, <task field>)`
+///   where the field is of type [`Task`] and [`task_mut`](OwnedTask::task_mut)
+///   MUST return a borrow of that same field. The shim casts through the
+///   offset; a mismatch is UB.
+/// - [`run`](OwnedTask::run) executes on an arbitrary worker thread (hence
+///   the `Send` bound).
+pub unsafe trait OwnedTask: Send + Sized + 'static {
+    /// `core::mem::offset_of!(Self, task)`. Used only for the `container_of`
+    /// recovery in [`__callback`](OwnedTask::__callback) and the schedule
+    /// argument; the install step uses the safe [`task_mut`] accessor.
     const TASK_OFFSET: usize;
+
+    /// Safe accessor for the intrusive `task: Task` field. Implementors
+    /// return `&mut self.task`; [`WorkPool::schedule_owned`] uses this to
+    /// install the callback without raw byte-offset arithmetic.
+    fn task_mut(&mut self) -> &mut Task;
 
     /// Run the task. Receives ownership of the heap allocation; dropping
     /// `self` frees it (Zig: `bun.destroy(this)` at end of callback).
@@ -73,19 +83,17 @@ impl WorkPool {
     /// Replaces the open-coded `Box::into_raw` + `&raw mut (*p).task` +
     /// `@fieldParentPtr`-in-callback pattern.
     pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
-        // Install the monomorphized shim as the intrusive callback.
-        // SAFETY: `TASK_OFFSET` is the verified offset of a `Task` field
-        // (trait contract); the write is in-bounds.
-        unsafe {
-            let slot = (core::ptr::from_mut(&mut *task).cast::<u8>())
-                .add(T::TASK_OFFSET)
-                .cast::<Task>();
-            (*slot).callback = T::__callback;
-            (*slot).node = crate::thread_pool::Node::default();
-        }
-        // The single into_raw for every OwnedTask scheduler call.
+        // Install the monomorphized shim via the safe accessor — no raw
+        // byte-offset write. `node` is left as the caller initialized it
+        // (always `Node::default()`); the Zig path never reset it at schedule
+        // time either.
+        task.task_mut().callback = T::__callback;
+        // The single into_raw for every OwnedTask scheduler call. Derive the
+        // intrusive `*mut Task` *after* into_raw so provenance covers the full
+        // allocation and there is exactly one raw-pointer derivation.
         let raw = Box::into_raw(task);
-        // SAFETY: `raw` is live for the pool's lifetime; offset is valid.
+        // SAFETY: `raw` is a live heap allocation now owned by the pool;
+        // `TASK_OFFSET` is the trait-contract offset of a `Task` field.
         Self::schedule(unsafe { raw.cast::<u8>().add(T::TASK_OFFSET).cast::<Task>() });
     }
 

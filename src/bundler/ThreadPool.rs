@@ -518,7 +518,7 @@ impl Worker {
         }
         // SAFETY: caller contract — `this` was heap-allocated. Reclaim the
         // allocation without running field destructors (handled above).
-        drop(unsafe { Box::<MaybeUninit<Worker>>::from_raw(this.cast()) });
+        unsafe { bun_core::heap::destroy(this.cast::<MaybeUninit<Worker>>()) };
     }
 
     // PORT NOTE: returns `&'static mut` (detached) — the `Worker` is

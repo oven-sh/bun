@@ -5874,7 +5874,7 @@ impl H2FrameParser {
             // SAFETY: `this` was `heap::alloc`'d in `constructor`; the value has
             // already been dropped in place so reclaim the allocation as a
             // `MaybeUninit` box (no double drop).
-            unsafe { drop(Box::<core::mem::MaybeUninit<Self>>::from_raw(this.cast())) };
+            unsafe { bun_core::heap::destroy(this.cast::<core::mem::MaybeUninit<Self>>()) };
         }
     }
 

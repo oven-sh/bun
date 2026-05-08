@@ -163,10 +163,10 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
             }
         }
 
-        // SAFETY: `value` was produced by `heap::alloc(Box::<MaybeUninit<T>>::new_uninit())`
+        // SAFETY: `value` was produced by `heap::leak(Box::<T>::new_uninit())`
         // in `get_impl`/`get_and_see_if_new`/`try_get` above, since it is not in the hive.
         // The slot is treated as uninitialized (Zig's `allocator.destroy` does not drop).
-        drop(unsafe { Box::<MaybeUninit<T>>::from_raw(value.cast()) });
+        unsafe { bun_core::heap::destroy(value.cast::<MaybeUninit<T>>()) };
     }
 }
 

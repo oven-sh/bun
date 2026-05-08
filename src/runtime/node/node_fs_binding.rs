@@ -394,9 +394,9 @@ pub fn create_binding(global: &JSGlobalObject) -> JSValue {
     let vm = global.bun_vm_ptr();
     module.node_fs.vm = NonNull::new(vm);
 
-    // SAFETY: `module` was `Box::new`-allocated; ownership transfers to the GC
+    // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.
-    unsafe { Binding::to_js_ptr(bun_core::heap::leak(module), global) }
+    Binding::to_js_boxed(module, global)
 }
 
 #[bun_jsc::host_fn]

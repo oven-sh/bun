@@ -435,7 +435,10 @@ pub fn install_hoisted_packages(
                         true,
                         log_level,
                     )?;
-                    if !installer.options().do_.install_packages() {
+                    // Read via `this` (the live `&mut PM`) rather than the
+                    // sibling `installer.options` raw — keeps the shared
+                    // borrow a child of `this`'s Unique under SB.
+                    if !this.options.do_.install_packages() {
                         return Err(bun_core::err!("InstallFailed"));
                     }
                 }
@@ -453,7 +456,7 @@ pub fn install_hoisted_packages(
                 true,
                 log_level,
             )?;
-            if !installer.options().do_.install_packages() {
+            if !this.options.do_.install_packages() {
                 return Err(bun_core::err!("InstallFailed"));
             }
 
@@ -461,7 +464,7 @@ pub fn install_hoisted_packages(
             this.report_slow_lifecycle_scripts();
         }
 
-        while this.pending_task_count() > 0 && installer.options().do_.install_packages() {
+        while this.pending_task_count() > 0 && this.options.do_.install_packages() {
             struct Closure<'a, 'b> {
                 installer: &'a mut PackageInstaller<'b>,
                 err: Option<bun_core::Error>,
@@ -557,7 +560,7 @@ pub fn install_hoisted_packages(
             }
         }
 
-        if !installer.options().do_.install_packages() {
+        if !this.options.do_.install_packages() {
             return Err(bun_core::err!("InstallFailed"));
         }
 

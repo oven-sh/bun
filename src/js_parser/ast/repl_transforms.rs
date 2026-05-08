@@ -148,12 +148,11 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
                         // Add this.funcName = funcName assignment
                         let this_expr = self.new_expr(E::This {}, stmt.loc);
-                        // SAFETY: `original_name` is an arena-owned slice valid for 'a; raw-ptr
-                        // deref yields an unbounded lifetime accepted by `Dot.name: &'static [u8]`
-                        // (Phase-A `Str` placeholder — see E.rs line 28).
-                        let name_str: &'static [u8] = unsafe {
-                            &*self.symbols[name_ref.inner_index() as usize].original_name
-                        };
+                        // `original_name` is an arena-owned `StoreStr` valid for 'a; `.slice()`
+                        // detaches the borrow from `self.symbols` so the &mut self calls below
+                        // don't conflict.
+                        let name_str: &[u8] =
+                            self.symbols[name_ref.inner_index() as usize].original_name.slice();
                         let this_dot = self.new_expr(
                             E::Dot {
                                 target: this_expr,
@@ -507,8 +506,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 E::Identifier { ref_: import_data.namespace_ref, ..Default::default() },
                 loc,
             );
-            // SAFETY: `alias` is an arena-owned `*const [u8]` valid for 'a; Phase-A `Str`.
-            let alias_str: &'static [u8] = unsafe { &*item.alias };
+            // `alias` is an arena-owned `StoreStr` valid for 'a.
+            let alias_str: &'static [u8] = item.alias.slice();
             let prop_access = self.new_expr(
                 E::Dot {
                     target: ns_ref_expr,

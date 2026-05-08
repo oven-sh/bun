@@ -630,14 +630,13 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
             Op::Code::BinAssign => {
                 // Optionally preserve the name
                 if let ExprData::EIdentifier(ident) = e_.left.data {
-                    // PORT NOTE: reshaped for borrowck — copy the raw original_name pointer out of
+                    // PORT NOTE: reshaped for borrowck — copy the `StoreStr` out of
                     // `p.symbols` before taking `&mut self` for `maybe_keep_expr_symbol_name`.
-                    let name_ptr =
+                    let name =
                         p.symbols[ident.ref_.inner_index() as usize].original_name;
                     e_.right = p.maybe_keep_expr_symbol_name(
                         e_.right,
-                        // SAFETY: `original_name` points into the source/arena (`'a`-lived).
-                        unsafe { &*name_ptr },
+                        name.slice(),
                         was_anonymous_named_expr,
                     );
                 }

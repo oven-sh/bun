@@ -321,7 +321,7 @@ pub fn post_process_js_chunk(
                                     };
                                     mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                                     // SAFETY: ClauseItem.alias is an arena `*const [u8]`; never null.
-                                    let alias_id = mi.str(unsafe { &*item.alias });
+                                    let alias_id = mi.str(item.alias.slice());
                                     mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
                                 }
                             }
@@ -1036,7 +1036,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                         ref_: Some(temp_ref),
                                         loc: Logger::Loc::EMPTY,
                                     },
-                                    alias: &raw const **alias,
+                                    alias: js_ast::StoreStr::new(alias),
                                     alias_loc: Logger::Loc::EMPTY,
                                     ..Default::default()
                                 });
@@ -1069,7 +1069,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                         ref_: Some(resolved_export_data.import_ref),
                                         loc: resolved_export_data.name_loc,
                                     },
-                                    alias: &raw const **alias,
+                                    alias: js_ast::StoreStr::new(alias),
                                     alias_loc: resolved_export_data.name_loc,
                                     ..Default::default()
                                 });
@@ -1116,7 +1116,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                     key: Some(Expr::init(
                                         E::String {
                                             // SAFETY: alias is an arena `*const [u8]`; never null.
-                                            data: unsafe { &*export_item.alias }.into(),
+                                            data: export_item.alias.slice().into(),
                                             is_utf16: false,
                                             ..Default::default()
                                         },

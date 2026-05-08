@@ -30,13 +30,13 @@ use crate::StmtNodeList;
 // the visit-time round-trips so the visitor bodies stay readable. All slices
 // are arena-owned and outlive the visit pass.
 //
-// `Symbol.original_name` / `ClauseItem.alias` remain `ArenaStr = *const [u8]`
-// pending the round-2 StoreStr migration; this thin shim keeps visitor bodies
-// readable until then.
+// `Symbol.original_name` / `ClauseItem.alias` are `StoreStr` (Deref<[u8]>);
+// `arena_str` is the legacy spelling kept so the visitor bodies below read
+// uniformly. Takes by value (Copy) so the returned borrow is detached from
+// any `&self.symbols[..]` temporary.
 #[inline(always)]
-unsafe fn arena_str<'a>(p: *const [u8]) -> &'a [u8] {
-    // SAFETY: arena-owned slice valid for the parse lifetime.
-    unsafe { &*p }
+fn arena_str<'a>(p: js_ast::StoreStr) -> &'a [u8] {
+    p.slice()
 }
 
 // Helper: visit a `StmtNodeList` arena slice in-place. Mirrors the
@@ -324,7 +324,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let old_ref = items[i].name.ref_.expect("infallible: ref bound");
 
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
-                let alias = unsafe { &*items[i].alias };
+                let alias = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
                     let _ = p.inject_replacement_export(stmts, old_ref, logger::Loc::EMPTY, &entry);
                     continue;
@@ -464,7 +464,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let symbol = &p.symbols[ident.ref_.inner_index() as usize];
                             if symbol.kind == js_ast::symbol::Kind::Unbound {
                                 // SAFETY: original_name is arena-owned, valid for 'a.
-                                let original_name = unsafe { arena_str(symbol.original_name) };
+                                let original_name = arena_str(symbol.original_name);
                                 if p.local_type_names.get(original_name).copied() == Some(true) {
                                     // the name points to a type — don't try to declare
                                     // this symbol, drop the statement.
@@ -542,7 +542,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         stmt.loc,
                     ));
                     let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
-                        alias: std::ptr::from_ref::<[u8]>(b"default"),
+                        alias: js_ast::StoreStr::new(b"default"),
                         alias_loc: data.default_name.loc,
                         name: data.default_name,
                         ..Default::default()
@@ -866,7 +866,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         debug_assert!(name_ref.is_symbol());
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         // SAFETY: original_name is arena-owned, valid for 'a.
-        let original_name: &'a [u8] = unsafe { arena_str(name_symbol.original_name) };
+        let original_name: &'a [u8] = arena_str(name_symbol.original_name);
         let remove_overwritten = name_symbol.remove_overwritten_function_declaration;
 
         // Handle exporting this function from a namespace
@@ -1019,7 +1019,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let class_name = data.class.class_name.expect("infallible: name checked");
             let class_name_ref = class_name.ref_.expect("infallible: ref bound");
             // SAFETY: original_name is arena-owned, valid for 'a.
-            let original_name = unsafe { arena_str(p.symbols[class_name_ref.inner_index() as usize].original_name) };
+            let original_name = arena_str(p.symbols[class_name_ref.inner_index() as usize].original_name);
             stmts.push(Stmt::assign(
                 p.new_expr(
                     E::Dot {
@@ -1150,7 +1150,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         js_ast::binding::Data::BIdentifier(b) => unsafe { (*b).r#ref },
                         _ => break 'try_register,
                     };
-                    let original_name = unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
+                    let original_name = arena_str(p.symbols[id.inner_index() as usize].original_name);
                     p.handle_react_refresh_register(
                         stmts,
                         original_name,
@@ -1171,7 +1171,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => break 'try_annotate,
                     };
                     let original_name =
-                        unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
+                        arena_str(p.symbols[id.inner_index() as usize].original_name);
                     decl.value =
                         Some(p.wrap_value_for_server_component_reference(val, original_name));
                 }
@@ -1311,10 +1311,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if bin.op == js_ast::OpCode::BinAssign
                                 && matches!(bin.left.data, js_ast::ExprData::ECommonjsExportIdentifier(_))
                             {
-                                // last entry's value
-                                let key: &'a [u8] = unsafe {
-                                    arena_str(&raw const p.commonjs_named_exports.keys()[to_convert as usize][..])
-                                };
+                                // last entry's value — `keys()` borrows the map; wrap as
+                                // `StoreStr` so the borrow is detached before re-borrowing
+                                // `commonjs_named_exports` mutably below.
+                                let key: &'a [u8] = js_ast::StoreStr::new(
+                                    &p.commonjs_named_exports.keys()[to_convert as usize][..],
+                                )
+                                .slice();
                                 let last = &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
                                 if !last.needs_decl {
                                     break 'convert;
@@ -1341,7 +1344,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.had_commonjs_named_exports_this_visit = true;
                                 let clause_items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
                                     // We want the generated name to not conflict
-                                    alias: std::ptr::from_ref::<[u8]>(key),
+                                    alias: js_ast::StoreStr::new(key),
                                     alias_loc: bin.left.loc,
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: last_loc },
                                     ..Default::default()
@@ -1747,7 +1750,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => unreachable!("for-of using must bind an identifier"),
                     };
                     let id_original_name =
-                        unsafe { arena_str(p.symbols[id.r#ref.inner_index() as usize].original_name) };
+                        arena_str(p.symbols[id.r#ref.inner_index() as usize].original_name);
                     let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
                     let mut first_decls = G::DeclList::init_capacity(1).expect("oom");
@@ -1935,7 +1938,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Create an assignment for each enum value
         for value in values.iter_mut() {
             // SAFETY: name is arena-owned, valid for 'a.
-            let name: &'a [u8] = unsafe { arena_str(value.name) };
+            let name: &'a [u8] = arena_str(value.name);
 
             let mut has_string_value = false;
             if let Some(enum_value) = value.value {

@@ -253,7 +253,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let ref_ = locref.ref_.expect("infallible: ref bound");
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let fn_name: &[u8] =
-                            unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
+                            p.symbols[ref_.inner_index() as usize].original_name.slice();
                         // SAFETY: exported_members points into arena-owned TSNamespaceScope; only
                         // borrowed via this pointer in this function.
                         unsafe { &mut *exported_members }.put(
@@ -273,7 +273,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let ref_ = locref.ref_.expect("infallible: ref bound");
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let class_name: &[u8] =
-                            unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
+                            p.symbols[ref_.inner_index() as usize].original_name.slice();
                         // SAFETY: see above.
                         unsafe { &mut *exported_members }.put(
                             class_name,
@@ -294,7 +294,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let member_data = clone_ts_member_data(member_data);
                             // SAFETY: original_name is arena-owned, valid for 'a.
                             let ns_name: &[u8] =
-                                unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
+                                p.symbols[ref_.inner_index() as usize].original_name.slice();
                             // SAFETY: see above.
                             unsafe { &mut *exported_members }.put(
                                 ns_name,
@@ -311,7 +311,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let member_data = clone_ts_member_data(member_data);
                             // SAFETY: original_name is arena-owned, valid for 'a.
                             let enum_name: &[u8] =
-                                unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
+                                p.symbols[ref_.inner_index() as usize].original_name.slice();
                             // SAFETY: see above.
                             unsafe { &mut *exported_members }.put(
                                 enum_name,
@@ -574,7 +574,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let mut value = EnumValue {
                 loc: p.lexer.loc(),
                 ref_: Ref::NONE,
-                name: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
+                name: js_ast::StoreStr::new(b"" as &[u8]),
                 value: None,
             };
             let mut needs_symbol = false;
@@ -585,11 +585,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
                 let estr = p.lexer.to_utf8_e_string()?;
                 debug_assert!(!estr.is_utf16);
-                value.name = estr.data.as_raw();
-                // SAFETY: `value.name` is an arena-owned slice valid for 'a.
-                needs_symbol = js_lexer::is_identifier(unsafe { &*value.name });
+                value.name = estr.data;
+                needs_symbol = js_lexer::is_identifier(value.name.slice());
             } else if p.lexer.is_identifier_or_keyword() {
-                value.name = std::ptr::from_ref::<[u8]>(p.lexer.identifier);
+                value.name = js_ast::StoreStr::new(p.lexer.identifier);
                 needs_symbol = true;
             } else {
                 p.lexer.expect(T::TIdentifier)?;
@@ -600,8 +599,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // Identifiers can be referenced by other values
             if !opts.is_typescript_declare && needs_symbol {
-                // SAFETY: `value.name` is an arena-owned slice valid for 'a.
-                value.ref_ = p.declare_symbol(SymbolKind::Other, value.loc, unsafe { &*value.name })?;
+                value.ref_ = p.declare_symbol(SymbolKind::Other, value.loc, value.name.slice())?;
             }
 
             // Parse the initializer
@@ -615,9 +613,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             values.push(value);
 
             // SAFETY: exported_members points into arena-owned TSNamespaceScope; only borrowed via
-            // this pointer in this function. value_name is an arena-owned slice valid for 'a.
+            // this pointer in this function.
             unsafe { &mut *exported_members }.put(
-                unsafe { &*value_name },
+                value_name.slice(),
                 TSNamespaceMember {
                     loc: value_loc,
                     data: TSNamespaceMemberData::EnumProperty,

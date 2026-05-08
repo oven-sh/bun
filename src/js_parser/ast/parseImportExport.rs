@@ -169,10 +169,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // "import { type as as } from 'mod'"
 
                             items.push(ClauseItem {
-                                alias,
+                                alias: alias.into(),
                                 alias_loc,
                                 name,
-                                original_name,
+                                original_name: original_name.into(),
                             });
                         }
                     } else if p.lexer.token == T::TIdentifier {
@@ -199,10 +199,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         items.push(ClauseItem {
-                            alias,
+                            alias: alias.into(),
                             alias_loc,
                             name,
-                            original_name,
+                            original_name: original_name.into(),
                         });
                     }
                 } else {
@@ -253,10 +253,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 items.push(ClauseItem {
-                    alias,
+                    alias: alias.into(),
                     alias_loc,
                     name,
-                    original_name,
+                    original_name: original_name.into(),
                 });
             }
 
@@ -349,10 +349,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             } else {
                                 // "export { type as as }"
                                 items.push(ClauseItem {
-                                    alias,
+                                    alias: alias.into(),
                                     alias_loc,
                                     name,
-                                    original_name,
+                                    original_name: original_name.into(),
                                 });
                                 // PERF(port): was assume_capacity (catch unreachable on append)
                             }
@@ -365,10 +365,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             p.lexer.next()?;
 
                             items.push(ClauseItem {
-                                alias,
+                                alias: alias.into(),
                                 alias_loc,
                                 name,
-                                original_name,
+                                original_name: original_name.into(),
                             });
                         } else {
                             had_type_only_exports = true;
@@ -416,10 +416,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     items.push(ClauseItem {
-                        alias,
+                        alias: alias.into(),
                         alias_loc,
                         name,
-                        original_name,
+                        original_name: original_name.into(),
                     });
                 }
             } else {
@@ -432,10 +432,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 items.push(ClauseItem {
-                    alias,
+                    alias: alias.into(),
                     alias_loc,
                     name,
-                    original_name,
+                    original_name: original_name.into(),
                 });
             }
 

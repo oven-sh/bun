@@ -803,7 +803,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         match r#ref.tag() {
             // SAFETY: original_name is an arena-owned slice valid for 'a (Symbol is created
             // from p.arena / source.contents in this same parse).
-            RefTag::Symbol => unsafe { &*self.symbols[r#ref.inner_index() as usize].original_name },
+            RefTag::Symbol => self.symbols[r#ref.inner_index() as usize].original_name.slice(),
             RefTag::SourceContentsSlice => {
                 let start = r#ref.source_index() as usize;
                 let end = start + r#ref.inner_index() as usize;
@@ -1273,7 +1273,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 symbol.use_count_estimate > 0
             }
             js_ast::b::B::BArray(array) => {
-                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a.
+                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let array = unsafe { &*array };
                 for item in unsafe { &*array.items } {
                     if self.is_binding_used(item.binding, default_export_ref) {
@@ -1283,7 +1283,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 false
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a.
+                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let obj = unsafe { &*obj };
                 for prop in unsafe { &*obj.properties } {
                     if self.is_binding_used(prop.value, default_export_ref) {
@@ -1360,8 +1360,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                                     if name_ref.eql(default_export_ref)
                                         || symbol.use_count_estimate > 0
-                                        // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
-                                        || self.named_exports.contains_key(unsafe { &*symbol.original_name })
+                                        // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                                        || self.named_exports.contains_key(symbol.original_name.slice())
                                         || self.named_imports.contains(&name_ref)
                                         || self.is_import_item.get(&name_ref).is_some()
                                     {
@@ -1384,8 +1384,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                                     if name_ref.eql(default_export_ref)
                                         || symbol.use_count_estimate > 0
-                                        // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
-                                        || self.named_exports.contains_key(unsafe { &*symbol.original_name })
+                                        // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                                        || self.named_exports.contains_key(symbol.original_name.slice())
                                         || self.named_imports.contains(&name_ref)
                                         || self.is_import_item.get(&name_ref).is_some()
                                     {
@@ -1499,7 +1499,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let symbol: &Symbol = &symbols[member.ref_.inner_index() as usize];
                 if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::MustNotBeRenamed {
                     // SAFETY: Symbol.original_name is an arena-owned slice valid for the parser lifetime.
-                    char_freq.scan(unsafe { &*symbol.original_name }, -(i32::try_from(symbol.use_count_estimate).expect("int cast")));
+                    char_freq.scan(symbol.original_name.slice(), -(i32::try_from(symbol.use_count_estimate).expect("int cast")));
                 }
             }
 
@@ -1507,7 +1507,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let symbol = &symbols[r#ref.inner_index() as usize];
                 if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::MustNotBeRenamed {
                     // SAFETY: see above.
-                    char_freq.scan(unsafe { &*symbol.original_name }, -(i32::try_from(symbol.use_count_estimate).expect("int cast")) - 1);
+                    char_freq.scan(symbol.original_name.slice(), -(i32::try_from(symbol.use_count_estimate).expect("int cast")) - 1);
                 }
             }
 
@@ -1543,19 +1543,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BIdentifier(ident) => {
                 // SAFETY: arena-owned `*mut Identifier` valid for parser 'a; no aliasing &mut.
                 let ident = unsafe { &*ident };
-                // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
-                let name: &'a [u8] = unsafe { &*self.symbols[ident.r#ref.inner_index() as usize].original_name };
+                // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                let name: &'a [u8] = self.symbols[ident.r#ref.inner_index() as usize].original_name.slice();
                 self.record_export(binding.loc, name, ident.r#ref).expect("unreachable");
             }
             js_ast::b::B::BArray(array) => {
-                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a.
+                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let array = unsafe { &*array };
                 for prop in unsafe { &*array.items } {
                     self.record_exported_binding(prop.binding);
                 }
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a.
+                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let obj = unsafe { &*obj };
                 for prop in unsafe { &*obj.properties } {
                     self.record_exported_binding(prop.value);
@@ -1679,7 +1679,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
             // SAFETY: original_name is an arena-owned slice valid for 'a.
-            let original = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+            let original = self.symbols[ref_.inner_index() as usize].original_name.slice();
             self.log()
                 .add_range_error_fmt(
                     Some(self.source),
@@ -1709,7 +1709,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             js_ast::ts::Data::EnumNumber(num) => {
                                 let num = *num;
                                 // SAFETY: arena-owned original_name slice.
-                                let name = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                                let name = self.symbols[ref_.inner_index() as usize].original_name.slice();
                                 return self.wrap_inlined_enum(
                                     Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: num }) },
                                     name,
@@ -1718,7 +1718,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             js_ast::ts::Data::EnumString(str_ptr) => {
                                 let str_ptr: *const E::EString = *str_ptr;
                                 // SAFETY: arena-owned original_name slice.
-                                let name = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                                let name = self.symbols[ref_.inner_index() as usize].original_name.slice();
                                 // SAFETY: arena-owned EString valid for 'a.
                                 let value = self.new_expr(unsafe { &*str_ptr }, loc);
                                 return self.wrap_inlined_enum(value, name);
@@ -1759,7 +1759,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     js_ast::ts::Data::EnumNumber(num) => {
                         let num = *num;
                         // SAFETY: arena-owned original_name slice.
-                        let name = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                        let name = self.symbols[ref_.inner_index() as usize].original_name.slice();
                         return self.wrap_inlined_enum(
                             Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: num }) },
                             name,
@@ -1768,7 +1768,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     js_ast::ts::Data::EnumString(str_ptr) => {
                         let str_ptr: *const E::EString = *str_ptr;
                         // SAFETY: arena-owned original_name slice.
-                        let name = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                        let name = self.symbols[ref_.inner_index() as usize].original_name.slice();
                         // SAFETY: arena-owned EString valid for 'a.
                         let value = self.new_expr(unsafe { &*str_ptr }, loc);
                         return self.wrap_inlined_enum(value, name);
@@ -1786,7 +1786,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // Substitute a namespace export reference now if appropriate
             if let Some(ns_ref) = self.is_exported_inside_namespace.get(&ref_).copied() {
                 // SAFETY: arena-owned original_name slice.
-                let name: &'a [u8] = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
+                let name: &'a [u8] = self.symbols[ref_.inner_index() as usize].original_name.slice();
 
                 self.record_usage(ns_ref);
                 let target = self.new_expr(E::Identifier::init(ns_ref), loc);
@@ -1835,8 +1835,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let response_ref = self.response_ref;
         let clause_items = arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
-            alias: std::ptr::from_ref::<[u8]>(b"Response"),
-            original_name: std::ptr::from_ref::<[u8]>(b"Response"),
+            alias: js_ast::StoreStr::new(b"Response"),
+            original_name: js_ast::StoreStr::new(b"Response"),
             alias_loc: logger::Loc::default(),
             name: LocRef { ref_: Some(response_ref), loc: logger::Loc::default() },
         });
@@ -1854,7 +1854,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.named_imports.put(
             self.response_ref,
             js_ast::NamedImport {
-                alias: Some(std::ptr::from_ref::<[u8]>(b"Response")),
+                alias: Some(js_ast::StoreStr::new(b"Response")),
                 alias_loc: Some(logger::Loc::default()),
                 namespace_ref: Some(self.bun_app_namespace_ref),
                 import_record_index: import_record_i,
@@ -1939,8 +1939,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let clause_items =
             arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(imports.len(), |_| js_ast::ClauseItem {
-                alias: std::ptr::from_ref::<[u8]>(b""),
-                original_name: std::ptr::from_ref::<[u8]>(b""),
+                alias: js_ast::StoreStr::new(b""),
+                original_name: js_ast::StoreStr::new(b""),
                 alias_loc: logger::Loc::default(),
                 name: LocRef::default(),
             });
@@ -1955,8 +1955,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let ref_ = symbols.get(alias).expect("unreachable");
             let alias_name: &'static [u8] = symbols.alias_name(alias);
             *clause_item = js_ast::ClauseItem {
-                alias: std::ptr::from_ref::<[u8]>(alias_name),
-                original_name: std::ptr::from_ref::<[u8]>(alias_name),
+                alias: js_ast::StoreStr::new(alias_name),
+                original_name: js_ast::StoreStr::new(alias_name),
                 alias_loc: logger::Loc::default(),
                 name: LocRef { ref_: Some(ref_), loc: logger::Loc::default() },
             };
@@ -1979,7 +1979,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.named_imports.put(
                 ref_,
                 js_ast::NamedImport {
-                    alias: Some(std::ptr::from_ref::<[u8]>(alias_name)),
+                    alias: Some(js_ast::StoreStr::new(alias_name)),
                     alias_loc: Some(logger::Loc::default()),
                     namespace_ref: Some(namespace_ref),
                     import_record_index: import_record_i,
@@ -2086,8 +2086,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 } else {
                     // PERF(port): was assume_capacity
                     items_import.push(js_ast::ClauseItem {
-                        alias: std::ptr::from_ref::<[u8]>(entry.name),
-                        original_name: std::ptr::from_ref::<[u8]>(entry.name),
+                        alias: js_ast::StoreStr::new(entry.name),
+                        original_name: js_ast::StoreStr::new(entry.name),
                         alias_loc: logger::Loc::default(),
                         name: LocRef { ref_: Some(entry.r#ref), loc: logger::Loc::default() },
                     });
@@ -2099,7 +2099,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 self.named_imports.put(
                     entry.r#ref,
                     js_ast::NamedImport {
-                        alias: Some(std::ptr::from_ref::<[u8]>(entry.name)),
+                        alias: Some(js_ast::StoreStr::new(entry.name)),
                         alias_loc: Some(logger::Loc::EMPTY),
                         namespace_ref: Some(namespace_ref),
                         import_record_index,
@@ -2695,8 +2695,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             || self.top_level_await_keyword.len > 0;
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
-            // SAFETY: Span.text is `ArenaStr` (`*const [u8]`) into lexer-owned source; valid for 'a.
-            let text = unsafe { &*factory.text };
+            // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
+            let text = factory.text.slice();
             self.options.jsx.factory = options::JSX::Pragma::member_list_to_components_if_different(
                 self.arena,
                 core::mem::take(&mut self.options.jsx.factory),
@@ -2707,7 +2707,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         if let Some(fragment) = self.lexer.jsx_pragma.jsx_frag() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
-            let text = unsafe { &*fragment.text };
+            let text = fragment.text.slice();
             self.options.jsx.fragment = options::JSX::Pragma::member_list_to_components_if_different(
                 self.arena,
                 core::mem::take(&mut self.options.jsx.fragment),
@@ -2718,7 +2718,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
-            let text = unsafe { &*import_source.text };
+            let text = import_source.text.slice();
             self.options.jsx.classic_import_source = Box::from(text);
             self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
             self.options.jsx.set_import_source(self.arena);
@@ -2726,7 +2726,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
-            let text = unsafe { &*runtime.text };
+            let text = runtime.text.slice();
             if let Some(jsx_runtime) = options::JSX::RUNTIME_MAP.get(text) {
                 self.options.jsx.runtime = jsx_runtime.runtime;
                 if let Some(dev) = jsx_runtime.development {
@@ -2898,12 +2898,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // The loop never inserts into `scope.members` itself (only ancestors), so
                 // snapshotting `(name_ptr, Member)` pairs up front is semantically identical
                 // and lets us re-borrow `*scope` mutably inside the body.
-                let member_snapshot: BumpVec<'a, (*const [u8], js_ast::scope::Member)> = {
+                let member_snapshot: BumpVec<'a, (js_ast::StoreStr, js_ast::scope::Member)> = {
                     // SAFETY: see above.
                     let members = &unsafe { &*scope }.members;
                     let mut v = BumpVec::with_capacity_in(members.count(), arena);
                     for (k, m) in members.iter() {
-                        v.push((std::ptr::from_ref::<[u8]>(k.as_ref()), *m));
+                        v.push((js_ast::StoreStr::new(k.as_ref()), *m));
                     }
                     v
                 };
@@ -2911,8 +2911,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 'next_member: for (_key_ptr, mut value) in member_snapshot.into_iter() {
                     let mut symbol_idx = value.ref_.inner_index() as usize;
 
-                    // SAFETY: Symbol.original_name is arena-owned `*const [u8]` valid for 'a.
-                    let name: &'a [u8] = unsafe { &*self.symbols[symbol_idx].original_name };
+                    // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                    let name: &'a [u8] = self.symbols[symbol_idx].original_name.slice();
                     let mut hash: Option<u64> = None;
 
                     // SAFETY: scope_parent is an arena-owned NonNull<Scope>; only borrowed
@@ -2971,8 +2971,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         //   }
                         //   f();
                         //
-                        // SAFETY: Symbol.original_name is arena-owned `*const [u8]` valid for 'a.
-                        let original_name: &'a [u8] = unsafe { &*self.symbols[symbol_idx].original_name };
+                        // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                        let original_name: &'a [u8] = self.symbols[symbol_idx].original_name.slice();
                         let hoisted_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, original_name).expect("unreachable");
                         // SAFETY: see top of fn — `scope` is arena-owned; no live & borrow of
                         // `scope.generated` exists here (the members snapshot was taken by value).
@@ -3456,13 +3456,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: None })?;
             }
 
-            // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+            // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
             for item in unsafe { &*stmt.items }.iter() {
                 let name = self.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                 self.is_import_item.insert(r#ref, ());
-                // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
-                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: Some(unsafe { &*item.alias }) })?;
+                // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
+                self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: Some(item.alias.slice()) })?;
             }
 
             return Ok(self.s(S::Empty {}, loc));
@@ -3473,7 +3473,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // We handle it here at parse time (similar to macros) rather than at visit time.
         if path.text == b"bun:bundle" {
             // Look for the "feature" import and validate specifiers
-            // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime;
+            // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a;
             // loop body only reads from `item`, so a shared borrow suffices and
             // avoids holding a unique borrow across `&mut self` method calls.
             for item in unsafe { &*stmt.items }.iter() {
@@ -3481,8 +3481,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // - alias is the name from the source module ("feature")
                 // - original_name is the local binding name
                 // - name.ref is the ref for the local binding
-                // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
-                let alias: &'a [u8] = unsafe { &*item.alias };
+                // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
+                let alias: &'a [u8] = item.alias.slice();
                 if alias == b"feature" {
                     // Check for duplicate imports of feature
                     if self.bundler_feature_flag_ref.is_valid() {
@@ -3546,7 +3546,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         let mut item_refs = ImportItemForNamespaceMap::new();
-        // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+        // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
         let count_excluding_namespace =
             u16::try_from(unsafe { &*stmt.items }.len()).expect("int cast") + u16::from(stmt.default_name.is_some());
 
@@ -3620,7 +3620,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         for i in 0..items_slice.len() {
             // PORT NOTE: Zig copied `ClauseItem` by value (POD struct). Rust's
             // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
-            // all fields are POD (`*const [u8]`/`Loc`/`LocRef`).
+            // all fields are POD (`StoreStr`/`Loc`/`LocRef`).
             // SAFETY: items_slice[i] is a live initialised `ClauseItem`; the
             // original slot is overwritten or compacted below before any drop.
             let mut item = unsafe { core::ptr::read(&raw const items_slice[i]) };
@@ -3629,8 +3629,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             item.name.ref_ = Some(r#ref);
 
             self.is_import_item.insert(r#ref, ());
-            // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
-            let alias: &'a [u8] = unsafe { &*item.alias };
+            // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
+            let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
 
             // ensure every e_import_identifier holds the namespace
@@ -3682,7 +3682,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // If we remapped the entire import away
         // i.e. import {graphql} "react-relay"
 
-        // SAFETY: arena-owned `*mut [ClauseItem]` (just resliced above) valid for 'a.
+        // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
         if remap_count > 0 && unsafe { &*stmt.items }.is_empty() && stmt.default_name.is_none() {
             self.import_records.items_mut()[stmt.import_record_index as usize].path.namespace = js_ast::Macro::NAMESPACE;
             self.import_records.items_mut()[stmt.import_record_index as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
@@ -3694,7 +3694,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             return Ok(self.s(S::Empty {}, loc));
         } else if remap_count > 0 {
-            // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+            // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
             item_refs.shrink_and_free(unsafe { &*stmt.items }.len() + usize::from(stmt.default_name.is_some()));
         }
 
@@ -3714,10 +3714,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.import_records.items_mut()[stmt.import_record_index as usize].loader = Some(loader);
 
             if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded {
-                // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+                // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in unsafe { &*stmt.items }.iter() {
-                    // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
-                    let alias: &[u8] = unsafe { &*item.alias };
+                    // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
+                    let alias: &[u8] = item.alias.slice();
                     if !(alias == b"default" || alias == b"db") {
                         self.log().add_error(
                             Some(self.source),
@@ -3728,10 +3728,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
                 }
             } else if loader == options::Loader::File || loader == options::Loader::Text {
-                // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+                // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in unsafe { &*stmt.items }.iter() {
-                    // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
-                    if unsafe { &*item.alias } != b"default" {
+                    // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
+                    if item.alias.slice() != b"default" {
                         self.log().add_error(
                             Some(self.source),
                             item.name.loc,
@@ -3767,7 +3767,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn new_symbol(&mut self, kind: js_ast::symbol::Kind, identifier: &'a [u8]) -> Result<Ref, bun_core::Error> {
         // TODO(port): narrow error set
         let inner_index = self.symbols.len() as js_ast::base::RefInt; // @truncate
-        self.symbols.push(Symbol { kind, original_name: std::ptr::from_ref::<[u8]>(identifier), ..Default::default() });
+        self.symbols.push(Symbol { kind, original_name: js_ast::StoreStr::new(identifier), ..Default::default() });
 
         if TYPESCRIPT {
             self.ts_use_counts.push(0);
@@ -3853,8 +3853,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BIdentifier(id) => {
                 // SAFETY: arena-owned `*mut Identifier` valid for parser 'a.
                 let id = unsafe { &*id };
-                // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
-                let name = unsafe { &*self.symbols[id.r#ref.inner_index() as usize].original_name };
+                // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                let name = self.symbols[id.r#ref.inner_index() as usize].original_name.slice();
                 exported_members.put(
                     name,
                     js_ast::TSNamespaceMember { loc: binding.loc, data: js_ast::ts::Data::Property },
@@ -3863,14 +3863,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 self.ref_to_ts_namespace_member.insert(id.r#ref, js_ast::ts::Data::Property);
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a.
+                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let obj = unsafe { &*obj };
                 for prop in unsafe { &*obj.properties } {
                     self.define_exported_namespace_binding(exported_members, prop.value)?;
                 }
             }
             js_ast::b::B::BArray(obj) => {
-                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a.
+                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let obj = unsafe { &*obj };
                 for prop in unsafe { &*obj.items } {
                     self.define_exported_namespace_binding(exported_members, prop.binding)?;
@@ -3934,7 +3934,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // SAFETY: B::Identifier is arena-allocated; valid for 'a.
                         let ident_ref = unsafe { &**ident }.r#ref;
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
-                        let name = unsafe { &*self.symbols[ident_ref.inner_index() as usize].original_name };
+                        let name = self.symbols[ident_ref.inner_index() as usize].original_name.slice();
                         self.log().add_range_error_fmt(
                             Some(self.source),
                             r,
@@ -4244,7 +4244,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 match merge {
                     MR::Forbidden => {
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
-                        let orig = unsafe { &*self.symbols[symbol_idx].original_name };
+                        let orig = self.symbols[symbol_idx].original_name.slice();
                         self.log().add_symbol_already_declared_error(
                             self.source,
                             orig,
@@ -4293,7 +4293,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
             let original_name: &[u8] =
-                unsafe { &*self.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize].original_name };
+                self.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize].original_name.slice();
 
             if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
                 self.log()
@@ -4693,7 +4693,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
         match binding.data {
             js_ast::b::B::BArray(bi) => {
-                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a; no aliasing &mut.
+                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let bi = unsafe { &*bi };
                 for item in unsafe { &*bi.items } {
                     if !self.binding_can_be_removed_if_unused_without_dce_check(item.binding) {
@@ -4707,7 +4707,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
             }
             js_ast::b::B::BObject(bi) => {
-                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a; no aliasing &mut.
+                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let bi = unsafe { &*bi };
                 for property in unsafe { &*bi.properties } {
                     if !property.flags.contains(Flags::Property::IsSpread)
@@ -4790,7 +4790,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 js_ast::StmtData::STry(try_) => {
-                    // SAFETY: arena-owned `*mut [Stmt]` valid for parser 'a lifetime; no aliasing &mut outstanding
+                    // SAFETY: arena-owned `StoreSlice<Stmt>` valid for parser 'a; no aliasing &mut outstanding
                     if !self.stmts_can_be_removed_if_unused_without_dce_check(unsafe { &*try_.body })
                         || (try_.finally.is_some()
                             && !self.stmts_can_be_removed_if_unused_without_dce_check(unsafe {
@@ -4987,7 +4987,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
         }
 
-        // SAFETY: arena-owned `*mut [Property]` valid for parser 'a lifetime; no aliasing &mut outstanding
+        // SAFETY: arena-owned `StoreSlice<Property>` valid for parser 'a; no aliasing &mut outstanding
         for property in unsafe { &*class.properties } {
             if property.kind == js_ast::g::PropertyKind::ClassStaticBlock {
                 // SAFETY: arena-owned ClassStaticBlock valid for 'a.
@@ -5539,7 +5539,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         body: Stmt,
     ) -> Result<(), bun_core::Error> {
         if let js_ast::StmtData::SBlock(block) = &body.data {
-            // SAFETY: S::Block.stmts is `*mut [Stmt]` arena-owned for parser 'a; no aliasing &mut.
+            // SAFETY: `S::Block.stmts` is `StoreSlice<Stmt>` arena-owned for parser 'a; no aliasing &mut.
             let block_stmts: &[Stmt] = unsafe { &*block.stmts };
             let mut keep_block = false;
             for stmt in block_stmts {
@@ -5577,14 +5577,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 self.is_exported_inside_namespace.insert(ident.r#ref, r#ref);
             }
             js_ast::b::B::BArray(array) => {
-                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a.
+                // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let array = unsafe { &*array };
                 for item in unsafe { &*array.items } {
                     self.mark_exported_binding_inside_namespace(r#ref, item.binding);
                 }
             }
             js_ast::b::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a.
+                // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let obj = unsafe { &*obj };
                 for item in unsafe { &*obj.properties } {
                     self.mark_exported_binding_inside_namespace(r#ref, item.value);
@@ -5660,7 +5660,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let left = self.new_expr(
                         E::Dot {
                             target: Expr::init_identifier(namespace, name_loc),
-                            // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
+                            // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                             name: unsafe { (&*name).into() },
                             name_loc,
                             ..Default::default()
@@ -5845,7 +5845,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // `parts` is `&[Box<[u8]>]` to match the active round-C `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
-    // `*const [*const [u8]]`; both index to a `[u8]` so the body is unchanged.
+    // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
     pub fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
@@ -6004,7 +6004,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                         constructor_function = Some(func.as_ptr());
                                     }
 
-                                    // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
+                                    // arena-owned `StoreSlice<Arg>` valid for parser 'a.
                                     for (i, arg) in unsafe { &*func.func.args }.iter().enumerate() {
                                         for arg_decorator in arg.ts_decorators.slice() {
                                             let arg0 = self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc);
@@ -6201,7 +6201,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     } else {
                         // SAFETY: arena-owned E.Function node valid for 'a.
                         let cf = unsafe { &mut *constructor_function.unwrap() };
-                        // SAFETY: `body.stmts` is an arena-owned `*mut [Stmt]`.
+                        // SAFETY: `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
                         let old_stmts: &[Stmt] = unsafe { &*cf.func.body.stmts };
                         let mut constructor_stmts =
                             BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + instance_members.len(), self.arena);
@@ -6327,7 +6327,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if prop.flags.contains(Flags::Property::IsMethod) {
                     if let Some(prop_value) = prop.value {
                         let func = prop_value.data.e_function().expect("infallible: variant checked");
-                        // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
+                        // arena-owned `StoreSlice<Arg>` valid for parser 'a.
                         let method_args: &[G::Arg] = unsafe { &*func.func.args };
                         {
                             let args_array = self.arena.alloc_slice_fill_default::<Expr>(method_args.len());
@@ -6369,7 +6369,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // if you do anyway, bun will set design:type and design:paramtypes twice, so it's fine.
                     if let Some(prop_value) = prop.value {
                         let func = prop_value.data.e_function().expect("infallible: variant checked");
-                        // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
+                        // arena-owned `StoreSlice<Arg>` valid for parser 'a.
                         let method_args: &[G::Arg] = unsafe { &*func.func.args };
                         {
                             let args_array = self.arena.alloc_slice_fill_default::<Expr>(method_args.len());
@@ -6534,11 +6534,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.record_usage(enclosing_ref);
 
         // TODO(port): E::Dot.name is `&'static [u8]` pending crate-wide 'bump
-        // threading. Symbol.original_name is arena-owned (`*const [u8]`, lives for
+        // threading. Symbol.original_name is an arena-owned `StoreStr` (lives for
         // parser 'a, which outlives every Expr). Erase the lifetime to fit the
         // placeholder field type.
         // SAFETY: arena-owned slice valid for the AST lifetime.
-        let name: &'static [u8] = unsafe { &*self.symbols[r#ref.inner_index() as usize].original_name };
+        let name: &'static [u8] = self.symbols[r#ref.inner_index() as usize].original_name.slice();
 
         self.new_expr(
             E::Dot {
@@ -6592,8 +6592,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             if let Some(label_ref) = scope.label_ref {
                 if scope.kind == js_ast::scope::Kind::Label
-                    // SAFETY: Symbol.original_name is arena-owned `*const [u8]` valid for 'a.
-                    && strings::eql(name, unsafe { &*self.symbols[label_ref.inner_index() as usize].original_name })
+                    // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                    && strings::eql(name, self.symbols[label_ref.inner_index() as usize].original_name.slice())
                 {
                     // Track how many times we've referenced this symbol
                     self.record_usage(label_ref);
@@ -8083,7 +8083,7 @@ impl LowerUsingDeclarationsContext {
                     // Merge export clauses together.
                     // PORT NOTE: ClauseItem isn't `Clone` (POD-only fields, no derive);
                     // shallow-copy via ptr::read to mirror Zig `appendSlice`.
-                    // SAFETY: arena-owned `*mut [ClauseItem]` slice valid for 'a; the
+                    // SAFETY: arena-owned `StoreSlice<ClauseItem>` valid for 'a; the
                     // source slot is never read again (this whole stmt is dropped via
                     // the `continue` below).
                     let items = unsafe { &*data.items };

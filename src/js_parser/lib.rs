@@ -246,12 +246,14 @@ pub use crate::ast::base::{Index, Ref, RefCtx, RefFields, RefHashCtx, RefTag};
 
 use crate::ast::symbol; // for symbol::Use, symbol::SlotNamespace
 
-// ─── arena-slice helpers (Phase-A raw-pointer stand-ins for &'bump [T]) ─────
-// TODO(port): replace with &'bump [u8] / &'bump mut [T] in Phase B.
-pub(crate) type ArenaStr = *const [u8];
+// ─── arena-slice helpers ────────────────────────────────────────────────────
+// Legacy alias: AST string fields now uniformly use `StoreStr` (safe `Deref`
+// wrapper around an arena `[u8]`). Kept as a type alias so existing field
+// declarations / call sites that spell `ArenaStr` continue to compile.
+pub(crate) type ArenaStr = StoreStr;
 #[inline]
 pub(crate) const fn empty_arena_str() -> ArenaStr {
-    core::ptr::slice_from_raw_parts(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
+    StoreStr::EMPTY
 }
 // (former `empty_arena_slice_mut<T>()` removed — use `StoreSlice::<T>::EMPTY`.)
 
@@ -323,6 +325,19 @@ impl StoreStr {
     #[inline]
     pub fn as_raw(self) -> *const [u8] {
         core::ptr::slice_from_raw_parts(self.ptr.as_ptr(), self.len)
+    }
+
+    /// Reconstruct from a raw fat pointer (inverse of `as_raw`). Safe: the
+    /// pointer is stored, not dereferenced; same arena-lifetime contract as
+    /// `new`. Exists only for the handful of callers that still hold a
+    /// `*const [u8]` (e.g. `js_printer::renamer::NameStr`) during the
+    /// StoreSlice migration.
+    #[inline]
+    pub fn from_raw(p: *const [u8]) -> Self {
+        match core::ptr::NonNull::new(p.cast_mut()) {
+            Some(nn) => StoreStr { ptr: nn.cast::<u8>(), len: p.len() },
+            None => StoreStr::EMPTY,
+        }
     }
 }
 
@@ -852,9 +867,7 @@ pub struct EnumValue {
 
 impl EnumValue {
     pub fn name_as_e_string(&self, bump: &bun_alloc::Arena) -> E::String {
-        // SAFETY: `name` is a valid arena slice for the lifetime of the parse.
-        let name = unsafe { &*self.name };
-        E::String::init_re_encode_utf8(name, bump)
+        E::String::init_re_encode_utf8(self.name.slice(), bump)
     }
 }
 
@@ -1524,9 +1537,9 @@ impl Default for Indentation {
 
 // ─── from bun_bundler::v2::MangledProps (src/bundler/bundle_v2.zig) ─────────
 // Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)`
-// LIFETIMES.tsv: value slices point into the parser arena → raw `*const [u8]`
-// pending crate-wide `'bump`.
-pub type MangledProps = ArrayHashMap<Ref, *const [u8]>;
+// LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
+// (arena-owned, no `'bump` cascade).
+pub type MangledProps = ArrayHashMap<Ref, StoreStr>;
 
 // ─── from bun_jsc::RuntimeTranspilerCache (src/jsc/RuntimeTranspilerCache.zig) ─
 // B-3 UNIFIED: this is the single canonical struct. `bun_bundler::cache`

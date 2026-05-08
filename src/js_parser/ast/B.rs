@@ -140,7 +140,7 @@ impl B {
                 let ref_ = unsafe { (**id).r#ref };
                 // SAFETY: `original_name` is an arena-owned slice valid for the
                 // parser/AST arena that `symbol_table` borrows from.
-                let original_name = unsafe { &*ref_.get_symbol(symbol_table).original_name };
+                let original_name = ref_.get_symbol(symbol_table).original_name.slice();
                 raw(hasher, (self.tag(), original_name.len()));
             }
             B::BArray(array) => {

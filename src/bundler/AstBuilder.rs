@@ -158,7 +158,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let inner_index: RefInt = RefInt::try_from(self.symbols.len()).unwrap();
         self.symbols.push(Symbol {
             kind,
-            original_name: std::ptr::from_ref::<[u8]>(identifier),
+            original_name: js_ast::StoreStr::new(identifier),
             ..Default::default()
         });
         let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
@@ -241,8 +241,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     loc: Loc::EMPTY,
                     ref_: Some(ref_),
                 },
-                original_name: std::ptr::from_ref::<[u8]>(import_id),
-                alias: std::ptr::from_ref::<[u8]>(import_id),
+                original_name: js_ast::StoreStr::new(import_id),
+                alias: js_ast::StoreStr::new(import_id),
                 alias_loc: Loc::EMPTY,
             };
         }
@@ -429,9 +429,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 let ident = unsafe { &*ident };
                 // PORT NOTE: reshaped for borrowck — capture original_name before calling &mut self method
                 let original_name = self.symbols[ident.r#ref.inner_index() as usize].original_name;
-                // SAFETY: `original_name` is an arena/static slice stored as raw ptr in Phase A.
-                let original_name = unsafe { &*original_name };
-                self.record_export(binding.loc, original_name, ident.r#ref)
+                self.record_export(binding.loc, original_name.slice(), ident.r#ref)
                     .expect("unreachable");
             }
             B::BArray(array) => {

@@ -19,11 +19,11 @@ pub struct ImportScanner<'a> {
     pub removed_import_equals: bool,
 }
 
-// `*const [u8]` literal helper — Rust won't coerce `&[u8; N]` straight to a
-// fat raw slice pointer at every site.
+// `StoreStr` literal helper — keeps `Some(raw_str(b"…"))` ergonomic at the
+// `NamedImport.alias` construction sites below.
 #[inline(always)]
-fn raw_str(s: &'static [u8]) -> *const [u8] {
-    std::ptr::from_ref::<[u8]>(s)
+fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
+    js_ast::StoreStr::new(s)
 }
 
 impl<'a> ImportScanner<'a> {
@@ -277,7 +277,7 @@ impl<'a> ImportScanner<'a> {
                                 && found_imports
                                 && st.star_name_loc.is_none()
                                 // SAFETY: arena-owned slice; see above.
-                                && unsafe { &*st.items }.is_empty()
+                                && st.items.slice().is_empty()
                                 && st.default_name.is_none())
                         {
                             // internal imports are presumed to be always used
@@ -318,13 +318,13 @@ impl<'a> ImportScanner<'a> {
                     let existing_count = existing_items.map(|m| m.count()).unwrap_or(0);
 
                     // SAFETY: arena-owned slice; valid for AST arena lifetime.
-                    let st_items: &[js_ast::ClauseItem] = unsafe { &*st.items };
+                    let st_items: &[js_ast::ClauseItem] = st.items.slice();
 
                     if p.options.bundle {
                         if st.star_name_loc.is_some() && existing_count > 0 {
                             let existing = existing_items.unwrap();
                             // Map keys are Box<[u8]> that drop with the parser; copy into the
-                            // AST arena so the *const [u8] stored on NamedImport / NamespaceAlias
+                            // AST arena so the `StoreStr` stored on NamedImport / NamespaceAlias
                             // stays valid through linking and printing.
                             let arena = p.arena;
                             let mut sorted: Vec<&[u8]> = Vec::with_capacity(existing_count);
@@ -345,7 +345,7 @@ impl<'a> ImportScanner<'a> {
                                 handle_oom(p.named_imports.put(
                                     item.ref_.expect("infallible: ref bound"),
                                     js_ast::NamedImport {
-                                        alias: Some(std::ptr::from_ref::<[u8]>(*alias)),
+                                        alias: Some(js_ast::StoreStr::new(*alias)),
                                         alias_loc: Some(item.loc),
                                         namespace_ref: Some(namespace_ref),
                                         import_record_index: st.import_record_index,
@@ -362,7 +362,7 @@ impl<'a> ImportScanner<'a> {
                                 let symbol: &mut Symbol =
                                     &mut p.symbols[name_ref.inner_index() as usize];
                                 // SAFETY: `original_name` is an arena-owned slice valid for 'p.
-                                let original_name = unsafe { &*symbol.original_name };
+                                let original_name = symbol.original_name.slice();
 
                                 symbol.namespace_alias = Some(G::NamespaceAlias {
                                     namespace_ref,
@@ -453,7 +453,7 @@ impl<'a> ImportScanner<'a> {
                         // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
                         for item in st_items.iter() {
                             // SAFETY: `item.alias` is an arena-owned slice valid for 'p.
-                            if strings::eql_comptime(unsafe { &*item.alias }, b"default") {
+                            if strings::eql_comptime(item.alias.slice(), b"default") {
                                 record!()
                                     .flags
                                     .insert(import_record::Flags::CONTAINS_DEFAULT_ALIAS);
@@ -484,10 +484,10 @@ impl<'a> ImportScanner<'a> {
                                 || st.star_name_loc.is_some()
                             {
                                 // SAFETY: arena-owned slice valid for 'p.
-                                let original_name = unsafe { &*symbol.original_name };
+                                let original_name = symbol.original_name.slice();
                                 symbol.namespace_alias = Some(G::NamespaceAlias {
                                     namespace_ref,
-                                    alias: js_ast::StoreStr::new(unsafe { &*item.alias }),
+                                    alias: js_ast::StoreStr::new(item.alias.slice()),
                                     import_record_index: st.import_record_index,
                                     was_originally_property_access: st.star_name_loc.is_some()
                                         && existing_items
@@ -526,7 +526,7 @@ impl<'a> ImportScanner<'a> {
 
                     for item in st_items.iter() {
                         // SAFETY: arena-owned slice valid for 'p.
-                        let alias = unsafe { &*item.alias };
+                        let alias = item.alias.slice();
                         if strings::eql_comptime(alias, b"default") {
                             record!()
                                 .flags
@@ -544,10 +544,8 @@ impl<'a> ImportScanner<'a> {
                     if st.func.flags.contains(crate::flags::Function::IsExport) {
                         if let Some(name) = st.func.name {
                             // SAFETY: arena-owned slice valid for 'p.
-                            let original_name: &'p [u8] = unsafe {
-                                &*p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
-                                    .original_name
-                            };
+                            let original_name: &'p [u8] = p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                                    .original_name.slice();
                             p.record_export(name.loc, original_name, name.ref_.expect("infallible: ref bound"))?;
                         } else {
                             p.log().add_range_error(
@@ -562,10 +560,8 @@ impl<'a> ImportScanner<'a> {
                     if st.is_export {
                         if let Some(name) = st.class.class_name {
                             // SAFETY: arena-owned slice valid for 'p.
-                            let original_name: &'p [u8] = unsafe {
-                                &*p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
-                                    .original_name
-                            };
+                            let original_name: &'p [u8] = p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                                    .original_name.slice();
                             p.record_export(name.loc, original_name, name.ref_.expect("infallible: ref bound"))?;
                         } else {
                             p.log().add_range_error(
@@ -657,9 +653,9 @@ impl<'a> ImportScanner<'a> {
                 }
                 js_ast::StmtData::SExportClause(st) => {
                     // SAFETY: arena-owned slice valid for 'p.
-                    for item in unsafe { &*st.items }.iter() {
+                    for item in st.items.slice().iter() {
                         // SAFETY: arena-owned alias slice valid for 'p.
-                        let alias: &'p [u8] = unsafe { &*item.alias };
+                        let alias: &'p [u8] = item.alias.slice();
                         p.record_export(item.alias_loc, alias, item.name.ref_.expect("infallible: ref bound"))?;
                     }
                 }
@@ -693,7 +689,7 @@ impl<'a> ImportScanner<'a> {
                 js_ast::StmtData::SExportFrom(st) => {
                     p.import_records_for_current_part.push(st.import_record_index);
                     // SAFETY: arena-owned slice valid for 'p.
-                    let items = unsafe { &*st.items };
+                    let items = st.items.slice();
                     p.named_imports
                         .ensure_unused_capacity(items.len())
                         .expect("unreachable");
@@ -720,13 +716,13 @@ impl<'a> ImportScanner<'a> {
                             },
                         )?;
                         // SAFETY: arena-owned alias slice valid for 'p.
-                        let alias: &'p [u8] = unsafe { &*item.alias };
+                        let alias: &'p [u8] = item.alias.slice();
                         p.record_export(item.name.loc, alias, ref_)?;
 
                         let record = &mut p.import_records.items_mut()
                             [st.import_record_index as usize];
                         // SAFETY: arena-owned slice valid for 'p.
-                        let original = unsafe { &*item.original_name };
+                        let original = item.original_name.slice();
                         if strings::eql_comptime(original, b"default") {
                             record
                                 .flags

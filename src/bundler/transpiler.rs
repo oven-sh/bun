@@ -1914,7 +1914,7 @@ impl<'a> Transpiler<'a> {
                                         // SAFETY: ARENA — `arena` outlives
                                         // the returned `ParseResult.ast`.
                                         Ok(boxed) => {
-                                            std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(&boxed))
+                                            js_ast::StoreStr::new(arena.alloc_slice_copy(&boxed))
                                         }
                                         Err(_) => return None,
                                     },
@@ -1932,7 +1932,7 @@ impl<'a> Transpiler<'a> {
                                 };
                                 export_clauses[count] = js_ast::ClauseItem {
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: key_loc },
-                                    alias: std::ptr::from_ref::<[u8]>(name),
+                                    alias: js_ast::StoreStr::new(name),
                                     alias_loc: key_loc,
                                     ..Default::default()
                                 };

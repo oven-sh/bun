@@ -967,7 +967,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if !is_expr {
             // SAFETY: original_name is arena-owned for 'a.
             let cns: &'a [u8] =
-                unsafe { &*p.symbols[class_name_ref.inner_index() as usize].original_name };
+                p.symbols[class_name_ref.inner_index() as usize].original_name.slice();
             let name = p.bump_name2(b"_", cns);
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
@@ -1093,9 +1093,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
         if is_expr && !expr_class_is_anonymous && expr_class_ref.is_some() {
             // SAFETY: see above.
-            original_class_name_for_decorator = Some(unsafe {
-                &*p.symbols[class_name_ref.inner_index() as usize].original_name
-            });
+            original_class_name_for_decorator = Some(p.symbols[class_name_ref.inner_index() as usize].original_name.slice());
             class_name_ref = expr_class_ref.unwrap();
             class_name_loc = loc;
         }
@@ -1205,7 +1203,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let npriv_inner = npriv_ref.inner_index();
                     // SAFETY: arena-owned.
                     let npriv_orig: &'a [u8] =
-                        unsafe { &*p.symbols[npriv_inner as usize].original_name };
+                        p.symbols[npriv_inner as usize].original_name.slice();
 
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         // Non-decorated private method/getter/setter → WeakSet + fn extraction
@@ -1425,7 +1423,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let priv_inner = priv_ref.inner_index();
                 // SAFETY: arena-owned.
                 let private_orig: &'a [u8] =
-                    unsafe { &*p.symbols[priv_inner as usize].original_name };
+                    p.symbols[priv_inner as usize].original_name.slice();
 
                 if (1..=3).contains(&k) {
                     let existing = private_lowered_map.get(&priv_inner).copied();
@@ -1526,10 +1524,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
                     _ => unreachable!(),
                 };
-                // SAFETY: `original_name` is arena-owned (`ArenaStr = *const [u8]`).
-                let priv_name = E::Str::new(unsafe {
-                    &*p.symbols[priv_ref.inner_index() as usize].original_name
-                });
+                // `original_name` is an arena-owned `StoreStr`.
+                let priv_name = E::Str::new(p.symbols[priv_ref.inner_index() as usize].original_name.slice());
                 p.new_expr(E::EString { data: priv_name, ..Default::default() }, loc)
             } else {
                 key_expr
@@ -1711,10 +1707,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else if is_expr && expr_class_is_anonymous {
                 name_from_context.unwrap_or(b"").into()
             } else {
-                // SAFETY: `original_name` is arena-owned (`ArenaStr = *const [u8]`).
-                E::Str::new(unsafe {
-                    &*p.symbols[class_name_ref.inner_index() as usize].original_name
-                })
+                // `original_name` is an arena-owned `StoreStr`.
+                E::Str::new(p.symbols[class_name_ref.inner_index() as usize].original_name.slice())
             };
 
             let mut cls_dec_args = BumpVec::with_capacity_in(5, bump);

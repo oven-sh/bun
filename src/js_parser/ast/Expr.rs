@@ -773,7 +773,7 @@ impl ArrayIterator<'_> {
 // PORT NOTE: the Phase-A draft of `as_array`/`is_string`/`as_utf8_string_literal`/
 // `as_string`/`as_string_cloned`/`as_bool`/`as_number` duplicated the live `&self`
 // implementations above (lines ~231-315) with worse signatures (`expr: &Expr`,
-// `*const [u8]`). Those drafts were dropped during un-gating; only the methods
+// raw-ptr returns). Those drafts were dropped during un-gating; only the methods
 // without a live counterpart remain.
 impl Expr {
     #[inline]
@@ -2483,7 +2483,7 @@ impl Data {
             let sym = r.get_symbol(symbol_table);
             // SAFETY: `original_name` is an arena-owned slice valid for the
             // parser/AST arena that `symbol_table` borrows from.
-            h.update(unsafe { &*sym.original_name });
+            h.update(sym.original_name.slice());
         }
 
         raw(hasher, self.tag() as u8);

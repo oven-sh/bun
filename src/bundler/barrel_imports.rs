@@ -39,7 +39,7 @@ impl Default for RequestedExports {
 struct BarrelExportResolution {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
-    original_alias: Option<*const [u8]>,
+    original_alias: Option<bun_js_parser::StoreStr>,
     /// True when the underlying import is `import * as ns` — propagation
     /// through this export must treat the target as needing all exports.
     alias_is_star: bool,
@@ -452,7 +452,7 @@ pub fn schedule_barrel_deferred_imports(
             *gop.value_ptr = RequestedExports::All;
         } else if let Some(alias_ptr) = ni.alias {
             // SAFETY: arena-backed `*const [u8]` valid for the AST lifetime.
-            let alias: &[u8] = unsafe { &*alias_ptr };
+            let alias: &[u8] = alias_ptr.slice();
             if gop.found_existing {
                 match gop.value_ptr {
                     RequestedExports::All => {}
@@ -552,11 +552,9 @@ pub fn schedule_barrel_deferred_imports(
                 is_star: true,
             });
         } else if let Some(alias_ptr) = ni.alias {
-            // SAFETY: arena-backed `*const [u8]` valid for the AST lifetime.
-            let alias: &[u8] = unsafe { &*alias_ptr };
             queue.push(BarrelWorkItem {
                 barrel_source_index: ir_target,
-                alias,
+                alias: alias_ptr.slice(),
                 is_star: false,
             });
         }
@@ -755,10 +753,10 @@ pub fn schedule_barrel_deferred_imports(
             barrels_to_resolve.put(barrel_idx, ())?;
         }
 
-        // SAFETY: `original_alias` is an arena-backed `*const [u8]` valid for
-        // the bundler-arena lifetime (see `BarrelExportResolution` PORT NOTE).
+        // `original_alias` is an arena-backed `StoreStr` valid for the
+        // bundler-arena lifetime (see `BarrelExportResolution` PORT NOTE).
         let propagate_alias: &[u8] = match resolution.original_alias {
-            Some(p) => unsafe { &*p },
+            Some(p) => p.slice(),
             None => alias,
         };
         if (resolution.import_record_index as usize) < barrel_ir.len() {

@@ -8,9 +8,10 @@ pub struct Symbol {
     /// This is the name that came from the parser. Printed names may be renamed
     /// during minification or to avoid name collisions. Do not use the original
     /// name during printing.
-    // TODO(port): arena-owned slice (parser/AST crate) — raw fat ptr for now; revisit
-    // ownership model (StoreRef / &'bump [u8]) in Phase B.
-    pub original_name: *const [u8],
+    // Arena-owned slice (parser/AST crate). `StoreStr` is the lifetime-erased
+    // `[u8]` wrapper used uniformly across AST string fields; it derefs to
+    // `[u8]` and is valid until the owning arena resets.
+    pub original_name: crate::StoreStr,
 
     /// This is used for symbols that represent items in the import clause of an
     /// ES6 import statement. These should always be referenced by EImportIdentifier
@@ -152,7 +153,7 @@ pub struct Symbol {
 // Rust default repr reorders fields and Option<NamespaceAlias> niche may differ; verify in
 // Phase B (likely needs #[repr(C)] or manual packing if the size is load-bearing).
 // const _: () = assert!(core::mem::size_of::<Symbol>() == 88);
-// const _: () = assert!(core::mem::align_of::<Symbol>() == core::mem::align_of::<*const [u8]>());
+// const _: () = assert!(core::mem::align_of::<Symbol>() == core::mem::align_of::<crate::StoreStr>());
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
@@ -160,7 +161,7 @@ pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
 impl Default for Symbol {
     fn default() -> Self {
         Self {
-            original_name: std::ptr::from_ref::<[u8]>(&[]),
+            original_name: crate::StoreStr::EMPTY,
             namespace_alias: None,
             link: Ref::NONE,
             use_count_estimate: 0,
@@ -402,7 +403,7 @@ impl Map {
                 };
                 // SAFETY: original_name is an arena-owned slice valid for the lifetime of
                 // symbols_for_source (the parser/AST arena outlives this Map).
-                let name = unsafe { &*symbol.original_name };
+                let name = symbol.original_name.slice();
                 bun_core::prettyln!(
                     " name: {}\n  tag: {}\n       {}",
                     bstr::BStr::new(name),

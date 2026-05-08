@@ -563,7 +563,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let original_name: &'a [u8] =
-                    unsafe { &*self.symbols[id_ref.inner_index() as usize].original_name };
+                    self.symbols[id_ref.inner_index() as usize].original_name.slice();
                 decl.value = Some(self.maybe_keep_expr_symbol_name(
                     decl.value.unwrap(),
                     original_name,
@@ -628,7 +628,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 self.record_declared_symbol(bind.r#ref);
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let name: &'a [u8] =
-                    unsafe { &*self.symbols[bind.r#ref.inner_index() as usize].original_name };
+                    self.symbols[bind.r#ref.inner_index() as usize].original_name.slice();
                 if is_eval_or_arguments(name) {
                     self.mark_strict_mode_feature(
                         StrictModeFeature::EvalOrArguments,
@@ -678,10 +678,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if let BData::BIdentifier(bind_) = item.binding.data {
                             // SAFETY: arena-owned B::Identifier valid for 'a.
                             let bind_ = unsafe { &*bind_ };
-                            // SAFETY: original_name is arena-owned, valid for 'a.
-                            let name: &'a [u8] = unsafe {
-                                &*self.symbols[bind_.r#ref.inner_index() as usize].original_name
-                            };
+                            let name: &'a [u8] =
+                                self.symbols[bind_.r#ref.inner_index() as usize].original_name.slice();
                             item.default_value = Some(self.maybe_keep_expr_symbol_name(
                                 item.default_value.expect("unreachable"),
                                 name,
@@ -721,10 +719,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if let BData::BIdentifier(bind_) = property.value.data {
                             // SAFETY: arena-owned B::Identifier valid for 'a.
                             let bind_ = unsafe { &*bind_ };
-                            // SAFETY: original_name is arena-owned, valid for 'a.
-                            let name: &'a [u8] = unsafe {
-                                &*self.symbols[bind_.r#ref.inner_index() as usize].original_name
-                            };
+                            let name: &'a [u8] =
+                                self.symbols[bind_.r#ref.inner_index() as usize].original_name.slice();
                             property.default_value = Some(self.maybe_keep_expr_symbol_name(
                                 property.default_value.expect("unreachable"),
                                 name,
@@ -858,11 +854,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // are not allowed to assign to this symbol (it throws a TypeError).
         if let Some(name) = class.class_name {
             // SAFETY: shadow_ref_ptr is a fresh bump allocation valid for 'a; sole access.
-            unsafe { *shadow_ref_ptr = name.ref_.expect("infallible: ref bound") };
-            // SAFETY: original_name is arena-owned, valid for 'a.
-            let original_name: &'a [u8] = unsafe {
-                &*self.symbols[(*shadow_ref_ptr).inner_index() as usize].original_name
-            };
+            let shadow_ref = name.ref_.expect("infallible: ref bound");
+            unsafe { *shadow_ref_ptr = shadow_ref };
+            let original_name: &'a [u8] = self.symbols[shadow_ref.inner_index() as usize].original_name.slice();
             self.vis_scope()
                 .members
                 .put(
@@ -1156,9 +1150,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             };
 
                             // SAFETY: original_name is an arena-owned slice valid for 'a.
-                            let name: &'a [u8] = unsafe {
-                                &*self.symbols[id_ref.inner_index() as usize].original_name
-                            };
+                            let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize].original_name.slice();
                             let arg_ident = self.new_expr(
                                 E::Identifier { ref_: id_ref, ..Default::default() },
                                 bind_loc,
@@ -1967,7 +1959,7 @@ pub fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<logger::Loc> {
             StmtData::SComment(_) => continue,
             StmtData::SDirective(dir) => {
                 // SAFETY: arena-owned slice valid for the parse.
-                if unsafe { &*dir.value } == b"use strict" {
+                if dir.value.slice() == b"use strict" {
                     return Some(stmt.loc);
                 }
             }

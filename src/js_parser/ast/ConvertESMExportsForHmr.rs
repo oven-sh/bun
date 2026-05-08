@@ -110,7 +110,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 self.export_props.push(G::Property {
                                     key: Some(Expr::init(
                                         // SAFETY: arena-owned name slice valid for the parse.
-                                        E::EString::init(unsafe { &*symbol.original_name }),
+                                        E::EString::init(symbol.original_name.slice()),
                                         binding.loc,
                                     )),
                                     value: Some(value),
@@ -150,8 +150,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             break 'fast_refresh_edge_case;
                         };
                         let name = p.symbols[symbol.ref_.expect("infallible: ref bound").inner_index() as usize].original_name;
-                        // SAFETY: arena-owned name slice valid for the parse.
-                        if ReactRefresh::is_componentish_name(unsafe { &*name }) {
+                        if ReactRefresh::is_componentish_name(name.slice()) {
                             // Lower to a function statement, and reference the function in the export list.
                             self.export_props.push(G::Property {
                                 key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
@@ -278,9 +277,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 self.export_props.push(G::Property {
                     key: Some(Expr::init(
                         // SAFETY: arena-owned name slice valid for the parse.
-                        E::EString::init(unsafe {
-                            &*p.symbols[class_name_ref.inner_index() as usize].original_name
-                        }),
+                        E::EString::init(p.symbols[class_name_ref.inner_index() as usize].original_name.slice()),
                         stmt.loc,
                     )),
                     value: Some(Expr::init_identifier(class_name_ref, stmt.loc)),
@@ -340,7 +337,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // the now-unused record, so we must update it.
                     symbol.namespace_alias = Some(G::NamespaceAlias {
                         namespace_ref: deduped.namespace_ref,
-                        alias: js_ast::StoreStr::new(unsafe { &*item.original_name }),
+                        alias: js_ast::StoreStr::new(item.original_name.slice()),
                         import_record_index: deduped.import_record_index,
                         ..Default::default()
                     });
@@ -379,7 +376,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     self.export_props.push(G::Property {
                         // SAFETY: arena-owned name slice valid for the parse.
                         key: Some(Expr::init(
-                            E::EString::init(unsafe { &*alias.original_name }),
+                            E::EString::init(alias.original_name.slice()),
                             stmt.loc,
                         )),
                         value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
@@ -567,7 +564,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         &mut self,
         p: &mut P<'p, TS, J, SCAN>,
         ref_: Ref,
-        export_symbol_name: Option<*const [u8]>,
+        export_symbol_name: Option<js_ast::StoreStr>,
         loc: logger::Loc,
         is_live_binding_source: bool,
     ) -> Result<(), AllocError> {
@@ -594,17 +591,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // mutate the field in the exports object. Re-exports can just be
             // encoded into the module format, propagated in `replaceModules`
             let key = Expr::init(
-                // SAFETY: arena-owned name slice valid for the parse.
-                E::EString::init(unsafe { &*export_symbol_name.unwrap_or(original_name) }),
+                E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
                 loc,
             );
 
             // This is technically incorrect in that we've marked this as a
             // top level symbol. but all we care about is preventing name
             // collisions, not necessarily the best minificaiton (dev only)
-            // SAFETY: arena-owned name slice valid for the parse; lifetime erased per Phase-A
-            // `Str`/`ArenaStr` convention (`generate_temp_ref` wants `&'p [u8]`).
-            let arg1 = generate_temp_ref(p, Some(unsafe { &*original_name }));
+            let arg1 = generate_temp_ref(p, Some(original_name.slice()));
             self.last_part
                 .declared_symbols
                 .append(js_ast::DeclaredSymbol { ref_: arg1, is_top_level: true })?;
@@ -640,8 +634,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // 'abc,'
             self.export_props.push(G::Property {
                 key: Some(Expr::init(
-                    // SAFETY: arena-owned name slice valid for the parse.
-                    E::EString::init(unsafe { &*export_symbol_name.unwrap_or(original_name) }),
+                    E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
                     loc,
                 )),
                 value: Some(id),

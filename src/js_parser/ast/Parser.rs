@@ -1934,9 +1934,9 @@ impl<'a> Parser<'a> {
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         clauses.push(js_ast::ClauseItem {
                             name: js_ast::LocRef { ref_: Some(r), loc: logger::Loc::EMPTY },
-                            alias: std::ptr::from_ref::<[u8]>(symbol_name.as_bytes()),
+                            alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
                             alias_loc: logger::Loc::EMPTY,
-                            original_name: std::ptr::from_ref::<[u8]>(b""),
+                            original_name: js_ast::StoreStr::new(b""),
                         });
                         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
                     }

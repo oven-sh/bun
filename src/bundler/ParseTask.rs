@@ -688,7 +688,7 @@ fn css_symbols_to_parser_symbols(
             core::mem::transmute::<bun_logger::Ref, bun_js_parser::ast::Ref>(s.link)
         };
         out.append_assume_capacity(PSym {
-            original_name: std::ptr::from_ref::<[u8]>(s.original_name),
+            original_name: bun_js_parser::StoreStr::new(s.original_name),
             // CSS-module locals are never ES6 namespace-aliased (the CSS parser
             // never assigns `namespace_alias`); drop rather than bridge the
             // distinct `NamespaceAlias` mirrors.

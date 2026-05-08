@@ -129,7 +129,7 @@ pub fn post_process_css_chunk(
     // }
 
     // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
-    let alloc = unsafe { &*worker.arena };
+    let alloc = worker.arena();
     chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
         alloc,
         &mut j,

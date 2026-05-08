@@ -224,7 +224,7 @@ impl FileSystemRouter {
                 // backing allocation outlives this slice. Cast through raw ptr to detach the
                 // borrow from `arena` so it can be moved below.
                 let leaked: &'static [u8] =
-                    unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(&bytes)) };
+                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&bytes)) };
                 extensions.push(&leaked[1..]);
             }
         }
@@ -241,7 +241,7 @@ impl FileSystemRouter {
             // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`; allocation
             // outlives this slice. Detach borrow via raw ptr so `arena` can be moved below.
             let leaked: &'static [u8] =
-                unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(s.slice())) };
+                unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(s.slice())) };
             asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
         }
         let mut log = Log::Log::new();

@@ -333,6 +333,7 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_perf",
+ "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",
  "bun_router",

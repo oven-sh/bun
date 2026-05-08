@@ -904,7 +904,7 @@ pub mod api {
                 // convention used throughout `bun_resolver` (PORTING.md
                 // §Lifetimes: ARENA → `&'bump T`).
                 let dupe = |key: &[u8]| -> &'static [u8] {
-                    unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(key)) }
+                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
                 };
 
                 // Direct key match (must use `getKey` to return the map-owned
@@ -1676,7 +1676,7 @@ pub fn generic_path_with_pretty_initialized<'a>(
 #[inline(always)]
 pub(crate) unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
     // SAFETY: upheld by caller per fn contract.
-    unsafe { &*std::ptr::from_ref::<[u8]>(s) }
+    unsafe { bun_ptr::detach_lifetime(s) }
 }
 #[inline]
 pub(crate) fn fs_path_to_logger(p: Fs::Path<'_>) -> Logger::fs::Path {
@@ -1788,7 +1788,7 @@ impl<'a> BundleV2<'a> {
         // borrow so the returned `&'a mut Transpiler<'a>` doesn't keep `self`
         // borrowed.
         let arena: &'a bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.arena()) };
+            unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
 
         // PORT NOTE: Zig holds `this_transpiler = this.transpiler` (a `*Transpiler`)
         // and reads from it while also touching `this.client_transpiler`. In Rust
@@ -1907,7 +1907,7 @@ impl<'a> BundleV2<'a> {
         }
         // SAFETY: `transpiler.log` is set from a live `*mut Log` in `init` and
         // outlives `BundleV2`.
-        unsafe { &mut *self.transpiler.log }
+        self.transpiler.log_mut()
     }
 }
 
@@ -2409,9 +2409,12 @@ impl<'a> BundleV2<'a> {
                     let source: Option<&Logger::Source>;
                     // PORT NOTE: reshaped for borrowck — `log_for_resolution_failures` borrows
                     // `&mut self`; the returned log is backed by either a DevServer-owned slot or
-                    // `*self.transpiler.log` (both raw-pointer-derived), so launder to `*mut` so
-                    // `self.graph.*` / `self.transpiler.*` reads below type-check.
-                    let log: *mut Logger::Log = self.log_for_resolution_failures(&import_record.source_file, target.bake_graph());
+                    // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
+                    // so `self.graph.*` / `self.transpiler.*` reads below type-check.
+                    // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
+                    let log: &mut Logger::Log = unsafe {
+                        bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(&import_record.source_file, target.bake_graph()))
+                    };
 
                     {
                         let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
@@ -2433,8 +2436,7 @@ impl<'a> BundleV2<'a> {
                             if is_package_path(&import_record.specifier) {
                                 if target == Target::Browser && options::ExternalModules::is_node_builtin(path_to_use) {
                                     add_error(
-                                        // SAFETY: see `log` note above.
-                                        unsafe { &mut *log }, source, import_record.range,
+                                        log, source, import_record.range,
                                         format_args!("Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
                                             bstr::BStr::new(import_record.kind.error_label()), bstr::BStr::new(path_to_use)),
                                         path_to_use,
@@ -2442,8 +2444,7 @@ impl<'a> BundleV2<'a> {
                                     ).expect("unreachable");
                                 } else {
                                     add_error(
-                                        // SAFETY: see `log` note above.
-                                        unsafe { &mut *log }, source, import_record.range,
+                                        log, source, import_record.range,
                                         format_args!("Could not resolve: \"{}\". Maybe you need to \"bun install\"?", bstr::BStr::new(path_to_use)),
                                         path_to_use,
                                         import_record.kind.into(),
@@ -2451,8 +2452,7 @@ impl<'a> BundleV2<'a> {
                                 }
                             } else {
                                 add_error(
-                                    // SAFETY: see `log` note above.
-                                    unsafe { &mut *log }, source, import_record.range,
+                                    log, source, import_record.range,
                                     format_args!("Could not resolve: \"{}\"", bstr::BStr::new(path_to_use)),
                                     path_to_use,
                                     import_record.kind.into(),
@@ -2496,7 +2496,7 @@ impl<'a> BundleV2<'a> {
                 unsafe { (*(*transpiler).fs).top_level_dir }, &path.text);
             // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
             // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
-            path.pretty = unsafe { &*std::ptr::from_ref::<[u8]>(self.arena().alloc_slice_copy(rel)) };
+            path.pretty = unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(rel)) };
         }
         path.assert_pretty_is_valid();
         path.assert_file_path_is_absolute();
@@ -2619,7 +2619,7 @@ impl<'a> BundleV2<'a> {
         // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
         let task_val = ParseTask::init(&result, source_index.into(), self);
         // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-        let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
+        let task: &mut ParseTask = self.arena_create(task_val);
         task.loader = Some(loader);
         task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
@@ -2708,7 +2708,7 @@ impl<'a> BundleV2<'a> {
         // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
         let task_val = ParseTask::init(result, source_index.into(), self);
         // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-        let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
+        let task: &mut ParseTask = self.arena_create(task_val);
         task.loader = Some(loader);
         task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
@@ -2888,14 +2888,22 @@ impl<'a> BundleV2<'a> {
     }
 
     /// Allocate `value` into the bundler's arena (`self.graph.heap`) and return
-    /// a raw pointer. Mirrors Zig `arena.create(T)` — the arena owns the
-    /// slab and reclaims it on `deinit_without_freeing_arena` / `heap.reset()`.
-    /// Returning `*mut T` (not `&'_ mut T`) releases the `&self` borrow at the
-    /// call site so callers can immediately reborrow `&mut self` (PORTING.md
-    /// §Allocators: `bump.alloc(init)` → `&'bump mut T`).
+    /// a `&'r mut T` whose lifetime is decoupled from `&self`. Mirrors Zig
+    /// `arena.create(T)` — the arena owns the slab and reclaims it on
+    /// `deinit_without_freeing_arena` / `heap.reset()`. The unbounded `'r`
+    /// releases the `&self` borrow at the call site so callers can immediately
+    /// reborrow `&mut self` (PORTING.md §Allocators: `bump.alloc(init)` →
+    /// `&'bump mut T`).
+    ///
+    /// SAFETY (encapsulated): the arena slab is pinned and outlives every
+    /// `&mut T` handed out here (freed only at `heap.reset()` after all
+    /// callers are done); each call returns a fresh disjoint slot, so the
+    /// resulting `&mut T` is unique.
     #[inline]
-    fn arena_create<T>(&self, value: T) -> *mut T {
-        std::ptr::from_mut::<T>(self.arena().alloc(value))
+    #[allow(clippy::mut_from_ref)]
+    fn arena_create<'r, T>(&self, value: T) -> &'r mut T {
+        // SAFETY: arena slot is fresh + pinned for the bundle pass; see fn doc.
+        unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }
     }
 
     pub fn increment_scan_counter(&mut self) {
@@ -3159,7 +3167,7 @@ impl<'a> BundleV2<'a> {
         // `&self` borrow so `server`/`client` don't keep `*self` borrowed across
         // the `self.graph.ast.set(...)` calls at the end of this function.
         let alloc: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.arena()) };
+            unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
 
         let hmr = self.transpiler.options.hot_module_reloading;
         let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
@@ -3325,7 +3333,7 @@ impl<'a> BundleV2<'a> {
         // Arena-owned (Zig: `arena.create(ParseTask)`); freed on heap reset.
         let task_val = ParseTask::init(resolve_result, js_ast::Index::init(source_index.get()), self);
         // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-        let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
+        let task: &mut ParseTask = self.arena_create(task_val);
         task.loader = Some(loader);
         task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
         task.task.node.next = core::ptr::null_mut();
@@ -3969,7 +3977,10 @@ impl<'a> BundleV2<'a> {
         bun_core::scoped_log!(Bundle, "onLoad: ({}, {:?})", load.source_index.get(), core::mem::discriminant(&load.value));
         // PORT NOTE: `helpCatchMemoryIssues` was a mimalloc TLH probe; bumpalo has no equivalent.
         let _ = FeatureFlags::HELP_CATCH_MEMORY_ISSUES;
-        let log = this.transpiler.log;
+        // `log_mut()` returns an unbounded `&mut Log` (backref to the
+        // arena/DevServer-owned log) so the `&mut this.graph.*` reborrows
+        // below type-check without per-use-site `unsafe { &mut *log }`.
+        let log = this.transpiler.log_mut();
 
         // TODO: watcher
 
@@ -3985,7 +3996,7 @@ impl<'a> BundleV2<'a> {
 
                 // When it's not a file, this is a build error and we should report it.
                 // we have no way of loading non-files.
-                let _ = unsafe { &mut *log }.add_error_fmt(Some(source), Logger::Loc::EMPTY, format_args!(
+                let _ = log.add_error_fmt(Some(source), Logger::Loc::EMPTY, format_args!(
                     "Module not found {} in namespace {}",
                     bun_core::fmt::quote(&source.path.pretty),
                     bun_core::fmt::quote(&source.path.namespace),
@@ -4102,8 +4113,6 @@ impl<'a> BundleV2<'a> {
                     ).expect("oom");
                 } else {
                     let kind = msg.kind;
-                    // SAFETY: `log` is `*mut Log` backref valid for the bundle.
-                    let log = unsafe { &mut *log };
                     log.msgs.push(msg);
                     log.errors += (kind == Logger::Kind::Err) as u32;
                     log.warnings += (kind == Logger::Kind::Warn) as u32;
@@ -4172,22 +4181,25 @@ impl<'a> BundleV2<'a> {
 
                 // SAFETY: Zig's `logForResolutionFailures` returns `*Log` (raw ptr).
                 // Holding the `&mut Logger::Log` borrow would alias `&this.graph`
-                // below; raw-ptr it so borrowck releases `this`. The log lives in
-                // `this.transpiler`/`this.framework`, disjoint from `graph.input_files`.
-                let log: *mut Logger::Log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
+                // below; detach the lifetime so borrowck releases `this`. The log
+                // lives in `this.transpiler`/`this.framework`, disjoint from
+                // `graph.input_files`.
+                let log: &mut Logger::Log = unsafe {
+                    bun_ptr::detach_lifetime_mut(this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph()))
+                };
 
                 // When it's not a file, this is an error and we should report it.
                 //
                 // We have no way of loading non-files.
                 if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                    let _ = unsafe { &mut *log }.add_error_fmt(None, Logger::Loc::EMPTY, format_args!(
+                    let _ = log.add_error_fmt(None, Logger::Loc::EMPTY, format_args!(
                         "Module not found {} in namespace {}",
                         bun_core::fmt::quote(&resolve.import_record.specifier),
                         bun_core::fmt::quote(&resolve.import_record.namespace),
                     ));
                 } else {
                     let source = &this.graph.input_files.items_source()[resolve.import_record.importer_source_index as usize];
-                    let _ = unsafe { &mut *log }.add_range_error_fmt(
+                    let _ = log.add_range_error_fmt(
                         Some(source),
                         resolve.import_record.range,
                         format_args!(
@@ -4281,7 +4293,7 @@ impl<'a> BundleV2<'a> {
                         };
                         // Arena-owned (Zig: `arena.create(ParseTask)`).
                         // SAFETY: arena outlives the bundle pass.
-                        let task: &mut ParseTask = unsafe { &mut *this.arena_create(task_val) };
+                        let task: &mut ParseTask = this.arena_create(task_val);
                         task.task.node.next = core::ptr::null_mut();
                         task.io_task.node.next = core::ptr::null_mut();
                         this.increment_scan_counter();
@@ -4896,7 +4908,7 @@ impl<'a> BundleV2<'a> {
                 // back, at which point the bundle pass is still alive.
                 // SAFETY: arena outlives the bundle pass.
                 let resolve: &mut jsc_api::JSBundler::Resolve =
-                    unsafe { &mut *self.arena_create(jsc_api::JSBundler::Resolve::default()) };
+                    self.arena_create(jsc_api::JSBundler::Resolve::default());
                 *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::MiniImportRecord {
                     kind: import_record.kind,
                     source_file: source_file.into(),
@@ -4931,7 +4943,7 @@ impl<'a> BundleV2<'a> {
                 // Arena-owned (Zig: `arena.create(Resolve)`).
                 // SAFETY: arena outlives the bundle pass.
                 let resolve: &mut jsc_api::JSBundler::Resolve =
-                    unsafe { &mut *self.arena_create(jsc_api::JSBundler::Resolve::default()) };
+                    self.arena_create(jsc_api::JSBundler::Resolve::default());
                 self.increment_scan_counter();
 
                 *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::MiniImportRecord {
@@ -5000,7 +5012,7 @@ impl<'a> BundleV2<'a> {
                 // chain holds the raw `*mut Load` until the JS thread calls back.
                 let load_val = jsc_api::JSBundler::Load::init(self, parse);
                 // SAFETY: arena outlives the bundle pass.
-                let load: &mut jsc_api::JSBundler::Load = unsafe { &mut *self.arena_create(load_val) };
+                let load: &mut jsc_api::JSBundler::Load = self.arena_create(load_val);
                 load.dispatch();
                 return true;
             }
@@ -5012,7 +5024,7 @@ impl<'a> BundleV2<'a> {
     fn path_with_pretty_initialized(&self, path: Fs::Path<'static>, target: options::Target) -> Result<Fs::Path<'static>, Error> {
         // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
         // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
-        let bump: &'static bun_alloc::Arena = unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.arena()) };
+        let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
         generic_path_with_pretty_initialized(path, target, unsafe { &(*self.transpiler.fs).top_level_dir }, bump)
     }
 
@@ -5407,7 +5419,7 @@ impl<'a> BundleV2<'a> {
                     // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
                     // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
                     // cascading borrow conflicts into every `&mut self` call below).
-                    path_primary.pretty = unsafe { &*std::ptr::from_ref::<[u8]>(self.arena().alloc_slice_copy(&path_primary.text)) };
+                    path_primary.pretty = unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(&path_primary.text)) };
                     import_record.path = ir_path_from_fs(&path_primary);
                     let _ = path_primary.text; // key already interned by get_or_put
                     bun_core::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));
@@ -5415,7 +5427,7 @@ impl<'a> BundleV2<'a> {
                     // Arena-owned (Zig: `arena.create(ParseTask)`).
                     let resolve_task_val = ParseTask::init(&file_map_result, js_ast::Index::INVALID, self);
                     // SAFETY: arena outlives the bundle pass.
-                    let resolve_task: &mut ParseTask = unsafe { &mut *self.arena_create(resolve_task_val) };
+                    let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
                     resolve_task.known_target = target;
                     // Use transpiler JSX options, applying force_node_env like the disk path does
                     resolve_task.jsx = transpiler.options.jsx.clone();
@@ -5581,7 +5593,7 @@ impl<'a> BundleV2<'a> {
             // The Rust port returns `Option<&mut Path>`, which would lock the
             // whole struct. Detach via raw ptr to mirror the Zig aliasing.
             let path: &mut Fs::Path = match resolve_result.path() {
-                Some(p) => unsafe { &mut *std::ptr::from_mut::<Fs::Path>(p) },
+                Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path>(p) },
                 None => {
                     import_record.path.is_disabled = true;
                     import_record.source_index = Index::INVALID;
@@ -5713,7 +5725,7 @@ impl<'a> BundleV2<'a> {
             // Arena-owned (Zig: `arena.create(ParseTask)`).
             let resolve_task_val = ParseTask::init(&resolve_result, js_ast::Index::INVALID, self);
             // SAFETY: arena outlives the bundle pass.
-            let resolve_task: &mut ParseTask = unsafe { &mut *self.arena_create(resolve_task_val) };
+            let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
 
             resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
                 Target::Browser
@@ -6071,7 +6083,7 @@ impl<'a> BundleV2<'a> {
             }
             parse_task::ResultValue::Success(result) => {
                 // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                result.log.clone_to_with_recycled(unsafe { &mut *this.transpiler.log }, true).expect("unreachable");
+                result.log.clone_to_with_recycled(this.transpiler.log_mut(), true).expect("unreachable");
 
                 this.has_any_top_level_await_modules = this.has_any_top_level_await_modules || !result.ast.top_level_await_keyword.is_empty();
 
@@ -6315,7 +6327,7 @@ impl<'a> BundleV2<'a> {
                         ).expect("oom");
                     } else if !err.log.msgs.is_empty() {
                         // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                        err.log.clone_to_with_recycled(unsafe { &mut *this.transpiler.log }, true).expect("unreachable");
+                        err.log.clone_to_with_recycled(this.transpiler.log_mut(), true).expect("unreachable");
                     } else {
                         // PORT NOTE: Zig used `@tagName(err.step)`.
                         let step_name = match err.step {
@@ -6325,7 +6337,7 @@ impl<'a> BundleV2<'a> {
                             crate::parse_task::Step::Resolve => "resolve",
                         };
                         // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                        unsafe { &mut *this.transpiler.log }.add_error_fmt(
+                        this.transpiler.log_mut().add_error_fmt(
                             None,
                             Logger::Loc::EMPTY,
                             format_args!("{} while {}", bstr::BStr::new(err.err.name()), step_name),

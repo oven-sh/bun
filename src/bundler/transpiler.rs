@@ -2050,7 +2050,7 @@ impl<'a> Transpiler<'a> {
                     // SAFETY: ARENA — `arena` outlives the returned
                     // `ParseResult.ast` (Phase-A `Str` convention erases
                     // `'bump` to `'static` for `E::String.data`).
-                    Ok(h) => unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(&h)) },
+                    Ok(h) => unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&h)) },
                     Err(_) => {
                         let _ = log.add_error_fmt(
                             None,
@@ -2845,7 +2845,7 @@ impl<'a> Transpiler<'a> {
                     // on `StyleSheet`/`ParserOptions` (see css_parser.rs
                     // TODO(port): 'bump threading).
                     let alloc: &'static Arena =
-                        unsafe { &*std::ptr::from_ref::<Arena>(self.arena) };
+                        unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
                     let (mut sheet, extra) = match bun_css::StyleSheet::<
                         bun_css::DefaultAtRule,

@@ -214,6 +214,41 @@ pub unsafe fn detach_lifetime<'a, T>(s: &[T]) -> &'a [T] {
     unsafe { &*core::ptr::from_ref::<[T]>(s) }
 }
 
+/// Detach a `&T` borrow from its borrowck lifetime (general `?Sized` form of
+/// [`detach_lifetime`]).
+///
+/// Replaces the open-coded `unsafe { &*std::ptr::from_ref::<T>(x) }` /
+/// `unsafe { &*(&raw const x) }` lifetime-laundering idiom that the Phase-A
+/// port scattered everywhere a Zig `*const T` was held across a sibling
+/// `&mut self` reborrow (arena handles, SoA columns, self-referential views).
+/// Centralising it here makes the call sites grep-able and the safety
+/// obligation uniform.
+///
+/// # Safety
+/// Caller guarantees the pointee is not freed, moved, or exclusively borrowed
+/// for the full caller-chosen lifetime `'a`.
+#[inline(always)]
+pub unsafe fn detach_lifetime_ref<'a, T: ?Sized>(r: &T) -> &'a T {
+    // SAFETY: caller contract — `r` is live and shared-only for `'a`.
+    unsafe { &*core::ptr::from_ref::<T>(r) }
+}
+
+/// Detach a `&mut T` borrow from its borrowck lifetime.
+///
+/// Mutable counterpart of [`detach_lifetime_ref`]. Replaces the open-coded
+/// `unsafe { &mut *std::ptr::from_mut::<T>(x) }` pattern. Strictly more
+/// dangerous than the shared form: callers must additionally guarantee
+/// **uniqueness** for `'a` (no other `&`/`&mut` to the same `T` is live).
+///
+/// # Safety
+/// Caller guarantees the pointee is live for `'a` and that no other borrow
+/// (shared or exclusive) to it overlaps the returned `&'a mut T`.
+#[inline(always)]
+pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
+    // SAFETY: caller contract — `r` is live and exclusively held for `'a`.
+    unsafe { &mut *core::ptr::from_mut::<T>(r) }
+}
+
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
 /// Runtime sibling of `bun_js_parser::StoreSlice<T>` for `*const [T]` struct

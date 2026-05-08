@@ -150,8 +150,11 @@ fn generate_compile_result_for_js_chunk_impl(
     // worker heap for now (see TODO above re: dev_server arena).
     let mut dc = DeclCollector { arena: worker.arena, ..Default::default() };
 
-    // SAFETY: worker.arena points at worker.heap, initialized in Worker::create.
-    let worker_alloc = unsafe { &*worker.arena };
+    // SAFETY: `worker.arena` (= `&worker.heap`) is read via the raw field and
+    // detached so it does not conflict with the `&mut worker.temporary_arena` /
+    // `&mut worker.stmt_list` borrows held above. Heap is pinned; see
+    // `Worker::arena`.
+    let worker_alloc = unsafe { bun_ptr::detach_lifetime_ref(&*worker.arena) };
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
     // touches `chunk.renamer` through its `chunk` parameter (Zig passes the renamer
     // union by value alongside `*Chunk`); take a raw-ptr view so borrowck doesn't

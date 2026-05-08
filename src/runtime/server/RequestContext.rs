@@ -473,6 +473,26 @@ where
 {
     const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
 
+    /// Reborrow the owning server. `server` is a BACKREF (LIFETIMES.tsv): set
+    /// at construction in `init()` from the `NewServer` that owns the request
+    /// pool, never null while the `RequestContext` is live, and the server
+    /// outlives every `RequestContext` it allocates. Centralises the
+    /// per-call-site `unsafe { &*self.server.expect(..) }`.
+    ///
+    /// Returned lifetime is **decoupled** from `&self` (unbounded `'r`): the
+    /// server is not a sub-field of `RequestContext` (it owns the pool the
+    /// context lives in), so callers may hold `&ThisServer` across `&mut self`
+    /// reborrows of disjoint `RequestContext` fields — exactly the pattern the
+    /// raw `*const ThisServer` field was used for.
+    #[inline]
+    pub fn server<'r>(&self) -> &'r ThisServer {
+        // SAFETY: BACKREF — `server` is `Some(non-null)` after `init()` and
+        // the pointee `NewServer` outlives this context (it owns the pool).
+        // `'r` may exceed `&self` because the server is not borrowed from
+        // `*self`; it lives independently and outlives every context.
+        unsafe { &*self.server.expect("infallible: server bound") }
+    }
+
     pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
         if let Some(signal) = &self.signal {
             if let Some(server) = self.server {
@@ -1159,7 +1179,7 @@ where
 
         let any_js_calls = core::cell::Cell::new(false);
         // SAFETY: BACKREF, just asserted Some
-        let server = unsafe { &*this.server.expect("infallible: server bound") };
+        let server = this.server();
         let vm = std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut();
         let global_this = server.global_this();
         // This is a task in the event loop.
@@ -1208,7 +1228,7 @@ where
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
         // SAFETY: BACKREF, just asserted Some
-        let server = unsafe { &*this.server.expect("infallible: server bound") };
+        let server = this.server();
         let vm = std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut();
         let global_this = server.global_this();
         // Drop one ref on every exit path. Declared before the microtask drain
@@ -1375,7 +1395,7 @@ where
         // Copy to stack memory to prevent aliasing issues in release builds
         // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
-        let bytes: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(this.blob.slice()) };
+        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(this.blob.slice()) };
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
         true
@@ -1660,7 +1680,7 @@ where
         self.flags.set_has_marked_pending(true);
 
         // SAFETY: BACKREF
-        let server = unsafe { &*self.server.expect("infallible: server bound") };
+        let server = self.server();
         FileResponseStream::start(file_response_stream::StartOptions {
             fd,
             auto_close,
@@ -3069,7 +3089,7 @@ where
     ) {
         debug_assert!(ctx.server.is_some());
         // SAFETY: BACKREF
-        let server = unsafe { &*ctx.server.expect("infallible: server bound") };
+        let server = ctx.server();
         let vm = server.vm();
 
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
@@ -3353,7 +3373,7 @@ where
         // copy it to stack memory to prevent aliasing issues in release builds
         // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
-        let bytes: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(self.blob.slice()) };
+        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.slice()) };
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
             if unsafe { !resp.try_end(bytes, bytes.len(), self.should_close_connection()) } {
@@ -3411,7 +3431,7 @@ where
             return;
         }
         // SAFETY: BACKREF
-        let server = unsafe { &*this.server.expect("infallible: server bound") };
+        let server = this.server();
         let vm = server.vm();
         let global_this = server.global_this();
 

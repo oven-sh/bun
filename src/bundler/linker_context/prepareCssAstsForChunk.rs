@@ -99,7 +99,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     prepare_css_asts_for_chunk_impl(
         unsafe { &mut *linker },
         unsafe { &mut *chunk },
-        unsafe { &*worker.arena },
+        worker.arena(),
     );
 }
 

@@ -345,7 +345,7 @@ pub fn generate_code_for_lazy_export(
             // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
             // borrow across the `this.log` reborrow inside the Visitor below.
-            let arena: &Arena = unsafe { &*std::ptr::from_ref::<Arena>(this.arena()) };
+            let arena: &Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(this.arena()) };
 
             for entry in values {
                 let ref_ = entry.ref_;
@@ -485,7 +485,7 @@ pub fn generate_code_for_lazy_export(
                     // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
-                        unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(this.arena()) };
+                        unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
                     let name = key_str.slice(alloc);
 
                     // TODO: support non-identifier names
@@ -544,7 +544,7 @@ pub fn generate_code_for_lazy_export(
                 // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                 // across the `&mut self` call to `generate_named_export_in_file` below.
                 let alloc: &bun_alloc::Arena =
-                    unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(this.arena()) };
+                    unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
                 let name = alloc.alloc_slice_copy(&name_buf);
 
                 let generated = this.generate_named_export_in_file(

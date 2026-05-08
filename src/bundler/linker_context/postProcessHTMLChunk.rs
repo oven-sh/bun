@@ -33,7 +33,7 @@ pub fn post_process_html_chunk(
     j.ensure_newline_at_end();
 
     // SAFETY: `worker.arena` is set by `Worker::create` and outlives the worker step.
-    let alloc = unsafe { &*worker.arena };
+    let alloc = worker.arena();
     chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
         alloc,
         &mut j,

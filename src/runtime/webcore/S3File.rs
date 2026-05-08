@@ -724,8 +724,8 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
             request_payer: credentials_with_options.request_payer,
             // SAFETY: these `*const [u8]` borrow into sibling `_*_slice` fields on
             // `credentials_with_options`, which lives for the duration of this call.
-            content_disposition: credentials_with_options.content_disposition.map(|p| unsafe { &*p }),
-            content_type: credentials_with_options.content_type.map(|p| unsafe { &*p }),
+            content_disposition: credentials_with_options.content_disposition.as_deref(),
+            content_type: credentials_with_options.content_type.as_deref(),
             content_hash: None,
             content_md5: None,
             search_params: None,

@@ -797,7 +797,7 @@ impl<'a> TransformTask<'a> {
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
         self.transpiler
-            .set_arena(unsafe { &*(&raw const arena) });
+            .set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
@@ -999,7 +999,7 @@ pub fn constructor(
     // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
     // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
     // the borrow to 'static, so launder through a raw ptr.
-    let arena_ref: &'static Arena = unsafe { &*std::ptr::from_ref::<Arena>(arena.as_ref()) };
+    let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
 
     // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
     // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
@@ -1309,7 +1309,7 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
         self.transpiler
-            .set_arena(unsafe { &*(&raw const arena) });
+            .set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
         self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
             transpiler: &raw mut self.transpiler,
@@ -1499,7 +1499,7 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
         self.transpiler
-            .set_arena(unsafe { &*(&raw const arena) });
+            .set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
         self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
             transpiler: &raw mut self.transpiler,
@@ -1681,7 +1681,7 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
         self.transpiler
-            .set_arena(unsafe { &*(&raw const arena) });
+            .set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
         self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
             transpiler: &raw mut self.transpiler,

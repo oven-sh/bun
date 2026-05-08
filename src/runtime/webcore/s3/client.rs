@@ -196,10 +196,7 @@ pub fn list_objects(
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
-    if let Some(continuation_token_ptr) = list_options.continuation_token {
-        // SAFETY: `continuation_token` borrows from `list_options._continuation_token`
-        // which is kept alive for the duration of this call.
-        let continuation_token = unsafe { &*continuation_token_ptr };
+    if let Some(continuation_token) = list_options.continuation_token.as_deref() {
         let mut buff = vec![0u8; continuation_token.len() * 3];
         let encoded =
             encode_uri_component::<true>(continuation_token, &mut buff).expect("unreachable");
@@ -210,9 +207,7 @@ pub fn list_objects(
         ));
     }
 
-    if let Some(delimiter_ptr) = list_options.delimiter {
-        // SAFETY: borrows from `list_options._delimiter` (alive for this call).
-        let delimiter = unsafe { &*delimiter_ptr };
+    if let Some(delimiter) = list_options.delimiter.as_deref() {
         let mut buff = vec![0u8; delimiter.len() * 3];
         let encoded = encode_uri_component::<true>(delimiter, &mut buff).expect("unreachable");
 
@@ -256,17 +251,13 @@ pub fn list_objects(
         let _ = search_params.append_fmt(format_args!("&max-keys={}", max_keys)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
-    if let Some(prefix_ptr) = list_options.prefix {
-        // SAFETY: borrows from `list_options._prefix` (alive for this call).
-        let prefix = unsafe { &*prefix_ptr };
+    if let Some(prefix) = list_options.prefix.as_deref() {
         let mut buff = vec![0u8; prefix.len() * 3];
         let encoded = encode_uri_component::<true>(prefix, &mut buff).expect("unreachable");
         let _ = search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
-    if let Some(start_after_ptr) = list_options.start_after {
-        // SAFETY: borrows from `list_options._start_after` (alive for this call).
-        let start_after = unsafe { &*start_after_ptr };
+    if let Some(start_after) = list_options.start_after.as_deref() {
         let mut buff = vec![0u8; start_after.len() * 3];
         let encoded =
             encode_uri_component::<true>(start_after, &mut buff).expect("unreachable");
@@ -341,10 +332,10 @@ pub fn list_objects(
     // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
     // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
     // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { &*(&raw const *task.sign_result.url) });
-    let headers_buf: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(task.headers.buf.as_slice()) };
+    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let headers_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(unsafe { &*(&raw const *task.proxy_url) }))
+        Some(bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.proxy_url) }))
     } else {
         None
     };
@@ -1023,10 +1014,10 @@ pub fn download_stream(
 
     // SAFETY (lifetime extension): `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
     // fields of `*task` which the task outlives. See `execute_simple_s3_request`.
-    let url = bun_url::URL::parse(unsafe { &*(&raw const *task.sign_result.url) });
-    let headers_buf: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(task.headers.buf.as_slice()) };
+    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let headers_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(unsafe { &*(&raw const *task.proxy_url) }))
+        Some(bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.proxy_url) }))
     } else {
         None
     };

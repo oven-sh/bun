@@ -6,7 +6,7 @@ use bstr::BStr;
 use bun_collections::BoundedArray;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{IntrusiveRc, RefCount, RefCounted};
+use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
 use bun_string::strings;
 
 use super::acl::ACL;
@@ -1348,12 +1348,13 @@ pub struct S3CredentialsWithOptions {
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
-    // TODO(port): self-referential — these `?[]const u8` fields are NOT freed in Zig `deinit`;
-    // they borrow into the sibling `_*_slice: ZigStringSlice` fields below. Verify against
-    // LIFETIMES.tsv in Phase B. Raw `*const [u8]` here to avoid double-owning the bytes.
-    pub content_disposition: Option<*const [u8]>,
-    pub content_type: Option<*const [u8]>,
-    pub content_encoding: Option<*const [u8]>,
+    // Self-referential views: these `?[]const u8` fields are NOT freed in Zig
+    // `deinit`; they borrow into the sibling `_*_slice: ZigStringSlice` fields
+    // below. `RawSlice` encodes that non-owning contract (and gives callers
+    // `.as_deref()` instead of an open-coded `unsafe { &*p }`).
+    pub content_disposition: Option<RawSlice<u8>>,
+    pub content_type: Option<RawSlice<u8>>,
+    pub content_encoding: Option<RawSlice<u8>>,
     /// indicates if requester pays for the request (for requester pays buckets)
     pub request_payer: bool,
     /// indicates if the credentials have changed

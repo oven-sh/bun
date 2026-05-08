@@ -221,7 +221,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { &*std::ptr::from_ref::<GenerateChunkCtx>(chunk_ctx) },
+                            ctx: unsafe { bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx) },
                             };
                             batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
 
@@ -243,7 +243,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { &*std::ptr::from_ref::<GenerateChunkCtx>(chunk_ctx) },
+                            ctx: unsafe { bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx) },
                             };
                             batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
 
@@ -263,7 +263,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
-                            ctx: unsafe { &*std::ptr::from_ref::<GenerateChunkCtx>(chunk_ctx) },
+                            ctx: unsafe { bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx) },
                         };
 
                         batch.push(ThreadPoolLib::Batch::from(&raw mut remaining_part_ranges[0].task));
@@ -559,7 +559,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this
         // long-lived shared borrow doesn't conflict with `c.log.add_error_fmt(&mut)`
         // inside the chunk loop below. `c` outlives `static_route_visitor`.
-        c: unsafe { &*std::ptr::from_ref::<LinkerContext>(c) },
+        c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };

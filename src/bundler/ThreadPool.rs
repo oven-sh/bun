@@ -462,6 +462,23 @@ pub struct Worker {
     pub stmt_list: MaybeUninit<StmtList>,
 }
 
+impl Worker {
+    /// Reborrow the self-referential `arena` (= `&self.heap`) as a shared
+    /// reference. Centralises the per-call-site `unsafe { &*worker.arena }`
+    /// into one accessor; see PORT NOTE on the field.
+    ///
+    /// SAFETY (encapsulated): `arena` is set to `&self.heap` in
+    /// [`Worker::create`] before any caller can observe the `Worker`, and is
+    /// never null or dangling after that point. The pointee is the worker's
+    /// own `heap` field, which is pinned for the worker's lifetime.
+    #[inline]
+    pub fn arena(&self) -> &ThreadLocalArena {
+        debug_assert!(!self.arena.is_null(), "Worker.arena read before create()");
+        // SAFETY: see fn doc — self-referential, set in create(), never null.
+        unsafe { &*self.arena }
+    }
+}
+
 pub struct WorkerData {
     // TODO(port): lifetime — TSV class ARENA (`&'arena mut Logger::Log`); kept
     // raw because the arena is the sibling field `Worker.heap`.

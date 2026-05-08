@@ -79,7 +79,7 @@ impl LinkerContext<'_> {
         // we must use this arena here
         // SAFETY: `Worker::create` initializes `arena` to point at
         // `worker.heap`; valid for the worker's lifetime.
-        let arena: &Bump = unsafe { &*worker.arena };
+        let arena: &Bump = worker.arena();
 
         // ── raw SoA column pointers (root provenance) ─────────────────────
         // `split_raw()` derives `*mut [T]` directly from the buffer base with
@@ -525,7 +525,7 @@ impl LinkerContext<'_> {
                     // SAFETY: `alias` borrows the worker arena which outlives the
                     // link pass; `E::String::data: &'static [u8]` is the arena
                     // erasure used throughout the AST.
-                    E::String::init(unsafe { &*std::ptr::from_ref::<[u8]>(alias) }),
+                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
                     loc,
                 )),
                 value: Some(Expr::allocate(

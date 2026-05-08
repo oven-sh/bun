@@ -2598,8 +2598,7 @@ where
         let server = unsafe { &mut *server_ptr };
         let server_request_list = Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
         let call_route = if Ctx::IS_H3 { Bun__ServerRouteList__callRouteH3 } else { Bun__ServerRouteList__callRoute };
-        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-        let global = unsafe { &*server.global_this };
+        let global = server.global_this();
         let response_value = match jsc::from_js_host_call(global, || unsafe {
             call_route(
                 global,
@@ -2677,8 +2676,7 @@ where
         let this = unsafe { &mut *self_ptr };
         debug_assert!(this.config.on_request.is_some());
 
-        // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-        let global = unsafe { &*this.global_this };
+        let global = this.global_this();
         let js_value = this.js_value_assert_alive();
         let on_request_fn = this.config.on_request.as_ref().map(|s| s.get()).unwrap_or(JSValue::UNDEFINED);
         let response_value = match on_request_fn.call(

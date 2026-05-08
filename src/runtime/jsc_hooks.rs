@@ -323,9 +323,14 @@ unsafe fn init_runtime_state(
     // Gate on `opts.is_main_thread` once `bun_aio::parent_death_watchdog`
     // un-gates.
 
-    // Spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)`.
-    // SAFETY: `vm` is the freshly-boxed unique VM on this thread.
-    unsafe { configure_debugger(vm, &opts.debugger) };
+    // Spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)` —
+    // called by `init`/`initBake`, NOT by `initWorker` (spec :1394-1491). The
+    // Rust port routes worker init through this same hook, so gate on
+    // `worker_ptr` to keep `vm.debugger == None` for workers.
+    if opts.worker_ptr.is_null() {
+        // SAFETY: `vm` is the freshly-boxed unique VM on this thread.
+        unsafe { configure_debugger(vm, &opts.debugger) };
+    }
 
     state.cast()
 }

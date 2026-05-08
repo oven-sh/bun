@@ -113,11 +113,9 @@ impl ClientSession {
 
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
         for &stream_ptr in self.pending.iter() {
-            // SAFETY: pending entries are live until detach() removes + destroys them.
-            let stream = unsafe { &mut *stream_ptr };
-            let Some(mut client) = stream.client else { continue };
-            // SAFETY: stream.client is a live backref while the stream is attached.
-            let client = unsafe { client.as_mut() };
+            let stream = stream_mut(stream_ptr);
+            let Some(client) = stream.client else { continue };
+            let client = client_mut(client);
             if client.async_http_id != async_http_id {
                 continue;
             }
@@ -136,12 +134,9 @@ impl ClientSession {
     }
 
     pub fn detach(&mut self, stream: *mut Stream) {
-        // SAFETY: caller passes a live Stream that is in (or was just removed from)
-        // self.pending; it remains valid until the heap::take at the bottom.
-        let st = unsafe { &mut *stream };
+        let st = stream_mut(stream);
         if let Some(cl) = st.client {
-            // SAFETY: stream.client is a live backref while attached.
-            unsafe { (*cl.as_ptr()).h3 = None };
+            client_mut(cl).h3 = None;
         }
         st.client = None;
         if let Some(qs) = st.qstream {
@@ -170,14 +165,12 @@ impl ClientSession {
 
     pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
         // PORT NOTE: reshaped for borrowck — capture client ptr before detach() invalidates stream.
-        // SAFETY: caller passes a live Stream from self.pending.
-        let client = unsafe { (*stream).client };
-        // SAFETY: same as above.
-        unsafe { (*stream).abort() };
+        let client = stream_mut(stream).client;
+        stream_mut(stream).abort();
         self.detach(stream);
         if let Some(cl) = client {
-            // SAFETY: HTTPClient outlives its h3 Stream; detach() nulled cl.h3 but cl itself is alive.
-            unsafe { (*cl.as_ptr()).fail_from_h2(err) };
+            // detach() nulled cl.h3 but the HTTPClient itself is alive.
+            client_mut(cl).fail_from_h2(err);
         }
     }
 
@@ -192,9 +185,8 @@ impl ClientSession {
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
         // `client_ptr` across `detach` and only form `&mut` afterward.
-        // SAFETY: caller passes a live Stream from self.pending.
-        let st = unsafe { &mut *stream };
-        let Some(mut client_ptr) = st.client else {
+        let st = stream_mut(stream);
+        let Some(client_ptr) = st.client else {
             return self.fail(stream, err);
         };
         // SAFETY: stream.client is a live backref while the stream is attached.
@@ -220,10 +212,9 @@ impl ClientSession {
         );
         st.abort();
         self.detach(stream);
-        // SAFETY: HTTPClient outlives its h3 Stream; detach() nulled client.h3 but
-        // the client itself is alive. Formed only after detach() so its Unique tag
-        // is not invalidated by detach()'s aliasing write.
-        let client = unsafe { client_ptr.as_mut() };
+        // Formed only after detach() so its Unique tag is not invalidated by
+        // detach()'s aliasing write to `client.h3`.
+        let client = client_mut(client_ptr);
         // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
         if !unsafe { (*ctx.as_ptr()).connect(client, &host, port) } {
             client.fail_from_h2(err);
@@ -259,20 +250,18 @@ impl ClientSession {
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
     pub fn deliver(&mut self, stream: *mut Stream, done: bool) {
-        // SAFETY: caller passes a live Stream from self.pending.
-        let st = unsafe { &mut *stream };
-        let Some(mut client_ptr) = st.client else {
+        let st = stream_mut(stream);
+        let Some(client_ptr) = st.client else {
             if done {
                 self.detach(stream);
             }
             return;
         };
-        // SAFETY: stream.client is a live backref while the stream is attached.
         // NB: `detach()` writes `client.h3 = None` through this same raw
         // backref, which pops this `&mut`'s Unique tag under Stacked Borrows —
         // so every `self.detach(stream)` below that is followed by further
         // `client` use re-derives a fresh `&mut` from `client_ptr` first.
-        let client = unsafe { client_ptr.as_mut() };
+        let client = client_mut(client_ptr);
 
         if client.signals.get(Signal::Aborted) {
             return self.fail(stream, err!(Aborted));
@@ -288,7 +277,7 @@ impl ClientSession {
                 if client.state.flags.is_redirect_pending {
                     self.detach(stream);
                     // SAFETY: re-derive — detach() invalidated the prior Unique tag.
-                    let client = unsafe { client_ptr.as_mut() };
+                    let client = client_mut(client_ptr);
                     return client.do_redirect_h3();
                 }
                 client.clone_metadata();
@@ -298,7 +287,7 @@ impl ClientSession {
                 }
                 self.detach(stream);
                 // SAFETY: re-derive — detach() invalidated the prior Unique tag.
-                let client = unsafe { client_ptr.as_mut() };
+                let client = client_mut(client_ptr);
                 return finish(client);
             }
             client.clone_metadata();
@@ -337,14 +326,14 @@ impl ClientSession {
             if done {
                 self.detach(stream);
                 // SAFETY: re-derive — detach() invalidated the prior Unique tag.
-                let client = unsafe { client_ptr.as_mut() };
+                let client = client_mut(client_ptr);
                 return finish(client);
             }
             if report {
                 if client.state.is_done() {
                     self.detach(stream);
                     // SAFETY: re-derive — detach() invalidated the prior Unique tag.
-                    let client = unsafe { client_ptr.as_mut() };
+                    let client = client_mut(client_ptr);
                     return client.progress_update_h3();
                 }
                 client.progress_update_h3();
@@ -355,11 +344,37 @@ impl ClientSession {
         if done {
             self.detach(stream);
             // SAFETY: re-derive — detach() invalidated the prior Unique tag.
-            let client = unsafe { client_ptr.as_mut() };
+            let client = client_mut(client_ptr);
             client.state.flags.received_last_chunk = true;
             return finish(client);
         }
     }
+}
+
+/// Upgrade a `Stream.client` backref to `&mut HTTPClient`.
+///
+/// INVARIANT: every `NonNull<HTTPClient>` reaching here came from a live
+/// `Stream.client` — an `as_erased_ptr()` of the `HTTPClient` embedded in its
+/// `AsyncHTTP`, which strictly outlives the `Stream`. All h3 callbacks run on
+/// the HTTP thread, so the returned `&mut` is the sole live borrow. Per the
+/// Stacked-Borrows notes in `deliver`/`retry_or_fail`, callers re-derive a
+/// fresh `&mut` here after each `detach()` (which writes `client.h3 = None`
+/// through this same raw backref) rather than holding one across it.
+/// Centralises the `unsafe { .as_mut() }` upgrade repeated at every callback.
+#[inline]
+fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
+    // SAFETY: see fn doc.
+    unsafe { &mut *p.as_ptr() }
+}
+
+/// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from
+/// it) to `&mut Stream`. Entries are heap-allocated by `Stream::new` and live
+/// until `detach()` reclaims them; HTTP-thread only, so the `&mut` is the sole
+/// live borrow.
+#[inline]
+fn stream_mut<'a>(p: *mut Stream) -> &'a mut Stream {
+    // SAFETY: see fn doc.
+    unsafe { &mut *p }
 }
 
 fn apply_headers(

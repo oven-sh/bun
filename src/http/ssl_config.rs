@@ -264,8 +264,7 @@ impl SSLConfig {
         macro_rules! hash_cstr {
             ($f:ident) => {
                 if !self.$f.is_null() {
-                    // SAFETY: non-null field is a NUL-terminated heap string we own.
-                    hasher.update(unsafe { bun_core::ffi::cstr(self.$f) }.to_bytes());
+                    hasher.update(cstr_bytes(self.$f));
                 }
                 hasher.update(&[0]);
             };
@@ -274,8 +273,7 @@ impl SSLConfig {
             ($f:ident) => {
                 if let Some(slice) = &self.$f {
                     for s in slice.iter() {
-                        // SAFETY: each entry is a NUL-terminated heap string we own.
-                        hasher.update(unsafe { bun_core::ffi::cstr(*s) }.to_bytes());
+                        hasher.update(cstr_bytes(*s));
                         hasher.update(&[0]);
                     }
                 }
@@ -335,8 +333,7 @@ impl SSLConfig {
             return None;
         }
         let p = core::mem::replace(&mut self.protos, core::ptr::null());
-        // SAFETY: p is a NUL-terminated heap string we own.
-        let bytes = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
+        let bytes = cstr_bytes(p);
         // TODO(port): bun.memory.dropSentinel — reuses the allocation in
         // place; here we copy. PERF(port).
         let owned = bytes.to_vec().into_boxed_slice();
@@ -349,8 +346,7 @@ impl SSLConfig {
             return None;
         }
         let p = core::mem::replace(&mut self.server_name, core::ptr::null());
-        // SAFETY: p is a NUL-terminated heap string we own.
-        let bytes = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
+        let bytes = cstr_bytes(p);
         let owned = bytes.to_vec().into_boxed_slice();
         bun_core::free_sensitive(p);
         Some(owned)
@@ -401,15 +397,24 @@ impl Drop for SSLConfig {
 unsafe impl Send for SSLConfig {}
 unsafe impl Sync for SSLConfig {}
 
+/// Borrow a non-null, heap-owned, NUL-terminated C string field as bytes.
+///
+/// INVARIANT: every `CStrPtr` stored on an `SSLConfig` (or in a `CStrSlice`)
+/// was produced by `clone_string` / `dupe_z` / `bun_core::dupe_z` (the TLS
+/// option parser) — all NUL-terminate — and remains valid for as long as the
+/// owning `SSLConfig` is alive. Centralises the `unsafe { ffi::cstr(..) }`
+/// upgrade so the SAFETY argument lives in one place.
+#[inline]
+fn cstr_bytes<'a>(p: CStrPtr) -> &'a [u8] {
+    debug_assert!(!p.is_null());
+    // SAFETY: see fn doc — `p` is a live, NUL-terminated, owned C string.
+    unsafe { bun_core::ffi::cstr(p) }.to_bytes()
+}
+
 fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {
     match (a.is_null(), b.is_null()) {
         (true, true) => true,
-        (false, false) => {
-            // SAFETY: both are non-null NUL-terminated strings we own.
-            let lhs = unsafe { bun_core::ffi::cstr(a) }.to_bytes();
-            let rhs = unsafe { bun_core::ffi::cstr(b) }.to_bytes();
-            bun_string::strings::eql_long(lhs, rhs, true)
-        }
+        (false, false) => bun_string::strings::eql_long(cstr_bytes(a), cstr_bytes(b), true),
         _ => false,
     }
 }
@@ -442,9 +447,7 @@ fn clone_string(s: CStrPtr) -> CStrPtr {
     if s.is_null() {
         return core::ptr::null();
     }
-    // SAFETY: s is a NUL-terminated heap string we own.
-    let bytes = unsafe { bun_core::ffi::cstr(s) }.to_bytes();
-    bun_core::dupe_z(bytes)
+    bun_core::dupe_z(cstr_bytes(s))
 }
 
 /// Weak dedup cache. Each map entry stores a weak pointer on its key's

@@ -3039,14 +3039,38 @@ impl StackCheck {
     /// Is there at least 128 KB of stack space available?
     #[inline]
     pub fn is_safe_to_recurse(&self) -> bool {
-        // TODO(port): @frameAddress() — use an approximate stack pointer
-        let stack_ptr: usize = {
-            let local = 0u8;
-            core::ptr::from_ref::<u8>(&local) as usize
-        };
+        let stack_ptr = Self::frame_address();
         let remaining_stack = stack_ptr.saturating_sub(self.cached_stack_end);
         let limit = if cfg!(windows) { 256 } else { 128 };
         remaining_stack > 1024 * limit
+    }
+
+    /// Port of Zig `@frameAddress()`. Reads the frame-pointer register
+    /// directly so the result is always on the real machine stack — taking
+    /// the address of a local instead lands on ASAN's heap-backed fake stack
+    /// when use-after-return detection is on, which makes the comparison
+    /// against `cached_stack_end` meaningless.
+    #[inline(always)]
+    fn frame_address() -> usize {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let fp: usize;
+            // SAFETY: reading rbp is side-effect-free.
+            unsafe { core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags)) };
+            fp
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            let fp: usize;
+            // SAFETY: reading x29 (fp) is side-effect-free.
+            unsafe { core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags)) };
+            fp
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            let probe = 0u8;
+            core::ptr::from_ref::<u8>(&probe) as usize
+        }
     }
 }
 

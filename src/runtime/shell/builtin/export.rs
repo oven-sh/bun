@@ -30,17 +30,23 @@ impl Export {
             let arg = Builtin::of(interp, cmd).args_slice()[i];
             // SAFETY: argv entries are NUL-terminated.
             let s = unsafe { CStr::from_ptr(arg) }.to_bytes();
+            if s.is_empty() {
+                continue;
+            }
             let (name, value) = match s.iter().position(|&b| b == b'=') {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
+            // Spec (export.zig): argv backing is freed when the Cmd retires,
+            // so the key/value MUST be duplicated into ref-counted storage —
+            // `init_slice` here would leave dangling EnvStr in `export_env`.
+            let label = EnvStr::dupe_ref_counted(name);
+            let val = EnvStr::dupe_ref_counted(value);
             let shell = interp.as_cmd(cmd).base.shell;
             // SAFETY: shell env outlives the Cmd node.
-            unsafe {
-                (*shell)
-                    .export_env
-                    .insert(EnvStr::init_slice(name), EnvStr::init_slice(value));
-            }
+            unsafe { (*shell).export_env.insert(label, val) };
+            label.deref();
+            val.deref();
         }
         Builtin::done(interp, cmd, 0)
     }

@@ -115,6 +115,12 @@ impl ShellCondExprStatTask {
     }
 }
 
+/// Spec: `Interpreter.Expansion.ShellGlobTask.Err`.
+pub enum ShellGlobErr {
+    Syscall(bun_sys::Error),
+    Unknown(bun_core::Error),
+}
+
 /// Spec: `Interpreter.Expansion.ShellGlobTask`.
 #[repr(C)]
 pub struct ShellGlobTask {
@@ -122,16 +128,28 @@ pub struct ShellGlobTask {
     pub expansion: NodeId,
     pub walker: bun_glob::BunGlobWalkerZ,
     pub result: Vec<Vec<u8>>,
-    pub err: Option<bun_core::Error>,
+    pub err: Option<ShellGlobErr>,
 }
 
-impl ShellGlobTask {
-    /// # Safety
-    /// `this` is a live `heap::alloc`'d task.
-    pub unsafe fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: caller contract; `interp` set at schedule.
-        let interp = unsafe { &mut *(*this).task.interp };
+impl bun_event_loop::Taskable for ShellGlobTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellGlobTask;
+}
+
+impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: *mut Self) {
+        // SAFETY: scheduled via `ShellTask::schedule`; `this` is the live
+        // heap allocation handed to it.
         let me = unsafe { &mut *this };
+        match Self::walk_impl(&mut me.walker, &mut me.result) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => me.err = Some(ShellGlobErr::Syscall(e)),
+            Err(e) => me.err = Some(ShellGlobErr::Unknown(e)),
+        }
+    }
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+        // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
+        let mut me = unsafe { bun_core::heap::take(this) };
         crate::shell::states::expansion::Expansion::on_glob_walk_done(
             interp,
             me.expansion,
@@ -139,14 +157,54 @@ impl ShellGlobTask {
             me.err.take(),
         );
     }
+}
 
-    /// Spec: ShellGlobTask.deinit — frees the walker arena + the task box.
-    /// # Safety
-    /// `this` is a live `heap::alloc`'d task; called exactly once after
-    /// `run_from_main_thread`.
-    pub unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller contract.
-        drop(unsafe { bun_core::heap::take(this) });
+impl ShellGlobTask {
+    /// Spec: Expansion.zig `ShellGlobTask.createOnMainThread` + `schedule`.
+    pub fn create_and_schedule(
+        interp: &mut Interpreter,
+        expansion: NodeId,
+        walker: bun_glob::BunGlobWalkerZ,
+    ) {
+        let mut task = ShellTask::new(interp.event_loop);
+        task.interp = core::ptr::from_mut(interp);
+        let this = bun_core::heap::alloc(ShellGlobTask {
+            task,
+            expansion,
+            walker,
+            result: Vec::new(),
+            err: None,
+        });
+        // SAFETY: `this` is a fresh heap allocation embedding `ShellTask` at
+        // `TASK_OFFSET`; freed in `run_from_main_thread`.
+        unsafe { ShellTask::schedule::<ShellGlobTask>(this) };
+    }
+
+    /// Spec: Expansion.zig `ShellGlobTask.walkImpl`.
+    fn walk_impl(
+        walker: &mut bun_glob::BunGlobWalkerZ,
+        result: &mut Vec<Vec<u8>>,
+    ) -> Result<bun_sys::Result<()>, bun_core::Error> {
+        let mut iter = bun_glob::walk::Iterator::new(walker);
+        if let Err(e) = iter.init()? {
+            return Ok(Err(e));
+        }
+        loop {
+            match iter.next()? {
+                Err(e) => return Ok(Err(e)),
+                Ok(None) => return Ok(Ok(())),
+                Ok(Some(path)) => {
+                    // The walker SENTINEL=true variant NUL-terminates; strip
+                    // it so the argv word boundary doesn't carry an embedded 0.
+                    let bytes = if path.last() == Some(&0) {
+                        &path[..path.len() - 1]
+                    } else {
+                        &path[..]
+                    };
+                    result.push(bytes.to_vec());
+                }
+            }
+        }
     }
 }
 

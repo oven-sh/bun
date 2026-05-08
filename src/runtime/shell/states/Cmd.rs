@@ -320,11 +320,24 @@ impl Cmd {
         // Assigns or Expansion child aborts the command — write the failing
         // error to stderr and finish with exit 1. Do NOT advance idx.
         if exit_code != 0 && matches!(child_kind, StateKind::Assign | StateKind::Expansion) {
-            // TODO(b2-blocked): writeFailingError("{f}\n", err) — extract the
-            // expansion error and enqueue an IOWriter stderr write, then
-            // transition to `WaitingWriteErr`. Until IOWriter is wired, fail
-            // synchronously with the spec's exit code.
+            // Spec (Cmd.zig childDone 384-396): pull the expansion error out
+            // before deiniting the child, then write it to stderr via
+            // `writeFailingError("{f}\n", err)` and finish with exit 1.
+            let err = if matches!(child_kind, StateKind::Expansion) {
+                Expansion::take_err(interp, child)
+            } else {
+                None
+            };
             interp.deinit_node(child);
+            if let Some(err) = err {
+                let y = Builtin::cmd_write_failing_error(
+                    interp,
+                    this,
+                    format_args!("{}\n", err),
+                );
+                err.deinit();
+                return y;
+            }
             let me = interp.as_cmd_mut(this);
             me.exit_code = Some(1);
             me.state = CmdState::Done;

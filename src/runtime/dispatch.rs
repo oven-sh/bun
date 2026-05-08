@@ -273,14 +273,7 @@ pub fn run_task(
             // SAFETY: live DirTask child of a ShellRmTask tree.
             unsafe { ShellRmDirTask::run_from_main_thread(t) };
         }
-        task_tag::ShellGlobTask => {
-            let t = cast_ptr!(ShellGlobTask);
-            // SAFETY: live Box'd glob task.
-            unsafe {
-                ShellGlobTask::run_from_main_thread(t);
-                ShellGlobTask::deinit(t);
-            }
-        }
+        task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
         task_tag::ShellYesTask => {
             // Declared in the union but never dispatched here in Zig (covered
             // by the trailing `else` panic). Mirror that.

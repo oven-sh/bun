@@ -49,6 +49,9 @@ pub enum ExpansionState {
     Glob,
     BraceExpand,
     Done,
+    /// Spec: Expansion.zig `.err`. The parent inspects this on
+    /// `child_done(_, 1)` to print the message.
+    Err(ShellErr),
 }
 
 #[derive(Default)]
@@ -110,11 +113,15 @@ impl Expansion {
                     me.state = ExpansionState::Walking;
                     continue;
                 }
-                ExpansionState::CmdSubst | ExpansionState::Glob | ExpansionState::BraceExpand => {
+                ExpansionState::CmdSubst | ExpansionState::Glob => {
                     // Re-entered while a child is in flight.
                     return Yield::suspended();
                 }
-                ExpansionState::Done => break,
+                ExpansionState::BraceExpand => {
+                    Self::do_brace_expand(me);
+                    continue;
+                }
+                ExpansionState::Done | ExpansionState::Err(_) => break,
                 ExpansionState::Walking => {}
             }
 
@@ -194,13 +201,107 @@ impl Expansion {
                 }
                 home.deref();
             }
-            // TODO(port): brace + glob expansion (Expansion.zig `.braces` /
-            // `.glob` arms). For now flush the assembled word.
+            // Spec (Expansion.zig next() lines 209-221): brace expansion
+            // first, then glob, else flush as a single word.
+            if atom.has_brace_expansion() {
+                me.state = ExpansionState::BraceExpand;
+                continue;
+            }
+            if atom.has_glob_expansion() {
+                return Self::transition_to_glob_state(interp, this);
+            }
             Self::push_current_out(me);
             me.state = ExpansionState::Done;
         }
         let parent = interp.as_expansion(this).base.parent;
-        interp.child_done(parent, this, 0)
+        let exit: ExitCode =
+            if matches!(interp.as_expansion(this).state, ExpansionState::Err(_)) { 1 } else { 0 };
+        interp.child_done(parent, this, exit)
+    }
+
+    /// Spec: Expansion.zig `.braces` arm. Re-tokenize `current_out` (the
+    /// fully-expanded word with `{`/`,`/`}` markers preserved by
+    /// `expand_simple_no_io`) and push each variant as a separate argv word.
+    fn do_brace_expand(me: &mut Expansion) {
+        use bun_shell_parser::braces;
+        let brace_str = &me.current_out[..];
+        let mut lexer_output = if bun_string::strings::is_all_ascii(brace_str) {
+            bun_core::handle_oom(braces::Lexer::tokenize(brace_str))
+        } else {
+            bun_core::handle_oom(
+                braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str),
+            )
+        };
+        let count =
+            braces::calculate_expanded_amount(&lexer_output.tokens[..]) as usize;
+        let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
+
+        let arena = bun_alloc::Arena::new();
+        if let Err(e) = braces::expand(
+            &arena,
+            &mut lexer_output.tokens[..],
+            &mut expanded[..],
+            lexer_output.contains_nested,
+        ) {
+            // Spec: error.UnexpectedToken → panic. Mirror it.
+            panic!("unexpected error from Braces.expand: {e:?}");
+        }
+        drop(arena);
+
+        // Spec lines 268-279: push each variant as its own word. The Zig
+        // version NUL-terminated then `out.pushResult`; the NodeId port
+        // records word boundaries via `bounds` instead.
+        me.current_out.clear();
+        for s in expanded {
+            if !me.out.buf.is_empty() {
+                me.out.bounds.push(me.out.buf.len() as u32);
+            }
+            me.out.buf.extend_from_slice(&s);
+        }
+
+        // SAFETY: `node` points into the AST arena which outlives this state.
+        let atom = unsafe { &*me.node };
+        me.state = if atom.has_glob_expansion() {
+            // Spec: brace+glob composes — re-enter via the glob arm. The
+            // NodeId port currently routes glob through `current_out`, so
+            // brace-produced multi-word + glob is left as a TODO (matches the
+            // Zig "weird behaviour" note above the spec).
+            ExpansionState::Done
+        } else {
+            ExpansionState::Done
+        };
+    }
+
+    /// Spec: Expansion.zig `transitionToGlobState`. Kick off an off-thread
+    /// glob walk for the assembled pattern in `current_out`.
+    fn transition_to_glob_state(interp: &mut Interpreter, this: NodeId) -> Yield {
+        use crate::shell::dispatch_tasks::ShellGlobTask;
+        let pattern: Vec<u8>;
+        let cwd: Vec<u8>;
+        {
+            let me = interp.as_expansion_mut(this);
+            me.state = ExpansionState::Glob;
+            pattern = me.current_out.clone();
+            // SAFETY: `Base.shell` arena-backref; env outlives this state.
+            cwd = unsafe { &*me.base.shell }.cwd().to_vec();
+        }
+        let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
+            &pattern, &cwd, false, false, false, false, false, None,
+        ) {
+            Ok(Ok(w)) => w,
+            Ok(Err(e)) => {
+                interp.as_expansion_mut(this).state =
+                    ExpansionState::Err(ShellErr::new_sys(e));
+                return Yield::Next(this);
+            }
+            Err(e) => {
+                interp.as_expansion_mut(this).state =
+                    ExpansionState::Err(ShellErr::Custom(e.to_string().into_bytes().into()));
+                return Yield::Next(this);
+            }
+        };
+        ShellGlobTask::create_and_schedule(interp, this, walker);
+        Yield::suspended()
     }
 
     /// Spec: Expansion.zig `expandSimpleNoIO`. Appends the no-IO expansion of
@@ -373,20 +474,77 @@ impl Expansion {
         interp: &mut Interpreter,
         this: NodeId,
         result: Vec<Vec<u8>>,
-        err: Option<bun_core::Error>,
+        err: Option<crate::shell::dispatch_tasks::ShellGlobErr>,
     ) {
+        use crate::shell::dispatch_tasks::ShellGlobErr;
+        log!("Expansion {} onGlobWalkDone", this);
+        if let Some(err) = err {
+            let shell_err = match err {
+                ShellGlobErr::Syscall(e) => ShellErr::new_sys(e),
+                ShellGlobErr::Unknown(e) => {
+                    ShellErr::Custom(e.to_string().into_bytes().into())
+                }
+            };
+            interp.throw(shell_err);
+            interp.as_expansion_mut(this).state = ExpansionState::Done;
+            Yield::Next(this).run(interp);
+            return;
+        }
+
+        if result.is_empty() {
+            // Spec lines 559-578: in variable assignments a no-match glob
+            // expands to the literal pattern; otherwise it's an error.
+            let parent = interp.as_expansion(this).base.parent;
+            let in_assign = matches!(interp.node(parent).kind(), StateKind::Assign)
+                || matches!(
+                    interp.node(parent),
+                    Node::Cmd(c) if matches!(
+                        c.state,
+                        crate::shell::states::cmd::CmdState::ExpandingAssigns
+                    )
+                );
+            let me = interp.as_expansion_mut(this);
+            if in_assign {
+                Self::push_current_out(me);
+                me.state = ExpansionState::Done;
+            } else {
+                let msg = format!(
+                    "no matches found: {}",
+                    bstr::BStr::new(&me.current_out)
+                );
+                me.state =
+                    ExpansionState::Err(ShellErr::Custom(msg.into_bytes().into()));
+            }
+            Yield::Next(this).run(interp);
+            return;
+        }
+
         {
             let me = interp.as_expansion_mut(this);
+            // Spec lines 580-588: push each match as its own argv word. The
+            // walker arena owns the strings, so they were `to_vec`'d already.
             for entry in result {
+                if !me.out.buf.is_empty() {
+                    me.out.bounds.push(me.out.buf.len() as u32);
+                }
                 me.out.buf.extend_from_slice(&entry);
-                me.out.bounds.push(me.out.buf.len() as u32);
             }
             me.state = ExpansionState::Done;
         }
-        // TODO(b2-blocked): on `err.is_some()` route through
-        // `writeFailingError` (IOWriter::enqueue) instead of resuming clean.
-        let _ = err;
         Yield::Next(this).run(interp);
+    }
+
+    /// Take the error out of `state == Err(_)` (called by the parent on
+    /// `child_done(_, 1)` to print it). Leaves `state == Done`.
+    pub fn take_err(interp: &mut Interpreter, this: NodeId) -> Option<ShellErr> {
+        let me = interp.as_expansion_mut(this);
+        match core::mem::replace(&mut me.state, ExpansionState::Done) {
+            ExpansionState::Err(e) => Some(e),
+            other => {
+                me.state = other;
+                None
+            }
+        }
     }
 
     pub fn deinit(interp: &mut Interpreter, this: NodeId) {

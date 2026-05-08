@@ -305,8 +305,11 @@ pub struct ArgumentsSlice<'a> {
     /// `remaining.ptr += 1` reslice (which a `Cow` can't express in-place).
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    // TODO(port): non-AST arena field — Node.fs callers allocate temp strings here; revisit ownership in Phase B
-    pub arena: bun_alloc::Arena,
+    /// Zig: `bun.ArenaAllocator` (= `std.heap.ArenaAllocator`), which is **lazy** —
+    /// `init()` allocates nothing. The Rust `bun_alloc::Arena` is a `MimallocArena`
+    /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
+    /// caller actually needs scratch storage (currently none do in the Rust port).
+    pub arena: Option<bun_alloc::Arena>,
     pub all: &'a [JSValue],
     pub threw: bool,
     pub protected: IntegerBitSet<32>,
@@ -318,6 +321,12 @@ impl<'a> ArgumentsSlice<'a> {
     #[inline]
     pub fn remaining(&self) -> &[JSValue] {
         &self.remaining_buf[self.remaining_start..]
+    }
+
+    /// Lazily create the scratch arena (Zig: `slice.arena.allocator()`).
+    #[inline]
+    pub fn arena(&mut self) -> &bun_alloc::Arena {
+        self.arena.get_or_insert_with(bun_alloc::Arena::new)
     }
 
     pub fn unprotect(&mut self) {
@@ -362,7 +371,7 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_start: 0,
             vm,
             all: slice,
-            arena: bun_alloc::Arena::new(),
+            arena: None,
             threw: false,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
@@ -377,7 +386,7 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_start: 0,
             vm,
             all: slice,
-            arena: bun_alloc::Arena::new(),
+            arena: None,
             threw: false,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,

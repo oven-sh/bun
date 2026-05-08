@@ -51,6 +51,8 @@ use crate::websocket_client::ErrorCode;
 use bun_http::ssl_config::SSLConfig;
 
 bun_core::declare_scope!(WebSocketUpgradeClient, visible);
+// Zig: `bun.new`/`bun.destroy` log under `.alloc` (hidden, BUN_DEBUG_alloc=1).
+bun_core::declare_scope!(alloc, hidden);
 
 macro_rules! log {
     ($($arg:tt)*) => {
@@ -175,6 +177,13 @@ bun_ptr::impl_cell_ref_counted! {
 }
 
 impl<const SSL: bool> HTTPClient<SSL> {
+    /// Zig: `meta.typeName(T)` keeps the full path because the name contains `(`.
+    const TYPE_NAME: &'static str = if SSL {
+        "http.websocket_client.WebSocketUpgradeClient.NewHTTPUpgradeClient(true)"
+    } else {
+        "http.websocket_client.WebSocketUpgradeClient.NewHTTPUpgradeClient(false)"
+    };
+
     /// Called by `RefCount` when the count hits zero.
     ///
     /// # Safety
@@ -186,6 +195,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             (*this).clear_data();
             debug_assert!((*this).tcp.is_detached());
             // allocated via Box::into_raw in `connect`.
+            bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::TYPE_NAME, this);
             drop(Box::from_raw(this));
         }
     }
@@ -339,7 +349,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             subprotocols
         };
 
-        let client = Box::into_raw(Box::new(HTTPClient::<SSL> {
+        let client: *mut Self = Box::into_raw(Box::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
             outgoing_websocket: Some(websocket),
@@ -358,6 +368,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             offered_permessage_deflate: offer_permessage_deflate,
             subprotocols,
         }));
+        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client);
         // SAFETY: just allocated above; we hold the only ref. This `&mut` is
         // used only for pre-connect setup and MUST NOT span any
         // `Socket::connect_*_group` call below — those install `client` as

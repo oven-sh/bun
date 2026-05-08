@@ -89,10 +89,19 @@ impl Qpack {
     /// name is neither forbidden nor in the static table; lowercase it and
     /// send with no index hint.
     pub fn classify(name: &[u8]) -> Option<Class> {
-        // TODO(port): Zig used `ComptimeStringMap.getAnyCase` (ASCII
-        // case-insensitive). phf::Map is case-sensitive — needs a custom
-        // hasher or pre-lowercased lookup in Phase B.
-        MAP.get(name).copied()
+        // phf::Map is case-sensitive, but `build_request` produces mixed-case
+        // names ("Transfer-Encoding", "Host", …). Lowercase into a small stack
+        // buffer first — every key in MAP is ≤ 19 bytes, so anything longer
+        // is a guaranteed miss.
+        let mut buf = [0u8; 32];
+        if name.len() > buf.len() {
+            return None;
+        }
+        let lower = &mut buf[..name.len()];
+        for (d, s) in lower.iter_mut().zip(name) {
+            *d = s.to_ascii_lowercase();
+        }
+        MAP.get(lower).copied()
     }
 }
 
@@ -138,6 +147,6 @@ static MAP: phf::Map<&'static [u8], Class> = phf::phf_map! {
 // PORT STATUS
 //   source:     src/uws_sys/quic/Header.zig (120 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      Zig enum is non-exhaustive (`_`); map lookup was case-insensitive (getAnyCase) — phf needs custom hasher or pre-lowercase in Phase B
+//   todos:      1
+//   notes:      Zig enum is non-exhaustive (`_`).
 // ──────────────────────────────────────────────────────────────────────────

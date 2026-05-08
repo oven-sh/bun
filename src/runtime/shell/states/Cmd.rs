@@ -350,15 +350,30 @@ impl Cmd {
             match interp.as_cmd_mut(this).state {
                 CmdState::ExpandingArgs { ref mut idx } => {
                     *idx += 1;
+                    let new_idx = *idx;
                     // Spec (Cmd.zig childDone 400-409): when the sole
                     // `name_and_args` atom is a `.simple == .cmd_subst`, stash
                     // `e.out_exit_code` so an empty-argv command consisting
                     // only of `$(cmd)` propagates `cmd`'s exit code via the
-                    // empty-argv0 branch in `transition_to_exec`.
-                    // TODO(b2-blocked): `ExpansionOut` has no `out_exit_code`
-                    // yet (Expansion.rs body gated) and `ast::Atom` is opaque
-                    // so the `.cmd_subst` check can't be expressed. Wire once
-                    // Expansion exposes the substitution's exit code.
+                    // empty-argv0 branch in `transition_to_exec` (POSIX: "if
+                    // there is no command name, but the command contained a
+                    // command substitution, the command shall complete with
+                    // the exit status of the last command substitution
+                    // performed").
+                    {
+                        // SAFETY: `node` points into the AST arena which
+                        // outlives every state node.
+                        let n = unsafe { &*interp.as_cmd(this).node };
+                        if new_idx == 1
+                            && n.name_and_args.len() == 1
+                            && matches!(
+                                n.name_and_args[0],
+                                ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
+                            )
+                        {
+                            interp.as_cmd_mut(this).exit_code = Some(out.out_exit_code);
+                        }
+                    }
                     // PORT NOTE: Zig used `out.bounds` to split into multiple
                     // argv words (glob/IFS); preserved here verbatim.
                     let me = interp.as_cmd_mut(this);
@@ -407,8 +422,7 @@ impl Cmd {
 
         // Spec (Cmd.zig initSubproc lines 442-456): empty/null argv[0] → exit
         // with the exit code from a sole command-substitution (stashed by
-        // `child_done` once Expansion exposes `out_exit_code`; see TODO there),
-        // else 0.
+        // `child_done` from `Expansion::out_exit_code`), else 0.
         let first_arg: Vec<u8> = {
             let me = interp.as_cmd(this);
             match me.args.first() {

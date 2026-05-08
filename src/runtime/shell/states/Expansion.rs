@@ -59,6 +59,11 @@ pub struct ExpansionOut {
     pub buf: Vec<u8>,
     /// Word boundaries within `buf` (for IFS splitting / glob results).
     pub bounds: Vec<u32>,
+    /// Spec: `Expansion.out_exit_code`. Set when the atom is a sole `$(…)`
+    /// that exited non-zero, so [`Cmd::child_done`] can propagate it as the
+    /// command's exit code when that substitution was argv0 and argv is
+    /// otherwise empty.
+    pub out_exit_code: ExitCode,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -562,7 +567,10 @@ impl Expansion {
 
     /// Take the expanded output (called by the parent after `child_done`).
     pub fn take_out(interp: &mut Interpreter, this: NodeId) -> ExpansionOut {
-        core::mem::take(&mut interp.as_expansion_mut(this).out)
+        let me = interp.as_expansion_mut(this);
+        let mut out = core::mem::take(&mut me.out);
+        out.out_exit_code = me.out_exit_code;
+        out
     }
 }
 

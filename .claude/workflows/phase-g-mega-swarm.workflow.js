@@ -132,9 +132,20 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
 
 **Probe (parallel 16):** ${round === 1 ? `\`cat ${GDIAG}/all.txt` : `Only re-run previously-failing files (round-${round - 1} failures + 10 random previously-passing for regression check): \`{ cat ${GDIAG}/failing-r${round - 1}.txt; shuf -n 10 ${GDIAG}/passing.txt; }`} | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); timeout 15 ./build/debug/bun-debug test {} > ${DIAG}/\$slug.log 2>&1; echo "{}|\$?" >> ${GDIAG}/results-r${round}.txt'\`. Write \`${GDIAG}/failing-r${round}.txt\` and update \`${GDIAG}/passing.txt\` (cumulative).
 
-**Triage (ONE shell pipeline, no per-file writes):** \`while IFS='|' read f rc; do slug=...; passing if rc==0 && pass-count matches baseline; else echo "{file,kind,summary}" to failing.json; done < results-r${round}.txt\`. kind: rc>=128→crash, rc==124→hang, else→diverge. summary = first 2 ✗ lines from .log (or backtrace tail for crash).
+**Triage — only DIVERGENCES from baseline are bugs:**
+For each file: rust_rc from results, baseline_rc = parse \`${DIAG}/<slug>.baseline\` (look for "X pass" or exit marker; if .baseline is empty/timeout-only, baseline_rc=124).
 
-Return {passing:N, failing:[{file,diag:"${DIAG}/<slug>.log",kind,summary}], total:N}. **Do NOT write per-file .diag** — fix-agents read .log + .baseline directly. DO NOT edit src/.`,
+| rust_rc | baseline_rc | verdict |
+|---|---|---|
+| ≥128 | any | **crash** → failing |
+| 1 | 0 | **diverge** → failing |
+| 124 | 0 | check .log: if ≥1 ✓/pass line → debug-slow, append to triaged-slow.txt; if banner-only → **real-hang** → failing |
+| 0 | 0 | passing |
+| 1 or 124 | 1 or 124 | **baseline-also-fails** → append to triaged-slow.txt (env/slow, not a port bug) |
+
+summary = first 2 ✗ lines from .log (or backtrace tail for crash, or "no output past banner" for real-hang).
+
+Return {passing:N, failing:[{file,diag:"${DIAG}/<slug>.log",kind:"crash|diverge|real-hang",summary}], total:N}. **Only return failing entries that are TRUE divergences.** DO NOT edit src/.`,
     { label: `survey-r${round}`, phase: "Survey", schema: SURVEY_S },
   );
   if (!survey) {

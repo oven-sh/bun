@@ -7077,6 +7077,9 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
 struct SysQuietWriterAdapter {
     writer: bun_core::io::Writer,
     fd: Fd,
+    buf: *mut u8,
+    cap: usize,
+    pos: usize,
 }
 const _: () = {
     assert!(core::mem::size_of::<SysQuietWriterAdapter>()
@@ -7089,15 +7092,40 @@ unsafe fn adapter_write_all(w: *mut bun_core::io::Writer, bytes: &[u8])
     -> core::result::Result<(), bun_core::Error>
 {
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
-    let this = unsafe { &*w.cast::<SysQuietWriterAdapter>() };
-    let _ = fd_write_all_quiet(this.fd, bytes);
+    let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
+    if this.cap == 0 {
+        let _ = fd_write_all_quiet(this.fd, bytes);
+        return Ok(());
+    }
+    if this.pos + bytes.len() > this.cap {
+        // Drain buffered bytes first.
+        if this.pos > 0 {
+            let buffered = unsafe { core::slice::from_raw_parts(this.buf, this.pos) };
+            let _ = fd_write_all_quiet(this.fd, buffered);
+            this.pos = 0;
+        }
+        // Large writes bypass the buffer so the next small write still coalesces.
+        if bytes.len() >= this.cap {
+            let _ = fd_write_all_quiet(this.fd, bytes);
+            return Ok(());
+        }
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), this.buf.add(this.pos), bytes.len());
+    }
+    this.pos += bytes.len();
     Ok(())
 }
-unsafe fn adapter_flush(_w: *mut bun_core::io::Writer)
+unsafe fn adapter_flush(w: *mut bun_core::io::Writer)
     -> core::result::Result<(), bun_core::Error>
 {
-    // Unbuffered (we write straight to the fd above), so flush is a no-op.
-    // PERF(port): Zig buffers via `adaptToNewApi(buf)`; wire that in B-2.
+    // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
+    let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
+    if this.pos > 0 {
+        let buffered = unsafe { core::slice::from_raw_parts(this.buf, this.pos) };
+        let _ = fd_write_all_quiet(this.fd, buffered);
+        this.pos = 0;
+    }
     Ok(())
 }
 
@@ -7141,7 +7169,7 @@ pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
             unsafe { qw_set_fd(&raw mut out, fd) };
             out
         },
-        quiet_writer_adapt: |qw, _buf, _len| {
+        quiet_writer_adapt: |qw, buf, len| {
             // SAFETY: qw came from quiet_writer_from_fd above.
             let fd = unsafe { qw_fd(&raw const qw) };
             let concrete = SysQuietWriterAdapter {
@@ -7150,6 +7178,9 @@ pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
                     flush: adapter_flush,
                 },
                 fd,
+                buf,
+                cap: len,
+                pos: 0,
             };
             let mut out = bun_core::output::QuietWriterAdapter::uninit();
             // SAFETY: size/align asserted in const block above; out is repr(C) [u8;64].
@@ -7162,7 +7193,7 @@ pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
             out
         },
         quiet_writer_flush: |_qw| {
-            // Unbuffered — see adapter_flush.
+            // QuietWriter itself is unbuffered (buffering lives in the Adapter).
         },
         quiet_writer_write_all: |qw, bytes| {
             // SAFETY: qw came from quiet_writer_from_fd above.

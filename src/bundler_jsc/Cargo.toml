@@ -20,7 +20,7 @@ bitflags.workspace = true
 bun_aio.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_bundler = { workspace = true, default-features = false }
+bun_bundler.workspace = true
 bun_logger.workspace = true
 bun_options_types.workspace = true
 bun_paths.workspace = true

@@ -33,16 +33,14 @@ bun_boringssl_sys.workspace = true
 bun_brotli.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_bundler = { workspace = true, default-features = false }
+bun_bundler.workspace = true
 bun_bundler_jsc.workspace = true
 bun_clap.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_csrf.workspace = true
-# phase-c: css is not on the `bun-rs -e` hot path; gate behind a feature so
-# bun_bin does not transitively compile bun_css.
 bun_cares_sys.workspace = true
-bun_css = { workspace = true, optional = true }
+bun_css.workspace = true
 bun_dns.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
@@ -105,12 +103,10 @@ bun_zlib.workspace = true
 bun_zstd.workspace = true
 bun_install_jsc.workspace = true
 bun_patch_jsc.workspace = true
-bun_css_jsc = { workspace = true, optional = true }
+bun_css_jsc.workspace = true
 
 [features]
-default = ["css"]
-# Enables Bun.color() and CSS-typed Maybe helpers.
-css = ["dep:bun_css", "dep:bun_css_jsc", "bun_bundler/css"]
+default = []
 # Mirrors Zig `Environment.show_crash_trace` — extra debug breakpoints / params.
 show_crash_trace = ["bun_bundler/show_crash_trace"]
 # Mirrors Zig `builtin.have_error_return_tracing` (`--verbose-error-trace`).

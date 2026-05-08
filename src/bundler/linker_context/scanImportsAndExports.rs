@@ -168,12 +168,7 @@ pub fn scan_imports_and_exports(
                 );
 
                 // Validate cross-file "composes: ... from" named imports and
-                // composes-from property collisions. The CSS AST surface
-                // (`BundlerStyleSheet.{composes,local_scope,local_properties}`)
-                // is still gated upstream (`bun_css`); the validation body is
-                // preserved verbatim under `__css_validation` below and un-gates
-                // with `bun_css::BundlerStyleSheet`.
-                #[cfg(feature = "css")]
+                // composes-from property collisions.
                 __css_validation::validate_css_import_composes(
                     this,
                     id,
@@ -181,10 +176,6 @@ pub fn scan_imports_and_exports(
                     import_records_list,
                     input_files,
                 );
-                #[cfg(not(feature = "css"))]
-                {
-                    let _ = (&input_files, &css_asts);
-                }
 
                 continue;
             }
@@ -1373,12 +1364,8 @@ impl ExportStarContext {
 
 // ──────────────────────────────────────────────────────────────────────────
 // CSS "composes:" validation. The body reaches into
-// `bun_css::BundlerStyleSheet.{composes,local_scope,local_properties}`, all of
-// which are gated upstream (`bun_css::css_parser`). Preserved verbatim from
-// the Phase-A draft; un-gates with `feature = "css"` once `BundlerStyleSheet`
-// is real.
+// `bun_css::BundlerStyleSheet.{composes,local_scope,local_properties}`.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(feature = "css")]
 mod __css_validation {
     use super::*;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};

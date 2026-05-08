@@ -64,162 +64,21 @@ pub mod perf {
     }
 }
 
-/// Type-surface shim for `bun_css` as seen by the bundler. The real crate's
-/// `BundlerStyleSheet` is itself gated (`css_parser.rs: `) and
-/// several types carry a `'bump` lifetime that `Chunk`/`ParseTask` don't yet
-/// thread, so this module is the canonical bundler-facing surface for now —
-/// it re-exports real types where they exist (under `feature = "css"`) and
-/// stubs the rest. Once `Chunk` gains a `'bump` lifetime and `bun_css`
-/// un-gates `BundlerStyleSheet`, this collapses to a plain `pub use ::bun_css`.
+/// Bundler-facing surface for `bun_css`. Several types carry a `'bump`
+/// lifetime that `Chunk`/`ParseTask` don't yet thread, so this module remains
+/// the canonical re-export point (and adds `CssModuleConfig`/`LayerName`
+/// aliases). Once `Chunk` gains a `'bump` lifetime this collapses to a plain
+/// `pub use ::bun_css`.
 pub mod bun_css {
-    use bun_collections::VecExt;
-
-    // ── feature = "css" (default) ────────────────────────────────────────
-    // The real crate now un-gates `BundlerStyleSheet` (= `StyleSheet<BundlerAtRule>`)
-    // with real `parse_bundler` / `minify` / `empty` bodies (`css_parser.rs`),
-    // so the bundler-facing surface is just a glob re-export. The previous
-    // local stub struct shadowed the glob; that shadow is dropped here so
-    // callers (`ParseTask.rs`, `prepareCssAstsForChunk.rs`) see the real type
-    // directly.
-    // `bun_css` is now an UNCONDITIONAL dep (`bun_js_parser` already pulls it
-    // in for `BundledAst.css`'s field type, so the optional flag saved nothing
-    // and only caused E0308 when downstream crates built `bun_bundler` without
-    // `default-features` — the `no_css` stub `BundlerStyleSheet` and the real
-    // one in `JSAst.css` are distinct nominal types). Glob-re-export always.
+    // `bun_css` is an UNCONDITIONAL dep (`bun_js_parser` already pulls it in
+    // for `BundledAst.css`'s field type). Glob-re-export always.
     pub use ::bun_css::*;
     pub use ::bun_css::css_modules::Config as CssModuleConfig;
 
-    // ── feature ≠ "css" ──────────────────────────────────────────────────
-    // Type-only surface so the bundler builds without the CSS crate. With no
-    // parser available these are data-free no-ops; the loader dispatch in
-    // `ParseTask::get_ast` never reaches `.css` without the feature, so the
-    // bodies below are the correct "css-disabled" semantics (empty sheet,
-    // identity minify).
-    // Retained as dead code for reference; never compiled now that the
-    // `::bun_css` re-export above is unconditional.
-    #[cfg(any())]
-    pub use self::no_css::*;
-    #[cfg(any())]
-    mod no_css {
-        use bun_collections::VecExt;
-        use bun_options_types::ImportRecord;
-
-        pub use bun_options_types::BundleEnums::Index as SrcIndex;
-
-        /// `css::BundlerStyleSheet` — arena-backed stylesheet AST. The real
-        /// type is `StyleSheet<BundlerAtRule>` (`css_parser.rs`).
-        #[derive(Default)]
-        pub struct BundlerStyleSheet {
-            pub local_scope: bun_collections::StringArrayHashMap<()>,
-        }
-        impl BundlerStyleSheet {
-            pub fn empty() -> Self {
-                Self::default()
-            }
-            /// css_parser.zig:3238 `parseBundler` — without `bun_css` there is
-            /// no parser; return an empty sheet.
-            pub fn parse_bundler(
-                _arena: &bun_alloc::Arena,
-                _code: &[u8],
-                _options: ParserOptions,
-                _import_records: &mut Vec<ImportRecord>,
-                _source_index: SrcIndex,
-            ) -> core::result::Result<(Self, StylesheetExtra), ()> {
-                Ok((Self::default(), StylesheetExtra::default()))
-            }
-            /// css_parser.zig `StyleSheet.minify` — identity when CSS disabled.
-            pub fn minify(
-                &mut self,
-                _arena: &bun_alloc::Arena,
-                _options: &MinifyOptions,
-                _extra: &StylesheetExtra,
-            ) -> core::result::Result<(), ()> {
-                Ok(())
-            }
-        }
-        #[derive(Default)]
-        pub struct StylesheetExtra {
-            pub symbols: Vec<bun_js_parser::Symbol>,
-        }
-        pub struct ParserOptions {
-            pub filename: &'static [u8],
-            pub css_modules: Option<CssModuleConfig>,
-        }
-        impl ParserOptions {
-            pub fn default(_log: Option<&mut bun_logger::Log>) -> Self {
-                Self { filename: b"", css_modules: None }
-            }
-        }
-        #[derive(Default)]
-        pub struct CssModuleConfig;
-        #[derive(Default)]
-        pub struct MinifyOptions {
-            pub targets: Targets,
-            pub unused_symbols: bun_collections::ArrayHashMap<Box<[u8]>, ()>,
-        }
-        #[derive(Default, Clone, Copy)]
-        pub struct Targets;
-        impl Targets {
-            pub fn for_bundler_target(_t: crate::options::Target) -> Self {
-                Self
-            }
-        }
-        #[derive(Clone)]
-        pub struct ImportConditions(());
-        pub struct PrinterOptions;
-        pub struct Printer;
-    }
-    /// `LayerName` for `Chunk::Layers`. With `feature = "css"` this is the
-    /// real `bun_css::css_parser::LayerName` (its `'bump` lifetime is already
-    /// laundered to `'static` in `rules/layer.rs`, so no thread needed here).
-    /// Without the feature, the `no_css` shadow below provides a
-    /// type-compatible owning stand-in so `Chunk` / `Layers` still build.
-    #[cfg(feature = "css")]
+    /// `LayerName` for `Chunk::Layers`. The real `bun_css::css_parser::LayerName`
+    /// (its `'bump` lifetime is already laundered to `'static` in
+    /// `rules/layer.rs`, so no thread needed here).
     pub use ::bun_css::css_parser::LayerName;
-    #[cfg(not(feature = "css"))]
-    pub use self::no_css_layer::LayerName;
-    #[cfg(not(feature = "css"))]
-    mod no_css_layer {
-        use bun_collections::VecExt;
-
-        pub struct LayerName {
-            pub v: Vec<Box<[u8]>>,
-        }
-        // PORT NOTE: `Vec<T>` has no blanket `Clone`; manual deep-clone via
-        // `Vec::from_slice` (matches Zig `deepCloneInfallible`). OOM on a
-        // tiny layer-name list is unrecoverable — `handle_oom`.
-        impl Clone for LayerName {
-            fn clone(&self) -> Self {
-                Self { v: self.v.clone() }
-            }
-        }
-        impl LayerName {
-            /// Mirror of `bun_css::LayerName::eql` for the lifetime-erased shadow
-            /// type. Compares each dot-segment by bytes.
-            pub fn eql(&self, rhs: &LayerName) -> bool {
-                if self.v.len() != rhs.v.len() {
-                    return false;
-                }
-                for (l, r) in self.v.slice().iter().zip(rhs.v.slice()) {
-                    if **l != **r {
-                        return false;
-                    }
-                }
-                true
-            }
-        }
-        impl core::fmt::Display for LayerName {
-            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                for (i, part) in self.v.slice().iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(".")?;
-                    }
-                    f.write_str(&String::from_utf8_lossy(part))?;
-                }
-                Ok(())
-            }
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

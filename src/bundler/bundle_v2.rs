@@ -4859,10 +4859,7 @@ impl<'a> BundleV2<'a> {
 
         // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
         for entry_point in start.css_entry_points.keys() {
-            #[cfg(feature = "css")]
             let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, &self.graph.heap, &[*entry_point]);
-            #[cfg(not(feature = "css"))]
-            let order: Vec<chunk::CssImportOrder> = Vec::new();
             let order_len = order.len() as usize;
             chunks.push(Chunk {
                 entry_point: chunk::EntryPoint::new(entry_point.get(), entry_point.get(), false, false),

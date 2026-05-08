@@ -114,32 +114,11 @@ pub fn bun_get_use_system_ca(
 }
 
 // ── src/css/jsc/css_internals.zig ───────────────────────────────────────────
-// `bun_css_jsc` is behind the `css` feature (kept off the default `bun_bin`
-// dep graph). When the feature is on, forward to the real bodies; when off,
-// throw — matching what a Zig build with the subsystem stripped would do.
-#[cfg(feature = "css")]
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,
         prefix_test, prefix_test_with_options, test_with_options,
     };
-}
-#[cfg(not(feature = "css"))]
-mod css {
-    use super::*;
-    macro_rules! css_disabled {
-        ($($name:ident),* $(,)?) => {$(
-            pub fn $name(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-                Err(global.throw(format_args!(
-                    "CSS internals are not compiled into this build of Bun"
-                )))
-            }
-        )*};
-    }
-    css_disabled!(
-        _test, attr_test, minify_error_test_with_options, minify_test,
-        minify_test_with_options, prefix_test, prefix_test_with_options, test_with_options,
-    );
 }
 pub use css::minify_test_with_options as css_jsc_css_internals_minify_test_with_options;
 pub use css::minify_error_test_with_options

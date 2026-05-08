@@ -1,28 +1,13 @@
 use crate::mal_prelude::*;
 use core::mem::offset_of;
-#[cfg(feature = "css")]
-#[cfg(feature = "css")]
-#[cfg(feature = "css")]
-#[cfg(feature = "css")]
-#[cfg(feature = "css")]
-#[cfg(feature = "css")]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(feature = "css")]
 use bun_collections::VecExt;
-#[cfg(feature = "css")]
 use bun_options_types::ImportRecord;
 use bun_threading::thread_pool as ThreadPoolLib;
 
-// `crate::bun_css` glob re-exports the real `::bun_css` crate under
-// `feature = "css"` (ungate_support.rs); `ImportInfo`/`LocalsResultsMap`/
-// `PrinterOptions{minify,targets}`/`to_css_with_writer` only exist there. The
-// no-css stub module is type-surface-only, so the impl below is gated and a
-// stub returns an error result (matching findImportedFilesInCSSOrder.rs).
-#[cfg(feature = "css")]
 use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions, Targets};
 
-#[cfg(feature = "css")]
 use crate::chunk::{Content, CssImportOrderKind};
 use crate::linker_context_mod::{LinkerContext, PendingPartRange};
 use crate::thread_pool::Worker;
@@ -80,24 +65,6 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
         generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i);
 }
 
-#[cfg(not(feature = "css"))]
-fn generate_compile_result_for_css_chunk_impl(
-    _worker: &mut Worker,
-    _c: &mut LinkerContext,
-    _chunk: &mut Chunk,
-    _imports_in_chunk_index: u32,
-) -> CompileResult {
-    // Without the CSS parser there are no CSS chunks to print; the loader
-    // dispatch in `ParseTask::get_ast` never produces `.css` ASTs without the
-    // feature, so this path is unreachable at runtime.
-    CompileResult::Css {
-        result: Err(bun_core::err!("PrintError")),
-        source_index: Index::INVALID.get(),
-        source_map: None,
-    }
-}
-
-#[cfg(feature = "css")]
 fn generate_compile_result_for_css_chunk_impl(
     worker: &mut Worker,
     c: &mut LinkerContext,

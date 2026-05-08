@@ -2930,7 +2930,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         let mut dupe_env: Vec<ZBox> = Vec::new();
         let mut p = environ;
         while !p.is_null() && !(*p).is_null() {
-            let s = core::ffi::CStr::from_ptr(*p);
+            let s = crate::ffi::cstr(*p);
             dupe_env.push(ZBox::from_vec_with_nul(s.to_bytes().to_vec()));
             p = p.add(1);
         }

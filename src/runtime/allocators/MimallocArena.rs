@@ -251,7 +251,7 @@ impl MimallocArena {
     pub fn dump_thread_stats(&self) {
         extern "C" fn dump(text_z: *const c_char, _: *mut c_void) {
             // SAFETY: mimalloc passes a valid NUL-terminated string.
-            let text = unsafe { core::ffi::CStr::from_ptr(text_z) }.to_bytes();
+            let text = unsafe { bun_core::ffi::cstr(text_z) }.to_bytes();
             let _ = bun_core::Output::error_writer().write_all(text);
         }
         // SAFETY: FFI — `dump` is a valid extern "C" callback; arg pointer is null (unused).
@@ -262,7 +262,7 @@ impl MimallocArena {
     pub fn dump_stats(&self) {
         extern "C" fn dump(text_z: *const c_char, _: *mut c_void) {
             // SAFETY: mimalloc passes a valid NUL-terminated string.
-            let text = unsafe { core::ffi::CStr::from_ptr(text_z) }.to_bytes();
+            let text = unsafe { bun_core::ffi::cstr(text_z) }.to_bytes();
             let _ = bun_core::Output::error_writer().write_all(text);
         }
         // SAFETY: FFI — `dump` is a valid extern "C" callback; arg pointer is null (unused).

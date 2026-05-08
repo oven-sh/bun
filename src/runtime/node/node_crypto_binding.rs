@@ -1128,7 +1128,7 @@ impl CryptoJobCtx for Scrypt {
                     boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast(), buf.len())
                 };
                 // SAFETY: `buf` is NUL-terminated by the call above.
-                let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+                let msg = unsafe { bun_core::ffi::cstr(buf.as_ptr().cast()) };
                 let exception = global
                     .err(
                         ErrorCode::CRYPTO_OPERATION_FAILED,
@@ -1277,7 +1277,7 @@ extern "C" fn for_each_hash(
         unsafe { &mut *ctx.cast::<CaseInsensitiveAsciiStringArrayHashMap<()>>() };
     // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
     // from BoringSSL's static tables.
-    let from_bytes = unsafe { core::ffi::CStr::from_ptr(maybe_from) }.to_bytes();
+    let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();
     bun_core::handle_oom(hashes.put(from_bytes, ()));
 }
 

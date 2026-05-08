@@ -1468,7 +1468,7 @@ pub mod upgrade_js_bindings {
 
             let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
             // SAFETY: zeroed IO_STATUS_BLOCK is valid for output
-            let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+            let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
 
             // SAFETY: FFI call to NtCreateFile with valid pointers
             let rc = unsafe {

@@ -494,7 +494,7 @@ pub mod dir_iterator {
                     // is left untouched, so zero-initialize it rather than
                     // reading uninitialized stack if the call fails.
                     // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-                    let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+                    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
                     if self.first {
                         // > Any bytes inserted for alignment SHOULD be set to
                         // > zero, and the receiver MUST ignore them.
@@ -2501,7 +2501,7 @@ mod windows_impl {
         // sys_uv::ftruncate requires a CRT fd via `fd.uv()`, which fails for
         // HANDLE-backed `Fd`s that have no uv mapping).
         // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-        let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+        let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
         let mut eof = bun_windows_sys::FILE_END_OF_FILE_INFORMATION { EndOfFile: len };
         // SAFETY: FFI; fd is a valid HANDLE, eof/io valid for the call.
         let rc = unsafe {
@@ -3478,7 +3478,7 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     loop {
         // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
         // field on success); `path` is NUL-terminated by `ZStr`.
-        let mut st: StatFS = unsafe { core::mem::zeroed() };
+        let mut st: StatFS = unsafe { bun_core::ffi::zeroed() };
         let rc = unsafe { libc::statfs(path.as_ptr(), &raw mut st) };
         if rc < 0 {
             let e = last_errno();
@@ -4828,7 +4828,7 @@ pub fn open_dir_at_windows_nt_path(
     };
     let mut fd: w::HANDLE = bun_windows_sys::INVALID_HANDLE_VALUE;
     // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: FFI; all pointer args valid for the call.
     let rc = unsafe {
         w::ntdll::NtCreateFile(
@@ -4903,7 +4903,7 @@ pub fn open_file_at_windows_nt_path(
         SecurityQualityOfService: core::ptr::null_mut(),
     };
     // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
 
     let mut attributes = options.attributes;
     loop {
@@ -5194,7 +5194,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
             SecurityQualityOfService: core::ptr::null_mut(),
         };
         // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION.
-        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
+        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed() };
         // SAFETY: FFI; attr/basic_info valid for the call duration.
         let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
         if rc != w::NTSTATUS::SUCCESS {
@@ -5888,7 +5888,7 @@ pub mod net {
         /// Construct from a borrowed `*const sockaddr` (Zig: `Address.initPosix`).
         /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
         pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
-            let mut storage: sockaddr_storage = unsafe { core::mem::zeroed() };
+            let mut storage: sockaddr_storage = unsafe { bun_core::ffi::zeroed() };
             let len = match unsafe { (*addr).sa_family } as i32 {
                 AF_INET => core::mem::size_of::<sockaddr_in>(),
                 AF_INET6 => core::mem::size_of::<sockaddr_in6>(),
@@ -5917,7 +5917,7 @@ pub mod net {
     }
     impl Default for Address {
         // SAFETY: POD, zero-valid — sockaddr union of integer fields.
-        fn default() -> Self { Self { any: unsafe { core::mem::zeroed() } } }
+        fn default() -> Self { Self { any: unsafe { bun_core::ffi::zeroed() } } }
     }
     impl fmt::Debug for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -7132,7 +7132,7 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer)
 #[cfg(unix)]
 unsafe fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
     // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
-    let mut ws: libc::winsize = unsafe { core::mem::zeroed() };
+    let mut ws: libc::winsize = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: TIOCGWINSZ expects a *mut winsize.
     let rc = unsafe { libc::ioctl(fd.native(), libc::TIOCGWINSZ, &raw mut ws) };
     if rc != 0 { return None; }

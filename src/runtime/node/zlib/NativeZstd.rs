@@ -176,7 +176,7 @@ impl NativeZstd {
             if err_.is_error() {
                 this.stream.close();
                 // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
-                let msg = unsafe { CStr::from_ptr(err_.msg) }.to_bytes();
+                let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
                 return Err(global
                     .err(
                         jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,

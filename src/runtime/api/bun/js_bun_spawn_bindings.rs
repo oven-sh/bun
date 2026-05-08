@@ -252,7 +252,7 @@ fn get_argv0(
     } else if cfg!(unix) {
         // If the user explicitly passed an empty $PATH, we fallback to the OS-specific default (which libuv also does)
         // SAFETY: BUN_DEFAULT_PATH_FOR_SPAWN is a NUL-terminated static C string.
-        unsafe { CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
     } else {
         b""
     };
@@ -315,7 +315,7 @@ fn get_argv(
         path,
         cwd,
         // SAFETY: argv0 was produced by to_owned_slice_z above; NUL-terminated and outlives this call.
-        argv0.map(|p| unsafe { CStr::from_ptr(p) }),
+        argv0.map(|p| unsafe { bun_core::ffi::cstr(p) }),
         cmds_array.next()?.unwrap(),
     )?;
 
@@ -1100,7 +1100,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             drop(spawn_options);
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is a NUL-terminated string we built above.
-                unsafe { &*(std::ptr::from_ref::<[u8]>(CStr::from_ptr(argv[0]).to_bytes()) as *const ZStr) }
+                unsafe { &*(std::ptr::from_ref::<[u8]>(bun_core::ffi::cstr(argv[0]).to_bytes()) as *const ZStr) }
             } else {
                 ZStr::EMPTY
             };
@@ -1133,7 +1133,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::ENOTDIR) => {
                         let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is a NUL-terminated string we built above.
-                            unsafe { &*(std::ptr::from_ref::<[u8]>(CStr::from_ptr(argv[0]).to_bytes()) as *const ZStr) }
+                            unsafe { &*(std::ptr::from_ref::<[u8]>(bun_core::ffi::cstr(argv[0]).to_bytes()) as *const ZStr) }
                         } else {
                             ZStr::EMPTY
                         };

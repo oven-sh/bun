@@ -198,7 +198,7 @@ impl CallFrame {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
         unsafe {
             let p = Bun__CallFrame__describeFrame(self);
-            let len = core::ffi::CStr::from_ptr(p).to_bytes().len();
+            let len = bun_core::ffi::cstr(p).to_bytes().len();
             ZStr::from_raw(p.cast::<u8>(), len)
         }
     }

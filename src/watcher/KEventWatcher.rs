@@ -75,7 +75,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     // not initialized each time
     // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD)
-    let mut changelist_array: [libc::kevent; CHANGELIST_COUNT] = unsafe { core::mem::zeroed() };
+    let mut changelist_array: [libc::kevent; CHANGELIST_COUNT] = unsafe { bun_core::ffi::zeroed() };
     let changelist = &mut changelist_array;
 
     // SAFETY: fd is a valid kqueue fd; changelist points to CHANGELIST_COUNT zeroed entries

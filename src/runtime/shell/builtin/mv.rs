@@ -104,7 +104,7 @@ impl Mv {
                     let target_idx = Self::state_mut(interp, cmd).args.target_idx;
                     let p = Builtin::of(interp, cmd).args_slice()[target_idx];
                     // SAFETY: argv entries are NUL-terminated.
-                    let target = ZBox::from_bytes(unsafe { CStr::from_ptr(p) }.to_bytes());
+                    let target = ZBox::from_bytes(unsafe { bun_core::ffi::cstr(p) }.to_bytes());
                     let evtloop = Builtin::event_loop(interp, cmd);
                     let mut task = Box::new(ShellMvCheckTargetTask {
                         cmd,
@@ -214,7 +214,7 @@ impl Mv {
                     };
                     let tgt_ptr = Builtin::of(interp, cmd).args_slice()[target_idx];
                     // SAFETY: argv entries are NUL-terminated.
-                    let target = unsafe { CStr::from_ptr(tgt_ptr) }.to_bytes();
+                    let target = unsafe { bun_core::ffi::cstr(tgt_ptr) }.to_bytes();
 
                     let mut tasks: Vec<Box<ShellMvBatchedTask>> =
                         Vec::with_capacity(task_count);
@@ -225,7 +225,7 @@ impl Mv {
                         for j in start..end {
                             let p = Builtin::of(interp, cmd).args_slice()[j];
                             // SAFETY: argv entries are NUL-terminated.
-                            srcs.push(ZBox::from_bytes(unsafe { CStr::from_ptr(p) }.to_bytes()));
+                            srcs.push(ZBox::from_bytes(unsafe { bun_core::ffi::cstr(p) }.to_bytes()));
                         }
                         tasks.push(Box::new(ShellMvBatchedTask {
                             cmd,
@@ -350,7 +350,7 @@ impl Mv {
         while idx < argc {
             let p = Builtin::of(interp, cmd).args_slice()[idx];
             // SAFETY: argv entries are NUL-terminated.
-            let flag = unsafe { CStr::from_ptr(p) }.to_bytes();
+            let flag = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
                 MvFlag::Done => {
                     let filepath_args = argc - idx;

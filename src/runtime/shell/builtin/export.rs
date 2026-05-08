@@ -29,7 +29,7 @@ impl Export {
         for i in 0..argc {
             let arg = Builtin::of(interp, cmd).args_slice()[i];
             // SAFETY: argv entries are NUL-terminated.
-            let s = unsafe { CStr::from_ptr(arg) }.to_bytes();
+            let s = unsafe { bun_core::ffi::cstr(arg) }.to_bytes();
             if s.is_empty() {
                 continue;
             }

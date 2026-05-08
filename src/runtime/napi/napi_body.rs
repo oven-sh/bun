@@ -736,7 +736,7 @@ pub extern "C" fn napi_create_string_latin1(
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { core::ffi::CStr::from_ptr(str_.cast::<c_char>()) }.to_bytes();
+                break 'brk unsafe { bun_core::ffi::cstr(str_.cast::<c_char>()) }.to_bytes();
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
@@ -789,7 +789,7 @@ pub extern "C" fn napi_create_string_utf8(
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { core::ffi::CStr::from_ptr(str_.cast::<c_char>()) }.to_bytes();
+                break 'brk unsafe { bun_core::ffi::cstr(str_.cast::<c_char>()) }.to_bytes();
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
@@ -1803,7 +1803,7 @@ fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
     }
 
     if len == NAPI_AUTO_LENGTH {
-        return unsafe { core::ffi::CStr::from_ptr(ptr.cast::<c_char>()) }.to_bytes();
+        return unsafe { bun_core::ffi::cstr(ptr.cast::<c_char>()) }.to_bytes();
     }
 
     unsafe { core::slice::from_raw_parts(ptr, len) }

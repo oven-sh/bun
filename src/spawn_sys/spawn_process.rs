@@ -83,13 +83,13 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let process_pid: *mut c_void = process.process_handle;
     type WinTime = bun_sys::windows::FILETIME;
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut starttime: WinTime = unsafe { core::mem::zeroed() };
+    let mut starttime: WinTime = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut exittime: WinTime = unsafe { core::mem::zeroed() };
+    let mut exittime: WinTime = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut kerneltime: WinTime = unsafe { core::mem::zeroed() };
+    let mut kerneltime: WinTime = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut usertime: WinTime = unsafe { core::mem::zeroed() };
+    let mut usertime: WinTime = unsafe { bun_core::ffi::zeroed() };
     // We at least get process times
     // SAFETY: FFI call with valid out-pointers
     if unsafe {
@@ -159,7 +159,7 @@ pub type Rusage = libc::rusage;
 #[inline]
 pub fn rusage_zeroed() -> Rusage {
     // SAFETY: all-zero is a valid Rusage on every platform (POD C struct / Default-able WinRusage)
-    unsafe { core::mem::zeroed() }
+    unsafe { bun_core::ffi::zeroed() }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -815,7 +815,7 @@ pub fn spawn_process_posix(
     // SAFETY: argv is null-terminated, argv[0] is non-null
     let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
-    let argv0_cstr = unsafe { CStr::from_ptr(argv0) };
+    let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
     let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {

@@ -1318,7 +1318,7 @@ pub mod waiter_thread_posix {
             {
                 // SAFETY: sigaction with a valid handler.
                 unsafe {
-                    let mut current_mask: libc::sigset_t = core::mem::zeroed();
+                    let mut current_mask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&raw mut current_mask);
                     libc::sigaddset(&raw mut current_mask, libc::SIGCHLD);
                     let act = libc::sigaction {
@@ -1411,7 +1411,7 @@ pub mod waiter_thread_posix {
             {
                 // SAFETY: sigwait with a valid (empty) mask.
                 unsafe {
-                    let mut mask: libc::sigset_t = core::mem::zeroed();
+                    let mut mask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&mut mask);
                     let mut signal: c_int = libc::SIGCHLD;
                     let _rc = libc::sigwait(&mask, &mut signal);
@@ -1564,7 +1564,7 @@ impl Default for WindowsOptions {
             hide_window: true,
             // TODO(port): EventLoopHandle has no Default; Phase B must require it as a ctor arg.
             // SAFETY: placeholder — Zig field is `= undefined`; never read before assignment.
-            loop_: unsafe { core::mem::zeroed() },
+            loop_: unsafe { bun_core::ffi::zeroed() },
         }
     }
 }
@@ -1707,7 +1707,7 @@ pub fn spawn_process_windows(
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
     // SAFETY: all-zero is a valid uv_process_options_t
-    let mut uv_process_options: uv::uv_process_options_t = unsafe { core::mem::zeroed() };
+    let mut uv_process_options: uv::uv_process_options_t = unsafe { bun_core::ffi::zeroed() };
 
     uv_process_options.args = argv;
     uv_process_options.env = envp;
@@ -1752,7 +1752,7 @@ pub fn spawn_process_windows(
     let mut stdio_containers: Vec<uv::uv_stdio_container_t> =
         Vec::with_capacity(3 + options.extra_fds.len());
     // SAFETY: all-zero is valid uv_stdio_container_t
-    stdio_containers.resize_with(3 + options.extra_fds.len(), || unsafe { core::mem::zeroed() });
+    stdio_containers.resize_with(3 + options.extra_fds.len(), || unsafe { bun_core::ffi::zeroed() });
 
     let stdio_options: [&WindowsStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
 
@@ -1961,7 +1961,7 @@ pub fn spawn_process_windows(
     // SAFETY: process is freshly allocated
     unsafe {
         // SAFETY: all-zero is valid uv::Process
-        (*process).poller = Poller::Uv(core::mem::zeroed());
+        (*process).poller = Poller::Uv(bun_core::ffi::zeroed());
         // Back-pointer for `on_exit_uv` / `on_close_uv` (replaces Zig
         // `@fieldParentPtr`, which has no sound Rust equivalent for default-repr
         // enum variant payloads). Every libuv handle starts with `data: *mut c_void`.
@@ -2795,8 +2795,8 @@ pub mod sync {
         fn ttou_blocked(pgid: libc::pid_t) {
             // SAFETY: signal mask manipulation
             unsafe {
-                let mut set: libc::sigset_t = core::mem::zeroed();
-                let mut old: libc::sigset_t = core::mem::zeroed();
+                let mut set: libc::sigset_t = bun_core::ffi::zeroed();
+                let mut old: libc::sigset_t = bun_core::ffi::zeroed();
                 libc::sigemptyset(&raw mut set);
                 libc::sigemptyset(&raw mut old);
                 libc::sigaddset(&raw mut set, libc::SIGTTOU);
@@ -3062,7 +3062,7 @@ pub mod sync {
 
                 let mut poll_fds_buf: [libc::pollfd; 2] =
                     // SAFETY: zeroed pollfd is valid
-                    unsafe { core::mem::zeroed() };
+                    unsafe { bun_core::ffi::zeroed() };
                 let mut poll_len: usize = 0;
                 for &fd in &out_fds_to_wait_for {
                     if fd == Fd::INVALID {
@@ -3186,7 +3186,7 @@ pub mod sync {
         const TAG_PPID: usize = 2;
 
         // SAFETY: zeroed kevent is valid
-        let mut changes_buf: [libc::kevent; 5] = unsafe { core::mem::zeroed() };
+        let mut changes_buf: [libc::kevent; 5] = unsafe { bun_core::ffi::zeroed() };
         let mut changes_len: usize = 0;
         let add = |list: &mut [libc::kevent; 5], len: &mut usize, ident: usize, filter: i16, fflags: u32, udata: usize| {
             list[*len] = libc::kevent {
@@ -3226,7 +3226,7 @@ pub mod sync {
         }
 
         // SAFETY: zeroed kevent is valid
-        let mut receipts: [libc::kevent; 5] = unsafe { core::mem::zeroed() };
+        let mut receipts: [libc::kevent; 5] = unsafe { bun_core::ffi::zeroed() };
         match bun_sys::kevent(kq_fd, &changes_buf[..changes_len], &mut receipts[..changes_len], None) {
             Err(err) => return Some(Err(err)),
             Ok(_) => {}
@@ -3271,7 +3271,7 @@ pub mod sync {
         unsafe { Bun__noOrphans_onFork() };
 
         // SAFETY: zeroed kevent is valid
-        let mut events: [libc::kevent; 16] = unsafe { core::mem::zeroed() };
+        let mut events: [libc::kevent; 16] = unsafe { bun_core::ffi::zeroed() };
         let mut child_exited = false;
         let mut child_status: Option<Status> = None;
         loop {
@@ -3382,8 +3382,8 @@ pub mod sync {
         // signalfd.
         // SAFETY: signal mask manipulation
         let (chld_fd, _restore_mask): (Fd, scopeguard::ScopeGuard<libc::sigset_t, _>) = unsafe {
-            let mut libc_mask: libc::sigset_t = core::mem::zeroed();
-            let mut old_mask: libc::sigset_t = core::mem::zeroed();
+            let mut libc_mask: libc::sigset_t = bun_core::ffi::zeroed();
+            let mut old_mask: libc::sigset_t = bun_core::ffi::zeroed();
             libc::sigemptyset(&raw mut libc_mask);
             libc::sigemptyset(&raw mut old_mask);
             libc::sigaddset(&raw mut libc_mask, libc::SIGCHLD);
@@ -3396,7 +3396,7 @@ pub mod sync {
             // use the raw syscall with a u64 mask.
             let fd = {
                 // SAFETY: POD, zero-valid — sigemptyset overwrites it immediately.
-                let mut kmask: libc::sigset_t = core::mem::zeroed();
+                let mut kmask: libc::sigset_t = bun_core::ffi::zeroed();
                 libc::sigemptyset(&raw mut kmask);
                 libc::sigaddset(&raw mut kmask, libc::SIGCHLD);
                 let rc = libc::signalfd(-1, &raw const kmask, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK);
@@ -3499,7 +3499,7 @@ pub mod sync {
             }
 
             // SAFETY: zeroed pollfd is valid
-            let mut buf: [libc::pollfd; 4] = unsafe { core::mem::zeroed() };
+            let mut buf: [libc::pollfd; 4] = unsafe { bun_core::ffi::zeroed() };
             let mut pfds_len: usize = 0;
             let push = |l: &mut [libc::pollfd; 4], len: &mut usize, fd: Fd| {
                 l[*len] = libc::pollfd {
@@ -3543,7 +3543,7 @@ pub mod sync {
             // happens at the top of the next iteration.
             if chld_fd.fd() != Fd::INVALID && buf[chld_idx].revents != 0 {
                 // SAFETY: zeroed signalfd_siginfo is valid for read target
-                let mut si: libc::signalfd_siginfo = unsafe { core::mem::zeroed() };
+                let mut si: libc::signalfd_siginfo = unsafe { bun_core::ffi::zeroed() };
                 let si_bytes = unsafe {
                     core::slice::from_raw_parts_mut(
                         (&raw mut si).cast::<u8>(),

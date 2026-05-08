@@ -477,7 +477,7 @@ impl PostgresSQLConnection {
         } else {
             // SAFETY: `server_name` is a NUL-terminated C string owned by
             // `tls_config` for the connection lifetime.
-            Some(unsafe { core::ffi::CStr::from_ptr(server_name) })
+            Some(unsafe { bun_core::ffi::cstr(server_name) })
         };
         // Zig: `@sizeOf(?*PostgresSQLConnection)` — `?*T` is an 8-byte null-niche
         // optional. The Rust layout-equivalent is `Option<NonNull<T>>`; using
@@ -850,7 +850,7 @@ impl PostgresSQLConnection {
                         let ssl_ptr: *mut BoringSSL::c::SSL = self.socket.get_native_handle().map_or(core::ptr::null_mut(), |p| p.cast());
                         if let Some(servername) = unsafe { BoringSSL::c::SSL_get_servername(ssl_ptr, 0).as_ref() } {
                             // SAFETY: SSL_get_servername returns a NUL-terminated C string.
-                            let hostname = unsafe { core::ffi::CStr::from_ptr(std::ptr::from_ref(servername).cast::<core::ffi::c_char>()) }.to_bytes();
+                            let hostname = unsafe { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast::<core::ffi::c_char>()) }.to_bytes();
                             // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                             if !BoringSSL::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
                                 let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else { return };

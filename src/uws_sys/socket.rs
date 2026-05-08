@@ -568,7 +568,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             kind,
             ssl_ctx,
             // SAFETY: `host_z` is NUL-terminated by construction above.
-            unsafe { core::ffi::CStr::from_ptr(host_z.as_ptr()) },
+            unsafe { bun_core::ffi::cstr(host_z.as_ptr()) },
             port,
             opts,
             size_of::<Option<core::ptr::NonNull<Owner>>>() as c_int,

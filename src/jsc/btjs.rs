@@ -49,7 +49,7 @@ mod zig_std_debug {
         {
             // SAFETY: context is a valid out-param; RtlCaptureContext writes to it.
             unsafe {
-                core::ptr::write(context, core::mem::zeroed());
+                core::ptr::write(context, bun_core::ffi::zeroed());
                 bun_sys::windows::ntdll_context::RtlCaptureContext(context);
             }
             return true;
@@ -506,7 +506,7 @@ mod zig_std_debug {
                             Box::default()
                         } else {
                             // SAFETY: dlpi_name is a valid NUL-terminated C string.
-                            unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
+                            unsafe { bun_core::ffi::cstr(info.dlpi_name) }
                                 .to_bytes()
                                 .to_vec()
                                 .into_boxed_slice()
@@ -538,7 +538,7 @@ mod zig_std_debug {
             // PORT NOTE: Zig walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
             // gives the same `{base_address, fname}` pair on Darwin without the MachO walk.
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
-            let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
+            let mut info: libc::Dl_info = unsafe { bun_core::ffi::zeroed() };
             let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
             if rc == 0 {
                 return Err(err!("MissingDebugInfo"));
@@ -549,7 +549,7 @@ mod zig_std_debug {
                     Box::default()
                 } else {
                     // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
-                    unsafe { core::ffi::CStr::from_ptr(info.dli_fname) }
+                    unsafe { bun_core::ffi::cstr(info.dli_fname) }
                         .to_bytes()
                         .to_vec()
                         .into_boxed_slice()
@@ -585,7 +585,7 @@ mod zig_std_debug {
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
             let _ = self.base_address;
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
-            let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
+            let mut info: libc::Dl_info = unsafe { bun_core::ffi::zeroed() };
             let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 || info.dli_sname.is_null() {
                 // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
@@ -599,7 +599,7 @@ mod zig_std_debug {
                 });
             }
             // SAFETY: dli_sname is a valid NUL-terminated C string when non-null.
-            let name = unsafe { core::ffi::CStr::from_ptr(info.dli_sname) }
+            let name = unsafe { bun_core::ffi::cstr(info.dli_sname) }
                 .to_bytes()
                 .to_vec()
                 .into_boxed_slice();
@@ -607,7 +607,7 @@ mod zig_std_debug {
                 bun_paths::basename(&self.name).to_vec().into_boxed_slice()
             } else {
                 // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
-                bun_paths::basename(unsafe { core::ffi::CStr::from_ptr(info.dli_fname) }.to_bytes())
+                bun_paths::basename(unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes())
                     .to_vec()
                     .into_boxed_slice()
             };
@@ -655,7 +655,7 @@ mod zig_std_debug {
                         &b""[..]
                     } else {
                         // SAFETY: dlpi_name is a valid NUL-terminated C string.
-                        unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }.to_bytes()
+                        unsafe { bun_core::ffi::cstr(info.dlpi_name) }.to_bytes()
                     };
                     context.name =
                         Some(bun_paths::basename(name).to_vec().into_boxed_slice());
@@ -673,13 +673,13 @@ mod zig_std_debug {
     #[cfg(target_vendor = "apple")]
     fn lookup_module_name_dyld(address: usize) -> Option<Box<[u8]>> {
         // SAFETY: dladdr only reads; out-param is a valid Dl_info.
-        let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
+        let mut info: libc::Dl_info = unsafe { bun_core::ffi::zeroed() };
         let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
         if rc == 0 || info.dli_fname.is_null() {
             return None;
         }
         // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
-        let name = unsafe { core::ffi::CStr::from_ptr(info.dli_fname) }.to_bytes();
+        let name = unsafe { bun_core::ffi::cstr(info.dli_fname) }.to_bytes();
         Some(bun_paths::basename(name).to_vec().into_boxed_slice())
     }
 
@@ -832,7 +832,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let tty_config = tty::detect_config_stdout();
 
     // SAFETY: Zig used `= undefined`; getcontext fully initializes.
-    let mut context: ThreadContext = unsafe { core::mem::zeroed() };
+    let mut context: ThreadContext = unsafe { bun_core::ffi::zeroed() };
     let has_context = get_context(&mut context);
 
     #[allow(unused_mut)]

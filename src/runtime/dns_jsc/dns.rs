@@ -1245,7 +1245,7 @@ pub mod get_addr_info_request {
     impl LibcBackend {
         pub fn uv_uninit() -> Self {
             // SAFETY: uv_getaddrinfo_t is C-POD initialized by uv_getaddrinfo
-            Self { uv: unsafe { core::mem::zeroed() } }
+            Self { uv: unsafe { bun_core::ffi::zeroed() } }
         }
         pub fn run(&mut self) {
             unreachable!("This path should never be reached on Windows");
@@ -2260,7 +2260,7 @@ pub mod internal {
 
     fn default_hints() -> AddrInfo {
         // SAFETY: POD, zero-valid — addrinfo with null ptrs / 0 ints is a valid hints struct.
-        let mut h: AddrInfo = unsafe { core::mem::zeroed() };
+        let mut h: AddrInfo = unsafe { bun_core::ffi::zeroed() };
         h.ai_family = netc::AF_UNSPEC;
         // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
         // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
@@ -2393,7 +2393,7 @@ pub mod internal {
                     }
                 } else {
                     // SAFETY: POD, zero-valid — sockaddr_storage is all-integers.
-                    (*entry).addr = core::mem::zeroed();
+                    (*entry).addr = bun_core::ffi::zeroed();
                 }
                 i += 1;
                 info_ = (*info_).ai_next;
@@ -2492,7 +2492,7 @@ pub mod internal {
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
             // SAFETY: POD, zero-valid — Win32 addrinfo with null ptrs / 0 ints.
-            let mut wsa_hints: wsa::addrinfo = core::mem::zeroed();
+            let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed();
             wsa_hints.ai_family = wsa::AF_UNSPEC;
             wsa_hints.ai_socktype = wsa::SOCK_STREAM;
 
@@ -3216,7 +3216,7 @@ impl UvDnsPoll {
             parent,
             socket,
             // SAFETY: POD, zero-valid — uv_poll_t is C POD; uv_poll_init writes it before use.
-            poll: unsafe { core::mem::zeroed() },
+            poll: unsafe { bun_core::ffi::zeroed() },
         }))
     }
 
@@ -4708,7 +4708,7 @@ impl Resolver {
             if port == 0 { port = IANA_DNS_PORT; }
 
             // size = strlen(buf+1) + 1
-            let size = unsafe { core::ffi::CStr::from_ptr(buf[1..].as_ptr().cast::<c_char>()) }.to_bytes().len() + 1;
+            let size = unsafe { bun_core::ffi::cstr(buf[1..].as_ptr().cast::<c_char>()) }.to_bytes().len() + 1;
             // PORT NOTE: `bun_str::ZigString` lacks `with_encoding`/`to_js` (those live
             // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
             // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
@@ -4886,7 +4886,7 @@ impl Resolver {
             // SAFETY: all-zero is a valid `struct_ares_addr_port_node` (POD: ptr, ints,
             // and the in_addr/in6_addr union). Public fields written below; the private
             // `addr` union stays zeroed until `ares_inet_pton` fills it.
-            let mut node: c_ares::struct_ares_addr_port_node = unsafe { core::mem::zeroed() };
+            let mut node: c_ares::struct_ares_addr_port_node = unsafe { bun_core::ffi::zeroed() };
             node.next = ptr::null_mut();
             node.family = af;
             node.udp_port = port;
@@ -4991,7 +4991,7 @@ impl Resolver {
         let port: u16 = port_value.to_port_number(global_this)?;
 
         // SAFETY: all-zero is a valid sockaddr_storage
-        let mut sa: SockaddrStorage = unsafe { core::mem::zeroed() };
+        let mut sa: SockaddrStorage = unsafe { bun_core::ffi::zeroed() };
         // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
         // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
         // `&mut sockaddr` view into that storage.

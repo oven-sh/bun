@@ -128,7 +128,7 @@ impl Ls {
                         for i in start..argc {
                             let p = Builtin::of(interp, cmd).args_slice()[i];
                             // SAFETY: argv entries are NUL-terminated.
-                            let path = unsafe { CStr::from_ptr(p) }.to_bytes();
+                            let path = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
                             let task = ShellLsTask::create(
                                 cmd, opts, task_count_ptr, cwd,
                                 ZBox::from_bytes(path), evtloop, interp_ptr,
@@ -243,7 +243,7 @@ impl Ls {
         while idx < argc {
             let p = Builtin::of(interp, cmd).args_slice()[idx];
             // SAFETY: argv entries are NUL-terminated.
-            let flag = unsafe { CStr::from_ptr(p) }.to_bytes();
+            let flag = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
                 ParseFlag::Done => return Ok(Some(idx)),
                 ParseFlag::ContinueParsing => {}

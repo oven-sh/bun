@@ -489,31 +489,31 @@ impl Archive {
     }
     pub fn version_string() -> &'static [u8] {
         // SAFETY: archive_version_string returns a static NUL-terminated C string.
-        unsafe { core::ffi::CStr::from_ptr(archive_version_string()) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(archive_version_string()) }.to_bytes()
     }
     pub fn version_details() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { core::ffi::CStr::from_ptr(archive_version_details()) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(archive_version_details()) }.to_bytes()
     }
     pub fn zlib_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { core::ffi::CStr::from_ptr(archive_zlib_version()) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(archive_zlib_version()) }.to_bytes()
     }
     pub fn liblzma_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { core::ffi::CStr::from_ptr(archive_liblzma_version()) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(archive_liblzma_version()) }.to_bytes()
     }
     pub fn bzlib_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { core::ffi::CStr::from_ptr(archive_bzlib_version()) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(archive_bzlib_version()) }.to_bytes()
     }
     pub fn liblz4_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { core::ffi::CStr::from_ptr(archive_liblz4_version()) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(archive_liblz4_version()) }.to_bytes()
     }
     pub fn libzstd_version() -> &'static [u8] {
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { core::ffi::CStr::from_ptr(archive_libzstd_version()) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(archive_libzstd_version()) }.to_bytes()
     }
 
     pub fn error_string(&self) -> &[u8] {
@@ -523,7 +523,7 @@ impl Archive {
             return b"";
         }
         // SAFETY: libarchive returns a NUL-terminated static C string.
-        unsafe { core::ffi::CStr::from_ptr(err_str) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(err_str) }.to_bytes()
     }
 
     pub fn write_new() -> *mut Archive {

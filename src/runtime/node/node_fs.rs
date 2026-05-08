@@ -611,7 +611,7 @@ where
             result: Err(sys::Error::default()),
             global_object: bun_ptr::BackRef::new(global_object),
             // SAFETY: all-zero is a valid uv::fs_t (libuv `#[repr(C)]` POD).
-            req: unsafe { core::mem::zeroed() },
+            req: unsafe { bun_core::ffi::zeroed() },
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
         });
@@ -4765,7 +4765,7 @@ impl NodeFS {
         // generated name back into the buffer in-place.
         let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
         if !rc.is_null() {
-            return Ok(ZigString::dupe_for_js(unsafe { core::ffi::CStr::from_ptr(rc) }.to_bytes()).expect("oom"));
+            return Ok(ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(rc) }.to_bytes()).expect("oom"));
         }
 
         // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly
@@ -5928,7 +5928,7 @@ impl NodeFS {
             let Some(ptr) = result_ptr else {
                 return Err(sys::Error { errno: E::ENOENT as _, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
             };
-            let mut buf = unsafe { core::ffi::CStr::from_ptr(ptr) }.to_bytes();
+            let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             if variant == RealpathVariant::Emulated {
                 // remove the trailing slash
                 if buf.last() == Some(&b'\\') {
@@ -7452,7 +7452,7 @@ pub extern "C" fn Bun__mkdirp(global_this: *mut JSGlobalObject, path: *const c_c
     // SAFETY: caller (C++) passes a valid JSGlobalObject*
     let global_this = unsafe { &*global_this };
     // SAFETY: caller passes a NUL-terminated C string
-    let path_bytes = unsafe { core::ffi::CStr::from_ptr(path) }.to_bytes();
+    let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
     // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
     let node_fs: &mut NodeFS =

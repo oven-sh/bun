@@ -71,7 +71,7 @@ pub fn to_js_data(global_object: &JSGlobalObject, value: Data) -> JSValue {
     let z = value.slice_z();
     // SAFETY: ZStr invariant guarantees a readable NUL terminator at `len`; Postgres
     // date payloads contain no interior NULs, satisfying CStr's contract.
-    let cstr = unsafe { core::ffi::CStr::from_ptr(z.as_ptr()) };
+    let cstr = unsafe { bun_core::ffi::cstr(z.as_ptr()) };
     JSValue::from_date_string(global_object, cstr)
 }
 

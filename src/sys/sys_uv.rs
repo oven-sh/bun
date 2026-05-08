@@ -239,7 +239,7 @@ pub fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr>
             );
         };
         // SAFETY: libuv guarantees req.ptr is a NUL-terminated string on success.
-        let slice = unsafe { CStr::from_ptr(result_ptr) }.to_bytes();
+        let slice = unsafe { bun_core::ffi::cstr(result_ptr) }.to_bytes();
         // Reserve one byte for the NUL sentinel below. When slice.len == buf.len
         // there is no room for it and buf[slice.len] = 0 would be out of bounds.
         if slice.len() >= buf.len() {

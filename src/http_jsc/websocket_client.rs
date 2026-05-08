@@ -324,7 +324,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
                 if !servername.is_null() {
                     // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
-                    let hostname = unsafe { core::ffi::CStr::from_ptr(servername) }.to_bytes();
+                    let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
                     // SAFETY: ssl_ptr is non-null (connected SSL socket on the handshake path).
                     if !ssl_ptr.is_null()
                         && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)

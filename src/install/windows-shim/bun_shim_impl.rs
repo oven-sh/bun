@@ -281,7 +281,7 @@ impl core::fmt::Display for FailReason {
 
 pub fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
     // SAFETY: all-zero is a valid IO_STATUS_BLOCK (#[repr(C)] POD).
-    let mut io: IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+    let mut io: IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: NtWriteFile is given a valid handle and a buffer that lives for the call.
     let rc = unsafe {
         nt::NtWriteFile(
@@ -523,9 +523,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // Open the metadata file
     // SAFETY: all-zero is a valid HANDLE (raw pointer; null is a valid bit pattern).
-    let mut metadata_handle: HANDLE = unsafe { core::mem::zeroed() };
+    let mut metadata_handle: HANDLE = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: all-zero is a valid IO_STATUS_BLOCK (#[repr(C)] POD).
-    let mut io: IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+    let mut io: IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
     if IS_STANDALONE {
         // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
         // SAFETY: writing 4 u16s ("bunx") into buf1 at the computed offset, which is in bounds.
@@ -1064,7 +1064,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // Documentation for the function I am using:
     // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw
     // SAFETY: POD, zero-valid — PROCESS_INFORMATION is a #[repr(C)] out-param.
-    let mut process: w::PROCESS_INFORMATION = unsafe { core::mem::zeroed() };
+    let mut process: w::PROCESS_INFORMATION = unsafe { bun_core::ffi::zeroed() };
     let mut startup_info = w::STARTUPINFOW {
         cb: size_of::<w::STARTUPINFOW>() as u32,
         lpReserved: core::ptr::null_mut(),

@@ -340,7 +340,7 @@ impl MySQLConnection {
         } else {
             // SAFETY: `server_name` is a NUL-terminated C string owned by
             // `tls_config` for the connection lifetime.
-            Some(unsafe { core::ffi::CStr::from_ptr(server_name) })
+            Some(unsafe { bun_core::ffi::cstr(server_name) })
         };
         // Zig: `@sizeOf(?*JSMySQLConnection)` — `?*T` is an 8-byte null-niche
         // optional. The Rust layout-equivalent is `Option<NonNull<T>>`; using
@@ -436,7 +436,7 @@ impl MySQLConnection {
                         if !servername.is_null() {
                             // SAFETY: SSL_get_servername returns a NUL-terminated C string
                             // borrowed for the SSL session lifetime.
-                            let hostname = unsafe { core::ffi::CStr::from_ptr(servername) }.to_bytes();
+                            let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
                             // SAFETY: `ssl_ptr` is non-null and live (see above).
                             if !bun_boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
                                 self.tls_status = TLSStatus::SslFailed;

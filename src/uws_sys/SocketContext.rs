@@ -19,7 +19,7 @@ use crate::create_bun_socket_error_t;
 #[cfg(unix)]
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // SAFETY: POD, zero-valid — `libc::stat` is all-integer; `stat(2)` writes it.
-    let mut st: libc::stat = unsafe { core::mem::zeroed() };
+    let mut st: libc::stat = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: `path` is NUL-terminated (ZStr invariant).
     let rc = unsafe { libc::stat(path.as_ptr().cast::<c_char>(), &raw mut st) };
     if rc != 0 {
@@ -51,7 +51,7 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     }
     wbuf[n] = 0;
     // SAFETY: POD, zero-valid.
-    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = unsafe { core::mem::zeroed() };
+    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = unsafe { bun_core::ffi::zeroed() };
     // SAFETY: `wbuf` is NUL-terminated at `[n]`; `data` is a valid out-ptr.
     let ok = unsafe {
         fs::GetFileAttributesExW(wbuf.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
@@ -152,7 +152,7 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: caller-provided NUL-terminated C string.
-                hp.update(unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes());
+                hp.update(unsafe { bun_core::ffi::cstr(s) }.to_bytes());
             }
             hp.update(&[0]); // terminator so {a:"xy"} ≠ {a:"x",b:"y"}
         };
@@ -167,7 +167,7 @@ impl BunSocketContextOptions {
                     hp.update(&[(!s.is_null()) as u8]);
                     if !s.is_null() {
                         // SAFETY: NUL-terminated C string.
-                        hp.update(unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes());
+                        hp.update(unsafe { bun_core::ffi::cstr(s) }.to_bytes());
                     }
                     hp.update(&[0]);
                 }
@@ -184,7 +184,7 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
-                let bytes = unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes();
+                let bytes = unsafe { bun_core::ffi::cstr(s) }.to_bytes();
                 // SAFETY: `s[bytes.len()] == 0` (CStr invariant) and `s[..len]` is readable.
                 let path = unsafe { bun_core::ZStr::from_raw(s.cast::<u8>(), bytes.len()) };
                 hp.update(path.as_bytes());
@@ -232,7 +232,7 @@ impl BunSocketContextOptions {
             for &s in slice {
                 if !s.is_null() {
                     // SAFETY: NUL-terminated C string.
-                    *n += unsafe { core::ffi::CStr::from_ptr(s) }.to_bytes().len();
+                    *n += unsafe { bun_core::ffi::cstr(s) }.to_bytes().len();
                 }
             }
         };

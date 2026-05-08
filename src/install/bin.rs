@@ -504,7 +504,7 @@ impl Value {
     #[inline]
     pub fn init_none() -> Value {
         // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
-        unsafe { core::mem::zeroed() }
+        unsafe { bun_core::ffi::zeroed() }
     }
     #[inline]
     pub fn init_file(file: String) -> Value {

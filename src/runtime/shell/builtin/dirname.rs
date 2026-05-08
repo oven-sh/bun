@@ -30,7 +30,7 @@ impl Dirname {
         let mut buf = Vec::new();
         for arg in args {
             // SAFETY: argv entries are NUL-terminated.
-            let path = unsafe { CStr::from_ptr(*arg) }.to_bytes();
+            let path = unsafe { bun_core::ffi::cstr(*arg) }.to_bytes();
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
             let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
             buf.extend_from_slice(dir);

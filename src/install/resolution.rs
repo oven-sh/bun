@@ -881,7 +881,7 @@ impl<SemverInt: VersionInt> Value<SemverInt> {
         // SAFETY: all-zero is a valid Value — every variant is POD with a valid
         // all-zero representation (Semver String, Repository, VersionedURLType are
         // all #[repr(C)] with no NonNull/NonZero fields).
-        unsafe { core::mem::zeroed() }
+        unsafe { bun_core::ffi::zeroed() }
     }
 
     /// To avoid undefined memory between union values, we must zero initialize the union first.

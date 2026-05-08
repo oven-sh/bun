@@ -103,13 +103,13 @@ impl UpgradedDuplex {
                 None
             } else {
                 // SAFETY: ssl_error.code is non-null and NUL-terminated (C string from BoringSSL verify error).
-                Some(unsafe { CStr::from_ptr(ssl_error.code) }.into())
+                Some(unsafe { bun_core::ffi::cstr(ssl_error.code) }.into())
             },
             reason: if ssl_error.reason.is_null() || ssl_error.error_no == 0 {
                 None
             } else {
                 // SAFETY: ssl_error.reason is non-null and NUL-terminated.
-                Some(unsafe { CStr::from_ptr(ssl_error.reason) }.into())
+                Some(unsafe { bun_core::ffi::cstr(ssl_error.reason) }.into())
             },
         };
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);

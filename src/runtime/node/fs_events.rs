@@ -585,7 +585,7 @@ impl FSEventsLoop {
                 let mut flags = event_flags[i];
                 // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
                 let mut path =
-                    unsafe { core::ffi::CStr::from_ptr(*path_ptr) }.to_bytes();
+                    unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
                 // Filter out paths that are outside handle's request
                 if path.len() < handle_path.len() || !path.starts_with(handle_path) {
                     continue;

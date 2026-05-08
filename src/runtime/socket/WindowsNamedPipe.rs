@@ -266,13 +266,13 @@ impl WindowsNamedPipe {
                 None
             } else {
                 // SAFETY: code is a NUL-terminated C string from BoringSSL when non-null
-                Some(unsafe { CStr::from_ptr(ssl_error.code) }.into())
+                Some(unsafe { bun_core::ffi::cstr(ssl_error.code) }.into())
             },
             reason: if ssl_error.reason.is_null() || ssl_error.error_no == 0 {
                 None
             } else {
                 // SAFETY: reason is a NUL-terminated C string from BoringSSL when non-null
-                Some(unsafe { CStr::from_ptr(ssl_error.reason) }.into())
+                Some(unsafe { bun_core::ffi::cstr(ssl_error.reason) }.into())
             },
         };
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);

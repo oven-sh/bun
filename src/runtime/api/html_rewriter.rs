@@ -2681,7 +2681,7 @@ impl Element {
             return Ok(JSValue::UNDEFINED);
         }
         // SAFETY: namespaceURI returns a NUL-terminated C string owned by lol-html.
-        let ns = unsafe { core::ffi::CStr::from_ptr(lolhtml::Element::namespace_uri(self.element)) };
+        let ns = unsafe { bun_core::ffi::cstr(lolhtml::Element::namespace_uri(self.element)) };
         bun_string_jsc::create_utf8_for_js(global_object, ns.to_bytes())
     }
 

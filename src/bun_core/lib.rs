@@ -875,6 +875,59 @@ pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'sta
 /// the Zig path (process is about to abort anyway), and the alternative — UB —
 /// is strictly worse.
 pub mod ffi {
+    /// Borrow a NUL-terminated C string from an FFI pointer.
+    ///
+    /// Single audited wrapper over `CStr::from_ptr` so the ~180 raw call
+    /// sites in the tree funnel through one `unsafe` block. Adds a
+    /// `debug_assert!(!p.is_null())` — `CStr::from_ptr(null)` is instant UB
+    /// and the Zig originals (`bun.span`, `std.mem.span`) likewise assume a
+    /// valid sentinel pointer, so a null here is always a caller bug.
+    ///
+    /// # Safety
+    /// `p` must be non-null, point to a valid NUL-terminated byte sequence,
+    /// and the returned borrow must not outlive that allocation. The caller
+    /// chooses `'a` — keep it as tight as the source buffer's lifetime.
+    #[inline(always)]
+    pub unsafe fn cstr<'a>(p: *const core::ffi::c_char) -> &'a core::ffi::CStr {
+        debug_assert!(!p.is_null(), "ffi::cstr: null pointer");
+        // SAFETY: caller contract above — non-null, NUL-terminated, valid for 'a.
+        unsafe { core::ffi::CStr::from_ptr(p) }
+    }
+
+    /// Convenience: `cstr(p).to_bytes()`. Dominant shape at call sites
+    /// (Zig `bun.span(p)` / `std.mem.span(p)` port).
+    ///
+    /// # Safety
+    /// Same contract as [`cstr`].
+    #[inline(always)]
+    pub unsafe fn cstr_bytes<'a>(p: *const core::ffi::c_char) -> &'a [u8] {
+        // SAFETY: forwarded to `cstr`.
+        unsafe { cstr(p) }.to_bytes()
+    }
+
+    /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
+    ///
+    /// Single audited wrapper over `core::mem::zeroed()` so libc/uv/c-ares
+    /// out-param init sites (`let mut x: libc::sigaction = zeroed();`) don't
+    /// each open-code an `unsafe` block. This is the Rust spelling of Zig's
+    /// `std.mem.zeroes(T)` / `= .{}` for `extern struct`.
+    ///
+    /// Prefer `T::default()` when `T` implements (or can derive) `Default` —
+    /// reserve this for foreign POD where the orphan rule blocks a `Default`
+    /// impl (libc, bindgen output) or where `Default` would be wrong but
+    /// zero-init matches the C API contract.
+    ///
+    /// # Safety
+    /// `T` must be inhabited at the all-zero bit pattern: no non-nullable
+    /// pointers (`&T`, `Box<T>`, `NonNull<T>`, fn ptrs), no `bool`/`char`
+    /// outside their valid range, no uninhabited enums. `#[repr(C)]` structs
+    /// of integers, raw pointers, and nested POD satisfy this.
+    #[inline(always)]
+    pub const unsafe fn zeroed<T>() -> T {
+        // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
+        unsafe { core::mem::zeroed() }
+    }
+
     /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
     /// boundary (C++ out-params, `extern "C"` callback args, `#[repr(C)]`
     /// struct fields). Unlike a bare `from_raw_parts`, tolerates the C

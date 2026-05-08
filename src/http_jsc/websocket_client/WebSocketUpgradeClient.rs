@@ -750,7 +750,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 if !servername.is_null() {
                     // SAFETY: SSL_get_servername returns a NUL-terminated C string
                     // owned by the SSL session; full provenance retained above.
-                    let hostname = unsafe { CStr::from_ptr(servername) }.to_bytes();
+                    let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
                     // SAFETY: ssl_ptr is a live `*SSL` from the open socket.
                     if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
                         // SAFETY: no `&mut Self` is live across this call.

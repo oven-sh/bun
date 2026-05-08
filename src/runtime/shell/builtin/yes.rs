@@ -45,7 +45,7 @@ impl Yes {
                 }
                 let p = Builtin::of(interp, cmd).args_slice()[i];
                 // SAFETY: argv entries are NUL-terminated.
-                one.extend_from_slice(unsafe { CStr::from_ptr(p) }.to_bytes());
+                one.extend_from_slice(unsafe { bun_core::ffi::cstr(p) }.to_bytes());
             }
             one.push(b'\n');
         }

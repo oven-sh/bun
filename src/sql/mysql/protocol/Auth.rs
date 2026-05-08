@@ -244,7 +244,7 @@ pub mod caching_sha2_password {
                         bun_core::scoped_log!(
                             Auth,
                             "Failed to read public key: {}",
-                            bstr::BStr::new(core::ffi::CStr::from_ptr(s).to_bytes())
+                            bstr::BStr::new(bun_core::ffi::cstr(s).to_bytes())
                         );
                     }
                 }

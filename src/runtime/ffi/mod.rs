@@ -230,7 +230,7 @@ pub(crate) fn get_dl_error() -> Result<Box<[u8]>, bun_core::Error> {
         let msg: &[u8] = unsafe {
             let p = libc::dlerror();
             if !p.is_null() {
-                core::ffi::CStr::from_ptr(p).to_bytes()
+                bun_core::ffi::cstr(p).to_bytes()
             } else {
                 b"unknown error"
             }

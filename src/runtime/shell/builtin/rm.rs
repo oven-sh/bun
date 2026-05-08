@@ -141,7 +141,7 @@ impl Rm {
 
                     let p = Builtin::of(interp, cmd).args_slice()[idx as usize];
                     // SAFETY: argv entries are NUL-terminated.
-                    let arg = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
+                    let arg = unsafe { bun_core::ffi::cstr(p) }.to_bytes().to_vec();
                     match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg) {
                         RmParseFlag::ContinueParsing => {
                             if let RmState::ParseOpts { idx: i, .. } =
@@ -193,7 +193,7 @@ impl Rm {
                                 for i in args_start..argc {
                                     let p = Builtin::of(interp, cmd).args_slice()[i];
                                     // SAFETY: argv entries are NUL-terminated.
-                                    let path = unsafe { CStr::from_ptr(p) }.to_bytes();
+                                    let path = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
                                     let resolved: &[u8] =
                                         if Platform::AUTO.is_absolute(path) {
                                             path
@@ -315,7 +315,7 @@ impl Rm {
                         for i in args_start..argc {
                             let p = Builtin::of(interp, cmd).args_slice()[i];
                             // SAFETY: argv entries are NUL-terminated.
-                            let root = unsafe { CStr::from_ptr(p) }.to_bytes();
+                            let root = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
                             let is_absolute = Platform::AUTO.is_absolute(root);
                             let task = ShellRmTask::create(
                                 cmd, opts, root, cwd, sig, out_count, is_absolute, evtloop,

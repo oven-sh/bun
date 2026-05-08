@@ -69,14 +69,14 @@ impl Default for SocketGroup {
     fn default() -> Self {
         // SAFETY: all-zero is a valid SocketGroup — every field is a raw
         // pointer (null), `Option<&'static _>` (None via NPO), or an integer (0).
-        unsafe { core::mem::zeroed() }
+        unsafe { bun_core::ffi::zeroed() }
     }
 }
 
 impl Default for VTable {
     fn default() -> Self {
         // SAFETY: all-zero is a valid VTable — every field is `Option<fn>` (None via NPO).
-        unsafe { core::mem::zeroed() }
+        unsafe { bun_core::ffi::zeroed() }
     }
 }
 

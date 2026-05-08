@@ -407,9 +407,9 @@ impl BunxCommand {
                 {
                     use bun_sys::windows as win;
                     // SAFETY: all-zero is a valid IO_STATUS_BLOCK (repr(C) POD, no niches)
-                    let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+                    let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
                     // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION (repr(C) POD, no niches)
-                    let mut info: win::FILE_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
+                    let mut info: win::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed() };
                     // SAFETY: FFI call with valid out-params
                     let rc = unsafe {
                         win::ntdll::NtQueryInformationFile(
@@ -886,9 +886,9 @@ impl BunxCommand {
                                 // any `break 'is_stale` (no early-return between open & close).
 
                                 // SAFETY: all-zero is a valid IO_STATUS_BLOCK (repr(C) POD, no niches)
-                                let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+                                let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
                                 // SAFETY: all-zero is a valid FILE_BASIC_INFORMATION (repr(C) POD, no niches)
-                                let mut info: win::FILE_BASIC_INFORMATION = unsafe { core::mem::zeroed() };
+                                let mut info: win::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed() };
                                 // SAFETY: FFI call with valid out-params
                                 let rc = unsafe {
                                     win::ntdll::NtQueryInformationFile(

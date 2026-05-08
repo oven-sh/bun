@@ -643,7 +643,7 @@ impl AbortHandler {
         #[cfg(unix)]
         {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
-            let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
+            let mut act: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
             act.sa_sigaction = Self::posix_signal_handler as *const () as usize;
             act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
             // SAFETY: sa_mask is a valid out-pointer; act is on the stack.

@@ -265,7 +265,7 @@ impl SSLConfig {
             ($f:ident) => {
                 if !self.$f.is_null() {
                     // SAFETY: non-null field is a NUL-terminated heap string we own.
-                    hasher.update(unsafe { CStr::from_ptr(self.$f) }.to_bytes());
+                    hasher.update(unsafe { bun_core::ffi::cstr(self.$f) }.to_bytes());
                 }
                 hasher.update(&[0]);
             };
@@ -275,7 +275,7 @@ impl SSLConfig {
                 if let Some(slice) = &self.$f {
                     for s in slice.iter() {
                         // SAFETY: each entry is a NUL-terminated heap string we own.
-                        hasher.update(unsafe { CStr::from_ptr(*s) }.to_bytes());
+                        hasher.update(unsafe { bun_core::ffi::cstr(*s) }.to_bytes());
                         hasher.update(&[0]);
                     }
                 }
@@ -336,7 +336,7 @@ impl SSLConfig {
         }
         let p = core::mem::replace(&mut self.protos, core::ptr::null());
         // SAFETY: p is a NUL-terminated heap string we own.
-        let bytes = unsafe { CStr::from_ptr(p) }.to_bytes();
+        let bytes = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
         // TODO(port): bun.memory.dropSentinel — reuses the allocation in
         // place; here we copy. PERF(port).
         let owned = bytes.to_vec().into_boxed_slice();
@@ -350,7 +350,7 @@ impl SSLConfig {
         }
         let p = core::mem::replace(&mut self.server_name, core::ptr::null());
         // SAFETY: p is a NUL-terminated heap string we own.
-        let bytes = unsafe { CStr::from_ptr(p) }.to_bytes();
+        let bytes = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
         let owned = bytes.to_vec().into_boxed_slice();
         bun_core::free_sensitive(p);
         Some(owned)
@@ -406,8 +406,8 @@ fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {
         (true, true) => true,
         (false, false) => {
             // SAFETY: both are non-null NUL-terminated strings we own.
-            let lhs = unsafe { CStr::from_ptr(a) }.to_bytes();
-            let rhs = unsafe { CStr::from_ptr(b) }.to_bytes();
+            let lhs = unsafe { bun_core::ffi::cstr(a) }.to_bytes();
+            let rhs = unsafe { bun_core::ffi::cstr(b) }.to_bytes();
             bun_string::strings::eql_long(lhs, rhs, true)
         }
         _ => false,
@@ -443,7 +443,7 @@ fn clone_string(s: CStrPtr) -> CStrPtr {
         return core::ptr::null();
     }
     // SAFETY: s is a NUL-terminated heap string we own.
-    let bytes = unsafe { CStr::from_ptr(s) }.to_bytes();
+    let bytes = unsafe { bun_core::ffi::cstr(s) }.to_bytes();
     bun_core::dupe_z(bytes)
 }
 

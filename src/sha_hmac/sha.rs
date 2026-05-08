@@ -150,7 +150,7 @@ macro_rules! new_hasher {
                 boringssl::load();
                 // SAFETY: BoringSSL *_Init fully initialises the context; we never
                 // read `hasher` before the call below writes it.
-                let mut this: Self = unsafe { core::mem::zeroed() };
+                let mut this: Self = unsafe { bun_core::ffi::zeroed() };
                 let rc: c_int = unsafe { $init(&mut this.hasher) };
                 debug_assert!(rc == 1);
                 this
@@ -202,7 +202,7 @@ macro_rules! new_evp {
                 // SAFETY: EVP md getters are infallible and take no arguments.
                 let md = unsafe { ffi::$md_fn() };
                 // SAFETY: EVP_MD_CTX_init zero-initialises; reading zeroed POD is fine.
-                let mut this: Self = unsafe { core::mem::zeroed() };
+                let mut this: Self = unsafe { bun_core::ffi::zeroed() };
 
                 // SAFETY: ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
                 unsafe { ffi::EVP_MD_CTX_init(&mut this.ctx) };

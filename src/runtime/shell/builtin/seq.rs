@@ -55,7 +55,7 @@ impl Seq {
         while idx < argc {
             let arg_ptr = Builtin::of(interp, cmd).args_slice()[idx];
             // SAFETY: argv entries are NUL-terminated.
-            let arg = unsafe { CStr::from_ptr(arg_ptr) }.to_bytes();
+            let arg = unsafe { bun_core::ffi::cstr(arg_ptr) }.to_bytes();
 
             if arg == b"-s" || arg == b"--separator" {
                 idx += 1;
@@ -64,7 +64,7 @@ impl Seq {
                 }
                 let next = Builtin::of(interp, cmd).args_slice()[idx];
                 // SAFETY: argv entries are NUL-terminated.
-                let bytes = unsafe { CStr::from_ptr(next) }.to_bytes();
+                let bytes = unsafe { bun_core::ffi::cstr(next) }.to_bytes();
                 Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(bytes);
                 idx += 1;
                 continue;
@@ -81,7 +81,7 @@ impl Seq {
                 }
                 let next = Builtin::of(interp, cmd).args_slice()[idx];
                 // SAFETY: argv entries are NUL-terminated.
-                let bytes = unsafe { CStr::from_ptr(next) }.to_bytes();
+                let bytes = unsafe { bun_core::ffi::cstr(next) }.to_bytes();
                 Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(bytes);
                 idx += 1;
                 continue;
@@ -104,7 +104,7 @@ impl Seq {
             ($i:expr) => {{
                 let p = Builtin::of(interp, cmd).args_slice()[$i];
                 // SAFETY: argv entries are NUL-terminated.
-                let s = unsafe { CStr::from_ptr(p) }.to_bytes();
+                let s = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
                 match parse_f32(s) {
                     Some(n) if n.is_finite() => n,
                     _ => return Self::fail(interp, cmd, b"seq: invalid argument\n"),

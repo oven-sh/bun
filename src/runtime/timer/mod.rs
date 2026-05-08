@@ -380,14 +380,14 @@ impl All {
             active_timer_count: 0,
             #[cfg(windows)]
             // SAFETY: all-zero is a valid uv::Timer (C struct, init'd later via uv_timer_init)
-            uv_timer: unsafe { core::mem::zeroed() },
+            uv_timer: unsafe { bun_core::ffi::zeroed() },
             warned_negative_number: false,
             warned_not_number: false,
             epoch: 0,
             immediate_ref_count: 0,
             #[cfg(windows)]
             // SAFETY: all-zero is a valid uv_idle_t (C struct, init'd later via uv_idle_init)
-            uv_idle: unsafe { core::mem::zeroed() },
+            uv_idle: unsafe { bun_core::ffi::zeroed() },
             event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
             maps: Maps::default(),

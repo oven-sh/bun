@@ -658,7 +658,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         // SAFETY: zeroed sigaction with SIG_DFL is a valid disposition.
         unsafe {
-            let mut act: libc::sigaction = core::mem::zeroed();
+            let mut act: libc::sigaction = crate::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut act.sa_mask);
             for &s in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
@@ -683,7 +683,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     {
         // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.
         unsafe {
-            let mut sa: libc::sigaction = core::mem::zeroed();
+            let mut sa: libc::sigaction = crate::ffi::zeroed();
             sa.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&raw mut sa.sa_mask);
             sa.sa_flags = libc::SA_RESETHAND;

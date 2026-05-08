@@ -1828,13 +1828,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
             ssl_error.error_no,
             if !ssl_error.reason.is_null() {
                 // SAFETY: NUL-terminated C string from BoringSSL
-                bstr::BStr::new(unsafe { core::ffi::CStr::from_ptr(ssl_error.reason) }.to_bytes())
+                bstr::BStr::new(unsafe { bun_core::ffi::cstr(ssl_error.reason) }.to_bytes())
             } else {
                 bstr::BStr::new(b"no reason")
             },
             if !ssl_error.code.is_null() {
                 // SAFETY: NUL-terminated C string from BoringSSL
-                bstr::BStr::new(unsafe { core::ffi::CStr::from_ptr(ssl_error.code) }.to_bytes())
+                bstr::BStr::new(unsafe { bun_core::ffi::cstr(ssl_error.code) }.to_bytes())
             } else {
                 bstr::BStr::new(b"no code")
             },
@@ -1869,7 +1869,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
                 {
                     // SAFETY: NUL-terminated
-                    unsafe { core::ffi::CStr::from_ptr(std::ptr::from_ref(servername).cast()) }
+                    unsafe { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast()) }
                         .to_bytes()
                 } else {
                     match &this.client.address {

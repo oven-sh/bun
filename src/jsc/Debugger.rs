@@ -462,7 +462,7 @@ impl Debugger {
                 // SAFETY: all-zero is a valid pre-`uv_timer_init` state (C POD,
                 // matches `std.mem.zeroes`).
                 let timer: *mut uv::Timer =
-                    bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed() }));
+                    bun_core::heap::into_raw(Box::new(unsafe { bun_core::ffi::zeroed() }));
                 // SAFETY: `timer` freshly allocated; `uv_loop` valid.
                 unsafe { (*timer).init(uv_loop) };
 

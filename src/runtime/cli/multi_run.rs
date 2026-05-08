@@ -549,7 +549,7 @@ impl AbortHandler {
             // SAFETY: all-zero is a valid `libc::sigaction`; sigemptyset/sigaction are
             // FFI calls with no extra preconditions beyond valid pointers.
             unsafe {
-                let mut action: bun_sys::posix::Sigaction = core::mem::zeroed();
+                let mut action: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
                 action.sa_sigaction = Self::posix_signal_handler as *const () as usize;
                 libc::sigemptyset(&raw mut action.sa_mask);
                 action.sa_flags =

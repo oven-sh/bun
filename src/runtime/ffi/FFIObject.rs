@@ -551,7 +551,7 @@ fn get_ptr_slice(
 
     // Zig: `bun.span(@as([*:0]u8, @ptrFromInt(addr)))` — scan for NUL terminator.
     // SAFETY: caller asserts `addr` points at a NUL-terminated C string.
-    let len = unsafe { core::ffi::CStr::from_ptr(addr as *const core::ffi::c_char) }
+    let len = unsafe { bun_core::ffi::cstr(addr as *const core::ffi::c_char) }
         .to_bytes()
         .len();
     ValueOrError::Slice(addr as *mut u8, len)

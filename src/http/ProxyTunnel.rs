@@ -284,7 +284,7 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
             unsafe {
                 ZStr::from_raw(
                     ssl_error.code.cast::<u8>(),
-                    CStr::from_ptr(ssl_error.code).count_bytes(),
+                    bun_core::ffi::cstr(ssl_error.code).count_bytes(),
                 )
             }
         },
@@ -295,7 +295,7 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
             unsafe {
                 ZStr::from_raw(
                     ssl_error.reason.cast::<u8>(),
-                    CStr::from_ptr(ssl_error.reason).count_bytes(),
+                    bun_core::ffi::cstr(ssl_error.reason).count_bytes(),
                 )
             }
         },

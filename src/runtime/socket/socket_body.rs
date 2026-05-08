@@ -1592,14 +1592,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             b""
         } else {
             // SAFETY: ssl_error.code is a NUL-terminated C string from BoringSSL.
-            unsafe { core::ffi::CStr::from_ptr(ssl_error.code) }.to_bytes()
+            unsafe { bun_core::ffi::cstr(ssl_error.code) }.to_bytes()
         };
 
         let reason: &[u8] = if ssl_error.reason.is_null() {
             b""
         } else {
             // SAFETY: ssl_error.reason is a NUL-terminated C string from BoringSSL.
-            unsafe { core::ffi::CStr::from_ptr(ssl_error.reason) }.to_bytes()
+            unsafe { bun_core::ffi::cstr(ssl_error.reason) }.to_bytes()
         };
 
         let fallback = SystemError {

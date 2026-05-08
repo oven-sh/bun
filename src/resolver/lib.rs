@@ -1999,7 +1999,7 @@ pub mod fs {
                 }
 
                 // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD).
-                let mut info: w::BY_HANDLE_FILE_INFORMATION = unsafe { core::mem::zeroed() };
+                let mut info: w::BY_HANDLE_FILE_INFORMATION = unsafe { bun_core::ffi::zeroed() };
                 // SAFETY: `handle` is valid; `info` is a valid out-param.
                 if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
                     cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {

@@ -35,7 +35,7 @@ impl Cd {
 
         if args.len() == 1 {
             // SAFETY: argv entries are NUL-terminated.
-            let first_arg = unsafe { CStr::from_ptr(args[0]) }.to_bytes();
+            let first_arg = unsafe { bun_core::ffi::cstr(args[0]) }.to_bytes();
             match first_arg.first() {
                 Some(b'-') => {
                     let prev = Builtin::shell(interp, cmd).prev_cwd().to_vec();

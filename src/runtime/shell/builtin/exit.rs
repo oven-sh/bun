@@ -26,7 +26,7 @@ impl Exit {
             1 => {
                 // SAFETY: argv entries are NUL-terminated (built by Cmd from
                 // expanded atoms, which append a sentinel).
-                let s = unsafe { CStr::from_ptr(args[0]) }.to_bytes();
+                let s = unsafe { bun_core::ffi::cstr(args[0]) }.to_bytes();
                 match parse_exit_code(s) {
                     Some(c) => c,
                     None => {

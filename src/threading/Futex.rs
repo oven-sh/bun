@@ -288,7 +288,7 @@ mod linux_impl {
         use bun_sys::linux;
         // SAFETY: ts is fully initialized below before being passed to the kernel when
         // timeout.is_some(); when timeout is None we pass null and ts is never read.
-        let mut ts: linux::timespec = unsafe { core::mem::zeroed() };
+        let mut ts: linux::timespec = unsafe { bun_core::ffi::zeroed() };
         if let Some(timeout_ns) = timeout {
             ts.sec = <_>::try_from(timeout_ns / NS_PER_S).unwrap();
             ts.nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
@@ -359,7 +359,7 @@ mod freebsd_impl {
     pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
         let mut tm_size: usize = 0;
         // SAFETY: all-zero is a valid `_umtx_time` (POD).
-        let mut tm: libc::_umtx_time = unsafe { core::mem::zeroed() };
+        let mut tm: libc::_umtx_time = unsafe { bun_core::ffi::zeroed() };
         let mut tm_ptr: *mut c_void = core::ptr::null_mut();
 
         if let Some(timeout_ns) = timeout {

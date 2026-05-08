@@ -340,7 +340,7 @@ type KQueueEvent = bun_sys::freebsd::Kevent;
 #[inline]
 fn make_kevent(ident: usize, filter: i16, flags: u16, fflags: u32, udata: *mut core::ffi::c_void) -> KQueueEvent {
     // SAFETY: all-zero is a valid `struct kevent` (POD).
-    let mut ev: KQueueEvent = unsafe { core::mem::zeroed() };
+    let mut ev: KQueueEvent = unsafe { bun_core::ffi::zeroed() };
     ev.ident = ident;
     ev.filter = filter;
     ev.flags = flags;
@@ -899,7 +899,7 @@ impl FilePoll {
         {
             use bun_sys::darwin::{kevent64_s, EV, EVFILT, NOTE};
             // SAFETY: all-zero is a valid kevent64_s
-            let mut changelist: [kevent64_s; 2] = unsafe { core::mem::zeroed() };
+            let mut changelist: [kevent64_s; 2] = unsafe { bun_core::ffi::zeroed() };
             let one_shot_flag: u16 = if !self.flags.contains(Flags::OneShot) {
                 0
             } else if one_shot == OneShotFlag::Dispatch {
@@ -999,7 +999,7 @@ impl FilePoll {
         {
             use bun_sys::freebsd::{kevent, Kevent, EV, EVFILT, NOTE};
             // SAFETY: all-zero is a valid Kevent
-            let mut changelist: [Kevent; 1] = unsafe { core::mem::zeroed() };
+            let mut changelist: [Kevent; 1] = unsafe { bun_core::ffi::zeroed() };
             let one_shot_flag: u16 = if !self.flags.contains(Flags::OneShot) {
                 0
             } else if one_shot == OneShotFlag::Dispatch {
@@ -1169,7 +1169,7 @@ impl FilePoll {
         {
             use bun_sys::darwin::{kevent64, kevent64_s, EV, EVFILT, NOTE};
             // SAFETY: all-zero is a valid kevent64_s
-            let mut changelist: [kevent64_s; 2] = unsafe { core::mem::zeroed() };
+            let mut changelist: [kevent64_s; 2] = unsafe { bun_core::ffi::zeroed() };
 
             changelist[0] = match flag {
                 Flags::Readable => kevent64_s {
@@ -1272,7 +1272,7 @@ impl FilePoll {
         {
             use bun_sys::freebsd::{kevent, Kevent, EV, EVFILT, NOTE};
             // SAFETY: all-zero is a valid Kevent
-            let mut changelist: [Kevent; 2] = unsafe { core::mem::zeroed() };
+            let mut changelist: [Kevent; 2] = unsafe { bun_core::ffi::zeroed() };
             let ident = usize::try_from(fd.native()).expect("int cast");
             let udata = Pollable::init(self).ptr();
             changelist[0] = match flag {
@@ -1735,7 +1735,7 @@ type Kevent64 = bun_sys::darwin::kevent64_s;
 #[cfg(target_os = "macos")]
 impl KEventWaker {
     // SAFETY: all-zero is a valid kevent64_s array
-    const ZEROED: [Kevent64; 16] = unsafe { core::mem::zeroed() };
+    const ZEROED: [Kevent64; 16] = unsafe { bun_core::ffi::zeroed() };
 
     /// An inert, fully-initialized waker for use as a field placeholder before
     /// `init()` overwrites it (e.g. `BundleThread::uninitialized`). Mirrors the

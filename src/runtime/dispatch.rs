@@ -122,35 +122,6 @@ use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 #[allow(unused_imports)]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
 
-// ──────────────────────────────────────────────────────────────────────────
-// Cross-crate trait glue (§Dispatch — orphan-rule placement)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `bun_install::SecurityScanSubprocess: StaticPipeWriterProcess` — the trait
-/// lives here in `bun_runtime` (where `StaticPipeWriter<P>` is defined), and
-/// `bun_install` is a lower-tier dep, so this is the only crate where the impl
-/// can legally live (orphan rule). Spec security_scanner.zig:907 `onCloseIO`:
-/// detach the writer source, drop the strong ref, clear `json_writer`, and
-/// decrement `remaining_fds`. The body is the inherent
-/// `SecurityScanSubprocess::on_close_io`; this impl just bridges the trait's
-/// `*mut Self` receiver and the runtime-tier `StdioKind` (unused per spec).
-impl<'a> crate::api::bun_subprocess::static_pipe_writer::StaticPipeWriterProcess
-    for bun_install::SecurityScanSubprocess<'a>
-{
-    const POLL_OWNER_TAG: u8 = poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER;
-    unsafe fn on_close_io(
-        this: *mut Self,
-        _kind: crate::api::bun_subprocess::StdioKind,
-    ) {
-        // SAFETY: `this` is the `process` BACKREF stored in the writer at
-        // `StaticPipeWriter::create`; the boxed `SecurityScanSubprocess`
-        // outlives the writer (it's only dropped after `is_done()` returns
-        // true in `sleep_until`). No `&mut` to either is held across this
-        // callback — `BufferedWriter::on_close` calls through a raw ptr.
-        unsafe { (*this).on_close_io(bun_spawn::StdioKind::Stdin) };
-    }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch (src/jsc/Task.zig `tickQueueWithCount` switch)
 // ════════════════════════════════════════════════════════════════════════════
@@ -697,7 +668,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            let h = owner_as!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>);
+            // `bun_install` builds its writer with the lower-tier
+            // `bun_spawn::static_pipe_writer::StaticPipeWriter`, not the
+            // runtime-tier one — cast must match the producer's type.
+            let h = owner_as!(bun_spawn::static_pipe_writer::Poll<bun_install::SecurityScanSubprocess<'_>>);
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SHELL_BUFFERED_WRITER => {

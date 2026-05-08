@@ -345,8 +345,7 @@ impl Cp {
             // Spec: else-arm `e.deinit()` — `e` drops here when not stored.
             s
         });
-        // SAFETY: freshly allocated.
-        unsafe { OutputTask::<Cp>::start(output_task, interp, errstr.as_deref()) }
+        OutputTask::<Cp>::start(output_task, interp, errstr.as_deref())
     }
 
     #[inline]

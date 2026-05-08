@@ -1177,25 +1177,18 @@ impl Readable {
                     event_loop, process, result, None, out_type, interp,
                 )),
                 Stdio::ArrayBuffer(array_buffer) => {
-                    let readable = Readable::Pipe(PipeReader::create(
-                        event_loop, process, result, None, out_type, interp,
-                    ));
-                    if let Readable::Pipe(pipe) = &readable {
-                        // TODO(port): Arc interior mutability for buffered_output.
-                        // SAFETY: raw-ptr write through the Arc allocation; see
-                        // PipeReader::set_buffered_output. The Arc was just created by
-                        // PipeReader::create and is uniquely held here.
-                        unsafe {
-                            PipeReader::set_buffered_output(
-                                Arc::as_ptr(pipe).cast_mut(),
-                                BufferedOutput::ArrayBuffer {
-                                    buf: core::mem::take(array_buffer),
-                                    i: 0,
-                                },
-                            )
-                        };
-                    }
-                    readable
+                    let mut pipe =
+                        PipeReader::create(event_loop, process, result, None, out_type, interp);
+                    // The Arc was just created by `PipeReader::create` and is
+                    // uniquely held (strong=1, weak=0) — `get_mut` is the
+                    // safe route to set `buffered_output` before it's shared.
+                    Arc::get_mut(&mut pipe)
+                        .expect("fresh PipeReader Arc")
+                        .buffered_output = BufferedOutput::ArrayBuffer {
+                        buf: core::mem::take(array_buffer),
+                        i: 0,
+                    };
+                    Readable::Pipe(pipe)
                 }
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
                     event_loop, process, result, shellio, out_type, interp,
@@ -1230,25 +1223,18 @@ impl Readable {
                 event_loop, process, result, None, out_type, interp,
             )),
             Stdio::ArrayBuffer(array_buffer) => {
-                let readable = Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, None, out_type, interp,
-                ));
-                if let Readable::Pipe(pipe) = &readable {
-                    // TODO(port): Arc interior mutability for buffered_output.
-                    // SAFETY: raw-ptr write through the Arc allocation; see
-                    // PipeReader::set_buffered_output. The Arc was just created by
-                    // PipeReader::create and is uniquely held here.
-                    unsafe {
-                        PipeReader::set_buffered_output(
-                            Arc::as_ptr(pipe).cast_mut(),
-                            BufferedOutput::ArrayBuffer {
-                                buf: core::mem::take(array_buffer),
-                                i: 0,
-                            },
-                        )
-                    };
-                }
-                readable
+                let mut pipe =
+                    PipeReader::create(event_loop, process, result, None, out_type, interp);
+                // The Arc was just created by `PipeReader::create` and is
+                // uniquely held (strong=1, weak=0) — `get_mut` is the safe
+                // route to set `buffered_output` before it's shared.
+                Arc::get_mut(&mut pipe)
+                    .expect("fresh PipeReader Arc")
+                    .buffered_output = BufferedOutput::ArrayBuffer {
+                    buf: core::mem::take(array_buffer),
+                    i: 0,
+                };
+                Readable::Pipe(pipe)
             }
             Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
                 event_loop, process, result, shellio, out_type, interp,
@@ -1625,12 +1611,10 @@ impl CapturedWriter {
         // `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
         let child = io_writer::ChildPtr::subproc_capture(std::ptr::from_mut(self).cast::<c_void>());
         let y = writer.enqueue(child, None, chunk);
-        // SAFETY: `self` borrow ends before `run_yield` reborrows the parent
-        // PipeReader; field-parent recovery is sound (single-threaded shell).
-        let parent = unsafe {
-            &*bun_core::from_field_ptr!(PipeReader, captured_writer, std::ptr::from_mut(self))
-        };
-        parent.run_yield(y);
+        // `parent()` recovers the enclosing `PipeReader` via the same
+        // `from_field_ptr!` projection (encapsulated once there). The `&mut
+        // self` access above is finished, so the shared `&PipeReader` is fine.
+        self.parent().run_yield(y);
     }
 
     pub fn get_buffer(&self) -> &[u8] {
@@ -2143,14 +2127,10 @@ impl PipeReader {
         match &mut self.state {
             PipeReaderState::Done(bytes) => {
                 // `MarkedArrayBuffer::from_bytes` adopts the allocation (freed
-                // by the JSC ArrayBuffer destructor). Transfer ownership via
-                // `heap::alloc` — this is an FFI hand-off, not a leak.
-                let owned = core::mem::take(bytes);
-                let len = owned.len();
-                let ptr = bun_core::heap::into_raw(owned).cast::<u8>();
-                // SAFETY: `ptr`/`len` come from `heap::alloc` of the slice
-                // just taken; ownership moves into the MarkedArrayBuffer.
-                let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+                // by the JSC ArrayBuffer destructor). `Box::leak` is the safe
+                // spelling of `into_raw` + `from_raw_parts_mut` — this is an
+                // FFI hand-off, not a leak.
+                let slice: &'static mut [u8] = Box::leak(core::mem::take(bytes));
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
             }
@@ -2207,23 +2187,17 @@ impl PipeReader {
         }
     }
 
-    // Helper accessors used above to paper over Arc<PipeReader> interior mutability.
+    // Helper accessor used above to paper over Arc<PipeReader> interior mutability.
     // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land (Phase B).
     //
-    // These take `*mut Self` (not `&self`) because `Arc<PipeReader>` only yields
+    // Takes `*mut Self` (not `&self`) because `Arc<PipeReader>` only yields
     // `&Self`, and casting `&Self as *const Self as *mut Self` to write through is
     // immediate UB — shared-ref provenance is read-only. Callers obtain the pointer
     // via `Arc::as_ptr(&arc).cast_mut()`, which projects from the Arc allocation's
     // original `NonNull` without materializing a `&Self`, mirroring Zig's intrusive
     // `*PipeReader` (bun.ptr.RefCount) which is freely mutated through any alias.
     // The JS-thread single-mutator invariant means no live `&`/`&mut` to these
-    // fields exists when these run.
-    unsafe fn set_buffered_output(this: *mut Self, bo: BufferedOutput) {
-        // SAFETY: see block comment above. Mirrors `readable.pipe.buffered_output = .{ ... }`
-        // in Readable.init — called immediately after `PipeReader.create` while the Arc is
-        // uniquely held.
-        unsafe { (*this).buffered_output = bo };
-    }
+    // fields exists when this runs.
     unsafe fn take_done_buffer(this: *mut Self) -> Box<[u8]> {
         // SAFETY: see block comment above. Mirrors onCloseIO:
         //   out.* = .{ .buffer = pipe.state.done }; pipe.state = .{ .done = &.{} };

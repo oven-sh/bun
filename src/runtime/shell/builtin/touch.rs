@@ -185,8 +185,7 @@ impl Touch {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
-            // SAFETY: freshly allocated.
-            unsafe { OutputTask::<Touch>::start(output_task, interp, Some(&errstr)) }.run(interp);
+            OutputTask::<Touch>::start(output_task, interp, Some(&errstr)).run(interp);
             return;
         }
         Self::next(interp, cmd).run(interp);

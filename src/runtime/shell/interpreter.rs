@@ -1749,14 +1749,21 @@ impl ShellExecEnv {
     }
 
     pub fn buffered_stdout(&mut self) -> *mut Vec<u8> {
-        // SAFETY: returning a raw `*mut` defers the aliasing obligation to
-        // whoever later dereferences it; no `&mut` escapes this call.
-        std::ptr::from_mut(unsafe { self.buffered_stdout_mut() })
+        // Return the raw `*mut` directly — no `&mut Vec<u8>` is materialised,
+        // so the `Bufio::Borrowed` aliasing concern (which forces
+        // [`buffered_stdout_mut`] to be `unsafe fn`) does not apply here. The
+        // dereference obligation is on whoever later writes through it.
+        match &mut self._buffered_stdout {
+            Bufio::Owned(o) => std::ptr::from_mut(o),
+            Bufio::Borrowed(b) => *b,
+        }
     }
 
     pub fn buffered_stderr(&mut self) -> *mut Vec<u8> {
-        // SAFETY: see `buffered_stdout`.
-        std::ptr::from_mut(unsafe { self.buffered_stderr_mut() })
+        match &mut self._buffered_stderr {
+            Bufio::Owned(o) => std::ptr::from_mut(o),
+            Bufio::Borrowed(b) => *b,
+        }
     }
 
     /// Mutably borrow the captured-stdout buffer (owned, or the parent env's
@@ -2599,26 +2606,28 @@ pub struct OutputTask<P: OutputTaskVTable> {
 }
 
 impl<P: OutputTaskVTable> OutputTask<P> {
-    pub fn new(parent: NodeId, output: OutputSrc) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(OutputTask {
+    pub fn new(parent: NodeId, output: OutputSrc) -> Box<Self> {
+        Box::new(OutputTask {
             parent,
             output,
             state: OutputTaskState::WaitingWriteErr,
             _marker: core::marker::PhantomData,
-        }))
+        })
     }
 
     /// Spec: interpreter.zig `OutputTask.start`.
     ///
-    /// SAFETY: `this` was returned by `OutputTask::new` and not yet freed.
-    pub unsafe fn start(
-        this: *mut Self,
-        interp: &mut Interpreter,
-        errbuf: Option<&[u8]>,
-    ) -> Yield {
-        // SAFETY: caller contract — `this` is the live `heap::alloc`'d task.
-        // The `&mut *this` is short-lived per `P::*` callback (those re-enter
-        // via raw `this`, not via a reborrow of `me`).
+    /// Takes the freshly-constructed task by `Box` (callers always pair `new`
+    /// → `start`), leaks it to the raw `*mut Self` the IOWriter callback chain
+    /// needs, and drives the first state transition. The box is reclaimed by
+    /// [`Self::deinit`] (via `heap::take`) when the task reaches `Done`.
+    pub fn start(me: Box<Self>, interp: &mut Interpreter, errbuf: Option<&[u8]>) -> Yield {
+        // Leak so `P::write_*` can stash `this` as the IOWriter's `ChildPtr`;
+        // address is stable for the task's lifetime. Re-derive `&mut` per
+        // step (the `P::*` callbacks re-enter via raw `this`, not a reborrow
+        // of `me`).
+        let this = bun_core::heap::into_raw(me);
+        // SAFETY: `this` is a fresh, uniquely-owned heap allocation.
         unsafe {
             let me = &mut *this;
             log!(

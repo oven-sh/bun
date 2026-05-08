@@ -221,8 +221,7 @@ impl Ls {
             }
             s
         });
-        // SAFETY: freshly allocated.
-        unsafe { OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()) }.run(interp);
+        OutputTask::<Ls>::start(output_task, interp, errstr.as_deref()).run(interp);
     }
 
     /// Spec: ls.zig `parseOpts` / `parseFlags`. Returns the index of the

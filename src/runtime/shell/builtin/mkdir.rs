@@ -202,8 +202,7 @@ impl Mkdir {
             }
             s
         });
-        // SAFETY: output_task is freshly allocated.
-        unsafe { OutputTask::<Mkdir>::start(output_task, interp, errstr.as_deref()) }.run(interp);
+        OutputTask::<Mkdir>::start(output_task, interp, errstr.as_deref()).run(interp);
     }
 
     #[inline]

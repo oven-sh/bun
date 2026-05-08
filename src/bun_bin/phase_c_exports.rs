@@ -299,16 +299,4 @@ pub extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> J
 }
 
 // (zig__renderDiff now defined in src/runtime/test_runner/diff_format.rs.)
-
-#[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
-    _global: *mut JSGlobalObject,
-    _vm: *mut c_void,
-    _module_key: *const c_void,
-    _source_code: *const c_void,
-    _declared_variables: *mut c_void,
-    _lexical_variables: *mut c_void,
-    _res: *const c_void,
-) -> *mut c_void {
-    unreachable!("zig__ModuleInfoDeserialized__toJSModuleRecord: bun_bundler_jsc not yet in bun_bin dep graph")
-}
+// (zig__ModuleInfoDeserialized__toJSModuleRecord now defined in src/bundler_jsc/analyze_jsc.rs.)

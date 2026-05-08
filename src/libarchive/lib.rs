@@ -1178,14 +1178,14 @@ impl BufferReadStream {
         let pos = isize::try_from(this.pos).expect("int cast");
         let offset = isize::try_from(offset).expect("int cast");
 
-        // libarchive only ever passes SEEK_SET/CUR/END; bail with the
-        // documented "invalid offset" sentinel for anything else rather than
-        // reinterpreting an unknown discriminant.
+        // libarchive only ever passes SEEK_SET/CUR/END; trap on anything
+        // else (matches Zig safety-checked `@enumFromInt(whence)` and the
+        // diff's own convention for out-of-range bitfield decode).
         let whence = match whence {
             0 => Seek::Set,
             1 => Seek::Current,
             2 => Seek::End,
-            _ => return lib::Result::Fatal as lib::la_int64_t,
+            n => unreachable!("invalid libarchive whence {n}"),
         };
         match whence {
             Seek::Current => {

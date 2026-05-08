@@ -861,9 +861,8 @@ impl Scrypt {
         let password = scopeguard::guard(password, |mut p| {
             if IS_ASYNC {
                 p.deinit_and_unprotect();
-            } else {
-                p.deinit();
             }
+            // sync: `Drop for StringOrBuffer` releases.
         });
 
         let Some(salt) =
@@ -879,9 +878,8 @@ impl Scrypt {
         let salt = scopeguard::guard(salt, |mut s| {
             if IS_ASYNC {
                 s.deinit_and_unprotect();
-            } else {
-                s.deinit();
             }
+            // sync: `Drop for StringOrBuffer` releases.
         });
 
         let keylen =
@@ -989,10 +987,8 @@ impl Scrypt {
             if IS_ASYNC {
                 c.salt.deinit_and_unprotect();
                 c.password.deinit_and_unprotect();
-            } else {
-                c.salt.deinit();
-                c.password.deinit();
             }
+            // sync: `Drop for StringOrBuffer` (on `c.salt`/`c.password`) releases.
         });
 
         if IS_ASYNC {
@@ -1074,8 +1070,8 @@ impl Scrypt {
     }
 
     fn deinit_sync(&mut self) {
-        self.salt.deinit();
-        self.password.deinit();
+        // `salt`/`password` are `StringOrBuffer` — released by `Drop` when
+        // `self` goes out of scope (the `scrypt_sync` scopeguard's `c`).
         self.buf.deinit();
     }
 }
@@ -1157,10 +1153,10 @@ fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSVa
 #[bun_jsc::host_fn]
 fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let data = PBKDF2::from_js(global_this, call_frame, false)?;
-    // PORT NOTE: Zig had `defer data.deinit()` plus an extra `data.deinit()` on the OOM
-    // branch (double-deinit). The scopeguard wraps `data` so it's released on every path;
-    // the redundant call is dropped.
-    let mut data = scopeguard::guard(data, |mut d| d.deinit());
+    // PORT NOTE: Zig had `defer data.deinit()` plus an extra `data.deinit()` on
+    // the OOM branch (double-deinit). `PBKDF2`'s `StringOrBuffer` fields release
+    // on `Drop`, so the local just goes out of scope; the redundant call is gone.
+    let mut data = data;
     // Zig: `JSValue.createBufferFromLength` → `JSBuffer__bufferFromLength`, which constructs
     // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
     // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods

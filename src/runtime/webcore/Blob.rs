@@ -3312,8 +3312,9 @@ impl BlobExt for Blob {
                         //   path_or_fd.deinit(); path_or_fd.* = .{ .path = .{ .string = empty } };
                         // } }` — release a SliceWithUnderlying / encoded-slice
                         // path the graph short-circuit would otherwise leak.
+                        // The reassignment below drops the old payload via
+                        // `Drop for PathLike`; no explicit `.deinit()` needed.
                         if !path_or_fd.path().is_string() {
-                            path_or_fd.deinit();
                             *path_or_fd = PathOrFileDescriptor::Path(
                                 crate::webcore::node_types::PathLike::String(
                                     bun_str::PathString::default(),
@@ -4693,12 +4694,10 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments);
 
     // accept a path or a blob
-    let path_or_blob = PathOrBlob::from_js_no_copy(global_this, &mut args)?;
-    let mut path_or_blob = scopeguard::guard(path_or_blob, |p| {
-        if let PathOrBlob::Path(ref path) = p { path.deinit(); }
-    });
+    // `defer if (.path) path.deinit()` → `Drop for PathLike` (via PathOrBlob).
+    let mut path_or_blob = PathOrBlob::from_js_no_copy(global_this, &mut args)?;
     // "Blob" must actually be a BunFile, not a webcore blob.
-    if let PathOrBlob::Blob(ref blob) = *path_or_blob {
+    if let PathOrBlob::Blob(ref blob) = path_or_blob {
         validate_writable_blob(global_this, blob)?;
     }
 
@@ -4738,7 +4737,7 @@ pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     }
     write_file_internal(
         global_this,
-        &mut *path_or_blob,
+        &mut path_or_blob,
         data,
         WriteFileOptions { mkdirp_if_not_exists, extra_options: options, mode },
     )

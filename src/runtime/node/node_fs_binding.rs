@@ -40,10 +40,10 @@ fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     // `defer slice.deinit()` → `Drop for ArgumentsSlice`.
 
+    // `defer if (@hasDecl(Arguments, "deinit")) args.deinit()` → `Drop for A`
+    // (every `args::*` field type — `PathLike`, `StringOrBuffer`, `Vec`, … —
+    // releases its own resources; the wrapper structs need no manual hook).
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
-    // `defer if (@hasDecl(Arguments, "deinit")) args.deinit()` — every
-    // `FsArgument` provides `deinit`; the guard runs on every exit path.
-    let args = scopeguard::guard(args, |a| FsArgument::deinit(&a));
 
     if global.has_exception() {
         return Ok(JSValue::ZERO);
@@ -92,7 +92,7 @@ fn run_async<A: FsArgument>(
     };
 
     if global.has_exception() {
-        FsArgument::deinit(&args);
+        drop(args);
         // SAFETY: not yet dropped; only drop site for this path.
         unsafe { ManuallyDrop::drop(&mut slice) };
         return Ok(JSValue::ZERO);
@@ -105,7 +105,7 @@ fn run_async<A: FsArgument>(
                     global,
                     reason.to_js(global),
                 );
-                FsArgument::deinit(&args);
+                drop(args);
                 // SAFETY: not yet dropped; only drop site for this path.
                 unsafe { ManuallyDrop::drop(&mut slice) };
                 return Ok(promise);
@@ -190,7 +190,7 @@ impl Binding {
         };
 
         if global.has_exception() {
-            cp_args.deinit();
+            drop(cp_args);
             // SAFETY: not yet dropped; only drop site for this path.
             unsafe { ManuallyDrop::drop(&mut slice) };
             return Ok(JSValue::ZERO);
@@ -207,8 +207,8 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
+        // `defer args.deinit()` → `Drop` on `cp_args` (its `PathLike` fields).
         let cp_args = args::Cp::from_js(global, &mut slice)?;
-        let _args = scopeguard::guard(&cp_args, |a| a.deinit());
 
         if global.has_exception() {
             return Ok(JSValue::ZERO);
@@ -238,7 +238,7 @@ impl Binding {
         };
 
         if global.has_exception() {
-            rd_args.deinit();
+            drop(rd_args);
             // SAFETY: not yet dropped; only drop site for this path.
             unsafe { ManuallyDrop::drop(&mut slice) };
             return Ok(JSValue::ZERO);

@@ -320,10 +320,6 @@ impl StringOrBuffer {
         }
     }
 
-    /// Explicit cleanup hook (Zig parity). Ownership is on `Drop`.
-    #[inline]
-    pub fn deinit(&self) {}
-
     /// Zig `StringOrBuffer.protect` — mirrors `to_thread_safe` but only
     /// protects the JS-side buffer value (no string conversion).
     #[inline]
@@ -823,7 +819,6 @@ pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub trait PathLikeExt {
-    fn deinit(&self);
     fn slice_z_with_force_copy<'a, const FORCE: bool>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr where Self: Sized;
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr where Self: Sized;
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr where Self: Sized;
@@ -843,7 +838,6 @@ pub trait PathLikeExt {
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
 pub trait PathOrFdExt {
-    fn deinit(&self);
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -851,11 +845,6 @@ pub trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike {
-    /// Explicit cleanup hook (Zig parity). Ownership is on `Drop`; this is a
-    /// no-op so call sites that spell `path.deinit()` keep compiling.
-    #[inline]
-    fn deinit(&self) {}
-
     // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
     // Rust const-generics can't change return mutability; we always return `&ZStr`.
     // The single force=true caller (if any) needs `&mut ZStr` — handle in Phase B.
@@ -1313,11 +1302,6 @@ pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
 
 impl PathOrFdExt for PathOrFileDescriptor {
-    /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
-    fn deinit(&self) {
-        if let Self::Path(path) = self { path.deinit(); }
-    }
-
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,

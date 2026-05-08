@@ -2440,6 +2440,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         let mut final_expr = expr;
+        let mut replaced = false;
 
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
@@ -2450,6 +2451,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // SAFETY: nearest_stmt_list points at a live ListManaged on a parent visit frame.
                 unsafe { stmts.as_mut().push(decl) };
                 final_expr = p.get_react_refresh_hook_signal_init(hook, expr);
+                replaced = true;
             }
         }
 
@@ -2459,9 +2461,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize].original_name.slice(),
             );
+            replaced = true;
         }
 
-        *e = final_expr;
+        // Only write back through &mut when one of the wrapping branches fired; on the
+        // common fall-through `final_expr` is the entry snapshot and the 24B store is dead.
+        if replaced {
+            *e = final_expr;
+        }
     }
     fn e_class(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;

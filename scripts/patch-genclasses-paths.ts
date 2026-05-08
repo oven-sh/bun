@@ -4,8 +4,8 @@
 // regenerated copy. The codegen's `rustModuleResolver` heuristic mis-guesses
 // ~35 of these; the committed file carries the corrections.
 
-import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const GEN = "build/debug/codegen/generated_classes.rs";
 const orig = execSync(`git show HEAD:${GEN}`, { encoding: "utf8" });

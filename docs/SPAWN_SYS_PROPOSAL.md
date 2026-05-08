@@ -40,16 +40,18 @@ bun_runtime    (re-exports api::bun_process from bun_spawn)
 ## What moves into `bun_spawn_sys`
 
 From `src/spawn/posix_spawn.rs` — **the whole file**:
+
 - `bun_spawn::{Action, Actions, Attr, FileActionType}` repr(C) mirrors of
   `bun_spawn_request_file_action_t` / `bun_spawn_request_t` in
   `src/jsc/bindings/bun-spawn.cpp`.
 - `posix_spawn::{BunSpawnRequest, ActionsList, spawn_z, WaitPidResult, wait4,
-  waitpid}`.
+waitpid}`.
 - `extern "C" posix_spawn_bun(...)` FFI decl.
 - macOS `PosixSpawnActions` / `PosixSpawnAttr` libc wrappers.
 - `posix_spawnattr_reset_signals` extern.
 
 From `src/spawn/process.rs`:
+
 - `spawn_process_posix` + `PosixSpawnFdGuard` + `set_spawned_stdio` (the
   fd/action plumbing — depends only on `bun_sys` + the structs above).
 - `PosixSpawnOptions`, `PosixStdio`, `PosixSpawnResult`, `ExtraPipe`,
@@ -66,6 +68,7 @@ From `src/spawn/process.rs`:
   layout guard. **No `Option<*const c_char>` in any FFI signature.**
 
 `bun_spawn_sys` Cargo deps:
+
 ```toml
 libc, bstr, scopeguard
 bun_sys           # Fd, E, Tag, Result, O, socketpair, memfd_create
@@ -122,7 +125,7 @@ execve — same latent bug, different code paths:
 
 - `src/runtime/api/bun/js_bun_spawn_bindings.rs:402,421,1891` (`env_array`, `argv`)
 - `src/runtime/cli/test/parallel/{Coordinator.rs:32, runner.rs:285,
-  Worker.rs:143}` — Worker.rs even has a `// SAFETY: Option<*const c_char>
-  has the same layout as *const c_char` comment that is **false**.
+Worker.rs:143}` — Worker.rs even has a `// SAFETY: Option<*const c_char>
+has the same layout as *const c_char` comment that is **false**.
 
 A `bun_spawn_sys::Argv`/`Envp` newtype would make these unrepresentable.

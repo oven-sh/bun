@@ -6,7 +6,7 @@
 // location. Handles moved→unmoved, unmoved→moved, and moved→moved.
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, relative, resolve, normalize } from "node:path";
+import { dirname, normalize, relative, resolve } from "node:path";
 
 const root = process.cwd();
 

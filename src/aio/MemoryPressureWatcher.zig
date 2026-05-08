@@ -346,11 +346,17 @@ const Linux = struct {
     /// Dedicated thread. PSI fires POLLPRI which `Async.FilePoll` doesn't yet
     /// expose, so block in poll() here and post a `ConcurrentTask` to the JS
     /// thread when it does — same off-thread→enqueue shape as macOS/Windows.
+    ///
+    /// On Linux, closing an fd from another thread does NOT wake a poll()
+    /// already blocked on it: poll holds its own `struct file` reference via
+    /// fdget(), so close() just decrements f_count without reaching
+    /// release(). Use a finite timeout so `shutdown` is checked periodically
+    /// instead of relying on cross-thread close-as-wakeup.
     fn run(s: *State) void {
         bun.Output.Source.configureNamedThread("MemoryPressure");
         var fds = [1]std.posix.pollfd{.{ .fd = s.fd.cast(), .events = std.posix.POLL.PRI, .revents = 0 }};
         while (!s.shutdown.load(.monotonic)) {
-            const n = std.posix.poll(&fds, -1) catch break;
+            const n = std.posix.poll(&fds, 200) catch break;
             if (s.shutdown.load(.monotonic)) break;
             if (n == 0) continue;
             if (fds[0].revents & (std.posix.POLL.ERR | std.posix.POLL.HUP | std.posix.POLL.NVAL) != 0) break;
@@ -378,9 +384,11 @@ const Linux = struct {
         const s = state orelse return;
         state = null;
         s.shutdown.store(true, .monotonic);
-        // Wake the blocked poll() with POLLERR/POLLNVAL.
-        s.fd.close();
+        // run()'s 200 ms poll timeout picks up the shutdown flag; join first
+        // and only then close the fd, so a concurrent fd-table reuse can't
+        // make the watcher poll() an unrelated file.
         s.thread.join();
+        s.fd.close();
         bun.destroy(s);
     }
 };

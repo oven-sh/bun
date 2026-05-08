@@ -912,7 +912,6 @@ impl EventLoop {
     }
 
     pub fn tick_possibly_forever(&mut self) {
-        let ctx = self.vm();
         let loop_ptr = self.usockets_loop();
         // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
         let loop_ = unsafe { &mut *loop_ptr };
@@ -1089,7 +1088,11 @@ fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_iteration_number(owner: *mut ()) -> u64 {
-    el_ref(owner).vm_ref().uws_loop_mut().iteration_number()
+    // Spec event_loop.zig:359 reads the EventLoop's own `uws_loop` field; on
+    // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
+    // code paths. Route through `usockets_loop()` to match spec semantics.
+    // SAFETY: `usockets_loop()` returns the live VM-owned uws loop.
+    unsafe { (*el_ref(owner).usockets_loop()).iteration_number() }
 }
 
 #[unsafe(no_mangle)]

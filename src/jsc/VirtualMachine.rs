@@ -1705,22 +1705,37 @@ pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::Even
     is_js: { unsafe fn f(_: *mut ()) -> bool { true } f },
     increment_pending_unref_counter: {
         unsafe fn f(owner: *mut ()) {
-            vm_from_owner(owner).pending_unref_counter += 1;
+            // CROSS-THREAD: reached via KeepAlive::unref_on_next_tick_concurrently
+            // (posix_event_loop.rs "From another thread"). Do NOT route through
+            // `vm_from_owner()` — that mints `&mut VirtualMachine`, which would
+            // alias the JS thread's `&mut`. Raw place RMW only (the field-level
+            // non-atomic race is pre-existing; TODO: make `pending_unref_counter`
+            // an `AtomicI32` with `fetch_add`).
+            // SAFETY: `owner` is `*mut VirtualMachine` (erased in `event_loop_ctx`).
+            unsafe { (*owner.cast::<VirtualMachine>()).pending_unref_counter += 1 };
         }
         f
     },
     ref_concurrently: {
         unsafe fn f(owner: *mut ()) {
-            // `event_loop()` is the self-pointer into the sibling
-            // `regular_event_loop` field. Spec posix_event_loop.zig:100
+            // CROSS-THREAD: reached via KeepAlive::ref_concurrently. Do NOT use
+            // `vm_from_owner()` / `event_loop_mut()` here — those mint `&mut VM`
+            // / `&mut EventLoop`, which would alias the JS thread's `&mut` and
+            // is UB. `event_loop()` takes `&self` (Sync) and `ref_concurrently`
+            // takes `&self` (atomic fetch_add + wakeup), so shared-only access
+            // is sufficient. Spec posix_event_loop.zig:100
             // `vm.event_loop.refConcurrently()`.
-            vm_from_owner(owner).event_loop_mut().ref_concurrently();
+            // SAFETY: `owner` is `*mut VirtualMachine`; `event_loop()` is the
+            // self-pointer into the sibling `regular_event_loop` field.
+            unsafe { (*(*owner.cast::<VirtualMachine>()).event_loop()).ref_concurrently() };
         }
         f
     },
     unref_concurrently: {
         unsafe fn f(owner: *mut ()) {
-            vm_from_owner(owner).event_loop_mut().unref_concurrently();
+            // CROSS-THREAD: see `ref_concurrently` — shared-only access.
+            // SAFETY: see `ref_concurrently`.
+            unsafe { (*(*owner.cast::<VirtualMachine>()).event_loop()).unref_concurrently() };
         }
         f
     },
@@ -6177,20 +6192,26 @@ impl VirtualMachine {
                 ),
                 has_disconnect_called: false,
             });
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`; sole
-            // owner here. Bind `&mut` once for the setup writes below.
-            let inst = unsafe { &mut *instance };
-            inst.data.owner = instance as *mut dyn crate::ipc::SendQueueOwner;
+            // PROVENANCE: `from_fd` STORES the `*mut SendQueue` in the socket
+            // ext slot for the socket's lifetime, so that pointer must derive
+            // from the root raw `instance` (SharedReadWrite tag, never popped),
+            // NOT from a `&mut IPCInstance` reborrow whose Unique tag would be
+            // invalidated by later writes through `instance`. Per-use raw deref
+            // also avoids holding a live `&mut` across `deinit` on the failure
+            // branch.
+            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
+            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
-            // SAFETY: `group` is the live per-VM SocketGroup.
+            // SAFETY: `group` is the live per-VM SocketGroup; `instance.data`
+            // is the freshly-initialized SendQueue stored inline in `*instance`.
             let socket = unsafe {
                 crate::ipc::Socket::from_fd::<crate::ipc::SendQueue>(
                     &mut *group,
                     uws::SocketKind::SpawnIpc,
                     fd,
-                    core::ptr::addr_of_mut!(inst.data),
+                    core::ptr::addr_of_mut!((*instance).data),
                     true,
                 )
             };
@@ -6202,7 +6223,8 @@ impl VirtualMachine {
             };
             socket.set_timeout(0);
 
-            inst.data.socket = crate::ipc::SocketUnion::Open(socket);
+            // SAFETY: `instance` is the live boxed IPCInstance.
+            unsafe { (*instance).data.socket = crate::ipc::SocketUnion::Open(socket) };
 
             instance
         };
@@ -6220,14 +6242,17 @@ impl VirtualMachine {
                 ),
                 has_disconnect_called: false,
             });
-            // SAFETY: `instance` was just boxed by `IPCInstance::new`; sole
-            // owner here. Bind `&mut` once for the setup writes below.
-            let inst = unsafe { &mut *instance };
-            inst.data.owner = instance as *mut dyn crate::ipc::SendQueueOwner;
+            // Per-use raw deref — do NOT bind a `&mut IPCInstance` here: it
+            // would remain live across `deinit(instance)` on the failure
+            // branch (live `&mut T` to freed memory violates the validity
+            // invariant even if never dereferenced).
+            // SAFETY: `instance` was just boxed by `IPCInstance::new`.
+            unsafe { (*instance).data.owner = instance as *mut dyn crate::ipc::SendQueueOwner };
 
             self.ipc = Some(IPCInstanceUnion::Initialized(instance));
 
-            if let Err(_) = inst.data.windows_configure_client(fd) {
+            // SAFETY: `instance` is the live boxed IPCInstance.
+            if let Err(_) = unsafe { (*instance).data.windows_configure_client(fd) } {
                 IPCInstance::deinit(instance);
                 self.ipc = None;
                 bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
@@ -6238,7 +6263,7 @@ impl VirtualMachine {
         };
 
         // SAFETY: `instance` is the live boxed IPCInstance.
-        unsafe { &mut *instance }.data.write_version_packet(self.global());
+        unsafe { (*instance).data.write_version_packet(self.global()) };
 
         Some(instance)
     }

@@ -1470,9 +1470,14 @@ impl<'a> Match<'a> {
     /// outlives the returned value.
     #[inline]
     pub unsafe fn detach_lifetime(self) -> Match<'static> {
+        // Safe-signature local so edition-2024 `unsafe_op_in_unsafe_fn` doesn't
+        // fire on every call site (and so the `.map(|s| d(s))` closure body —
+        // which is not itself an unsafe context — compiles cleanly). The actual
+        // unsafe op stays scoped to the pointer-cast inside.
         #[inline(always)]
-        unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY: caller contract on `detach_lifetime`.
+        fn d(s: &[u8]) -> &'static [u8] {
+            // SAFETY: caller contract on `detach_lifetime` — every borrowed
+            // slice outlives the returned `Match<'static>`.
             unsafe { &*core::ptr::from_ref::<[u8]>(s) }
         }
         Match {

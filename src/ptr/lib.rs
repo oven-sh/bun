@@ -279,11 +279,12 @@ pub fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
     // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
     let view: &[&[T]] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
     // Fat-pointer field order (ptr-then-len) is de-facto stable but not
-    // language-guaranteed; spot-check one element so an ABI change would trip
-    // here in debug rather than silently misbehaving downstream.
+    // language-guaranteed; verify every element in debug so an ABI change
+    // would trip here rather than silently misbehaving downstream. (The const
+    // block above only proves size/align, not field order.)
     #[cfg(debug_assertions)]
-    if let Some(first) = s.first() {
-        debug_assert!(first.as_ptr() == view[0].as_ptr() && first.len() == view[0].len());
+    for (i, b) in s.iter().enumerate() {
+        debug_assert!(b.as_ptr() == view[i].as_ptr() && b.len() == view[i].len());
     }
     view
 }

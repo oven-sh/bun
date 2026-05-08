@@ -312,9 +312,13 @@ impl<'a> URL<'a> {
     pub unsafe fn erase_lifetime<'b>(self) -> URL<'b> {
         // Field-by-field reconstruction — every slice is `(ptr, len)`, so the
         // value is bitwise unchanged; only the borrow-checker tag widens.
+        // `d` is a safe-signature local so edition-2024 `unsafe_op_in_unsafe_fn`
+        // doesn't fire on every call site; the actual unsafe op stays scoped
+        // to the pointer-cast inside.
         #[inline(always)]
-        unsafe fn d<'b>(s: &[u8]) -> &'b [u8] {
-            // SAFETY: caller contract on `erase_lifetime`.
+        fn d<'b>(s: &[u8]) -> &'b [u8] {
+            // SAFETY: caller contract on `erase_lifetime` — every slice the
+            // returned `URL<'b>` references outlives `'b`.
             unsafe { &*core::ptr::from_ref::<[u8]>(s) }
         }
         URL {

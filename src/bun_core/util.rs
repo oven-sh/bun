@@ -2387,13 +2387,22 @@ pub mod base64 {
 }
 
 // ── dupe_z / free_sensitive ───────────────────────────────────────────────
-/// `allocator.dupeZ(u8, bytes)` → heap-allocated NUL-terminated copy. Returns
-/// a raw `*const c_char` because the SSLConfig FFI surface stores C-strings.
-/// Caller frees via `free_sensitive` (or libc `free` for non-sensitive).
+/// `bun.default_allocator.dupeZ(u8, bytes)` → heap-allocated NUL-terminated
+/// copy. Returns a raw `*const c_char` because the SSLConfig FFI surface
+/// stores C-strings. Caller frees via [`free_sensitive`].
+///
+/// Allocated via mimalloc (the process-global default allocator), NOT
+/// `libc::malloc`. Under ASAN, libc malloc/free are intercepted and freed
+/// buffers sit in a ~256 MiB quarantine; routing the per-connection cert/key
+/// dups through libc made the SSLConfig leak test (`websocket.test.js`
+/// "bounded RSS growth") observe ~250 MiB RSS growth even though every
+/// allocation was correctly freed. Matching the Zig spec
+/// (`bun.default_allocator`) keeps these in mimalloc and out of quarantine.
 pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
-    // SAFETY: malloc is the allocator SSLConfig's C side expects to free.
+    // SAFETY: mimalloc FFI; returns null on OOM or a writable region of
+    // ≥len+1 bytes (alignment ≤ MI_MAX_ALIGN_SIZE for u8).
     unsafe {
-        let p = libc::malloc(bytes.len() + 1).cast::<u8>();
+        let p = bun_alloc::mimalloc::mi_malloc(bytes.len() + 1).cast::<u8>();
         if p.is_null() { crate::out_of_memory(); }
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
@@ -2401,19 +2410,41 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
     }
 }
 
-/// Port of `bun.freeSensitive` for the C-string case used by http SSLConfig.
-/// Zeros the allocation before freeing (defence-in-depth for keys/passphrases).
-/// `p` must have been allocated by `dupe_z` (i.e. `libc::malloc`, NUL-terminated).
+/// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
+/// case used by http SSLConfig. Zeros the allocation before freeing
+/// (defence-in-depth for keys/passphrases). `p` must have been allocated by
+/// [`dupe_z`] (i.e. mimalloc, NUL-terminated).
 pub fn free_sensitive(p: *const core::ffi::c_char) {
     if p.is_null() { return; }
-    // SAFETY: p is a NUL-terminated malloc'd buffer per `dupe_z` contract.
+    // SAFETY: p is a NUL-terminated mimalloc'd buffer per `dupe_z` contract.
     unsafe {
         let len = libc::strlen(p);
-        // Volatile zero so the optimizer can't elide it (`std.crypto.secureZero`).
-        let mut q = p as *mut u8;
-        for _ in 0..len { core::ptr::write_volatile(q, 0); q = q.add(1); }
-        libc::free(p as *mut core::ffi::c_void);
+        secure_zero(p as *mut u8, len);
+        // `mi_free` is size-agnostic (mimalloc tracks the allocation size in
+        // page metadata), so an interior NUL truncating `strlen` only shortens
+        // the zero pass — the free is still exact.
+        bun_alloc::basic::free_without_size(p as *mut core::ffi::c_void);
     }
+}
+
+/// Port of `std.crypto.secureZero` — `@memset(@volatileCast(s), 0)`. Zeros
+/// `len` bytes at `p` in a way the optimizer cannot elide. Uses bulk
+/// `write_bytes` (lowers to `memset`) instead of a per-byte volatile loop so
+/// debug builds don't pay O(len) iteration overhead — the SSLConfig leak test
+/// secure-zeros ~300 MiB of cert material across 1200 iterations and the
+/// per-byte loop alone took ~3 s in debug. `black_box` on the pointer after
+/// the memset forces the compiler to assume the zeroed region is observed,
+/// preventing dead-store elimination in release builds.
+///
+/// # Safety
+/// `p` must be valid for writes of `len` bytes.
+#[inline]
+pub unsafe fn secure_zero(p: *mut u8, len: usize) {
+    // SAFETY: caller contract.
+    unsafe { core::ptr::write_bytes(p, 0, len) };
+    // Treat `p` as escaped so the preceding stores cannot be eliminated.
+    core::hint::black_box(p);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
 // ── argv ──────────────────────────────────────────────────────────────────

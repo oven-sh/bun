@@ -321,10 +321,10 @@ fn strings_equal(a: &CString, b: &CString) -> bool {
 // PORT NOTE: `bun_core::free_sensitive` only handles libc-malloc'd `*const c_char`;
 // our fields are Rust-allocated `CString`, so we zero in-place and let Drop free.
 fn free_sensitive_bytes(mut bytes: Vec<u8>) {
-    for b in bytes.iter_mut() {
-        // SAFETY: writing 0 into a byte we exclusively own.
-        unsafe { core::ptr::write_volatile(b, 0) };
-    }
+    let len = bytes.len();
+    // SAFETY: `bytes` is exclusively owned; `as_mut_ptr()` is valid for
+    // writes of `len` bytes.
+    unsafe { bun_core::secure_zero(bytes.as_mut_ptr(), len) };
     drop(bytes);
 }
 
@@ -427,52 +427,64 @@ impl Clone for SSLConfig {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl SSLConfig {
-    /// Deep-copy into the lower-tier `bun_http::ssl_config::SSLConfig` shape.
+    /// Move into the lower-tier `bun_http::ssl_config::SSLConfig` shape.
     /// `bun_http` cannot name this T6 type (cycle), and `from_js` lives here
     /// (it walks a `JSValue`), so callers that need an interned `bun_http`
     /// `SharedPtr` (e.g. `fetch()` → `AsyncHTTP`) convert at the boundary.
-    pub fn into_http(self) -> bun_http::ssl_config::SSLConfig {
-        // Disarm Drop: `self`'s fields are deep-copied via `dupe_z`, so the
-        // originals must still drop normally — but we want a single
-        // `GlobalRegistry::remove` call (on the source), not on a half-built
-        // http config. The http config gets fresh allocations.
-        fn dz(s: &Option<CString>) -> *const c_char {
-            s.as_ref()
-                .map(|c| bun_core::dupe_z(c.as_bytes()))
+    ///
+    /// Ownership of every string allocation is *transferred* (no deep copy).
+    /// The Zig spec has a single `SSLConfig` type so the bridge is identity;
+    /// the previous deep-copy via `dupe_z` doubled the alloc + secure-zero
+    /// cost per field, which under ASAN inflated quarantine RSS and pushed
+    /// the WebSocket SSLConfig leak test (1200 × 256 KiB CA) past its
+    /// 5-second timeout in debug builds. `CString::into_raw` yields a
+    /// mimalloc pointer (the process-global `#[global_allocator]`), and
+    /// `bun_http::ssl_config`'s `free_sensitive` frees via `mi_free`, so the
+    /// allocator pairing is exact.
+    pub fn into_http(mut self) -> bun_http::ssl_config::SSLConfig {
+        fn mv(s: &mut Option<CString>) -> *const c_char {
+            s.take()
+                .map(|c| c.into_raw() as *const c_char)
                 .unwrap_or(core::ptr::null())
         }
-        fn dzs(l: &Option<CStringList>) -> Option<Box<[*const c_char]>> {
-            l.as_ref().map(|list| {
-                list.iter()
-                    .map(|c| bun_core::dupe_z(c.as_bytes()))
+        fn mvs(l: &mut Option<CStringList>) -> Option<Box<[*const c_char]>> {
+            l.take().map(|list| {
+                let CStringList { strings, ptrs } = list;
+                drop(ptrs);
+                strings
+                    .into_iter()
+                    .map(|c| c.into_raw() as *const c_char)
                     .collect::<Vec<_>>()
                     .into_boxed_slice()
             })
         }
-        bun_http::ssl_config::SSLConfig {
-            server_name: dz(&self.server_name),
-            key_file_name: dz(&self.key_file_name),
-            cert_file_name: dz(&self.cert_file_name),
-            ca_file_name: dz(&self.ca_file_name),
-            dh_params_file_name: dz(&self.dh_params_file_name),
-            passphrase: dz(&self.passphrase),
-            key: dzs(&self.key),
-            cert: dzs(&self.cert),
-            ca: dzs(&self.ca),
+        let out = bun_http::ssl_config::SSLConfig {
+            server_name: mv(&mut self.server_name),
+            key_file_name: mv(&mut self.key_file_name),
+            cert_file_name: mv(&mut self.cert_file_name),
+            ca_file_name: mv(&mut self.ca_file_name),
+            dh_params_file_name: mv(&mut self.dh_params_file_name),
+            passphrase: mv(&mut self.passphrase),
+            key: mvs(&mut self.key),
+            cert: mvs(&mut self.cert),
+            ca: mvs(&mut self.ca),
             secure_options: self.secure_options,
             request_cert: self.request_cert,
             reject_unauthorized: self.reject_unauthorized,
-            ssl_ciphers: dz(&self.ssl_ciphers),
-            protos: dz(&self.protos),
+            ssl_ciphers: mv(&mut self.ssl_ciphers),
+            protos: mv(&mut self.protos),
             client_renegotiation_limit: self.client_renegotiation_limit,
             client_renegotiation_window: self.client_renegotiation_window,
             requires_custom_request_ctx: self.requires_custom_request_ctx,
             is_using_default_ciphers: self.is_using_default_ciphers,
             low_memory_mode: self.low_memory_mode,
             cached_hash: 0,
-        }
-        // `self` drops here, freeing the original `CString`s and removing from
-        // the runtime-tier `GlobalRegistry`.
+        };
+        // `self` drops here with every owned field already taken — Drop's
+        // `free_string`/`free_strings` calls are no-ops, and
+        // `GlobalRegistry::remove` runs (cheap pointer-identity miss for
+        // never-interned configs).
+        out
     }
 }
 

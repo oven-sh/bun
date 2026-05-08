@@ -458,7 +458,9 @@ function ClientRequest(input, options, cb) {
                 }
                 if (res.statusCode === 304) {
                   res.complete = true;
-                  maybeEmitClose();
+                  // maybeEmitClose() already ran above (finished) or is
+                  // deferred via deferredRequestClose (duplex) — no need to
+                  // call it again and bypass the self.finished gate.
                   return;
                 }
               }

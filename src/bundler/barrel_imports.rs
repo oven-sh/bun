@@ -15,8 +15,10 @@ use bun_js_parser::ast::bundled_ast as JSAst;
 use bun_options_types::{import_record, ImportKind};
 
 use crate::bundle_v2::BundleV2;
+use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};
 use crate::parse_task;
 use crate::Graph::{InputFileFlags, InputFileColumns as _};
+use crate::Index;
 
 bun_core::declare_scope!(barrel, hidden);
 
@@ -293,39 +295,42 @@ fn resolve_barrel_records(
     barrel_idx: u32,
     barrels_to_resolve: &mut ArrayHashMap<u32, ()>,
 ) -> i32 {
-    // TODO(b2-blocked): `resolve_import_records` / `process_resolve_queue` /
-    // `patch_import_record_source_indices` live on the gated
-    // `_the gated draft block (now dissolved)::BundleV2` and have not yet been hoisted onto the
-    // un-gated `crate::bundle_v2::BundleV2`. The Zig body
-    // (barrel_imports.zig:210-233) is reproduced verbatim below for the
-    // moment those methods land; until then this path is a no-op (records
-    // stay deferred and `schedule_barrel_deferred_imports` falls back to
-    // re-processing on the next parse-complete tick).
-    //
-    //   const graph_ast = this.graph.ast.slice();
-    //   const barrel_ir = &graph_ast.items(.import_records)[barrel_idx];
-    //   const target = graph_ast.items(.target)[barrel_idx];
-    //   var resolve_result = this.resolveImportRecords(.{
-    //       .import_records = barrel_ir,
-    //       .source = &this.graph.input_files.items(.source)[barrel_idx],
-    //       .loader = this.graph.input_files.items(.loader)[barrel_idx],
-    //       .target = target,
-    //   });
-    //   defer resolve_result.resolve_queue.deinit();
-    //   const scheduled = this.processResolveQueue(resolve_result.resolve_queue, target, barrel_idx);
-    //   const barrel_ir_updated = &this.graph.ast.slice().items(.import_records)[barrel_idx];
-    //   this.patchImportRecordSourceIndices(barrel_ir_updated, .{
-    //       .source_index = Index.init(barrel_idx),
-    //       .source_path = this.graph.input_files.items(.source)[barrel_idx].path.text,
-    //       .loader = this.graph.input_files.items(.loader)[barrel_idx],
-    //       .target = target,
-    //       .force_save = true,
-    //   });
-    //   _ = barrels_to_resolve.swapRemove(barrel_idx);
-    //   return scheduled;
-    let _ = this;
+    let idx = barrel_idx as usize;
+    let target = this.graph.ast.items_target()[idx];
+    let loader = this.graph.input_files.items_loader()[idx];
+    // Move the column cells out so the `&mut self` method calls below don't
+    // alias borrows into `graph.ast` / `graph.input_files`.
+    let mut barrel_ir = core::mem::take(&mut this.graph.ast.items_import_records_mut()[idx]);
+    let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
+    let source_path: &'static [u8] = source.path.text;
+
+    let resolve_result = this.resolve_import_records(ResolveImportRecordCtx {
+        import_records: &mut barrel_ir,
+        source: &source,
+        loader,
+        target,
+    });
+
+    this.graph.input_files.items_source_mut()[idx] = source;
+
+    let scheduled = this.process_resolve_queue(resolve_result.resolve_queue, target, barrel_idx);
+
+    this.patch_import_record_source_indices(
+        &mut barrel_ir,
+        PatchImportRecordsCtx {
+            source_index: Index::init(barrel_idx),
+            source_path,
+            loader,
+            target,
+            force_save: true,
+            ..Default::default()
+        },
+    );
+
+    this.graph.ast.items_import_records_mut()[idx] = barrel_ir;
+
     let _ = barrels_to_resolve.swap_remove(&barrel_idx);
-    0
+    scheduled
 }
 
 /// After a new file's import records are patched with source_indices,

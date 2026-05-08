@@ -15,7 +15,10 @@ unsafe extern "C" {
         out_saw_error: *mut bool,
     ) -> BunString;
     fn Bun__deleteTextCodec(codec: *mut TextCodec);
-    fn Bun__stripBOMFromTextCodec(codec: *mut TextCodec);
+    // `TextCodec` is an opaque `UnsafeCell`-backed ZST handle, so `&TextCodec`
+    // is ABI-identical to a non-null `TextCodec*` and the C++ side mutating
+    // through it (BOM state) is interior mutation invisible to Rust.
+    safe fn Bun__stripBOMFromTextCodec(codec: &TextCodec);
     fn Bun__isEncodingSupported(encoding_name: *const u8, encoding_name_len: usize) -> bool;
     fn Bun__getCanonicalEncodingName(
         encoding_name: *const u8,
@@ -72,8 +75,7 @@ impl TextCodec {
 
     pub fn strip_bom(&mut self) {
         mark_binding!();
-        // SAFETY: `self` is a valid live codec.
-        unsafe { Bun__stripBOMFromTextCodec(self) }
+        Bun__stripBOMFromTextCodec(self)
     }
 
     pub fn is_supported(encoding: &[u8]) -> bool {

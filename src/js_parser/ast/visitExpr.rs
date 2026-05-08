@@ -184,7 +184,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && e_.ref_.eql(p.delete_target.e_identifier().expect("infallible: variant checked").ref_);
 
         let name = p.load_name_from_ref(e_.ref_);
-        if p.is_strict_mode() && js_lexer::StrictModeReservedWords.contains(name) {
+        if p.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name) {
             p.mark_strict_mode_feature(
                 StrictModeFeature::ReservedWord,
                 js_lexer::range_of_identifier(p.source, expr.loc),

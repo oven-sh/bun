@@ -321,15 +321,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // If so, check for a modifier keyword
                         if could_be_modifier_keyword {
                             // TODO: micro-optimization, use a smaller list for non-typescript files.
-                            if let Some(keyword) = PropertyModifierKeyword::LIST.get(name).copied() {
+                            if let Some(keyword) = PropertyModifierKeyword::find(name) {
                                 match keyword {
                                     PropertyModifierKeyword::PGet => {
                                         if !opts.is_async
-                                            && PropertyModifierKeyword::LIST
-                                                .get(raw)
-                                                .copied()
-                                                .unwrap_or(PropertyModifierKeyword::PStatic)
-                                                == PropertyModifierKeyword::PGet
+                                            && PropertyModifierKeyword::find(raw)
+                                                == Some(PropertyModifierKeyword::PGet)
                                         {
                                             kind = PropertyKind::Get;
                                             errors = None;
@@ -339,11 +336,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                                     PropertyModifierKeyword::PSet => {
                                         if !opts.is_async
-                                            && PropertyModifierKeyword::LIST
-                                                .get(raw)
-                                                .copied()
-                                                .unwrap_or(PropertyModifierKeyword::PStatic)
-                                                == PropertyModifierKeyword::PSet
+                                            && PropertyModifierKeyword::find(raw)
+                                                == Some(PropertyModifierKeyword::PSet)
                                         {
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             kind = PropertyKind::Set;
@@ -353,11 +347,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     }
                                     PropertyModifierKeyword::PAsync => {
                                         if !opts.is_async
-                                            && PropertyModifierKeyword::LIST
-                                                .get(raw)
-                                                .copied()
-                                                .unwrap_or(PropertyModifierKeyword::PStatic)
-                                                == PropertyModifierKeyword::PAsync
+                                            && PropertyModifierKeyword::find(raw)
+                                                == Some(PropertyModifierKeyword::PAsync)
                                             && !p.lexer.has_newline_before
                                         {
                                             opts.is_async = true;
@@ -373,11 +364,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         if !opts.is_static
                                             && !opts.is_async
                                             && opts.is_class
-                                            && PropertyModifierKeyword::LIST
-                                                .get(raw)
-                                                .copied()
-                                                .unwrap_or(PropertyModifierKeyword::PGet)
-                                                == PropertyModifierKeyword::PStatic
+                                            && PropertyModifierKeyword::find(raw)
+                                                == Some(PropertyModifierKeyword::PStatic)
                                         {
                                             opts.is_static = true;
                                             kind = PropertyKind::Normal;
@@ -431,11 +419,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
                                         if opts.is_class
                                             && p.options.features.standard_decorators
-                                            && PropertyModifierKeyword::LIST
-                                                .get(raw)
-                                                .copied()
-                                                .unwrap_or(PropertyModifierKeyword::PStatic)
-                                                == PropertyModifierKeyword::PAccessor
+                                            && PropertyModifierKeyword::find(raw)
+                                                == Some(PropertyModifierKeyword::PAccessor)
                                         {
                                             kind = PropertyKind::AutoAccessor;
                                             errors = None;
@@ -450,11 +435,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         // Skip over TypeScript keywords
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
-                                            && PropertyModifierKeyword::LIST
-                                                .get(raw)
-                                                .copied()
-                                                .unwrap_or(PropertyModifierKeyword::PStatic)
-                                                == keyword
+                                            && PropertyModifierKeyword::find(raw) == Some(keyword)
                                         {
                                             errors = None;
                                             continue 'restart;
@@ -523,7 +504,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && p.lexer.token != T::TLessThan
                         && !opts.is_generator
                         && !opts.is_async
-                        && !js_lexer::Keywords.contains_key(name);
+                        && js_lexer::keyword(name).is_none();
 
                     if is_shorthand_property {
                         if (p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent

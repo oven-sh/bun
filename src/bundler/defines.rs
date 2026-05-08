@@ -377,7 +377,7 @@ impl DefineDataExt for DefineData {
         let mut is_ident = true;
 
         while let Some(part) = value_splitter.next() {
-            if !js_lexer::is_identifier(part) || js_lexer::Keywords.contains_key(part) {
+            if !js_lexer::is_identifier(part) || js_lexer::keyword(part).is_some() {
                 is_ident = false;
                 break;
             }

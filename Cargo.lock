@@ -492,6 +492,7 @@ dependencies = [
  "bun_ptr",
  "bun_simdutf_sys",
  "bun_wyhash",
+ "hashbrown 0.15.5",
  "paste",
  "strum",
  "thiserror",

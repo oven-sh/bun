@@ -3886,11 +3886,12 @@ unsafe fn transpile_file(
         // Rust mirror yet, but the feature is unconditionally on in Zig builds.
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        let (has_loaded, is_in_preload, plugin_runner_is_none) = unsafe {
+        let (has_loaded, is_in_preload, plugin_runner_is_none, store_enabled) = unsafe {
             (
                 (*jsc_vm).has_loaded,
                 (*jsc_vm).is_in_preload,
                 (*jsc_vm).plugin_runner.is_none(),
+                (*jsc_vm).transpiler_store.enabled,
             )
         };
         if !had_blob
@@ -3901,8 +3902,7 @@ unsafe fn transpile_file(
             // Plugins make this complicated.
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
             && plugin_runner_is_none
-            // TODO(b2-cycle): `&& jsc_vm.transpiler_store.enabled` —
-            // `transpiler_store` is `()` on the low-tier VM (VirtualMachine.rs:183).
+            && store_enabled
         {
             // Disgusting workaround (spec :993-1018): polyfills like
             // `reflect-metadata` are CJS-with-side-effects that other ESM
@@ -3915,11 +3915,21 @@ unsafe fn transpile_file(
                 }
             }
 
-            // TODO(b2-cycle): `RuntimeTranspilerStore::transpile` — gated
-            // behind `vm.transpiler_store: ()` (VirtualMachine.rs:182-183).
-            // Un-gate once the field widens to the real store. Until then:
-            // fall through to the synchronous path (correct, just not
-            // concurrent — matches `concurrent_transpiler = false`).
+            // Spec :1022-1028.
+            // SAFETY: per fn contract — `jsc_vm` / `specifier_ptr` / `referrer`
+            // are valid for the call. `lr.path` borrows `_specifier`, which the
+            // store immediately heap-duplicates inside `transpile()`.
+            return unsafe {
+                (*jsc_vm).transpiler_store.transpile(
+                    jsc_vm,
+                    global_ref,
+                    (*specifier_ptr).dupe_ref(),
+                    lr.path,
+                    (*referrer).dupe_ref(),
+                    concurrent_loader,
+                    lr.package_json,
+                )
+            };
         }
         let _ = concurrent_loader;
     }

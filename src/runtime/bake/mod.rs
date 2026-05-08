@@ -595,21 +595,12 @@ pub struct HmrRuntime {
     pub line_count: u32,
 }
 pub use bake_body::get_hmr_runtime;
-
-/// Bundler-side HMR-runtime loader body. The bundler crate
-/// (`bun_bundler::bake_types`) cannot embed `bake.client.js`/`bake.server.js`
-/// itself (those are T6 codegen artifacts), so it declares this `extern "Rust"`
-/// and the linker resolves it here.
-#[unsafe(no_mangle)]
-pub fn __bun_bake_get_hmr_runtime(
-    side: bun_bundler::bake_types::Side,
-) -> bun_bundler::bake_types::HmrRuntime {
-    let rt = bake_body::get_hmr_runtime(side);
-    bun_bundler::bake_types::HmrRuntime {
-        code: rt.code.as_bytes(),
-        line_count: rt.line_count,
-    }
-}
+// (Former `__bun_bake_get_hmr_runtime` link-time bridge deleted —
+// `bun_bundler::bake_types::get_hmr_runtime` now loads the codegen bytes
+// itself via `bun_core::runtime_embed_file!`, so the storage moved DOWN and
+// the cross-crate hook is gone. This crate's `HmrRuntime` keeps the
+// NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
+// `&[u8]`.)
 
 // `bake.UserOptions` — top-level JS-facing options struct. Full body (with
 // `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported

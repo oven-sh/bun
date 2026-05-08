@@ -1085,8 +1085,7 @@ pub mod waiter_thread_posix {
         }
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
-        /// shape — `C = ()`). Default Rust ABI; the explicit `extern "Rust"`
-        /// qualifier was redundant (and tripped the cross-crate-hook grep).
+        /// shape — `C = ()`). Default Rust ABI.
         pub fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
             // SAFETY: `this` was Box::into_raw'd in `loop_()` below; the mini
             // event loop hands ownership back here exactly once.

@@ -480,21 +480,30 @@ pub mod bake_types {
     /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
     pub type HmrRuntimeSide = Side;
 
-    unsafe extern "Rust" {
-        /// Mirrors src/bake/bake.zig:855 `getHmrRuntime`. The codegen'd
-        /// `bake.client.js`/`bake.server.js` live in the T6 `bun_runtime` crate
-        /// (it owns `runtime_embed_file!`/`include_bytes!` of the build
-        /// outputs); `bun_bundler` cannot depend on it, so the body is defined
-        /// `#[no_mangle]` in `bun_runtime::bake` and resolved at link time.
-        fn __bun_bake_get_hmr_runtime(side: Side) -> HmrRuntime;
-    }
-
-    /// Mirrors src/bake/bake.zig:855 `getHmrRuntime`. MOVE_DOWN bake→bundler.
-    /// Embed bytes are produced by codegen (`bake.client.js` / `bake.server.js`).
-    #[inline]
+    /// Mirrors src/bake/bake.zig:855 `getHmrRuntime`. MOVE_DOWN bake→bundler:
+    /// the codegen'd `bake.client.js` / `bake.server.js` are loaded via
+    /// `bun_core::runtime_embed_file!` (same per-site `OnceLock<String>` cache
+    /// `js_parser/runtime.rs` uses for `runtime.out.js`), so the storage lives
+    /// HERE — no upward link to `bun_runtime`. `bun_runtime::bake` keeps its
+    /// own `&'static ZStr` flavour for JSC/C++ handoff; this bundler-side copy
+    /// only needs `&[u8]` for the chunk preamble + sourcemap line skip, so the
+    /// NUL-termination dance is unnecessary. PERF(port): `HmrRuntime::init`
+    /// re-counts `\n` on every call (was const-eval in Zig); cold path —
+    /// once per chunk after a full bundle.
     pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-        // SAFETY: link-time-resolved Rust-ABI fn; returns `'static` embed bytes.
-        unsafe { __bun_bake_get_hmr_runtime(side) }
+        HmrRuntime::init(match side {
+            Side::Client => bun_core::runtime_embed_file!(
+                bun_core::EmbedKind::CodegenEager,
+                "bake.client.js"
+            )
+            .as_bytes(),
+            // Server runtime is loaded once; non-eager.
+            Side::Server => bun_core::runtime_embed_file!(
+                bun_core::EmbedKind::Codegen,
+                "bake.server.js"
+            )
+            .as_bytes(),
+        })
     }
 
     /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.

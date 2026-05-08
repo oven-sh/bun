@@ -1011,12 +1011,7 @@ pub type Source = readable_stream::NewSource<FileReader>;
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
-    crate::source_context_codegen!(
-        FileInternalReadableStreamSource__create,
-        FileInternalReadableStreamSourcePrototype__pendingPromiseSetCachedValue,
-        FileInternalReadableStreamSourcePrototype__onDrainCallbackSetCachedValue,
-        FileInternalReadableStreamSourcePrototype__onDrainCallbackGetCachedValue
-    );
+    crate::source_context_codegen!(js_FileInternalReadableStreamSource);
     fn on_start(&mut self) -> streams::Start { Self::on_start(self) }
     fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
         // SAFETY: lifetime laundering — `buf` borrows a JS typed array kept alive

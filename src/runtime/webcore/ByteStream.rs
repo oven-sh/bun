@@ -59,12 +59,7 @@ impl readable_stream::SourceContext for ByteStream {
     const NAME: &'static str = "Bytes";
     // setRefUnrefFn = null
     const SUPPORTS_REF: bool = false;
-    crate::source_context_codegen!(
-        BytesInternalReadableStreamSource__create,
-        BytesInternalReadableStreamSourcePrototype__pendingPromiseSetCachedValue,
-        BytesInternalReadableStreamSourcePrototype__onDrainCallbackSetCachedValue,
-        BytesInternalReadableStreamSourcePrototype__onDrainCallbackGetCachedValue
-    );
+    crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
 
     fn on_start(&mut self) -> streams::Start { Self::on_start(self) }
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {

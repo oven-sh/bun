@@ -53,12 +53,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     const NAME: &'static str = "Blob";
     // setRefUnrefFn = null
     const SUPPORTS_REF: bool = false;
-    crate::source_context_codegen!(
-        BlobInternalReadableStreamSource__create,
-        BlobInternalReadableStreamSourcePrototype__pendingPromiseSetCachedValue,
-        BlobInternalReadableStreamSourcePrototype__onDrainCallbackSetCachedValue,
-        BlobInternalReadableStreamSourcePrototype__onDrainCallbackGetCachedValue
-    );
+    crate::source_context_codegen!(js_BlobInternalReadableStreamSource);
 
     fn on_start(&mut self) -> streams::Start { Self::on_start(self) }
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {

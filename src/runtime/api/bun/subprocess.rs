@@ -200,15 +200,11 @@ impl<'a> RefCounted for Subprocess<'a> {
 pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
 
 // ── manual `#[bun_jsc::JsClass]` expansion (generic struct) ──────────────────
+// Routes through the codegen'd `crate::generated_classes::js_Subprocess`
+// wrappers (which are typed against `Subprocess<'static>`) so the extern
+// symbols are declared exactly once.
 const _: () = {
-    unsafe extern "C" {
-        #[link_name = "Subprocess__fromJS"]
-        fn __from_js(value: JSValue) -> *mut c_void;
-        #[link_name = "Subprocess__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut c_void;
-        #[link_name = "Subprocess__create"]
-        fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-    }
+    use crate::generated_classes::js_Subprocess as js;
 
     impl<'a> Subprocess<'a> {
         /// Wrap an already-heap-allocated `Subprocess` (via `Box::into_raw`) in
@@ -223,27 +219,25 @@ const _: () = {
         /// side (released via `SubprocessClass__finalize`).
         #[inline]
         pub unsafe fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
-            // SAFETY: caller contract.
-            unsafe { __create(global.as_mut_ptr(), ptr.cast()) }
+            // The codegen wrapper is monomorphized at `'static`; the lifetime
+            // parameter is purely a borrow-checker artifact (C++ stores the
+            // pointer as opaque `m_ctx`), so erase it via `cast`.
+            js::to_js(ptr.cast(), global)
         }
     }
 
     impl<'a> bun_jsc::JsClass for Subprocess<'a> {
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             let ptr = Box::into_raw(Box::new(self));
-            // SAFETY: `global` is live; ownership of `ptr` transfers to the C++ wrapper
-            // (freed via `SubprocessClass__finalize`).
-            unsafe { __create(global.as_mut_ptr(), ptr.cast()) }
+            // Ownership of `ptr` transfers to the C++ wrapper (freed via
+            // `SubprocessClass__finalize`).
+            js::to_js(ptr.cast(), global)
         }
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast; null on type mismatch.
-            let p = unsafe { __from_js(value) };
-            if p.is_null() { None } else { Some(p.cast()) }
+            js::from_js(value).map(|p| p.as_ptr().cast())
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast; null on type mismatch.
-            let p = unsafe { __from_js_direct(value) };
-            if p.is_null() { None } else { Some(p.cast()) }
+            js::from_js_direct(value).map(|p| p.as_ptr().cast())
         }
         // `noConstructor: true` — no `Subprocess__getConstructor` export; trait default applies.
     }

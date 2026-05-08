@@ -138,6 +138,7 @@ describe("framework config validation", () => {
   test.each([1, "hello", null, true])("fileSystemRouterTypes with non-object element %p throws", item => {
     expect(() =>
       Bun.serve({
+        port: 0,
         // @ts-expect-error
         app: { framework: { fileSystemRouterTypes: [item] } },
       }),

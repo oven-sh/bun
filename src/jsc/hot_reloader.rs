@@ -59,7 +59,7 @@ impl ImportWatcher {
         file_path: &[u8],
         loader: bun_bundler::options::Loader,
     ) -> bool {
-        // PORT NOTE: bun_watcher::Loader is an opaque newtype over u8 (CYCLEBREAK);
+        // PORT NOTE: bun_watcher::Loader is an opaque newtype over u8;
         // wrap the bun_options_types::Loader discriminant.
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
@@ -77,7 +77,7 @@ impl ImportWatcher {
         hash: bun_watcher::HashType,
         loader: bun_bundler::options::Loader,
         dir_fd: Fd,
-        // PORT NOTE: bun_watcher::PackageJSON is an opaque forward-decl (CYCLEBREAK);
+        // PORT NOTE: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
         package_json: Option<&'static bun_watcher::PackageJSON>,
     ) -> bun_sys::Result<()> {

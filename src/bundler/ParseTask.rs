@@ -104,7 +104,7 @@ impl bundler::JSBundlerPlugin {
     }
 }
 // PORT NOTE: `FileMap::get` now lives on the real `JSBundler::FileMap` in
-// bundle_v2.rs (no longer an opaque CYCLEBREAK forward-decl). The placeholder
+// bundle_v2.rs (no longer an opaque forward-decl). The placeholder
 // always-miss `get` shim that used to sit here has been removed so the two
 // inherent impls don't collide.
 
@@ -282,7 +282,7 @@ impl ParseTask {
                 file: resolve_result.file_fd,
             },
             side_effects: resolve_result.primary_side_effects_data,
-            // CYCLEBREAK: `_resolver::Result.jsx` is the resolver-side TYPE_ONLY
+            // `_resolver::Result.jsx` is the resolver-side TYPE_ONLY
             // mirror; `From<_> for options::jsx::Pragma` bridges field-by-field
             // (options.rs:jsx::From). Preserves jsxImportSource/runtime/etc.
             // from tsconfig.json (.zig:122).
@@ -571,7 +571,7 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
     };
     let source = Source {
         // PORT NOTE: `logger::Source.path` is `bun_logger::fs::Path`, distinct
-        // from `bun_resolver::fs::Path` (CYCLEBREAK TYPE_ONLY mirror). Construct
+        // from `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
         // directly rather than `clone()` across the type boundary.
         path: bun_logger::fs::Path {
             text: b"runtime",
@@ -1270,7 +1270,7 @@ fn get_ast(
 // ───────────────────────────────────────────────────────────────────────────
 
 // blocked_on: `BundleV2.file_map` is `Option<NonNull<FileMap>>` where `FileMap`
-// is an opaque CYCLEBREAK forward-decl (`_opaque: [u8; 0]`); `.get(path)`
+// is an opaque forward-decl (`_opaque: [u8; 0]`); `.get(path)`
 // requires the real T6 `jsc::api::JSBundler::FileMap` surface. Also blocked on
 // `bake_types::Framework.built_in_modules` value variant carrying `&[u8]` (vs
 // `Box<[u8]>` here) and `resolver.caches.fs.read_file_with_allocator` shape.
@@ -1368,7 +1368,7 @@ fn get_code_for_parse_task_without_plugins(
             ) {
                 Ok(e) => {
                     // PORT NOTE: `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
-                    // are structurally identical CYCLEBREAK twins; convert
+                    // are structurally identical twins; convert
                     // by-variant so ownership of `Owned(Vec<u8>)` transfers.
                     use bun_resolver::cache::Contents as RC;
                     let contents = match e.contents {
@@ -2224,7 +2224,7 @@ fn run_with_source_code(
 
     let source = Source {
         // PORT NOTE: `Source.path` is `bun_logger::fs::Path`, distinct from
-        // `bun_resolver::fs::Path` (CYCLEBREAK TYPE_ONLY mirror). Construct
+        // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
         // field-by-field across the type boundary.
         path: bun_logger::fs::Path {
             text: file_path.text,
@@ -2270,13 +2270,13 @@ fn run_with_source_code(
 
     let output_format = topts.output_format;
 
-    // CYCLEBREAK: `crate::options::jsx::Pragma` → `bun_js_parser::options::JSX::Pragma`
+    // `crate::options::jsx::Pragma` → `bun_js_parser::options::JSX::Pragma`
     // via `From` (options.rs jsx mod). Preserves jsxImportSource/runtime/etc.
     // (.zig:1207).
     let mut opts = ParserOptions::init(task.jsx.clone().into(), loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
-    // CYCLEBREAK MOVE_DOWN: `AllowUnresolved` is now the same nominal type on
+    // `AllowUnresolved` is the same nominal type on
     // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
     // a worker-owned `Transpiler` that outlives the parse.
     // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
@@ -2371,7 +2371,7 @@ fn run_with_source_code(
         js_parser::options::ServerComponents::None
     };
 
-    // CYCLEBREAK: `transpiler.options.framework: Option<&bake_types::Framework>`
+    // `transpiler.options.framework: Option<&bake_types::Framework>`
     // vs `opts.framework: Option<&js_parser::options::Framework>` — both
     // TYPE_ONLY mirrors of `bake.Framework`. Project the fields the parser
     // reads (Parser.zig:1415,1433) into the parser-side mirror and bump-alloc

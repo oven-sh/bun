@@ -1550,7 +1550,7 @@ impl Terminal {
 
     fn update_ref(&mut self, add: bool) {
         self.reader.update_ref(add);
-        // CYCLEBREAK: bun_io::EventLoopHandle is opaque `*mut c_void`; pass the
+        // `bun_io::EventLoopHandle` is opaque; pass the
         // address of the stored bun_jsc::EventLoopHandle.
         self.writer.update_ref(
             bun_io::EventLoopHandle(
@@ -1888,7 +1888,7 @@ impl BufferedReaderParent for Terminal {
         unsafe { (*this).event_loop_handle.r#loop().cast() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is opaque `*mut c_void`; pass the
+        // `bun_io::EventLoopHandle` is opaque; pass the
         // address of the stored bun_jsc::EventLoopHandle so the FilePoll vtable
         // (registered by bun_runtime::init) can recover it.
         // SAFETY: see on_read_chunk; shared-only read.
@@ -1925,7 +1925,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see on_write. Shared-only read of event_loop_handle.
-        // CYCLEBREAK: `bun_io::EventLoopHandle` is opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it.
         bun_io::EventLoopHandle(

@@ -152,7 +152,7 @@ where
     // Phase B: replace callers with concrete StringArrayHashMap construction; this stub preserves signature.
 }
 
-// CYCLEBREAK MOVE_DOWN: `AllowUnresolved` is defined canonically in
+// `AllowUnresolved` is defined canonically in
 // `bun_js_parser::options` (lower tier) because the parser is the consumer
 // (`P::should_allow_unresolved_dynamic_specifier`). Re-export here so
 // `BundleOptions.allow_unresolved` and `Parser.Options.allow_unresolved` are
@@ -435,7 +435,7 @@ pub static NODE_BUILTINS_MAP: phf::Set<&'static [u8]> = phf::phf_set! {
 
 pub use bun_options_types::BundlePackage;
 
-// B-3 UNIFIED: was a local CYCLEBREAK dup of `bun_options_types::BundleEnums::ModuleType`.
+// Re-export of `bun_options_types::BundleEnums::ModuleType`.
 // Re-exported so `crate::options_impl::ModuleType` and `js_ast::parser::options::ModuleType`
 // (which also re-exports the BundleEnums def) are the *same* nominal type — kills the
 // `to_parser_module_type` shim in transpiler.rs.
@@ -445,7 +445,7 @@ pub use bun_options_types::BundleEnums::ModuleType;
 // canonical const map on the upstream enum.
 pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = ModuleType::LIST;
 
-// B-3 UNIFIED: was a local CYCLEBREAK dup of `bun_options_types::BundleEnums::Target`.
+// Re-export of `bun_options_types::BundleEnums::Target`.
 // Spec options.zig:379 has exactly ONE `Target`; re-export the canonical enum so
 // `BundleOptions.target`, `js_printer::Options.target`, the resolver, and css
 // targets all share one nominal type (kills the `to_bundle_enums_target` shim).
@@ -576,7 +576,7 @@ impl TargetExt for Target {
 pub use bun_options_types::Format;
 pub use bun_options_types::WindowsOptions;
 
-// B-3 UNIFIED: was a local CYCLEBREAK dup of `bun_options_types::BundleEnums::Loader`.
+// Re-export of `bun_options_types::BundleEnums::Loader`.
 // Spec options.zig:568 has exactly ONE `Loader`; re-export so the bundler's
 // `BundleOptions.loaders` and the resolver's `Path::loader()` operate on the
 // same nominal type.
@@ -1353,7 +1353,7 @@ pub mod jsx {
         pub use super::defaults as Defaults;
     }
 
-    // ── CYCLEBREAK conversions ────────────────────────────────────────────
+    // ── Pragma conversions ────────────────────────────────────────────────
     // `bun_resolver::tsconfig_json::options::jsx::Pragma` and this `Pragma`
     // are nominally distinct until the move-down to `bun_options_types`
     // lands (see resolver/tsconfig_json.rs:13). Field-wise copy.
@@ -1409,7 +1409,7 @@ pub mod jsx {
 
     impl From<Pragma> for bun_js_parser::options::JSX::Pragma {
         fn from(src: Pragma) -> Self {
-            // Structurally identical; see js_parser/parser.rs:49 CYCLEBREAK note.
+            // Structurally identical; see js_parser/parser.rs.
             use bun_js_parser::options::JSX as P;
             P::Pragma {
                 factory: src.factory,

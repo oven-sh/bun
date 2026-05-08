@@ -18,6 +18,7 @@ use std::io::Write as _;
 use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
+use crate::allocators::allocation_scope::BumpAllocatorExt as _;
 use bun_collections::{ArrayHashMap, AutoBitSet, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as core, Environment, Output};
 use bun_jsc::{
@@ -326,6 +327,8 @@ pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub magic: Magic,
+    /// No overhead in release builds.
+    pub allocation_scope: AllocationScope,
     /// Absolute path to project root directory. For the HMR
     /// runtime, its module IDs are strings relative to this.
     pub root: Box<[u8]>,
@@ -561,6 +564,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // exactly once before `assume_init()` below.
     unsafe {
         w!(magic, Magic::Valid);
+        w!(allocation_scope, AllocationScope::init_default());
         w!(root, Box::from(options.root.as_bytes()));
         w!(vm, std::ptr::from_ref::<VirtualMachine>(options.vm));
         w!(server, None);
@@ -1122,17 +1126,26 @@ impl Drop for DevServer {
 
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.
+
+        // allocation_scope dropped last automatically by field order.
+        // TODO(port): if AllocationScope::ENABLED, deinit happens via Drop.
     }
 }
 
+// `AllocationScope` lives in `crate::allocators::allocation_scope` (moved out of
+// `bun_alloc` because it pulls in `bun_core`/`bun_collections`).
+pub type AllocationScope = crate::allocators::allocation_scope::AllocationScope;
+/// Zig: `pub const DevAllocator = AllocationScope.Borrowed;`
+pub type DevAllocator<'a> =
+    crate::allocators::allocation_scope::Borrowed<'a, bun_alloc::StdAllocator>;
+
 impl DevServer {
-    /// Zig threaded a borrowed debug allocator handle through DevServer; in
-    /// the Rust port everything is `Box`/`Vec` on the global mimalloc, so this
-    /// just returns the default `StdAllocator`. Kept for the few call sites
-    /// that still want a `StdAllocator` handle.
-    #[inline]
     pub fn allocator(&self) -> bun_alloc::StdAllocator {
-        bun_alloc::StdAllocator::default()
+        self.allocation_scope.allocator()
+    }
+
+    pub fn dev_allocator(&self) -> DevAllocator<'_> {
+        self.allocation_scope.borrow()
     }
 }
 
@@ -1704,9 +1717,9 @@ fn on_memory_visualizer_corked(resp: AnyResponse) {
 }
 
 struct RequestEnsureRouteBundledCtx {
-    // PORT NOTE: erased to BackRef — the Zig code freely re-borrowed `dev`
+    // PORT NOTE: erased to raw pointer — the Zig code freely re-borrowed `dev`
     // across the ctx; a `&mut DevServer` field would alias the caller's borrow.
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: *mut DevServer,
     req: ReqOrSaved,
     resp: AnyResponse,
     kind: deferred_request::HandlerKind,
@@ -1720,9 +1733,7 @@ impl RequestEnsureRouteBundledCtx {
     /// outlives the ctx (the ctx is stack-local in the request handler scope).
     #[inline]
     fn dev_mut(&mut self) -> &mut DevServer {
-        // SAFETY: BackRef invariant — `dev` outlives the stack-local ctx;
-        // `&mut self` guarantees no other ctx-derived borrow is live.
-        unsafe { self.dev.get_mut() }
+        unsafe { &mut *self.dev }
     }
 
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
@@ -1806,8 +1817,11 @@ impl EnsureRouteCtx for RequestEnsureRouteBundledCtx {
     fn on_failure(&mut self) -> JsResult<()> { Self::on_failure(self) }
     fn on_plugin_error(&mut self) -> JsResult<()> { Self::on_plugin_error(self) }
     fn to_dev_response(&mut self) -> DevResponse<'_> { Self::to_dev_response(self) }
+    // SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
+    // construction and outlives the ctx (the ctx is stack-local in the request
+    // handler scope).
     fn dev(&mut self) -> &mut DevServer {
-        self.dev_mut()
+        unsafe { &mut *self.dev }
     }
     fn route_bundle_index(&self) -> route_bundle::Index { self.route_bundle_index }
 }
@@ -3143,7 +3157,10 @@ impl DevServer {
             );
 
             for removed in &self.incremental_result.failures_removed {
-                payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
+                payload.extend_from_slice(
+                    // SAFETY: encode() returns a #[repr(transparent)] u32 wrapper (@bitCast in Zig)
+                    &unsafe { ::core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
+                );
                 removed.deinit(self);
             }
 
@@ -3205,7 +3222,10 @@ impl DevServer {
             );
 
             for removed in &self.incremental_result.failures_removed {
-                payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
+                payload.extend_from_slice(
+                    // SAFETY: encode() returns a #[repr(transparent)] u32 wrapper (@bitCast in Zig)
+                    &unsafe { ::core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
+                );
                 removed.deinit(self);
             }
 
@@ -3830,6 +3850,8 @@ pub fn finalize_bundle(
         if let Some(_slice) = html.bundled_html_text.take() {
             // freed by Drop
         }
+        #[cfg(feature = "allocation_scope")]
+        dev.allocation_scope.assert_owned(compile_result_code);
         html.bundled_html_text = Some(compile_result_code.clone()); // TODO(port): ownership transfer
         html.script_injection_offset =
             Some(route_bundle::ByteOffset(*compile_result_offset));
@@ -3946,6 +3968,8 @@ pub fn finalize_bundle(
         let global = unsafe { &*(*dev.vm).global };
         let server_modules = if let Some(json) = source_map_json {
             // This memory will be owned by the `DevServerSourceProvider` in C++
+            #[cfg(feature = "allocation_scope")]
+            dev.allocation_scope.leak_slice(&json);
             let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
 
             match c::bake_load_server_hmr_patch_with_source_map(
@@ -4744,7 +4768,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: bun_ptr::BackRef::new_mut(dev),
+            dev: std::ptr::from_mut::<DevServer>(dev),
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::ServerHandler,
@@ -4783,7 +4807,7 @@ impl DevServer {
                 .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
                 .expect("oom");
             let mut ctx = RequestEnsureRouteBundledCtx {
-                dev: bun_ptr::BackRef::new_mut(self),
+                dev: std::ptr::from_mut::<DevServer>(self),
                 req: ReqOrSaved::Saved(saved_request),
                 resp,
                 kind: deferred_request::HandlerKind::ServerHandler,
@@ -4816,7 +4840,7 @@ impl DevServer {
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: bun_ptr::BackRef::new_mut(self),
+            dev: std::ptr::from_mut::<DevServer>(self),
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
@@ -5089,12 +5113,18 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
 
 impl DevServer {
     fn print_memory_line(&self) {
+        if !ALLOCATION_SCOPE_ENABLED {
+            return;
+        }
         if !bun_output::scope_is_visible!(DevServer) {
             return;
         }
+        let stats = self.allocation_scope.stats();
         Output::pretty_errorln(format_args!(
-            "<d>DevServer tracked {}, process: {}<r>",
+            "<d>DevServer tracked {}, measured: {} ({}), process: {}<r>",
             bun_core::fmt::size(self.memory_cost(), Default::default()),
+            stats.num_allocations,
+            bun_core::fmt::size(stats.total_memory_allocated, Default::default()),
             bun_core::fmt::size(sys::self_process_memory_usage().unwrap_or(0), Default::default()),
         ));
     }
@@ -5104,6 +5134,8 @@ impl DevServer {
 // are defined once in `crate::bake::dev_server` and re-exported here so the
 // Phase-A draft body and the keystone struct module agree on identity.
 pub use crate::bake::dev_server::FileKind;
+
+pub(crate) const ALLOCATION_SCOPE_ENABLED: bool = crate::allocators::allocation_scope::ENABLED;
 
 pub use crate::bake::dev_server::IncrementalResult;
 
@@ -5332,9 +5364,11 @@ impl DevServer {
             source_maps: cost.source_maps as u32,
             assets: cost.assets as u32,
             other: cost.other as u32,
-            // PORT NOTE: Zig populated this from a debug allocation-scope
-            // tracker; Rust ownership has no equivalent runtime counter.
-            devserver_tracked: 0,
+            devserver_tracked: if ALLOCATION_SCOPE_ENABLED {
+                self.allocation_scope.stats().total_memory_allocated as u32
+            } else {
+                0
+            },
             process_used: sys::self_process_memory_usage().unwrap_or(0) as u32,
             system_used: system_total.saturating_sub(crate::node::os::freemem()) as u32,
             system_total: system_total as u32,
@@ -6117,9 +6151,9 @@ impl DevServer {
 /// Problem statement documented on `SCRIPT_UNREF_PAYLOAD`
 /// Takes 8 bytes: The generation ID in hex.
 struct UnrefSourceMapRequest {
-    // BACKREF: DevServer outlives the request; BackRef avoids the `'static`
+    // BACKREF: DevServer outlives the request; raw ptr avoids the `'static`
     // bound on `BodyReaderHandler` that a borrowed `&mut DevServer` would violate.
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: *mut DevServer,
     body: uws::BodyReaderMixin<Self>, // TODO(port): BodyReaderMixin(@This(), "body", runWithBody, finalize)
 }
 
@@ -6143,11 +6177,11 @@ impl UnrefSourceMapRequest {
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
         let ctx = Box::new(UnrefSourceMapRequest {
-            dev: bun_ptr::BackRef::new_mut(dev),
+            dev: std::ptr::from_mut::<DevServer>(dev),
             body: uws::BodyReaderMixin::init(),
         });
         // SAFETY: dev outlives the request
-        unsafe { (*ctx.dev.as_ptr()).server.as_mut().unwrap().on_pending_request() };
+        unsafe { (*ctx.dev).server.as_mut().unwrap().on_pending_request() };
         let raw = Box::into_raw(ctx);
         uws::BodyReaderMixin::<Self>::read_body(raw, resp);
     }
@@ -6157,9 +6191,9 @@ impl UnrefSourceMapRequest {
     unsafe fn finalize(ctx: *mut UnrefSourceMapRequest) {
         // SAFETY: caller contract — ctx is the original Box allocation; no
         // live borrow of *ctx exists.
-        let mut ctx = unsafe { Box::from_raw(ctx) };
-        // SAFETY: dev outlives the request; sole `&mut DevServer` on the JS thread.
-        unsafe { ctx.dev.get_mut() }.server.as_mut().unwrap().on_static_request_complete();
+        let ctx = unsafe { Box::from_raw(ctx) };
+        // SAFETY: dev outlives the request
+        unsafe { (*ctx.dev).server.as_mut().unwrap().on_static_request_complete() };
         drop(ctx);
     }
 
@@ -6180,7 +6214,7 @@ impl UnrefSourceMapRequest {
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);
         // SAFETY: ctx is live (caller contract); dev outlives the request.
-        let _ = unsafe { (*ctx).dev.get_mut() }
+        let _ = unsafe { &mut *(*ctx).dev }
             .source_maps
             .remove_or_upgrade_weak_ref(source_map_key, source_map_store::RemoveOrUpgradeMode::Remove);
         r.write_status(b"204 No Content");
@@ -6240,9 +6274,9 @@ pub fn get_deinit_count_for_testing() -> usize {
 }
 
 struct PromiseEnsureRouteBundledCtx<'a> {
-    // PORT NOTE: BackRef — the Zig code freely re-borrowed `dev` across the ctx
+    // PORT NOTE: raw ptr — the Zig code freely re-borrowed `dev` across the ctx
     // while also passing `&mut dev` into `ensure_route_is_bundled`.
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: *mut DevServer,
     global: &'a JSGlobalObject,
     promise: Option<jsc::JSPromiseStrong>,
     p: Option<*mut jsc::JSPromise>, // BORROW_FIELD: from sibling self.promise
@@ -6252,12 +6286,11 @@ struct PromiseEnsureRouteBundledCtx<'a> {
 
 impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     /// Reborrow the erased `dev` pointer.
-    /// `self.dev` is set from a live `&mut DevServer` at ctx construction;
-    /// the ctx is stack-local in the request handler scope.
+    /// SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
+    /// construction; the ctx is stack-local in the request handler scope.
     #[inline]
     fn dev_mut(&mut self) -> &mut DevServer {
-        // SAFETY: BackRef invariant — `dev` outlives the stack-local ctx.
-        unsafe { self.dev.get_mut() }
+        unsafe { &mut *self.dev }
     }
 
     fn ensure_promise(&mut self) -> jsc::JSPromiseStrong {
@@ -6396,7 +6429,9 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
         PromiseEnsureRouteBundledCtx::to_dev_response(self)
     }
     fn dev(&mut self) -> &mut DevServer {
-        self.dev_mut()
+        // SAFETY: `self.dev` set from a live `&mut DevServer` at ctx construction;
+        // ctx is stack-local in the request handler scope.
+        unsafe { &mut *self.dev }
     }
     fn route_bundle_index(&self) -> route_bundle::Index {
         self.route_bundle_index
@@ -6457,8 +6492,9 @@ fn bundle_new_route_js_function_impl(
     let route_bundle_index = dev
         .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
         .expect("oom");
+    let dev_ptr: *mut DevServer = dev;
     let mut ctx = PromiseEnsureRouteBundledCtx {
-        dev: bun_ptr::BackRef::new_mut(dev),
+        dev: dev_ptr,
         global,
         promise: None,
         p: None,

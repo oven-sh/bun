@@ -1716,7 +1716,7 @@ impl JSTranspiler {
         };
 
         // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
-        // resolver-side `cache::JavaScript` is a fieldless CYCLEBREAK shell with
+        // resolver-side `cache::JavaScript` is a fieldless shell with
         // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
         // Both are stateless unit structs, so calling the bundler-crate one
         // directly is equivalent.

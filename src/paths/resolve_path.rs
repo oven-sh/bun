@@ -6,7 +6,6 @@ use crate::{
 };
 use bun_core::{strings, ZStr, WStr};
 use bun_alloc::{is_slice_in_buffer, is_slice_in_buffer_t};
-// MOVE_DOWN(CYCLEBREAK): bun_resolver::fs → crate::fs (move-in pass adds the module).
 use crate::fs as Fs;
 
 // PORT NOTE: Zig `threadlocal var` buffers. Stored in `UnsafeCell` (not `RefCell`)

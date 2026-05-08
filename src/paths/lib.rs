@@ -248,7 +248,6 @@ pub type OSPathChar = u16;
 pub type OSPathChar = u8;
 
 // Zig: `[:0]const OSPathChar`. Callers borrow as `&OSPathSliceZ`.
-// MOVE_DOWN(CYCLEBREAK): ZStr/WStr live in bun_core (T0).
 #[cfg(windows)]
 pub type OSPathSliceZ = bun_core::WStr;
 #[cfg(not(windows))]
@@ -347,7 +346,7 @@ pub fn dirname(p: &[u8]) -> Option<&[u8]> {
 pub use env_path::{EnvPath, EnvPathInput, PathComponentBuilder};
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(CYCLEBREAK): Windows path-prefix constants — relocated from
+// Windows path-prefix constants — relocated from
 // `bun_sys::windows` (src/sys/windows/windows.zig) so tier-1 callers
 // (`bun_str::immutable::paths`, this crate's `Path.rs`) can resolve them
 // without depending upward on `bun_sys`.
@@ -380,7 +379,7 @@ pub mod windows {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(CYCLEBREAK): `bun_resolver::is_package_path` /
+// `is_package_path` /
 // `is_package_path_not_absolute` — pure path predicates with no resolver
 // state. Source: src/resolver/resolver.zig:6-26. Pulled down so `bun_install`
 // and `bun_js_parser` can drop their `bun_resolver` edge.
@@ -420,7 +419,7 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE_DOWN(CYCLEBREAK): `bun_resolver::fs` — TYPE_ONLY subset.
+// `fs` — TYPE_ONLY subset of resolver fs.
 // Source: src/resolver/fs.zig.
 //
 // The full `FileSystem` (DirEntry cache, RealFS impl, FilenameStore/DirnameStore)

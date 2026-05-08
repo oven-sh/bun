@@ -32,7 +32,7 @@ pub struct FileResponseStream {
     // raw so the struct stays `'static` for the uWS callback userdata slot.
     vm: *const VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     fd: Fd,
     auto_close: bool,
@@ -613,7 +613,7 @@ impl bun_io::BufferedReaderParent for FileResponseStream {
             .cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: `this` non-null/live per trait contract; `event_loop_handle`

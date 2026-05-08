@@ -1,5 +1,3 @@
-// CYCLEBREAK: bun_bundler::cache → JsonCache vtable (see below).
-// CYCLEBREAK: bun_bundler::options::jsx::Pragma → local structural def (see `options` mod).
 use bun_collections::VecExt;
 use bun_collections::ArrayHashMap;
 use bun_interchange::json_parser;
@@ -9,9 +7,8 @@ use bun_logger as logger;
 use bun_string::strings;
 use enumset::{EnumSet, EnumSetType};
 
-// CYCLEBREAK: `bun_bundler::options::jsx::Pragma` is TYPE_ONLY but lives in a
-// higher-tier crate. Per CYCLEBREAK.md the type def belongs in a lower tier;
-// until the move-down lands, the resolver carries the structural definition it
+// `bun_bundler::options::jsx::Pragma` lives in a higher-tier crate, so the
+// resolver carries the structural definition it
 // needs (the five fields read/written by `merge_jsx` + `parse`). bun_bundler
 // re-exports this on its side once the move-in pass runs.
 // TODO(b0): bun_bundler::options::jsx::Pragma arrives from move-in (or moves to bun_options_types).
@@ -202,7 +199,7 @@ impl JsonCache {
     /// struct (cache.zig:283), which is fully functional on first use because
     /// its methods statically forward to `json_parser`. The resolver crate
     /// reaches `json_parser` via `bun_interchange` (lower-tier; already a
-    /// transitive dep through `bun_js_parser`), so no CYCLEBREAK is needed here
+    /// transitive dep through `bun_js_parser`), so no cycle-break is needed here
     /// — only the `bun_bundler::cache::Json` *type* sat in a higher tier, and
     /// that is what the vtable erasure replaces. The bundler may still install
     /// its own vtable (to share an arena), but it is no longer required for
@@ -505,7 +502,7 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    // CYCLEBREAK: `json_cache` is the erased `JsonCache` vtable handle (was
+    // `json_cache` is the erased `JsonCache` vtable handle (was
     // `&mut bun_bundler::cache::Json`).
     // PORT NOTE: Zig `Expr.asString(allocator)` allocates and never frees (the
     // resolver owns the JSON AST for its lifetime). The live Rust `Expr` query

@@ -40,8 +40,8 @@ unsafe fn bitwise_copy<T>(src: &T) -> T {
 
 /// `ImportRecord.path` is `bun_paths::fs::Path<'static>`; `CssImportOrderKind::ExternalPath`
 /// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
-/// ports of the same Zig `Fs.Path` struct (CYCLEBREAK TYPE_ONLY mirrors). Re-construct
-/// field-by-field (non-`repr(C)`, layout not guaranteed identical).
+/// ports of the same Zig `Fs.Path` struct. Re-construct
+/// field-by-field rather than transmute non-`repr(C)` structs.
 #[inline]
 fn fs_path_from_import_record(p: &bun_paths::fs::Path<'static>) -> bun_fs::Path<'static> {
     bun_fs::Path {
@@ -310,7 +310,7 @@ pub fn find_imported_files_in_css_order<'a>(
             self.order.push(CssImportOrder {
                 // PORT NOTE: `crate::Index` (= `bun_options_types::Index`) and the
                 // `bun_js_parser::Index` carried by `CssImportOrderKind::SourceIndex`
-                // are CYCLEBREAK TYPE_ONLY mirrors of the same Zig `bun.ast.Index`;
+                // are TYPE_ONLY mirrors of the same Zig `bun.ast.Index`;
                 // both are `#[repr(transparent)]` over `u32`.
                 kind: CssImportOrderKind::SourceIndex(AstIndex { value: source_index.get() }),
                 // PORT NOTE: Zig `wrapping_conditions.*` is a bitwise struct copy.
@@ -955,7 +955,7 @@ fn debug_css_order_impl(
                 parse_graph.input_files.items_unique_key_for_additional_file(),
             )
         };
-        // CYCLEBREAK: `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
+        // `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
         // `this.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s
         // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
         // pointers — same layout, used read-only by the printer.

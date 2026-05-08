@@ -66,7 +66,7 @@ pub struct WindowsNamedPipe {
     // create a timeout version that doesn't need the jsc VM
     pub vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
 
     // TODO(port): `bun.io.StreamingWriter(WindowsNamedPipe, .{ onClose, onWritable, onError, onWrite })`
@@ -1026,7 +1026,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see on_write. Shared-only read of `event_loop_handle`.
-        // CYCLEBREAK: opaque `*mut c_void` round-tripped through io-layer
+        // opaque `*mut c_void` round-tripped through io-layer
         // vtable; pass the address of the stored `bun_jsc::EventLoopHandle` so
         // the (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         bun_io::EventLoopHandle(unsafe {

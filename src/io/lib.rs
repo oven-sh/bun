@@ -69,8 +69,6 @@ use core::mem::offset_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-// CYCLEBREAK(MOVE_DOWN): `Waker` moved from bun_aio (T3) into io (T2). See
-// the `crate::waker` module body below.
 pub use crate::waker::Waker;
 pub use crate::closer::Closer;
 use bun_sys::{self as sys, Fd, FdExt, E};
@@ -1455,14 +1453,14 @@ impl FilePoll {
     }
 }
 
-/// CYCLEBREAK(TYPE_ONLY): moved from `bun_runtime::webcore::PathOrFileDescriptor`.
+/// Moved from `bun_runtime::webcore::PathOrFileDescriptor`.
 /// Owned here so `open_for_writing` has no upward dep; runtime re-exports it.
 pub enum PathOrFileDescriptor {
     Path(bun_string::PathString),
     Fd(Fd),
 }
 
-// ─── Waker (CYCLEBREAK MOVE_DOWN from bun_aio) ────────────────────────────────
+// ─── Waker (moved from bun_aio) ──────────────────────────────────────────────
 //
 // Ported from src/aio/posix_event_loop.zig:1272-1384 (LinuxWaker / KEventWaker)
 // and src/aio/windows_event_loop.zig:361-383 (Windows Waker). io (T2) owns the
@@ -1654,7 +1652,7 @@ pub mod waker {
     }
 }
 
-// ─── Closer (CYCLEBREAK MOVE_DOWN from bun_aio) ───────────────────────────────
+// ─── Closer (moved from bun_aio) ─────────────────────────────────────────────
 //
 // Ported from src/aio/posix_event_loop.zig:1386-1406 and
 // src/aio/windows_event_loop.zig:385-411. Schedules an async fd close on the

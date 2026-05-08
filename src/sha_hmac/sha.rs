@@ -286,7 +286,7 @@ pub mod evp {
     new_evp!(Blake2, 256 / 8, EVP_blake2b256);
 
     // ──────────────────────────────────────────────────────────────────────
-    // CYCLEBREAK MOVE_DOWN: bun_jsc::api::bun::crypto::evp::Algorithm
+    // evp::Algorithm — moved from bun_jsc::api::bun::crypto.
     //   source: src/runtime/crypto/EVP.zig (`pub const Algorithm = enum { ... }`)
     //   moved here so `csrf` and `sha_hmac::hmac` can name it without
     //   depending upward on bun_jsc/bun_runtime.

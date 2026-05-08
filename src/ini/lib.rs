@@ -1815,7 +1815,7 @@ use bun_install_types::NodeLinker::{
 /// Port of `PnpmMatcher.fromExpr` (src/install/PnpmMatcher.zig) operating on
 /// `bun_js_parser::Expr` instead of the lower-tier `bun_logger::ast::Expr`.
 ///
-/// CYCLEBREAK: `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
+/// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
 /// and the two `ExprData` enums are distinct (closed Rust enums; only the leaf
 /// `E::*` payloads are shared). `bun_ini` depends on both, so the T4-typed
 /// overload lives here. The matcher construction is delegated to the shared

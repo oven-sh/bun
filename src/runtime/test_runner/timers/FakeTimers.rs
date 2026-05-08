@@ -217,7 +217,7 @@ impl FakeTimers {
             debug_assert!(now.eql(&prev.unwrap()) || now.greater(&prev.unwrap()));
         }
         CURRENT_TIME.set(global, &now, None);
-        // SAFETY: `next` is live; `fire` takes erased `*mut ()` for the VM (CYCLEBREAK).
+        // SAFETY: `next` is live; `fire` takes erased `*mut ()` for the VM.
         unsafe { (*next).fire(&now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
 
         self.assert_valid(AssertMode::Unlocked);

@@ -563,7 +563,7 @@ impl<'a> BufferedWriter<'a> {
         &mut self,
         bytes: &mut dyn EStringRef,
     ) -> Result<usize, AllocError> {
-        // CYCLEBREAK(b0): was `&mut bun_js_parser::E::String`; now vtable dispatch.
+        // was `&mut bun_js_parser::E::String`; now vtable dispatch.
         if bytes.is_utf8() {
             return self.write_all(bytes.slice());
         }
@@ -617,7 +617,7 @@ impl<'a> BufferedWriter<'a> {
         &mut self,
         str: &mut dyn EStringRef,
     ) -> Result<(), AllocError> {
-        // CYCLEBREAK(b0): was `&mut bun_js_parser::E::String`; now vtable dispatch.
+        // was `&mut bun_js_parser::E::String`; now vtable dispatch.
         if str.is_utf8() {
             self.write_html_attribute_value(str.slice())?;
             return Ok(());

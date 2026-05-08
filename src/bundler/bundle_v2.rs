@@ -90,8 +90,8 @@ pub struct BundleV2<'a> {
     pub bun_watcher: Option<dispatch::WatcherHandle>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle>,
-    /// CYCLEBREAK GENUINE: erased `bake::DevServer`. Populated from
-    /// `transpiler.options.dev_server` + the runtime-registered vtable at
+    /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
+    /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
     pub dev_server: Option<dispatch::DevServerHandle>,
     /// In-memory files that can be used as entrypoints or imported.
@@ -1279,7 +1279,7 @@ pub mod api {
     }
 }
 
-/// CYCLEBREAK(b0) TYPE_ONLY: `SavedFile` is a unit struct in Zig
+/// `SavedFile` is a unit struct in Zig
 /// (src/bundler_jsc/output_file_jsc.zig:4) — its only member is `toJS`, which
 /// is JSC-bound and stays in T6. The bundler stores it as an `OutputFile` value
 /// tag, so a unit struct here is sufficient.
@@ -5141,7 +5141,7 @@ pub struct ResolveImportRecordResult {
     pub last_error: Option<Error>,
 }
 
-// CYCLEBREAK TYPE_ONLY: `bun_paths::fs::Path` / `bun_resolver::fs::Path` /
+// `bun_paths::fs::Path` / `bun_resolver::fs::Path` /
 // `bun_logger::fs::Path` are field-identical mirrors of the same Zig `Fs.Path`.
 // Re-construct field-by-field (non-`repr(C)`, layout not guaranteed identical).
 // SAFETY: Phase-A lifetime erasure — backing slices are arena/BSSStringList-owned

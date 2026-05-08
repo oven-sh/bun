@@ -2736,8 +2736,6 @@ impl<'a> Path<'a> {
             name_to_use = &self.text[node_modules + 14..];
         }
 
-        // CYCLEBREAK: was `bun_bundler::options::jsx::Pragma::parse_package_name` —
-        // pure byte-slice helper, inlined as a free fn to break the resolver→bundler edge.
         let pkgname = crate::fs::parse_package_name(name_to_use);
         if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
             return None;
@@ -2746,8 +2744,6 @@ impl<'a> Path<'a> {
         Some(pkgname)
     }
 
-    // CYCLEBREAK: was `bun_bundler::options::{Loader, LoaderHashTable}` — both moved
-    // down to `bun_options_types::BundleEnums` (TYPE_ONLY per CYCLEBREAK.md).
     pub fn loader(
         &self,
         loaders: &bun_options_types::BundleEnums::LoaderHashTable,

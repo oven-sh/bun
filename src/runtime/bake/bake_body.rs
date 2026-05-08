@@ -1151,7 +1151,7 @@ impl Framework {
     /// `bun_bundler::bake_types::Framework` view. Spec bake.zig stores the
     /// `bake.Framework` pointer directly on `BundleOptions.framework`; in the
     /// Rust port the bundler crate cannot name `bun_runtime::bake::Framework`
-    /// (CYCLEBREAK), so it carries a TYPE_ONLY subset that we populate here.
+    /// so it carries a TYPE_ONLY subset that we populate here.
     pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();

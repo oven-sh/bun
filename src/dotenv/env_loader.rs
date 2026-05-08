@@ -14,7 +14,6 @@ use bun_url::URL;
 use bun_which::which;
 use bun_wyhash;
 
-// MOVE_DOWN(b0): bun_analytics::features → bun_core (CYCLEBREAK). Re-import at lower tier.
 use bun_core::analytics;
 
 #[derive(Copy, Clone, PartialEq, Eq)]

@@ -20,7 +20,7 @@ pub mod jsc {
 }
 
 // ─── un-gated in B-2 (heavy submodules re-gated inside each file) ────────
-pub mod allocators; // MOVED from bun_alloc (CYCLEBREAK: tier-0 → bun_core/sys/runtime back-edge)
+pub mod allocators; // moved from bun_alloc (tier-0 → bun_core/sys/runtime back-edge)
 pub mod crypto;
 pub mod server;
 pub mod ffi;

@@ -144,8 +144,8 @@ pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// VLQ — MOVE_DOWN from bun_sourcemap (CYCLEBREAK: crash_handler → bun_base64::VLQ).
-// Ground truth: src/sourcemap/VLQ.zig. Lives here because the encoding is pure
+// VLQ — moved from bun_sourcemap. Ground truth: src/sourcemap/VLQ.zig.
+// Lives here because the encoding is pure
 // base64-alphabet bit-packing with zero sourcemap-specific deps; bun_sourcemap
 // re-exports this for its own consumers.
 // ──────────────────────────────────────────────────────────────────────────
@@ -179,9 +179,7 @@ pub mod vlq {
         }
 
         // TODO(port): Zig took `writer: anytype`. `std::io::Write` is the Phase-A
-        // byte-sink trait but is itself slated to MOVE_DOWN into bun_core
-        // (CYCLEBREAK MOVE_DOWN list). Re-point this bound once that lands so
-        // base64 stays a tier-0 leaf with no bun_io dep.
+        // byte-sink trait; base64 stays a tier-0 leaf with no bun_io dep.
         pub fn write_to(self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
             writer.write_all(&self.bytes[0..self.len as usize])?;
             Ok(())

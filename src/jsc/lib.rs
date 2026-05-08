@@ -447,7 +447,7 @@ pub mod garbage_collection_controller;
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
     // Spec jsc.zig:251 — `bun.analytics.Features.jsc += 1`. Counter lives in
-    // `bun_core` (MOVE_DOWN per CYCLEBREAK) so this crate doesn't depend on
+    // `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();

@@ -48,7 +48,7 @@ pub trait RuntimeTranspilerCacheExt {
     fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]);
     /// Erase a live `*mut Self` into the js_printer dispatch handle so
     /// `js_printer::Options.runtime_transpiler_cache` can call back without
-    /// naming this crate. See CYCLEBREAK.md §Dispatch.
+    /// naming this crate. See PORTING.md §Dispatch.
     fn as_printer_ref(this: core::ptr::NonNull<Self>) -> bun_js_printer::RuntimeTranspilerCacheRef;
 }
 
@@ -244,7 +244,7 @@ impl Default for Fs {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK MOVE_DOWN: `Entry`/`Contents`/`ExternalFreeFunction` are defined
+// `Entry`/`Contents`/`ExternalFreeFunction` are defined
 // canonically in `bun_resolver::cache` (lower tier) because `Resolver.caches`
 // is typed by them and the resolver crate cannot depend on the bundler.
 // Re-export here so `crate::cache::Entry` and `bun_resolver::cache::Entry`
@@ -368,7 +368,7 @@ impl Fs {
     /// PORT NOTE: `comptime use_shared_buffer` is taken at runtime — the live
     /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
     /// `Transpiler::parse`) pass a value computed from runtime state, and the
-    /// resolver's CYCLEBREAK `FsCache` forward-decl already pinned this shape.
+    /// resolver's `FsCache` forward-decl already pinned this shape.
     /// PERF(port): re-monomorphize once both callers stabilize.
     ///
     /// PORT NOTE: `arena` is dropped — Zig forwarded it to
@@ -666,7 +666,7 @@ pub struct Json {
     /// (cache.zig:296-313) and the comment at the call site (package_json.zig
     /// "DirInfo cache is reused globally / So we cannot free these") makes the
     /// lifetime explicitly process-long. The vtable signature drops the
-    /// arena arg (CYCLEBREAK §Dispatch), so the bundler-side `Json` owns
+    /// arena arg (§Dispatch), so the bundler-side `Json` owns
     /// the arena instead and the thunks below borrow it via `*mut ()`.
     bump: Bump,
 }

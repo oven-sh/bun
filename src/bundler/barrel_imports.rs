@@ -253,7 +253,7 @@ fn apply_barrel_optimization_impl(
         // ensuring it gets re-parsed on every incremental build. This is needed
         // because the set of needed exports can change when importing files change.
         if let Some(dev) = dev_handle {
-            // CYCLEBREAK: barrel_files_with_deferrals get_or_put + key dupe encapsulated
+            // barrel_files_with_deferrals get_or_put + key dupe encapsulated
             // in DevServerVTable. PERF(port): was direct hashmap access.
             unsafe {
                 (dev.vtable.register_barrel_with_deferrals)(dev.owner, result.source.path.text)

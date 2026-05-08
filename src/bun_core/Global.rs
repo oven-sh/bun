@@ -56,7 +56,7 @@ pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<c_void> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 // ──────────────────────────────────────────────────────────────────────────
-// MOVE-IN: crash_handler primitives (CYCLEBREAK §→core, from ptr/safety/collections/sys)
+// crash_handler primitives (moved from ptr/safety/collections/sys)
 // StoredTrace + dump_stack_trace + panicking state are pure data + libc; the
 // platform-specific symbolication / SEH bits stay in bun_crash_handler (T>core).
 // ──────────────────────────────────────────────────────────────────────────
@@ -732,10 +732,8 @@ pub fn crash() -> ! {
     exit(1);
 }
 
-// CYCLEBREAK §bun_core GENUINE: `BunInfo` (struct + `generate()`) depends on
-// `bun_analytics::generate_header::Platform`, `bun_js_parser::Expr`, and
-// `bun_interchange::json::to_ast` — all higher-tier than `bun_core`. It now
-// lives at `bun_runtime::server::BunInfo`. Only the version constants below
+// `BunInfo` (struct + `generate()`) lives at `bun_runtime::server::BunInfo`
+// because it depends on analytics/js_parser/interchange — all higher-tier. Only the version constants below
 // are needed at this tier.
 
 pub const user_agent: &str = concatcp!("Bun/", package_json_version);

@@ -451,7 +451,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for WorkerPipe {
         unsafe { (*(*(*this).worker).coord).vm.uv_loop() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: worker/coord backrefs valid for pipe lifetime; the

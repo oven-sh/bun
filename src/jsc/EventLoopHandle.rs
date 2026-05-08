@@ -1,7 +1,7 @@
 //! `jsc.EventLoopHandle` — non-owning reference to either the JS event loop or
 //! the mini event loop.
 //!
-//! LAYERING (CYCLEBREAK): the Zig spec (`src/jsc/EventLoopHandle.zig`) lives
+//! LAYERING: the Zig spec (`src/jsc/EventLoopHandle.zig`) lives
 //! under `jsc` and reaches freely into `jsc.EventLoop`, `jsc.VirtualMachine`,
 //! and `bun_runtime::webcore::Blob::Store`. In Rust that is a hard dep cycle:
 //! `bun_runtime → bun_jsc`, and many tier-≤4 crates (`bun_install`,

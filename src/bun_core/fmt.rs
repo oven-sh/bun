@@ -12,7 +12,7 @@ use crate::output as Output;
 const SHA512_DIGEST: usize = 64;
 
 // ════════════════════════════════════════════════════════════════════════════
-// MOVE-IN: strings / js_lexer / js_printer minimal subsets (CYCLEBREAK §→core)
+// strings / js_lexer / js_printer minimal subsets.
 // Only the free functions fmt.rs/output.rs actually call. The full modules
 // (SIMD search, codepoint tables, JSON printer) stay in bun_str / bun_js_parser
 // which add `pub use bun_core::strings::*` and extend with the heavy bits.

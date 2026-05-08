@@ -308,7 +308,7 @@ pub use cache::Set as Cache;
 pub use cache::{RuntimeTranspilerCache, RuntimeTranspilerCacheExt};
 
 // ──────────────────────────────────────────────────────────────────────────
-// CYCLEBREAK(b0) TYPE_ONLY: re-export the canonical `bake_types` defs from
+// Re-export the canonical `bake_types` defs from
 // `bundle_v2` so there is exactly ONE nominal `Side`/`Graph`/`Framework` etc.
 // across the crate (the previous inline copy here diverged and produced
 // "expected `bake_types::Graph`, found `bake_types::Graph`" errors).
@@ -316,7 +316,7 @@ pub use cache::{RuntimeTranspilerCache, RuntimeTranspilerCacheExt};
 pub use bundle_v2::bake_types;
 
 // ──────────────────────────────────────────────────────────────────────────
-// CYCLEBREAK(b0) §Dispatch: re-export the canonical `dispatch` module from
+// Re-export the canonical `dispatch` module from
 // `bundle_v2` (full vtable slot set) so there is one `DevServerHandle` type.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bundle_v2::dispatch;

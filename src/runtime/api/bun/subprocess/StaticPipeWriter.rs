@@ -167,10 +167,10 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsBufferedWriterParen
 }
 
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
-    /// CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the
-    /// io-layer `FilePollVTable` round-trips back to the runtime. We pass the
-    /// address of the stored `bun_jsc::EventLoopHandle` so the (runtime-registered)
-    /// vtable can recover it.
+    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
+    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
+    /// the stored `bun_jsc::EventLoopHandle` so the (runtime-registered) vtable
+    /// can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for

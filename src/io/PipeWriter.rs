@@ -13,8 +13,6 @@ use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::{self as sys, Fd};
 
-// CYCLEBREAK: FilePoll/EventLoopHandle are opaque vtable-backed handles in io
-// (T2); concrete types live in bun_aio (T3) / bun_jsc (T6).
 use crate::{EventLoopHandle, FilePoll, FilePollFlag, FilePollKind};
 
 use crate::pipes::{FileType, PollOrFd};
@@ -598,7 +596,6 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    // CYCLEBREAK(TYPE_ONLY): bun_uws::Loop → bun_uws_sys::Loop (T0).
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;

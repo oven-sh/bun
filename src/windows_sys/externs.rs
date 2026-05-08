@@ -1,6 +1,6 @@
 //! Raw Win32 extern fn declarations + tier-0 Win32 typedefs split from
 //! sys/windows/windows.zig. `bun_sys::windows` re-exports FROM here (see
-//! CYCLEBREAK.md). This crate is a tier-0 leaf: it depends on nothing above
+//! the layering doc). This crate is a tier-0 leaf: it depends on nothing above
 //! `libuv_sys`.
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
@@ -944,7 +944,7 @@ impl Win32Error {
     // NOTE: `toSystemErrno()` is intentionally NOT defined here — it returns
     // `errno::SystemErrno`, a higher-tier type. The mapping lives in
     // `errno::SystemErrno::init_win32_error`; callers in `errno` should invoke
-    // that directly (CYCLEBREAK: T0 must not depend on T1).
+    // that directly (T0 must not depend on T1).
 }
 
 pub type LPDWORD = *mut DWORD;

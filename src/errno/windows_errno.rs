@@ -2,11 +2,9 @@
 
 use core::ffi::c_int;
 
-// CYCLEBREAK: `bun_sys::windows` types moved DOWN to leaf crates so `bun_errno`
-// stays cycle-free. `uv::UV_E*` constants come from `bun_libuv_sys` (leaf);
+// `uv::UV_E*` constants come from `bun_libuv_sys` (leaf);
 // `Win32Error` / `NTSTATUS` / the NTSTATUS→errno mapper live locally in this
-// module (their only external use was via `bun_sys::SystemErrno::init`, which
-// is defined right here).
+// module (their only external use is via `SystemErrno::init`, defined here).
 use bun_libuv_sys as uv;
 pub use self::windows::{Win32Error, NTSTATUS};
 

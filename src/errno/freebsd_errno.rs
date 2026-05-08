@@ -1,4 +1,4 @@
-// CYCLEBREAK: bun_sys::posix MOVE_DOWN → errno (this crate). Move-in pass lands `crate::posix`.
+// posix types live in `crate::posix` (moved from bun_sys).
 pub use crate::posix::mode_t as Mode;
 pub use crate::posix::E;
 pub use crate::posix::S;
@@ -337,7 +337,6 @@ macro_rules! impl_get_errno_libc {
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    // CYCLEBREAK: bun_sys::c::_errno MOVE_DOWN → crate::posix (landed)
                     return E::from_raw(crate::posix::errno() as u16);
                 }
                 E::SUCCESS

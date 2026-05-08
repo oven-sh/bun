@@ -1188,7 +1188,7 @@ impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
     }
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
         // SAFETY: as above. Erase `&AnyEventLoop` → opaque handle (see
-        // CYCLEBREAK note on `bun_io::EventLoopHandle`).
+        // note on `bun_io::EventLoopHandle`).
         unsafe {
             EventLoopHandle(
                 std::ptr::from_ref::<AnyEventLoop<'static>>((*this).event_loop()).cast_mut().cast::<c_void>(),

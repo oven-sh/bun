@@ -268,7 +268,7 @@ pub mod fs {
     }
 }
 
-// TYPE_ONLY (CYCLEBREAK §logger): moved-in locally so the import drop doesn't dangle.
+// Canonical Index — moved-in locally.
 // Canonical definition is here now; bun_js_parser re-exports `bun_logger::Index`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -318,7 +318,7 @@ pub enum ImportKind {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Ref / Symbol — MOVE_DOWN from bun_js_parser::ast (T4→T2, CYCLEBREAK §css/§ini).
+// Ref / Symbol — moved from bun_js_parser::ast.
 //
 // Canonical definitions live here now; bun_js_parser re-exports
 // `pub use bun_logger::{Ref, Symbol, SymbolKind, ImportItemStatus, NamespaceAlias, symbol};`.
@@ -1909,7 +1909,7 @@ impl Default for Range {
     }
 }
 
-/// CYCLEBREAK(b0) MOVE_DOWN: was `bun_js_parser::lexer::rangeOfIdentifier`.
+/// Was `bun_js_parser::lexer::rangeOfIdentifier`.
 /// Moved into logger to break logger→js_parser. Mirrors lexer.zig:3113-3148.
 /// TODO(b0-move-in): full Unicode `isIdentifierStart/Continue` tables — currently
 /// ASCII + `#`/`\` only; non-ASCII identifiers get a Range with len up to the
@@ -3164,7 +3164,6 @@ impl Source {
     }
 
     pub fn range_of_identifier(&self, loc: Loc) -> Range {
-        // CYCLEBREAK(b0): MOVE_DOWN bun_js_parser::lexer::range_of_identifier → logger.
         // Local impl mirrors src/js_parser/lexer.zig:range_of_identifier — scan from `loc`
         // while bytes are JS identifier-part.
         range_of_identifier(&self.contents, loc)
@@ -3501,7 +3500,7 @@ impl FileSourceExt for bun_sys::Fd {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// js_ast — MOVE_DOWN from bun_js_parser::ast (T4→T2, CYCLEBREAK §interchange).
+// js_ast — moved from bun_js_parser::ast.
 // Real value-shaped AST in `js_ast.rs`; see that file's module doc.
 // ───────────────────────────────────────────────────────────────────────────
 

@@ -20,7 +20,7 @@
 #![warn(unreachable_pub)]
 extern crate bun_string as bun_str;
 
-// ───── json_lexer (CYCLEBREAK) ────────────────────────────────────────────
+// ───── json_lexer ─────────────────────────────────────────────────────────
 // JSON-only subset of `bun_js_parser::js_lexer`, sliced from
 // `src/js_parser/lexer.zig` with `is_json = true` arms taken. Breaks the
 // GENUINE T4 cycle (`bun_js_parser` → `bun_interchange` → `bun_js_parser`)

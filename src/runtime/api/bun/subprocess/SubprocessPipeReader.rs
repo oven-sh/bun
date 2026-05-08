@@ -39,7 +39,7 @@ pub struct PipeReader {
     // TODO(port): lifetime — long-lived borrow of the VM's event loop
     pub event_loop: NonNull<EventLoop>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (CYCLEBREAK: `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
     /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
     pub ref_count: RefCount<PipeReader>,
@@ -442,7 +442,7 @@ impl BufferedReaderParent for PipeReader {
         unsafe { (*this).loop_().cast() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // `bun_io::EventLoopHandle` is opaque; pass
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: `this` is non-null/live per trait contract; `event_loop_handle`

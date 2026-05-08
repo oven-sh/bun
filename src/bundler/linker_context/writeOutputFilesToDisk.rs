@@ -22,7 +22,6 @@ use crate::LinkerContext;
 use crate::linker_context_mod::LinkerCtx;
 use crate::linker_context::output_file_list_builder::OutputFileList;
 
-// CYCLEBREAK MOVE_DOWN: write_file_with_path_buffer → bun_sys.
 // TODO(b0): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
 use bun_sys::{
     write_file_with_path_buffer, FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData,

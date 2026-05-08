@@ -63,7 +63,7 @@ fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<(u32, u32)> {
     Some((off, len))
 }
 
-// ── route_param (TYPE_ONLY move-down from bun_router, see CYCLEBREAK.md) ──
+// ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
     // PORT NOTE: name/value borrow from the route template + the live request
     // path; lifetime-generic so `bun_router` (the only producer) can fill them
@@ -1352,7 +1352,7 @@ impl PercentEncoding {
 }
 
 // TODO(b0): FormData re-export removed — bun_runtime (T6) is upward.
-// Not listed in CYCLEBREAK §url; callers should import from bun_runtime::webcore::form_data
+// Callers should import from bun_runtime::webcore::form_data
 // directly (or move-in pass relocates FormData here if it belongs at T2).
 // pub use bun_runtime::webcore::form_data::FormData;
 

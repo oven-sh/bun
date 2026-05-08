@@ -1373,7 +1373,7 @@ impl AsyncModule {
                         &mut *(*jsc_vm).bun_watcher.cast::<crate::hot_reloader::ImportWatcher>()
                     };
                     // PORT NOTE: `bun_watcher::PackageJSON` is an opaque
-                    // forward-decl of `bun_resolver::PackageJSON` (CYCLEBREAK);
+                    // forward-decl of `bun_resolver::PackageJSON`;
                     // the watcher only stores the pointer, so cast through.
                     // SAFETY: `package_json` (when set) is a VM-lifetime
                     // backref — outlives the watcher entry.

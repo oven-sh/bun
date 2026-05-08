@@ -237,8 +237,7 @@ pub extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
 // Zig `comptime { _ = Bun__HTTPMethod__from; }` force-reference dropped — Rust links what's `pub`.
 
 // ═══════════════════════════════════════════════════════════════════════
-// TYPE_ONLY: bun_runtime::webcore::FetchHeaders::HTTPHeaderName → http_types
-// (CYCLEBREAK.md §→http_types, requested by `http`)
+// HTTPHeaderName — moved from bun_runtime::webcore::FetchHeaders.
 // Source: src/jsc/FetchHeaders.zig
 //
 // `enum(u8)` discriminant crosses the FFI boundary to

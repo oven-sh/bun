@@ -1482,7 +1482,7 @@ pub trait JsonWriter {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// MOVE-IN (CYCLEBREAK §→js_parser): symbols pulled DOWN from higher-tier
+// Symbols pulled DOWN from higher-tier
 // crates so lower-tier callers (css, interchange, js_parser itself) can
 // resolve them here without forming a cycle. Ground truth for each port is
 // the named .zig file, NOT the sibling .rs (which may already forward-ref).

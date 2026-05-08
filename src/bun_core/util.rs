@@ -316,7 +316,7 @@ impl<T> ArrayLike for Vec<T> {
 // move-in pass in bun_collections.
 
 // ════════════════════════════════════════════════════════════════════════════
-// MOVE-IN: low-tier primitives hoisted into bun_core (CYCLEBREAK §→core)
+// Low-tier primitives hoisted into bun_core.
 // Forward-referenced as `crate::X` by Global.rs / output.rs / fmt.rs / env.rs.
 // Source bodies extracted from the corresponding .zig (ground truth).
 // ════════════════════════════════════════════════════════════════════════════

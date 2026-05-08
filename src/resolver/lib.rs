@@ -811,8 +811,6 @@ pub mod fs {
                 name_to_use = &self.text[node_modules + 14..];
             }
 
-            // CYCLEBREAK: was `bun_bundler::options::jsx::Pragma::parse_package_name` —
-            // pure byte-slice helper, inlined here to break the resolver→bundler edge.
             let pkgname = parse_package_name(name_to_use);
             if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
                 return None;
@@ -822,8 +820,6 @@ pub mod fs {
         }
 
         /// Port of `Path.loader` in `fs.zig`.
-        // CYCLEBREAK: was `bun_bundler::options::{Loader, LoaderHashTable}` — both moved
-        // down to `bun_options_types::BundleEnums` (TYPE_ONLY per CYCLEBREAK.md).
         pub fn loader(
             &self,
             loaders: &bun_options_types::BundleEnums::LoaderHashTable,
@@ -857,7 +853,7 @@ pub mod fs {
     }
 
     /// Port of `options.JSX.Pragma.parsePackageName` (a pure byte-slice helper).
-    // CYCLEBREAK: inlined from bun_bundler to break resolver→bundler edge. The
+    // Inlined from bun_bundler. The
     // bundler copy remains; both should converge to `bun_string::strings` in Phase B.
     pub fn parse_package_name(str: &[u8]) -> &[u8] {
         use bun_string::strings;
@@ -2315,7 +2311,7 @@ pub mod fs {
 // DirEntryAccessor — `bun_glob::walk::Accessor` impl backed by the resolver's
 // DirEntry cache. Port of `glob.walk.DirEntryAccessor` (GlobWalker.zig).
 //
-// CYCLEBREAK: lives here (not in `bun_glob`) because it needs `fs::DirEntry`/
+// Lives here (not in `bun_glob`) because it needs `fs::DirEntry`/
 // `RealFS::read_directory`, and `bun_resolver` already depends on `bun_glob`.
 // Low-tier crate owns the trait (`bun_glob::walk::Accessor`); high-tier crate
 // owns this impl. See PORTING.md §Dispatch.
@@ -2546,7 +2542,7 @@ pub use dir_entry_accessor::DirEntryAccessor;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `cache` — port of `src/bundler/cache.zig` (`Set`/`Fs`/`Entry`/`JavaScript`/
-// `Json`). CYCLEBREAK MOVE_DOWN: these types must live below `bun_bundler` in
+// `Json`). These types live below `bun_bundler` in
 // the crate graph because `Resolver.caches` is typed by them and the bundler
 // constructs/assigns it (`transpiler.resolver.caches = Set::init()`). The
 // bundler crate re-exports/extends these as `bun_bundler::cache::*`.
@@ -2863,7 +2859,7 @@ pub mod cache {
         /// PORT NOTE: `comptime use_shared_buffer` is taken at runtime — the live
         /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
         /// `Transpiler::parse`) pass a value computed from runtime state, and the
-        /// resolver's earlier CYCLEBREAK forward-decl already pinned this shape.
+        /// resolver's earlier forward-decl already pinned this shape.
         /// PERF(port): re-monomorphize once both callers stabilize.
         ///
         /// PORT NOTE: `allocator` is dropped — Zig forwarded it to
@@ -3091,17 +3087,6 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
         }
 }
 
-// CYCLEBREAK STATUS (resolver↔bundler):
-//   ✓ bun_bundler::options::{Loader, LoaderHashTable, ModuleType, Target} → bun_options_types::BundleEnums (already moved)
-//   ✓ bun_bundler::options::jsx::Pragma → crate::tsconfig_json::options::jsx::Pragma (structural local def; TYPE_ONLY)
-//   ✓ bun_bundler::options::jsx::Pragma::parse_package_name → crate::fs::parse_package_name (inlined)
-//   ✓ bun_bundler::cache::Json → crate::tsconfig_json::JsonCache (manual vtable, §Dispatch cold-path)
-//   ✓ bun_bundler::cache::Set → crate::cache::Set (MOVE_DOWN; bundler re-exports/extends)
-//   ✓ bun_bundler::options::{BundleOptions, Packages} -> crate::options (canonical resolver-tier defs)
-//   ✓ bun_install::{PackageManager, dependency, lockfile, resolution} -> bun_install_types::AutoInstaller
-//   ✓ bun_http::HTTPThread -> folded into AutoInstaller init hook
-//   ✓ HardcodedModule -> bun_resolve_builtins
-//   ✓ StandaloneModuleGraph -> crate::StandaloneModuleGraph trait + bun_options_types::standalone_path
 pub mod __phase_a_body {
 use super::{is_package_path, is_package_path_not_absolute};
 
@@ -3906,7 +3891,7 @@ impl PathPair {
     }
 }
 
-// B-3 UNIFIED: was a local CYCLEBREAK dup of `bun_options_types::SideEffects`.
+// Re-export of `bun_options_types::SideEffects`.
 // Spec: options.zig:884 `Loader.sideEffects()` returns `bun.resolver.SideEffects`
 // — the SAME type stored in `Result.primary_side_effects_data`. Re-export so
 // `result.primary_side_effects_data = loader.side_effects()` type-checks.

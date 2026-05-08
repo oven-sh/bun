@@ -348,7 +348,7 @@ impl<'a> AnyEventLoop<'a> {
 
 // ─────────────────────────── EventLoopHandle ───────────────────────────────
 // MOVE-IN: relocated from `bun_jsc::EventLoopHandle` (src/jsc/EventLoopHandle.zig)
-// per CYCLEBREAK.md §→event_loop. Non-owning reference to either the JS event
+// Non-owning reference to either the JS event
 // loop or the mini event loop. The `.js` arm holds an erased `*mut jsc::EventLoop`
 // and dispatches through link-time-resolved `js::*` shims (defined in `bun_jsc`).
 

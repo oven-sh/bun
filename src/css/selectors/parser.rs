@@ -1226,8 +1226,7 @@ impl<'a> SelectorParser<'a> {
         if input.flags.css_modules() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(raw, tag, bun_logger::Loc { start: i32::try_from(loc).expect("int cast") }),
-                #[cfg(debug_assertions)]
-                (raw, input.arena()),
+                crate::values::ident::debug_ident(raw, input.arena()),
             );
         }
         let _ = (input, tag, loc);

@@ -59,6 +59,7 @@ impl ASTMemoryAllocator {
         let mut ast_scope = Scope {
             current: Some(self),
             previous: Some(stmt::data::Store::memory_allocator()),
+            previous_logger: ptr::null(),
         };
         ast_scope.enter();
         ast_scope
@@ -116,11 +117,12 @@ impl ASTMemoryAllocator {
 pub struct Scope<'a> {
     current: Option<&'a mut ASTMemoryAllocator>,
     previous: Option<*mut ASTMemoryAllocator>,
+    previous_logger: *const Arena,
 }
 
 impl<'a> Default for Scope<'a> {
     fn default() -> Self {
-        Self { current: None, previous: None }
+        Self { current: None, previous: None, previous_logger: ptr::null() }
     }
 }
 
@@ -129,14 +131,19 @@ impl<'a> Scope<'a> {
         debug_assert!(expr::data::Store::memory_allocator() == stmt::data::Store::memory_allocator());
 
         self.previous = Some(expr::data::Store::memory_allocator());
+        self.previous_logger = bun_logger::js_ast::data_store_override();
 
-        let current: *mut ASTMemoryAllocator = match &mut self.current {
-            Some(r) => std::ptr::from_mut::<ASTMemoryAllocator>(*r),
-            None => ptr::null_mut(),
+        let (current, arena): (*mut ASTMemoryAllocator, *const Arena) = match &mut self.current {
+            Some(r) => {
+                let arena: *const Arena = &r.arena;
+                (std::ptr::from_mut::<ASTMemoryAllocator>(*r), arena)
+            }
+            None => (ptr::null_mut(), ptr::null()),
         };
 
         expr::data::Store::set_memory_allocator(current);
         stmt::data::Store::set_memory_allocator(current);
+        bun_logger::js_ast::set_data_store_override(arena);
 
         if current.is_null() {
             stmt::data::Store::begin();
@@ -148,6 +155,7 @@ impl<'a> Scope<'a> {
         let prev = self.previous.unwrap_or(ptr::null_mut());
         expr::data::Store::set_memory_allocator(prev);
         stmt::data::Store::set_memory_allocator(prev);
+        bun_logger::js_ast::set_data_store_override(self.previous_logger);
     }
 }
 

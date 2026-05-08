@@ -1160,6 +1160,32 @@ macro_rules! impl_into_expr_data_inline {
 std::thread_local! {
     static DATA_STORE: core::cell::RefCell<Bump> =
         core::cell::RefCell::new(Bump::new());
+    static DATA_STORE_OVERRIDE: core::cell::Cell<*const Bump> =
+        const { core::cell::Cell::new(core::ptr::null()) };
+}
+
+/// Zig: `Expr.Data.Store.memory_allocator` — when non-null, `Expr::init`
+/// allocates boxed payloads into this arena instead of the long-lived
+/// `DATA_STORE`, so a scoped caller (YAML/TOML/JSONC parse) can bulk-free
+/// the whole tree by dropping the arena. Set/restored by
+/// `bun_js_parser::ASTMemoryAllocator::Scope`.
+#[inline]
+pub fn data_store_override() -> *const Bump {
+    DATA_STORE_OVERRIDE.with(|c| c.get())
+}
+#[inline]
+pub fn set_data_store_override(p: *const Bump) {
+    DATA_STORE_OVERRIDE.with(|c| c.set(p));
+}
+
+#[inline]
+fn data_store_alloc<T>(value: T) -> StoreRef<T> {
+    let ov = DATA_STORE_OVERRIDE.with(|c| c.get());
+    if !ov.is_null() {
+        // SAFETY: override is installed by an RAII scope that outlives this call.
+        return StoreRef::from_bump(unsafe { &*ov }.alloc(value));
+    }
+    DATA_STORE.with(|s| StoreRef::from_bump(s.borrow().alloc(value)))
 }
 
 /// Copy `bytes` into the thread-local `DATA_STORE` arena so the slice shares
@@ -1172,27 +1198,33 @@ std::thread_local! {
 /// drops. The lifetime is erased per the Phase-A `Str` convention used by
 /// `EString::init` — this is arena ownership, not a leak.
 pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
-    DATA_STORE.with(|s| {
-        let store = s.borrow();
-        let copied: &[u8] = store.alloc_slice_copy(bytes);
-        // SAFETY: `copied` lives in `DATA_STORE` until `data_store_reset`;
-        // erase to match `EString::init`'s `&'static [u8]` field.
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(copied) }
-    })
+    let ov = DATA_STORE_OVERRIDE.with(|c| c.get());
+    let copied: &[u8] = if !ov.is_null() {
+        // SAFETY: override is installed by an RAII scope that outlives this call.
+        unsafe { &*ov }.alloc_slice_copy(bytes)
+    } else {
+        DATA_STORE.with(|s| {
+            let store = s.borrow();
+            let p: *const [u8] = store.alloc_slice_copy(bytes);
+            // SAFETY: `DATA_STORE` outlives this borrow; pointer stays valid
+            // until `data_store_reset`.
+            unsafe { &*p }
+        })
+    };
+    // SAFETY: erase to match `EString::init`'s `&'static [u8]` field; arena
+    // ownership, freed only on scope drop / `data_store_reset`.
+    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(copied) }
 }
 
 macro_rules! impl_into_expr_data_boxed {
     ($($ty:ident => $variant:ident),* $(,)?) => {$(
         impl IntoExprData for E::$ty {
             fn into_data_store(self) -> expr::Data {
-                // Zig interns into the thread-local `Expr.Data.Store` slab.
-                // T2 routes through `DATA_STORE` (a `bumpalo::Bump`); pointees
-                // live until `Expr::data_store_reset()`. `bun_js_parser`'s
-                // `IntoExprData` impls go through `data::Store::append`. Unify
-                // with the Store when `Data` is unified.
-                DATA_STORE.with(|s| {
-                    expr::Data::$variant(StoreRef::from_bump(s.borrow().alloc(self)))
-                })
+                // Zig interns into the thread-local `Expr.Data.Store` slab,
+                // honoring `Store.memory_allocator` when set. Route through
+                // `data_store_alloc` so a scoped `ASTMemoryAllocator` can
+                // capture and bulk-free these nodes.
+                expr::Data::$variant(data_store_alloc(self))
             }
             fn into_data_alloc(self, bump: &Bump) -> expr::Data {
                 expr::Data::$variant(StoreRef::from_bump(bump.alloc(self)))

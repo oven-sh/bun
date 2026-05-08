@@ -292,6 +292,17 @@ pub type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
 #[cfg(not(debug_assertions))]
 pub type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
 
+/// Construct a `DebugIdent` — call sites use this instead of an inline
+/// `#[cfg(debug_assertions)]` arg attribute (which removes the parameter
+/// entirely in release and breaks arity).
+#[inline(always)]
+pub fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> DebugIdent<'a> {
+    #[cfg(debug_assertions)]
+    { (_raw, _arena) }
+    #[cfg(not(debug_assertions))]
+    { core::marker::PhantomData }
+}
+
 impl IdentOrRef {
     #[inline]
     fn ptrbits(self) -> u64 {

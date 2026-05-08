@@ -127,13 +127,13 @@ impl StringArrayJsc for [BunString] {
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         unsafe extern "C" {
             fn BunString__createArray(
-                global: *mut JSGlobalObject,
+                global: &JSGlobalObject,
                 ptr: *const BunString,
                 len: usize,
             ) -> JSValue;
         }
         crate::host_fn::from_js_host_call(global, || unsafe {
-            BunString__createArray(global.as_ptr(), self.as_ptr(), self.len())
+            BunString__createArray(global, self.as_ptr(), self.len())
         })
     }
 }

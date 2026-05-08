@@ -14,11 +14,11 @@ pub struct JSBigInt {
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     fn JSC__JSBigInt__fromJS(value: JSValue) -> *mut JSBigInt;
-    fn JSC__JSBigInt__orderDouble(this: *const JSBigInt, num: f64) -> i8;
-    fn JSC__JSBigInt__orderUint64(this: *const JSBigInt, num: u64) -> i8;
-    fn JSC__JSBigInt__orderInt64(this: *const JSBigInt, num: i64) -> i8;
-    fn JSC__JSBigInt__toInt64(this: *const JSBigInt) -> i64;
-    fn JSC__JSBigInt__toString(this: *const JSBigInt, global: *const JSGlobalObject) -> BunString;
+    safe fn JSC__JSBigInt__orderDouble(this: &JSBigInt, num: f64) -> i8;
+    safe fn JSC__JSBigInt__orderUint64(this: &JSBigInt, num: u64) -> i8;
+    safe fn JSC__JSBigInt__orderInt64(this: &JSBigInt, num: i64) -> i8;
+    safe fn JSC__JSBigInt__toInt64(this: &JSBigInt) -> i64;
+    safe fn JSC__JSBigInt__toString(this: &JSBigInt, global: &JSGlobalObject) -> BunString;
 }
 
 /// Types that can be compared against a `JSBigInt` via the FFI order functions.
@@ -31,24 +31,21 @@ impl BigIntOrderable for f64 {
     #[inline]
     fn raw_order(self, this: &JSBigInt) -> i8 {
         debug_assert!(!self.is_nan());
-        // SAFETY: `this` is a valid JSBigInt cell reference.
-        unsafe { JSC__JSBigInt__orderDouble(this, self) }
+        JSC__JSBigInt__orderDouble(this, self)
     }
 }
 
 impl BigIntOrderable for u64 {
     #[inline]
     fn raw_order(self, this: &JSBigInt) -> i8 {
-        // SAFETY: `this` is a valid JSBigInt cell reference.
-        unsafe { JSC__JSBigInt__orderUint64(this, self) }
+        JSC__JSBigInt__orderUint64(this, self)
     }
 }
 
 impl BigIntOrderable for i64 {
     #[inline]
     fn raw_order(self, this: &JSBigInt) -> i8 {
-        // SAFETY: `this` is a valid JSBigInt cell reference.
-        unsafe { JSC__JSBigInt__orderInt64(this, self) }
+        JSC__JSBigInt__orderInt64(this, self)
     }
 }
 
@@ -73,15 +70,11 @@ impl JSBigInt {
     }
 
     pub fn to_int64(&self) -> i64 {
-        // SAFETY: `self` is a valid JSBigInt cell reference.
-        unsafe { JSC__JSBigInt__toInt64(self) }
+        JSC__JSBigInt__toInt64(self)
     }
 
     pub fn to_string(&self, global: &JSGlobalObject) -> JsResult<BunString> {
-        crate::host_fn::from_js_host_call_generic(global, || {
-            // SAFETY: `self` and `global` are valid for the duration of the call.
-            unsafe { JSC__JSBigInt__toString(self, global) }
-        })
+        crate::host_fn::from_js_host_call_generic(global, || JSC__JSBigInt__toString(self, global))
     }
 }
 

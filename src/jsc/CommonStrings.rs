@@ -28,21 +28,19 @@ enum CommonStringsForZig {
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn Bun__CommonStringsForZig__toJS(
+    // `JSGlobalObject` is an opaque `UnsafeCell`-backed FFI handle; `&T` is
+    // ABI-identical to non-null `*const T` and the C++ side's lazy init of its
+    // common-strings table (interior mutation) is invisible to Rust.
+    safe fn Bun__CommonStringsForZig__toJS(
         common_string: CommonStringsForZig,
-        global_object: *mut JSGlobalObject,
+        global_object: &JSGlobalObject,
     ) -> JSValue;
 }
 
 impl CommonStringsForZig {
     #[inline]
     fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global_object` is a valid live JSGlobalObject reference; the C++
-        // side lazily initializes its common-strings table (interior mutation) and
-        // never retains the pointer past this call. `JSGlobalObject` is an opaque
-        // `UnsafeCell`-backed FFI handle, so `as_mut_ptr()` yields a `*mut` with
-        // write provenance from `&self` — sound under Stacked Borrows.
-        unsafe { Bun__CommonStringsForZig__toJS(self, global_object.as_mut_ptr()) }
+        Bun__CommonStringsForZig__toJS(self, global_object)
     }
 }
 

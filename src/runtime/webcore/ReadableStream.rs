@@ -596,6 +596,12 @@ pub trait SourceContext: Sized {
 // The Zig `js = @field(jsc.Codegen, ...)` + toJS/fromJS/fromJSDirect aliases are wired by the
 // derive; cached-property accessors (pendingPromiseSetCached, onDrainCallback{Get,Set}Cached)
 // are emitted by the .classes.ts generator.
+//
+// `repr(C)` keeps `context` at offset 0: C++ `wrapped()` returns `*mut NewSource<C>` and
+// [`ReadableStream::from_js`] casts that straight to `*mut C` (matching Zig, where `context`
+// is the first field). With Rust's default repr the field is reordered and the cast reads
+// adjacent fields as the loader, returning empty bodies.
+#[repr(C)]
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: bool,
@@ -733,6 +739,11 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
         if result == JSValue::ZERO { None } else { Some(result) }
     }
 }
+
+// Enforce the layout invariant `from_js`/`Source` rely on.
+const _: () = assert!(core::mem::offset_of!(NewSource<ByteBlobLoader>, context) == 0);
+const _: () = assert!(core::mem::offset_of!(NewSource<ByteStream>, context) == 0);
+const _: () = assert!(core::mem::offset_of!(NewSource<FileReader>, context) == 0);
 
 impl<C: SourceContext> NewSource<C> {
     /// `bun.TrivialNew(@This())` — heap-allocate and hand back the raw pointer.

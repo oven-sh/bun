@@ -10,7 +10,7 @@ use crate::quic::Socket;
 /// Opaque FFI handle for `us_quic_pending_connect_s`.
 #[repr(C)]
 pub struct PendingConnect {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

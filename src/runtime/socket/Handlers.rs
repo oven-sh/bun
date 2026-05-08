@@ -15,10 +15,10 @@ use super::SocketMode;
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
 unsafe extern "C" {
-    fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: *const JSGlobalObject,
-        callback: JSValue,
-    ) -> JSValue;
+    safe fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: &JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
 }
 
 /// `bun_jsc::AnyPromise` (the lib.rs stub enum) lacks `resolve`/`reject`; the
@@ -303,7 +303,7 @@ impl Handlers {
             if !f.is_empty() {
                 // SAFETY: FFI — `global_object` is a live JSGlobalObject*, `*f` is a
                 // protect()-rooted callable JSValue; returns the (possibly wrapped) value.
-                *f = unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global_object, *f) };
+                *f = AsyncContextFrame__withAsyncContextIfNeeded(global_object, *f);
             }
         });
     }

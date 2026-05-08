@@ -51,7 +51,7 @@ use crate::web_socket::NewWebSocket as WebSocket;
 /// Opaque handle to a uWS::TemplatedApp<SSL>. Always used via `*mut App<SSL>`.
 #[repr(C)]
 pub struct App<const SSL: bool> {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -62,14 +62,22 @@ impl<const SSL: bool> App<SSL> {
     pub const IS_SSL: bool = SSL;
     const SSL_FLAG: i32 = SSL as i32;
 
+    /// `&mut uws_app_s` view of self for `safe fn` shims. Both types are
+    /// `#[repr(C)]` opaque ZSTs with `UnsafeCell<[u8; 0]>`, so the cast is a
+    /// no-op and the reference is ABI-identical to a non-null pointer.
+    #[inline]
+    fn as_raw(&mut self) -> &mut uws_app_s {
+        // SAFETY: `App<SSL>` and `uws_app_s` are layout-identical opaque ZSTs
+        // over the same C++ object; the borrow reborrows `&mut self`.
+        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<uws_app_s>() }
+    }
+
     pub fn close(&mut self) {
-        // SAFETY: self is a valid *mut uws_app_s (opaque C++ app); ssl flag matches construction.
-        unsafe { c::uws_app_close(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_s>()) }
+        c::uws_app_close(Self::SSL_FLAG, self.as_raw())
     }
 
     pub fn close_idle_connections(&mut self) {
-        // SAFETY: self is a valid *mut uws_app_s.
-        unsafe { c::uws_app_close_idle(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_s>()) }
+        c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw())
     }
 
     pub fn create(opts: BunSocketContextOptions) -> Option<*mut Self> {
@@ -91,31 +99,20 @@ impl<const SSL: bool> App<SSL> {
     }
 
     pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
-        // SAFETY: self is a valid *mut uws_app_t.
-        unsafe {
-            c::uws_app_set_flags(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                require_host_header,
-                use_strict_method_validation,
-            )
-        }
+        c::uws_app_set_flags(
+            Self::SSL_FLAG,
+            self.as_raw(),
+            require_host_header,
+            use_strict_method_validation,
+        )
     }
 
     pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
-        // SAFETY: self is a valid *mut uws_app_t.
-        unsafe {
-            c::uws_app_set_max_http_header_size(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                max_header_size,
-            )
-        }
+        c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
     }
 
     pub fn clear_routes(&mut self) {
-        // SAFETY: self is a valid *mut uws_app_t.
-        unsafe { c::uws_app_clear_routes(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_t>()) }
+        c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
 
     pub fn publish_with_options(
@@ -372,7 +369,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn run(&mut self) {
         // SAFETY: self is a valid app.
-        unsafe { c::uws_app_run(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_t>()) }
+        c::uws_app_run(Self::SSL_FLAG, self.as_raw())
     }
 
     pub fn listen(
@@ -464,7 +461,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn constructor_failed(&mut self) -> bool {
         // SAFETY: self is a valid app.
-        unsafe { c::uws_constructor_failed(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_t>()) }
+        c::uws_constructor_failed(Self::SSL_FLAG, self.as_raw())
     }
 
     pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
@@ -620,7 +617,7 @@ impl<const SSL: bool> App<SSL> {
 /// nest type definitions inside an `impl`; defined at module level instead.
 #[repr(C)]
 pub struct ListenSocket<const SSL: bool> {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -663,7 +660,7 @@ impl From<AddServerNameError> for bun_core::Error {
 
 #[repr(C)]
 pub struct uws_app_s {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 pub type uws_app_t = uws_app_s;
@@ -682,8 +679,8 @@ pub mod c {
         Option<extern "C" fn(*const c_char, *mut c_void)>;
 
     unsafe extern "C" {
-        pub fn uws_app_close(ssl: i32, app: *mut uws_app_s);
-        pub fn uws_app_close_idle(ssl: i32, app: *mut uws_app_s);
+        pub safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
+        pub safe fn uws_app_close_idle(ssl: i32, app: &mut uws_app_s);
         pub fn uws_app_set_on_clienterror(
             ssl: c_int,
             app: *mut uws_app_s,
@@ -692,13 +689,13 @@ pub mod c {
         );
         pub fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;
         pub fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
-        pub fn uws_app_set_flags(
+        pub safe fn uws_app_set_flags(
             ssl: i32,
-            app: *mut uws_app_t,
+            app: &mut uws_app_t,
             require_host_header: bool,
             use_strict_method_validation: bool,
         );
-        pub fn uws_app_set_max_http_header_size(ssl: i32, app: *mut uws_app_t, max_header_size: u64);
+        pub safe fn uws_app_set_max_http_header_size(ssl: i32, app: &mut uws_app_t, max_header_size: u64);
         pub fn uws_app_get(
             ssl: i32,
             app: *mut uws_app_t,
@@ -779,7 +776,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_run(ssl: i32, app: *mut uws_app_t);
+        pub safe fn uws_app_run(ssl: i32, app: &mut uws_app_t);
         pub fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
         pub fn uws_app_listen(
             ssl: i32,
@@ -797,7 +794,7 @@ pub mod c {
             handler: uws_listen_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_constructor_failed(ssl: i32, app: *mut uws_app_t) -> bool;
+        pub safe fn uws_constructor_failed(ssl: i32, app: &mut uws_app_t) -> bool;
         pub fn uws_num_subscribers(
             ssl: i32,
             app: *mut uws_app_t,
@@ -850,7 +847,7 @@ pub mod c {
             user_data: *mut c_void,
         );
 
-        pub fn uws_app_clear_routes(ssl_flag: c_int, app: *mut uws_app_t);
+        pub safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
     }
 
     #[repr(C)]

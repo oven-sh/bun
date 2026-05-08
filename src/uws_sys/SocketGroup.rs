@@ -125,8 +125,7 @@ impl SocketGroup {
     }
 
     pub fn close_all(&mut self) {
-        // SAFETY: `self` was previously passed to `init`.
-        unsafe { us_socket_group_close_all(self) }
+        us_socket_group_close_all(self)
     }
 
     /// Non-null after `init`. The fields stay nullable raw pointers only because
@@ -289,8 +288,7 @@ impl SocketGroup {
     }
 
     pub fn next_in_loop(&mut self) -> *mut SocketGroup {
-        // SAFETY: forwarding to C.
-        unsafe { us_socket_group_next(self) }
+        us_socket_group_next(self)
     }
 }
 
@@ -302,12 +300,12 @@ unsafe extern "C" {
         ext: *mut c_void,
     );
     fn us_socket_group_deinit(group: *mut SocketGroup);
-    fn us_socket_group_close_all(group: *mut SocketGroup);
+    safe fn us_socket_group_close_all(group: &mut SocketGroup);
     #[allow(dead_code)]
-    fn us_socket_group_timestamp(group: *mut SocketGroup) -> c_ushort;
+    safe fn us_socket_group_timestamp(group: &mut SocketGroup) -> c_ushort;
     #[allow(dead_code)]
-    fn us_socket_group_loop(group: *mut SocketGroup) -> *mut Loop;
-    fn us_socket_group_next(group: *mut SocketGroup) -> *mut SocketGroup;
+    safe fn us_socket_group_loop(group: &mut SocketGroup) -> *mut Loop;
+    safe fn us_socket_group_next(group: &mut SocketGroup) -> *mut SocketGroup;
     fn us_socket_group_listen(
         group: *mut SocketGroup,
         kind: u8,

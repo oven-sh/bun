@@ -90,7 +90,7 @@ macro_rules! extern_crypto_job {
             // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
             #[repr(C)]
             pub struct Ctx {
-                _p: [u8; 0],
+                _p: core::cell::UnsafeCell<[u8; 0]>,
                 _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
             }
 

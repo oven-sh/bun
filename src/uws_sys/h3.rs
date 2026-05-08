@@ -17,18 +17,16 @@ use crate::SocketAddress;
 
 #[repr(C)]
 pub struct ListenSocket {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 impl ListenSocket {
     pub fn close(&mut self) {
-        // SAFETY: self is a live FFI handle owned by uws
-        unsafe { c::uws_h3_listen_socket_close(self) }
+        c::uws_h3_listen_socket_close(self)
     }
     pub fn get_local_port(&mut self) -> i32 {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_listen_socket_port(self) }
+        c::uws_h3_listen_socket_port(self)
     }
     pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         // SAFETY: self is a live FFI handle; buf ptr/len valid for write
@@ -52,7 +50,7 @@ impl ListenSocket {
 
 #[repr(C)]
 pub struct Request {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -61,12 +59,10 @@ impl Request {
         false
     }
     pub fn get_yield(&mut self) -> bool {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_req_get_yield(self) }
+        c::uws_h3_req_get_yield(self)
     }
     pub fn set_yield(&mut self, y: bool) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_req_set_yield(self, y) }
+        c::uws_h3_req_set_yield(self, y)
     }
     pub fn url(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
@@ -145,7 +141,7 @@ impl Request {
 
 #[repr(C)]
 pub struct Response {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -159,16 +155,13 @@ impl Response {
         unsafe { c::uws_h3_res_try_end(self, data.as_ptr(), data.len(), total, close_connection) }
     }
     pub fn end_without_body(&mut self, close_connection: bool) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_end_without_body(self, close_connection) }
+        c::uws_h3_res_end_without_body(self, close_connection)
     }
     pub fn end_stream(&mut self, close_connection: bool) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_end_stream(self, close_connection) }
+        c::uws_h3_res_end_stream(self, close_connection)
     }
     pub fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_end_sendfile(self, write_offset, close_connection) }
+        c::uws_h3_res_end_sendfile(self, write_offset, close_connection)
     }
     pub fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
@@ -194,57 +187,44 @@ impl Response {
         unsafe { c::uws_h3_res_write_header_int(self, key.as_ptr(), key.len(), value) }
     }
     pub fn write_mark(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_write_mark(self) }
+        c::uws_h3_res_write_mark(self)
     }
     pub fn mark_wrote_content_length_header(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_mark_wrote_content_length_header(self) }
+        c::uws_h3_res_mark_wrote_content_length_header(self)
     }
     pub fn write_continue(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_write_continue(self) }
+        c::uws_h3_res_write_continue(self)
     }
     pub fn flush_headers(&mut self, immediate: bool) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_flush_headers(self, immediate) }
+        c::uws_h3_res_flush_headers(self, immediate)
     }
     pub fn pause(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_pause(self) }
+        c::uws_h3_res_pause(self)
     }
     pub fn resume_(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_resume(self) }
+        c::uws_h3_res_resume(self)
     }
     #[inline] pub fn resume(&mut self) { self.resume_() }
     pub fn timeout(&mut self, seconds: u8) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_timeout(self, seconds) }
+        c::uws_h3_res_timeout(self, seconds)
     }
     pub fn reset_timeout(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_reset_timeout(self) }
+        c::uws_h3_res_reset_timeout(self)
     }
     pub fn get_write_offset(&mut self) -> u64 {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_get_write_offset(self) }
+        c::uws_h3_res_get_write_offset(self)
     }
     pub fn override_write_offset(&mut self, off: u64) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_override_write_offset(self, off) }
+        c::uws_h3_res_override_write_offset(self, off)
     }
     pub fn get_buffered_amount(&mut self) -> u64 {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_get_buffered_amount(self) }
+        c::uws_h3_res_get_buffered_amount(self)
     }
     pub fn has_responded(&mut self) -> bool {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_has_responded(self) }
+        c::uws_h3_res_has_responded(self)
     }
     pub fn state(&mut self) -> State {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_state(self) }
+        c::uws_h3_res_state(self)
     }
     pub fn should_close_connection(&mut self) -> bool {
         self.state().is_http_connection_close()
@@ -259,8 +239,7 @@ impl Response {
     pub fn prepare_for_sendfile(&mut self) {}
     pub fn mark_needs_more(&mut self) {}
     pub fn get_socket_data(&mut self) -> *mut c_void {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_get_socket_data(self) }
+        c::uws_h3_res_get_socket_data(self)
     }
     pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress<'_>> {
         let mut port: i32 = 0;
@@ -279,8 +258,7 @@ impl Response {
         Some(SocketAddress { ip, port, is_ipv6 })
     }
     pub fn force_close(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_force_close(self) }
+        c::uws_h3_res_force_close(self)
     }
 
     pub fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -301,8 +279,7 @@ impl Response {
         unsafe { c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast()) }
     }
     pub fn clear_on_writable(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_res_clear_on_writable(self) }
+        c::uws_h3_res_clear_on_writable(self)
     }
     pub fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
@@ -402,7 +379,7 @@ impl Response {
 
 #[repr(C)]
 pub struct App {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -456,12 +433,10 @@ impl App {
         unsafe { c::uws_h3_app_destroy(this) }
     }
     pub fn close(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_app_close(self) }
+        c::uws_h3_app_close(self)
     }
     pub fn clear_routes(&mut self) {
-        // SAFETY: self is a live FFI handle
-        unsafe { c::uws_h3_app_clear_routes(self) }
+        c::uws_h3_app_clear_routes(self)
     }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
@@ -623,17 +598,21 @@ mod c {
     pub type HeaderCb =
         unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void);
 
+    // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,
+    // so `&T`/`&mut T` are ABI-identical to a non-null pointer. Shims whose
+    // only pointer arg is the opaque handle (plus value types) are `safe fn`.
+    // Shims with (ptr,len), nullable raw, *mut c_void ctx stay unsafe.
     unsafe extern "C" {
         pub fn uws_h3_create_app(opts: BunSocketContextOptions, idle_timeout_s: u32) -> *mut App;
         pub fn uws_h3_app_destroy(app: *mut App);
-        pub fn uws_h3_app_close(app: *mut App);
-        pub fn uws_h3_app_clear_routes(app: *mut App);
+        pub safe fn uws_h3_app_close(app: &mut App);
+        pub safe fn uws_h3_app_clear_routes(app: &mut App);
         pub fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,
             opts: BunSocketContextOptions,
         ) -> bool;
-        pub fn uws_h3_res_write_continue(res: *mut Response);
+        pub safe fn uws_h3_res_write_continue(res: &mut Response);
         pub fn uws_h3_app_get(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
         pub fn uws_h3_app_post(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
         pub fn uws_h3_app_put(app: *mut App, p: *const u8, n: usize, h: Handler, ud: *mut c_void);
@@ -652,18 +631,18 @@ mod c {
             h: ListenHandler,
             ud: *mut c_void,
         );
-        pub fn uws_h3_listen_socket_port(ls: *mut ListenSocket) -> i32;
+        pub safe fn uws_h3_listen_socket_port(ls: &mut ListenSocket) -> i32;
         pub fn uws_h3_listen_socket_local_address(
             ls: *mut ListenSocket,
             buf: *mut u8,
             len: c_int,
         ) -> c_int;
-        pub fn uws_h3_listen_socket_close(ls: *mut ListenSocket);
+        pub safe fn uws_h3_listen_socket_close(ls: &mut ListenSocket);
 
-        pub fn uws_h3_res_state(res: *mut Response) -> State;
+        pub safe fn uws_h3_res_state(res: &mut Response) -> State;
         pub fn uws_h3_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
-        pub fn uws_h3_res_end_stream(res: *mut Response, close: bool);
-        pub fn uws_h3_res_force_close(res: *mut Response);
+        pub safe fn uws_h3_res_end_stream(res: &mut Response, close: bool);
+        pub safe fn uws_h3_res_force_close(res: &mut Response);
         pub fn uws_h3_res_try_end(
             res: *mut Response,
             p: *const u8,
@@ -671,9 +650,9 @@ mod c {
             total: usize,
             close: bool,
         ) -> bool;
-        pub fn uws_h3_res_end_without_body(res: *mut Response, close: bool);
-        pub fn uws_h3_res_pause(res: *mut Response);
-        pub fn uws_h3_res_resume(res: *mut Response);
+        pub safe fn uws_h3_res_end_without_body(res: &mut Response, close: bool);
+        pub safe fn uws_h3_res_pause(res: &mut Response);
+        pub safe fn uws_h3_res_resume(res: &mut Response);
         pub fn uws_h3_res_write_status(res: *mut Response, p: *const u8, n: usize);
         pub fn uws_h3_res_write_header(
             res: *mut Response,
@@ -683,24 +662,24 @@ mod c {
             vn: usize,
         );
         pub fn uws_h3_res_write_header_int(res: *mut Response, kp: *const u8, kn: usize, v: u64);
-        pub fn uws_h3_res_mark_wrote_content_length_header(res: *mut Response);
-        pub fn uws_h3_res_write_mark(res: *mut Response);
-        pub fn uws_h3_res_flush_headers(res: *mut Response, immediate: bool);
+        pub safe fn uws_h3_res_mark_wrote_content_length_header(res: &mut Response);
+        pub safe fn uws_h3_res_write_mark(res: &mut Response);
+        pub safe fn uws_h3_res_flush_headers(res: &mut Response, immediate: bool);
         pub fn uws_h3_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
-        pub fn uws_h3_res_get_write_offset(res: *mut Response) -> u64;
-        pub fn uws_h3_res_override_write_offset(res: *mut Response, off: u64);
-        pub fn uws_h3_res_has_responded(res: *mut Response) -> bool;
-        pub fn uws_h3_res_get_buffered_amount(res: *mut Response) -> u64;
-        pub fn uws_h3_res_reset_timeout(res: *mut Response);
-        pub fn uws_h3_res_timeout(res: *mut Response, seconds: u8);
-        pub fn uws_h3_res_end_sendfile(res: *mut Response, off: u64, close: bool);
-        pub fn uws_h3_res_get_socket_data(res: *mut Response) -> *mut c_void;
+        pub safe fn uws_h3_res_get_write_offset(res: &mut Response) -> u64;
+        pub safe fn uws_h3_res_override_write_offset(res: &mut Response, off: u64);
+        pub safe fn uws_h3_res_has_responded(res: &mut Response) -> bool;
+        pub safe fn uws_h3_res_get_buffered_amount(res: &mut Response) -> u64;
+        pub safe fn uws_h3_res_reset_timeout(res: &mut Response);
+        pub safe fn uws_h3_res_timeout(res: &mut Response, seconds: u8);
+        pub safe fn uws_h3_res_end_sendfile(res: &mut Response, off: u64, close: bool);
+        pub safe fn uws_h3_res_get_socket_data(res: &mut Response) -> *mut c_void;
         pub fn uws_h3_res_on_writable(
             res: *mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, u64, *mut c_void) -> bool>,
             ud: *mut c_void,
         );
-        pub fn uws_h3_res_clear_on_writable(res: *mut Response);
+        pub safe fn uws_h3_res_clear_on_writable(res: &mut Response);
         pub fn uws_h3_res_on_aborted(
             res: *mut Response,
             cb: Option<unsafe extern "C" fn(*mut Response, *mut c_void)>,
@@ -728,8 +707,8 @@ mod c {
             is_ipv6: *mut bool,
         ) -> usize;
 
-        pub fn uws_h3_req_get_yield(req: *mut Request) -> bool;
-        pub fn uws_h3_req_set_yield(req: *mut Request, y: bool);
+        pub safe fn uws_h3_req_get_yield(req: &mut Request) -> bool;
+        pub safe fn uws_h3_req_set_yield(req: &mut Request, y: bool);
         pub fn uws_h3_req_get_url(req: *mut Request, out: *mut *const u8) -> usize;
         pub fn uws_h3_req_get_method(req: *mut Request, out: *mut *const u8) -> usize;
         pub fn uws_h3_req_get_header(

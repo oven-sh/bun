@@ -3380,7 +3380,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
 
 // path.zig:2749 — `extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;`
 unsafe extern "C" {
-    fn Process__getCachedCwd(global: *const JSGlobalObject) -> JSValue;
+    safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
 }
 
 pub fn resolve_posix_js_t<T: PathChar>(
@@ -3491,12 +3491,12 @@ pub fn resolve(
             // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
             if paths.is_empty() {
                 // SAFETY: FFI call with valid global object pointer.
-                return Ok(unsafe { Process__getCachedCwd(global_object) });
+                return Ok(Process__getCachedCwd(global_object));
             }
             // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
             else if paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./") {
                 // SAFETY: FFI call with valid global object pointer.
-                return Ok(unsafe { Process__getCachedCwd(global_object) });
+                return Ok(Process__getCachedCwd(global_object));
             }
         }
     }

@@ -1,3 +1,4 @@
+use core::cell::UnsafeCell;
 use core::ffi::{c_uint, c_void};
 
 use crate::{Loop, SocketGroup, SocketKind};
@@ -8,14 +9,13 @@ use crate::{Loop, SocketGroup, SocketKind};
 /// `onConnectingError`.
 #[repr(C)]
 pub struct ConnectingSocket {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
 impl ConnectingSocket {
     pub fn close(&mut self) {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_close(self) }
+        us_connecting_socket_close(self)
     }
 
     /// Returns the owning `SocketGroup`. Raw pointer because the group is
@@ -23,24 +23,21 @@ impl ConnectingSocket {
     /// materializing `&mut SocketGroup` here would alias with other sockets'
     /// borrows of the same group.
     pub fn group(&mut self) -> *mut SocketGroup {
-        // SAFETY: self is a valid handle; uSockets guarantees a non-null group
-        unsafe { us_connecting_socket_group(self) }
+        us_connecting_socket_group(self)
     }
     pub fn raw_group(&mut self) -> *mut SocketGroup {
         self.group()
     }
 
     pub fn kind(&mut self) -> SocketKind {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        SocketKind::from_u8(unsafe { us_connecting_socket_kind(self) })
+        SocketKind::from_u8(us_connecting_socket_kind(self))
     }
 
     /// Returns the owning `Loop`. Raw pointer because the loop is a shared
     /// singleton referenced by every group/socket/timer (Zig `*Loop` freely
     /// aliases); materializing `&mut Loop` here would be aliased UB.
     pub fn r#loop(&mut self) -> *mut Loop {
-        // SAFETY: self is a valid handle; uSockets guarantees a non-null loop
-        unsafe { us_connecting_socket_get_loop(self) }
+        us_connecting_socket_get_loop(self)
     }
 
     pub fn ext<T>(&mut self) -> &mut T {
@@ -52,60 +49,57 @@ impl ConnectingSocket {
     }
 
     pub fn get_error(&mut self) -> i32 {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_get_error(self) }
+        us_connecting_socket_get_error(self)
     }
 
     pub fn get_native_handle(&mut self) -> *mut c_void {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_get_native_handle(self) }
+        us_connecting_socket_get_native_handle(self)
     }
 
     pub fn is_closed(&mut self) -> bool {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_is_closed(self) == 1 }
+        us_connecting_socket_is_closed(self) == 1
     }
 
     pub fn is_shutdown(&mut self) -> bool {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_is_shut_down(self) == 1 }
+        us_connecting_socket_is_shut_down(self) == 1
     }
 
     pub fn long_timeout(&mut self, seconds: c_uint) {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_long_timeout(self, seconds) }
+        us_connecting_socket_long_timeout(self, seconds)
     }
 
     pub fn shutdown(&mut self) {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_shutdown(self) }
+        us_connecting_socket_shutdown(self)
     }
 
     pub fn shutdown_read(&mut self) {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_shutdown_read(self) }
+        us_connecting_socket_shutdown_read(self)
     }
 
     pub fn timeout(&mut self, seconds: c_uint) {
-        // SAFETY: self is a valid us_connecting_socket_t handle
-        unsafe { us_connecting_socket_timeout(self, seconds) }
+        us_connecting_socket_timeout(self, seconds)
     }
 }
 
+// All shims take only a non-null `us_connecting_socket_t*` plus value types.
+// `ConnectingSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&mut
+// ConnectingSocket` is ABI-identical to a non-null pointer (no readonly/noalias
+// attribute). Declaring the shims with reference params and `safe fn` moves the
+// validity proof into the type signature.
 unsafe extern "C" {
-    pub fn us_connecting_socket_close(s: *mut ConnectingSocket);
-    pub fn us_connecting_socket_group(s: *mut ConnectingSocket) -> *mut SocketGroup;
-    pub fn us_connecting_socket_kind(s: *mut ConnectingSocket) -> u8;
-    pub fn us_connecting_socket_ext(s: *mut ConnectingSocket) -> *mut c_void;
-    pub fn us_connecting_socket_get_error(s: *mut ConnectingSocket) -> i32;
-    pub fn us_connecting_socket_get_native_handle(s: *mut ConnectingSocket) -> *mut c_void;
-    pub fn us_connecting_socket_is_closed(s: *mut ConnectingSocket) -> i32;
-    pub fn us_connecting_socket_is_shut_down(s: *mut ConnectingSocket) -> i32;
-    pub fn us_connecting_socket_long_timeout(s: *mut ConnectingSocket, seconds: c_uint);
-    pub fn us_connecting_socket_shutdown(s: *mut ConnectingSocket);
-    pub fn us_connecting_socket_shutdown_read(s: *mut ConnectingSocket);
-    pub fn us_connecting_socket_timeout(s: *mut ConnectingSocket, seconds: c_uint);
-    pub fn us_connecting_socket_get_loop(s: *mut ConnectingSocket) -> *mut Loop;
+    pub safe fn us_connecting_socket_close(s: &mut ConnectingSocket);
+    pub safe fn us_connecting_socket_group(s: &mut ConnectingSocket) -> *mut SocketGroup;
+    pub safe fn us_connecting_socket_kind(s: &mut ConnectingSocket) -> u8;
+    pub safe fn us_connecting_socket_ext(s: &mut ConnectingSocket) -> *mut c_void;
+    pub safe fn us_connecting_socket_get_error(s: &mut ConnectingSocket) -> i32;
+    pub safe fn us_connecting_socket_get_native_handle(s: &mut ConnectingSocket) -> *mut c_void;
+    pub safe fn us_connecting_socket_is_closed(s: &mut ConnectingSocket) -> i32;
+    pub safe fn us_connecting_socket_is_shut_down(s: &mut ConnectingSocket) -> i32;
+    pub safe fn us_connecting_socket_long_timeout(s: &mut ConnectingSocket, seconds: c_uint);
+    pub safe fn us_connecting_socket_shutdown(s: &mut ConnectingSocket);
+    pub safe fn us_connecting_socket_shutdown_read(s: &mut ConnectingSocket);
+    pub safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);
+    pub safe fn us_connecting_socket_get_loop(s: &mut ConnectingSocket) -> *mut Loop;
 }
 
 // ported from: src/uws_sys/ConnectingSocket.zig

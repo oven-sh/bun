@@ -9,8 +9,8 @@ use bun_core::env_var::feature_flag;
 
 // TODO(port): move to <area>_sys — extern decls colocated for now
 unsafe extern "C" {
-    fn Bun__Process__getArgv(global: *const JSGlobalObject) -> JSValue;
-    fn Bun__Process__getExecArgv(global: *const JSGlobalObject) -> JSValue;
+    safe fn Bun__Process__getArgv(global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__Process__getExecArgv(global: &JSGlobalObject) -> JSValue;
 }
 
 // ───────────────────────────── argv0 / execPath ─────────────────────────────
@@ -37,13 +37,11 @@ pub extern "C" fn get_exec_path(global_object: *const JSGlobalObject) -> JSValue
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
 pub extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
-    // SAFETY: FFI call into C++; global is valid
-    unsafe { Bun__Process__getArgv(global) }
+    Bun__Process__getArgv(global)
 }
 
 pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
-    // SAFETY: FFI call into C++; global is valid
-    unsafe { Bun__Process__getExecArgv(global) }
+    Bun__Process__getExecArgv(global)
 }
 
 // ───────────────────────────── exit ─────────────────────────────

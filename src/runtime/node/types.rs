@@ -734,13 +734,13 @@ impl Encoding {
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI call into WebCore; `Encoding` is `#[repr(u8)]` matching BufferEncodingType.h.
-        unsafe { WebCore_BufferEncodingType_toJS(global_object, self) }
+        WebCore_BufferEncodingType_toJS(global_object, self)
     }
 }
 
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
-    fn WebCore_BufferEncodingType_toJS(global_object: *const JSGlobalObject, encoding: Encoding) -> JSValue;
+    safe fn WebCore_BufferEncodingType_toJS(global_object: &JSGlobalObject, encoding: Encoding) -> JSValue;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1602,7 +1602,7 @@ pub type DirentKind = bun_sys::FileKind;
 
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
-    fn Bun__JSDirentObjectConstructor(global: *const JSGlobalObject) -> JSValue;
+    safe fn Bun__JSDirentObjectConstructor(global: &JSGlobalObject) -> JSValue;
     fn Bun__Dirent__toJS(
         global: *const JSGlobalObject,
         kind: i32,
@@ -1615,7 +1615,7 @@ unsafe extern "C" {
 impl Dirent {
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI call.
-        unsafe { Bun__JSDirentObjectConstructor(global) }
+        Bun__JSDirentObjectConstructor(global)
     }
 
     pub fn to_js(

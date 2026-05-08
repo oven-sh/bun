@@ -34,21 +34,21 @@ pub struct SocketAddress<'a> {
 /// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
 #[repr(C)]
 pub struct Socket {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 /// Opaque per-socket userdata blob (forward-decl; concrete type lives in `bun_uws`).
 #[repr(C)]
 pub struct SocketData {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 /// Opaque uWS WebSocket upgrade context (forward-decl; concrete type lives in `bun_uws`).
 #[repr(C)]
 pub struct WebSocketUpgradeContext {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -59,7 +59,7 @@ pub struct WebSocketUpgradeContext {
 /// extern type (Nomicon pattern).
 #[repr(C)]
 pub struct Response<const SSL: bool> {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -77,6 +77,17 @@ impl<const SSL: bool> Response<SSL> {
     #[inline]
     pub fn downcast(&mut self) -> *mut c::uws_res {
         std::ptr::from_mut::<Self>(self).cast::<c::uws_res>()
+    }
+
+    /// `&mut uws_res` view of self for `safe fn` shims. Both types are
+    /// `#[repr(C)]` opaque ZSTs with `UnsafeCell<[u8; 0]>`, so the cast is a
+    /// no-op and the reference is ABI-identical to the non-null pointer the C
+    /// shim expects.
+    #[inline]
+    fn as_raw(&mut self) -> &mut c::uws_res {
+        // SAFETY: `Response<SSL>` and `c::uws_res` are layout-identical opaque
+        // ZSTs over the same C++ object; the borrow reborrows `&mut self`.
+        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<c::uws_res>() }
     }
 
     #[inline]
@@ -112,33 +123,27 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     pub fn get_socket_data(&mut self) -> *mut c_void {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_get_socket_data(Self::ssl_flag(), self.downcast()).cast() }
+        c::uws_res_get_socket_data(Self::ssl_flag(), self.as_raw()).cast()
     }
 
     pub fn is_connect_request(&mut self) -> bool {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_is_connect_request(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_is_connect_request(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn flush_headers(&mut self, flush_immediately: bool) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_flush_headers(Self::ssl_flag(), self.downcast(), flush_immediately) }
+        c::uws_res_flush_headers(Self::ssl_flag(), self.as_raw(), flush_immediately)
     }
 
     pub fn is_corked(&mut self) -> bool {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_is_corked(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_is_corked(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn state(&self) -> State {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_state(
-                Self::ssl_flag() as c_int,
-                std::ptr::from_ref::<Self>(self).cast::<c::uws_res>(),
-            )
-        }
+        // SAFETY: `Response<SSL>` and `c::uws_res` are layout-identical opaque
+        // ZSTs (both `UnsafeCell<[u8; 0]>`); the reborrow is a no-op cast.
+        c::uws_res_state(Self::ssl_flag() as c_int, unsafe {
+            &*std::ptr::from_ref::<Self>(self).cast::<c::uws_res>()
+        })
     }
 
     pub fn should_close_connection(&self) -> bool {
@@ -146,28 +151,23 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     pub fn prepare_for_sendfile(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_prepare_for_sendfile(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_prepare_for_sendfile(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn uncork(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_uncork(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_uncork(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn pause(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_pause(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_pause(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn resume_(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_resume(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_resume(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn write_continue(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_write_continue(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_write_continue(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn write_status(&mut self, status: &[u8]) {
@@ -210,35 +210,23 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     pub fn end_without_body(&mut self, close_connection: bool) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_end_without_body(Self::ssl_flag(), self.downcast(), close_connection) }
+        c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
     pub fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_end_sendfile(
-                Self::ssl_flag(),
-                self.downcast(),
-                write_offset,
-                close_connection,
-            )
-        }
+        c::uws_res_end_sendfile(Self::ssl_flag(), self.as_raw(), write_offset, close_connection)
     }
 
     pub fn timeout(&mut self, seconds: u8) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_timeout(Self::ssl_flag(), self.downcast(), seconds) }
+        c::uws_res_timeout(Self::ssl_flag(), self.as_raw(), seconds)
     }
 
     pub fn reset_timeout(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_reset_timeout(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_reset_timeout(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn get_buffered_amount(&mut self) -> u64 {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_get_buffered_amount(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_get_buffered_amount(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn write(&mut self, data: &[u8]) -> WriteResult {
@@ -252,8 +240,7 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     pub fn get_write_offset(&mut self) -> u64 {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_get_write_offset(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_get_write_offset(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn override_write_offset<T>(&mut self, offset: T)
@@ -261,29 +248,23 @@ impl<const SSL: bool> Response<SSL> {
         u64: TryFrom<T>,
         <u64 as TryFrom<T>>::Error: core::fmt::Debug,
     {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe {
-            c::uws_res_override_write_offset(
-                Self::ssl_flag(),
-                self.downcast(),
-                u64::try_from(offset).expect("int cast"),
-            )
-        }
+        c::uws_res_override_write_offset(
+            Self::ssl_flag(),
+            self.as_raw(),
+            u64::try_from(offset).expect("int cast"),
+        )
     }
 
     pub fn has_responded(&mut self) -> bool {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_has_responded(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_has_responded(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn mark_wrote_content_length_header(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_mark_wrote_content_length_header(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn write_mark(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_write_mark(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_write_mark(Self::ssl_flag(), self.as_raw())
     }
 
     pub fn get_native_handle(&mut self) -> Fd {
@@ -292,19 +273,16 @@ impl<const SSL: bool> Response<SSL> {
             // on windows uSockets exposes SOCKET (uintptr-sized) as a pointer
             // value; tag kind=system via `from_system` (masks bit 63) so
             // `INVALID_SOCKET` (~0) doesn't decode as kind=uv.
-            // SAFETY: uws_res_get_native_handle returns the OS SOCKET handle as a pointer.
-            return Fd::from_system(unsafe {
-                c::uws_res_get_native_handle(Self::ssl_flag(), self.downcast())
-                    as *mut core::ffi::c_void
-            });
+            return Fd::from_system(
+                c::uws_res_get_native_handle(Self::ssl_flag(), self.as_raw())
+                    as *mut core::ffi::c_void,
+            );
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: uws_res_get_native_handle returns the fd encoded as a pointer value.
             Fd::from_native(
                 c_int::try_from(
-                    unsafe { c::uws_res_get_native_handle(Self::ssl_flag(), self.downcast()) }
-                        as usize,
+                    c::uws_res_get_native_handle(Self::ssl_flag(), self.as_raw()) as usize,
                 )
                 .unwrap(),
             )
@@ -387,15 +365,13 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     pub fn clear_on_writable(&mut self) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_clear_on_writable(Self::ssl_flag(), self.downcast()) }
+        c::uws_res_clear_on_writable(Self::ssl_flag(), self.as_raw())
     }
 
     #[inline]
     pub fn mark_needs_more(&mut self) {
         if !SSL {
-            // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-            unsafe { c::us_socket_mark_needs_more_not_ssl(self.downcast()) }
+            c::us_socket_mark_needs_more_not_ssl(self.as_raw())
         }
     }
 
@@ -506,8 +482,7 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     pub fn end_stream(&mut self, close_connection: bool) {
-        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
-        unsafe { c::uws_res_end_stream(Self::ssl_flag(), self.downcast(), close_connection) }
+        c::uws_res_end_stream(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
     /// Run `handler` while the response is corked. Zig signature took
@@ -1081,23 +1056,27 @@ pub mod c {
     /// Opaque `uws_res_t` (the untyped C handle).
     #[repr(C)]
     pub struct uws_res {
-        _p: [u8; 0],
+        _p: core::cell::UnsafeCell<[u8; 0]>,
         _m: PhantomData<(*mut u8, PhantomPinned)>,
     }
 
+    // `uws_res` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&uws_res` /
+    // `&mut uws_res` are ABI-identical to a non-null pointer. Value-typed
+    // shims are `safe fn`; (ptr,len), nullable raw, *mut c_void ctx stay
+    // unsafe.
     unsafe extern "C" {
-        pub fn uws_res_mark_wrote_content_length_header(ssl: i32, res: *mut uws_res);
-        pub fn uws_res_write_mark(ssl: i32, res: *mut uws_res);
-        pub fn us_socket_mark_needs_more_not_ssl(socket: *mut uws_res);
-        pub fn uws_res_state(ssl: c_int, res: *const uws_res) -> State;
-        pub fn uws_res_is_connect_request(ssl: i32, res: *mut uws_res) -> bool;
+        pub safe fn uws_res_mark_wrote_content_length_header(ssl: i32, res: &mut uws_res);
+        pub safe fn uws_res_write_mark(ssl: i32, res: &mut uws_res);
+        pub safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
+        pub safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
+        pub safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
         pub fn uws_res_get_remote_address_info(
             res: *mut uws_res,
             dest: *mut *const u8,
             port: *mut i32,
             is_ipv6: *mut bool,
         ) -> usize;
-        pub fn uws_res_uncork(ssl: i32, res: *mut uws_res);
+        pub safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,
@@ -1105,12 +1084,12 @@ pub mod c {
             length: usize,
             close_connection: bool,
         );
-        pub fn uws_res_flush_headers(ssl: i32, res: *mut uws_res, flush_immediately: bool);
-        pub fn uws_res_is_corked(ssl: i32, res: *mut uws_res) -> bool;
-        pub fn uws_res_get_socket_data(ssl: i32, res: *mut uws_res) -> *mut SocketData;
-        pub fn uws_res_pause(ssl: i32, res: *mut uws_res);
-        pub fn uws_res_resume(ssl: i32, res: *mut uws_res);
-        pub fn uws_res_write_continue(ssl: i32, res: *mut uws_res);
+        pub safe fn uws_res_flush_headers(ssl: i32, res: &mut uws_res, flush_immediately: bool);
+        pub safe fn uws_res_is_corked(ssl: i32, res: &mut uws_res) -> bool;
+        pub safe fn uws_res_get_socket_data(ssl: i32, res: &mut uws_res) -> *mut SocketData;
+        pub safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
+        pub safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
+        pub safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
         pub fn uws_res_write_status(ssl: i32, res: *mut uws_res, status: *const u8, length: usize);
         pub fn uws_res_write_header(
             ssl: i32,
@@ -1127,28 +1106,28 @@ pub mod c {
             key_length: usize,
             value: u64,
         );
-        pub fn uws_res_end_without_body(ssl: i32, res: *mut uws_res, close_connection: bool);
-        pub fn uws_res_end_sendfile(
+        pub safe fn uws_res_end_without_body(ssl: i32, res: &mut uws_res, close_connection: bool);
+        pub safe fn uws_res_end_sendfile(
             ssl: i32,
-            res: *mut uws_res,
+            res: &mut uws_res,
             write_offset: u64,
             close_connection: bool,
         );
-        pub fn uws_res_timeout(ssl: i32, res: *mut uws_res, timeout: u8);
-        pub fn uws_res_reset_timeout(ssl: i32, res: *mut uws_res);
-        pub fn uws_res_get_buffered_amount(ssl: i32, res: *mut uws_res) -> u64;
+        pub safe fn uws_res_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
+        pub safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
+        pub safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
         pub fn uws_res_write(ssl: i32, res: *mut uws_res, data: *const u8, length: *mut usize)
             -> bool;
-        pub fn uws_res_get_write_offset(ssl: i32, res: *mut uws_res) -> u64;
-        pub fn uws_res_override_write_offset(ssl: i32, res: *mut uws_res, offset: u64);
-        pub fn uws_res_has_responded(ssl: i32, res: *mut uws_res) -> bool;
+        pub safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
+        pub safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
+        pub safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;
         pub fn uws_res_on_writable(
             ssl: i32,
             res: *mut uws_res,
             handler: Option<unsafe extern "C" fn(*mut uws_res, u64, *mut c_void) -> bool>,
             user_data: *mut c_void,
         );
-        pub fn uws_res_clear_on_writable(ssl: i32, res: *mut uws_res);
+        pub safe fn uws_res_clear_on_writable(ssl: i32, res: &mut uws_res);
         pub fn uws_res_on_aborted(
             ssl: i32,
             res: *mut uws_res,
@@ -1169,9 +1148,9 @@ pub mod c {
             total: usize,
             close: bool,
         ) -> bool;
-        pub fn uws_res_end_stream(ssl: i32, res: *mut uws_res, close_connection: bool);
-        pub fn uws_res_prepare_for_sendfile(ssl: i32, res: *mut uws_res);
-        pub fn uws_res_get_native_handle(ssl: i32, res: *mut uws_res) -> *mut Socket;
+        pub safe fn uws_res_end_stream(ssl: i32, res: &mut uws_res, close_connection: bool);
+        pub safe fn uws_res_prepare_for_sendfile(ssl: i32, res: &mut uws_res);
+        pub safe fn uws_res_get_native_handle(ssl: i32, res: &mut uws_res) -> *mut Socket;
         pub fn uws_res_get_remote_address_as_text(
             ssl: i32,
             res: *mut uws_res,

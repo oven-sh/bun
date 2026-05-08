@@ -1674,19 +1674,19 @@ unsafe extern "C" {
 
 #[repr(C)]
 pub struct struct_stat {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 #[repr(C)]
 pub struct struct_archive_acl {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 #[repr(C)]
 pub struct struct_archive_entry_linkresolver {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -1848,7 +1848,7 @@ type dev_t = u64;
 /// Opaque libc `FILE` (only used as `*mut FILE` across FFI).
 #[repr(C)]
 pub struct FILE {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

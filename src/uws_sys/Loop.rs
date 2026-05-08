@@ -70,13 +70,11 @@ pub trait LoopHandler {
 #[cfg(not(windows))]
 impl PosixLoop {
     pub fn uncork(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_res_clear_corked_socket(self) };
+        c::uws_res_clear_corked_socket(self);
     }
 
     pub fn update_date(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
+        c::uws_loop_date_header_timer_update(self);
     }
 
     pub fn iteration_number(&self) -> u64 {
@@ -154,9 +152,8 @@ impl PosixLoop {
     }
 
     pub fn get() -> *mut Loop {
-        // SAFETY: uws_get_loop returns the process-lifetime singleton
         // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
-        unsafe { c::uws_get_loop() }
+        c::uws_get_loop()
     }
 
     /// Packetize HTTP/3 stream writes that happened since the last
@@ -166,8 +163,7 @@ impl PosixLoop {
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_quic_loop_flush_if_pending(self) };
+        c::us_quic_loop_flush_if_pending(self);
     }
 
     pub fn create<H: LoopHandler>() -> *mut Loop {
@@ -179,8 +175,7 @@ impl PosixLoop {
     }
 
     pub fn wakeup(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(self) };
+        c::us_wakeup_loop(self);
     }
 
     #[inline]
@@ -215,16 +210,14 @@ impl PosixLoop {
     /// `closeAllSocketGroups()` must drain it explicitly or every just-closed
     /// `us_socket_t` (libc-allocated) shows up as an LSAN leak.
     pub fn drain_closed_sockets(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_internal_free_closed_sockets(self) };
+        c::us_internal_free_closed_sockets(self);
     }
 
     /// `us_socket_group_close_all()` on every group currently linked to this
     /// loop — covers Listener/App-owned groups that `RareData`'s static field
     /// list doesn't enumerate. Returns whether any group was linked.
     pub fn close_all_groups(&mut self) -> bool {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_close_all_groups(self) != 0 }
+        c::us_loop_close_all_groups(self) != 0
     }
 
     // TODO(port): Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
@@ -283,8 +276,7 @@ impl PosixLoop {
     }
 
     pub fn run(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        c::us_loop_run(self);
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {
@@ -354,8 +346,7 @@ impl WindowsLoop {
     }
 
     pub fn uncork(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_res_clear_corked_socket(self) };
+        c::uws_res_clear_corked_socket(self);
     }
 
     pub fn get() -> *mut WindowsLoop {
@@ -384,8 +375,7 @@ impl WindowsLoop {
     }
 
     pub fn wakeup(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(self) };
+        c::us_wakeup_loop(self);
     }
 
     #[inline]
@@ -394,21 +384,18 @@ impl WindowsLoop {
     }
 
     pub fn tick_with_timeout(&mut self, _: Option<&Timespec>) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        c::us_loop_run(self);
     }
 
     pub fn tick_without_idle(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_pump(self) };
+        c::us_loop_pump(self);
     }
 
     pub fn drain_quic_if_necessary(&mut self) {
         if self.internal_loop_data.quic_head.is_null() {
             return;
         }
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_quic_loop_flush_if_pending(self) };
+        c::us_quic_loop_flush_if_pending(self);
     }
 
     pub fn create<H: LoopHandler>() -> *mut WindowsLoop {
@@ -420,8 +407,7 @@ impl WindowsLoop {
     }
 
     pub fn run(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        c::us_loop_run(self);
     }
 
     // TODO: remove these two aliases
@@ -454,13 +440,11 @@ impl WindowsLoop {
     }
 
     pub fn drain_closed_sockets(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_internal_free_closed_sockets(self) };
+        c::us_internal_free_closed_sockets(self);
     }
 
     pub fn close_all_groups(&mut self) -> bool {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_close_all_groups(self) != 0 }
+        c::us_loop_close_all_groups(self) != 0
     }
 
     // TODO(port): see PosixLoop::next_tick — same trampoline-synthesis limitation.
@@ -474,8 +458,7 @@ impl WindowsLoop {
     }
 
     pub fn update_date(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
+        c::uws_loop_date_header_timer_update(self);
     }
 
     /// # Safety
@@ -543,6 +526,10 @@ pub type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 mod c {
     use super::*;
 
+    // `Loop` (= `PosixLoop`/`WindowsLoop`) is `#[repr(C)]`, so `&mut Loop` is
+    // ABI-identical to a non-null pointer. Shims whose only pointer argument is
+    // the loop itself (plus value types) are declared `safe fn`; shims with
+    // `*mut c_void ctx`, nullable raw, or ownership transfer stay unsafe.
     unsafe extern "C" {
         pub fn us_create_loop(
             hint: *mut c_void,
@@ -552,26 +539,26 @@ mod c {
             ext_size: c_uint,
         ) -> *mut Loop;
         pub fn us_loop_free(loop_: *mut Loop);
-        pub fn us_loop_ext(loop_: *mut Loop) -> *mut c_void;
-        pub fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
-        pub fn us_loop_run(loop_: *mut Loop);
-        pub fn us_loop_pump(loop_: *mut Loop);
-        pub fn us_wakeup_loop(loop_: *mut Loop);
-        pub fn us_loop_integrate(loop_: *mut Loop);
-        pub fn us_loop_iteration_number(loop_: *mut Loop) -> c_longlong;
+        pub safe fn us_loop_ext(loop_: &mut Loop) -> *mut c_void;
+        pub safe fn us_quic_loop_flush_if_pending(loop_: &mut Loop);
+        pub safe fn us_loop_run(loop_: &mut Loop);
+        pub safe fn us_loop_pump(loop_: &mut Loop);
+        pub safe fn us_wakeup_loop(loop_: &mut Loop);
+        pub safe fn us_loop_integrate(loop_: &mut Loop);
+        pub safe fn us_loop_iteration_number(loop_: &mut Loop) -> c_longlong;
         pub fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub fn uws_loop_removePreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
-        pub fn us_internal_free_closed_sockets(loop_: *mut Loop);
-        pub fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
-        pub fn uws_get_loop() -> *mut Loop;
+        pub safe fn us_internal_free_closed_sockets(loop_: &mut Loop);
+        pub safe fn us_loop_close_all_groups(loop_: &mut Loop) -> c_int;
+        pub safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
         pub fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);
-        pub fn uws_res_clear_corked_socket(loop_: *mut Loop);
-        pub fn uws_loop_date_header_timer_update(loop_: *mut Loop);
+        pub safe fn uws_res_clear_corked_socket(loop_: &mut Loop);
+        pub safe fn uws_loop_date_header_timer_update(loop_: &mut Loop);
     }
 }
 

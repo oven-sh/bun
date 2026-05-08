@@ -27,7 +27,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 // `src/jsc/JSGlobalObject.rs`. Re-declare the FFI symbol and wrap it here so
 // the StackOverflow branch can throw without depending on the gated module.
 unsafe extern "C" {
-    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
+    safe fn JSGlobalObject__throwStackOverflow(this: &JSGlobalObject);
 }
 trait JSGlobalObjectStackOverflowExt {
     fn throw_stack_overflow(&self) -> JsError;
@@ -35,8 +35,7 @@ trait JSGlobalObjectStackOverflowExt {
 impl JSGlobalObjectStackOverflowExt for JSGlobalObject {
     #[inline]
     fn throw_stack_overflow(&self) -> JsError {
-        // SAFETY: FFI — `self` is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__throwStackOverflow(self) };
+        JSGlobalObject__throwStackOverflow(self);
         JsError::Thrown
     }
 }

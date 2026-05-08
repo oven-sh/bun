@@ -134,7 +134,7 @@ unsafe extern "C" {
 /// from `&self`. See [`Self::as_mut_ptr`].
 #[repr(C)]
 pub struct NapiEnv {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _cell: UnsafeCell<()>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
@@ -264,7 +264,7 @@ pub type napi_env = *mut NapiEnv;
 /// Contents are not used by any Rust code
 #[repr(C)]
 pub struct Ref {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
@@ -278,7 +278,7 @@ pub type napi_ref = *mut Ref;
 /// mutation through `&self` (see [`NapiEnv`] for rationale).
 #[repr(C)]
 pub struct NapiHandleScope {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _cell: UnsafeCell<()>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
@@ -1772,7 +1772,7 @@ pub static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
 
 #[repr(C)]
 pub struct struct_napi_async_cleanup_hook_handle__ {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 pub type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;

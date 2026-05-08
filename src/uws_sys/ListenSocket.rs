@@ -9,14 +9,13 @@ use crate::{us_socket_t, SocketGroup, SslCtx, LIBUS_SOCKET_DESCRIPTOR};
 /// Opaque FFI handle for a uSockets listen socket.
 #[repr(C)]
 pub struct ListenSocket {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 impl ListenSocket {
     pub fn close(&mut self) {
-        // SAFETY: self is a valid *mut ListenSocket from the C side.
-        unsafe { us_listen_socket_close(self) }
+        us_listen_socket_close(self)
     }
 
     pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
@@ -53,8 +52,7 @@ impl ListenSocket {
     }
 
     pub fn fd(&mut self) -> Fd {
-        // SAFETY: self is a valid listen socket.
-        let raw = unsafe { us_listen_socket_get_fd(self) };
+        let raw = us_listen_socket_get_fd(self);
         // SOCKET → kind=system (mask bit 63); `from_native` would store the
         // raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
         #[cfg(windows)] { Fd::from_system(raw as *mut core::ffi::c_void) }
@@ -107,19 +105,21 @@ impl ListenSocket {
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char),
     ) {
-        // SAFETY: self is valid; cb has C ABI.
-        unsafe { us_listen_socket_on_server_name(self, cb) }
+        us_listen_socket_on_server_name(self, cb)
     }
 }
 
 // This file IS the *_sys crate, so externs live here.
+// `ListenSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&mut
+// ListenSocket` is ABI-identical to a non-null pointer; value-typed shims are
+// `safe fn`. Shims with nullable raw / ctx ptr stay unsafe.
 unsafe extern "C" {
-    fn us_listen_socket_close(ls: *mut ListenSocket);
-    fn us_listen_socket_group(ls: *mut ListenSocket) -> *mut SocketGroup;
-    fn us_listen_socket_ext(ls: *mut ListenSocket) -> *mut c_void;
-    fn us_listen_socket_get_fd(ls: *mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
+    safe fn us_listen_socket_close(ls: &mut ListenSocket);
+    safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
+    safe fn us_listen_socket_ext(ls: &mut ListenSocket) -> *mut c_void;
+    safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
     #[allow(dead_code)]
-    fn us_listen_socket_port(ls: *mut ListenSocket) -> c_int;
+    safe fn us_listen_socket_port(ls: &mut ListenSocket) -> c_int;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,
@@ -131,8 +131,8 @@ unsafe extern "C" {
         ls: *mut ListenSocket,
         hostname: *const c_char,
     ) -> *mut c_void;
-    fn us_listen_socket_on_server_name(
-        ls: *mut ListenSocket,
+    safe fn us_listen_socket_on_server_name(
+        ls: &mut ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char),
     );
 }

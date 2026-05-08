@@ -295,14 +295,13 @@ pub enum EventType {
 
 impl EventType {
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: FFI call into C++; EventType is #[repr(u8)] matching the C++ enum.
-        unsafe { Bun__domEventNameToJS(global_object, self) }
+        Bun__domEventNameToJS(global_object, self)
     }
 }
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn Bun__domEventNameToJS(global: *const JSGlobalObject, event_type: EventType) -> JSValue;
+    safe fn Bun__domEventNameToJS(global: &JSGlobalObject, event_type: EventType) -> JSValue;
 }
 
 pub struct FSWatchTaskWindows {

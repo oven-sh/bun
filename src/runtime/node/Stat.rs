@@ -96,10 +96,10 @@ impl<const BIG: bool> StatType<BIG> {
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
         if BIG {
             // SAFETY: FFI call into JSC binding; `global` is a valid borrow.
-            unsafe { Bun__JSBigIntStatsObjectConstructor(global) }
+            Bun__JSBigIntStatsObjectConstructor(global)
         } else {
             // SAFETY: FFI call into JSC binding; `global` is a valid borrow.
-            unsafe { Bun__JSStatsObjectConstructor(global) }
+            Bun__JSStatsObjectConstructor(global)
         }
     }
 
@@ -116,30 +116,27 @@ impl<const BIG: bool> StatType<BIG> {
             let birthtime_ms: i64 = Self::to_time_ms_i64(b_time);
 
             return bun_jsc::from_js_host_call(global, || {
-                // SAFETY: FFI call; all integer args are by-value, `global` is a valid borrow.
-                unsafe {
-                    Bun__createJSBigIntStatsObject(
-                        global,
-                        stat_.dev,
-                        stat_.ino,
-                        stat_.mode,
-                        stat_.nlink,
-                        stat_.uid,
-                        stat_.gid,
-                        stat_.rdev,
-                        stat_.size,
-                        stat_.blksize,
-                        stat_.blocks,
-                        atime_ms,
-                        mtime_ms,
-                        ctime_ms,
-                        birthtime_ms,
-                        Self::to_nanoseconds(a_time),
-                        Self::to_nanoseconds(m_time),
-                        Self::to_nanoseconds(c_time),
-                        Self::to_nanoseconds(b_time),
-                    )
-                }
+                Bun__createJSBigIntStatsObject(
+                    global,
+                    stat_.dev,
+                    stat_.ino,
+                    stat_.mode,
+                    stat_.nlink,
+                    stat_.uid,
+                    stat_.gid,
+                    stat_.rdev,
+                    stat_.size,
+                    stat_.blksize,
+                    stat_.blocks,
+                    atime_ms,
+                    mtime_ms,
+                    ctime_ms,
+                    birthtime_ms,
+                    Self::to_nanoseconds(a_time),
+                    Self::to_nanoseconds(m_time),
+                    Self::to_nanoseconds(c_time),
+                    Self::to_nanoseconds(b_time),
+                )
             });
         }
 
@@ -148,35 +145,32 @@ impl<const BIG: bool> StatType<BIG> {
         let ctime_ms: f64 = Self::to_time_ms_f64(c_time);
         let birthtime_ms: f64 = Self::to_time_ms_f64(b_time);
 
-        // SAFETY: FFI call; all scalar args are by-value, `global` is a valid borrow.
-        Ok(unsafe {
-            Bun__createJSStatsObject(
-                global,
-                stat_.dev,
-                stat_.ino,
-                stat_.mode,
-                stat_.nlink,
-                stat_.uid,
-                stat_.gid,
-                stat_.rdev,
-                stat_.size,
-                stat_.blksize,
-                stat_.blocks,
-                atime_ms,
-                mtime_ms,
-                ctime_ms,
-                birthtime_ms,
-            )
-        })
+        Ok(Bun__createJSStatsObject(
+            global,
+            stat_.dev,
+            stat_.ino,
+            stat_.mode,
+            stat_.nlink,
+            stat_.uid,
+            stat_.gid,
+            stat_.rdev,
+            stat_.size,
+            stat_.blksize,
+            stat_.blocks,
+            atime_ms,
+            mtime_ms,
+            ctime_ms,
+            birthtime_ms,
+        ))
     }
 }
 
 unsafe extern "C" {
-    fn Bun__JSBigIntStatsObjectConstructor(global: *const JSGlobalObject) -> JSValue;
-    fn Bun__JSStatsObjectConstructor(global: *const JSGlobalObject) -> JSValue;
+    safe fn Bun__JSBigIntStatsObjectConstructor(global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__JSStatsObjectConstructor(global: &JSGlobalObject) -> JSValue;
 
-    fn Bun__createJSStatsObject(
-        global: *const JSGlobalObject,
+    safe fn Bun__createJSStatsObject(
+        global: &JSGlobalObject,
         dev: u64,
         ino: u64,
         mode: u64,
@@ -193,8 +187,8 @@ unsafe extern "C" {
         birthtime_ms: f64,
     ) -> JSValue;
 
-    fn Bun__createJSBigIntStatsObject(
-        global: *const JSGlobalObject,
+    safe fn Bun__createJSBigIntStatsObject(
+        global: &JSGlobalObject,
         dev: u64,
         ino: u64,
         mode: u64,

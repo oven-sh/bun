@@ -114,10 +114,16 @@ pub struct Timespec {
 }
 
 // Opaque FFI handles (Nomicon pattern) — what higher tiers reach for when the
-// real module body isn't needed.
+// real module body isn't needed. `_p: UnsafeCell<[u8; 0]>` (not bare `[u8; 0]`)
+// so that `&T` does NOT carry `readonly`/`noalias` attributes at the ABI
+// boundary — the C side mutates through these handles regardless of whether
+// Rust holds `&` or `&mut`, and a readonly attribute would license LLVM to
+// cache loads across the FFI call. With UnsafeCell the reference is
+// ABI-identical to a non-null pointer, which lets us declare value-typed shims
+// as `safe fn` and drop per-call-site `unsafe { }`.
 macro_rules! opaque {
     ($($name:ident),+ $(,)?) => {$(
-        #[repr(C)] pub struct $name { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+        #[repr(C)] pub struct $name { _p: core::cell::UnsafeCell<[u8; 0]>, _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
     )+};
 }
 opaque!(

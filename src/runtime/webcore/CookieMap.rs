@@ -6,7 +6,7 @@ use bun_uws::ResponseKind;
 /// Opaque FFI handle. Always used behind a pointer (`*mut CookieMap`).
 #[repr(C)]
 pub struct CookieMap {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

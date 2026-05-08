@@ -21,7 +21,7 @@ pub use napi_body::{napi_async_work, NapiFinalizerTask, ThreadSafeFunction};
 /// This is `struct napi_env__` from napi.h
 #[repr(C)]
 pub struct NapiEnv {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

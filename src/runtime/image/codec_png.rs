@@ -11,7 +11,7 @@ use crate::encoded_wrap_free;
 // TODO(port): move to runtime_sys (or a dedicated spng_sys crate)
 #[repr(C)]
 pub struct spng_ctx {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

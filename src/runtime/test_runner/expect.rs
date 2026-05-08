@@ -1330,10 +1330,10 @@ impl Expect {
         }
 
         // SAFETY: FFI call with valid &JSGlobalObject
-        let expect_proto = unsafe { Expect__getPrototype(global_this) };
+        let expect_proto = Expect__getPrototype(global_this);
         let expect_constructor = <Self as bun_jsc::JsClass>::get_constructor(global_this);
         // SAFETY: FFI call with valid &JSGlobalObject
-        let expect_static_proto = unsafe { ExpectStatic__getPrototype(global_this) };
+        let expect_static_proto = ExpectStatic__getPrototype(global_this);
 
         // SAFETY: already checked that args[0] is an object
         let matchers_to_register = args[0].get_object().expect("unreachable");
@@ -2563,7 +2563,7 @@ impl ExpectMatcherContext {
     #[bun_jsc::host_fn(getter)]
     pub fn get_utils(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI call with valid &JSGlobalObject
-        unsafe { ExpectMatcherUtils__getSingleton(global_this) }
+        ExpectMatcherUtils__getSingleton(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -3022,7 +3022,7 @@ pub mod mock {
 #[inline]
 fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> Option<JSValue> {
     // SAFETY: FFI call with valid JSValue and &JSGlobalObject
-    let matcher_fn = unsafe { Bun__JSWrappingFunction__getWrappedFunction(this_value, global_this) };
+    let matcher_fn = Bun__JSWrappingFunction__getWrappedFunction(this_value, global_this);
     if matcher_fn.is_empty() { None } else { Some(matcher_fn) }
 }
 
@@ -3038,12 +3038,12 @@ unsafe extern "C" {
         wrapped_fn: JSValue,
         strong: bool,
     ) -> JSValue;
-    fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
+    safe fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: &JSGlobalObject) -> JSValue;
 
-    fn ExpectMatcherUtils__getSingleton(global_this: *const JSGlobalObject) -> JSValue;
+    safe fn ExpectMatcherUtils__getSingleton(global_this: &JSGlobalObject) -> JSValue;
 
-    fn Expect__getPrototype(global_this: *const JSGlobalObject) -> JSValue;
-    fn ExpectStatic__getPrototype(global_this: *const JSGlobalObject) -> JSValue;
+    safe fn Expect__getPrototype(global_this: &JSGlobalObject) -> JSValue;
+    safe fn ExpectStatic__getPrototype(global_this: &JSGlobalObject) -> JSValue;
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:

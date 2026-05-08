@@ -281,8 +281,8 @@ pub fn render_react(
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn JSReactElement__createFragment(
-        global_object: *const JSGlobalObject,
+    safe fn JSReactElement__createFragment(
+        global_object: &JSGlobalObject,
         react_version: u8,
         children: JSValue,
     ) -> JSValue;
@@ -309,8 +309,7 @@ fn render_react_impl(
     }
 
     let children = render_ast(global_this, callframe, marked_args, Some(react_version))?;
-    // SAFETY: FFI call into JSC bindings; global_this is a live &JSGlobalObject.
-    let fragment = unsafe { JSReactElement__createFragment(global_this, react_version, children) };
+    let fragment = JSReactElement__createFragment(global_this, react_version, children);
     marked_args.append(fragment);
     Ok(fragment)
 }
@@ -382,8 +381,8 @@ struct ParseRenderer<'a> {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn JSReactElement__create(
-        global_object: *const JSGlobalObject,
+    safe fn JSReactElement__create(
+        global_object: &JSGlobalObject,
         react_version: u8,
         element_type: JSValue,
         props: JSValue,
@@ -588,7 +587,7 @@ impl<'a> ParseRenderer<'a> {
     fn create_element(&mut self, type_val: JSValue, props: JSValue) -> JSValue {
         if let Some(version) = self.react_version {
             // SAFETY: FFI call into JSC bindings; global_object is a live &JSGlobalObject.
-            let obj = unsafe { JSReactElement__create(self.global_object, version, type_val, props) };
+            let obj = JSReactElement__create(self.global_object, version, type_val, props);
             self.marked_args.append(obj);
             obj
         } else {
@@ -1371,11 +1370,11 @@ impl<'a> JsCallbackRenderer<'a> {
             }
             md::BlockType::Ol => {
                 // SAFETY: FFI into JSC bindings.
-                Ok(Some(unsafe { BunMarkdownMeta__createList(g, true, JSValue::js_number(data as f64), self.count_list_depth()) }))
+                Ok(Some(BunMarkdownMeta__createList(g, true, JSValue::js_number(data as f64), self.count_list_depth())))
             }
             md::BlockType::Ul => {
                 // SAFETY: FFI into JSC bindings.
-                Ok(Some(unsafe { BunMarkdownMeta__createList(g, false, JSValue::UNDEFINED, self.count_list_depth()) }))
+                Ok(Some(BunMarkdownMeta__createList(g, false, JSValue::UNDEFINED, self.count_list_depth())))
             }
             md::BlockType::Code => {
                 if flags & md::BLOCK_FENCED_CODE != 0 {
@@ -1396,7 +1395,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     JSValue::UNDEFINED
                 };
                 // SAFETY: FFI into JSC bindings.
-                Ok(Some(unsafe { BunMarkdownMeta__createCell(g, align_js) }))
+                Ok(Some(BunMarkdownMeta__createCell(g, align_js)))
             }
             md::BlockType::Li => {
                 // The li entry is still on top of the stack; parent ul/ol is at len-2.
@@ -1418,7 +1417,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 };
 
                 // SAFETY: FFI into JSC bindings.
-                Ok(Some(unsafe { BunMarkdownMeta__createListItem(g, item_index, depth, is_ordered, start_js, checked_js) }))
+                Ok(Some(BunMarkdownMeta__createListItem(g, item_index, depth, is_ordered, start_js, checked_js)))
             }
             _ => Ok(None),
         }
@@ -1435,7 +1434,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     JSValue::UNDEFINED
                 };
                 // SAFETY: FFI into JSC bindings.
-                Ok(Some(unsafe { BunMarkdownMeta__createLink(g, href, title) }))
+                Ok(Some(BunMarkdownMeta__createLink(g, href, title)))
             }
             md::SpanType::Img => {
                 // Image meta shares shape with link (src/href are both the first
@@ -1507,21 +1506,22 @@ pub enum TagIndex {
 }
 
 // TODO(port): move to <area>_sys
+// `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&JSGlobalObject`
+// is ABI-identical to a non-null pointer; all other params are value types.
 unsafe extern "C" {
-    fn BunMarkdownTagStrings__getTagString(global: *const JSGlobalObject, index: u8) -> JSValue;
+    safe fn BunMarkdownTagStrings__getTagString(global: &JSGlobalObject, index: u8) -> JSValue;
 
     // Fast-path meta-object constructors using cached Structures (see
     // BunMarkdownMeta.cpp). Each constructs via putDirectOffset so the
     // resulting objects share a single Structure and stay monomorphic.
-    fn BunMarkdownMeta__createListItem(global: *const JSGlobalObject, index: u32, depth: u32, ordered: bool, start: JSValue, checked: JSValue) -> JSValue;
-    fn BunMarkdownMeta__createList(global: *const JSGlobalObject, ordered: bool, start: JSValue, depth: u32) -> JSValue;
-    fn BunMarkdownMeta__createCell(global: *const JSGlobalObject, align: JSValue) -> JSValue;
-    fn BunMarkdownMeta__createLink(global: *const JSGlobalObject, href: JSValue, title: JSValue) -> JSValue;
+    safe fn BunMarkdownMeta__createListItem(global: &JSGlobalObject, index: u32, depth: u32, ordered: bool, start: JSValue, checked: JSValue) -> JSValue;
+    safe fn BunMarkdownMeta__createList(global: &JSGlobalObject, ordered: bool, start: JSValue, depth: u32) -> JSValue;
+    safe fn BunMarkdownMeta__createCell(global: &JSGlobalObject, align: JSValue) -> JSValue;
+    safe fn BunMarkdownMeta__createLink(global: &JSGlobalObject, href: JSValue, title: JSValue) -> JSValue;
 }
 
 fn get_cached_tag_string(global_object: &JSGlobalObject, tag: TagIndex) -> JSValue {
-    // SAFETY: FFI into JSC bindings; tag is a valid index.
-    unsafe { BunMarkdownTagStrings__getTagString(global_object, tag as u8) }
+    BunMarkdownTagStrings__getTagString(global_object, tag as u8)
 }
 
 fn get_block_type_tag(block_type: md::BlockType, data: u32) -> TagIndex {

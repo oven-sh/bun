@@ -56,13 +56,13 @@ trait JSValueAsyncCtxExt {
 impl JSValueAsyncCtxExt for JSValue {
     fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {
-            fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: *const JSGlobalObject,
+            safe fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: &JSGlobalObject,
                 callback: JSValue,
             ) -> JSValue;
         }
         // SAFETY: thin FFI; `global` is live, `self` is a valid encoded JSValue.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
+        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 }
 

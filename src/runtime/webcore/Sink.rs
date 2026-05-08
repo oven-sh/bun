@@ -1570,7 +1570,7 @@ macro_rules! js_sink {
 /// Zig: `const Detached = opaque {};` used only as a TaggedPointerUnion type-tag.
 #[repr(C)]
 pub struct Detached {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

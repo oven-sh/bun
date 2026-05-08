@@ -94,7 +94,7 @@ impl SecureContext {
         let key = u64::from_le_bytes(d[0..8].try_into().expect("infallible: size matches"));
 
         // SAFETY: FFI; `global` is a valid &JSGlobalObject for the duration of the call.
-        let cached = unsafe { cpp::Bun__SecureContextCache__get(global, key) };
+        let cached = cpp::Bun__SecureContextCache__get(global, key);
         if !cached.is_empty() {
             if let Some(existing) = Self::from_js(cached) {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
@@ -110,7 +110,7 @@ impl SecureContext {
         // `sc` is a fresh Box from `create_with_digest`; ownership transfers to the GC wrapper.
         let value = Self::to_js_boxed(sc, global);
         // SAFETY: FFI; `global` is valid, `value` is a live JSValue rooted on the stack.
-        unsafe { cpp::Bun__SecureContextCache__set(global, key, value) };
+        cpp::Bun__SecureContextCache__set(global, key, value);
         Ok(value)
     }
 
@@ -200,8 +200,8 @@ mod cpp {
     use super::*;
     // TODO(port): move to runtime_sys
     unsafe extern "C" {
-        pub fn Bun__SecureContextCache__get(global: *const JSGlobalObject, key: u64) -> JSValue;
-        pub fn Bun__SecureContextCache__set(global: *const JSGlobalObject, key: u64, value: JSValue);
+        pub safe fn Bun__SecureContextCache__get(global: &JSGlobalObject, key: u64) -> JSValue;
+        pub safe fn Bun__SecureContextCache__set(global: &JSGlobalObject, key: u64, value: JSValue);
     }
 }
 

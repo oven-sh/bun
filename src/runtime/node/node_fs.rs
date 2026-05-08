@@ -268,7 +268,7 @@ fn without_nt_prefix<T: bun_string::strings::paths::Ch>(path: &[T]) -> &[T] {
 #[inline]
 fn os_path_literal_empty() -> &'static OSPathSliceZ {
     #[cfg(windows)]
-    { static EMPTY: [u16; 1] = [0]; unsafe { core::mem::transmute::<&[u16], &OSPathSliceZ>(&EMPTY[..0]) } }
+    { bun_core::WStr::EMPTY }
     #[cfg(not(windows))]
     { ZStr::EMPTY }
 }

@@ -1178,8 +1178,16 @@ impl BufferReadStream {
         let pos = isize::try_from(this.pos).expect("int cast");
         let offset = isize::try_from(offset).expect("int cast");
 
-        // SAFETY: whence is one of SEEK_SET/CUR/END from libarchive
-        match unsafe { core::mem::transmute::<c_int, Seek>(whence) } {
+        // libarchive only ever passes SEEK_SET/CUR/END; bail with the
+        // documented "invalid offset" sentinel for anything else rather than
+        // reinterpreting an unknown discriminant.
+        let whence = match whence {
+            0 => Seek::Set,
+            1 => Seek::Current,
+            2 => Seek::End,
+            _ => return lib::Result::Fatal as lib::la_int64_t,
+        };
+        match whence {
             Seek::Current => {
                 let new_pos = (pos + offset).min(buflen - 1).max(0);
                 this.pos = usize::try_from(new_pos).expect("int cast");

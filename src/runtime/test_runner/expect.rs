@@ -109,11 +109,21 @@ impl AsymmetricMatcherConstructorType {
     pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
         // SAFETY: FFI call with valid &JSGlobalObject; JSValue is Copy/repr(transparent)
         let result = unsafe { AsymmetricMatcherConstructorType__fromJS(global_object, value) };
-        if result == -1 {
-            return Err(JsError::Thrown);
-        }
-        // SAFETY: C++ guarantees result is in 0..=9 when != -1
-        Ok(unsafe { core::mem::transmute::<u8, Self>(result as u8) })
+        Ok(match result {
+            -1 => return Err(JsError::Thrown),
+            1 => Self::Symbol,
+            2 => Self::String,
+            3 => Self::Object,
+            4 => Self::Array,
+            5 => Self::BigInt,
+            6 => Self::Boolean,
+            7 => Self::Number,
+            8 => Self::Promise,
+            9 => Self::InstanceOf,
+            // C++ contract: any non-(-1) value is one of the above; treat
+            // 0 (and any future unknown) as `None` rather than UB.
+            _ => Self::None,
+        })
     }
 }
 

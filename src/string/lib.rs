@@ -1229,6 +1229,19 @@ impl ZigString {
     #[inline]
     pub const fn is_empty(&self) -> bool { self.len == 0 }
 
+    /// Construct from an already-tagged pointer + length pair. Exists so the
+    /// `bun_jsc::ZigString` mirror (identical `#[repr(C)] { *const u8, usize }`,
+    /// same tag-bit scheme) can convert field-by-field instead of `transmute`.
+    /// `ptr` is stored verbatim — tag bits are not touched.
+    #[inline]
+    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
+        Self { ptr, len }
+    }
+    /// Raw tagged pointer (top-bit flags intact). Pair with
+    /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
+    #[inline]
+    pub const fn tagged_ptr(&self) -> *const u8 { self.ptr }
+
     #[inline]
     pub const fn init(s: &[u8]) -> Self {
         Self { ptr: s.as_ptr(), len: s.len() }

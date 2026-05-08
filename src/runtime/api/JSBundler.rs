@@ -1463,9 +1463,7 @@ pub mod js_bundler {
                 return;
             }
         } else {
-            // SAFETY: api::Loader is #[repr(u8)]
-            let loader: api::Loader =
-                unsafe { core::mem::transmute::<u8, api::Loader>(loader_as_int.as_int32() as u8) };
+            let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
             // SAFETY: bv2 backref is valid; plugins is Some
             let global = unsafe { (*bv2_plugin(this.bv2)).global_object() };
             let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(

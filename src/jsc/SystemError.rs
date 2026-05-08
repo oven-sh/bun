@@ -70,9 +70,7 @@ unsafe extern "C" {
 impl SystemError {
     pub fn get_errno(&self) -> bun_sys::E {
         // The inverse in bun.sys.Error.toSystemError()
-        // SAFETY: errno * -1 is a valid discriminant of bun_sys::E (mirrors Zig @enumFromInt).
-        // TODO(port): verify bun_sys::E repr width matches this cast.
-        unsafe { core::mem::transmute((self.errno * -1) as u16) }
+        bun_sys::E::from_raw((self.errno * -1) as u16)
     }
 
     pub fn deref(&self) {

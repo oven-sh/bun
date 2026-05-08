@@ -1,6 +1,5 @@
 use core::convert::Infallible;
 use std::borrow::Cow;
-use std::sync::OnceLock;
 
 /// Duck-typed arg-iterator surface (Zig used `anytype`). Implemented by
 /// `OsIterator` and `SliceIterator`; `ShellIterator` does not fit (fallible,
@@ -103,12 +102,11 @@ impl ArgIter<'static> for OsIterator {
 
 /// Process argv as a `&'static` slice of `&'static [u8]`.
 ///
-/// Zig: `bun.argv: [][:0]const u8` (process-lifetime). `bun_core::Output::argv()`
-/// only exposes an iterator, so we materialize it once into a `OnceLock` (per
-/// PORTING.md §Concurrency: OnceLock for `&'static`, never `Box::leak`).
+/// Zig: `bun.argv: [][:0]const u8` — the process-global view that includes
+/// `BUN_OPTIONS` injection and `set_argv()` swaps. Must be read fresh on each
+/// `OsIterator::init()` (no caching) so option parsing sees the spliced view.
 fn os_argv() -> &'static [&'static [u8]] {
-    static ARGV: OnceLock<Vec<&'static [u8]>> = OnceLock::new();
-    ARGV.get_or_init(|| bun_core::Output::argv().collect()).as_slice()
+    bun_core::argv().as_byte_slices()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]

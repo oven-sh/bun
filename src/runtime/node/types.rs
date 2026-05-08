@@ -666,6 +666,12 @@ impl Encoding {
                 const CHARSET: &[u8; 16] = b"0123456789abcdef";
                 let (mut encoded, bytes) =
                     bun_str::String::create_uninitialized_latin1(input.len() * 2);
+                if encoded.is_dead() {
+                    // WTF OOM — match webcore::encoding pattern; transfer the
+                    // Dead string (becomes JS empty) rather than indexing a
+                    // zero-length `bytes`.
+                    return encoded.transfer_to_js(global_object);
+                }
                 for (i, &b) in input.iter().enumerate() {
                     bytes[i * 2] = CHARSET[(b >> 4) as usize];
                     bytes[i * 2 + 1] = CHARSET[(b & 15) as usize];
@@ -725,6 +731,12 @@ impl Encoding {
                 const CHARSET: &[u8; 16] = b"0123456789abcdef";
                 let (mut encoded, bytes) =
                     bun_str::String::create_uninitialized_latin1(input.len() * 2);
+                if encoded.is_dead() {
+                    // WTF OOM — match webcore::encoding pattern; transfer the
+                    // Dead string (becomes JS empty) rather than indexing a
+                    // zero-length `bytes`.
+                    return encoded.transfer_to_js(global_object);
+                }
                 for (i, &b) in input.iter().enumerate() {
                     bytes[i * 2] = CHARSET[(b >> 4) as usize];
                     bytes[i * 2 + 1] = CHARSET[(b & 15) as usize];

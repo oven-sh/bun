@@ -18,7 +18,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::{env_var, fmt, tty, Environment, Output};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_paths::{self as path, PathBuffer};
@@ -594,7 +594,7 @@ fn cmd_copy(repl: &mut Repl, args: &[u8]) -> ReplResult {
 
     if code.is_empty() {
         // .copy with no args - copy _ (last result) to clipboard
-        if let Err(err) = repl.copy_value_to_clipboard(repl.last_result) {
+        if let Err(err) = repl.copy_value_to_clipboard(repl.last_result.value()) {
             if let Some(global) = repl.global {
                 let exc = global.take_exception(err);
                 repl.set_last_error(exc);
@@ -738,8 +738,8 @@ pub struct Repl<'a> {
     // Special REPL variables
     // PORT NOTE: bare JSValue fields are safe here because Repl is stack-allocated
     // and values are explicitly protect()/unprotect()'d.
-    last_result: JSValue,
-    last_error: JSValue,
+    last_result: ProtectedJSValue,
+    last_error: ProtectedJSValue,
 
     // Windows: saved console mode for restoration
     #[cfg(windows)]
@@ -766,31 +766,23 @@ impl<'a> Repl<'a> {
             stdin_buf_end: 0,
             vm: None,
             global: None,
-            last_result: JSValue::UNDEFINED,
-            last_error: JSValue::UNDEFINED,
+            // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
+            // C++-side no-op for non-cell values.
+            last_result: ProtectedJSValue::adopt(JSValue::UNDEFINED),
+            last_error: ProtectedJSValue::adopt(JSValue::UNDEFINED),
             #[cfg(windows)]
             original_windows_mode: None,
         }
     }
 
     fn set_last_result(&mut self, value: JSValue) {
-        if !self.last_result.is_undefined() {
-            self.last_result.unprotect();
-        }
-        self.last_result = value;
-        if !value.is_undefined() {
-            value.protect();
-        }
+        // Assignment drops the previous guard (= unprotect old). `protected()`
+        // on `undefined` is a C++ no-op, so the is_undefined() gate is elided.
+        self.last_result = value.protected();
     }
 
     fn set_last_error(&mut self, value: JSValue) {
-        if !self.last_error.is_undefined() {
-            self.last_error.unprotect();
-        }
-        self.last_error = value;
-        if !value.is_undefined() {
-            value.protect();
-        }
+        self.last_error = value.protected();
     }
 
     // ========================================================================
@@ -1332,14 +1324,7 @@ impl<'a> Repl<'a> {
             }
         }
         // Protect across tick() in case of GC
-        if !actual_result.is_undefined() {
-            actual_result.protect();
-        }
-        let _unprotect = scopeguard::guard(actual_result, |v| {
-            if !v.is_undefined() {
-                v.unprotect();
-            }
-        });
+        let _prot = actual_result.protected();
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
         vm_mut(vm).tick();
@@ -2205,13 +2190,8 @@ impl<'a> Drop for Repl<'a> {
     fn drop(&mut self) {
         self.restore_terminal();
         self.history.save();
-        // line_editor, history, multiline_buffer, editor_buffer dropped automatically
-        if !self.last_result.is_undefined() {
-            self.last_result.unprotect();
-        }
-        if !self.last_error.is_undefined() {
-            self.last_error.unprotect();
-        }
+        // line_editor, history, multiline_buffer, editor_buffer, last_result,
+        // last_error dropped automatically (ProtectedJSValue unprotects).
     }
 }
 

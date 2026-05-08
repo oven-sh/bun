@@ -78,9 +78,9 @@ fn run_async<A: FsArgument>(
     // alive past return when ownership transfers to the Task. The Rust port
     // mirrors this with `ManuallyDrop`: dropped only on the early-return
     // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `deinit_and_unprotect()` when the
+    // protected JSValues are released by `Drop for ThreadSafe<A>` when the
     // Task completes), and `slice` is intentionally not dropped — its
-    // `unprotect()` would race that.
+    // `Drop`-unprotect would race that.
 
     let args = match <A as FsArgument>::from_js(global, &mut slice) {
         Ok(a) => a,

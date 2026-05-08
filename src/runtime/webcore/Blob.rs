@@ -5058,13 +5058,12 @@ pub fn construct_bun_file(
         if p.slice().starts_with(b"s3://") {
             // PORT NOTE (layering): `webcore::node_types::PathLike` re-exports
             // `crate::node::types::PathLike`, so no conversion is needed —
-            // clone the path (Zig consumed it; the Rust `path` is dropped at
-            // scope exit by `deinit_and_unprotect` below).
+            // clone the path (Zig consumed it; the Rust `path` drops at scope exit).
             return S3File::construct_internal_js(global_object, p.clone(), options);
         }
     }
-    // PORT NOTE: Zig `defer path.deinitAndUnprotect()` — stub PathOrFileDescriptor
-    // owns its data and `deinit_and_unprotect` is a no-op; drop handles it.
+    // PORT NOTE: Zig `defer path.deinitAndUnprotect()` — sync path took no
+    // `protect()`, so `Drop for PathOrFileDescriptor` suffices.
 
     let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 

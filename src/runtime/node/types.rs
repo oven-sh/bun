@@ -72,23 +72,6 @@ impl BlobOrStringOrBuffer {
         }
     }
 
-    pub fn deinit_and_unprotect(&mut self) {
-        // Alternate cleanup path (unprotects JS-side buffers); leaves `self`
-        // empty (subsequent Drop is a no-op).
-        match self {
-            Self::StringOrBuffer(sob) => {
-                sob.deinit_and_unprotect();
-            }
-            Self::Blob(blob) => {
-                // `.blob` is populated via a raw bitwise copy of a live JS Blob
-                // (see from_js_maybe_file_maybe_async / from_js_with_encoding_value_allow_request_response),
-                // so it does not own `content_type` or `name`. Only release the
-                // store reference, matching Drop above.
-                let _ = blob.store.take();
-            }
-        }
-    }
-
     pub fn byte_length(&self) -> usize {
         self.slice().len()
     }
@@ -266,6 +249,31 @@ impl Drop for StringOrBuffer {
 }
 
 
+impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
+    /// Zig `BlobOrStringOrBuffer.deinitAndUnprotect`, JS-side half — owned
+    /// payloads are released by `Drop` (which runs next when held in a
+    /// [`bun_jsc::ThreadSafe`]).
+    #[inline]
+    fn unprotect(&mut self) {
+        if let Self::StringOrBuffer(sob) = self {
+            sob.unprotect();
+        }
+    }
+}
+
+impl bun_jsc::Unprotect for StringOrBuffer {
+    /// Zig `StringOrBuffer.deinitAndUnprotect`, JS-side half — undo the
+    /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
+    /// `from_js_maybe_async(.., is_async=true)`. Owned slices are released by
+    /// `Drop`.
+    #[inline]
+    fn unprotect(&mut self) {
+        if let Self::Buffer(buffer) = self {
+            buffer.buffer.value.unprotect();
+        }
+    }
+}
+
 impl StringOrBuffer {
     pub fn to_thread_safe(&mut self) {
         match self {
@@ -281,6 +289,13 @@ impl StringOrBuffer {
                 buffer.buffer.value.protect();
             }
         }
+    }
+
+    /// Consuming `to_thread_safe()` — see [`PathLike::into_thread_safe`].
+    #[inline]
+    pub fn into_thread_safe(mut self) -> bun_jsc::ThreadSafe<Self> {
+        self.to_thread_safe();
+        bun_jsc::ThreadSafe::adopt(self)
     }
 
     pub fn from_js_to_owned_slice(
@@ -333,18 +348,6 @@ impl StringOrBuffer {
     #[inline]
     pub fn buffer(&self) -> Option<&Buffer> {
         if let Self::Buffer(b) = self { Some(b) } else { None }
-    }
-
-    pub fn deinit_and_unprotect(&mut self) {
-        // Alternate cleanup path (unprotects JS-side buffers); leaves `self`
-        // empty so the subsequent Drop is a no-op.
-        if let Self::Buffer(buffer) = self {
-            buffer.buffer.value.unprotect();
-        }
-        // Reassigning runs `Drop` on the old value, releasing
-        // `SliceWithUnderlyingString` / `EncodedSlice` exactly as Zig's
-        // `deinitAndUnprotect` does for those arms.
-        *self = Self::EMPTY;
     }
 
     pub fn from_js_maybe_async(
@@ -814,7 +817,7 @@ pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
-/// `deinit_and_unprotect` / `to_thread_safe` / `slice` / `estimated_size` are
+/// `to_thread_safe` / `into_thread_safe` / `slice` / `estimated_size` are
 /// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).

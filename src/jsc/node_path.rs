@@ -12,6 +12,79 @@ use bun_sys::Fd;
 
 use crate::array_buffer::MarkedArrayBuffer;
 
+// ──────────────────────────────────────────────────────────────────────────
+// RAII for `protect()`/`unprotect()` pairs taken by `to_thread_safe()`.
+//
+// Zig's async-fs path calls `args.toThreadSafe()` (which `JSValue.protect()`s
+// any borrowed JS-backed buffers so the work-pool thread may read them) and
+// later `args.deinitAndUnprotect()` to release. In Rust the "deinit" half is
+// already `Drop`; only the JS-side `unprotect()` needs an explicit hook, and
+// pairing it with the protect via a guard type removes the leak hazard on
+// every early return between `toThreadSafe` and the manual cleanup.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Undo the `JSValue::protect()` calls taken by [`to_thread_safe`](
+/// PathLike::to_thread_safe) (or an `args::*` type's `to_thread_safe`).
+///
+/// Implementations release **only** the JS-GC protect refcount — owned Rust
+/// payloads (Vec, `SliceWithUnderlyingString`, …) are freed by the type's own
+/// `Drop`, which runs immediately after when the value is held in a
+/// [`ThreadSafe<T>`].
+pub trait Unprotect {
+    fn unprotect(&mut self);
+}
+
+/// RAII guard returned by `into_thread_safe()`: a `T` whose JS-backed buffers
+/// have been `protect()`ed. `Drop` calls [`Unprotect::unprotect`] then drops
+/// the inner `T` normally — the Rust spelling of Zig's
+/// `defer args.deinitAndUnprotect()`.
+///
+/// `repr(transparent)` so identity-casts in the const-generic dispatch macros
+/// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
+#[repr(transparent)]
+pub struct ThreadSafe<T: Unprotect>(T);
+
+impl<T: Unprotect> ThreadSafe<T> {
+    /// Wrap an **already-protected** `T`. Use when the protect was taken
+    /// elsewhere (e.g. inside `from_js_maybe_async(.., is_async=true)`).
+    #[inline]
+    pub fn adopt(value: T) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: Unprotect> core::ops::DerefMut for ThreadSafe<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+impl<T: Unprotect> Drop for ThreadSafe<T> {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.unprotect();
+        // `self.0: T` drops next (field drop after `Drop::drop`).
+    }
+}
+
+impl<T: Unprotect + Default> Default for ThreadSafe<T> {
+    #[inline]
+    fn default() -> Self {
+        Self(T::default())
+    }
+}
+
+// `ThreadSafe<T>` crosses to the work-pool thread; auto-`Send` iff `T: Send`.
+
 /// `node.PathLike` (types.zig:532) — `union(enum)`.
 pub enum PathLike {
     String(PathString),
@@ -109,8 +182,12 @@ impl PathLike {
     /// `PathLike.toThreadSafe()` (types.zig:557) — promote any borrowed-JS
     /// payload to a thread-safe representation. For `Buffer` the variant is
     /// kept and the backing JS value is `protect()`ed (paired with
-    /// [`Self::deinit_and_unprotect`]); the discriminant is preserved so
-    /// callers matching on `Buffer` after this call see the same shape as Zig.
+    /// [`Unprotect::unprotect`]); the discriminant is preserved so callers
+    /// matching on `Buffer` after this call see the same shape as Zig.
+    ///
+    /// Prefer [`Self::into_thread_safe`] which returns a [`ThreadSafe`] guard;
+    /// this in-place form exists for nested calls from container types'
+    /// `to_thread_safe`.
     pub fn to_thread_safe(&mut self) {
         match self {
             Self::SliceWithUnderlyingString(s) => {
@@ -125,18 +202,25 @@ impl PathLike {
         }
     }
 
-    /// `PathLike.deinitAndUnprotect()` (types.zig:571) — release owned
-    /// payloads and undo the `protect()` taken by [`Self::to_thread_safe`] /
-    /// `ArgumentsSlice::protect_eat`. Leaves `self` in the default state so
-    /// the subsequent `Drop` is a no-op.
-    pub fn deinit_and_unprotect(&mut self) {
+    /// Consuming `to_thread_safe()`: protect any JS-backed buffer and return a
+    /// guard that unprotects on drop. The Rust replacement for Zig's
+    /// `args.toThreadSafe()` / `defer args.deinitAndUnprotect()` pair.
+    #[inline]
+    pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
+        self.to_thread_safe();
+        ThreadSafe::adopt(self)
+    }
+}
+
+impl Unprotect for PathLike {
+    /// `PathLike.deinitAndUnprotect()` (types.zig:571), JS-side half — undo
+    /// the `protect()` taken by [`Self::to_thread_safe`] /
+    /// `ArgumentsSlice::protect_eat`. Owned payloads are released by `Drop`.
+    #[inline]
+    fn unprotect(&mut self) {
         if let Self::Buffer(b) = self {
             b.buffer.value.unprotect();
         }
-        // Dropping the taken value releases `SliceWithUnderlyingString` /
-        // `ThreadsafeString` / `EncodedSlice` exactly as Zig's
-        // `deinitAndUnprotect` does for those arms; nothing is reused.
-        drop(core::mem::take(self));
     }
 }
 
@@ -197,12 +281,11 @@ impl PathOrFileDescriptor {
         }
     }
 
-    /// `PathOrFileDescriptor.deinitAndUnprotect()` (types.zig:934).
+    /// Consuming `to_thread_safe()` — see [`PathLike::into_thread_safe`].
     #[inline]
-    pub fn deinit_and_unprotect(&mut self) {
-        if let Self::Path(p) = self {
-            p.deinit_and_unprotect();
-        }
+    pub fn into_thread_safe(mut self) -> ThreadSafe<Self> {
+        self.to_thread_safe();
+        ThreadSafe::adopt(self)
     }
 
     #[inline]
@@ -210,6 +293,16 @@ impl PathOrFileDescriptor {
         match self {
             Self::Fd(_) => 0,
             Self::Path(p) => p.estimated_size(),
+        }
+    }
+}
+
+impl Unprotect for PathOrFileDescriptor {
+    /// `PathOrFileDescriptor.deinitAndUnprotect()` (types.zig:934), JS-side half.
+    #[inline]
+    fn unprotect(&mut self) {
+        if let Self::Path(p) = self {
+            p.unprotect();
         }
     }
 }

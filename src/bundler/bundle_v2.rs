@@ -189,6 +189,18 @@ impl<'a> BundleV2<'a> {
         &mut self.linker.r#loop
     }
 
+    /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
+    /// `AnyEventLoop` that owns this bundle pass and outlives it.
+    #[inline]
+    pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop<'static> {
+        let ptr = self
+            .linker
+            .r#loop
+            .expect("BundleV2.linker.loop must be set before plugins run");
+        // SAFETY: BACKREF — set by the loop that constructed `BundleV2`; valid for the bundle pass.
+        unsafe { ptr.as_ptr().as_mut().unwrap_unchecked() }
+    }
+
     #[inline]
     pub fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
         self.dev_server.as_ref()
@@ -3851,11 +3863,7 @@ impl<'a> BundleV2<'a> {
         // For `Bun.build` this is a Mini loop running on the bundler thread, so
         // `on_load` must land there — not on the JS plugin loop — or it will
         // mutate `graph` / allocate from `graph.heap` off-thread.
-        let any_loop = self
-            .r#loop()
-            .expect("BundleV2.linker.loop must be set before plugins run");
-        // SAFETY: BACKREF — `any_loop` outlives this bundle pass.
-        match unsafe { &mut *any_loop.as_ptr() } {
+        match self.any_loop_mut() {
             bun_event_loop::AnyEventLoop::Js { owner } => {
                 // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
                 unsafe {
@@ -3880,11 +3888,7 @@ impl<'a> BundleV2<'a> {
 
     pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
         // See `on_load_async` — must dispatch on the bundler's own loop.
-        let any_loop = self
-            .r#loop()
-            .expect("BundleV2.linker.loop must be set before plugins run");
-        // SAFETY: BACKREF — `any_loop` outlives this bundle pass.
-        match unsafe { &mut *any_loop.as_ptr() } {
+        match self.any_loop_mut() {
             bun_event_loop::AnyEventLoop::Js { owner } => {
                 // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`.
                 unsafe {

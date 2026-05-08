@@ -322,12 +322,106 @@ unsafe fn init_runtime_state(
     // arming it means a child Bun process won't exit when its parent dies.
     // Gate on `opts.is_main_thread` once `bun_aio::parent_death_watchdog`
     // un-gates.
-    // TODO(b2-cycle): `Debugger::configure(vm, &opts.debugger)` —
-    // `Debugger.rs::configure` gated; spec VirtualMachine.zig:1321
-    // `vm.configureDebugger(opts.debugger)`. The config is now plumbed through
-    // `InitOptions.debugger`; wire the call once `Debugger::configure` un-gates.
+
+    // Spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)`.
+    // SAFETY: `vm` is the freshly-boxed unique VM on this thread.
+    unsafe { configure_debugger(vm, &opts.debugger) };
 
     state.cast()
+}
+
+/// Spec VirtualMachine.zig:1335 `configureDebugger` — translate the CLI flag /
+/// `BUN_INSPECT*` env vars into `vm.debugger = Some(Debugger { .. })` so
+/// `ensure_debugger` (below) actually starts the inspector.
+///
+/// # Safety
+/// `vm` is the freshly-boxed unique VM on this thread; `vm.transpiler` has
+/// been written by [`init_runtime_state`] (the post-`isInspectorEnabled` tail
+/// touches `transpiler.options`).
+unsafe fn configure_debugger(
+    vm: *mut VirtualMachine,
+    cli_flag: &bun_options_types::Context::Debugger,
+) {
+    use bun_core::env_var;
+    use bun_jsc::debugger::{Debugger, Mode, Wait};
+    use bun_options_types::Context::Debugger as CliDebugger;
+
+    if env_var::HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET.get().is_some() {
+        return;
+    }
+
+    let unix: &'static [u8] = env_var::BUN_INSPECT.get().unwrap_or(b"");
+    let connect_to: &'static [u8] = env_var::BUN_INSPECT_CONNECT_TO.get().unwrap_or(b"");
+
+    let set_breakpoint_on_first_line = !unix.is_empty() && unix.ends_with(b"?break=1");
+    let wait_for_debugger = !unix.is_empty() && unix.ends_with(b"?wait=1");
+
+    let wait_for_connection = if set_breakpoint_on_first_line || wait_for_debugger {
+        Wait::Forever
+    } else {
+        Wait::Off
+    };
+
+    let debugger = match cli_flag {
+        CliDebugger::Unspecified => {
+            if !unix.is_empty() {
+                Some(Debugger {
+                    path_or_port: None,
+                    from_environment_variable: unix,
+                    wait_for_connection,
+                    set_breakpoint_on_first_line,
+                    ..Default::default()
+                })
+            } else if !connect_to.is_empty() {
+                Some(Debugger {
+                    path_or_port: None,
+                    from_environment_variable: connect_to,
+                    wait_for_connection: Wait::Off,
+                    set_breakpoint_on_first_line: false,
+                    mode: Mode::Connect,
+                    ..Default::default()
+                })
+            } else {
+                None
+            }
+        }
+        CliDebugger::Enable(enable) => {
+            // Argv-derived; lives for process lifetime in spec.
+            let path_or_port: &'static [u8] =
+                Box::leak(enable.path_or_port.to_vec().into_boxed_slice());
+            Some(Debugger {
+                path_or_port: Some(path_or_port),
+                from_environment_variable: unix,
+                wait_for_connection: if enable.wait_for_connection {
+                    Wait::Forever
+                } else {
+                    wait_for_connection
+                },
+                set_breakpoint_on_first_line: set_breakpoint_on_first_line
+                    || enable.set_breakpoint_on_first_line,
+                ..Default::default()
+            })
+        }
+    };
+
+    let Some(debugger) = debugger else { return };
+    let mode = debugger.mode;
+    // SAFETY: `vm` is the unique freshly-boxed VM; sole writer.
+    unsafe { (*vm).debugger = Some(Box::new(debugger)) };
+
+    // Spec :1379 `if (this.isInspectorEnabled())` — always true here.
+    bun_jsc::runtime_transpiler_cache::IS_DISABLED
+        .store(true, core::sync::atomic::Ordering::Relaxed);
+    if mode != Mode::Connect {
+        // SAFETY: `vm` unique; `transpiler` written above in `init_runtime_state`.
+        unsafe {
+            let opts = &mut (*vm).transpiler.options;
+            opts.minify_identifiers = false;
+            opts.minify_syntax = false;
+            opts.minify_whitespace = false;
+            opts.debugger = true;
+        }
+    }
 }
 
 /// Reclaim the per-VM [`RuntimeState`] boxed in [`init_runtime_state`]. Called

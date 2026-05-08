@@ -251,11 +251,12 @@ impl FilePoll {
         // TODO(@paperclover): This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
+        // Zig does `@ptrFromInt(@as(u64, @bitCast(this.fd)))`; `Fd` is
+        // `#[repr(transparent)]` over `u64` on Windows, so the bitcast is just
+        // the public backing field.
         // SAFETY: see TODO above — preserved verbatim from Zig.
         unsafe {
-            // TODO(port): Zig does @ptrFromInt(@as(u64, @bitCast(this.fd))); Fd repr must be u64-bitcastable.
-            let raw: u64 = core::mem::transmute_copy(&self.fd);
-            uv::uv_unref(raw as *mut uv::uv_handle_t);
+            uv::uv_unref(self.fd.0 as *mut uv::uv_handle_t);
         }
         true
     }

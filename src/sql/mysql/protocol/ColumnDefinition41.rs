@@ -106,20 +106,16 @@ impl ColumnDefinition41 {
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;
         self.column_length = reader.int::<u32>()?;
-        // PORT NOTE: Zig FieldType is a NON-exhaustive `enum(u8)` so `@enumFromInt` is
-        // defined for any byte. Rust `#[repr(u8)] enum` is exhaustive — transmuting an
-        // unlisted discriminant is immediate UB. Range-check the documented protocol gaps
-        // (0x14..=0xf4) and error instead. This diverges from Zig (which keeps the value)
-        // but is sound; if a new server sends an unknown type, we fail loudly here rather
-        // than silently invoke UB. TODO(b2): switch FieldType to `#[repr(transparent)]
-        // struct(u8)` newtype to match Zig's non-exhaustive semantics exactly.
+        // PORT NOTE: Zig FieldType is a NON-exhaustive `enum(u8)` so `@enumFromInt` accepts
+        // any byte. Rust `#[repr(u8)] enum` is exhaustive, so unknown bytes go through
+        // `from_raw`'s match and error here instead. This diverges from Zig (which keeps
+        // the value) but is sound; if a new server sends an unknown type, we fail loudly
+        // rather than carry an invalid discriminant. TODO(b2): switch FieldType to a
+        // `#[repr(transparent)] struct(u8)` newtype to match Zig's non-exhaustive
+        // semantics exactly.
         let type_byte = reader.int::<u8>()?;
-        self.column_type = if matches!(type_byte, 0x00..=0x13 | 0xf5..=0xff) {
-            // SAFETY: byte is verified to be a listed discriminant of `#[repr(u8)] FieldType`.
-            unsafe { core::mem::transmute::<u8, FieldType>(type_byte) }
-        } else {
-            return Err(bun_core::err!("UnknownMySQLFieldType"));
-        };
+        self.column_type = FieldType::from_raw(type_byte)
+            .ok_or_else(|| bun_core::err!("UnknownMySQLFieldType"))?;
         self.flags = ColumnFlags::from_int(reader.int::<u16>()?);
         self.decimals = reader.int::<u8>()?;
 

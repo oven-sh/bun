@@ -66,17 +66,37 @@ pub enum SocketKind {
 impl SocketKind {
     /// Checked conversion from the raw `u8` returned by C (`us_socket_kind`).
     /// Mirrors Zig's `@enumFromInt`, which traps on out-of-range values in
-    /// safe builds. Never `transmute::<u8, SocketKind>` directly — an invalid
-    /// discriminant in a `#[repr(u8)]` enum is immediate UB in Rust.
+    /// safe builds. An invalid discriminant in a `#[repr(u8)]` enum is
+    /// immediate UB in Rust, so this is an exhaustive match — LLVM folds the
+    /// contiguous arms to a single range-check + reinterpret.
     #[inline]
     pub fn from_u8(v: u8) -> Self {
-        assert!(
-            v <= SocketKind::UwsWsTls as u8,
-            "invalid SocketKind discriminant {v} from C",
-        );
-        // SAFETY: SocketKind is #[repr(u8)] with contiguous discriminants
-        // 0..=UwsWsTls; the assert above guarantees `v` is in range.
-        unsafe { core::mem::transmute::<u8, SocketKind>(v) }
+        match v {
+            0 => SocketKind::Invalid,
+            1 => SocketKind::Dynamic,
+            2 => SocketKind::BunSocketTcp,
+            3 => SocketKind::BunSocketTls,
+            4 => SocketKind::BunListenerTcp,
+            5 => SocketKind::BunListenerTls,
+            6 => SocketKind::HttpClient,
+            7 => SocketKind::HttpClientTls,
+            8 => SocketKind::WsClientUpgrade,
+            9 => SocketKind::WsClientUpgradeTls,
+            10 => SocketKind::WsClient,
+            11 => SocketKind::WsClientTls,
+            12 => SocketKind::Postgres,
+            13 => SocketKind::PostgresTls,
+            14 => SocketKind::Mysql,
+            15 => SocketKind::MysqlTls,
+            16 => SocketKind::Valkey,
+            17 => SocketKind::ValkeyTls,
+            18 => SocketKind::SpawnIpc,
+            19 => SocketKind::UwsHttp,
+            20 => SocketKind::UwsHttpTls,
+            21 => SocketKind::UwsWs,
+            22 => SocketKind::UwsWsTls,
+            _ => unreachable!("invalid SocketKind discriminant {v} from C"),
+        }
     }
 
     #[inline]

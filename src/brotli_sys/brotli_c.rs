@@ -129,8 +129,44 @@ impl BrotliDecoder {
     }
 
     pub fn get_error_code(state: &BrotliDecoder) -> BrotliDecoderErrorCode {
-        // SAFETY: state is a valid &BrotliDecoder; BrotliDecoderErrorCode2 is a superset of BrotliDecoderErrorCode discriminants
-        unsafe { core::mem::transmute::<i32, BrotliDecoderErrorCode>(BrotliDecoderGetErrorCode(state) as i32) }
+        // SAFETY: state is a valid &BrotliDecoder.
+        let raw = unsafe { BrotliDecoderGetErrorCode(state) } as i32;
+        // Zig: `@enumFromInt(@intFromEnum(...))` — safety-checked in debug.
+        // `BrotliDecoderErrorCode2` is a superset (adds 0..=3 non-error
+        // states); this is only called after `BROTLI_DECODER_RESULT_ERROR`,
+        // so brotli returns one of the negative codes below. Exhaustive
+        // match traps on contract violation instead of producing an invalid
+        // discriminant.
+        use BrotliDecoderErrorCode as E;
+        match raw {
+            -1 => E::FORMAT_EXUBERANT_NIBBLE,
+            -2 => E::FORMAT_RESERVED,
+            -3 => E::FORMAT_EXUBERANT_META_NIBBLE,
+            -4 => E::FORMAT_SIMPLE_HUFFMAN_ALPHABET,
+            -5 => E::FORMAT_SIMPLE_HUFFMAN_SAME,
+            -6 => E::FORMAT_CL_SPACE,
+            -7 => E::FORMAT_HUFFMAN_SPACE,
+            -8 => E::FORMAT_CONTEXT_MAP_REPEAT,
+            -9 => E::FORMAT_BLOCK_LENGTH_1,
+            -10 => E::FORMAT_BLOCK_LENGTH_2,
+            -11 => E::FORMAT_TRANSFORM,
+            -12 => E::FORMAT_DICTIONARY,
+            -13 => E::FORMAT_WINDOW_BITS,
+            -14 => E::FORMAT_PADDING_1,
+            -15 => E::FORMAT_PADDING_2,
+            -16 => E::FORMAT_DISTANCE,
+            -18 => E::COMPOUND_DICTIONARY,
+            -19 => E::DICTIONARY_NOT_SET,
+            -20 => E::INVALID_ARGUMENTS,
+            -21 => E::ALLOC_CONTEXT_MODES,
+            -22 => E::ALLOC_TREE_GROUPS,
+            -25 => E::ALLOC_CONTEXT_MAP,
+            -26 => E::ALLOC_RING_BUFFER_1,
+            -27 => E::ALLOC_RING_BUFFER_2,
+            -30 => E::ALLOC_BLOCK_TYPE_TREES,
+            -31 => E::UNREACHABLE,
+            _ => unreachable!("BrotliDecoderGetErrorCode returned non-error {raw}"),
+        }
     }
 
     pub fn error_string(c: BrotliDecoderErrorCode) -> &'static core::ffi::CStr {

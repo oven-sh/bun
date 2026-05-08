@@ -36,11 +36,6 @@ use crate::lockfile_real::package::{
 };
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
-// PORT NOTE: `Options` above is the namespace module (`Options::LogLevel`); the
-// concrete `PackageManager.options` field is `crate::PackageManagerOptionsStub`
-// (the struct the in-crate `PackageManager` actually carries). `installer.options`
-// aliases `&manager.options`, so it must agree with that type.
-use crate::PackageManagerOptionsStub as PackageManagerOptions;
 use crate::package_manager_real::progress_strings::ProgressStrings;
 use crate::package_manager_task as task;
 use crate::network_task::ForTarballError;
@@ -85,9 +80,10 @@ pub struct PackageInstaller<'a> {
     pub force_install: bool,
     pub root_node_modules_folder: Dir,
     pub summary: &'a mut package_install::Summary,
-    /// Zig: `*const Options` — BACKREF into `(*manager).options`. Never null.
-    /// Access via `options()`.
-    pub options: *const PackageManagerOptions,
+    // PORT NOTE: Zig also stored `options: *const Options` (a BACKREF into
+    // `(*manager).options`). Dropped — every caller reads via
+    // `self.manager().options` so the shared borrow stays a child of the live
+    // `&mut PackageManager` Unique tag rather than a sibling raw.
     // TODO(port): the following slice fields alias into `self.lockfile.packages` (BACKREF);
     // borrowck will reject `&'a mut Lockfile` + `&'a [T]` into it. Phase B: store as raw
     // `*const [T]` or re-fetch via `fix_cached_lockfile_package_slices` helper accessors.
@@ -445,12 +441,6 @@ impl<'a> PackageInstaller<'a> {
     pub fn lockfile_mut(&self) -> &'a mut Lockfile {
         // SAFETY: BACKREF — never null; disjoint from `*self`; see `manager_mut`.
         unsafe { &mut *self.lockfile }
-    }
-
-    #[inline]
-    pub fn options(&self) -> &'a PackageManagerOptions {
-        // SAFETY: BACKREF — never null; pointee outlives `'a`.
-        unsafe { &*self.options }
     }
 
     /// Increments the number of installed packages for a tree id and runs available scripts

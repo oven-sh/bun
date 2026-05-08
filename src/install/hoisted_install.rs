@@ -109,6 +109,11 @@ pub fn install_hoisted_packages(
             )?;
         }
     }
+    // Re-derive after `filter()` so every subsequent `this` use (progress
+    // setup through the install loop) is a fresh child of `mgr_ptr` under
+    // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
+    // line-77 reborrow's tag.
+    let this = unsafe { &mut *mgr_ptr };
 
     let _restore_buffers = scopeguard::guard(
         (original_trees, original_tree_dep_ids),
@@ -338,16 +343,13 @@ pub fn install_hoisted_packages(
             let trees_count = this.lockfile.buffers.trees.len();
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
 
-            // `PackageInstaller.{manager,lockfile,options,progress}` are
-            // BACKREF raw pointers (Zig: non-exclusive `*PM` / `*Lockfile` /
-            // `*const Options`); copying `mgr_ptr` into them does not move
-            // `this`, so the body below keeps using `this` for
-            // `pending_task_count` / `run_tasks` / lifecycle ticks via the
-            // same provenance root.
+            // `PackageInstaller.{manager,lockfile,progress}` are BACKREF raw
+            // pointers (Zig: non-exclusive `*PM` / `*Lockfile`); copying
+            // `mgr_ptr` into them does not move `this`, so the body below
+            // keeps using `this` for `pending_task_count` / `run_tasks` /
+            // lifecycle ticks via the same provenance root.
             break 'brk PackageInstaller {
                 manager: mgr_ptr,
-                // SAFETY: `mgr_ptr` is the provenance root; raw place addr.
-                options: unsafe { core::ptr::addr_of!((*mgr_ptr).options) },
                 metas,
                 bins,
                 names,
@@ -435,9 +437,6 @@ pub fn install_hoisted_packages(
                         true,
                         log_level,
                     )?;
-                    // Read via `this` (the live `&mut PM`) rather than the
-                    // sibling `installer.options` raw — keeps the shared
-                    // borrow a child of `this`'s Unique under SB.
                     if !this.options.do_.install_packages() {
                         return Err(bun_core::err!("InstallFailed"));
                     }

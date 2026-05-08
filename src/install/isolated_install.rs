@@ -194,6 +194,8 @@ impl<'a, 'b> Wait<'a, 'b> {
         // tick without aliasing `&mut Installer`.
         let pkg_manager = self.installer.manager_mut();
         let log_level = pkg_manager.options.log_level;
+        // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
+        // is the live `&mut PackageManager` for this call.
         if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
             pkg_manager,
             self.installer,

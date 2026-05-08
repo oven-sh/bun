@@ -1745,6 +1745,21 @@ impl ZigStringJsc for bun_string::ZigString {
     }
     #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
+        if self.len > bun_string::String::max_length() {
+            // SAFETY: `to_external_value` contract — bytes are globally (mimalloc) allocated.
+            unsafe {
+                bun_alloc::mimalloc::mi_free(
+                    self.byte_slice().as_ptr().cast_mut().cast::<core::ffi::c_void>(),
+                )
+            };
+            let _ = global
+                .err(
+                    crate::ErrorCode::STRING_TOO_LONG,
+                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                )
+                .throw();
+            return JSValue::ZERO;
+        }
         // SAFETY: `self` points to globally-allocated bytes; ownership transferred to JSC.
         unsafe { ZigString__toExternalValue(self, global) }
     }
@@ -1760,6 +1775,23 @@ impl ZigStringJsc for bun_string::ZigString {
         ctx: *mut core::ffi::c_void,
         callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
     ) -> JSValue {
+        if self.len > bun_string::String::max_length() {
+            // SAFETY: invoking caller-provided destructor on the buffer (Zig: `callback(ctx, ptr, len)`).
+            unsafe {
+                callback(
+                    ctx,
+                    self.byte_slice().as_ptr().cast_mut().cast::<core::ffi::c_void>(),
+                    self.len,
+                )
+            };
+            let _ = global
+                .err(
+                    crate::ErrorCode::STRING_TOO_LONG,
+                    format_args!("Cannot create a string longer than 2^32-1 characters"),
+                )
+                .throw();
+            return JSValue::ZERO;
+        }
         // SAFETY: ownership of the buffer + `ctx` transfers to JSC's finalizer.
         unsafe { ZigString__external(self, global, ctx, callback) }
     }

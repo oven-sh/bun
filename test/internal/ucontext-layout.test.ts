@@ -24,9 +24,12 @@ test.skipIf(!((isLinux || isAndroid) && process.arch === "x64"))(
     expect(layout).toBeDefined();
 
     // `uc_mcontext` sits at the same offset on glibc, musl, and bionic: it is
-    // preceded only by `{uc_flags, uc_link, uc_stack}` whose sizes are fixed by
-    // the kernel ABI.
-    const expected = layout!.android
+    // preceded only by `{uc_flags, uc_link, uc_stack}` whose sizes are fixed
+    // by the kernel ABI. Branch on the JS-side `isAndroid` (process.platform),
+    // not `layout.android` (Zig-side Environment.isAndroid), so a regression
+    // where Zig misreports the target doesn't pick its own expected values —
+    // `expect(layout).toEqual(expected)` then also asserts the two agree.
+    const expected = isAndroid
       ? // bionic libc/include/sys/ucontext.h, __x86_64__: uc_sigmask is a bare
         // `union { sigset_t; sigset64_t; }` == one `unsigned long`.
         { sizeof: 816, mcontext: 40, sigmask: 296, fpregs_mem: 304, android: true }

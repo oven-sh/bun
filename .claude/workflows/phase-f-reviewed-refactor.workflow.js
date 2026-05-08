@@ -108,11 +108,16 @@ ${HARD}
 Return {applied, files_touched, commit:"<sha>", metric_before, metric_after, notes}.`,
     { label: `apply-r${round}`, phase: "Apply", schema: APPLY_S },
   );
-  if (!apply || !apply.applied) {
-    history.push({ round, error: "apply failed", apply });
+  if (!apply) {
+    history.push({ round, error: "apply agent returned null" });
     break;
   }
-  last_commit = apply.commit;
+  // applied:false on round>1 with prior fixes addressed = nothing-more-to-do; proceed to re-review
+  if (!apply.applied && round === 1) {
+    history.push({ round, error: "round-1 apply failed", apply });
+    break;
+  }
+  last_commit = apply.commit || last_commit;
 
   // ── Build ──
   phase("Build");

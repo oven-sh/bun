@@ -141,6 +141,25 @@ impl CachedBytecode {
     }
 }
 
+/// Link-time entry point for `bun_bundler` (declared `extern "Rust"` there).
+/// Performs the full Zig sequence from `generateChunksInParallel.zig`:
+/// set the thread-local bundler flag, initialize JSC, generate, copy the
+/// bytes into an owned buffer, and release the C++ handle.
+#[no_mangle]
+pub fn __bun_bundler_generate_cached_bytecode(
+    format: Format,
+    source: &[u8],
+    source_provider_url: &mut BunString,
+) -> Option<Box<[u8]>> {
+    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.with(|c| c.set(true));
+    crate::initialize(false);
+    let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
+    let owned = Box::<[u8]>::from(bytes);
+    // SAFETY: `handle` was just produced by C++ and is valid until deref.
+    unsafe { CachedBytecode__deref(handle.as_ptr()) };
+    Some(owned)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/CachedBytecode.zig (76 lines)

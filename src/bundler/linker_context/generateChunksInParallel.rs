@@ -814,15 +814,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         Loader::Js
                     };
 
-                    // CYCLEBREAK §Dispatch: jsc::{VirtualMachine, initialize,
-                    // CachedBytecode} vtable carried on `LinkerOptions.bytecode`.
-                    // `None` = bytecode unavailable.
-                    if let Some(bytecode_vt) = c.options.bytecode.filter(|_| {
-                        matches!(chunk.content, crate::chunk::Content::Javascript(_))
-                            && loader.is_javascript_like()
-                    }) {
-                        unsafe { (bytecode_vt.set_bundler_thread)(true) };
-                        unsafe { (bytecode_vt.initialize_jsc)(false) };
+                    if matches!(chunk.content, crate::chunk::Content::Javascript(_))
+                        && loader.is_javascript_like()
+                    {
                         let mut fdpath = bun_paths::PathBuffer::uninit();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
@@ -849,15 +843,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         source_provider_url.ref_();
                         // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop`
                         // releases the ref bumped above on every exit path (incl. `break 'brk`).
-                        let source_provider_url = bun_string::OwnedString::new(source_provider_url);
+                        let mut source_provider_url = bun_string::OwnedString::new(source_provider_url);
 
-                        if let Some((bytecode, cached_bytecode)) = unsafe {
-                            (bytecode_vt.generate)(
-                                c.options.output_format,
-                                &code_result.buffer,
-                                &source_provider_url.to_utf8().slice(),
-                            )
-                        } {
+                        if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
+                            c.options.output_format,
+                            &code_result.buffer,
+                            &mut source_provider_url,
+                        ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
                                 "Bytecode cache generated {}: {}",
@@ -887,15 +879,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 display_size: bytecode.len() as u32,
                                 data: options::OutputFileData::Buffer {
                                     data: bytecode,
-                                    // TODO(port): Zig stores `cached_bytecode.arena()` for matched dealloc.
                                 },
                                 side: Some(side),
                                 entry_point_index: None,
                                 is_executable: false,
                                 ..Default::default()
                             }));
-                            // PORT NOTE: `cached_bytecode` ownership handled by OutputFileData; see TODO above.
-                            let _ = cached_bytecode;
                         } else {
                             // an error
                             // logger OOM-only (Zig: catch unreachable)

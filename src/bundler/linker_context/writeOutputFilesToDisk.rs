@@ -349,32 +349,23 @@ pub fn write_output_files_to_disk(
                     Loader::Js
                 };
 
-                // CYCLEBREAK §Dispatch: jsc::{VirtualMachine, initialize,
-                // CachedBytecode} vtable carried on `LinkerOptions.bytecode`.
-                // `None` = bytecode unavailable.
-                if let Some(bytecode_vt) =
-                    c.options.bytecode.filter(|_| loader.is_javascript_like())
-                {
-                    unsafe { (bytecode_vt.set_bundler_thread)(true) };
-                    unsafe { (bytecode_vt.initialize_jsc)(false) };
+                if loader.is_javascript_like() {
                     let mut fdpath = PathBuffer::uninit();
-                    let mut source_provider_url = BunString::create_format(format_args!(
+                    let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
                         bstr::BStr::new(chunk.final_rel_path),
                         BYTECODE_EXTENSION,
                     ));
                     source_provider_url.ref_();
-                    // `defer source_provider_url.deref()` handled by Drop on BunString.
+                    // `defer source_provider_url.deref()` handled by Drop on OwnedString.
+                    let mut source_provider_url = bun_string::OwnedString::new(source_provider_url);
 
-                    if let Some(result) = unsafe {
-                        (bytecode_vt.generate)(
-                            c.options.output_format,
-                            &code_result.buffer,
-                            source_provider_url.to_utf8().slice(),
-                        )
-                    } {
+                    if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
+                        c.options.output_format,
+                        &code_result.buffer,
+                        &mut source_provider_url,
+                    ) {
                         let source_provider_url_str = source_provider_url.to_utf8();
-                        let (bytecode, cached_bytecode) = result;
                         debug!(
                             "Bytecode cache generated {}: {}",
                             bstr::BStr::new(source_provider_url_str.slice()),
@@ -389,8 +380,6 @@ pub fn write_output_files_to_disk(
                         fdpath[..frp.len()].copy_from_slice(frp);
                         fdpath[frp.len()..frp.len() + BYTECODE_EXTENSION.len()]
                             .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
-                        // `defer cached_bytecode.deref()` — handled by Drop.
-                        let _cached_bytecode = cached_bytecode;
                         match write_file_with_path_buffer(
                             &mut pathbuf,
                             WriteFileArgs {

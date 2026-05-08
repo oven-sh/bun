@@ -1074,11 +1074,6 @@ impl From<LinkError> for BunError {
 
 pub struct LinkerOptions {
     pub generate_bytecode_cache: bool,
-    /// CYCLEBREAK §Dispatch: jsc::{CachedBytecode, initialize, VirtualMachine}
-    /// vtable. The high tier (`bun_runtime`) sets this when constructing the
-    /// bundle from a JSC-linked binary; `None` = bytecode generation
-    /// unavailable. PERF(port): was inline switch.
-    pub bytecode: Option<&'static crate::bundle_v2::dispatch::BytecodeVTable>,
     pub output_format: Format,
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1108,7 +1103,6 @@ impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
             generate_bytecode_cache: false,
-            bytecode: None,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,

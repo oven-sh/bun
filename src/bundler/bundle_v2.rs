@@ -1408,21 +1408,28 @@ pub mod dispatch {
         }
     }
 
-    /// Bytecode generation vtable (jsc::CachedBytecode + jsc::initialize +
-    /// VirtualMachine::set_is_bundler_thread_for_bytecode_cache). The high
-    /// tier (`bun_runtime`) provides a `&'static` instance and stores it on
-    /// `LinkerOptions.bytecode` when constructing the bundle; `None` =
-    /// bytecode disabled (mirrors Zig's comptime `bun.jsc` link check).
-    /// PERF(port): was inline switch.
-    pub struct BytecodeVTable {
-        pub set_bundler_thread: unsafe fn(bool),
-        pub initialize_jsc: unsafe fn(bool),
-        /// Returns (bytes, source_provider_url_dupe) on success.
-        pub generate: unsafe fn(
+    unsafe extern "Rust" {
+        /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Sets the
+        /// bundler-thread flag, initializes JSC, generates bytecode, and
+        /// returns an owned copy of the bytes.
+        fn __bun_bundler_generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_url: &[u8],
-        ) -> Option<(Box<[u8]>, Box<[u8]>)>,
+            source_provider_url: &mut bun_string::String,
+        ) -> Option<Box<[u8]>>;
+    }
+
+    /// Bytecode generation entry point for the linker. Mirrors the Zig
+    /// `jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
+    ///  jsc.initialize(false); jsc.CachedBytecode.generate(...)` sequence.
+    #[inline]
+    pub fn generate_cached_bytecode(
+        format: crate::options_impl::Format,
+        source: &[u8],
+        source_provider_url: &mut bun_string::String,
+    ) -> Option<Box<[u8]>> {
+        // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc`.
+        unsafe { __bun_bundler_generate_cached_bytecode(format, source, source_provider_url) }
     }
 
     /// CYCLEBREAK GENUINE: `bun.jsc.hot_reloader.NewHotReloader<BundleV2, …>` is

@@ -851,7 +851,7 @@ pub unsafe fn __bun_run_wtf_timer(
 /// `t` after the per-arm call returns.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
-    use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
+    use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
     macro_rules! owner {
@@ -875,14 +875,15 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: per fn contract — `now` is the live snapshot; `vm` is the
             // per-thread VM. `fire` may free the container; `t` is dead after.
-            unsafe { (*internals).fire(&*now, vm) };
+            // `fire` takes `*mut Self` (noalias re-entrancy — see its doc).
+            unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
         }
         EventLoopTimerTag::ImmediateObject => {
             let container = owner!(ImmediateObject, event_loop_timer);
             // SAFETY: see TimeoutObject arm.
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: see TimeoutObject arm.
-            unsafe { (*internals).fire(&*now, vm) };
+            unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
         }
         EventLoopTimerTag::TimerCallback => {
             let container = owner!(TimerCallback, event_loop_timer);

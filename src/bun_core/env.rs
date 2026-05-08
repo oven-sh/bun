@@ -40,32 +40,25 @@ pub const IS_X64: bool = cfg!(target_arch = "x86_64");
 pub const IS_MUSL: bool = cfg!(target_env = "musl");
 pub const IS_ANDROID: bool = cfg!(target_os = "android");
 pub const IS_GLIBC: bool = IS_LINUX && cfg!(target_env = "gnu");
-// TODO(port): Zig `ReleaseSafe` has no direct Rust cfg; expose via build_options in Phase B.
 pub const ALLOW_ASSERT: bool = IS_DEBUG || IS_TEST || build_options::RELEASE_SAFE;
 pub const CI_ASSERT: bool =
     IS_DEBUG || IS_TEST || ENABLE_ASAN || (build_options::RELEASE_SAFE && IS_CANARY);
 pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
-/// All calls to `@export` should be gated behind this check, so that code
-/// generators that compile Zig code know not to reference and compile a ton of
-/// unused code.
-// TODO(port): `builtin.output_mode == .Obj` has no Rust equivalent; gate via build_options.
-pub const EXPORT_CPP_APIS: bool = if build_options::OVERRIDE_NO_EXPORT_CPP_APIS {
-    false
-} else {
-    build_options::OUTPUT_MODE_OBJ || IS_TEST
-};
+/// Zig gated `@export` blocks behind `output_mode == .Obj` so the
+/// `zig translate-c` and codegen pipelines could compile a stripped-down
+/// crate. The Rust build is always a single staticlib that exports the C++
+/// surface, so this is a constant `true`.
+pub const EXPORT_CPP_APIS: bool = true;
 
 /// Whether or not to enable allocation tracking when the `AllocationScope`
 /// allocator is used.
 pub const ENABLE_ALLOC_SCOPES: bool = IS_DEBUG || ENABLE_ASAN;
 
-/// Set if compiling with `-Dno_llvm`
-/// All places this is used is working around a Zig bug.
-pub const ZIG_SELF_HOSTED_BACKEND: bool = build_options::ZIG_SELF_HOSTED_BACKEND;
-
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
 pub const BASELINE: bool = build_options::BASELINE;
-pub const ENABLE_SIMD: bool = !BASELINE && !ZIG_SELF_HOSTED_BACKEND;
+/// Zig disabled SIMD under `-Dno_llvm` (self-hosted backend lacked vector
+/// lowering); Rust always uses LLVM, so only `BASELINE` gates it.
+pub const ENABLE_SIMD: bool = !BASELINE;
 pub const GIT_SHA: &str = build_options::SHA;
 pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
     // TODO(port): const slice indexing on &str — Phase B may need a const fn helper or build.rs precompute.

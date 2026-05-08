@@ -95,10 +95,8 @@ pub mod build_options {
         };
     }
 
-    pub const RELEASE_SAFE: bool = false;
-    pub const OVERRIDE_NO_EXPORT_CPP_APIS: bool = false;
-    pub const OUTPUT_MODE_OBJ: bool = true;
-    pub const ZIG_SELF_HOSTED_BACKEND: bool = false;
+    /// `true` for the `release-assertions` profile (Zig: ReleaseSafe).
+    pub const RELEASE_SAFE: bool = build_opt_bool!("BUN_RELEASE_SAFE", false);
     pub const REPORTED_NODEJS_VERSION: &str = build_opt!("BUN_REPORTED_NODEJS_VERSION", "24.0.0");
     pub const BASELINE: bool = build_opt_bool!("BUN_BASELINE", false);
     pub const SHA: &str = build_opt!("BUN_GIT_SHA", "0000000000000000000000000000000000000000");
@@ -122,7 +120,25 @@ pub mod build_options {
         None => concat!(env!("CARGO_MANIFEST_DIR"), "/../../build/debug/codegen").as_bytes(),
     };
     pub const CODEGEN_EMBED: bool = true;
-    pub const VERSION: crate::Version = crate::Version { major: 1, minor: 3, patch: 0 };
+    /// `cfg.version` from package.json, split by `scripts/build/rust.ts`.
+    pub const VERSION: crate::Version = {
+        // const-parse a "u32" string — `str::parse` isn't const.
+        const fn p(s: &str) -> u32 {
+            let b = s.as_bytes();
+            let mut i = 0;
+            let mut n: u32 = 0;
+            while i < b.len() {
+                n = n * 10 + (b[i] - b'0') as u32;
+                i += 1;
+            }
+            n
+        }
+        crate::Version {
+            major: p(build_opt!("BUN_VERSION_MAJOR", "1")),
+            minor: p(build_opt!("BUN_VERSION_MINOR", "3")),
+            patch: p(build_opt!("BUN_VERSION_PATCH", "0")),
+        }
+    };
     /// Zig: `build_options.fallback_html_version` — hex-string hash of the
     /// fallback HTML bundle, injected by the build system. Placeholder until
     /// Phase C wires the real value via `env!()` in `build.rs`.

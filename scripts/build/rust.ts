@@ -259,7 +259,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // Values come from the same `Config` fields zig.ts forwards, so
     // `process.versions.bun` / `bun --revision` agree across both backends.
     BUN_GIT_SHA: cfg.revision,
+    BUN_VERSION_MAJOR: cfg.version.split(".")[0]!,
+    BUN_VERSION_MINOR: cfg.version.split(".")[1]!,
+    BUN_VERSION_PATCH: cfg.version.split(".")[2]!,
     BUN_REPORTED_NODEJS_VERSION: cfg.nodejsVersion,
+    BUN_RELEASE_SAFE: String(cfg.assertions),
     BUN_BASELINE: String(cfg.baseline),
     BUN_IS_CANARY: String(cfg.canary),
     BUN_CANARY_REVISION: String(cfg.canaryRevision ?? 0),

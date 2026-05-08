@@ -456,6 +456,12 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.keys.shrink_to_fit();
         self.values.shrink_to_fit();
         self.hashes.shrink_to_fit();
+        // Re-assert the threshold invariant: a map shrunk back below
+        // `INDEX_THRESHOLD` should route lookups through the linear scan, not
+        // keep a (now mostly-empty) hashbrown table alive past shrink_to_fit.
+        if self.keys.len() <= INDEX_THRESHOLD {
+            self.index = None;
+        }
     }
 
     /// Debug-only: assert no in-flight `GetOrPutResult` borrows when an
@@ -511,9 +517,12 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.keys.clear();
         self.values.clear();
         self.hashes.clear();
-        if let Some(index) = self.index.as_mut() {
-            index.clear();
-        }
+        // Drop (not clear) the accelerator: post-clear `len == 0` is below
+        // `INDEX_THRESHOLD`, so per the threshold invariant `self.index` must be
+        // `None` — otherwise the next few `push_entry` calls would maintain a
+        // hashbrown probe for a 1–8-entry map that the linear scan handles in
+        // one cache line.
+        self.index = None;
     }
 
     /// std-HashMap-compat alias for `clear_retaining_capacity`. Zig callers
@@ -560,7 +569,12 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
                     // vecs either patches the index in place
                     // (`index_swap_remove`/`index_remove_tail`) or calls
                     // `drop_index()` first.
-                    unsafe { *hashes.add(i) == h && eq(&*keys.add(i), i) }
+                    let kh = unsafe { *hashes.add(i) };
+                    kh == h && {
+                        // SAFETY: same invariant — `i < keys.len()`.
+                        let k = unsafe { &*keys.add(i) };
+                        eq(k, i)
+                    }
                 })
                 .map(|&i| i as usize);
         }
@@ -586,11 +600,12 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.hashes.push(h);
         match self.index.as_mut() {
             Some(index) => {
-                let hashes = self.hashes.as_ptr();
+                // The hasher closure only fires on table resize (cold), so a
+                // bounds-checked slice index is fine here — keep `unsafe`
+                // confined to the per-probe `find_hash` path where it pays.
+                let hashes: &[u32] = self.hashes.as_slice();
                 index.insert_unique(spread_hash(h), i as u32, |&j| {
-                    // SAFETY: `j` was inserted with `j < hashes.len()` and the
-                    // vec is append-only between `drop_index()` calls.
-                    spread_hash(unsafe { *hashes.add(j as usize) })
+                    spread_hash(hashes[j as usize])
                 });
             }
             None if i >= INDEX_THRESHOLD => self.rebuild_index(),
@@ -604,13 +619,8 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
     #[cold]
     fn rebuild_index(&mut self) {
         let mut table = hashbrown::HashTable::with_capacity(self.hashes.len());
-        let hashes = self.hashes.as_ptr();
         for (i, &h) in self.hashes.iter().enumerate() {
-            table.insert_unique(spread_hash(h), i as u32, |&j| {
-                // SAFETY: `j < self.hashes.len()` — it was inserted by an
-                // earlier iteration of this loop.
-                spread_hash(unsafe { *hashes.add(j as usize) })
-            });
+            table.insert_unique(spread_hash(h), i as u32, |&j| spread_hash(self.hashes[j as usize]));
         }
         self.index = Some(table);
     }

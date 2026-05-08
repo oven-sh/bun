@@ -699,7 +699,11 @@ impl Map {
             loop {
                 let p = lookup(link);
                 let next = unsafe { (*p).link };
-                if !next.is_valid() {
+                // `next.eql(root)` ⇔ `(*p).link` already points at root —
+                // mirrors Zig's post-order `if (!symbol.link.eql(link))` gate
+                // and saves a redundant store on the last intermediate plus
+                // the otherwise-wasted lookup of `root` itself.
+                if next.eql(root) || !next.is_valid() {
                     break;
                 }
                 // SAFETY: `p` is a valid in-bounds slot per `lookup` invariant;

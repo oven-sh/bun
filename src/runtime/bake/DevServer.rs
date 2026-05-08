@@ -18,7 +18,6 @@ use std::io::Write as _;
 use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
-use crate::allocators::allocation_scope::BumpAllocatorExt as _;
 use bun_collections::{ArrayHashMap, AutoBitSet, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as core, Environment, Output};
 use bun_jsc::{
@@ -327,8 +326,6 @@ pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub magic: Magic,
-    /// No overhead in release builds.
-    pub allocation_scope: AllocationScope,
     /// Absolute path to project root directory. For the HMR
     /// runtime, its module IDs are strings relative to this.
     pub root: Box<[u8]>,
@@ -564,7 +561,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // exactly once before `assume_init()` below.
     unsafe {
         w!(magic, Magic::Valid);
-        w!(allocation_scope, AllocationScope::init_default());
         w!(root, Box::from(options.root.as_bytes()));
         w!(vm, std::ptr::from_ref::<VirtualMachine>(options.vm));
         w!(server, None);
@@ -1126,26 +1122,17 @@ impl Drop for DevServer {
 
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.
-
-        // allocation_scope dropped last automatically by field order.
-        // TODO(port): if AllocationScope::ENABLED, deinit happens via Drop.
     }
 }
 
-// `AllocationScope` lives in `crate::allocators::allocation_scope` (moved out of
-// `bun_alloc` because it pulls in `bun_core`/`bun_collections`).
-pub type AllocationScope = crate::allocators::allocation_scope::AllocationScope;
-/// Zig: `pub const DevAllocator = AllocationScope.Borrowed;`
-pub type DevAllocator<'a> =
-    crate::allocators::allocation_scope::Borrowed<'a, bun_alloc::StdAllocator>;
-
 impl DevServer {
+    /// Zig threaded a borrowed debug allocator handle through DevServer; in
+    /// the Rust port everything is `Box`/`Vec` on the global mimalloc, so this
+    /// just returns the default `StdAllocator`. Kept for the few call sites
+    /// that still want a `StdAllocator` handle.
+    #[inline]
     pub fn allocator(&self) -> bun_alloc::StdAllocator {
-        self.allocation_scope.allocator()
-    }
-
-    pub fn dev_allocator(&self) -> DevAllocator<'_> {
-        self.allocation_scope.borrow()
+        bun_alloc::StdAllocator::default()
     }
 }
 
@@ -3850,8 +3837,6 @@ pub fn finalize_bundle(
         if let Some(_slice) = html.bundled_html_text.take() {
             // freed by Drop
         }
-        #[cfg(feature = "allocation_scope")]
-        dev.allocation_scope.assert_owned(compile_result_code);
         html.bundled_html_text = Some(compile_result_code.clone()); // TODO(port): ownership transfer
         html.script_injection_offset =
             Some(route_bundle::ByteOffset(*compile_result_offset));
@@ -3968,8 +3953,6 @@ pub fn finalize_bundle(
         let global = unsafe { &*(*dev.vm).global };
         let server_modules = if let Some(json) = source_map_json {
             // This memory will be owned by the `DevServerSourceProvider` in C++
-            #[cfg(feature = "allocation_scope")]
-            dev.allocation_scope.leak_slice(&json);
             let json: ::core::mem::ManuallyDrop<Vec<u8>> = ::core::mem::ManuallyDrop::new(json);
 
             match c::bake_load_server_hmr_patch_with_source_map(
@@ -5113,18 +5096,12 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
 
 impl DevServer {
     fn print_memory_line(&self) {
-        if !ALLOCATION_SCOPE_ENABLED {
-            return;
-        }
         if !bun_output::scope_is_visible!(DevServer) {
             return;
         }
-        let stats = self.allocation_scope.stats();
         Output::pretty_errorln(format_args!(
-            "<d>DevServer tracked {}, measured: {} ({}), process: {}<r>",
+            "<d>DevServer tracked {}, process: {}<r>",
             bun_core::fmt::size(self.memory_cost(), Default::default()),
-            stats.num_allocations,
-            bun_core::fmt::size(stats.total_memory_allocated, Default::default()),
             bun_core::fmt::size(sys::self_process_memory_usage().unwrap_or(0), Default::default()),
         ));
     }
@@ -5134,8 +5111,6 @@ impl DevServer {
 // are defined once in `crate::bake::dev_server` and re-exported here so the
 // Phase-A draft body and the keystone struct module agree on identity.
 pub use crate::bake::dev_server::FileKind;
-
-pub(crate) const ALLOCATION_SCOPE_ENABLED: bool = crate::allocators::allocation_scope::ENABLED;
 
 pub use crate::bake::dev_server::IncrementalResult;
 
@@ -5364,11 +5339,9 @@ impl DevServer {
             source_maps: cost.source_maps as u32,
             assets: cost.assets as u32,
             other: cost.other as u32,
-            devserver_tracked: if ALLOCATION_SCOPE_ENABLED {
-                self.allocation_scope.stats().total_memory_allocated as u32
-            } else {
-                0
-            },
+            // PORT NOTE: Zig populated this from a debug allocation-scope
+            // tracker; Rust ownership has no equivalent runtime counter.
+            devserver_tracked: 0,
             process_used: sys::self_process_memory_usage().unwrap_or(0) as u32,
             system_used: system_total.saturating_sub(crate::node::os::freemem()) as u32,
             system_total: system_total as u32,

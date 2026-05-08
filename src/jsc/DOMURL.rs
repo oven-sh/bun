@@ -7,17 +7,21 @@ use bun_string::{self as bstr, ZigString};
 /// Opaque FFI handle for WebCore::DOMURL (C++ side).
 #[repr(C)]
 pub struct DOMURL {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 // TODO(port): move to jsc_sys
+//
+// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; `ZigString`/`c_int`
+// out-params are plain `#[repr(C)]` PODs whose `&mut` is exclusive for the
+// call → `safe fn`.
 unsafe extern "C" {
-    fn WebCore__DOMURL__cast_(value: JSValue, vm: *mut VM) -> *mut DOMURL;
-    fn WebCore__DOMURL__fileSystemPath(this: *mut DOMURL, error_code: *mut c_int) -> bstr::String;
+    safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
+    safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;
     // These two are referenced via `bun.cpp.*` in the Zig source.
-    fn WebCore__DOMURL__href_(this: *mut DOMURL, out: *mut ZigString);
-    fn WebCore__DOMURL__pathname_(this: *mut DOMURL, out: *mut ZigString);
+    safe fn WebCore__DOMURL__href_(this: &DOMURL, out: &mut ZigString);
+    safe fn WebCore__DOMURL__pathname_(this: &DOMURL, out: &mut ZigString);
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
@@ -39,12 +43,8 @@ impl From<ToFileSystemPathError> for bun_core::Error {
 impl DOMURL {
     pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {
         // TODO(port): lifetime — DOMURL is a GC-owned C++ cell; no Rust-expressible lifetime. Phase B revisit.
-        // SAFETY: FFI call; `vm` is a live JSC VM borrow whose opaque bytes are
-        // wrapped in `UnsafeCell`, so `VM::as_mut_ptr` yields a `*mut VM` with
-        // write provenance (no `&T as *const T as *mut T` laundering). The C++
-        // side ignores the `vm` argument (`WebCoreCast` only inspects `value`).
-        // Returned pointer is null or a valid GC cell uniquely materialized here.
-        unsafe { WebCore__DOMURL__cast_(value, vm.as_mut_ptr()).as_mut() }
+        // SAFETY: returned pointer is null or a valid GC cell uniquely materialized here.
+        unsafe { WebCore__DOMURL__cast_(value, vm).as_mut() }
     }
 
     pub fn cast<'a>(value: JSValue) -> Option<&'a mut DOMURL> {
@@ -53,8 +53,7 @@ impl DOMURL {
     }
 
     pub fn href_(&mut self, out: &mut ZigString) {
-        // SAFETY: self is a valid DOMURL handle obtained from cast/cast_.
-        unsafe { WebCore__DOMURL__href_(self, out) }
+        WebCore__DOMURL__href_(self, out)
     }
 
     pub fn href(&mut self) -> ZigString {
@@ -65,8 +64,7 @@ impl DOMURL {
 
     pub fn file_system_path(&mut self) -> Result<bstr::String, ToFileSystemPathError> {
         let mut error_code: c_int = 0;
-        // SAFETY: self is a valid DOMURL handle; error_code is a valid out-param.
-        let path = unsafe { WebCore__DOMURL__fileSystemPath(self, &raw mut error_code) };
+        let path = WebCore__DOMURL__fileSystemPath(self, &mut error_code);
         match error_code {
             1 => return Err(ToFileSystemPathError::InvalidHost),
             2 => return Err(ToFileSystemPathError::InvalidPath),
@@ -78,8 +76,7 @@ impl DOMURL {
     }
 
     pub fn pathname_(&mut self, out: &mut ZigString) {
-        // SAFETY: self is a valid DOMURL handle obtained from cast/cast_.
-        unsafe { WebCore__DOMURL__pathname_(self, out) }
+        WebCore__DOMURL__pathname_(self, out)
     }
 
     pub fn pathname(&mut self) -> ZigString {

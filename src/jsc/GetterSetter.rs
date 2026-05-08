@@ -2,7 +2,7 @@ use core::marker::{PhantomData, PhantomPinned};
 
 #[repr(C)]
 pub struct GetterSetter {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

@@ -83,8 +83,7 @@ pub fn jsvalue_to_uint64(value: EncodedJSValue) -> u64 {
         // callers already range-check via the int32/number tags so behavior matches.
         return jsvalue_to_double(value) as u64;
     }
-    // SAFETY: extern "C" fn with by-value POD union arg; no invariants beyond ABI.
-    unsafe { JSVALUE_TO_UINT64_SLOW(value) }
+    JSVALUE_TO_UINT64_SLOW(value)
 }
 
 #[inline]
@@ -95,14 +94,15 @@ pub fn jsvalue_to_int64(value: EncodedJSValue) -> i64 {
     if jsvalue_is_number(value) {
         return jsvalue_to_double(value) as i64;
     }
-    // SAFETY: extern "C" fn with by-value POD union arg.
-    unsafe { JSVALUE_TO_INT64_SLOW(value) }
+    JSVALUE_TO_INT64_SLOW(value)
 }
 
 // TODO(port): move to jsc_sys
+//
+// By-value POD union arg; no invariants beyond ABI → `safe fn`.
 unsafe extern "C" {
-    pub fn JSVALUE_TO_UINT64_SLOW(value: EncodedJSValue) -> u64;
-    pub fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) -> i64;
+    pub safe fn JSVALUE_TO_UINT64_SLOW(value: EncodedJSValue) -> u64;
+    pub safe fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) -> i64;
 }
 
 // In Zig these alias `jsc.JSValue.fromUInt64NoTruncate` / `fromInt64NoTruncate`

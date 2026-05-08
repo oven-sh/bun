@@ -15,7 +15,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 /// In Zig this is a single `opaque {}` aliased under many names; we mirror that.
 #[repr(C)]
 pub struct Generic {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

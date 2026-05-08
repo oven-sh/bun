@@ -13,9 +13,7 @@ pub struct JSArrayIterator<'a> {
 impl<'a> JSArrayIterator<'a> {
     pub fn init(value: JSValue, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {
         let mut length: u32 = 0;
-        // SAFETY: FFI call into JSC; `value` is a valid JSValue on the stack,
-        // `length` is a valid out-param.
-        let elements = unsafe { Bun__JSArray__getContiguousVector(value, &raw mut length) };
+        let elements = Bun__JSArray__getContiguousVector(value, &mut length);
         if !elements.is_null() {
             return Ok(JSArrayIterator {
                 i: 0,
@@ -62,7 +60,7 @@ impl<'a> JSArrayIterator<'a> {
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn Bun__JSArray__getContiguousVector(value: JSValue, out_len: *mut u32) -> *const JSValue;
+    safe fn Bun__JSArray__getContiguousVector(value: JSValue, out_len: &mut u32) -> *const JSValue;
     fn Bun__JSArray__contiguousVectorIsStillValid(
         value: JSValue,
         elements: *const JSValue,

@@ -8,14 +8,14 @@ use bun_string::ZigString;
 /// Opaque FFI handle to WebCore::URLSearchParams (lives on the C++ side).
 #[repr(C)]
 pub struct URLSearchParams {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn URLSearchParams__create(global_object: *mut JSGlobalObject, init: *const ZigString) -> JSValue;
-    fn URLSearchParams__fromJS(value: JSValue) -> Option<NonNull<URLSearchParams>>;
+    safe fn URLSearchParams__create(global_object: &JSGlobalObject, init: &ZigString) -> JSValue;
+    safe fn URLSearchParams__fromJS(value: JSValue) -> Option<NonNull<URLSearchParams>>;
     fn URLSearchParams__toString(
         self_: *mut URLSearchParams,
         ctx: *mut c_void,
@@ -25,16 +25,12 @@ unsafe extern "C" {
 
 impl URLSearchParams {
     pub fn create(global_object: &JSGlobalObject, init: ZigString) -> JSValue {
-        // SAFETY: `as_ptr()` yields a `*mut` with valid write provenance via the
-        // `UnsafeCell` interior of `JSGlobalObject` (C++ may mutate VM/heap state);
-        // `init` outlives the synchronous FFI call.
-        unsafe { URLSearchParams__create(global_object.as_ptr(), &raw const init) }
+        URLSearchParams__create(global_object, &init)
     }
 
     // TODO(port): lifetime — opaque handle is owned by the JS GC heap, not by `value`.
     pub fn from_js(value: JSValue) -> Option<NonNull<URLSearchParams>> {
-        // SAFETY: JSValue is a #[repr(transparent)] i64; FFI returns null when not a URLSearchParams.
-        unsafe { URLSearchParams__fromJS(value) }
+        URLSearchParams__fromJS(value)
     }
 
     pub fn to_string<Ctx>(&mut self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: ZigString)) {

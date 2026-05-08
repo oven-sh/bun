@@ -10,42 +10,48 @@ use bun_uws::ResponseKind;
 // TODO(port): consider an RAII wrapper that calls `deref` on Drop instead of returning `NonNull<FetchHeaders>` from constructors.
 #[repr(C)]
 pub struct FetchHeaders {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
 // TODO(port): move to jsc_sys
-// NOTE: `JSGlobalObject` / `VM` are opaque ZST handles; extern fns take `*const` to match the
-// codebase convention (see JSValue.rs / JSGlobalObject.rs) and avoid `&T as *const T as *mut T`
-// casts. ABI is identical — C++ sees a plain pointer either way.
+//
+// `FetchHeaders`/`JSGlobalObject`/`VM` are opaque `UnsafeCell`-backed ZST
+// handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
+// header storage / VM state through them is interior mutation invisible to
+// Rust. `ZigString` is a plain `#[repr(C)]` POD; `&ZigString`/`&mut ZigString`
+// at the FFI boundary are sound (C++ reads/writes only the named struct).
+// Shims that traffic only in such refs + scalars are declared `safe fn`; those
+// that take raw `*mut c_void` / unsized `*mut StringPointer` arrays / `deref`
+// (which may free) keep their `unsafe fn` body.
 unsafe extern "C" {
-    fn WebCore__FetchHeaders__append(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *const JSGlobalObject);
-    fn WebCore__FetchHeaders__cast_(value0: JSValue, arg1: *const VM) -> *mut FetchHeaders;
-    fn WebCore__FetchHeaders__clone(arg0: *mut FetchHeaders, arg1: *const JSGlobalObject) -> JSValue;
-    fn WebCore__FetchHeaders__cloneThis(arg0: *mut FetchHeaders, arg1: *const JSGlobalObject) -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__append(arg0: &FetchHeaders, arg1: &ZigString, arg2: &ZigString, arg3: &JSGlobalObject);
+    safe fn WebCore__FetchHeaders__cast_(value0: JSValue, arg1: &VM) -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__clone(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
+    safe fn WebCore__FetchHeaders__cloneThis(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__copyTo(arg0: *mut FetchHeaders, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *mut u8);
-    fn WebCore__FetchHeaders__count(arg0: *mut FetchHeaders, arg1: *mut u32, arg2: *mut u32);
-    fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__count(arg0: &FetchHeaders, arg1: &mut u32, arg2: &mut u32);
+    safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createValueNotJS(arg0: *const JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> *mut FetchHeaders;
     fn WebCore__FetchHeaders__createValue(arg0: *const JSGlobalObject, arg1: *mut StringPointer, arg2: *mut StringPointer, arg3: *const ZigString, arg4: u32) -> JSValue;
     fn WebCore__FetchHeaders__deref(arg0: *mut FetchHeaders);
-    fn WebCore__FetchHeaders__fastGet_(arg0: *mut FetchHeaders, arg1: u8, arg2: *mut ZigString);
-    fn WebCore__FetchHeaders__fastHas_(arg0: *mut FetchHeaders, arg1: u8) -> bool;
-    fn WebCore__FetchHeaders__fastRemove_(arg0: *mut FetchHeaders, arg1: u8);
-    fn WebCore__FetchHeaders__get_(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *mut ZigString, arg3: *const JSGlobalObject);
-    fn WebCore__FetchHeaders__has(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const JSGlobalObject) -> bool;
-    fn WebCore__FetchHeaders__isEmpty(arg0: *mut FetchHeaders) -> bool;
+    safe fn WebCore__FetchHeaders__fastGet_(arg0: &FetchHeaders, arg1: u8, arg2: &mut ZigString);
+    safe fn WebCore__FetchHeaders__fastHas_(arg0: &FetchHeaders, arg1: u8) -> bool;
+    safe fn WebCore__FetchHeaders__fastRemove_(arg0: &FetchHeaders, arg1: u8);
+    safe fn WebCore__FetchHeaders__get_(arg0: &FetchHeaders, arg1: &ZigString, arg2: &mut ZigString, arg3: &JSGlobalObject);
+    safe fn WebCore__FetchHeaders__has(arg0: &FetchHeaders, arg1: &ZigString, arg2: &JSGlobalObject) -> bool;
+    safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
     fn WebCore__FetchHeaders__put_(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *const JSGlobalObject);
-    fn WebCore__FetchHeaders__remove(arg0: *mut FetchHeaders, arg1: *const ZigString, arg2: *const JSGlobalObject);
-    fn WebCore__FetchHeaders__toJS(arg0: *mut FetchHeaders, arg1: *const JSGlobalObject) -> JSValue;
+    safe fn WebCore__FetchHeaders__remove(arg0: &FetchHeaders, arg1: &ZigString, arg2: &JSGlobalObject);
+    safe fn WebCore__FetchHeaders__toJS(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
     fn WebCore__FetchHeaders__toUWSResponse(arg0: *mut FetchHeaders, kind: ResponseKind, arg2: *mut c_void);
     fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
 
-    fn WebCore__FetchHeaders__createFromJS(arg0: *const JSGlobalObject, arg1: JSValue) -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__createFromJS(arg0: &JSGlobalObject, arg1: JSValue) -> *mut FetchHeaders;
 
-    fn WebCore__FetchHeaders__put(this: *mut FetchHeaders, name_: HTTPHeaderName, value: *const ZigString, global: *const JSGlobalObject);
+    safe fn WebCore__FetchHeaders__put(this: &FetchHeaders, name_: HTTPHeaderName, value: &ZigString, global: &JSGlobalObject);
 }
 
 #[repr(C)]
@@ -87,9 +93,7 @@ impl FetchHeaders {
     pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<NonNull<FetchHeaders>>> {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
-            // SAFETY: `global` is an opaque ZST handle passed by address only.
-            let p = unsafe { WebCore__FetchHeaders__createFromJS(global, value) };
-            NonNull::new(p)
+            NonNull::new(WebCore__FetchHeaders__createFromJS(global, value))
         })
     }
 
@@ -143,8 +147,7 @@ impl FetchHeaders {
     }
 
     pub fn is_empty(&mut self) -> bool {
-        // SAFETY: self is a valid FetchHeaders handle
-        unsafe { WebCore__FetchHeaders__isEmpty(self) }
+        WebCore__FetchHeaders__isEmpty(self)
     }
 
     pub fn create_from_uws(uws_request: *mut c_void) -> NonNull<FetchHeaders> {
@@ -169,7 +172,7 @@ impl FetchHeaders {
     }
 
     pub fn create_empty() -> NonNull<FetchHeaders> {
-        // SAFETY: C++ allocates a new empty FetchHeaders and never returns null
+        // SAFETY: C++ allocates a new empty FetchHeaders and never returns null.
         unsafe { NonNull::new_unchecked(WebCore__FetchHeaders__createEmpty()) }
     }
 
@@ -194,39 +197,19 @@ impl FetchHeaders {
     }
 
     pub fn append(&mut self, name_: &ZigString, value: &ZigString, global: &JSGlobalObject) {
-        // SAFETY: all pointers are valid for the duration of the call; `global` is an opaque
-        // ZST handle passed by address only.
-        unsafe {
-            WebCore__FetchHeaders__append(
-                self,
-                name_,
-                value,
-                global,
-            )
-        }
+        WebCore__FetchHeaders__append(self, name_, value, global)
     }
 
     pub fn put(&mut self, name_: HTTPHeaderName, value: &[u8], global: &JSGlobalObject) -> JsResult<()> {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
             let zs = ZigString::init(value);
-            // SAFETY: self/global are valid; &zs lives across the call; `global` is an opaque
-            // ZST handle passed by address only.
-            unsafe { WebCore__FetchHeaders__put(self, name_, &raw const zs, global) }
+            WebCore__FetchHeaders__put(self, name_, &zs, global)
         })
     }
 
     pub fn get_(&mut self, name_: &ZigString, out: &mut ZigString, global: &JSGlobalObject) {
-        // SAFETY: all pointers are valid for the duration of the call; `global` is an opaque
-        // ZST handle passed by address only.
-        unsafe {
-            WebCore__FetchHeaders__get_(
-                self,
-                name_,
-                out,
-                global,
-            )
-        }
+        WebCore__FetchHeaders__get_(self, name_, out, global)
     }
 
     pub fn get(&mut self, name_: &[u8], global: &JSGlobalObject) -> Option<ZigString> {
@@ -243,15 +226,7 @@ impl FetchHeaders {
     }
 
     pub fn has(&mut self, name_: &ZigString, global: &JSGlobalObject) -> bool {
-        // SAFETY: all pointers are valid for the duration of the call; `global` is an opaque
-        // ZST handle passed by address only.
-        unsafe {
-            WebCore__FetchHeaders__has(
-                self,
-                name_,
-                global,
-            )
-        }
+        WebCore__FetchHeaders__has(self, name_, global)
     }
 
     pub fn fast_has(&mut self, name_: HTTPHeaderName) -> bool {
@@ -269,24 +244,11 @@ impl FetchHeaders {
     }
 
     pub fn fast_has_(&mut self, name_: u8) -> bool {
-        // SAFETY: self is a valid FetchHeaders handle
-        unsafe {
-            WebCore__FetchHeaders__fastHas_(
-                self,
-                name_,
-            )
-        }
+        WebCore__FetchHeaders__fastHas_(self, name_)
     }
 
     pub fn fast_get_(&mut self, name_: u8, str: &mut ZigString) {
-        // SAFETY: self is a valid FetchHeaders handle; str is a valid out-pointer
-        unsafe {
-            WebCore__FetchHeaders__fastGet_(
-                self,
-                name_,
-                str,
-            )
-        }
+        WebCore__FetchHeaders__fastGet_(self, name_, str)
     }
 
     pub fn fast_remove(&mut self, header: HTTPHeaderName) {
@@ -294,31 +256,15 @@ impl FetchHeaders {
     }
 
     pub fn fast_remove_(&mut self, header: u8) {
-        // SAFETY: self is a valid FetchHeaders handle
-        unsafe {
-            WebCore__FetchHeaders__fastRemove_(
-                self,
-                header,
-            )
-        }
+        WebCore__FetchHeaders__fastRemove_(self, header)
     }
 
     pub fn remove(&mut self, name_: &ZigString, global: &JSGlobalObject) {
-        // SAFETY: all pointers are valid for the duration of the call; `global` is an opaque
-        // ZST handle passed by address only.
-        unsafe {
-            WebCore__FetchHeaders__remove(
-                self,
-                name_,
-                global,
-            )
-        }
+        WebCore__FetchHeaders__remove(self, name_, global)
     }
 
     pub fn cast_(value: JSValue, vm: &VM) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: `vm` is an opaque ZST handle passed by address only.
-        let p = unsafe { WebCore__FetchHeaders__cast_(value, vm) };
-        NonNull::new(p)
+        NonNull::new(WebCore__FetchHeaders__cast_(value, vm))
     }
 
     pub fn cast(value: JSValue) -> Option<NonNull<FetchHeaders>> {
@@ -329,40 +275,21 @@ impl FetchHeaders {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        // SAFETY: self/global are valid for the duration of the call; `global_this` is an opaque
-        // ZST handle passed by address only.
-        unsafe { WebCore__FetchHeaders__toJS(self, global_this) }
+        WebCore__FetchHeaders__toJS(self, global_this)
     }
 
     pub fn count(&mut self, names: &mut u32, buf_len: &mut u32) {
-        // SAFETY: self is valid; names/buf_len are valid out-pointers
-        unsafe {
-            WebCore__FetchHeaders__count(
-                self,
-                names,
-                buf_len,
-            )
-        }
+        WebCore__FetchHeaders__count(self, names, buf_len)
     }
 
     pub fn clone(&mut self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: self/global are valid for the duration of the call; `global` is an opaque
-        // ZST handle passed by address only.
-        unsafe {
-            WebCore__FetchHeaders__clone(
-                self,
-                global,
-            )
-        }
+        WebCore__FetchHeaders__clone(self, global)
     }
 
     pub fn clone_this(&mut self, global: &JSGlobalObject) -> JsResult<Option<NonNull<FetchHeaders>>> {
         // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
-            // SAFETY: self/global are valid for the duration of the call; `global` is an opaque
-            // ZST handle passed by address only.
-            let p = unsafe { WebCore__FetchHeaders__cloneThis(self, global) };
-            NonNull::new(p)
+            NonNull::new(WebCore__FetchHeaders__cloneThis(self, global))
         })
     }
 

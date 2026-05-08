@@ -49,7 +49,7 @@ unsafe extern "C" {
 // `toJSStringRef` is unreachable behind `@hasDecl(bun, "bindgen")`).
 #[repr(C)]
 pub struct OpaqueJSString {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 pub type JSStringRef = *mut OpaqueJSString;

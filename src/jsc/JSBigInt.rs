@@ -7,7 +7,7 @@ use bun_string::String as BunString;
 /// Opaque JSC BigInt cell. Always used behind a reference (`&JSBigInt`).
 #[repr(C)]
 pub struct JSBigInt {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

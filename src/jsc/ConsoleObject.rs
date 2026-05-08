@@ -76,7 +76,7 @@ macro_rules! pfmt {
 /// Opaque FFI handle for `Inspector::ScriptArguments`.
 #[repr(C)]
 pub struct ScriptArguments {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
@@ -3220,12 +3220,14 @@ pub mod formatter {
         Ok(None)
     }
 
+    // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
+    // params are by-value `JSValue`/scalars → `safe fn`.
     unsafe extern "C" {
         /// C++ helper (`bindings.cpp`) — invokes a user-supplied
         /// `[util.inspect.custom]` function with the synthesized `(depth, opts,
         /// inspect)` argument shape. Only called from `print_as`.
-        fn JSC__JSValue__callCustomInspectFunction(
-            global: *mut JSGlobalObject,
+        safe fn JSC__JSValue__callCustomInspectFunction(
+            global: &JSGlobalObject,
             function: JSValue,
             this: JSValue,
             depth: u32,
@@ -3789,11 +3791,9 @@ pub mod formatter {
             // Call custom inspect function. Will return the error if there is
             // one; we'll need to pass the callback through to the "this" value
             // in here.
-            // SAFETY: FFI call; `global_this` is a valid `JSGlobalObject` for
-            // the call's duration.
-            let result = crate::from_js_host_call(self.global_this, || unsafe {
+            let result = crate::from_js_host_call(self.global_this, || {
                 JSC__JSValue__callCustomInspectFunction(
-                    self.global_this.as_ptr(),
+                    self.global_this,
                     self.custom_formatted_object.function,
                     self.custom_formatted_object.this,
                     u32::from(self.max_depth.saturating_sub(self.depth)),

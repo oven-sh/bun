@@ -12,15 +12,15 @@ unsafe extern "C" {
     // actual C ABI (likely void with pending exception on the VM) before finalizing.
     pub fn Bun__performTask(global: *mut JSGlobalObject, task: *mut CppTask);
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
-    fn Bun__EventLoopTaskNoContext__createdInBunVm(
-        task: *const EventLoopTaskNoContext,
+    safe fn Bun__EventLoopTaskNoContext__createdInBunVm(
+        task: &EventLoopTaskNoContext,
     ) -> *mut VirtualMachine;
 }
 
 /// A task created from C++ code, usually via ScriptExecutionContext.
 #[repr(C)]
 pub struct CppTask {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -43,7 +43,7 @@ impl CppTask {
 
 #[repr(C)]
 pub struct EventLoopTaskNoContext {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -58,9 +58,7 @@ impl EventLoopTaskNoContext {
     /// §Global mutable state — VirtualMachine is process-lifetime; callers
     /// deref per-access so two calls don't fabricate aliasing `&mut`).
     pub fn get_vm(&self) -> Option<NonNull<VirtualMachine>> {
-        // SAFETY: `self` is a valid C++ EventLoopTaskNoContext; the returned VM (if non-null)
-        // outlives this task.
-        NonNull::new(unsafe { Bun__EventLoopTaskNoContext__createdInBunVm(std::ptr::from_ref(self)) })
+        NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self))
     }
 }
 

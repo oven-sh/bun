@@ -7,7 +7,7 @@ use bun_string::ZigString;
 /// Opaque FFI handle to WebCore::DOMFormData (C++ side).
 #[repr(C)]
 pub struct DOMFormData {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

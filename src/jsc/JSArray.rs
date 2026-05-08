@@ -3,7 +3,7 @@ use crate::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 /// Opaque FFI handle for `JSC::JSArray`. Always used behind a reference/pointer.
 #[repr(C)]
 pub struct JSArray {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
@@ -11,7 +11,7 @@ pub struct JSArray {
 unsafe extern "C" {
     // TODO(@paperclover): this can throw
     fn JSArray__constructArray(global: *const JSGlobalObject, items: *const JSValue, len: usize) -> JSValue;
-    fn JSArray__constructEmptyArray(global: *const JSGlobalObject, len: usize) -> JSValue;
+    safe fn JSArray__constructEmptyArray(global: &JSGlobalObject, len: usize) -> JSValue;
 }
 
 impl JSArray {
@@ -28,10 +28,7 @@ impl JSArray {
 
     #[track_caller]
     pub fn create_empty(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
-        crate::from_js_host_call(global, || unsafe {
-            // SAFETY: global is a live &JSGlobalObject.
-            JSArray__constructEmptyArray(global, len)
-        })
+        crate::from_js_host_call(global, || JSArray__constructEmptyArray(global, len))
     }
 
     pub fn iterator<'a>(&self, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {

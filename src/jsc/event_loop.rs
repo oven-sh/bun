@@ -210,8 +210,11 @@ enum DrainMicrotasksResult {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ mutating
+// the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    fn JSC__JSGlobalObject__drainMicrotasks(global: *mut JSGlobalObject) -> DrainMicrotasksResult;
+    safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> DrainMicrotasksResult;
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -375,8 +378,7 @@ impl EventLoop {
         // SAFETY: `jsc_vm` is the live JSC::VM for this thread.
         unsafe { (*jsc_vm).release_weak_refs() };
 
-        // SAFETY: global_object is a valid live JSGlobalObject (borrowed from VM)
-        match unsafe { JSC__JSGlobalObject__drainMicrotasks(global_object.as_ptr()) } {
+        match JSC__JSGlobalObject__drainMicrotasks(global_object) {
             DrainMicrotasksResult::Success => {}
             DrainMicrotasksResult::JsTerminated => return Err(JsTerminated::JSTerminated),
         }

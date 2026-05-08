@@ -37,7 +37,7 @@ pub use crate::http_server_agent::HTTPServerAgent;
 /// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.
 #[repr(C)]
 pub struct InspectorBunFrontendDevServerAgentHandle {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -992,7 +992,7 @@ pub enum TestType {
 
 #[repr(C)]
 pub struct TestReporterHandle {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -1157,7 +1157,7 @@ pub struct LifecycleAgent {
 
 #[repr(C)]
 pub struct LifecycleHandle {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

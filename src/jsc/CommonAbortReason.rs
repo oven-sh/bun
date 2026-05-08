@@ -10,17 +10,17 @@ pub enum CommonAbortReason {
 
 impl CommonAbortReason {
     pub fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: FFI call into WebCore C++; `global` is a valid borrowed JSGlobalObject.
-        // `as_ptr()` goes through `UnsafeCell` so the `*mut` carries write provenance
-        // (C++ may mutate the global to allocate the JS error value).
-        unsafe { WebCore__CommonAbortReason__toJS(global.as_ptr(), self) }
+        WebCore__CommonAbortReason__toJS(global, self)
     }
 }
 
 // TODO(port): move to jsc_sys
+//
+// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ allocating
+// the JS error value through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    fn WebCore__CommonAbortReason__toJS(
-        global: *mut JSGlobalObject,
+    safe fn WebCore__CommonAbortReason__toJS(
+        global: &JSGlobalObject,
         reason: CommonAbortReason,
     ) -> JSValue;
 }

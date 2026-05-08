@@ -15,7 +15,7 @@ use crate::c_api::JSValueRef;
 /// arguments. See `docs/project/bindgen.md`
 #[repr(C)]
 pub struct CallFrame {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

@@ -1022,7 +1022,7 @@ pub fn make_typed_array_with_bytes_no_copy(
 /// Corresponds to `JSC::ArrayBuffer`.
 #[repr(C)]
 pub struct JSCArrayBuffer {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

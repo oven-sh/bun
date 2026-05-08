@@ -8,7 +8,7 @@ use crate::{JSGlobalObject, JSHostFn, JSValue};
 /// Opaque FFI handle for `JSC::JSFunction`.
 #[repr(C)]
 pub struct JSFunction {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -47,9 +47,14 @@ pub struct CreateJSFunctionOptions {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; the remaining
+// params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so the
+// constructor and `optimizeSoon` shims are declared `safe fn`. `getSourceCode`
+// writes through a raw `*mut ZigString` out-param and stays `unsafe`.
 unsafe extern "C" {
-    fn JSFunction__createFromZig(
-        global: *const JSGlobalObject,
+    safe fn JSFunction__createFromZig(
+        global: &JSGlobalObject,
         fn_name: BunString,
         implementation: JSHostFn,
         arg_count: u32,
@@ -58,7 +63,7 @@ unsafe extern "C" {
         constructor: Option<JSHostFn>,
     ) -> JSValue;
 
-    pub fn JSC__JSFunction__optimizeSoon(value: JSValue);
+    pub safe fn JSC__JSFunction__optimizeSoon(value: JSValue);
 
     fn JSC__JSFunction__getSourceCode(value: JSValue, out: *mut ZigString) -> bool;
 }
@@ -75,26 +80,19 @@ impl JSFunction {
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) -> JSValue {
-        // SAFETY: `global` is a valid live JSGlobalObject for the duration of the call;
-        // the FFI side does not retain the raw pointer past return. JSGlobalObject is an
-        // opaque FFI handle — Rust never reads its body, so passing `*const` is sound even
-        // though C++ may mutate VM state behind it (matches the convention in JSGlobalObject.rs).
-        unsafe {
-            JSFunction__createFromZig(
-                global,
-                fn_name.into(),
-                implementation,
-                function_length,
-                options.implementation_visibility,
-                options.intrinsic,
-                options.constructor,
-            )
-        }
+        JSFunction__createFromZig(
+            global,
+            fn_name.into(),
+            implementation,
+            function_length,
+            options.implementation_visibility,
+            options.intrinsic,
+            options.constructor,
+        )
     }
 
     pub fn optimize_soon(value: JSValue) {
-        // SAFETY: trivial FFI wrapper; `JSValue` is `Copy` and passed by value.
-        unsafe { JSC__JSFunction__optimizeSoon(value) }
+        JSC__JSFunction__optimizeSoon(value)
     }
 
     pub fn get_source_code(value: JSValue) -> Option<BunString> {

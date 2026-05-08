@@ -1082,8 +1082,7 @@ impl<'a> SourceMapHandler<'a> {
             unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
         }
         SourceMapHandler {
-            // SAFETY: `ctx` is a live `&mut T` so the pointer is non-null; type-erased to `*mut ()`
-            // and cast back to `*mut T` inside the thunk before dereference.
+            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
             ctx: NonNull::from(ctx).cast::<()>(),
             callback: thunk::<T>,
             _marker: core::marker::PhantomData,
@@ -1292,8 +1291,7 @@ impl RequireOrImportMetaCallback {
             unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
         }
         Self {
-            // SAFETY: `ctx` is `&mut T` so the pointer is non-null; type-erased to `*mut ()`
-            // and cast back to `*mut T` inside the thunk before dereference.
+            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
             ctx: Some(NonNull::from(ctx).cast::<()>()),
             callback: thunk::<T>,
         }

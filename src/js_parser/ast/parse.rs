@@ -362,7 +362,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.expect(T::TCloseParen)?;
         p.allow_in = old_allow_in;
         Ok(ExprListLoc {
-            // SAFETY: bump-arena slice; ExprNodeList wraps it as Borrowed (no growth/free).
             list: ExprNodeList::from_bump_slice(args.into_bump_slice_mut()),
             loc: close_paren_loc,
         })
@@ -1258,7 +1257,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
         }
 
-        // SAFETY: bump-arena slice; DeclList wraps it as Borrowed (no growth/free).
         Ok(G::DeclList::from_bump_slice(decls.into_bump_slice_mut()))
     }
 

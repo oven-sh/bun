@@ -718,6 +718,7 @@ impl NumberRenamer {
                 debug_assert!(!value_ref.ref_.is_source_contents_slice());
                 value_ref.ref_.inner_index()
             }));
+            debug_assert_eq!(sorted.len(), scope.members.count());
             sorted.sort_unstable();
 
             for &inner_index in sorted.iter() {

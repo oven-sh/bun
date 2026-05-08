@@ -634,7 +634,6 @@ impl<'a> ImportScanner<'a> {
                             p.arena.alloc_slice_fill_default::<Expr>(2);
                         export_default_args[0] = p.module_exports(expr.loc);
                         export_default_args[1] = expr;
-                        // SAFETY: bump-allocated slice; lives for the AST arena's lifetime.
                         let args =
                             js_ast::ExprNodeList::from_bump_slice(export_default_args);
                         let value = p.call_runtime(expr.loc, b"__exportDefault", args);

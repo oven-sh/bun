@@ -146,7 +146,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn call_rt(&mut self, l: logger::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
-        // SAFETY: `a` is a fresh bump slice valid for 'a; never grown.
         let list = ExprNodeList::from_bump_slice(a);
         self.call_runtime(l, name, list)
     }
@@ -664,8 +663,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 new_args.push(*arg);
                             }
                             e.target = call_target;
-                            // SAFETY: bump slice valid for 'a.
-                            e.args = 
+                            e.args =
                                 ExprNodeList::from_bump_slice(new_args.into_bump_slice_mut());
                             return;
                         }
@@ -1556,7 +1554,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            // SAFETY: bump slice for 'a.
             let dec_args_list =
                 ExprNodeList::from_bump_slice(dec_args.into_bump_slice_mut());
             let raw_element = p.call_runtime(loc, b"__decorateElement", dec_args_list);
@@ -1732,7 +1729,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 )
             });
 
-            // SAFETY: bump slice for 'a.
             let cls_dec_list =
                 ExprNodeList::from_bump_slice(cls_dec_args.into_bump_slice_mut());
             let dec_call = p.call_runtime(loc, b"__decorateElement", cls_dec_list);
@@ -1815,8 +1811,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if let Some(init_val) = entry.prop.initializer {
                             run_args.push(init_val);
                         }
-                        // SAFETY: bump slice for 'a.
-                        let run_args_list = 
+                        let run_args_list =
                             ExprNodeList::from_bump_slice(run_args.into_bump_slice_mut());
                         let run_init_call =
                             p.call_runtime(loc, b"__runInitializers", run_args_list);
@@ -1898,7 +1893,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let Some(init_val) = entry.prop.initializer {
                     run_args.push(init_val);
                 }
-                // SAFETY: bump slice for 'a.
                 let run_args_list =
                     ExprNodeList::from_bump_slice(run_args.into_bump_slice_mut());
                 let run_init_call = p.call_runtime(loc, b"__runInitializers", run_args_list);
@@ -1988,7 +1982,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     );
                     let spread = p.new_expr(E::Spread { value: inner }, loc);
                     let arg_slice = bump.alloc_slice_copy(&[spread]);
-                    // SAFETY: bump slice for 'a.
                     let call_args =
                         ExprNodeList::from_bump_slice(arg_slice);
                     let call = p.new_expr(
@@ -2108,7 +2101,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Emit var declarations
             if !expr_var_decls.is_empty() {
                 let decls_slice = expr_var_decls.into_bump_slice_mut();
-                // SAFETY: bump slice for 'a.
                 let decls = DeclList::from_bump_slice(decls_slice);
                 let var_decl_stmt = p.s(S::Local { decls, ..Default::default() }, loc);
                 if let Some(mut stmt_list) = p.nearest_stmt_list {

@@ -105,8 +105,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     }
 
                     if !hoisted_decl_list.is_empty() {
-                        // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
-                        let decls = 
+                        let decls =
                             G::DeclList::from_bump_slice(hoisted_decl_list.into_bump_slice_mut());
                         hoisted_stmts.push(self.s(
                             S::Local { kind, decls, ..Default::default() },
@@ -607,7 +606,6 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             value: Some(expr),
             ..Default::default()
         });
-        // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
         let prop_list =
             G::PropertyList::from_bump_slice(properties.into_bump_slice_mut());
         self.new_expr(E::Object { properties: prop_list, ..Default::default() }, expr.loc)
@@ -691,7 +689,6 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         items.push(expr);
                     }
                 }
-                // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
                 let item_list =
                     ExprNodeList::from_bump_slice(items.into_bump_slice_mut());
                 self.new_expr(
@@ -723,7 +720,6 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         ..Default::default()
                     });
                 }
-                // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
                 let prop_list =
                     G::PropertyList::from_bump_slice(properties.into_bump_slice_mut());
                 self.new_expr(
@@ -745,7 +741,6 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     let slice: &mut [G::Decl] =
         bump.alloc_slice_fill_with(1, |_| G::Decl { binding, value: None });
-    // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
     G::DeclList::from_bump_slice(slice)
 }
 

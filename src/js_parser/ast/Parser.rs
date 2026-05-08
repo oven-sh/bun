@@ -564,7 +564,6 @@ impl<'a> Parser<'a> {
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
             let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| expr);
-            // SAFETY: arena slice outlives the returned `Ast`; Vec::Borrowed → no-op Drop.
             let args = Vec::from_bump_slice(args_slice);
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }
@@ -1367,10 +1366,10 @@ impl<'a> Parser<'a> {
                                 if let Some(id) = redirect_import_record_index {
                                     part.symbol_uses = Default::default();
                                     return Ok(js_ast::Result::Ast(js_ast::Ast {
-                                        // SAFETY: borrow the arena/Vec-backed records as a
-                                        // Vec view (matches `P::to_ast`); `p` is dropped
-                                        // immediately after this return so no double-ownership.
-                                        import_records: 
+                                        // Borrow the arena/Vec-backed records as a Vec view
+                                        // (matches `P::to_ast`); `p` is dropped immediately
+                                        // after this return so no double-ownership.
+                                        import_records:
                                             Vec::from_bump_slice(p.import_records.items_mut()),
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
@@ -1552,8 +1551,8 @@ impl<'a> Parser<'a> {
                     if let Some(star) = export_star_redirect {
                         return Ok(js_ast::Result::Ast(js_ast::Ast {
                             // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
-                            // SAFETY: see note on the matching arm above.
-                            import_records: 
+                            // See note on the matching arm above re double-ownership.
+                            import_records:
                                 Vec::from_bump_slice(p.import_records.items_mut()),
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),

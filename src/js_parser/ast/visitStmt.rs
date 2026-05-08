@@ -236,7 +236,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 items[i].name.ref_ = Some(ref_);
-                // Compaction: items[end..] is the kept prefix; items[i] is dead
+                // Compaction: items[..end] is the kept prefix; items[i] is dead
                 // after this iteration and the slice is truncated to `end` below.
                 items.swap(end, i);
                 end += 1;
@@ -264,7 +264,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 items[i].name.ref_ = Some(ref_);
-                // Compaction: items[end..] is the kept prefix; items[i] is dead
+                // Compaction: items[..end] is the kept prefix; items[i] is dead
                 // after this iteration and the slice is truncated to `end` below.
                 items.swap(end, i);
                 end += 1;
@@ -317,7 +317,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
                 VecExt::append(&mut p.cur_scope().generated, ref_).expect("oom");
                 p.record_declared_symbol(ref_);
-                // Compaction: items[j..] is the kept prefix; items[i] is dead
+                // Compaction: items[..j] is the kept prefix; items[i] is dead
                 // after this iteration and the slice is truncated to `j` below.
                 items.swap(j, i);
                 items[j].name.ref_ = Some(ref_);

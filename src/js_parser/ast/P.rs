@@ -5993,7 +5993,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                         for arg_decorator in arg.ts_decorators.slice() {
                                             let arg0 = self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc);
                                             let args = self.arena.alloc_slice_copy(&[arg0, *arg_decorator]);
-                                            // SAFETY: arena-owned slice; never grown after wrapping.
                                             let args = ExprNodeList::from_bump_slice(args);
                                             let call = self.call_runtime(arg_decorator.loc, b"__legacyDecorateParamTS", args);
                                             let decorators = if is_constructor {
@@ -6055,11 +6054,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         );
                         full.extend_from_slice(prop.ts_decorators.slice());
                         full.extend_from_slice(&array);
-                        // SAFETY: arena slice handed to a non-growing list.
                         let full_items = ExprNodeList::from_bump_slice(full.into_bump_slice_mut());
                         let array_expr = self.new_expr(E::Array { items: full_items, ..Default::default() }, loc);
                         let args_slice = self.arena.alloc_slice_copy(&[array_expr, target, descriptor_key, descriptor_kind]);
-                        // SAFETY: arena slice; never grown.
                         let args = ExprNodeList::from_bump_slice(args_slice);
 
                         let decorator = self.call_runtime(prop.key.expect("infallible: prop has key").loc, b"__legacyDecorateClassTS", args);
@@ -6237,7 +6234,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self.serialize_metadata(ca.ts_metadata.clone()).expect("unreachable");
                                 }
-                                // SAFETY: arena slice; never grown.
                                 let items = ExprNodeList::from_bump_slice(param_array);
                                 self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY)
                             } else {
@@ -6245,7 +6241,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             };
                             let label = self.new_expr(E::EString::from_static(b"design:paramtypes"), logger::Loc::EMPTY);
                             let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
-                            // SAFETY: arena slice; never grown.
                             let args = ExprNodeList::from_bump_slice(args_slice);
                             array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
                         }
@@ -6258,7 +6253,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let array_expr = self.new_expr(E::Array { items: array_items, ..Default::default() }, stmt.loc);
                     let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let args_slice = self.arena.alloc_slice_copy(&[array_expr, class_ident]);
-                    // SAFETY: arena slice; never grown.
                     let args = ExprNodeList::from_bump_slice(args_slice);
 
                     let lhs = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
@@ -6294,7 +6288,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let label = self.new_expr(E::EString::from_static($label), logger::Loc::EMPTY);
                 let value = $value;
                 let args = self.arena.alloc_slice_copy(&[label, value]);
-                // SAFETY: arena slice; never grown.
                 let args = ExprNodeList::from_bump_slice(args);
                 array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
             }};
@@ -6318,7 +6311,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
-                            // SAFETY: arena slice; never grown.
                             let items = ExprNodeList::from_bump_slice(args_array);
                             let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
@@ -6360,7 +6352,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
-                            // SAFETY: arena slice; never grown.
                             let items = ExprNodeList::from_bump_slice(args_array);
                             let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
                             push_metadata!(b"design:paramtypes", arr);
@@ -7265,8 +7256,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         }
 
                         if part.import_record_indices.is_empty() {
-                            // SAFETY: bump-arena slice; Vec::from_bump_slice marks
-                            // origin Borrowed so Drop is a no-op (matches Zig's
+                            // Bump-arena slice; Vec::from_bump_slice marks origin
+                            // Borrowed so Drop is a no-op (matches Zig's
                             // `ImportRecord.List.init(dupe(...))` arena ownership).
                             // The *old* value is a bitwise duplicate of
                             // `parts[idx].import_record_indices` and may be Owned —
@@ -8013,9 +8004,7 @@ impl LowerUsingDeclarationsContext {
                             stmt_loc,
                         ),
                     ]);
-                    // SAFETY: bump-arena slice valid for 'a; ExprNodeList::from_bump_slice
-                    // marks origin Borrowed so Drop is a no-op.
-                    decl.value = Some(p.call_runtime(value_loc, b"__using", 
+                    decl.value = Some(p.call_runtime(value_loc, b"__using",
                         ExprNodeList::from_bump_slice(args)));
                 }
             }
@@ -8151,7 +8140,6 @@ impl LowerUsingDeclarationsContext {
                 p.new_expr(E::Identifier { ref_: err_ref, ..Default::default() }, loc),
                 p.new_expr(E::Identifier { ref_: has_err_ref, ..Default::default() }, loc),
             ]);
-            // SAFETY: bump-arena slice valid for 'a; Borrowed origin → no-op Drop.
             p.call_runtime(loc, b"__callDispose", ExprNodeList::from_bump_slice(args))
         };
 

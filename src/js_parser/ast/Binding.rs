@@ -242,8 +242,6 @@ impl Binding {
                 }
                 Expr::init(
                     E::Array {
-                        // SAFETY: `exprs` was bump-allocated; `from_bump_slice` records
-                        // Borrowed origin so no growth/free is attempted.
                         items: ExprNodeList::from_bump_slice(exprs.into_bump_slice_mut()),
                         is_single_line: b.is_single_line,
                         ..Default::default()
@@ -273,8 +271,7 @@ impl Binding {
                 }
                 Expr::init(
                     E::Object {
-                        // SAFETY: bump-allocated slice; Borrowed origin, never grown/freed.
-                        properties: 
+                        properties:
                             G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()),
                         is_single_line: b.is_single_line,
                         ..Default::default()

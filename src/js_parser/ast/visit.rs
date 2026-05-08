@@ -908,8 +908,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.arena);
                     list.extend_from_slice(csb_stmts);
                     self.visit_stmts(&mut list, StmtsKind::FnBody).expect("unreachable");
-                    // SAFETY: bump-arena slice; Vec marked Borrowed (no growth, no free).
-                    csb.stmts = 
+                    csb.stmts =
                         Vec::from_bump_slice(list.into_bump_slice_mut());
                     self.pop_scope();
 
@@ -1302,7 +1301,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
             // `&mut`) so the pointer shares the local's base tag and survives the
             // direct `&mut before` reborrows in the loop below (Stacked Borrows).
-            p.nearest_stmt_list = Some(NonNull::from(&mut before));
+            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
 
             let mut preprocessed_enum_i: usize = 0;
 
@@ -1433,8 +1432,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 );
 
                 if let_decls.len() > 0 {
-                    // SAFETY: BumpVec → Vec. `into_bump_slice_mut` leaks into the arena;
-                    // Vec::Borrowed origin makes Drop a no-op.
                     let decls =
                         G::DeclList::from_bump_slice(let_decls.into_bump_slice_mut());
                     let loc = decls.at(0).value.unwrap().loc;
@@ -1452,8 +1449,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             before.push(new);
                         }
                     } else {
-                        // SAFETY: see let_decls note above.
-                        let decls = 
+                        let decls =
                             G::DeclList::from_bump_slice(var_decls.into_bump_slice_mut());
                         let loc = decls.at(0).value.unwrap().loc;
                         before.push(p.s(

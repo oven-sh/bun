@@ -60,7 +60,9 @@ pub fn compute_chunks(
     let entry_point_to_js_chunk_idx: &mut [u32] =
         temp.alloc_slice_fill_copy(this.graph.entry_points.len(), u32::MAX);
 
-    // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the link step.
+    // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the
+    // link step. Raw deref (not `this.parse_graph()`) because the loop below
+    // needs disjoint `&mut this.graph.*` borrows while `parse_graph` is held.
     let parse_graph = unsafe { &*this.parse_graph };
     // SAFETY: `bump` is a backref into `BundleV2.graph.arena`, valid for the link step.
     // Hoisted as a raw deref so the loop can hold disjoint &mut borrows into `this.graph`.

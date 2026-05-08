@@ -166,6 +166,35 @@ impl Default for Graph {
 }
 
 impl Graph {
+    /// Shared borrow of the bundler `ThreadPool`.
+    ///
+    /// `pool` is arena-allocated in `BundleV2::init` (bundle_v2.zig:992) and
+    /// torn down in `BundleV2::deinit` (bundle_v2.zig:2248). It is non-null
+    /// and valid for the entire bundle pass; see LIFETIMES.tsv row 170
+    /// (BACKREF). All `ThreadPool` driver methods (`schedule`, `start`,
+    /// `worker_pool`, `schedule_inside_thread_pool`) take `&self`, so callers
+    /// can use this in place of the prior open-coded
+    /// `unsafe { self.pool.as_ref() }` / `as_mut()`.
+    #[inline]
+    pub fn pool(&self) -> &ThreadPool {
+        // SAFETY: `pool` is set in `BundleV2::init` to an arena-owned
+        // `ThreadPool` and remains valid until `BundleV2::deinit`. The
+        // `NonNull` guarantees non-null; no `&mut ThreadPool` is live across
+        // any `pool()` borrow (the only `&mut` site is `deinit`, called after
+        // all schedule/worker activity has drained).
+        unsafe { self.pool.as_ref() }
+    }
+
+    /// Exclusive borrow of the bundler `ThreadPool`. Only needed for
+    /// `ThreadPool::deinit` during teardown; prefer [`Self::pool`] for
+    /// scheduling.
+    #[inline]
+    pub fn pool_mut(&mut self) -> &mut ThreadPool {
+        // SAFETY: see `pool()`. `&mut self` excludes other safe borrows of
+        // `Graph`, so no aliasing `&ThreadPool` is live.
+        unsafe { self.pool.as_mut() }
+    }
+
     #[inline]
     pub fn path_to_source_index_map(
         &mut self,

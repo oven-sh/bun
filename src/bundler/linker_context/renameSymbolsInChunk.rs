@@ -74,17 +74,36 @@ pub unsafe fn rename_symbols_in_chunk(
     let meta = c.graph.meta.split_raw();
 
     // SAFETY: `split_raw()` columns are valid for `ast.len()` / `meta.len()`
-    // elements; the lists do not reallocate during this function.
-    let all_module_scopes = unsafe { &mut *ast.module_scope };
-    let all_flags: &[js_meta::Flags] = unsafe { &*meta.flags };
-    let all_parts = unsafe { &mut *ast.parts };
-    let all_wrapper_refs = unsafe { &*ast.wrapper_ref };
-    let all_import_records = unsafe { &*ast.import_records };
-    let ast_flags_col = unsafe { &*ast.flags };
-    let char_freq_col = unsafe { &*ast.char_freq };
-    let exports_ref_col = unsafe { &*ast.exports_ref };
-    let module_ref_col = unsafe { &*ast.module_ref };
-    let nested_slot_counts_col = unsafe { &*ast.nested_scope_slot_counts };
+    // elements; the lists do not reallocate during this function. Read-only
+    // columns are deref'd to `&[T]`; the two written columns
+    // (`module_scope`, `parts`) are deref'd to `&mut [T]` — see CONCURRENCY
+    // note above re: code-splitting overlap. All ten derefs share the same
+    // invariant, so they are grouped under one `unsafe` block.
+    let (
+        all_module_scopes,
+        all_flags,
+        all_parts,
+        all_wrapper_refs,
+        all_import_records,
+        ast_flags_col,
+        char_freq_col,
+        exports_ref_col,
+        module_ref_col,
+        nested_slot_counts_col,
+    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _) = unsafe {
+        (
+            &mut *ast.module_scope,
+            &*meta.flags,
+            &mut *ast.parts,
+            &*ast.wrapper_ref,
+            &*ast.import_records,
+            &*ast.flags,
+            &*ast.char_freq,
+            &*ast.exports_ref,
+            &*ast.module_ref,
+            &*ast.nested_scope_slot_counts,
+        )
+    };
 
     // PORT NOTE: `symbol::Map` is not `Clone`/`Copy`; Zig passed the struct
     // (slice header) by value. Build a non-owning shallow view via

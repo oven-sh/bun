@@ -249,6 +249,25 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl ParseTask {
+    /// Shared borrow of the owning `BundleV2`. `ctx` is a BACKREF
+    /// (LIFETIMES.tsv) into the arena-allocated bundle, set at `init` time and
+    /// valid until `BundleV2::deinit`. Prefer this over open-coded
+    /// `unsafe { &*task.ctx }`; sites that mutate the bundle (e.g.
+    /// `on_complete`) must continue to deref the raw `ctx` field directly.
+    ///
+    /// The returned lifetime is **decoupled** from `&self` (mirroring the
+    /// prior open-coded `unsafe { &*task.ctx }`): the bundle outlives every
+    /// `ParseTask` it spawns, and callers in `get_code_for_parse_task_*`
+    /// store slices borrowed from `ctx` into out-params whose lifetime is
+    /// independent of `task`.
+    #[inline]
+    pub fn ctx<'r>(&self) -> &'r BundleV2<'static> {
+        debug_assert!(!self.ctx.is_null(), "ParseTask.ctx accessed before init()");
+        // SAFETY: non-null backref valid for the bundle pass; the bundle
+        // outlives any `'r` a caller can name.
+        unsafe { &*self.ctx }
+    }
+
     pub fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
@@ -1303,7 +1322,7 @@ fn get_code_for_parse_task_without_plugins(
             let _trace = perf::trace("Bundler.readFile");
 
             // SAFETY: ctx backref is valid for ParseTask lifetime.
-            let ctx = unsafe { &*task.ctx };
+            let ctx = task.ctx();
 
             // Check FileMap for in-memory files first
             if let Some(file_map) = ctx.file_map {
@@ -1459,7 +1478,7 @@ fn get_code_for_parse_task<'b>(
             break 'brk false;
         }
         // SAFETY: ctx backref is valid for ParseTask lifetime.
-        let ctx = unsafe { &*task.ctx };
+        let ctx = task.ctx();
         let Some(plugin) = &ctx.plugins else { break 'brk false };
         // SAFETY: `plugin` is a live BACKREF for the bundle pass.
         if !unsafe { plugin.as_ref() }.has_on_before_parse_plugins() {
@@ -1491,8 +1510,7 @@ fn get_code_for_parse_task<'b>(
         result: core::ptr::null_mut(),
     };
 
-    // SAFETY: task.ctx backref valid for the duration of the parse.
-    let plugins = unsafe { &*ctx.task.ctx }.plugins.expect("unreachable");
+    let plugins = ctx.task.ctx().plugins.expect("unreachable");
     // SAFETY: `plugins` is a live BACKREF for the bundle pass.
     ctx.run(unsafe { plugins.as_ref() }, from_plugin)
 }
@@ -2439,7 +2457,7 @@ fn run_with_source_code(
         content_hash: 0,
     };
     // SAFETY: task.ctx backref valid.
-    let task_ctx = unsafe { &*task.ctx };
+    let task_ctx = task.ctx();
     let module_type = opts.module_type;
     // `topts` (a `&BundleOptions`) is dead past this point; the callees take
     // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
@@ -2583,7 +2601,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
             if crate::ThreadPool::uses_io_pool() {
                 // SAFETY: `pool` is a `NonNull<ThreadPool>` BACKREF live for the
                 // bundle pass.
-                unsafe { ctx.graph.pool.as_ref() }.schedule_inside_thread_pool(this);
+                ctx.graph.pool().schedule_inside_thread_pool(this);
                 worker.unget();
                 return;
             }

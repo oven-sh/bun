@@ -206,6 +206,18 @@ impl<'a> Transpiler<'a> {
         unsafe { &mut *self.fs }
     }
 
+    /// Shared read-only borrow of the `Log`. Use for `has_errors()` /
+    /// `.errors` / `.warnings` checks; prefer [`Self::log_mut`] for writes.
+    #[inline]
+    pub fn log(&self) -> &logger::Log {
+        // SAFETY: `self.log` is non-null after `init` (set to the
+        // caller-provided arena `Log`) and outlives `self`. Read-only access
+        // here cannot conflict with the aliased raw copies in
+        // `self.{resolver,linker,options}.log` (those are also reads or
+        // serialized writes on the bundle thread).
+        unsafe { &*self.log }
+    }
+
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
     /// other `self.*` fields as arguments without a borrow-checker conflict;
     /// callers must not hold two results live at once, nor hold a result

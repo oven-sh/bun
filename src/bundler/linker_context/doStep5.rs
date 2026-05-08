@@ -103,9 +103,10 @@ impl LinkerContext<'_> {
         // shared slices are fine here.
         // SAFETY: `split_raw()` columns are valid for `meta.len()` elements;
         // no task mutates `imports_to_bind` / `probably_typescript_type`.
-        let imports_to_bind: &[RefImportData] = unsafe { &*meta.imports_to_bind };
-        let probably_typescript_type: &[ArrayHashMap<Ref, ()>] =
-            unsafe { &*meta.probably_typescript_type };
+        let (imports_to_bind, probably_typescript_type): (
+            &[RefImportData],
+            &[ArrayHashMap<Ref, ()>],
+        ) = unsafe { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
 
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
@@ -226,15 +227,18 @@ impl LinkerContext<'_> {
         // overlay row may be written by `create_exports_for_file` above (this
         // borrow begins after it returns) and the ast row is parser-built and
         // never reallocated during step 5. No other task touches row `id`.
-        let tlsp_overlay: &bun_js_parser::ast::ast::TopLevelSymbolToParts = unsafe {
-            &*(meta.top_level_symbol_to_parts_overlay
-                as *const bun_js_parser::ast::ast::TopLevelSymbolToParts)
-                .add(id as usize)
-        };
-        let tlsp_ast: &bun_js_parser::ast::ast::TopLevelSymbolToParts = unsafe {
-            &mut *(ast.top_level_symbols_to_parts
-                as *mut bun_js_parser::ast::ast::TopLevelSymbolToParts)
-                .add(id as usize)
+        let (tlsp_overlay, tlsp_ast): (
+            &bun_js_parser::ast::ast::TopLevelSymbolToParts,
+            &bun_js_parser::ast::ast::TopLevelSymbolToParts,
+        ) = unsafe {
+            (
+                &*(meta.top_level_symbol_to_parts_overlay
+                    as *const bun_js_parser::ast::ast::TopLevelSymbolToParts)
+                    .add(id as usize),
+                &mut *(ast.top_level_symbols_to_parts
+                    as *mut bun_js_parser::ast::ast::TopLevelSymbolToParts)
+                    .add(id as usize),
+            )
         };
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];

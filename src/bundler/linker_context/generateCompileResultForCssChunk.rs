@@ -40,27 +40,15 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
         &*bun_core::from_field_ptr!(PendingPartRange, task, task)
     };
     let ctx = part_range.ctx;
-    // SAFETY: `GenerateChunkCtx.{c, chunk}` are stored as `&mut T`, but `ctx` is held by
-    // shared ref (`PendingPartRange.ctx: &GenerateChunkCtx`), so a normal field access would
-    // reborrow them as `&T` and any later `*const → *mut` cast would launder shared
-    // provenance into mutable (UB). Instead, read the pointer *value* of each `&mut T` field
-    // directly: `addr_of!` yields `*const &mut T`, which has identical layout to
-    // `*const *mut T`, and dereferencing that yields a `*mut T` carrying the original
-    // mutable provenance. This mirrors Zig's `*LinkerContext` / `*Chunk` raw-pointer
-    // semantics in `generateChunksInParallel.zig`, where many `PendingPartRange` tasks share
-    // one `chunk_ctx` across worker threads.
-    let c_ptr: *mut LinkerContext =
-        unsafe { *core::ptr::addr_of!(ctx.c).cast::<*mut LinkerContext>() };
-    let chunk_ptr: *mut Chunk = unsafe { *core::ptr::addr_of!(ctx.chunk).cast::<*mut Chunk>() };
+    // `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
+    // through `&GenerateChunkCtx` preserves the mutable provenance they were
+    // constructed with in `generate_chunks_in_parallel`. This mirrors Zig's
+    // `*LinkerContext` / `*Chunk` semantics where many `PendingPartRange`
+    // tasks share one `chunk_ctx` across worker threads.
+    let c_ptr: *mut LinkerContext = ctx.c.cast();
+    let chunk_ptr: *mut Chunk = ctx.chunk;
 
-    // SAFETY: `c_ptr` addresses the `linker` field embedded in `BundleV2`
-    // (`bundle_v2.zig:linker`).
-    // `Worker::get` only needs `&BundleV2` (it reads `graph.pool` and serializes via mutex),
-    // so no mutable reference is materialized here.
-    let bv2: &crate::BundleV2 = unsafe {
-        &*bun_core::from_field_ptr!(crate::BundleV2, linker, c_ptr)
-    };
-    let worker = Worker::get(bv2);
+    let worker = Worker::get(ctx.bundle());
     // `defer worker.unget()` — explicit; Worker::get returns the thread-local worker.
     let mut worker = scopeguard::guard(worker, |w| w.unget());
 

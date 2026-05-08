@@ -54,44 +54,25 @@ macro_rules! debug {
 // `PendingPartRange: Send` justification.
 pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `task` is the `task` field of a `PendingPartRange` scheduled by
-    // `generate_chunks_in_parallel`; recover the parent via offset_of. We keep
-    // `part_range` as a raw pointer (never `&PendingPartRange`) so that reading
-    // the `ctx` field — and the `&mut` pointers stored inside it — does not go
-    // through a shared reborrow that would strip write provenance.
-    let part_range: *const PendingPartRange = unsafe {
-        bun_core::from_field_ptr!(PendingPartRange, task, task)
+    // `generate_chunks_in_parallel`; recover the parent via offset_of.
+    // `GenerateChunkCtx` fields are raw `*mut` (not `&mut`), so reading them
+    // through `&PendingPartRange` / `&GenerateChunkCtx` is a plain `Copy` of
+    // the pointer value and preserves the mutable provenance they were
+    // constructed with — no `addr_of!` provenance dance needed.
+    let part_range: &PendingPartRange = unsafe {
+        &*bun_core::from_field_ptr!(PendingPartRange, task, task)
     };
-    let i = unsafe { (*part_range).i } as usize;
-    // SAFETY: read the stored ctx reference's bits as a raw pointer. `&T` and
-    // `*const T` share layout; this avoids ever materializing `&GenerateChunkCtx`
-    // (which would shared-reborrow its `&mut` fields under Stacked Borrows).
-    let ctx: *const GenerateChunkCtx = unsafe {
-        *core::ptr::addr_of!((*part_range).ctx).cast::<*const GenerateChunkCtx>()
-    };
-    // SAFETY: `GenerateChunkCtx.c` is the embedded `LinkerContext` inside
-    // `BundleV2`. The link step never mutates `LinkerContext` from this task,
-    // so a `*const` (and the derived `&BundleV2` for `Worker::get`) suffices —
-    // no const→mut cast needed.
-    let c: *const LinkerContext = unsafe {
-        *core::ptr::addr_of!((*ctx).c).cast::<*const LinkerContext>()
-    };
-    let bv2: &BundleV2 = unsafe {
-        &*bun_core::from_field_ptr!(BundleV2, linker, c)
-    };
-    let worker = Worker::get(bv2);
+    let i = part_range.i as usize;
+    let ctx: &GenerateChunkCtx = part_range.ctx;
+    // `GenerateChunkCtx.c` is the embedded `LinkerContext` inside `BundleV2`.
+    // The link step never mutates `LinkerContext` from this task, so a
+    // `*const` (and the derived `&BundleV2` for `Worker::get`) suffices.
+    let c: *const LinkerContext = ctx.c.cast_const().cast();
+    let worker = Worker::get(ctx.bundle());
     let _unget = scopeguard::guard(&mut *worker, |w| w.unget());
 
-    // SAFETY: `GenerateChunkCtx.{chunk,chunks}` were constructed from `&mut`
-    // borrows in `generate_chunks_in_parallel`. We read their pointer bits
-    // directly (`&mut T` and `*mut T` share layout) so the mutable provenance
-    // they were created with is preserved — never round-tripping through
-    // `*const`. Zig's `*T` aliases freely; this is the raw-pointer equivalent.
-    let chunk: *mut Chunk = unsafe {
-        *core::ptr::addr_of!((*ctx).chunk).cast::<*mut Chunk>()
-    };
-    let chunks: *mut [Chunk] = unsafe {
-        *core::ptr::addr_of!((*ctx).chunks).cast::<*mut [Chunk]>()
-    };
+    let chunk: *mut Chunk = ctx.chunk;
+    let chunks: *mut [Chunk] = ctx.chunks;
     // SAFETY: `chunk` is this task's exclusively-owned HTML chunk for the
     // duration of the compile step; the result slot was pre-allocated.
     let result = unsafe { generate_compile_result_for_html_chunk_impl(&*c, chunk, chunks) };

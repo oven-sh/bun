@@ -617,8 +617,12 @@ impl Debugger {
             // by `holdAPILock` / the futex; the VM allocation is `'static`.
             unsafe impl Send for SendVmPtr {}
             let send_vm = SendVmPtr(this);
+            // Spec `std.Thread.spawn(.{}, ...)` — Zig's default is 16 MiB.
+            // Rust's `std::thread` default (2 MiB) is too small to run a full
+            // `VirtualMachine::init` + JS module load on this thread.
             std::thread::Builder::new()
                 .name("Debugger".to_string())
+                .stack_size(16 * 1024 * 1024)
                 .spawn(move || {
                     let send_vm = send_vm;
                     Debugger::start_js_debugger_thread(send_vm.0);

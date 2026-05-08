@@ -496,6 +496,7 @@ impl PatchTask {
 
         let (resolution_label, resolution_tag) = {
             // TODO: fix this threadsafety issue.
+            // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
             // SAFETY: BACKREF; the lockfile is read-only while apply tasks run
             // off-thread (same contract as the Zig pointer dereference here).
             let manager = unsafe { &*self.manager };
@@ -536,6 +537,7 @@ impl PatchTask {
         let mut dest_subpath_buf = [0u8; 1024];
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());
+        // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
         // SAFETY: BACKREF — read-only lockfile access; same contract as the
         // Zig pointer dereference here.
         let lockfile = unsafe { &(*self.manager).lockfile };
@@ -608,10 +610,7 @@ impl PatchTask {
                 before - cursor.len()
             };
             buntagbuf[bun_tag_prefix.len() + hashlen] = 0;
-            // SAFETY: buntagbuf[bun_tag_prefix.len() + hashlen] == 0 written just above.
-            let buntag_zstr = unsafe {
-                ZStr::from_raw(buntagbuf.as_ptr(), bun_tag_prefix.len() + hashlen)
-            };
+            let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
             let buntagfd = match sys::openat(
                 patch_pkg_dir,
                 buntag_zstr,
@@ -690,6 +689,7 @@ impl PatchTask {
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
                 if e.get_errno() == sys::Errno::ENOENT {
+                    // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
                     // SAFETY: BACKREF — read-only lockfile access on the worker
                     // thread; same contract as the Zig pointer dereference here.
                     let manager = unsafe { &*self.manager };

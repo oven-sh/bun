@@ -245,7 +245,7 @@ pub fn enqueue_tarball_for_reading(
     // `local_tarball` arm is the active union field. `string_bytes` is not
     // resized in this fn — `enqueue_local_tarball` copies `path` into the
     // filename store before any append.
-    let path = unsafe { detach_lifetime(this.lockfile.str(resolution.local_tarball())) };
+    let path = this.lockfile.str_detached(resolution.local_tarball());
     let task_id = Task::Id::for_tarball(path);
     let task_queue = this.task_queue.get_or_put(task_id).expect("unreachable");
     if !task_queue.found_existing {
@@ -291,9 +291,9 @@ pub fn enqueue_git_for_checkout(
     // conflict (Zig passes the aliased `*PackageManager` freely).
     // SAFETY: the enqueue callees copy these slices into the filename store
     // and never resize `string_bytes` while they are live.
-    let url = unsafe { detach_lifetime(this.lockfile.str(&repository.repo)) };
+    let url = this.lockfile.str_detached(&repository.repo);
     let clone_id = Task::Id::for_git_clone(url);
-    let resolved = unsafe { detach_lifetime(this.lockfile.str(&repository.resolved)) };
+    let resolved = this.lockfile.str_detached(&repository.resolved);
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
     let checkout_queue = this.task_queue.get_or_put(checkout_id).expect("unreachable");
     if !checkout_queue.found_existing {
@@ -989,7 +989,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // `name_str` out or only reads it before any append.
                         // Detach the slice lifetime so the `&mut PackageManager`
                         // reborrows below do not conflict with it.
-                        let name_str = unsafe { detach_lifetime(this.lockfile.str(&name)) };
+                        let name_str = this.lockfile.str_detached(&name);
                         let task_id = Task::Id::for_manifest(name_str);
 
                         if cfg!(debug_assertions) {
@@ -1197,8 +1197,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             // enqueue callees below do not conflict.
             // SAFETY: `string_bytes` is not resized in this branch; the
             // enqueue callees copy the slices into the filename store.
-            let alias = unsafe { detach_lifetime(this.lockfile.str(&dependency.name)) };
-            let url = unsafe { detach_lifetime(this.lockfile.str(&dep.repo)) };
+            let alias = this.lockfile.str_detached(&dependency.name);
+            let url = this.lockfile.str_detached(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
             let ctx = if success_fn as usize == assign_root_resolution as usize {
                 TaskCallbackContext::RootDependency(id)
@@ -1588,7 +1588,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // `enqueue_local_tarball` copies `dep_name` into the
                     // filename store.
                     let dep_name =
-                        unsafe { detach_lifetime(this.lockfile.str(&dependency.name)) };
+                        this.lockfile.str_detached(&dependency.name);
                     let task = enqueue_local_tarball(
                         this,
                         task_id,
@@ -2358,7 +2358,7 @@ fn get_or_put_resolved_package(
             // `find_result` lookup; `manifest` lives in `this.manifests` and
             // is only read. Detach the slice lifetime so `name_str` does not
             // borrow `*this`.
-            let name_str = unsafe { detach_lifetime(this.lockfile.str(&name)) };
+            let name_str = this.lockfile.str_detached(&name);
 
             let scope: *const crate::npm::registry::Scope =
                 unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
@@ -2535,7 +2535,7 @@ fn get_or_put_resolved_package(
                     // does not conflict.
                     // SAFETY: `get_or_put` copies `folder_path_abs` into the
                     // lockfile string buffer before any other mutation.
-                    let folder_path = unsafe { detach_lifetime(this.lockfile.str(&folder)) };
+                    let folder_path = this.lockfile.str_detached(&folder);
                     let mut buf2 = PathBuffer::uninit();
                     let folder_path_abs = if bun_paths::is_absolute(folder_path) {
                         folder_path
@@ -2637,7 +2637,7 @@ fn get_or_put_resolved_package(
             // conflict.
             // SAFETY: `get_or_put` copies `workspace_path_u8` into the
             // lockfile string buffer before any other mutation.
-            let workspace_path = unsafe { detach_lifetime(this.lockfile.str(&workspace_path_raw)) };
+            let workspace_path = this.lockfile.str_detached(&workspace_path_raw);
             let mut buf2 = PathBuffer::uninit();
             let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
                 workspace_path
@@ -2687,7 +2687,7 @@ fn get_or_put_resolved_package(
             // `version.tag == Symlink`.
             let link_dir =
                 unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
-            let symlink_path = unsafe { detach_lifetime(this.lockfile.str(version.symlink())) };
+            let symlink_path = this.lockfile.str_detached(version.symlink());
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Global(link_dir),
                 version.clone(),

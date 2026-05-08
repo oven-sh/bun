@@ -635,8 +635,7 @@ impl RepositoryExt for Repository {
             .map_err(|_| err!("NoSpaceLeft"))?;
             // TODO(port): narrow error set
             let written = total - cursor.len() - 1;
-            // SAFETY: NUL written at folder_name_buf[written] above.
-            unsafe { bun_str::ZStr::from_raw(folder_name_buf.as_ptr(), written) }
+            bun_str::ZStr::from_buf(&folder_name_buf[..], written)
         };
 
         match cache_dir.open_dir_z(folder_name) {

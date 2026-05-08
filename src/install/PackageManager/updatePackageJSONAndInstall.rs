@@ -715,10 +715,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                                 let name = entry.name.slice_u8();
                                 node_modules_buf[..name.len()].copy_from_slice(name);
                                 node_modules_buf[name.len()] = 0;
-                                // SAFETY: node_modules_buf[name.len()] == 0 written above
-                                let buf: &ZStr = unsafe {
-                                    ZStr::from_raw(node_modules_buf.as_ptr(), name.len())
-                                };
+                                let buf: &ZStr = ZStr::from_buf(&node_modules_buf, name.len());
 
                                 let file = match bun_sys::openat(
                                     node_modules_bin,

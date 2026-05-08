@@ -29,38 +29,33 @@ pub fn version_to_js(
         BunString::static_(<&'static str>::from(dep.tag).as_bytes()).to_js(global)?,
     );
 
-    // PORT NOTE: `dependency::Version` in Zig is `struct { tag: Tag, value: Value /* bare union */ }`.
-    // The Rust port keeps `Value` as a `#[repr(C)] union` (discriminant in `Version.tag`),
-    // so each per-arm read is tag-guarded and wrapped in an `unsafe` block.
+    // PORT NOTE: `dependency::Version` keeps `Value` as a `#[repr(C)] union`
+    // (discriminant in `Version.tag`); the tag-checked accessors on
+    // `DependencyVersion` (`npm()`, `git()`, …) wrap the union read.
     match dep.tag {
         Tag::DistTag => {
-            // SAFETY: tag-guarded union access (tag == DistTag)
-            let v = unsafe { &dep.value.dist_tag };
+            let v = dep.dist_tag();
             object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
             object.put(global, b"tag", semver_string_to_js(&v.tag, buf, global)?);
         }
         Tag::Folder => {
-            // SAFETY: tag-guarded union access (tag == Folder)
-            let v = unsafe { &dep.value.folder };
+            let v = dep.folder();
             object.put(global, b"folder", semver_string_to_js(v, buf, global)?);
         }
         Tag::Git => {
-            // SAFETY: tag-guarded union access (tag == Git)
-            let v = unsafe { &*dep.value.git };
+            let v = dep.git();
             object.put(global, b"owner", semver_string_to_js(&v.owner, buf, global)?);
             object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
             object.put(global, b"ref", semver_string_to_js(&v.committish, buf, global)?);
         }
         Tag::Github => {
-            // SAFETY: tag-guarded union access (tag == Github)
-            let v = unsafe { &*dep.value.github };
+            let v = dep.github();
             object.put(global, b"owner", semver_string_to_js(&v.owner, buf, global)?);
             object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
             object.put(global, b"ref", semver_string_to_js(&v.committish, buf, global)?);
         }
         Tag::Npm => {
-            // SAFETY: tag-guarded union access (tag == Npm)
-            let v = unsafe { &*dep.value.npm };
+            let v = dep.npm();
             object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
             let mut version_str =
                 BunString::create_format(format_args!("{}", v.version.fmt(buf)));
@@ -68,18 +63,15 @@ pub fn version_to_js(
             object.put(global, b"alias", JSValue::js_boolean(v.is_alias));
         }
         Tag::Symlink => {
-            // SAFETY: tag-guarded union access (tag == Symlink)
-            let v = unsafe { &dep.value.symlink };
+            let v = dep.symlink();
             object.put(global, b"path", semver_string_to_js(v, buf, global)?);
         }
         Tag::Workspace => {
-            // SAFETY: tag-guarded union access (tag == Workspace)
-            let v = unsafe { &dep.value.workspace };
+            let v = dep.workspace();
             object.put(global, b"name", semver_string_to_js(v, buf, global)?);
         }
         Tag::Tarball => {
-            // SAFETY: tag-guarded union access (tag == Tarball)
-            let v = unsafe { &dep.value.tarball };
+            let v = dep.tarball();
             object.put(global, b"name", semver_string_to_js(&v.package_name, buf, global)?);
             match &v.uri {
                 dependency::tarball::Uri::Local(local) => {

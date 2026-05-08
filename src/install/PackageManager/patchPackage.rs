@@ -662,6 +662,9 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     let mut win_normalizer = PathBuffer::uninit();
 
     let workspace_name_hash = manager.workspace_name_hash;
+    // Drop any cached id from earlier install passes so the lookup runs against
+    // the current (post-clean) lockfile.
+    manager.root_package_id.id = None;
     let workspace_package_id = manager.root_package_id.get(&manager.lockfile, workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
     // PORT NOTE: reshaped for borrowck — owned buffer kept so `argument` can borrow it.

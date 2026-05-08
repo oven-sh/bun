@@ -670,3 +670,23 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("app.bundlerOptions validation", () => {
+  test("non-object bundlerOptions throws", () => {
+    expect(() => serve({ port: 0, app: { bundlerOptions: 551 } } as any)).toThrow(
+      "'app.bundlerOptions' must be an object",
+    );
+  });
+
+  test.each(["server", "client", "ssr"] as const)("non-object bundlerOptions.%s throws", key => {
+    expect(() => serve({ port: 0, app: { bundlerOptions: { [key]: 551 } } } as any)).toThrow(
+      `'app.bundlerOptions.${key}' must be an object`,
+    );
+  });
+
+  test("non-object non-boolean minify throws", () => {
+    expect(() => serve({ port: 0, app: { bundlerOptions: { server: { minify: 551 } } } } as any)).toThrow(
+      'The "minify" property must be of type boolean | object',
+    );
+  });
+});

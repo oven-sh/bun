@@ -68,13 +68,25 @@ pub const UserOptions = struct {
         }
 
         if (try config.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
+            if (!js_options.isObject()) {
+                return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions' must be an object", .{});
+            }
             if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
+                if (!server_options.isObject()) {
+                    return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions.server' must be an object", .{});
+                }
                 bundler_options.server = try BuildConfigSubset.fromJS(global, server_options);
             }
             if (try js_options.getOptional(global, "client", JSValue)) |client_options| {
+                if (!client_options.isObject()) {
+                    return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions.client' must be an object", .{});
+                }
                 bundler_options.client = try BuildConfigSubset.fromJS(global, client_options);
             }
             if (try js_options.getOptional(global, "ssr", JSValue)) |ssr_options| {
+                if (!ssr_options.isObject()) {
+                    return global.throwInvalidArguments("'" ++ api_name ++ ".bundlerOptions.ssr' must be an object", .{});
+                }
                 bundler_options.ssr = try BuildConfigSubset.fromJS(global, ssr_options);
             }
         }
@@ -215,11 +227,17 @@ const BuildConfigSubset = struct {
         }
 
         if (try js_options.getOptional(global, "minify", JSValue)) |minify_options| brk: {
-            if (minify_options.isBoolean() and minify_options.asBoolean()) {
-                options.minify_syntax = minify_options.asBoolean();
-                options.minify_identifiers = minify_options.asBoolean();
-                options.minify_whitespace = minify_options.asBoolean();
+            if (minify_options.isBoolean()) {
+                if (minify_options.asBoolean()) {
+                    options.minify_syntax = true;
+                    options.minify_identifiers = true;
+                    options.minify_whitespace = true;
+                }
                 break :brk;
+            }
+
+            if (!minify_options.isObject()) {
+                return bun.jsc.Node.validators.throwErrInvalidArgType(global, "minify", .{}, "boolean | object", minify_options);
             }
 
             if (try minify_options.getBooleanLoose(global, "whitespace")) |value| {

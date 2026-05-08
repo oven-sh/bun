@@ -103,19 +103,105 @@ pub mod strings {
         if i - prefix_len < 36 { return 0; }
         i
     }
-    /// Generic high-entropy-looking token. Returns (offset_into_match, len).
-    pub fn starts_with_secret(s: &[u8]) -> Option<(usize, usize)> {
-        // TODO(port): Zig impl scans for ghp_/glpat-/sk-/xoxb- etc. Minimal
-        // subset; bun_str extends.
-        for prefix in [b"ghp_".as_slice(), b"sk-", b"glpat-", b"xoxb-", b"xoxp-"] {
-            if s.starts_with(prefix) {
-                let mut n = prefix.len();
-                while n < s.len() && (s[n].is_ascii_alphanumeric() || s[n] == b'_' || s[n] == b'-') {
-                    n += 1;
+    fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize, usize)> {
+        if text.len() < item.len() || &text[..item.len()] != item {
+            return None;
+        }
+
+        let mut whitespace = false;
+        let mut offset = item.len();
+        while offset < text.len() && text[offset].is_ascii_whitespace() {
+            offset += 1;
+            whitespace = true;
+        }
+        if offset == text.len() {
+            return None;
+        }
+        let cont = super::js_lexer::is_identifier_continue(text[offset] as i32);
+
+        // must be another identifier
+        if !whitespace && cont {
+            return None;
+        }
+
+        // `null` is not returned after this point. Redact to the next
+        // newline if anything is unexpected
+        if cont {
+            let rest = &text[offset..];
+            return Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())));
+        }
+        offset += 1;
+
+        let mut end = offset;
+        while end < text.len() && text[end].is_ascii_whitespace() {
+            end += 1;
+        }
+
+        if end == text.len() {
+            return Some((offset, text.len() - offset));
+        }
+
+        match text[end] {
+            q @ (b'\'' | b'"' | b'`') => {
+                // attempt to find closing
+                let opening = end;
+                end += 1;
+                while end < text.len() {
+                    match text[end] {
+                        b'\\' => {
+                            // skip
+                            end += 1;
+                            end += 1;
+                        }
+                        c if c == q => {
+                            // closing
+                            return Some((opening + 1, (end - 1) - opening));
+                        }
+                        _ => end += 1,
+                    }
                 }
-                if n > prefix.len() + 8 { return Some((0, n)); }
+
+                let rest = &text[offset..];
+                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
+            }
+            _ => {
+                let rest = &text[offset..];
+                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
             }
         }
+    }
+
+    /// Returns offset and length of first secret found.
+    pub fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
+        if let Some(r) = starts_with_redacted_item(str, b"_auth") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"_authToken") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"email") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"_password") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"token") {
+            return Some(r);
+        }
+
+        if starts_with_uuid(str) {
+            return Some((0, 36));
+        }
+
+        let npm_secret_len = starts_with_npm_secret(str);
+        if npm_secret_len > 0 {
+            return Some((0, npm_secret_len));
+        }
+
+        if let Some(r) = find_url_password(str) {
+            return Some(r);
+        }
+
         None
     }
 

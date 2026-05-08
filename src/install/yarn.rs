@@ -861,8 +861,8 @@ pub fn migrate_yarn_lockfile<'a>(
         })?;
 
         if let Some(resolutions) = package_json.as_property(b"resolutions") {
-            let mut root_package = *this.packages.get(0);
-            let mut string_builder = this.string_builder();
+            let root_package = *this.packages.get(0);
+            let (mut string_builder, lf) = this.string_builder_split();
 
             if let logger::js_ast::ExprData::EObject(e_object) = &resolutions.expr.data {
                 string_builder.cap += e_object.properties.len_u32() as usize * 128;
@@ -870,12 +870,15 @@ pub fn migrate_yarn_lockfile<'a>(
             if string_builder.cap > 0 {
                 string_builder.allocate()?;
             }
-            // TODO(port): blocked_on `OverrideMap::parse_append` typing — it
-            // takes the stub `bun_install::Lockfile` and `bun_js_parser::Expr`,
-            // but here `this` is `lockfile_real::Lockfile` and `package_json`
-            // is the value-shaped `bun_logger::js_ast::Expr`. Re-enable once
-            // OverrideMap is ported against `lockfile_real` (reconciler-6).
-            let _ = (&resolutions, &mut root_package, &mut string_builder, &package_json_source);
+            lf.overrides.parse_append(
+                manager,
+                lf.dependencies.as_slice(),
+                &root_package,
+                log,
+                &package_json_source,
+                package_json,
+                &mut string_builder,
+            )?;
             this.packages.set(0, root_package);
         }
     }

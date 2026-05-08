@@ -213,14 +213,14 @@ pub fn write<W: Write + ?Sized>(
                     temp_buffer.clear();
                     temp_buffer.extend_from_slice(public_path);
                     temp_buffer
-                        .extend_from_slice(strings::remove_leading_dot_slash(ch.final_rel_path));
+                        .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
                     bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
                         &temp_buffer,
                         writer,
                     )?;
                 } else {
                     bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
-                        ch.final_rel_path,
+                        &ch.final_rel_path[..],
                         writer,
                     )?;
                 }
@@ -268,10 +268,10 @@ pub fn write<W: Write + ?Sized>(
                 temp_buffer.clear();
                 temp_buffer.extend_from_slice(public_path);
                 temp_buffer
-                    .extend_from_slice(strings::remove_leading_dot_slash(ch.final_rel_path));
+                    .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
                 &temp_buffer[..]
             } else {
-                ch.final_rel_path
+                &ch.final_rel_path
             };
 
             write_entry_item(

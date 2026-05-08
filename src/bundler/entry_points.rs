@@ -42,9 +42,8 @@ impl Default for FallbackEntryPoint {
 impl FallbackEntryPoint {
     
     // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
-    // module is still gated; body also touched `bun_resolver::fs` and used a
-    // forbidden `Box::leak` fallback that must be retyped to `Cow<'static,[u8]>`
-    // (see PORTING.md §Forbidden) before un-gating.
+    // module is still gated; body also touched `bun_resolver::fs` (see
+    // PORTING.md §Forbidden) before un-gating.
     pub fn generate<TranspilerType>(
         entry: &mut FallbackEntryPoint,
         input_path: &[u8],
@@ -73,60 +72,42 @@ impl FallbackEntryPoint {
             .client_css_in_js
             != ClientCssInJs::AutoOnImportCss;
 
-        // TODO(port): self-referential — `code` borrows `entry.code_buffer` (or a heap alloc) and
-        // is then stored into `entry.source`. Phase B: store as raw `*const [u8]` inside Source or
-        // restructure so Source owns its bytes.
-        let code: &[u8];
-
-        if disable_css_imports {
-            // Zig fmt placeholders: {s} → bytes
-            macro_rules! write_fmt {
-                ($w:expr) => {
-                    write!(
-                        $w,
-                        "globalThis.Bun_disableCSSImports = true;\n\
-                         import boot from '{}';\n\
-                         boot(globalThis.__BUN_DATA__);",
-                        BStr::new(input_path),
-                    )
-                };
-            }
-
-            // PERF(port): was std.fmt.count + bufPrint/allocPrint stack-fallback — profile in Phase B
-            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
-            if write_fmt!(&mut cursor).is_ok() {
-                let n = cursor.position() as usize;
-                code = &entry.code_buffer[..n];
-            } else {
-                let mut v: Vec<u8> = Vec::new();
-                write_fmt!(&mut v).map_err(|_| bun_core::err!("FormatError"))?;
-                // TODO(port): heap-allocated branch leaks (matches Zig: transpiler.arena owns it).
-                code = Box::leak(v.into_boxed_slice());
-            }
-        } else {
-            macro_rules! write_fmt {
-                ($w:expr) => {
-                    write!(
-                        $w,
-                        "import boot from '{}';\n\
-                         boot(globalThis.__BUN_DATA__);",
-                        BStr::new(input_path),
-                    )
-                };
-            }
-
-            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
-            if write_fmt!(&mut cursor).is_ok() {
-                let n = cursor.position() as usize;
-                code = &entry.code_buffer[..n];
-            } else {
-                let mut v: Vec<u8> = Vec::new();
-                write_fmt!(&mut v).map_err(|_| bun_core::err!("FormatError"))?;
-                code = Box::leak(v.into_boxed_slice());
-            }
+        // PORT NOTE: self-referential — when the rendered code fits in
+        // `entry.code_buffer` the Source borrows it (disjoint-field write to
+        // `entry.source` while `entry.code_buffer` is shared-borrowed). On
+        // overflow the Source owns the bytes via `Cow::Owned` (Zig allocated
+        // from `transpiler.arena`; here the Source owns it directly so Drop
+        // frees it).
+        macro_rules! render_into_entry {
+            ($fmt:literal) => {{
+                let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
+                // PERF(port): was std.fmt.count + bufPrint/allocPrint stack-fallback — profile in Phase B
+                if write!(&mut cursor, $fmt, BStr::new(input_path)).is_ok() {
+                    let n = cursor.position() as usize;
+                    entry.source =
+                        logger::Source::init_path_string(input_path, &entry.code_buffer[..n]);
+                } else {
+                    let mut v: Vec<u8> = Vec::new();
+                    write!(&mut v, $fmt, BStr::new(input_path))
+                        .map_err(|_| bun_core::err!("FormatError"))?;
+                    entry.source = logger::Source::init_path_string_owned(input_path, v);
+                }
+            }};
         }
 
-        entry.source = logger::Source::init_path_string(input_path, code);
+        if disable_css_imports {
+            render_into_entry!(
+                "globalThis.Bun_disableCSSImports = true;\n\
+                 import boot from '{}';\n\
+                 boot(globalThis.__BUN_DATA__);"
+            );
+        } else {
+            render_into_entry!(
+                "import boot from '{}';\n\
+                 boot(globalThis.__BUN_DATA__);"
+            );
+        }
+
         entry.source.path.namespace = b"fallback-entry";
         Ok(())
     }

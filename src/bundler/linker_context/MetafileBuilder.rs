@@ -67,7 +67,7 @@ pub fn generate_chunk_json(
     let sources = parse_graph.input_files.items_source();
 
     // Start chunk entry: "path/to/output.js": {
-    write_json_string(&mut json, chunk.final_rel_path)?;
+    write_json_string(&mut json, &chunk.final_rel_path)?;
     json.extend_from_slice(b": {");
 
     // Write bytes
@@ -129,7 +129,7 @@ pub fn generate_chunk_json(
 
         let imported_chunk = &chunks[cross_import.chunk_index as usize];
         json.extend_from_slice(b"\n        {\n          \"path\": ");
-        write_json_string(&mut json, imported_chunk.final_rel_path)?;
+        write_json_string(&mut json, &imported_chunk.final_rel_path)?;
         json.extend_from_slice(b",\n          \"kind\": ");
         write_json_string(&mut json, cross_import.import_kind.label())?;
         json.extend_from_slice(b"\n        }");
@@ -183,7 +183,7 @@ pub fn generate_chunk_json(
                 let css_chunk = &chunks[css_chunk_index as usize];
                 if !css_chunk.final_rel_path.is_empty() {
                     json.extend_from_slice(b",\n      \"cssBundle\": ");
-                    write_json_string(&mut json, css_chunk.final_rel_path)?;
+                    write_json_string(&mut json, &css_chunk.final_rel_path)?;
                 }
             }
         }
@@ -390,8 +390,8 @@ pub fn generate(
 
         j.push_static(b"\n    ");
         // PORT NOTE: Zig pushes a borrowed slice; push_static borrows for the
-        // lifetime of the joiner (chunk.metafile_chunk_json is &'static [u8]).
-        j.push_static(chunk.metafile_chunk_json);
+        // lifetime of the joiner (`chunk.metafile_chunk_json: Box<[u8]>` outlives `j`).
+        j.push_static(&chunk.metafile_chunk_json);
     }
 
     j.push_static(b"\n  }\n}\n");

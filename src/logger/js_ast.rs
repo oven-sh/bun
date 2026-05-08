@@ -81,6 +81,18 @@ impl<T> StoreRef<T> {
     pub fn from_bump(r: &mut T) -> Self {
         StoreRef(NonNull::from(r))
     }
+    /// Consume a `Box<T>` whose payload must outlive every Store reset
+    /// (Zig `deepClone(default_allocator)` semantics). Ownership transfers to
+    /// the returned `StoreRef`; the allocation is process-lifetime by design
+    /// and is never dropped — mirrors `bun.default_allocator.create(T)` with
+    /// no paired `destroy`. Prefer `from_bump` for arena-backed nodes.
+    #[inline]
+    pub fn from_box(b: Box<T>) -> Self {
+        // SAFETY: `Box::into_raw` yields a non-null, aligned, exclusively-
+        // owned pointer. No `&'static mut` is forged (avoids asserting a
+        // Stacked-Borrows uniqueness tag for the program lifetime).
+        StoreRef(unsafe { NonNull::new_unchecked(Box::into_raw(b)) })
+    }
     #[inline]
     pub const fn as_ptr(self) -> *mut T {
         self.0.as_ptr()

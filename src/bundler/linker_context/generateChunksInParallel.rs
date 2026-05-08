@@ -45,16 +45,9 @@ const BYTECODE_EXTENSION: &str = ".jsc";
 
 bun_core::declare_scope!(PartRanges, hidden);
 
-/// Promote an arena-backed buffer to `&'static [u8]`. Mirrors Zig's
-/// `c.arena().dupe(u8, ..)` where the linker arena outlives every reader of
-/// `Chunk.final_rel_path` / `metafile_chunk_json` / `Log` text. See
-/// `ParseTask.rs::leak_static` and `linker.rs::intern` for the same pattern.
-#[inline]
-fn leak_static(buf: Box<[u8]>) -> &'static [u8] {
-    // PORT NOTE: Zig stored these as arena-owned `[]const u8`; the Rust `Chunk`
-    // models them as `&'static [u8]`, so leak via the global mimalloc heap.
-    Box::leak(buf)
-}
+// PORT NOTE: `Chunk.final_rel_path` / `metafile_chunk_json` are owned
+// `Box<[u8]>` (Zig stored them as linker-arena `[]const u8`); assignments
+// below move the boxed buffer directly — no lifetime promotion needed.
 use crate::linker_context_mod::LinkerCtx;
 macro_rules! debug {
     ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
@@ -366,11 +359,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let rel_path_fixed: Box<[u8]> = Box::from(
                     &*path::resolve_path::normalize_buf::<path::platform::Posix>(&rel_path, &mut buf),
                 );
-                chunk.final_rel_path = leak_static(rel_path_fixed);
+                chunk.final_rel_path = rel_path_fixed;
                 continue;
             }
 
-            chunk.final_rel_path = leak_static(rel_path.into_boxed_slice());
+            chunk.final_rel_path = rel_path.into_boxed_slice();
         }
 
         if duplicates_map.count() > 0 {
@@ -407,7 +400,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
 
-            c.log.add_error(None, Logger::Loc::EMPTY, leak_static(msg.into_boxed_slice()))?;
+            c.log.add_error(None, Logger::Loc::EMPTY, msg)?;
 
             // PORT NOTE: Zig `inline for` over a homogeneous tuple → const array + plain for.
             for (name, template) in [
@@ -522,7 +515,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         for i in 0..chunks.len() {
             let json = metafile_builder::generate_chunk_json(c, &chunks[i], chunks)
                 .unwrap_or_default();
-            chunks[i].metafile_chunk_json = leak_static(json);
+            chunks[i].metafile_chunk_json = json;
         }
     }
 

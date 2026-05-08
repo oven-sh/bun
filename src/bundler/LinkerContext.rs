@@ -2008,25 +2008,28 @@ impl<'a> LinkerContext<'a> {
             self.append_isolated_hashes_for_imported_chunks(hash, chunks, chunk_index, chunk_visit_map);
         }
 
-        let chunk = &chunks[index as usize];
-
         // Mix in hashes for content referenced via output pieces. JS chunks
         // express cross-chunk dependencies via `cross_chunk_imports` above, but
         // HTML (and CSS) chunks only reference other chunks through pieces, so
         // recurse on those too.
-        // PORT NOTE: reshaped for borrowck — collect piece queries first
+        // PORT NOTE: reshaped for borrowck — collect piece queries first so the
+        // `&chunks[index]` borrow is dropped before the recursive `&mut chunks`
+        // calls in the Chunk/Scb arms below.
         let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
-            if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
+            if let crate::chunk::IntermediateOutput::Pieces(pieces) =
+                &chunks[index as usize].intermediate_output
+            {
                 pieces.slice().iter().map(|p| (p.query.kind(), p.query.index())).collect()
             } else {
                 Vec::new()
             };
-        let final_rel_path = chunk.final_rel_path;
 
         for (kind, piece_index) in piece_queries {
             match kind {
                 crate::chunk::QueryKind::Asset => {
-                    let mut from_chunk_dir = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Posix>(&final_rel_path);
+                    let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
+                        bun_paths::resolve_path::platform::Posix,
+                    >(&chunks[index as usize].final_rel_path);
                     if from_chunk_dir == b"." {
                         from_chunk_dir = b"";
                     }

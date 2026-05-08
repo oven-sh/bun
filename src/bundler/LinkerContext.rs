@@ -538,9 +538,10 @@ impl<'a> LinkerContext<'a> {
 
     pub fn schedule_tasks(&self, batch: ThreadPoolLib::Batch) {
         let _ = self.pending_task_count.fetch_add(u32::try_from(batch.len).expect("int cast"), Ordering::Relaxed);
-        // SAFETY: `pool` is a `NonNull<ThreadPool>` whose `worker_pool` is the
-        // live worker-pool backref (initialized by `ThreadPool::start`).
-        unsafe { (*self.parse_graph().pool.as_ref().worker_pool).schedule(batch) };
+        // SAFETY: `pool` is the arena-allocated bundler `ThreadPool` set in
+        // `BundleV2::init`; `worker_pool()` is the safe accessor for its
+        // backing `bun_threading::ThreadPool`.
+        unsafe { self.parse_graph().pool.as_ref() }.worker_pool().schedule(batch);
     }
 
     fn process_html_import_files(&mut self) {

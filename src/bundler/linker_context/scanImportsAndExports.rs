@@ -98,7 +98,7 @@ pub fn scan_imports_and_exports(
     // PORT NOTE: `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
     // PERF(port): was zero-copy slice; profile.
-    let reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
+    let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
     // ── cache SoA column base pointers ────────────────────────────────────
     // `MultiArrayList` never reallocates inside this function (only column
@@ -494,19 +494,41 @@ pub fn scan_imports_and_exports(
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
         //
-        // PORT NOTE: Zig dispatched via `worker_pool.doPtr(arena, this,
-        // do_step5, reachable)` (parallel fan-out, blocks until done).
-        // `bun_threading::ThreadPool::each` requires `Ctx: Sync` and
-        // `F: Fn(&Ctx, V, usize)`; `do_step5` takes `&mut LinkerContext` and the
-        // body mutates `this.graph` (not `Sync`), so the parallel form doesn't
-        // typecheck here. The Zig code actually serializes through
-        // `LinkerGraph` writes anyway (each step touches a distinct
-        // `source_index` SoA row), so run sequentially for now and revisit when
-        // the per-worker arena split (`ThreadPool::Worker`) un-gates.
-        // TODO(b3): restore parallel `worker_pool.each` once `do_step5` is
-        // expressed against per-worker state (no `&mut LinkerContext`).
-        for (i, source_index) in reachable.iter().copied().enumerate() {
-            this.do_step5(source_index, i);
+        // PORT NOTE: Zig dispatched via `worker_pool.each(arena, this,
+        // doStep5, reachable_files)` (parallel fan-out, blocks until done).
+        // `do_step5` only touches distinct SoA rows per `source_index` (the
+        // columns are pre-sized and never reallocate during this step),
+        // matching the Zig invariant. We pass `*mut LinkerContext` through a
+        // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
+        // for reads and writes per-row cells via raw `split_raw()` pointers —
+        // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
+        // forms `&mut LinkerContext`).
+        {
+            #[repr(transparent)]
+            struct Step5Ctx<'a>(*mut LinkerContext<'a>);
+            // SAFETY: the pointer is only dereferenced to `&LinkerContext` for
+            // reads plus raw `*mut` per-row SoA cells for disjoint-row writes
+            // (see `do_step5` doc); lifetime is bounded by the blocking
+            // `each()` call below. The `ThreadPool::Worker` it acquires is
+            // per-OS-thread.
+            unsafe impl core::marker::Sync for Step5Ctx<'_> {}
+
+            let ctx = Step5Ctx(core::ptr::from_mut::<LinkerContext<'_>>(this));
+            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
+            // the link step); `pool` is the arena-allocated bundler ThreadPool
+            // set in `BundleV2::init`.
+            let worker_pool = unsafe { (*this.parse_graph).pool.as_ref() }.worker_pool();
+            // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
+            // so reborrow it mutably (not actually mutated by the by-value
+            // variant). Step 6 reuses it afterwards.
+            worker_pool.each(
+                ctx,
+                |ctx: &Step5Ctx<'_>, source_index: Index, i: usize| {
+                    // SAFETY: see `Step5Ctx` Sync justification above.
+                    unsafe { LinkerContext::do_step5(ctx.0, source_index, i) };
+                },
+                &mut reachable[..],
+            );
         }
 
         // Some parts of the AST may now be owned by worker allocators. Transfer ownership back

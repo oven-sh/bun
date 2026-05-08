@@ -30,11 +30,38 @@ use core::cell::Cell;
 use core::mem::offset_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{
-    AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering,
+    AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering,
 };
 
 use bun_core::Output;
 use crate::{Futex, WaitGroup};
+
+/// Debug instrumentation: when `BUN_THREADPOOL_STATS=1`, each pool records
+/// aggregate worker idle/busy nanoseconds and dumps them on drop. Zero-cost
+/// when the env var is unset (single relaxed load of a `OnceLock<bool>`).
+#[inline]
+fn stats_enabled() -> bool {
+    static CELL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CELL.get_or_init(|| std::env::var_os("BUN_THREADPOOL_STATS").is_some())
+}
+
+#[derive(Default)]
+struct PoolStats {
+    /// Sum of nanoseconds workers spent inside `wait()` (idle/searching).
+    idle_ns: AtomicU64,
+    /// Sum of nanoseconds workers spent executing task callbacks.
+    busy_ns: AtomicU64,
+    /// Tasks executed.
+    tasks: AtomicU64,
+    /// Times a worker entered the futex sleep path in `idle_event.wait()`.
+    sleeps: AtomicU64,
+    /// Monotonic timestamp of the last `dump_stats` call (or pool init), so
+    /// the per-phase wall-clock can be reported alongside the worker sums.
+    /// Lets the dump distinguish "workers idle while the orchestrator runs
+    /// serial work" (busy_ns ≪ wall × workers, but busy_ns ≈ wall × N for
+    /// some N) from "wake-chain too slow".
+    last_dump_ns: AtomicU64,
+}
 
 // PORT NOTE: Zig's `packed struct(u32)` named `Sync` is kept as `Sync` here for
 // diffability with the .zig. It shadows `core::marker::Sync` within this module;
@@ -166,6 +193,7 @@ pub struct ThreadPool {
     wait_group: WaitGroup,
     /// Used by `schedule` to optimize for the case where the thread pool isn't running yet.
     is_running: AtomicBool,
+    stats: PoolStats,
 }
 
 /// Configuration options for the thread pool.
@@ -200,7 +228,51 @@ impl ThreadPool {
             spawned_thread_count: AtomicU32::new(0),
             wait_group: WaitGroup::init(),
             is_running: AtomicBool::new(false),
+            stats: PoolStats {
+                // Seed wall-clock origin so the first `dump_stats` window is
+                // measured from pool creation. Skip the syscall when stats are
+                // disabled (the field is otherwise dead).
+                last_dump_ns: AtomicU64::new(if stats_enabled() { now_ns() } else { 0 }),
+                ..PoolStats::default()
+            },
         }
+    }
+
+    /// Dump aggregate worker idle/busy stats to stderr. No-op unless
+    /// `BUN_THREADPOOL_STATS` is set. Safe to call at any time; intended for
+    /// the bundler to call between phases.
+    pub fn dump_stats(&self, label: &str) {
+        if !stats_enabled() {
+            return;
+        }
+        let now = now_ns();
+        let idle = self.stats.idle_ns.swap(0, Ordering::Relaxed);
+        let busy = self.stats.busy_ns.swap(0, Ordering::Relaxed);
+        let tasks = self.stats.tasks.swap(0, Ordering::Relaxed);
+        let sleeps = self.stats.sleeps.swap(0, Ordering::Relaxed);
+        let last = self.stats.last_dump_ns.swap(now, Ordering::Relaxed);
+        let spawned = self.sync.load(Ordering::Relaxed).spawned();
+        let total = idle + busy;
+        let util = if total > 0 { (busy as f64 / total as f64) * 100.0 } else { 0.0 };
+        // Effective parallelism over the wall-clock window: how many CPUs the
+        // pool kept busy on average. This is the number to compare against
+        // `perf stat`'s "CPUs utilized" — `util` alone is misleading because
+        // a worker that is futex-asleep while the orchestrator does serial
+        // work is correctly counted as 100% idle.
+        let wall = if last == 0 { 0 } else { now.wrapping_sub(last) };
+        let eff = if wall > 0 { busy as f64 / wall as f64 } else { 0.0 };
+        eprintln!(
+            "[threadpool {}] workers={} tasks={} wall={:.3}s busy={:.3}s idle={:.3}s util={:.1}% eff_cpus={:.2} sleeps={}",
+            label,
+            spawned,
+            tasks,
+            wall as f64 / 1e9,
+            busy as f64 / 1e9,
+            idle as f64 / 1e9,
+            util,
+            eff,
+            sleeps,
+        );
     }
 
     pub fn wake_for_idle_events(&self) {
@@ -762,6 +834,9 @@ impl ThreadPool {
                     unsafe { (*current).drain_idle_events() };
                 }
 
+                if stats_enabled() {
+                    self.stats.sleeps.fetch_add(1, Ordering::Relaxed);
+                }
                 self.idle_event.wait();
                 sync = self.sync.load(Ordering::Relaxed);
             }
@@ -927,6 +1002,24 @@ impl Drop for ThreadRegistration {
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
+#[inline]
+fn now_ns() -> u64 {
+    // CLOCK_MONOTONIC nanoseconds; only used when `stats_enabled()`.
+    #[cfg(unix)]
+    {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: ts is valid for write.
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts) };
+        (ts.tv_sec as u64).wrapping_mul(1_000_000_000).wrapping_add(ts.tv_nsec as u64)
+    }
+    #[cfg(not(unix))]
+    {
+        use std::time::Instant;
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        START.get_or_init(Instant::now).elapsed().as_nanos() as u64
+    }
+}
+
 impl Thread {
     #[inline]
     pub fn current() -> *mut Thread {
@@ -989,29 +1082,41 @@ impl Thread {
         // SAFETY: thread_pool outlives this worker (join() waits); self_ptr is
         // our stack-local Thread.
         let _registration = unsafe { ThreadRegistration::new(thread_pool, self_ptr) };
+        // SAFETY: `_registration` proves liveness — the pool's `join()` blocks
+        // on every registered thread, so `thread_pool` is valid for all of
+        // `run()`. Hoist a single shared ref so the hot loop (and the
+        // `BUN_THREADPOOL_STATS` instrumentation) need no per-use `unsafe`.
+        let pool: &ThreadPool = unsafe { &*thread_pool };
 
+        let stats = stats_enabled();
         let mut is_waking = false;
         loop {
-            // SAFETY: thread_pool is live for the duration of run().
-            is_waking = match unsafe { (*thread_pool).wait(is_waking) } {
+            let wait_start = if stats { now_ns() } else { 0 };
+            is_waking = match pool.wait(is_waking) {
                 Ok(w) => w,
                 Err(_) => return,
             };
+            if stats {
+                pool.stats.idle_ns.fetch_add(now_ns().wrapping_sub(wait_start), Ordering::Relaxed);
+            }
 
             // SAFETY: self_ptr is our own stack-local Thread.
             while let Some(result) = unsafe { (*self_ptr).pop(thread_pool) } {
                 if result.pushed || is_waking {
-                    // SAFETY: thread_pool outlives this worker (join() waits).
-                    unsafe { (*thread_pool).notify(is_waking) };
+                    pool.notify(is_waking);
                 }
                 is_waking = false;
 
                 // SAFETY: result.node points to the `node` field of a Task.
                 let task = unsafe { Task::from_node(result.node.as_ptr()) };
+                let task_start = if stats { now_ns() } else { 0 };
                 // SAFETY: task is a live scheduled Task; callback contract is `unsafe fn(*mut Task)`.
                 unsafe { ((*task).callback)(task) };
-                // SAFETY: thread_pool outlives this worker (join() waits).
-                unsafe { (*thread_pool).wait_group.finish() };
+                if stats {
+                    pool.stats.busy_ns.fetch_add(now_ns().wrapping_sub(task_start), Ordering::Relaxed);
+                    pool.stats.tasks.fetch_add(1, Ordering::Relaxed);
+                }
+                pool.wait_group.finish();
             }
 
             Output::flush();

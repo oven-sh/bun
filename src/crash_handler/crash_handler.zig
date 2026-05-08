@@ -888,7 +888,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
 var did_register_sigaltstack = false;
 var sigaltstack: [512 * 1024]u8 = undefined;
 
-fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
+fn updatePosixSegfaultHandler(act: ?*bun.sys.Sigaction) !void {
     if (act) |act_| {
         if (!did_register_sigaltstack) {
             var stack: std.c.stack_t = .{
@@ -904,19 +904,19 @@ fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
         }
     }
 
-    std.posix.sigaction(std.posix.SIG.SEGV, act, null);
-    std.posix.sigaction(std.posix.SIG.ILL, act, null);
-    std.posix.sigaction(std.posix.SIG.BUS, act, null);
-    std.posix.sigaction(std.posix.SIG.FPE, act, null);
+    bun.sys.sigaction(std.posix.SIG.SEGV, act, null);
+    bun.sys.sigaction(std.posix.SIG.ILL, act, null);
+    bun.sys.sigaction(std.posix.SIG.BUS, act, null);
+    bun.sys.sigaction(std.posix.SIG.FPE, act, null);
 }
 
 var windows_segfault_handle: ?windows.HANDLE = null;
 
 pub fn resetOnPosix() void {
     if (bun.Environment.enable_asan) return;
-    var act = std.posix.Sigaction{
+    var act = bun.sys.Sigaction{
         .handler = .{ .sigaction = handleSegfaultPosix },
-        .mask = std.posix.sigemptyset(),
+        .mask = bun.sys.sigemptyset(),
         .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
     };
     updatePosixSegfaultHandler(&act) catch {};
@@ -948,9 +948,9 @@ pub fn resetSegfaultHandler() void {
         return;
     }
 
-    var act = std.posix.Sigaction{
+    var act = bun.sys.Sigaction{
         .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.sigemptyset(),
+        .mask = bun.sys.sigemptyset(),
         .flags = 0,
     };
     // To avoid a double-panic, do nothing if an error happens here.
@@ -1593,7 +1593,7 @@ fn crash() noreturn {
         },
         else => {
             // Install default handler so that the tkill below will terminate.
-            const sigact = std.posix.Sigaction{ .handler = .{ .handler = std.posix.SIG.DFL }, .mask = std.posix.sigemptyset(), .flags = 0 };
+            const sigact = bun.sys.Sigaction{ .handler = .{ .handler = std.posix.SIG.DFL }, .mask = bun.sys.sigemptyset(), .flags = 0 };
             inline for (.{
                 std.posix.SIG.SEGV,
                 std.posix.SIG.ILL,
@@ -1603,7 +1603,7 @@ fn crash() noreturn {
                 std.posix.SIG.HUP,
                 std.posix.SIG.TERM,
             }) |sig| {
-                std.posix.sigaction(sig, &sigact, null);
+                bun.sys.sigaction(sig, &sigact, null);
             }
 
             @trap();

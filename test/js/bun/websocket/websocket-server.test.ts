@@ -521,6 +521,35 @@ describe("Server", () => {
       }));
       */
     it.todo("perMessageDeflate");
+    describe("perMessageDeflate (validation)", () => {
+      it.each([1073741824, "hello", 1n, Symbol()])("throws when not a boolean or object", value => {
+        expect(() => {
+          serve({
+            port: 0,
+            fetch: () => new Response(),
+            websocket: {
+              message() {},
+              // @ts-expect-error
+              perMessageDeflate: value,
+            },
+          });
+        }).toThrow("websocket expects perMessageDeflate to be a boolean or an object");
+      });
+      it.each([true, false, null, undefined, {}, { compress: true, decompress: "shared" }] as const)(
+        "accepts %p",
+        value => {
+          using server = serve({
+            port: 0,
+            fetch: () => new Response(),
+            websocket: {
+              message() {},
+              perMessageDeflate: value as any,
+            },
+          });
+          expect(server.port).toBeGreaterThan(0);
+        },
+      );
+    });
   });
 });
 describe("ServerWebSocket", () => {

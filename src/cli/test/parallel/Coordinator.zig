@@ -449,8 +449,8 @@ pub const Coordinator = struct {
     /// this (SIGKILL).
     pub const AbortHandler = struct {
         var should_abort: std.atomic.Value(bool) = .init(false);
-        var prev_int: if (Environment.isPosix) std.posix.Sigaction else void = undefined;
-        var prev_term: if (Environment.isPosix) std.posix.Sigaction else void = undefined;
+        var prev_int: if (Environment.isPosix) bun.sys.Sigaction else void = undefined;
+        var prev_term: if (Environment.isPosix) bun.sys.Sigaction else void = undefined;
 
         fn posixHandler(_: i32, _: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) void {
             should_abort.store(true, .release);
@@ -468,13 +468,13 @@ pub const Coordinator = struct {
 
         pub fn install() void {
             if (Environment.isPosix) {
-                const act = std.posix.Sigaction{
+                const act = bun.sys.Sigaction{
                     .handler = .{ .sigaction = posixHandler },
-                    .mask = std.posix.sigemptyset(),
+                    .mask = bun.sys.sigemptyset(),
                     .flags = std.posix.SA.SIGINFO,
                 };
-                std.posix.sigaction(std.posix.SIG.INT, &act, &prev_int);
-                std.posix.sigaction(std.posix.SIG.TERM, &act, &prev_term);
+                bun.sys.sigaction(std.posix.SIG.INT, &act, &prev_int);
+                bun.sys.sigaction(std.posix.SIG.TERM, &act, &prev_term);
             } else {
                 _ = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
             }
@@ -482,8 +482,8 @@ pub const Coordinator = struct {
 
         pub fn uninstall() void {
             if (Environment.isPosix) {
-                std.posix.sigaction(std.posix.SIG.INT, &prev_int, null);
-                std.posix.sigaction(std.posix.SIG.TERM, &prev_term, null);
+                bun.sys.sigaction(std.posix.SIG.INT, &prev_int, null);
+                bun.sys.sigaction(std.posix.SIG.TERM, &prev_term, null);
             } else {
                 _ = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.FALSE);
             }

@@ -51,16 +51,6 @@ impl<T: Unprotect> ThreadSafe<T> {
     pub fn adopt(value: T) -> Self {
         Self(value)
     }
-
-    /// Disarm the guard and return the inner value **without** unprotecting.
-    /// The caller re-assumes responsibility for the paired `unprotect()`.
-    #[inline]
-    pub fn into_inner(self) -> T {
-        let this = core::mem::ManuallyDrop::new(self);
-        // SAFETY: `ManuallyDrop` suppresses `Drop for ThreadSafe<T>`; `this.0`
-        // is read exactly once and never touched again.
-        unsafe { core::ptr::read(&this.0) }
-    }
 }
 
 impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {

@@ -800,10 +800,15 @@ pub mod random {
 // Scrypt
 // ───────────────────────────────────────────────────────────────────────────
 pub struct Scrypt {
-    /// `ThreadSafe` so the `protect()` taken by `from_js_maybe_async(.., is_async)`
-    /// is released on drop. Sync path: `unprotect()` is a no-op (no protect taken).
-    password: bun_jsc::ThreadSafe<StringOrBuffer>,
-    salt: bun_jsc::ThreadSafe<StringOrBuffer>,
+    // Plain `StringOrBuffer` — NOT `ThreadSafe<_>`. The struct serves both
+    // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
+    // `from_js_maybe_async(.., true)`); wrapping in `ThreadSafe` here would make
+    // the sync path's drop call `JSValue::unprotect()` on a buffer it never
+    // protected, stealing a refcount from any independent protector. The async
+    // path releases its protect via `Unprotect for Scrypt` in
+    // `CryptoJobCtx::deinit` instead (Zig: `deinit` vs `deinitSync`).
+    password: StringOrBuffer,
+    salt: StringOrBuffer,
     n: u32,
     r: u32,
     p: u32,
@@ -860,10 +865,15 @@ impl Scrypt {
             ));
         };
 
-        // `from_js_maybe_async(.., IS_ASYNC)` already protected when async;
-        // adopt into a `ThreadSafe` guard so drop unprotects on early return.
-        // Sync path: `unprotect()` is a no-op (no protect was taken).
-        let password = bun_jsc::ThreadSafe::adopt(password);
+        // Zig: `errdefer if (is_async) password.deinitAndUnprotect() else password.deinit()`.
+        // The `deinit()` half is `Drop for StringOrBuffer`; only the async branch took a
+        // `protect()` (inside `from_js_maybe_async`), so only that branch may unprotect —
+        // an unconditional unprotect would steal a refcount on the sync path.
+        let password = scopeguard::guard(password, |mut p| {
+            if IS_ASYNC {
+                bun_jsc::Unprotect::unprotect(&mut p);
+            }
+        });
 
         let Some(salt) =
             StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
@@ -875,7 +885,11 @@ impl Scrypt {
             ));
         };
 
-        let salt = bun_jsc::ThreadSafe::adopt(salt);
+        let salt = scopeguard::guard(salt, |mut s| {
+            if IS_ASYNC {
+                bun_jsc::Unprotect::unprotect(&mut s);
+            }
+        });
 
         let keylen =
             validators::validate_int32(global, keylen_value, format_args!("keylen"), Some(0), None)?;
@@ -966,8 +980,8 @@ impl Scrypt {
         }
 
         let ctx = Scrypt {
-            password,
-            salt,
+            password: scopeguard::ScopeGuard::into_inner(password),
+            salt: scopeguard::ScopeGuard::into_inner(salt),
             n: n.unwrap(),
             r: r.unwrap(),
             p: p.unwrap(),
@@ -977,14 +991,21 @@ impl Scrypt {
             result: std::ptr::from_mut::<[u8]>(&mut []),
             err: None,
         };
-        // `password`/`salt` are `ThreadSafe<StringOrBuffer>`; dropping `ctx` on
-        // any `?`-propagated error below already unprotects + releases.
+        // Re-arm the errdefer now that ownership moved into `ctx` — Zig's
+        // `errdefer` covers the `validateFunction`/`checkScryptParams` calls below.
+        let ctx = scopeguard::guard(ctx, |mut c| {
+            if IS_ASYNC {
+                bun_jsc::Unprotect::unprotect(&mut c);
+            }
+        });
 
         if IS_ASYNC {
             let _ = validators::validate_function(global, "callback", callback)?;
         }
 
         ctx.check_scrypt_params(global)?;
+
+        let ctx = scopeguard::ScopeGuard::into_inner(ctx);
 
         if IS_ASYNC {
             return Ok((ctx, callback));
@@ -1063,6 +1084,16 @@ impl Scrypt {
     }
 }
 
+impl bun_jsc::Unprotect for Scrypt {
+    /// Release the `protect()` taken by `from_js_maybe_async(.., true)` on the
+    /// async path. The sync path never calls this (see `deinit_sync`).
+    #[inline]
+    fn unprotect(&mut self) {
+        bun_jsc::Unprotect::unprotect(&mut self.password);
+        bun_jsc::Unprotect::unprotect(&mut self.salt);
+    }
+}
+
 impl CryptoJobCtx for Scrypt {
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         if self.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
@@ -1120,7 +1151,9 @@ impl CryptoJobCtx for Scrypt {
     }
 
     fn deinit(&mut self) {
-        // `password`/`salt: ThreadSafe<StringOrBuffer>` unprotect + drop with `self`.
+        // Zig `Scrypt.deinit` (async path): `salt/password.deinitAndUnprotect()`.
+        // `Drop for StringOrBuffer` handles the deinit half when `CryptoJob` is freed.
+        bun_jsc::Unprotect::unprotect(self);
         self.buf.deinit();
     }
 }

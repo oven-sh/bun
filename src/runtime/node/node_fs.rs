@@ -1503,6 +1503,10 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // owns `Box<[u8]>` and frees on Drop (in `heap::take` below).
         if !IS_SHELL { this_ref.r#ref.unref(event_loop_handle_to_ctx(this_ref.evtloop)); }
         // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
+        // PORT NOTE: intentional spec divergence — Zig `NewAsyncCpTask.deinit` only
+        // calls `args.deinit()` (no-op for `.buffer`), leaking the `protect()` taken by
+        // `args.toThreadSafe()` when `src`/`dest` are Buffers. `Drop for ThreadSafe<args::Cp>`
+        // releases that protect here, fixing the leak.
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
         drop(unsafe { bun_core::heap::take(this) });

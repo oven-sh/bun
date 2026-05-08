@@ -221,7 +221,7 @@ pub struct UploadPart {
     /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
     /// Freed via `free_allocated_slice`. Default is a static empty slice.
     pub data: *const [u8],
-    pub ctx: *mut MultiPartUpload, // BACKREF (LIFETIMES.tsv)
+    pub ctx: bun_ptr::BackRef<MultiPartUpload>, // BACKREF (LIFETIMES.tsv)
     pub allocated_size: usize,
     pub state: PartState,
     pub part_number: u16, // max is 10,000
@@ -274,13 +274,16 @@ impl UploadPart {
     pub fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
         let this = unsafe { &mut *this.cast::<Self>() };
+        // Copy the BackRef out so the `&mut MultiPartUpload` borrow is detached
+        // from `this` (Zig held both `*UploadPart` and `*MultiPartUpload` freely).
+        let mut ctx_ref = this.ctx;
         // SAFETY: ctx is a live BACKREF while a part is in flight (part holds a ref on ctx)
-        let ctx = unsafe { &mut *this.ctx };
+        let ctx = unsafe { ctx_ref.get_mut() };
 
         if this.state == PartState::Canceled || ctx.state == State::Finished {
             scoped_log!(S3MultiPartUpload, "onPartResponse {} canceled", this.part_number);
             this.free_allocated_slice();
-            MultiPartUpload::deref_(this.ctx);
+            MultiPartUpload::deref_(this.ctx.as_ptr());
             return Ok(());
         }
 
@@ -299,7 +302,7 @@ impl UploadPart {
                     scoped_log!(S3MultiPartUpload, "onPartResponse {} failed", this.part_number);
                     this.free_allocated_slice();
                     // PORT NOTE: `defer this.ctx.deref()` reordered after fail()
-                    let ctx_ptr = this.ctx;
+                    let ctx_ptr = this.ctx.as_ptr();
                     // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
                     let r = unsafe { (*ctx_ptr).fail(err) };
                     MultiPartUpload::deref_(ctx_ptr);
@@ -319,7 +322,7 @@ impl UploadPart {
                 // mark as available
                 ctx.available.set(this.index as usize);
                 // PORT NOTE: `defer this.ctx.deref()` reordered after drainEnqueuedParts()
-                let ctx_ptr = this.ctx;
+                let ctx_ptr = this.ctx.as_ptr();
                 // drain more
                 // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
                 let r = unsafe { (*ctx_ptr).drain_enqueued_parts(sent as u64) };
@@ -330,8 +333,11 @@ impl UploadPart {
     }
 
     fn perform(&mut self) -> JsTerminatedResult<()> {
+        // Copy the BackRef out so the `&mut MultiPartUpload` borrow is detached
+        // from `self` (request body reads `self.data()`/`self.part_number`).
+        let mut ctx_ref = self.ctx;
         // SAFETY: ctx is a live BACKREF (part holds a ref on ctx)
-        let ctx = unsafe { &mut *self.ctx };
+        let ctx = unsafe { ctx_ref.get_mut() };
         let mut params_buffer = [0u8; 2048];
         let written = {
             let mut w: &mut [u8] = &mut params_buffer[..];
@@ -363,8 +369,7 @@ impl UploadPart {
     }
 
     pub fn start(&mut self) -> JsTerminatedResult<()> {
-        // SAFETY: ctx is a live BACKREF
-        let ctx = unsafe { &*self.ctx };
+        let ctx = self.ctx.get();
         if self.state != PartState::Pending || ctx.state != State::MultipartCompleted {
             return Ok(());
         }
@@ -479,6 +484,9 @@ impl MultiPartUpload {
             return None;
         }
         self.available.unset(index);
+        // SAFETY: `self` is a heap-stable `MultiPartUpload` (intrusive RC); every
+        // `UploadPart` holds a ref so `self` outlives the part (BackRef invariant).
+        let self_ref = unsafe { bun_ptr::BackRef::from_raw(std::ptr::from_mut::<Self>(self)) };
         if self.queue.is_none() {
             // queueSize will never change and is small (max 255)
             let mut queue: Vec<UploadPart> = Vec::with_capacity(queue_size);
@@ -488,7 +496,7 @@ impl MultiPartUpload {
                     data: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
                     allocated_size: 0,
                     part_number: 0,
-                    ctx: self,
+                    ctx: self_ref,
                     index: 0,
                     retry: 0,
                     state: PartState::NotAssigned,
@@ -508,14 +516,13 @@ impl MultiPartUpload {
         // PORT NOTE: `defer this.currentPartNumber += 1` hoisted before return
         self.current_part_number += 1;
 
-        let self_ptr = std::ptr::from_mut::<Self>(self);
         let queue_item = &mut self.queue.as_mut().unwrap()[index];
         // always set all struct fields to avoid undefined behavior
         *queue_item = UploadPart {
             data,
             allocated_size: allocated_len,
             part_number,
-            ctx: self_ptr,
+            ctx: self_ref,
             index: index as u8, // @truncate
             retry: self.options.retry,
             state: PartState::Pending,

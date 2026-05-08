@@ -1577,8 +1577,8 @@ pub enum AsyncWorkStatus {
 pub struct napi_async_work {
     pub task: WorkPoolTask,
     pub concurrent_task: ConcurrentTask,
-    // PORT NOTE: `*mut` (not `&'static`) — `enqueue_task` needs `&mut EventLoop`.
-    pub event_loop: *mut EventLoop,
+    // PORT NOTE: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
+    pub event_loop: bun_ptr::BackRef<EventLoop>,
     pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
     pub env: NapiEnvRef,
     pub execute: napi_async_execute_callback,
@@ -1609,7 +1609,9 @@ impl napi_async_work {
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
             // SAFETY: bun_vm() never null for a Bun-owned global.
-            event_loop: global.bun_vm().event_loop(),
+            // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
+            // stable address) and outlives every napi_async_work.
+            event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1652,8 +1654,7 @@ impl napi_async_work {
             Ordering::SeqCst,
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
-                // SAFETY: event_loop is the live JS-thread loop.
-                unsafe { &*self.event_loop }
+                self.event_loop
                     .enqueue_task_concurrent(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));
                 return;
             }
@@ -1662,8 +1663,7 @@ impl napi_async_work {
         self.status
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
-        // SAFETY: event_loop is the live JS-thread loop.
-        unsafe { &*self.event_loop }
+        self.event_loop
             .enqueue_task_concurrent(self.concurrent_task.from(self_ptr, AutoDeinit::ManualDeinit));
     }
 
@@ -2144,9 +2144,9 @@ pub struct ThreadSafeFunction {
     // for std.condvar
     pub lock: Mutex,
 
-    // PORT NOTE: `*mut` (not `&'static`) — `enqueue_task`/`drain_microtasks`
-    // need `&mut EventLoop`; reborrowed at use sites (single JS thread).
-    pub event_loop: *mut EventLoop,
+    // PORT NOTE: BackRef — `enqueue_task`/`drain_microtasks` need `&mut
+    // EventLoop`; reborrowed at use sites (single JS thread).
+    pub event_loop: bun_ptr::BackRef<EventLoop>,
     pub tracker: Debugger::AsyncTaskTracker,
 
     pub env: NapiEnvRef,
@@ -2275,7 +2275,7 @@ impl ThreadSafeFunction {
                     self.poll_ref.disable();
                     let self_ptr: *mut Self = self;
                     // SAFETY: event_loop is the live JS-thread loop; single JS thread.
-                    unsafe { &mut *self.event_loop }.enqueue_task(Task::init(self_ptr));
+                    unsafe { self.event_loop.get_mut() }.enqueue_task(Task::init(self_ptr));
                 }
             }
             _ => {
@@ -2339,7 +2339,8 @@ impl ThreadSafeFunction {
         let env = self.env.get();
         if !is_first {
             // SAFETY: event_loop is the live JS-thread loop; single JS thread.
-            unsafe { &mut *self.event_loop }.drain_microtasks()?;
+            // SAFETY: event_loop is the live JS-thread loop; single JS thread.
+            unsafe { self.event_loop.get_mut() }.drain_microtasks()?;
         }
         // SAFETY: env is valid while the TSF is live.
         let global_object = unsafe { &*env }.to_js();
@@ -2411,9 +2412,7 @@ impl ThreadSafeFunction {
         match prev {
             x if x == DispatchState::Idle as u8 => {
                 let self_ptr: *mut Self = self;
-                // SAFETY: event_loop is the live JS-thread loop.
-                unsafe { &*self.event_loop }
-                    .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+                self.event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do
@@ -2547,7 +2546,9 @@ pub extern "C" fn napi_create_threadsafe_function(
     };
 
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
-        event_loop: vm.event_loop(),
+        // SAFETY: `event_loop()` is the live JS-thread loop (non-null, stable
+        // address) and outlives every threadsafe function.
+        event_loop: unsafe { bun_ptr::BackRef::from_raw(vm.event_loop()) },
         // SAFETY: env is a live C++-owned napi_env.
         env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
         callback,

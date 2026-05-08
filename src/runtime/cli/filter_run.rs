@@ -50,7 +50,7 @@ struct ProcessInfo {
 // Zig; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
-    state: *mut State<'a>,
+    state: bun_ptr::BackRef<State<'a>>,
 
     stdout: BufferedReader,
     stderr: BufferedReader,
@@ -70,8 +70,11 @@ pub struct ProcessHandle<'a> {
 
 impl<'a> ProcessHandle<'a> {
     fn start(&mut self) -> Result<(), bun_core::Error> {
+        // Copy the BackRef out so the `&mut State` borrow is detached from `self`
+        // (matches Zig's free aliasing of `*State` alongside `*ProcessHandle`).
+        let mut state_ref = self.state;
         // SAFETY: state backref is valid for the lifetime of the run loop (State outlives all handles).
-        let state = unsafe { &mut *self.state };
+        let state = unsafe { state_ref.get_mut() };
         state.remaining_scripts += 1;
         let handle = self;
 
@@ -168,8 +171,9 @@ impl<'a> ProcessHandle<'a> {
 
     pub fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
+        let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
-        let state = unsafe { &mut *self.state };
+        let state = unsafe { state_ref.get_mut() };
         let _ = state.read_chunk(self, chunk);
         true
     }
@@ -208,14 +212,14 @@ impl<'a> ProcessHandle<'a> {
         self.end_time = Some(Instant::now());
         // We just leak the process because we're going to exit anyway after all processes are done
         let _ = proc;
+        let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
-        let state = unsafe { &mut *self.state };
+        let state = unsafe { state_ref.get_mut() };
         let _ = state.process_exit(self);
     }
 
     pub fn event_loop(&self) -> *mut MiniEventLoop<'static> {
-        // SAFETY: state backref valid.
-        unsafe { (*self.state).event_loop }
+        self.state.event_loop
     }
 
     pub fn loop_(&self) -> *mut bun_aio::Loop {
@@ -223,12 +227,12 @@ impl<'a> ProcessHandle<'a> {
         {
             // SAFETY: state backref valid; event_loop is the live MiniEventLoop
             // singleton. Two derefs: MiniEventLoop → uws WindowsLoop → uv_loop.
-            return unsafe { (*(*(*self.state).event_loop).loop_).uv_loop };
+            return unsafe { (*(*self.state.event_loop).loop_).uv_loop };
         }
         #[cfg(not(windows))]
         {
             // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
-            return unsafe { (*(*self.state).event_loop).loop_ };
+            return unsafe { (*self.state.event_loop).loop_ };
         }
     }
 }
@@ -258,7 +262,7 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for ProcessHandle<'a> {
         // (runtime-registered) FilePoll vtable can recover it via `io_ev`.
         // SAFETY: state backref valid for the lifetime of the run loop.
         bun_io::EventLoopHandle(unsafe {
-            core::ptr::addr_of_mut!((*(*this).state).event_loop_handle).cast::<c_void>()
+            core::ptr::addr_of_mut!((*(*this).state.as_ptr()).event_loop_handle).cast::<c_void>()
         })
     }
 }
@@ -912,7 +916,9 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // in `ProcessHandle::start` / `State::process_exit` are sound under Stacked
     // Borrows; `state` is not moved after this point.
     let mut handles_vec: Vec<ProcessHandle> = Vec::with_capacity(scripts.len());
-    let state_ptr: *mut State = core::ptr::addr_of_mut!(state);
+    // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
+    let state_ptr: bun_ptr::BackRef<State> =
+        unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {

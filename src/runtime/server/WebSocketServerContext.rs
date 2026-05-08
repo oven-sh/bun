@@ -31,9 +31,9 @@ pub struct Handler {
     pub app: Option<*mut c_void>,
 
     // Always set manually.
-    // TODO(port): LIFETIMES.tsv = STATIC → `&'static VirtualMachine` once bun_jsc is real.
-    pub vm: *const VirtualMachine,
-    pub global_object: *const JSGlobalObject,
+    // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
+    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     pub active_connections: usize,
 
     /// used by publish()
@@ -60,16 +60,14 @@ impl Handler {
     /// connection exists and outlives every `ServerWebSocket`.
     #[inline]
     pub fn global_object(&self) -> &JSGlobalObject {
-        // SAFETY: see doc above — JSC_BORROW per LIFETIMES.tsv.
-        unsafe { &*self.global_object }
+        self.global_object.get()
     }
 
     /// Deref the raw `vm` pointer.
     /// SAFETY: `vm` is `'static` per LIFETIMES.tsv (set in `from_js`).
     #[inline]
     pub fn vm(&self) -> &VirtualMachine {
-        // SAFETY: see doc above.
-        unsafe { &*self.vm }
+        self.vm.get()
     }
 
     /// Zig: `handler.active_connections +|= n` through a `*Handler`.
@@ -108,21 +106,19 @@ impl Handler {
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
                 .call(global_object, JSValue::UNDEFINED, &[error_value])
-                .map_err(|err| {
-                    // SAFETY: `global_object` is set at construction (Handler::from_js / server.zig
-                    // assignment) and outlives the handler — LIFETIMES.tsv = JSC_BORROW.
-                    unsafe { &*self.global_object }.report_active_exception_as_unhandled(err)
-                });
+                .map_err(|err| self.global_object.report_active_exception_as_unhandled(err));
             return;
         }
 
-        // SAFETY: Zig signature is `vm: *jsc.VirtualMachine` (mutable). VirtualMachine is the
+        // Zig signature is `vm: *jsc.VirtualMachine` (mutable). VirtualMachine is the
         // process-lifetime singleton (LIFETIMES.tsv = STATIC) and is only touched on the JS
         // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Derive the
-        // mutable pointer from the stored raw `self.vm` (== `vm`) rather than casting the
+        // mutable pointer from the stored BackRef (== `vm`) rather than casting the
         // shared ref, which rustc's invalid_reference_casting lint rejects.
         let _ = vm;
-        let vm_mut = unsafe { &mut *self.vm.cast_mut() };
+        let mut vm_ref = self.vm;
+        // SAFETY: process-lifetime singleton; sole `&mut` on the JS thread.
+        let vm_mut = unsafe { vm_ref.get_mut() };
         let _ = vm_mut.uncaught_exception(global_object, error_value, false);
     }
 
@@ -136,8 +132,8 @@ impl Handler {
             on_ping: JSValue::ZERO,
             on_pong: JSValue::ZERO,
             app: None,
-            vm: VirtualMachine::get(),
-            global_object,
+            vm: bun_ptr::BackRef::new(VirtualMachine::get()),
+            global_object: bun_ptr::BackRef::new(global_object),
             active_connections: 0,
             flags: HandlerFlags::empty(),
         };
@@ -194,9 +190,7 @@ impl Handler {
     }
 
     pub fn unprotect(&self) {
-        // SAFETY: `vm` is set at construction (Handler::from_js → VirtualMachine::get())
-        // and is process-lifetime — LIFETIMES.tsv = STATIC.
-        if unsafe { &*self.vm }.is_shutting_down() {
+        if self.vm.is_shutting_down() {
             return;
         }
 

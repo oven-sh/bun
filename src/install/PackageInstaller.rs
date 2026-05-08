@@ -525,7 +525,6 @@ impl<'a> PackageInstaller<'a> {
     ) {
         let lockfile = self.lockfile();
         let manager = self.manager_mut();
-        let options = self.options();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let mut node_modules_path: AbsPath =
             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
@@ -626,7 +625,7 @@ impl<'a> PackageInstaller<'a> {
                 let nm_ptr: *mut AbsPath = &raw mut node_modules_path;
                 let mut bin_linker = bin::Linker {
                     bin,
-                    global_bin_path: options.bin_path,
+                    global_bin_path: manager.options.bin_path,
                     package_name: package_name_,
                     target_package_name,
                     string_buf,
@@ -677,7 +676,7 @@ impl<'a> PackageInstaller<'a> {
                             .unwrap_or_oom();
                     }
 
-                    if options.enable.fail_early() {
+                    if manager.options.enable.fail_early() {
                         manager.crash();
                     }
                 }

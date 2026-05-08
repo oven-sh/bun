@@ -210,6 +210,34 @@ impl LinkerContext<'_> {
         let named_imports: *mut bun_js_parser::ast::bundled_ast::NamedImports =
             (ast.named_imports as *mut bun_js_parser::ast::bundled_ast::NamedImports)
                 .wrapping_add(id as usize);
+        // SAFETY: `named_imports` is a stable column pointer (see above). We
+        // hoist the emptiness check so the per-symbol-use inner loop skips
+        // the lookup entirely for files with no imports (≈ all leaf modules).
+        let named_imports_is_empty = unsafe { (*named_imports).is_empty() };
+
+        // PERF(port): hoist this file's two `top_level_symbols_to_parts`
+        // sub-maps. The Zig version reaches them through
+        // `c.topLevelSymbolsToParts(id, ref)` per symbol-use, which is fine
+        // when the underlying ArrayHashMap has its index_header (O(1) get).
+        // In the port, perf showed `find_hash` falling through to the linear
+        // scan branch here (≈87% of step5 self-time on three.js), so we (a)
+        // hoist the per-file column pointer math out of the J×K inner loop
+        // and (b) ensure the accelerator index is built on the large
+        // `top_level_symbols_to_parts[id]` map before probing it J times.
+        // SAFETY: both columns are SoA rows owned by this task's `id`; the
+        // overlay row may be written by `create_exports_for_file` above (this
+        // borrow begins after it returns) and the ast row is parser-built and
+        // never reallocated during step 5. No other task touches row `id`.
+        let tlsp_overlay: &bun_js_parser::ast::ast::TopLevelSymbolToParts = unsafe {
+            &*(meta.top_level_symbol_to_parts_overlay
+                as *const bun_js_parser::ast::ast::TopLevelSymbolToParts)
+                .add(id as usize)
+        };
+        let tlsp_ast: &bun_js_parser::ast::ast::TopLevelSymbolToParts = unsafe {
+            &mut *(ast.top_level_symbols_to_parts
+                as *mut bun_js_parser::ast::ast::TopLevelSymbolToParts)
+                .add(id as usize)
+        };
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
         // SAFETY: see above.
@@ -219,7 +247,15 @@ impl LinkerContext<'_> {
             // which ones aren't
             // PORT NOTE: reshaped for borrowck — Zig iterates keys()/values() while
             // holding a mutable getPtr into part.symbol_uses; collect refs first.
-            let prop_use_refs: Vec<Ref> = part.import_symbol_property_uses.keys().to_vec();
+            // PERF(port): the property-use map is empty for the overwhelming
+            // majority of parts (it only fills for `import * as ns`/enum
+            // property accesses); skip the `to_vec()` alloc-round-trip in
+            // that case.
+            let prop_use_refs: Vec<Ref> = if part.import_symbol_property_uses.is_empty() {
+                Vec::new()
+            } else {
+                part.import_symbol_property_uses.keys().to_vec()
+            };
             for ref_ in &prop_use_refs {
                 // Re-fetch each iteration to avoid overlapping &mut.
                 let properties: *const _ = part.import_symbol_property_uses.get(ref_).unwrap();
@@ -307,33 +343,51 @@ impl LinkerContext<'_> {
               //                          block label from the above commented code.
 
             // Now that we know this, we can determine cross-part dependencies
-            for j in 0..part.symbol_uses.keys().len() {
-                let ref_ = part.symbol_uses.keys()[j];
-                if cfg!(debug_assertions) {
-                    debug_assert!(part.symbol_uses.values()[j].count_estimate > 0);
-                }
+            // PERF(port): iterate the keys slice directly (the index-based
+            // form re-loaded `keys.len()` and bounds-checked each access).
+            let part_index_u32 = part_index as u32;
+            let dependencies = &mut part.dependencies;
+            for &ref_ in part.symbol_uses.keys() {
+                debug_assert!({
+                    let j = part
+                        .symbol_uses
+                        .keys()
+                        .iter()
+                        .position(|k| *k == ref_)
+                        .unwrap();
+                    part.symbol_uses.values()[j].count_estimate > 0
+                });
 
-                let other_parts = c.top_level_symbols_to_parts(id, ref_);
+                // Inlined `c.top_level_symbols_to_parts(id, ref_)` against the
+                // hoisted per-file maps so the column pointer math (and the
+                // `&LinkerContext` deref) is out of the inner loop.
+                let other_parts: &[u32] = if let Some(overlay) = tlsp_overlay.get(&ref_) {
+                    overlay.as_slice()
+                } else if let Some(list) = tlsp_ast.get(&ref_) {
+                    list.as_slice()
+                } else {
+                    &[]
+                };
 
                 for &other_part_index in other_parts {
                     let local = local_dependencies.get_or_put(other_part_index).expect("unreachable");
-                    if !local.found_existing || (*local.value_ptr) as usize != part_index {
-                        *local.value_ptr = u32::try_from(part_index).expect("int cast");
+                    if !local.found_existing || *local.value_ptr != part_index_u32 {
+                        *local.value_ptr = part_index_u32;
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
-                        part.dependencies
-                            .push(Dependency {
-                                source_index: js_ast::Index::source(source_index as usize),
-                                part_index: other_part_index,
-                            });
+                        dependencies.push(Dependency {
+                            source_index: js_ast::Index::source(source_index as usize),
+                            part_index: other_part_index,
+                        });
                     }
                 }
 
                 // Also map from imports to parts that use them
-                // SAFETY: `named_imports` is a stable column pointer.
-                if let Some(existing) = unsafe { (*named_imports).get_ptr_mut(&ref_) } {
-                    existing
-                        .local_parts_with_uses
-                        .push(u32::try_from(part_index).expect("int cast"));
+                if !named_imports_is_empty {
+                    // SAFETY: `named_imports` is a stable column pointer; this
+                    // task owns row `id` exclusively (see split_raw note).
+                    if let Some(existing) = unsafe { (*named_imports).get_ptr_mut(&ref_) } {
+                        existing.local_parts_with_uses.push(part_index_u32);
+                    }
                 }
             }
         }

@@ -1414,16 +1414,20 @@ pub struct StringHashMapGetOrPut<'a, V> {
 }
 
 impl<V: Default> StringHashMap<V> {
+    /// PERF(port): the previous shape (`contains_key` + `entry(Box::from(key))`)
+    /// hashed `key` twice and unconditionally heap-allocated the `Box` even on
+    /// hit. `Scope::members` calls this once per declared identifier during
+    /// parse, so on three.js that was ~thousands of redundant `Box`
+    /// allocations + double-hashes per file. Route through a single `entry()`
+    /// match; the `Box` is still allocated upfront (std `HashMap::entry`
+    /// requires the owned key) but on hit it is dropped without a second
+    /// probe. Full prehash reuse needs a `raw_entry`-style API — tracked in
+    /// the `get_adapted` PERF note above.
     pub fn get_or_put(
         &mut self,
         key: &[u8],
     ) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
-        let found_existing = self.inner.contains_key(key);
-        let value_ptr = self
-            .inner
-            .entry(Box::from(key))
-            .or_insert_with(V::default);
-        Ok(StringHashMapGetOrPut { found_existing, value_ptr })
+        Ok(self.get_or_put_context_adapted(key, ()))
     }
 
     pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
@@ -1437,12 +1441,17 @@ impl<V: Default> StringHashMap<V> {
         key: &[u8],
         _adapter: A,
     ) -> StringHashMapGetOrPut<'_, V> {
-        let found_existing = self.inner.contains_key(key);
-        let value_ptr = self
-            .inner
-            .entry(Box::from(key))
-            .or_insert_with(V::default);
-        StringHashMapGetOrPut { found_existing, value_ptr }
+        use std::collections::hash_map::Entry as StdEntry;
+        match self.inner.entry(Box::from(key)) {
+            StdEntry::Occupied(o) => StringHashMapGetOrPut {
+                found_existing: true,
+                value_ptr: o.into_mut(),
+            },
+            StdEntry::Vacant(v) => StringHashMapGetOrPut {
+                found_existing: false,
+                value_ptr: v.insert(V::default()),
+            },
+        }
     }
 }
 

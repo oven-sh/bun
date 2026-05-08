@@ -60,7 +60,7 @@ pub type DebuggerId = jsc::DebuggerId;
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
 pub use super::dev_server_body::{
-    deferred_request, AllocationScope, CacheEntry, CurrentBundle, DeferredPromise,
+    deferred_request, CacheEntry, CurrentBundle, DeferredPromise,
     DeferredRequest, DevServer, EntryPointList, entry_point_list, HTMLRouter, Magic, NextBundle,
     Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch, TestingBatchEvents,
 };

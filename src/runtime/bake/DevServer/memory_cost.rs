@@ -67,7 +67,6 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .log
     //   .framework
     //   .bundler_options
-    //   .allocation_scope
     //   .broadcast_console_log_from_browser_to_server
 
     // to be counted.

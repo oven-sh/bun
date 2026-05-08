@@ -55,8 +55,7 @@ unsafe impl Sync for StdAllocator {}
 
 impl Default for StdAllocator {
     /// Zig: `bun.memory.initDefault(std.mem.Allocator)` → `bun.default_allocator`
-    /// (mimalloc-backed `c_allocator`). Lets `AllocationScopeIn<StdAllocator>`
-    /// satisfy its `A: Default` bound for `init_default()`.
+    /// (mimalloc-backed `c_allocator`).
     #[inline]
     fn default() -> Self {
         basic::C_ALLOCATOR
@@ -202,7 +201,7 @@ pub const USE_MIMALLOC: bool = true;
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //
-//   allocation_scope, LinuxMemFdAllocator, MimallocArena (the vtable impl)
+//   LinuxMemFdAllocator, MimallocArena (the vtable impl)
 //   import bun_core/sys/runtime/collections and so live in
 //   `bun_runtime::allocators` (CYCLEBREAK §bun_alloc); callers import from
 //   there directly.

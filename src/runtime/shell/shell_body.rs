@@ -28,8 +28,6 @@ use bun_sys::{self as sys, Fd, SystemError};
 
 pub use super::interpreter as interpret; // ./interpreter.zig → crate::shell::interpret
 pub use super::subproc; // ./subproc.zig — declared once in `shell/mod.rs`
-pub use super::alloc_scope; // ./AllocScope.zig
-pub use alloc_scope as AllocScope;
 
 pub use interpret::{ExitCode, Interpreter, unreachable_state};
 pub use super::{EnvMap, EnvStr, ParsedShellScript};

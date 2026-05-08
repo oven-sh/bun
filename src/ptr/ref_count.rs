@@ -17,21 +17,6 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_core::StoredTrace;
 use bun_core::ThreadLock;
 
-// `bun_alloc::allocation_scope` is itself gated (debug-only allocator
-// instrumentation). The AllocationScope integration here is debug-tracking
-// metadata; stub the types until allocation_scope un-gates.
-// TODO(b2-blocked): bun_alloc::allocation_scope
-mod allocation_scope {
-    use core::ffi::c_void;
-    pub struct AllocationScope;
-    impl AllocationScope {
-        pub fn track_external_allocation(&mut self, _bytes: &[u8], _ret: usize, _extra: Extra) {}
-        pub fn track_external_free(&mut self, _bytes: &[u8], _ret: usize) -> bool { true }
-    }
-    pub struct Extra { pub ptr: *mut c_void, pub vtable: &'static ExtraVTable }
-    pub struct ExtraVTable { pub on_allocation_leak: fn(*mut c_void, &mut [u8]) }
-}
-use allocation_scope::AllocationScope;
 // PORT NOTE(b0): was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
 // Debug-only diagnostic storage; std HashMap drops insertion order for `frees`
 // which is acceptable for leak reports.
@@ -645,14 +630,6 @@ impl DebugDataOps for NoopDebugData {
         TrackedRefId::new(0)
     }
     fn release(&mut self, _id: TrackedRefId, _return_address: usize) {}
-    fn track_in_scope(
-        &mut self,
-        _scope: &mut AllocationScope,
-        _data_ptr: *mut c_void,
-        _data_size: usize,
-        _ret_addr: usize,
-    ) {
-    }
 }
 
 #[cfg(debug_assertions)]
@@ -839,7 +816,6 @@ macro_rules! impl_thread_safe_any_ref_counted {
 /// By using this, you gain the following memory debugging tools:
 ///
 /// - `T.ref_count.dump_active_refs()` to dump all active references.
-/// - AllocationScope integration via `.new_tracked()` and `.track_all()`
 ///
 /// If you want to enforce usage of RefPtr for memory management, you
 /// can remove the forwarded `ref` and `deref` methods from `RefCount`.
@@ -1009,34 +985,6 @@ impl<T: AnyRefCounted> RefPtr<T> {
         ptr
     }
 
-    /// This will assert that ALL references are cleaned up by the time the
-    /// allocation scope ends.
-    pub fn new_tracked(scope: &mut AllocationScope, init_data: T) -> Self {
-        let ptr = Self::new(init_data);
-        ptr.track_impl(scope, return_address());
-        ptr
-    }
-
-    /// This will assert that ALL references are cleaned up by the time the
-    /// allocation scope ends.
-    pub fn track_all(&self, scope: &mut AllocationScope) {
-        self.track_impl(scope, return_address());
-    }
-
-    fn track_impl(&self, scope: &mut AllocationScope, ret_addr: usize) {
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = (scope, ret_addr);
-            return;
-        }
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: data is live (we hold a ref)
-            let debug = unsafe { &mut *T::rc_debug_data(self.as_ptr()) };
-            debug.track_in_scope(scope, self.as_ptr().cast::<c_void>(), size_of::<T>(), ret_addr);
-        }
-    }
-
     /// # Safety
     /// `raw_ptr` must point to a live `T` and the caller must hold/own a ref.
     pub unsafe fn unchecked_and_unsafe_init(raw_ptr: *mut T, ret_addr: usize) -> Self {
@@ -1163,13 +1111,6 @@ pub trait DebugDataOps {
     fn assert_valid_dyn(&self);
     fn acquire(&mut self, return_address: usize) -> TrackedRefId;
     fn release(&mut self, id: TrackedRefId, return_address: usize);
-    fn track_in_scope(
-        &mut self,
-        scope: &mut AllocationScope,
-        data_ptr: *mut c_void,
-        data_size: usize,
-        ret_addr: usize,
-    );
 }
 
 const MAGIC_VALID: u128 = 0x2f84_e51d;
@@ -1192,11 +1133,6 @@ pub struct DebugData<Count> {
     next_id: AtomicU32,
     map: HashMap<TrackedRefId, TrackedRef>,
     frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
-    // Allocation Scope integration
-    // TODO(port): lifetime — LIFETIMES.tsv classifies this BORROW_PARAM (`&'a mut`)
-    // but the scope outlives the &mut param passed to `track_in_scope`; Zig stored
-    // a raw `*allocation_scope.AllocationScope`. Raw ptr (debug-only) for now.
-    allocation_scope: Option<NonNull<AllocationScope>>,
     count_pointer: Option<NonNull<Count>>,
 }
 
@@ -1210,7 +1146,6 @@ impl<Count: CountLoad> DebugData<Count> {
             next_id: AtomicU32::new(0),
             map: HashMap::new(),
             frees: ArrayHashMap::new(),
-            allocation_scope: None,
             count_pointer: None,
         }
     }
@@ -1270,27 +1205,7 @@ impl<Count: CountLoad> DebugData<Count> {
         self.map.shrink_to_fit();
         self.frees.clear();
         // TODO(port): ArrayHashMap shrink — Zig clearAndFree
-        if let Some(mut scope) = self.allocation_scope {
-            // SAFETY: scope was stored from a live `&mut AllocationScope` in
-            // `track_in_scope`; debug-only raw backref (see field note).
-            let _ = unsafe { scope.as_mut() }.track_external_free(data, ret_addr);
-        }
-    }
-
-    fn on_allocation_leak(ptr: *mut c_void, data: &mut [u8]) {
-        // SAFETY: vtable contract — ptr is &mut DebugData<Count>
-        let debug: &mut Self = unsafe { &mut *(ptr.cast::<Self>()) };
-        // TODO(port): count_pointer not wired through the dyn `acquire` path
-        // (only `acquire_with_count` sets it) — this unwrap will panic for
-        // refs created via `RefPtr::unchecked_and_unsafe_init`.
-        // SAFETY: count_pointer was set in acquire_with_count and points into
-        // the sibling raw_count field, which lives as long as self.
-        let rc = unsafe { debug.count_pointer.unwrap().as_ref() }.load_count();
-        debug.dump(None, data.as_mut_ptr().cast::<c_void>(), rc);
-    }
-
-    fn get_scope_extra_vtable(&self) -> &'static allocation_scope::ExtraVTable {
-        &SCOPE_EXTRA_VTABLE
+        let _ = (data, ret_addr);
     }
 }
 
@@ -1322,42 +1237,6 @@ impl<Count: CountLoad> DebugDataOps for DebugData<Count> {
     fn release(&mut self, id: TrackedRefId, return_address: usize) {
         self.release_impl(id, return_address);
     }
-
-    fn track_in_scope(
-        &mut self,
-        scope: &mut AllocationScope,
-        data_ptr: *mut c_void,
-        data_size: usize,
-        ret_addr: usize,
-    ) {
-        // PORT NOTE: reshaped for borrowck — capture self ptr before guard borrows lock.
-        let self_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        let vtable = self.get_scope_extra_vtable();
-        let _guard = self.lock.lock();
-        // SAFETY: data_ptr/data_size describe a live T allocation
-        let bytes = unsafe { core::slice::from_raw_parts(data_ptr.cast::<u8>(), data_size) };
-        scope.track_external_allocation(
-            bytes,
-            ret_addr,
-            allocation_scope::Extra { ptr: self_ptr, vtable },
-        );
-        // TODO(port): lifetime — TSV says `&'a mut` but the scope outlives this
-        // borrow; raw ptr (debug-only). See field note on `allocation_scope`.
-        self.allocation_scope = Some(NonNull::from(scope));
-    }
-}
-
-#[cfg(debug_assertions)]
-static SCOPE_EXTRA_VTABLE: allocation_scope::ExtraVTable = allocation_scope::ExtraVTable {
-    // TODO(port): on_allocation_leak is generic over Count; a single static
-    // vtable cannot name it. Phase B: either monomorphize two statics or
-    // erase Count behind the dyn DebugDataOps surface.
-    on_allocation_leak: on_allocation_leak_erased,
-};
-
-#[cfg(debug_assertions)]
-fn on_allocation_leak_erased(_ptr: *mut c_void, _data: &mut [u8]) {
-    // TODO(port): see SCOPE_EXTRA_VTABLE note.
 }
 
 /// Abstracts loading the current count from `Cell<u32>` / `AtomicU32`.
@@ -1412,7 +1291,6 @@ fn generic_dump(
     let mut i: usize = 0;
     for (_, entry) in map.iter() {
         bun_core::pretty_error!("<b>RefPtr acquired at:<r>\n");
-        // TODO(b0-genuine): was dump_stack_trace(trace, AllocationScope::TRACE_LIMITS)
         dump_stack_hook(Some(&entry.acquired_at), 0);
         i += 1;
         if i >= 3 {

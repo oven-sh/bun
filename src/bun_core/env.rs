@@ -50,10 +50,6 @@ pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
 /// surface, so this is a constant `true`.
 pub const EXPORT_CPP_APIS: bool = true;
 
-/// Whether or not to enable allocation tracking when the `AllocationScope`
-/// allocator is used.
-pub const ENABLE_ALLOC_SCOPES: bool = IS_DEBUG || ENABLE_ASAN;
-
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
 pub const BASELINE: bool = build_options::BASELINE;
 /// Zig disabled SIMD under `-Dno_llvm` (self-hosted backend lacked vector

@@ -101,10 +101,8 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// `data` is transferred into the returned string, and must be freed with
     /// `Drop` when the string and its borrows are done being used.
     pub fn init_owned(data: Box<[T]>) -> Self {
-        // PORT NOTE: Zig checked `allocation_scope.isInstance(allocator)` and
-        // asserted ownership through `AllocationScope`. With the global mimalloc
-        // allocator there is no scope to check; the `Box<[T]>` type already
-        // proves unique ownership.
+        // PORT NOTE: Zig asserted ownership at runtime via a debug allocator
+        // wrapper. In Rust the `Box<[T]>` type already proves unique ownership.
         let len = data.len();
         let ptr = Box::into_raw(data).cast::<T>();
         Self {

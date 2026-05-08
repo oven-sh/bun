@@ -6,8 +6,6 @@
 //! `*mut ShellExecEnv` (which may be owned or borrowed — see field doc) are
 //! stored here.
 
-#[cfg(debug_assertions)]
-use crate::shell::alloc_scope::AllocScope;
 use crate::shell::interpreter::{NodeId, ShellExecEnv, StateKind};
 
 pub struct Base {
@@ -25,55 +23,26 @@ pub struct Base {
     // (shared across multiple children) and is freed by the owning node, not
     // by Drop on Base.
     pub shell: *mut ShellExecEnv,
-    #[cfg(debug_assertions)]
-    __alloc_scope: Option<AllocScope>,
 }
 
 impl Base {
-    /// Create a new allocation scope for this state node.
     pub fn new(kind: StateKind, parent: NodeId, shell: *mut ShellExecEnv) -> Self {
-        Self {
-            kind,
-            parent,
-            shell,
-            // TODO(b2-blocked): bun_alloc::default_allocator() — AllocScope
-            // tracking is debug-only; pass a no-op until the alloc-scope API
-            // stabilises.
-            #[cfg(debug_assertions)]
-            __alloc_scope: None,
-        }
+        Self { kind, parent, shell }
     }
 
-    /// Borrow the parent's allocation scope instead of creating a new one.
-    /// (In release builds the scope is a no-op either way.)
+    /// Kept for call-site parity with the Zig state machine; in Rust the
+    /// owned-vs-borrowed distinction is carried by `EnvStr` itself, so there
+    /// is no per-node allocation scope to borrow.
+    #[inline]
     pub fn new_borrowed_scope(kind: StateKind, parent: NodeId, shell: *mut ShellExecEnv) -> Self {
-        Self {
-            kind,
-            parent,
-            shell,
-            #[cfg(debug_assertions)]
-            __alloc_scope: None,
-        }
+        Self::new(kind, parent, shell)
     }
 
-    pub fn end_scope(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            self.__alloc_scope.take();
-        }
-    }
-
-    /// Stop tracking `memory` (it has been handed off to e.g. an `EnvStr`).
-    pub fn leak_slice<T>(&mut self, memory: &[T]) {
-        #[cfg(debug_assertions)]
-        if let Some(scope) = self.__alloc_scope.as_mut() {
-            scope.leak_slice(memory);
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = memory;
-        }
-    }
+    /// No-op kept for call-site parity. Zig used this to flush the per-node
+    /// debug allocation scope; Rust ownership (`EnvStr`, `Box`, `Vec`) makes
+    /// that tracking redundant.
+    #[inline]
+    pub fn end_scope(&mut self) {}
 
     #[inline]
     pub fn shell(&self) -> &ShellExecEnv {

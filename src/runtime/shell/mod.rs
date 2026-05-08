@@ -38,8 +38,6 @@ pub mod ref_counted_str;
 pub mod env_str;
 #[path = "EnvMap.rs"]
 pub mod env_map;
-#[path = "AllocScope.rs"]
-pub mod alloc_scope;
 
 #[path = "Yield.rs"]
 pub mod yield_;

@@ -490,7 +490,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         use std::io::Write as _;
         let fmt = match &self.config.address {
             server_config::Address::Unix(unix) => {
-                let unix = unix.to_bytes();
+                let unix = unix.as_bytes();
                 if unix.len() > 1 && unix[0] == 0 {
                     // abstract domain socket, let's give it an "abstract" URL
                     URLFormatter { proto: URLProto::Abstract, hostname: Some(&unix[1..]), port: None }
@@ -1432,11 +1432,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.notify_inspector_server_stopped();
 
         if let server_config::Address::Unix(path) = &self.config.address {
-            let bytes = path.to_bytes();
+            let bytes = path.as_bytes();
             if !bytes.is_empty() && bytes[0] != 0 {
-                // SAFETY: CString guarantees NUL termination at `bytes.len()`.
-                let z = unsafe { bun_str::ZStr::from_raw(bytes.as_ptr(), bytes.len()) };
-                let _ = bun_sys::unlink(z);
+                let _ = bun_sys::unlink(path.as_zstr());
             }
         }
 
@@ -1648,7 +1646,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .to_error_instance(global)
             }
             server_config::Address::Unix(unix) => {
-                let unix = unix.to_bytes();
+                let unix = unix.as_bytes();
                 match bun_sys::get_errno(-1i32) {
                     bun_sys::E::SUCCESS => jsc::SystemError {
                         message: bun_str::String::create_format(format_args!(
@@ -2400,7 +2398,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // then re-derive fresh for each post-listen field access.
         let mut host_buff = [0u8; 1025];
         // Extract (discriminant, raw payload) and drop the `&*this` borrow at `;`.
-        // The raw pointers reference `config.address`'s CString backing storage,
+        // The raw pointers reference `config.address`'s backing storage,
         // which the trampolines never touch (they only write `listener`/
         // `h3_listener`), so the bytes remain valid through the listen calls.
         enum Addr { Tcp { port: u16, host: *const c_char }, Unix { ptr: *const u8, len: usize } }
@@ -2500,8 +2498,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         unsafe { uws_sys::h3::App::destroy(h3a) };
                     }
                 }
-                // SAFETY: ptr/len reference `config.address`'s CString; NUL
-                // invariant holds for ZStr::from_raw.
+                // SAFETY: ptr/len reference `config.address`'s ZBox; NUL
+                // sentinel at `ptr[len]` holds for ZStr::from_raw.
                 let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
                 // SAFETY: app is a live uws handle owned by this server. No
                 // `&*this` is live across this call.

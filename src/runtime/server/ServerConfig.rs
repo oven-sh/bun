@@ -103,7 +103,8 @@ impl Default for ServerConfig {
 
 pub enum Address {
     Tcp { port: u16, hostname: Option<CString> },
-    Unix(CString),
+    /// Zig `[:0]const u8` — leading NUL is valid (Linux abstract sockets).
+    Unix(bun_core::ZBox),
 }
 
 impl Default for Address {
@@ -531,7 +532,7 @@ impl ServerConfig {
                 }
             }
             Address::Unix(addr) => {
-                let _ = write!(&mut arraylist, "unix:{}", bstr::BStr::new(addr.to_bytes()));
+                let _ = write!(&mut arraylist, "unix:{}", bstr::BStr::new(addr.as_bytes()));
             }
         }
 
@@ -1162,9 +1163,7 @@ impl ServerConfig {
                     )));
                 }
 
-                args.address = Address::Unix(
-                    CString::new(unix_str.slice()).expect("unix path has no interior NUL"),
-                );
+                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
             }
         }
         if global.has_exception() {

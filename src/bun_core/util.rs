@@ -2943,15 +2943,12 @@ impl Timespec {
 
     /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
     /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
-    /// monotonic clock directly. Mocked-time provider is link-time resolved
-    /// (`__bun_timespec_now_mocked`, defined in `bun_runtime::test_runner`).
+    /// monotonic clock directly. Mocked-time hook installed by bun_jsc at
+    /// startup via `set_now_hook`.
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
-            // SAFETY: link-time `extern "Rust"` — body in
-            // `bun_runtime::test_runner::timers::fake_timers` reads a
-            // process-global `RwLock<Timespec>`; no preconditions.
-            if let Some(t) = unsafe { __bun_timespec_now_mocked() } { return t; }
+            if let Some(hook) = NOW_HOOK.load() { return hook(); }
         }
         Self::now_real()
     }
@@ -2988,13 +2985,21 @@ pub mod timespec_mode {
     pub type Mode = super::TimespecMockMode;
 }
 
-unsafe extern "Rust" {
-    /// `bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()` — link-time
-    /// hook so T0 can ask "is fake time active, and if so what is it?" without a
-    /// `bun_runtime` dep. Body is `#[no_mangle]` in
-    /// `bun_runtime::test_runner::timers::fake_timers`. Returns `None` when fake
-    /// timers are not enabled (the common case — single relaxed read on a `RwLock`).
-    fn __bun_timespec_now_mocked() -> Option<Timespec>;
+/// Mocked-time injection hook (set by bun_jsc when `useFakeTimers` is active).
+struct NowHookSlot(core::sync::atomic::AtomicPtr<()>);
+impl NowHookSlot {
+    const fn new() -> Self { Self(core::sync::atomic::AtomicPtr::new(core::ptr::null_mut())) }
+    fn load(&self) -> Option<fn() -> Timespec> {
+        let p = self.0.load(AOrdering::Relaxed);
+        if p.is_null() { None } else { Some(unsafe { core::mem::transmute::<*mut (), fn() -> Timespec>(p) }) }
+    }
+}
+static NOW_HOOK: NowHookSlot = NowHookSlot::new();
+pub fn set_timespec_now_hook(hook: Option<fn() -> Timespec>) {
+    NOW_HOOK.0.store(
+        hook.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
+        AOrdering::Relaxed,
+    );
 }
 
 // ── f16 ───────────────────────────────────────────────────────────────────
@@ -3039,12 +3044,14 @@ impl core::fmt::Display for f16 {
 
 // ── perf ──────────────────────────────────────────────────────────────────
 // Port of `bun.perf` (src/perf/perf.zig). Real impl wires to OS-native
-// signpost/ftrace and is gated behind a runtime env-var check; T0 ships only
-// the [`Ctx`] handle so `let _tracer = bun_core::perf::trace("X")` compiles
-// in any tier. The macOS `OSLog`/Linux `ftrace` backends live in `bun_perf`
-// (higher tier) and are reached via link-time `extern "Rust"` (PORTING.md
-// §Dispatch — exactly one impl exists, so the linker is the registry).
+// signpost/ftrace and is gated behind a runtime env-var check; T0 ships the
+// `Disabled` arm only so `let _tracer = bun_core::perf::trace("X")` compiles
+// and is a no-op. The macOS `OSLog`/Linux `ftrace` backends live in `bun_sys`
+// (higher tier) and are wired in via `set_backend` at init — §Dispatch hook
+// pattern (low tier defines `static HOOK`, high tier writes it).
 pub mod perf {
+    use core::sync::atomic::{AtomicPtr, Ordering};
+
     /// Opaque per-span state returned by `trace()`. `end()` is idempotent;
     /// `Drop` calls it so `let _t = trace("x");` works as a scope guard.
     #[must_use = "bind to a local (`let _t = perf::trace(..)`) so the span has nonzero duration"]
@@ -3064,38 +3071,33 @@ pub mod perf {
     }
     impl Drop for Ctx { #[inline] fn drop(&mut self) { self.end(); } }
 
-    impl Ctx {
-        /// Backend constructor — pairs an opaque `data` payload with the `end`
-        /// callback that consumes it. Used by the `bun_perf` provider.
-        #[inline]
-        pub fn new(end: unsafe fn(*mut core::ffi::c_void), data: *mut core::ffi::c_void) -> Ctx {
-            Ctx { end: Some(end), data }
-        }
-    }
-
-    unsafe extern "Rust" {
-        /// Whether Instruments / ftrace / Tracy is attached. Body is
-        /// `#[no_mangle]` in `bun_perf`; one relaxed atomic read after the
-        /// first-call `Once`.
-        fn __bun_perf_is_enabled() -> bool;
-        /// Begin a named span; returns [`Ctx::DISABLED`] when tracing is off.
-        /// Body is `#[no_mangle]` in `bun_perf`.
-        fn __bun_perf_trace_begin(name: &'static str) -> Ctx;
-    }
+    type BeginFn = unsafe fn(name: &'static str) -> Ctx;
+    static BACKEND: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
     #[inline]
-    pub fn is_enabled() -> bool {
-        // SAFETY: link-time `extern "Rust"`; body in `bun_perf` has no preconditions.
-        unsafe { __bun_perf_is_enabled() }
+    pub fn is_enabled() -> bool { !BACKEND.load(Ordering::Relaxed).is_null() }
+
+    /// Installed once at startup by `bun_sys::perf::init()`.
+    pub fn set_backend(begin: Option<BeginFn>) {
+        BACKEND.store(
+            begin.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
+            Ordering::Release,
+        );
     }
 
-    /// `bun.perf.trace("Event.name")`. When no backend is attached (the common
-    /// case — Instruments/ftrace not running), this is one relaxed-load +
-    /// branch inside the provider.
+    /// `bun.perf.trace("Event.name")`. When no backend is registered (the
+    /// common case — Instruments/ftrace not attached), this is a single
+    /// relaxed-load + branch.
     #[inline]
     pub fn trace(name: &'static str) -> Ctx {
-        // SAFETY: link-time `extern "Rust"`; body in `bun_perf` has no preconditions.
-        unsafe { __bun_perf_trace_begin(name) }
+        let p = BACKEND.load(Ordering::Relaxed);
+        if p.is_null() {
+            return Ctx::DISABLED;
+        }
+        // SAFETY: `p` was stored from a `BeginFn` in `set_backend`.
+        let begin: BeginFn = unsafe { core::mem::transmute::<*mut (), BeginFn>(p) };
+        // SAFETY: backend contract — `name` is `'static`.
+        unsafe { begin(name) }
     }
 }
 

@@ -13,23 +13,20 @@ pub use thread_lock::ThreadLock;
 pub mod thread_id;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Upward hooks (PORTING.md §Dispatch).
+// Debug-hook registration (CYCLEBREAK §Debug-hook, pattern 3).
 //
 // Low-tier `bun_safety` cannot name `bun_crash_handler` / `bun_bundler` /
-// `bun_runtime::allocators` directly (upward edges). Stack-dump goes via
-// link-time `extern "Rust"` (single provider); allocator predicates remain
-// runtime-registered AtomicPtr slots (multi-provider — folds 8 higher-tier
-// `is_instance` checks).
+// `bun_runtime::allocators` directly (upward edges). Instead we expose
+// AtomicPtr<()> slots that `bun_runtime::init()` populates with erased
+// fn-ptrs at startup. Calls through an unset hook are no-ops.
 // ──────────────────────────────────────────────────────────────────────────
 
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-unsafe extern "Rust" {
-    /// `bun_crash_handler::dump_stack_trace` (frame_count=10, stop_at_jsc_llint=true).
-    /// Body is `#[no_mangle]` in `bun_crash_handler`; link-time resolved.
-    fn __bun_safety_dump_stack(trace: &bun_core::StoredTrace);
-}
+/// Erased signature: `unsafe fn(trace: &bun_core::StoredTrace)`.
+/// Provider: `bun_crash_handler::dump_stack_trace` (frame_count=10, stop_at_jsc_llint=true).
+pub static DUMP_STACK: AtomicPtr<()> = AtomicPtr::new(null_mut());
 
 /// Erased signature: `unsafe fn(alloc: bun_alloc::StdAllocator) -> bool`.
 ///
@@ -44,11 +41,16 @@ pub static ALLOC_HAS_PTR: AtomicPtr<()> = AtomicPtr::new(null_mut());
 /// Provider: `bun_runtime::allocators::mimalloc_arena::is_instance`.
 pub static IS_MIMALLOC_ARENA: AtomicPtr<()> = AtomicPtr::new(null_mut());
 
-/// Symbolicate and print a captured `StoredTrace` via `bun_crash_handler`.
+/// Call through `DUMP_STACK` if registered; no-op otherwise.
 #[inline]
 pub fn dump_stored_trace(trace: &bun_core::StoredTrace) {
-    // SAFETY: link-time `extern "Rust"`; body in `bun_crash_handler` only reads `trace`.
-    unsafe { __bun_safety_dump_stack(trace) };
+    let p = DUMP_STACK.load(Ordering::Relaxed);
+    if p.is_null() {
+        return;
+    }
+    // SAFETY: `bun_runtime::init()` stores a fn ptr with this exact signature.
+    let f: unsafe fn(&bun_core::StoredTrace) = unsafe { core::mem::transmute(p) };
+    unsafe { f(trace) };
 }
 
 /// Call through an allocator-predicate hook if registered; `false` otherwise.

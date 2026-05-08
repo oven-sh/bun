@@ -15,14 +15,15 @@ use crate::{USE_MIMALLOC, debug_allocator_data}; // B-1 stubs (real consts ungat
 use crate::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Link-time hooks (PORTING.md §Dispatch — `extern "Rust"`, linker resolves).
+// Debug-hook registration (CYCLEBREAK §Debug-hook)
+// Low tier defines the hook; bun_runtime::init() writes the fn-ptr.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Set by `bun_crash_handler` at startup. No-op if null.
+pub static RESET_SEGV: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
 unsafe extern "Rust" {
-    /// `bun.crash_handler.resetSegfaultHandler` — restore `SIG_DFL` for the
-    /// fatal signals before re-raising. Body is `#[no_mangle]` in
-    /// `bun_crash_handler`; link-time resolved.
-    fn __bun_reset_segfault_handler();
     /// `bun.jsc.Node.FSEvents.closeAndWait()` — flush the macOS FSEvents
     /// CFRunLoop thread before process exit (spec `Global.zig:220`). Body is
     /// `#[no_mangle]` in `bun_runtime::node::fs_events`; link-time resolved.
@@ -577,9 +578,12 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     Output::flush();
     Output::source::stdio::restore();
 
-    // clear segfault handler — link-time `extern "Rust"` into bun_crash_handler.
-    // SAFETY: body is `reset_segfault_handler()`; signal-safe (writes SIG_DFL via sigaction).
-    unsafe { __bun_reset_segfault_handler() };
+    // clear segfault handler — via debug-hook (CYCLEBREAK pattern 3).
+    // SAFETY: hook is either null (no-op) or a valid `fn()` written by crash_handler init.
+    let hook = RESET_SEGV.load(Ordering::Relaxed);
+    if !hook.is_null() {
+        unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };
+    }
 
     // clear signal handler
     #[cfg(not(windows))]

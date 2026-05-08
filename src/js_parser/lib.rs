@@ -1598,10 +1598,12 @@ impl RuntimeTranspilerCache {
 // and layers the table-backed `init` / json-parse on top via an extension
 // trait — those bodies need `defines_table` / `bun_interchange` which sit a
 // tier above js_parser. The fallback table lookup in `for_identifier` is
-// reached via the `__bun_pure_global_identifier_lookup` link-time hook that
-// bundler defines (PORTING.md §Dispatch — exactly one impl exists, so the
-// linker is the registry; the Zig original inlined the static map).
+// reached via the `PURE_GLOBAL_IDENTIFIER_LOOKUP` hook that bundler registers
+// once at startup (PORTING.md §Dispatch — cold path, one indirect call per
+// unbound-identifier visit; the Zig original inlined the static map).
 pub mod defines {
+    use std::sync::OnceLock;
+
     use bun_collections::{StringArrayHashMap, StringHashMap};
     use bun_string::strings;
 
@@ -1616,14 +1618,13 @@ pub mod defines {
 
     pub type IdentifierDefine = DefineData;
 
-    unsafe extern "Rust" {
-        /// `bun_bundler::defines_table::PURE_GLOBAL_IDENTIFIER_MAP.get(name)` —
-        /// link-time hook so the parser can probe the bundler's static
-        /// pure-global table without depending on `bun_bundler`. Body is
-        /// `#[no_mangle]` in `bun_bundler::defines`.
-        // PERF(port): was direct comptime-map probe; now one direct call (LTO-inlinable).
-        fn __bun_pure_global_identifier_lookup(name: &[u8]) -> Option<&'static IdentifierDefine>;
-    }
+    /// Hook: `bun_bundler::defines_table::PURE_GLOBAL_IDENTIFIER_MAP` lookup.
+    /// Set once by the bundler's `Define::init`. `None` ⇒ no global fallback
+    /// (matches Zig when the table is compiled out).
+    // PERF(port): was direct comptime-map probe.
+    pub static PURE_GLOBAL_IDENTIFIER_LOOKUP: OnceLock<
+        fn(&[u8]) -> Option<&'static IdentifierDefine>,
+    > = OnceLock::new();
 
     #[derive(Clone)]
     pub struct DotDefine {
@@ -1858,9 +1859,8 @@ pub mod defines {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
-            // Table fallback via link-time hook (`bun_bundler::defines`).
-            // SAFETY: `extern "Rust"` body is a `phf::Map::get` on a static table.
-            unsafe { __bun_pure_global_identifier_lookup(name) }
+            // Table fallback via hook (registered by bun_bundler::defines).
+            PURE_GLOBAL_IDENTIFIER_LOOKUP.get().and_then(|f| f(name))
         }
 
         // Zig: `comptime Iterator: type, iter: Iterator` — type param dropped.

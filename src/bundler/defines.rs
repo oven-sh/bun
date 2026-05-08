@@ -23,12 +23,12 @@ use crate::defines_table::{
 // crate adds the table-backed `init` / json-parse / dotenv-vtable bodies that
 // need `defines_table` / `bun_interchange` / `bun_dotenv` (all tiered above
 // js_parser) via the `DefineExt` / `DefineDataExt` extension traits below, and
-// defines the `__bun_pure_global_identifier_lookup` link-time hook so the
-// parser-side `for_identifier` falls back to the comptime map.
+// registers the `PURE_GLOBAL_IDENTIFIER_LOOKUP` hook so the parser-side
+// `for_identifier` falls back to the comptime map.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
     are_parts_equal, Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines,
-    UserDefines, UserDefinesArray,
+    UserDefines, UserDefinesArray, PURE_GLOBAL_IDENTIFIER_LOOKUP,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`
@@ -170,12 +170,8 @@ pub fn env_define_json_store_ref(store: &mut RawDefines) -> bun_dotenv::DefineSt
 // Extension impls — bodies that need `defines_table` / `bun_interchange`.
 // ══════════════════════════════════════════════════════════════════════════
 
-/// Link-time provider for `bun_js_parser::defines::__bun_pure_global_identifier_lookup`
-/// (PORTING.md §Dispatch — `extern "Rust"`, linker is the registry). Probes the
-/// static `PURE_GLOBAL_IDENTIFIER_MAP` so the parser-side `for_identifier`
-/// matches Zig behavior without `js_parser → bundler` dep.
-#[unsafe(no_mangle)]
-pub fn __bun_pure_global_identifier_lookup(name: &[u8]) -> Option<&'static IdentifierDefine> {
+/// Hook body for `bun_js_parser::defines::PURE_GLOBAL_IDENTIFIER_LOOKUP`.
+fn pure_global_identifier_lookup(name: &[u8]) -> Option<&'static IdentifierDefine> {
     table::PURE_GLOBAL_IDENTIFIER_MAP.get(name).map(|id| id.value())
 }
 
@@ -229,6 +225,11 @@ impl DefineExt for Define {
         drop_debugger: bool,
         omit_unused_global_calls: bool,
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
+        // Register the table-fallback hook so the parser-side `for_identifier`
+        // matches Zig behavior. Idempotent — `OnceLock::set` is a no-op after
+        // the first call.
+        let _ = PURE_GLOBAL_IDENTIFIER_LOOKUP.set(pure_global_identifier_lookup);
+
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),

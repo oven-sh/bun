@@ -49,15 +49,6 @@ pub static CURRENT_TIME: CurrentTime = CurrentTime {
     date_now_offset: AtomicU64::new(0f64.to_bits()),
 };
 
-/// Link-time provider for `bun_core::__bun_timespec_now_mocked` (PORTING.md
-/// §Dispatch). Mirrors Zig's
-/// `bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()` in
-/// `bun.getRoughTickCount(.allow_mocked_time)`.
-#[unsafe(no_mangle)]
-pub fn __bun_timespec_now_mocked() -> Option<Timespec> {
-    CURRENT_TIME.get_timespec_now()
-}
-
 impl CurrentTime {
     pub fn get_timespec_now(&self) -> Option<Timespec> {
         let value = *self.offset_raw.read().unwrap();

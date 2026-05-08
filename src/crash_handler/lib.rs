@@ -1240,13 +1240,24 @@ pub fn init() {
         reset_on_posix();
     }
     // TODO(port): wasm @compileError("TODO")
+
+    install_hooks();
 }
 
-/// Link-time provider for `bun_core::Global::__bun_reset_segfault_handler`
-/// (PORTING.md §Dispatch — `extern "Rust"`, linker is the registry).
-#[unsafe(no_mangle)]
-pub fn __bun_reset_segfault_handler() {
-    reset_segfault_handler();
+/// One-shot hook registration into lower-tier crates (CYCLEBREAK §Debug-hook).
+///
+/// `bun_core` cannot depend on `crash_handler` (T0 → T3 would cycle), so it
+/// exposes `Global::RESET_SEGV: AtomicPtr<()>` and calls through it as a
+/// no-op-if-null thunk. We populate it here at startup. The remaining
+/// `DUMP_STACK` hooks (`bun_safety` / `bun_ptr` / `bun_sys`) are written by
+/// `bun_runtime::init()` using the `dump_stack_hook_for_*` shims below — those
+/// crates sit beside or above us in the tier graph, so the registrant lives at
+/// T6.
+pub fn install_hooks() {
+    Global::RESET_SEGV.store(
+        reset_segfault_handler as fn() as *mut (),
+        Ordering::Relaxed,
+    );
 }
 
 pub fn reset_segfault_handler() {
@@ -2397,14 +2408,16 @@ pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStack
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Link-time providers for lower-tier `extern "Rust"` dump-stack hooks
-// (PORTING.md §Dispatch). Lower crates (`bun_sys` / `bun_safety` / `bun_ptr`)
-// declare these; we are the sole `#[no_mangle]` definer.
+// Hook-provider shims (CYCLEBREAK §Debug-hook). `bun_runtime::init()` stores
+// these fn-ptrs into the lower-tier `DUMP_STACK` AtomicPtr slots; the lower
+// tiers transmute back to the exact signatures below and call through.
+// PERF(port): was direct call — one indirect call on a cold debug/diagnostic
+// path is acceptable.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Provider for `bun_sys::__bun_sys_dump_stack`.
-#[unsafe(no_mangle)]
-pub fn __bun_sys_dump_stack(
+/// Provider for `bun_sys::DUMP_STACK`.
+/// Erased signature: `unsafe fn(Option<usize>, u32, bool)`.
+pub unsafe fn dump_stack_hook_for_sys(
     return_address: Option<usize>,
     frame_count: u32,
     stop_at_jsc_llint: bool,
@@ -2416,11 +2429,11 @@ pub fn __bun_sys_dump_stack(
     });
 }
 
-/// Provider for `bun_safety::__bun_safety_dump_stack`.
+/// Provider for `bun_safety::DUMP_STACK`.
+/// Erased signature: `unsafe fn(&bun_core::StoredTrace)`.
 /// Uses the fixed limits the allocator-safety call sites want
 /// (`frame_count = 10`, `stop_at_jsc_llint = true`).
-#[unsafe(no_mangle)]
-pub fn __bun_safety_dump_stack(stored: &bun_core::StoredTrace) {
+pub unsafe fn dump_stack_hook_for_safety(stored: &bun_core::StoredTrace) {
     let addrs = stored.data;
     let stack = StackTrace { index: stored.index, instruction_addresses: &addrs };
     dump_stack_trace(&stack, WriteStackTraceLimits {
@@ -2430,10 +2443,10 @@ pub fn __bun_safety_dump_stack(stored: &bun_core::StoredTrace) {
     });
 }
 
-/// Provider for `bun_ptr::__bun_ptr_dump_stack`.
+/// Provider for `bun_ptr::DUMP_STACK`.
+/// Erased signature: `unsafe fn(*const bun_core::StoredTrace, usize)`.
 /// `stored == null` ⇒ capture the live stack starting at `ret_addr`.
-#[unsafe(no_mangle)]
-pub fn __bun_ptr_dump_stack(stored: *const bun_core::StoredTrace, ret_addr: usize) {
+pub unsafe fn dump_stack_hook_for_ptr(stored: *const bun_core::StoredTrace, ret_addr: usize) {
     if stored.is_null() {
         dump_current_stack_trace(
             if ret_addr == 0 { None } else { Some(ret_addr) },

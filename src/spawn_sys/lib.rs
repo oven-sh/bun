@@ -139,19 +139,28 @@ pub mod waiter_thread_flag {
 // "no".
 // ──────────────────────────────────────────────────────────────────────────
 pub mod pdeathsig {
-    unsafe extern "Rust" {
-        /// `bun_aio::ParentDeathWatchdog::should_default_spawn_pdeathsig` —
-        /// whether the no-orphans watchdog is armed *and* the current thread is
-        /// the install thread. Body is `#[no_mangle]` in `bun_aio`; link-time
-        /// resolved. Returns `false` until `enable()` is called.
-        fn __bun_spawn_should_default_pdeathsig() -> bool;
+    use core::sync::atomic::{AtomicPtr, Ordering};
+
+    type Hook = fn() -> bool;
+
+    static HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// Installed by `bun_aio::ParentDeathWatchdog::install()`.
+    pub fn set_hook(f: Hook) {
+        HOOK.store(f as *mut (), Ordering::Release);
     }
 
     #[inline]
     pub(crate) fn should_default() -> bool {
-        // SAFETY: link-time `extern "Rust"`; body in `bun_aio` reads two
-        // atomics + a `OnceLock<ThreadId>`; no preconditions.
-        unsafe { __bun_spawn_should_default_pdeathsig() }
+        let p = HOOK.load(Ordering::Acquire);
+        if p.is_null() {
+            return false;
+        }
+        // SAFETY: `p` was stored from a `fn() -> bool` in `set_hook`; fn
+        // pointers are word-sized and `*mut ()` round-trips them on every
+        // supported target.
+        let f: Hook = unsafe { core::mem::transmute::<*mut (), Hook>(p) };
+        f()
     }
 }
 

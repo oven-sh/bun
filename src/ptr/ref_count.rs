@@ -11,7 +11,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
 // MOVE_DOWN(b0): was bun_crash_handler::StoredTrace — type moves to bun_core.
 use bun_core::StoredTrace;
@@ -39,21 +39,22 @@ use std::collections::HashMap;
 type ArrayHashMap<K, V> = HashMap<K, V>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Upward link-time hook (PORTING.md §Dispatch — `extern "Rust"`).
+// Debug-hook (CYCLEBREAK §Debug-hook registration): set by
+// `bun_runtime::init()` → `crash_handler::dump_stack_trace`. Null = no-op.
 // ──────────────────────────────────────────────────────────────────────────
 
-unsafe extern "Rust" {
-    /// `bun_crash_handler` — symbolicating stack dump for ref-count diagnostics.
-    /// `trace == null` ⇒ capture the live stack starting at `ret_addr`. Body is
-    /// `#[no_mangle]` in `bun_crash_handler`; link-time resolved.
-    fn __bun_ptr_dump_stack(trace: *const StoredTrace, ret_addr: usize);
-}
+/// fn-ptr signature: `unsafe fn(trace: *const StoredTrace /* null = current */, ret_addr: usize)`
+pub static DUMP_STACK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 #[inline]
 fn dump_stack_hook(trace: *const StoredTrace, ret_addr: usize) {
-    // SAFETY: link-time `extern "Rust"`; body in `bun_crash_handler` accepts
-    // null `trace` (captures live stack) and any `ret_addr`.
-    unsafe { __bun_ptr_dump_stack(trace, ret_addr) };
+    let p = DUMP_STACK.load(Ordering::Relaxed);
+    if p.is_null() {
+        return;
+    }
+    // SAFETY: `bun_runtime::init()` stores a fn-ptr matching this signature.
+    let f: unsafe fn(*const StoredTrace, usize) = unsafe { core::mem::transmute(p) };
+    unsafe { f(trace, ret_addr) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

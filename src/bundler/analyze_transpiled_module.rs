@@ -412,7 +412,9 @@ impl ModuleInfoExt for ModuleInfo {
         // `ModuleInfo` during `finalize()`. The Rust printer-crate `ModuleInfo`
         // exposes a borrowed `as_deserialized()` instead; here we materialise the
         // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
-        let _ = self.finalize();
+        if !self.finalized {
+            let _ = self.finalize();
+        }
         // PORT NOTE: reshaped for borrowck — capture raw pointers before
         // `Box::into_raw(self)` consumes the box.
         let (strings_buf, strings_lens, rm_keys, rm_values, buffer, record_kinds, flags);

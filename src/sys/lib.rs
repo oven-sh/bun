@@ -795,11 +795,11 @@ pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
 /// call on the same thread; both C++ callers consume it immediately.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
-    // `SystemErrno::init` has a per-target signature: i64 on Linux, i32 on
-    // macOS, `impl Into<i32>` on FreeBSD, generic `SystemErrnoInit` on Windows.
+    // `SystemErrno::init` has a per-target signature: `i64` on every POSIX
+    // target (Linux/Darwin/FreeBSD), generic `SystemErrnoInit` on Windows.
     // Feed it the widest signed int and let each impl narrow.
-    #[cfg(target_os = "linux")] let code = err as i64;
-    #[cfg(not(target_os = "linux"))] let code = err;
+    #[cfg(unix)] let code = err as i64;
+    #[cfg(windows)] let code = err;
     let Some(e) = SystemErrno::init(code) else {
         return core::ptr::null();
     };
@@ -2195,7 +2195,7 @@ mod posix_impl {
             };
             // CLOEXEC first (sys.zig:3173).
             for &fd in &fds {
-                if let Err(e) = set_close_on_exec(Fd::from_system(fd)) {
+                if let Err(e) = set_close_on_exec(Fd::from_native(fd)) {
                     return close_both(e);
                 }
             }
@@ -3671,8 +3671,8 @@ pub mod c {
         COPYFILE_CHECK, COPYFILE_EXCL, COPYFILE_NOFOLLOW_SRC,
         COPYFILE_NOFOLLOW_DST, COPYFILE_MOVE, COPYFILE_UNLINK,
         COPYFILE_NOFOLLOW, COPYFILE_CLONE, COPYFILE_CLONE_FORCE,
-        // <sys/sysctl.h>
-        sysctl, sysctlbyname, sysctlnametomib,
+        // <sys/sysctl.h> — `sysctlbyname` already re-exported above for all BSDs.
+        sysctl, sysctlnametomib,
         // <mach/*.h> — host/processor/vm primitives for `os.cpus()` & memory stats
         natural_t, integer_t, mach_port_t, mach_msg_type_number_t,
         host_processor_info, host_statistics64,
@@ -3682,20 +3682,14 @@ pub mod c {
         PROCESSOR_CPU_LOAD_INFO, HOST_VM_INFO64, HOST_VM_INFO64_COUNT,
         CPU_STATE_USER, CPU_STATE_SYSTEM, CPU_STATE_IDLE, CPU_STATE_NICE,
         CPU_STATE_MAX,
-        // <net/if_dl.h>
-        sockaddr_dl,
+        // <net/if_dl.h> — `sockaddr_dl` already re-exported above for all BSDs.
         // misc libc
         truncate, _NSGetEnviron,
         // <string.h> Apple extensions
         memset_pattern4, memset_pattern8, memset_pattern16,
     };
-    /// `UTIME_NOW` — `<sys/stat.h>` sentinel for `utimensat`/`futimens`.
-    /// libc crate omits it on Apple; value is `-1` per the header.
-    #[cfg(target_os = "macos")]
-    pub const UTIME_NOW: core::ffi::c_long = -1;
-    /// `UTIME_OMIT` — companion sentinel.
-    #[cfg(target_os = "macos")]
-    pub const UTIME_OMIT: core::ffi::c_long = -2;
+    // `UTIME_NOW`/`UTIME_OMIT` — already re-exported via `pub use super::UTIME_NOW`
+    // (top-level `#[cfg(unix)]` consts cast `libc::UTIME_NOW`/`_OMIT` to i64).
     /// `PROCESSOR_CPU_LOAD_INFO_COUNT` — sizeof(processor_cpu_load_info)/sizeof(natural_t).
     /// Not bound by `libc`; <mach/processor_info.h>.
     #[cfg(target_os = "macos")]
@@ -5662,8 +5656,6 @@ pub mod posix {
         if rc != 0 { return Err(super::err_with(super::Tag::TODO)); }
         Ok(())
     }
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))]
-    pub use libc::timeval;
 
     // ── address families (Zig: `std.posix.AF`) ──
     // `libc` does not expose `AF_*` on `x86_64-pc-windows-msvc`; route through
@@ -5726,25 +5718,6 @@ pub mod posix {
     #[cfg(unix)] pub use libc::timespec;
     #[cfg(unix)] pub use libc::timeval;
 
-    /// `std.posix.sysctlbynameZ` — Maybe-wrapped sysctl by name (Darwin/BSD).
-    /// `oldp`/`oldlenp` are out-params; `newp`/`newlen` set a new value (rare).
-    #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
-    #[inline]
-    pub fn sysctlbyname(
-        name: &core::ffi::CStr,
-        oldp: *mut c_void,
-        oldlenp: *mut usize,
-        newp: *mut c_void,
-        newlen: usize,
-    ) -> super::Maybe<()> {
-        // SAFETY: name is NUL-terminated; oldp/oldlenp/newp validity is the
-        // caller's responsibility (matches Zig std.posix.sysctlbynameZ).
-        let rc = unsafe { libc::sysctlbyname(name.as_ptr(), oldp, oldlenp, newp, newlen) };
-        if rc != 0 {
-            return Err(super::Error::from_code(super::get_errno(rc), super::Tag::TODO));
-        }
-        Ok(())
-    }
     #[cfg(windows)]
     #[repr(C)] #[derive(Clone, Copy, Default)]
     pub struct timespec { pub tv_sec: i64, pub tv_nsec: i64 }

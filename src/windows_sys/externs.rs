@@ -92,6 +92,23 @@ pub struct BY_HANDLE_FILE_INFORMATION {
     pub nFileIndexLow: DWORD,
 }
 
+/// `WIN32_FILE_ATTRIBUTE_DATA` — out-param of `GetFileAttributesExW` (fileapi.h).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct WIN32_FILE_ATTRIBUTE_DATA {
+    pub dwFileAttributes: DWORD,
+    pub ftCreationTime: FILETIME,
+    pub ftLastAccessTime: FILETIME,
+    pub ftLastWriteTime: FILETIME,
+    pub nFileSizeHigh: DWORD,
+    pub nFileSizeLow: DWORD,
+}
+
+/// `GET_FILEEX_INFO_LEVELS` — enum(u32) selecting `GetFileAttributesExW` payload.
+pub type GET_FILEEX_INFO_LEVELS = u32;
+pub const GetFileExInfoStandard: GET_FILEEX_INFO_LEVELS = 0;
+pub const GetFileExMaxInfoLevel: GET_FILEEX_INFO_LEVELS = 1;
+
 /// Mirrors `std.os.windows.FILE_INFO_BY_HANDLE_CLASS` (`enum(u32)`).
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
 
@@ -1248,6 +1265,8 @@ unsafe extern "system" {
     pub fn SetEndOfFile(hFile: HANDLE) -> BOOL;
 
     pub fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *mut FILETIME, out_lpExitTime: *mut FILETIME, out_lpKernelTime: *mut FILETIME, out_lpUserTime: *mut FILETIME) -> BOOL;
+
+    pub fn GetFileAttributesExW(lpFileName: LPCWSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID) -> BOOL;
 }
 
 unsafe extern "C" {

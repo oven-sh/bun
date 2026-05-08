@@ -184,7 +184,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
         // SAFETY: see on_write. Shared-only read of event_loop_handle.
         unsafe { (*this).io_evtloop() }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // SAFETY: see on_write. Shared-only read of event_loop_handle.
         unsafe { (*this).event_loop_handle.r#loop() }
     }

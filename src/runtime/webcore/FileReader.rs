@@ -271,7 +271,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
         FileReader::on_reader_error(unsafe { &mut *this }, err)
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Raw `addr_of!` projection — no `&Self` materialized (reader field may
         // be borrowed mutably by the caller). Spec FileReader.zig:161-165.
         // SAFETY: `this` is non-null/live per trait contract; `event_loop` is

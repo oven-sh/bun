@@ -356,7 +356,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
         unsafe { (*this).on_reader_error(err) };
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         unsafe { (*this).io_evtloop() }.loop_().cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {

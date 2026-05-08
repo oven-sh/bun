@@ -6650,7 +6650,7 @@ impl NodeFS {
     pub fn _copy_single_file_sync(
         &mut self,
         src: &OSPathSliceZ, dest: &OSPathSliceZ, mode: constants::Copyfile,
-        /// Stat on posix, file attributes on windows
+        // Stat on posix, file attributes on windows
         #[cfg(windows)] reuse_stat: Option<windows::DWORD>,
         #[cfg(not(windows))] reuse_stat: Option<sys::Stat>,
         args: &args::Cp,

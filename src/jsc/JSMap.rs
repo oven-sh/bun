@@ -6,7 +6,7 @@ use crate::{JSGlobalObject, JSValue, JsError, JsResult};
 /// Opaque type for working with JavaScript `Map` objects.
 #[repr(C)]
 pub struct JSMap {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

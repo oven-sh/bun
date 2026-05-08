@@ -7,13 +7,13 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 /// Nomicon extern-type pattern: zero-sized, `!Send + !Sync + !Unpin`.
 #[repr(C)]
 pub struct MarkedArgumentBuffer {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    fn MarkedArgumentBuffer__append(args: *mut MarkedArgumentBuffer, value: JSValue);
+    safe fn MarkedArgumentBuffer__append(args: &MarkedArgumentBuffer, value: JSValue);
     fn MarkedArgumentBuffer__run(
         ctx: *mut c_void,
         f: extern "C" fn(ctx: *mut c_void, args: *mut c_void),
@@ -40,9 +40,7 @@ impl MarkedArgumentBuffer {
     }
 
     pub fn append(&mut self, value: JSValue) {
-        // SAFETY: `self` is a valid `*mut MarkedArgumentBuffer` by construction (only ever
-        // obtained from C++ via `MarkedArgumentBuffer__run`'s callback).
-        unsafe { MarkedArgumentBuffer__append(self, value) }
+        MarkedArgumentBuffer__append(self, value)
     }
 
     pub fn run<T>(

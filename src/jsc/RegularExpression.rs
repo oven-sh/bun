@@ -5,7 +5,7 @@ use bun_string::String as BunString;
 /// Opaque FFI handle for `JSC::Yarr::RegularExpression`.
 #[repr(C)]
 pub struct RegularExpression {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -37,14 +37,20 @@ impl From<RegularExpressionError> for bun_core::Error {
 }
 
 // TODO(port): move to bun_jsc_sys
+//
+// `RegularExpression` is an opaque `UnsafeCell`-backed ZST handle, so
+// `&RegularExpression` is ABI-identical to a non-null `*const` and C++ mutating
+// internal Yarr state through it is interior mutation invisible to Rust. The
+// query/compile shims are therefore declared `safe fn`; only `deinit` (which
+// frees the allocation) keeps a raw `*mut` and stays `unsafe`.
 unsafe extern "C" {
-    fn Yarr__RegularExpression__init(pattern: BunString, flags: u16) -> *mut RegularExpression;
+    safe fn Yarr__RegularExpression__init(pattern: BunString, flags: u16) -> *mut RegularExpression;
     fn Yarr__RegularExpression__deinit(pattern: *mut RegularExpression);
-    fn Yarr__RegularExpression__isValid(this: *mut RegularExpression) -> bool;
-    fn Yarr__RegularExpression__matchedLength(this: *mut RegularExpression) -> i32;
+    safe fn Yarr__RegularExpression__isValid(this: &RegularExpression) -> bool;
+    safe fn Yarr__RegularExpression__matchedLength(this: &RegularExpression) -> i32;
     // C++: int Yarr__RegularExpression__searchRev(RegularExpression*, BunString) (bindings/RegularExpression.cpp:30)
-    fn Yarr__RegularExpression__searchRev(this: *mut RegularExpression, string: BunString) -> i32;
-    fn Yarr__RegularExpression__matches(this: *mut RegularExpression, string: BunString) -> i32;
+    safe fn Yarr__RegularExpression__searchRev(this: &RegularExpression, string: BunString) -> i32;
+    safe fn Yarr__RegularExpression__matches(this: &RegularExpression, string: BunString) -> i32;
 }
 
 impl RegularExpression {
@@ -53,8 +59,7 @@ impl RegularExpression {
         pattern: BunString,
         flags: Flags,
     ) -> Result<*mut RegularExpression, RegularExpressionError> {
-        // SAFETY: FFI call into JSC Yarr; `pattern` is #[repr(C)] and passed by value.
-        let regex = unsafe { Yarr__RegularExpression__init(pattern, flags as u16) };
+        let regex = Yarr__RegularExpression__init(pattern, flags as u16);
         // SAFETY: Yarr__RegularExpression__init always returns a non-null heap allocation.
         let regex_ref = unsafe { &mut *regex };
         if !regex_ref.is_valid() {
@@ -68,8 +73,7 @@ impl RegularExpression {
 
     #[inline]
     pub fn is_valid(&mut self) -> bool {
-        // SAFETY: `self` is a valid live Yarr RegularExpression handle.
-        unsafe { Yarr__RegularExpression__isValid(self) }
+        Yarr__RegularExpression__isValid(self)
     }
 
     // Reserving `match` for a full match result.
@@ -80,20 +84,17 @@ impl RegularExpression {
     /// Simple boolean matcher
     #[inline]
     pub fn matches(&mut self, str: BunString) -> bool {
-        // SAFETY: `self` is a valid live Yarr RegularExpression handle.
-        unsafe { Yarr__RegularExpression__matches(self, str) >= 0 }
+        Yarr__RegularExpression__matches(self, str) >= 0
     }
 
     #[inline]
     pub fn search_rev(&mut self, str: BunString) -> i32 {
-        // SAFETY: `self` is a valid live Yarr RegularExpression handle.
-        unsafe { Yarr__RegularExpression__searchRev(self, str) }
+        Yarr__RegularExpression__searchRev(self, str)
     }
 
     #[inline]
     pub fn matched_length(&mut self) -> i32 {
-        // SAFETY: `self` is a valid live Yarr RegularExpression handle.
-        unsafe { Yarr__RegularExpression__matchedLength(self) }
+        Yarr__RegularExpression__matchedLength(self)
     }
 
     /// Destroys the FFI-allocated handle. Caller must not use `this` afterwards.

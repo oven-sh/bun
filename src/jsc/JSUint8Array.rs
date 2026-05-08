@@ -7,7 +7,7 @@ use crate::{JSGlobalObject, JSValue};
 /// Opaque FFI handle for a JSC `JSUint8Array` cell.
 #[repr(C)]
 pub struct JSUint8Array {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

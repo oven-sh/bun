@@ -113,7 +113,7 @@ impl Drop for Route {
 /// Opaque handle to the C++ `InspectorHTTPServerAgent`.
 #[repr(C)]
 pub struct InspectorHTTPServerAgent {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

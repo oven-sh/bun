@@ -9,8 +9,8 @@ use bun_string::{String as BunString, ZigString};
 unsafe extern "C" {
     static JSC__JSObject__maxInlineCapacity: c_uint;
 
-    fn JSC__JSObject__getIndex(this: JSValue, global_this: *mut JSGlobalObject, i: u32) -> JSValue;
-    fn Bun__JSObject__getCodePropertyVMInquiry(global: *mut JSGlobalObject, obj: *mut JSObject) -> JSValue;
+    safe fn JSC__JSObject__getIndex(this: JSValue, global_this: &JSGlobalObject, i: u32) -> JSValue;
+    safe fn Bun__JSObject__getCodePropertyVMInquiry(global: &JSGlobalObject, obj: &JSObject) -> JSValue;
     fn JSC__createStructure(
         global: *mut JSGlobalObject,
         owner: *mut JSCell,
@@ -38,7 +38,7 @@ unsafe extern "C" {
 /// Opaque JSC `JSObject` cell handle. Always borrowed (`&JSObject` / `&mut JSObject`).
 #[repr(C)]
 pub struct JSObject {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -198,10 +198,7 @@ impl JSObject {
         // with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
         // TODO(b2-blocked): TopExceptionScope::init is in-place (Pin); skipped in stub path.
-        // SAFETY: thin FFI shim into JSC. `global_this.as_ptr()` yields the raw
-        // opaque handle; C++ may set a pending exception (interior mut) but
-        // Rust never materializes a `&`-view of that state.
-        let value = unsafe { JSC__JSObject__getIndex(this, global_this.as_ptr(), i) };
+        let value = JSC__JSObject__getIndex(this, global_this, i);
         if global_this.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -237,10 +234,7 @@ impl JSObject {
 
     /// This will not call getters or be observable from JavaScript.
     pub fn get_code_property_vm_inquiry(&mut self, global: &JSGlobalObject) -> Option<JSValue> {
-        // SAFETY: thin FFI shim into JSC; does not throw. `global.as_ptr()`
-        // yields the raw opaque handle (VMInquiry is read-only on the JS side,
-        // but the C++ signature is non-const; centralized via `as_ptr()`).
-        let v = unsafe { Bun__JSObject__getCodePropertyVMInquiry(global.as_ptr(), self) };
+        let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;
         }

@@ -15,7 +15,7 @@ pub enum WeakRefType {
 /// Opaque FFI handle (C++ `Bun::WeakRef`).
 #[repr(C)]
 pub struct WeakImpl {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

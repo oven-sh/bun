@@ -7,7 +7,7 @@ use crate::{JSGlobalObject, JSObject, JSValue};
 /// Opaque FFI handle for `JSC::JSCell`.
 #[repr(C)]
 pub struct JSCell {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -16,7 +16,7 @@ impl JSCell {
     /// Use `to_object` to mutate non-objects into objects.
     pub fn get_object(&self) -> Option<&JSObject> {
         // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
-        // SAFETY: FFI call; returned pointer (if non-null) borrows from `self`'s heap cell.
+        // SAFETY: returned pointer (if non-null) borrows from `self`'s heap cell.
         unsafe { JSC__JSCell__getObject(self).as_ref() }
     }
 
@@ -29,7 +29,7 @@ impl JSCell {
     /// - [ECMA-262 §7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
     pub fn to_object<'a>(&'a self, global: &'a JSGlobalObject) -> &'a JSObject {
         // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
-        // SAFETY: FFI call; C++ side never returns null for ToObject on a cell.
+        // SAFETY: C++ side never returns null for ToObject on a cell.
         unsafe { &*JSC__JSCell__toObject(self, global) }
     }
 
@@ -62,9 +62,13 @@ impl JSCell {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `JSCell`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
+// `&T` is ABI-identical to a non-null `*const T` and C++ mutating cell state
+// through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    fn JSC__JSCell__getObject(this: *const JSCell) -> *mut JSObject;
-    fn JSC__JSCell__toObject(this: *const JSCell, global: *const JSGlobalObject) -> *mut JSObject;
+    safe fn JSC__JSCell__getObject(this: &JSCell) -> *mut JSObject;
+    safe fn JSC__JSCell__toObject(this: &JSCell, global: &JSGlobalObject) -> *mut JSObject;
     // NOTE: this function always returns a JSType, but by using `u8` then
     // casting it via `@enumFromInt` we can ensure our `JSType` enum matches
     // WebKit's. This protects us from possible future breaking changes made

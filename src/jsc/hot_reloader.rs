@@ -390,7 +390,7 @@ fn flush_changed_paths_for_reload() {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn BunDebugger__willHotReload();
+    safe fn BunDebugger__willHotReload();
 }
 
 // TODO(port): in Zig this was a `pub var` inside the generic struct, giving one
@@ -602,8 +602,7 @@ where
 
         self.pending_count().fetch_add(1, Ordering::Relaxed);
 
-        // SAFETY: extern "C" fn with no preconditions.
-        unsafe { BunDebugger__willHotReload() };
+        BunDebugger__willHotReload();
         let that = bun_core::heap::into_raw(Box::new(Self {
             reloader: self.reloader,
             count: self.count,

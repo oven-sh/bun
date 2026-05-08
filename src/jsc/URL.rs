@@ -11,7 +11,7 @@ use bun_string::strings;
 /// Opaque handle to a WebKit `WTF::URL` allocated on the C++ side.
 #[repr(C)]
 pub struct URL {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

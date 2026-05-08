@@ -11,9 +11,9 @@ use core::ffi::c_int;
 unsafe extern "C" {
     fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
 
-    fn WTF__numberOfProcessorCores() -> c_int;
+    safe fn WTF__numberOfProcessorCores() -> c_int;
 
-    fn WTF__releaseFastMallocFreeMemoryForThisThread();
+    safe fn WTF__releaseFastMallocFreeMemoryForThisThread();
 
     fn WTF__parseES5Date(bytes: *const u8, length: usize) -> f64;
 
@@ -23,14 +23,12 @@ unsafe extern "C" {
 /// On Linux, this is min(sysconf(_SC_NPROCESSORS_ONLN), sched_getaffinity count, cgroup cpu.max quota).
 /// Result is cached after the first call.
 pub fn number_of_processor_cores() -> u32 {
-    // SAFETY: FFI call with no preconditions.
-    let n = unsafe { WTF__numberOfProcessorCores() };
+    let n = WTF__numberOfProcessorCores();
     u32::try_from(n.max(1)).expect("int cast")
 }
 
 pub fn release_fast_malloc_free_memory_for_this_thread() {
-    // SAFETY: FFI call with no preconditions.
-    unsafe { WTF__releaseFastMallocFreeMemoryForThisThread() };
+    WTF__releaseFastMallocFreeMemoryForThisThread();
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]

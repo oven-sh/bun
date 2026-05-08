@@ -9,7 +9,7 @@ use crate::ExceptionValidationScope;
 /// Opaque FFI handle for a JSC deferred work task (constructed/owned on the C++ side).
 #[repr(C)]
 pub struct JSCDeferredWorkTask {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

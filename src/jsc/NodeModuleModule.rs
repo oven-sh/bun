@@ -141,11 +141,14 @@ impl Default for CustomLoader {
 }
 
 // TODO(port): move to jsc_sys
+//
+// `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
+// params are by-value `JSValue`/scalars → `safe fn`.
 unsafe extern "C" {
-    pub fn JSCommonJSExtensions__appendFunction(global: *mut JSGlobalObject, value: JSValue) -> u32;
-    pub fn JSCommonJSExtensions__setFunction(global: *mut JSGlobalObject, index: u32, value: JSValue);
+    pub safe fn JSCommonJSExtensions__appendFunction(global: &JSGlobalObject, value: JSValue) -> u32;
+    pub safe fn JSCommonJSExtensions__setFunction(global: &JSGlobalObject, index: u32, value: JSValue);
     /// Returns the index of the last value, which must have it's references updated to `index`
-    pub fn JSCommonJSExtensions__swapRemove(global: *mut JSGlobalObject, index: u32) -> u32;
+    pub safe fn JSCommonJSExtensions__swapRemove(global: &JSGlobalObject, index: u32) -> u32;
 }
 
 // Memory management is complicated because JSValues are stored in gc-visitable

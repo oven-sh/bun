@@ -10,7 +10,7 @@ use bun_string::zig_string::Slice as ZigStringSlice;
 /// Opaque JSC `JSString*` cell. Never constructed in Rust; only handled by reference.
 #[repr(C)]
 pub struct JSString {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

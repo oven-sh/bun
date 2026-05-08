@@ -1263,9 +1263,16 @@ lexer_impl_header! {
 
     /// Non-ASCII tail of [`next_codepoint`]. Kept out-of-line so the hot
     /// ASCII path stays small enough to inline into every `step()` site.
-    /// `#[cold]` is intentionally omitted — non-ASCII source is uncommon in
-    /// the bundle bench but not pathological, and `cold` would pessimize
-    /// register allocation at the boundary.
+    ///
+    /// `#[cold]` is required: with fat LTO + `codegen-units = 1`, LLVM's
+    /// single-caller heuristic merges an `#[inline(never)]`-only callee back
+    /// into its sole caller, which then makes `next_codepoint` too large to
+    /// inline into `next()` (perf showed it as a separate ~2.6% symbol with
+    /// the multibyte decode folded in). `cold` parks this in `.text.unlikely`
+    /// and survives LTO's IPO inliner. The register-allocation concern from
+    /// the previous note is outweighed: non-ASCII bytes are <0.1% of the
+    /// three.js stream, and the alternative is a function call per byte.
+    #[cold]
     #[inline(never)]
     fn next_codepoint_multibyte(&mut self, first: u8) -> CodePoint {
         let contents: &[u8] = self.source.contents.as_ref();

@@ -26,6 +26,12 @@ pub struct MapEntry {
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,
+    /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow.
+    /// In Zig the duped path is stored as `entry.key_ptr.*` and `toSource`
+    /// is called on that same allocation, so the source's path slices stay
+    /// valid for the entry's lifetime. `StringHashMap` boxes its own key,
+    /// so keep the `dupeZ` alive here instead.
+    path_storage: bun_core::ZBox,
 }
 
 impl Default for MapEntry {
@@ -34,6 +40,7 @@ impl Default for MapEntry {
             root: Expr::default(),
             source: Source::default(),
             indentation: Indentation::default(),
+            path_storage: bun_core::ZBox::default(),
         }
     }
 }
@@ -153,7 +160,8 @@ impl WorkspacePackageJSONCache {
         // Zig: `allocator.dupeZ(u8, path)` — owned NUL-terminated copy reused
         // both as the map key and the path handed to `File.toSource`. The
         // returned `Source` *borrows* its `path` slices from this allocation,
-        // so it must outlive the cached `MapEntry` (forgotten on success below).
+        // so it must outlive the cached `MapEntry` (stored as
+        // `value.path_storage` below).
         let key = bun_core::ZBox::from_bytes(path);
 
         // MOVE_DOWN: `bun.sys.File.toSource` lives in `bun_logger` (T1 → T2
@@ -188,6 +196,9 @@ impl WorkspacePackageJSONCache {
             root: bun_core::handle_oom(parsed.root.deep_clone()),
             source,
             indentation: parsed.indentation,
+            // `source.path` borrows this allocation; the `Box<[u8]>` heap
+            // address is stable across the move into the map.
+            path_storage: key,
         };
 
         let entry = bun_core::handle_oom(self.map.get_or_put(path));
@@ -240,6 +251,7 @@ impl WorkspacePackageJSONCache {
             root: bun_core::handle_oom(parsed.root.deep_clone()),
             source: source.clone(),
             indentation: parsed.indentation,
+            path_storage: bun_core::ZBox::default(),
         };
 
         let entry = bun_core::handle_oom(self.map.get_or_put(path));

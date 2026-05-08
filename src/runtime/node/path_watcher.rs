@@ -116,18 +116,15 @@ impl PathWatcherManager {
             }
         }
 
-        let raw: *mut PathWatcherManager = Box::into_raw(Box::new(PathWatcherManager::default()));
-        // SAFETY: `raw` is the unique owner; not yet published.
-        if let Err(e) = Platform::init(unsafe { &mut *raw }) {
-            // SAFETY: paired with `Box::into_raw` above; not yet published.
-            unsafe { drop(Box::from_raw(raw)) };
+        let m = Box::leak(Box::new(PathWatcherManager::default()));
+        if let Err(e) = Platform::init(m) {
+            // SAFETY: `m` was just leaked from a Box and not yet published.
+            unsafe { drop(Box::from_raw(std::ptr::from_mut::<PathWatcherManager>(m))) };
             return Err(e);
         }
-        // SAFETY: holding DEFAULT_MANAGER_MUTEX; `raw` is process-lifetime
-        // hereafter (singleton; never freed once published).
-        unsafe { DEFAULT_MANAGER.write(Some(&*raw)) };
-        // SAFETY: just published; valid for `'static`.
-        Ok(unsafe { &*raw })
+        // SAFETY: holding DEFAULT_MANAGER_MUTEX.
+        unsafe { DEFAULT_MANAGER.write(Some(&*m)) };
+        Ok(&*m)
     }
 
     /// Build the dedup key into `buf`. Not null-terminated; only used as a hashmap key.

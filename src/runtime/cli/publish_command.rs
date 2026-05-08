@@ -329,11 +329,11 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let package_json_contents =
             maybe_package_json_contents.ok_or(FromTarballError::MissingPackageJSON)?;
 
-        // PORT NOTE: dupe `package_json_contents` into the process-lifetime CLI
-        // arena so the `Source` borrow stays alive across `normalized_package`
-        // (Zig held an arena slice).
+        // PORT NOTE: adopt `package_json_contents` (already an owned `Box<[u8]>`)
+        // into the process-lifetime side-table so the `Source` borrow stays
+        // alive across `normalized_package` (Zig held an arena slice). Zero-copy.
         let package_json_contents: &'static [u8] =
-            crate::cli::cli_dupe(&package_json_contents);
+            crate::cli::cli_adopt(package_json_contents);
 
         let bump = bun_alloc::Arena::new();
         let (package_name, package_version, json, json_source) = {
@@ -893,10 +893,11 @@ impl PublishCommand {
         }
 
         // PORT NOTE: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
-        // request body (Zig had no lifetimes). Single-shot CLI path — dupe
-        // into the process-lifetime CLI arena.
-        let publish_req_body: &'static [u8] = crate::cli::cli_dupe(
-            &Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
+        // request body (Zig had no lifetimes). Single-shot CLI path — adopt the
+        // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
+        // into the process-lifetime side-table. Zero-copy.
+        let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
+            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
         );
 
         let mut print_buf: Vec<u8> = Vec::new();

@@ -604,11 +604,9 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
             tracker: AsyncTaskTracker::init(vm),
         });
         // Transfer ownership to libuv: the box outlives the async request and is
-        // reclaimed in `destroy()` (run_from_js_thread → scopeguard).
-        let raw: *mut Self = Box::into_raw(task);
-        // SAFETY: `raw` is the unique owner until `destroy()` reconstitutes the
-        // Box; no other `&mut` to this allocation exists yet.
-        let task: &mut Self = unsafe { &mut *raw };
+        // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `Box::leak`
+        // is the safe spelling of this paired `into_raw`/`from_raw` hand-off.
+        let task: &mut Self = Box::leak(task);
         // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
         // event loop is the only one that owns AsyncFSTask/UVFSRequest.
         task.r#ref.ref_(js_event_loop_ctx());
@@ -617,7 +615,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         task.tracker.did_schedule(global_object);
 
         let loop_ = uv::Loop::get();
-        task.req.data = raw.cast::<c_void>();
+        task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
 
         // PORT NOTE: Zig's `comptime switch (FunctionEnum)` monomorphises this
         // to a single arm. Rust resolves the match at compile time too (`F` is
@@ -740,7 +738,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
     extern "C" fn uv_callback(req: *mut uv::fs_t) {
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
         scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
-        // SAFETY: req.data was set to the Box::into_raw'd `*mut Self` in create()
+        // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
         // SAFETY: req is the live libuv request passed to this callback
@@ -756,7 +754,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         // Same as uv_callback but passes `req` through to the dispatch fn (statfs needs req.ptr).
         // SAFETY: req points to a live uv::fs_t passed by libuv; cleanup is the documented pair
         scopeguard::defer! { unsafe { uv::uv_fs_req_cleanup(req) } };
-        // SAFETY: req.data was set to the Box::into_raw'd `*mut Self` in create()
+        // SAFETY: req.data was set to the Box::leak'd `*mut Self` in create()
         let this: &mut Self = unsafe { &mut *(*req).data.cast::<Self>() };
         let mut node_fs = NodeFS::default();
         // SAFETY: req is the live libuv request passed to this callback
@@ -767,7 +765,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: self was Box::into_raw'd in create(); destroy() runs exactly once on scope exit
+        // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
         let _deinit = scopeguard::guard(core::ptr::from_mut(self), |p| unsafe { Self::destroy(p) });
         // Move `result` out so the `global_object()` `&self` borrow can coexist
         // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
@@ -799,7 +797,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         Ok(())
     }
 
-    /// SAFETY: `this` must be the pointer Box::into_raw'd in `create()`; called exactly once.
+    /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
@@ -808,7 +806,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         this_ref.r#ref.unref(js_event_loop_ctx());
         this_ref.args.deinit_and_unprotect();
         this_ref.promise = JSPromiseStrong::default();
-        // SAFETY: paired with Box::into_raw in create()
+        // SAFETY: paired with Box::leak in create()
         drop(unsafe { Box::from_raw(this) });
     }
 }
@@ -1060,9 +1058,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         task.args.to_thread_safe();
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();
-        let raw: *mut Self = Box::into_raw(task);
-        // SAFETY: `raw` is the unique owner; reclaimed in `destroy()`.
-        WorkPool::schedule(unsafe { &raw mut (*raw).task });
+        WorkPool::schedule(&raw mut Box::leak(task).task);
         promise
     }
 
@@ -1092,7 +1088,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: self was Box::into_raw'd in create(); destroy() runs exactly once on scope exit
+        // SAFETY: self was Box::leak'd in create(); destroy() runs exactly once on scope exit
         let _deinit = scopeguard::guard(std::ptr::from_mut::<Self>(self), |p| unsafe { Self::destroy(p) });
         // Move `result` out so the `global_object()` `&self` borrow can coexist
         // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
@@ -1133,7 +1129,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         Ok(())
     }
 
-    /// SAFETY: `this` must be the pointer Box::into_raw'd in `create()`; called exactly once.
+    /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
@@ -1143,7 +1139,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         this_ref.r#ref.unref(js_event_loop_ctx());
         this_ref.args.deinit_and_unprotect();
         this_ref.promise = JSPromiseStrong::default();
-        // SAFETY: paired with Box::into_raw in create()
+        // SAFETY: paired with Box::leak in create()
         drop(unsafe { Box::from_raw(this) });
     }
 }
@@ -1244,7 +1240,7 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         let this: &mut Self = unsafe {
             &mut *(task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>())
         };
-        // Preserve the raw `*mut` (Box::into_raw provenance) so `on_subtask_done`
+        // Preserve the raw `*mut` (Box::leak provenance) so `on_subtask_done`
         // may later promote it to `&mut` once the refcount reaches zero.
         let cp_task = this.cp_task;
         // SAFETY: cp_task is set in create() and the parent outlives all subtasks (subtask_count refcount).
@@ -1318,7 +1314,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         vm: &mut VirtualMachine,
     ) -> JSValue {
         let task = Self::create_with_shell_task(global_object, cp_args, vm, core::ptr::null_mut(), true);
-        // SAFETY: create_with_shell_task returns a Box::into_raw'd pointer; valid until destroy()
+        // SAFETY: create_with_shell_task returns a Box::leak'd pointer; valid until destroy()
         unsafe { &*task }.promise.value()
     }
 
@@ -1348,9 +1344,8 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         task.args.dest.to_thread_safe();
         task.tracker.did_schedule(global_object);
 
-        let raw: *mut Self = Box::into_raw(task);
-        // SAFETY: `raw` is the unique owner; reclaimed in `destroy()`.
-        WorkPool::schedule(unsafe { &raw mut (*raw).task });
+        let raw = Box::leak(task);
+        WorkPool::schedule(&raw mut raw.task);
         raw
     }
 
@@ -1381,9 +1376,8 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         task.args.src.to_thread_safe();
         task.args.dest.to_thread_safe();
 
-        let raw: *mut Self = Box::into_raw(task);
-        // SAFETY: `raw` is the unique owner; reclaimed in `destroy()`.
-        WorkPool::schedule(unsafe { &raw mut (*raw).task });
+        let raw = Box::leak(task);
+        WorkPool::schedule(&raw mut raw.task);
         raw
     }
 
@@ -1420,7 +1414,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     /// and destroys `this`.
     ///
     /// Takes a raw `*mut Self` (not `&self`) so the pointer retains the
-    /// mutable provenance from the original `Box::into_raw`; the JS-thread
+    /// mutable provenance from the original `Box::leak`; the JS-thread
     /// callback later materializes `&mut *this`, which would be UB if the
     /// pointer were derived from a shared reference.
     fn on_subtask_done(this: *mut Self) {
@@ -1440,7 +1434,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         }
 
         // Count reached zero ⇒ exclusive access. `this` carries mutable
-        // provenance from `Box::into_raw`, so the enqueued callback may safely
+        // provenance from `Box::leak`, so the enqueued callback may safely
         // form `&mut *this` on the JS thread.
         if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
             // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
@@ -1469,7 +1463,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // SAFETY: shelltask is non-null in the IS_SHELL specialization and
             // outlives this task; `cp_on_finish` enqueues it concurrently.
             unsafe { ShellCpTask::cp_on_finish(self.shelltask, result) };
-            // SAFETY: self was Box::into_raw'd in create*(); destroyed exactly once here
+            // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             return Ok(());
         }
@@ -1501,7 +1495,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
         let _dispatch = self.tracker.dispatch(global_object);
 
-        // SAFETY: self was Box::into_raw'd in create*(); destroyed exactly once here
+        // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
         // SAFETY: `promise` points at a GC-rooted JS heap cell (see above), still
         // valid after `destroy` dropped only the `Strong` wrapper.
@@ -1514,7 +1508,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         Ok(())
     }
 
-    /// SAFETY: `this` must be the pointer returned by Box::into_raw in
+    /// SAFETY: `this` must be the pointer returned by Box::leak in
     /// `create_with_shell_task()`/`create_mini()`; called exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
@@ -1524,7 +1518,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         if !IS_SHELL { this_ref.r#ref.unref(event_loop_handle_to_ctx(this_ref.evtloop)); }
         this_ref.args.deinit();
         this_ref.promise = JSPromiseStrong::default();
-        // SAFETY: paired with Box::into_raw in create_with_shell_task()/create_mini()
+        // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
         drop(unsafe { Box::from_raw(this) });
     }
 
@@ -1641,7 +1635,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let _ = Self::_cp_async_directory(
             nodefs,
             args.flags,
-            // Pass the raw `*mut Self` (Box::into_raw provenance) so spawned
+            // Pass the raw `*mut Self` (Box::leak provenance) so spawned
             // `CpSingleTask`s store a pointer that may later be promoted to
             // `&mut` in `on_subtask_done`.
             *_done,
@@ -1925,7 +1919,7 @@ impl ReaddirSubtask {
         let this: &mut Self = unsafe {
             &mut *(task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>())
         };
-        // SAFETY: `this` is the Box::into_raw'd subtask; basename was allocator.dupeZ'd in enqueue()
+        // SAFETY: `this` is the Box::leak'd subtask; basename was allocator.dupeZ'd in enqueue()
         let _cleanup = scopeguard::guard(std::ptr::from_mut::<Self>(this), |p| unsafe {
             // free duped basename + destroy self.
             // basename was allocated as `Box<[u8]>` of len+1 (NUL included) in
@@ -1994,9 +1988,7 @@ impl AsyncReaddirRecursiveTask {
             task: work_pool_task(ReaddirSubtask::call),
         });
         debug_assert!(self.subtask_count.fetch_add(1, Ordering::Relaxed) > 0);
-        let raw: *mut ReaddirSubtask = Box::into_raw(task);
-        // SAFETY: `raw` is the unique owner; reclaimed in `ReaddirSubtask::call`.
-        WorkPool::schedule(unsafe { &raw mut (*raw).task });
+        WorkPool::schedule(&raw mut Box::leak(task).task);
     }
 
     pub fn create(
@@ -2044,9 +2036,7 @@ impl AsyncReaddirRecursiveTask {
         task.args.to_thread_safe();
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();
-        let raw: *mut Self = Box::into_raw(task);
-        // SAFETY: `raw` is the unique owner; reclaimed in `destroy()`.
-        WorkPool::schedule(unsafe { &raw mut (*raw).task });
+        WorkPool::schedule(&raw mut Box::leak(task).task);
         promise
     }
 
@@ -2233,7 +2223,7 @@ impl AsyncReaddirRecursiveTask {
 
         let _dispatch = self.tracker.dispatch(global_object);
 
-        // SAFETY: self was Box::into_raw'd in create(); destroyed exactly once here
+        // SAFETY: self was Box::leak'd in create(); destroyed exactly once here
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
         // SAFETY: GC-rooted JS heap cell, valid past `destroy` (see above).
         let promise = unsafe { &mut *promise };
@@ -2245,7 +2235,7 @@ impl AsyncReaddirRecursiveTask {
         Ok(())
     }
 
-    /// SAFETY: `this` must be the pointer Box::into_raw'd in `create()`; called exactly once.
+    /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
@@ -2259,7 +2249,7 @@ impl AsyncReaddirRecursiveTask {
         this_ref.free_root_path();
         this_ref.clear_result_list();
         // Zig `promise.deinit()` — `JSPromiseStrong` releases on Drop (via Box::from_raw below).
-        // SAFETY: paired with Box::into_raw in create()
+        // SAFETY: paired with Box::leak in create()
         drop(unsafe { Box::from_raw(this) });
     }
 }

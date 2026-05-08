@@ -483,6 +483,29 @@ impl JSValue {
             )
         }
     }
+    /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it in a Node
+    /// `Buffer` without copying. Ownership transfers to JSC; freed via
+    /// `MarkedArrayBuffer_deallocator` on GC. Prefer this over `Box::leak` +
+    /// [`JSValue::create_buffer`] so the FFI hand-off is explicit at call sites.
+    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
+        let len = bytes.len();
+        // `into_raw` (not `leak`) — this is an FFI ownership transfer, paired
+        // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
+        // `Box<[u8]>` has no backing allocation, so the `None` arm leaks
+        // nothing.
+        let ptr = Box::into_raw(bytes).cast::<u8>();
+        // SAFETY: `global` is live; `ptr`/`len` describe the just-released
+        // mimalloc allocation whose ownership is transferred to JSC.
+        unsafe {
+            JSBuffer__bufferFromPointerAndLengthAndDeinit(
+                global,
+                ptr,
+                len,
+                core::ptr::null_mut(),
+                if len == 0 { None } else { Some(MarkedArrayBuffer_deallocator) },
+            )
+        }
+    }
     /// `JSValue.createBufferWithCtx` (JSValue.zig) — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
     /// runs when the Buffer's backing store is collected.

@@ -259,9 +259,13 @@ pub static Bun__Node__ProcessTitle: bun_core::RacyCell<Option<Box<[u8]>>> =
 
 /// Process-lifetime arena for one-shot CLI commands. Zig passed
 /// `bun.default_allocator` (or a per-command `ArenaAllocator` never `deinit`'d)
-/// and let allocations live until exit. `bun_alloc::Arena` (= `MimallocArena`)
-/// is `Sync`, so a `LazyLock` is sufficient — the backing heap is process-
-/// lifetime, so borrows from it are legitimately `&'static`.
+/// and let allocations live until exit.
+///
+/// **Main-thread only.** `MimallocArena`'s `Sync` impl is *contract-only*:
+/// `mi_heap_*` allocation calls are thread-local, and
+/// `MimallocArena::assert_owning_thread()` debug-panics on cross-thread alloc.
+/// The heap is pinned to whichever thread first touches `cli_arena()` (the CLI
+/// dispatch thread). Do not call from worker/watcher threads.
 #[inline]
 pub fn cli_arena() -> &'static bun_alloc::Arena {
     static ARENA: std::sync::LazyLock<bun_alloc::Arena> =
@@ -271,18 +275,26 @@ pub fn cli_arena() -> &'static bun_alloc::Arena {
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
 /// `s.to_vec().into_boxed_slice()` leaks at CLI sites where Zig used
-/// `allocator.dupe(u8, s)` with the default allocator.
+/// `allocator.dupe(u8, s)` with the default allocator. Main-thread only
+/// (see [`cli_arena`]).
 #[inline]
 pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
     cli_arena().alloc_slice_copy(s)
 }
 
-/// Move `v`'s bytes into the process-lifetime CLI arena and return a
-/// `&'static [u8]` borrow. Use when the caller already owns a `Vec`/`Box`
-/// (avoids an extra heap alloc relative to `cli_dupe`).
-#[inline]
-pub fn cli_intern(v: Vec<u8>) -> &'static [u8] {
-    cli_arena().alloc_slice_copy(&v)
+/// Adopt an already-owned `Box<[u8]>` into a process-lifetime side-table and
+/// return a `&'static [u8]` borrow — zero-copy (the `Box`'s heap allocation has
+/// a stable address; only the `Box` value moves into the table). Use when the
+/// caller already owns a large buffer (e.g. tarball, request body) so
+/// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
+pub fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
+    static ADOPTED: std::sync::Mutex<Vec<Box<[u8]>>> = std::sync::Mutex::new(Vec::new());
+    // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
+    // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
+    // `Box` pointer-value moves), so the returned slice stays valid `'static`.
+    let (ptr, len) = (b.as_ptr(), b.len());
+    ADOPTED.lock().unwrap().push(b);
+    unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
 /// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and

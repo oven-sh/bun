@@ -545,6 +545,52 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             None => unreachable!("do_connect requires self.connection to be set"),
         }
+        // The resolved-DNS / unix fast paths attach SSL eagerly inside
+        // `group.connect*` (see context.c `us_socket_group_connect_resolved_dns`),
+        // so a write that lands before the dispatch-layer `on_open` (e.g. the
+        // h2 auto-flush deferred task that runs after `internalConnect`'s
+        // nextTick) would `SSL_write` and serialize a ClientHello without
+        // SNI/ALPN. Prime them now; `on_open` re-runs the same setup so this
+        // is idempotent. `.connecting` sockets have no `SSL*` yet, so this is
+        // a no-op there.
+        if SSL && ssl_ctx.is_some() {
+            if let uws::InternalSocket::Connected(_) = self.socket.socket {
+                if let Some(ssl_ptr) = self.socket.ssl() {
+                    // SAFETY: BoringSSL FFI; `ssl_ptr` is a live `*mut SSL`.
+                    if unsafe { boringssl_sys::SSL_is_init_finished(ssl_ptr) } == 0 {
+                        let host_bytes: Option<&[u8]> = self
+                            .server_name
+                            .as_deref()
+                            .filter(|h| !h.is_empty())
+                            .or_else(|| match &self.connection {
+                                Some(super::listener::UnixOrHost::Host { host, .. })
+                                    if !host.is_empty() =>
+                                {
+                                    Some(host.as_ref())
+                                }
+                                _ => None,
+                            });
+                        if let Some(host) = host_bytes {
+                            let host_z = bun_core::ZBox::from_bytes(host);
+                            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+                            unsafe {
+                                boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr())
+                            };
+                        }
+                        if let Some(protos) = &self.protos {
+                            // SAFETY: BoringSSL FFI; `protos` is a valid slice.
+                            unsafe {
+                                boringssl_sys::SSL_set_alpn_protos(
+                                    ssl_ptr,
+                                    protos.as_ptr(),
+                                    protos.len(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

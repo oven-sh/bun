@@ -1582,7 +1582,7 @@ impl<'a> PackageInstaller<'a> {
                         patch_contents_hash,
                         patch_name_and_version_hash.unwrap(),
                     );
-                    // SAFETY: `task` was just `Box::into_raw`'d in `new_apply_patch_hash`;
+                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
                     // we hold the only pointer until `enqueue_patch_task` takes ownership.
                     if let patch_install::Callback::Apply(apply) = unsafe { &mut (*task).callback } {
                         apply.install_context = Some(patch_install::InstallContext {

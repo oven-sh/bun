@@ -460,7 +460,7 @@ pub struct UDPSocket {
 
 impl UDPSocket {
     pub fn new(init: Self) -> *mut Self {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
@@ -492,7 +492,7 @@ impl UDPSocket {
         // Capture the raw pointer (Copy) and re-derive `&mut` inside the closure
         // so borrowck does not see `this` as held across the guard's lifetime.
         let guard = scopeguard::guard(this_ptr, |ptr| {
-            // SAFETY: `ptr` came from `Box::into_raw` above and ownership has been
+            // SAFETY: `ptr` came from `heap::alloc` above and ownership has been
             // transferred to the JS wrapper; the guard only fires on the early-return
             // error paths below, on the same stack frame, so the allocation is live
             // and we hold the only mutable reference.
@@ -1486,10 +1486,10 @@ impl UDPSocket {
         let this_ref = unsafe { &mut *this };
         debug_assert!(this_ref.closed || unsafe { &*this_ref.vm }.is_shutting_down());
         this_ref.poll_ref.disable();
-        // config drop handled by Box::from_raw below.
+        // config drop handled by heap::take below.
         // this_value.deinit() handled by JsRef Drop.
-        // SAFETY: allocated via Box::into_raw in `new`; this is the matching free.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: allocated via heap::alloc in `new`; this is the matching free.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` — the macro's free-fn shim emits a

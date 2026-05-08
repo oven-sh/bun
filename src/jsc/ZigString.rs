@@ -97,7 +97,7 @@ impl ZigString {
     /// here, a `STRING_TOO_LONG` error is thrown, and `.zero` is returned.
     ///
     /// SAFETY: `ptr` must have been allocated by the global mimalloc allocator
-    /// (via `Box::into_raw`/`Vec::into_raw_parts`/`bun.default_allocator`) and
+    /// (via `heap::alloc`/`Vec::into_raw_parts`/`bun.default_allocator`) and
     /// must not be used by the caller after this returns.
     pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
         to_external_u16(ptr, len, global)
@@ -193,7 +193,7 @@ impl ZigString {
             // Ownership transfers to JSC (freed via `deinit_global` /
             // external-string finalizer). Convert to a raw mimalloc block.
             let len = utf16.len();
-            let ptr = Box::into_raw(utf16.into_boxed_slice()).cast::<u16>();
+            let ptr = bun_core::heap::leak(utf16.into_boxed_slice()).cast::<u16>();
             // SAFETY: ptr/len describe a valid globally-allocated UTF-16 buffer.
             let mut out =
                 ZigString::init_utf16(unsafe { slice::from_raw_parts(ptr, len) });
@@ -202,7 +202,7 @@ impl ZigString {
             Ok(out)
         } else {
             let len = utf8.len();
-            let ptr = Box::into_raw(Box::<[u8]>::from(utf8)).cast::<u8>();
+            let ptr = bun_core::heap::leak(Box::<[u8]>::from(utf8)).cast::<u8>();
             // SAFETY: ptr/len describe a valid globally-allocated byte buffer.
             let mut out = ZigString::init(unsafe { slice::from_raw_parts(ptr, len) });
             out.mark_global();
@@ -960,7 +960,7 @@ impl Slice {
 
     pub fn init_dupe(input: &[u8]) -> Result<Slice, AllocError> {
         let len = input.len();
-        let ptr = Box::into_raw(Box::<[u8]>::from(input)).cast::<u8>();
+        let ptr = bun_core::heap::leak(Box::<[u8]>::from(input)).cast::<u8>();
         // SAFETY: ptr/len describe a freshly-allocated default-allocator block;
         // ownership moves into `Slice` (freed by its `Drop`).
         Ok(Self::init(unsafe { slice::from_raw_parts(ptr, len) }))
@@ -1001,7 +1001,7 @@ impl Slice {
     }
 
     pub fn to_owned(&self) -> Result<Slice, AllocError> {
-        let ptr = Box::into_raw(Box::<[u8]>::from(self.slice())).cast::<u8>();
+        let ptr = bun_core::heap::leak(Box::<[u8]>::from(self.slice())).cast::<u8>();
         Ok(Slice {
             allocator: NullableAllocator::default_alloc(),
             ptr,
@@ -1021,8 +1021,8 @@ impl Slice {
             if NullableAllocator::is_default(a) {
                 let len = self.len as usize;
                 self.allocator = NullableAllocator::null();
-                // SAFETY: ptr/len were produced by Box::into_raw / default allocator.
-                let owned = unsafe { Box::from_raw(slice::from_raw_parts_mut(self.ptr.cast_mut(), len)) };
+                // SAFETY: ptr/len were produced by heap::alloc / default allocator.
+                let owned = unsafe { bun_core::heap::take(slice::from_raw_parts_mut(self.ptr.cast_mut(), len)) };
                 self.ptr = b"".as_ptr();
                 self.len = 0;
                 return Ok(owned);
@@ -1037,7 +1037,7 @@ impl Slice {
         owned.ptr = b"".as_ptr();
         owned.len = 0;
         // SAFETY: to_owned() produced a default-allocator Box<[u8]>; reconstruct it.
-        Ok(unsafe { Box::from_raw(slice::from_raw_parts_mut(ptr, len)) })
+        Ok(unsafe { bun_core::heap::take(slice::from_raw_parts_mut(ptr, len)) })
     }
 
     /// Same as `into_owned_slice`, but creates a NUL-terminated slice.
@@ -1054,7 +1054,7 @@ impl Slice {
             return Ok(self);
         }
         let len = self.len;
-        let ptr = Box::into_raw(Box::<[u8]>::from(self.slice())).cast::<u8>();
+        let ptr = bun_core::heap::leak(Box::<[u8]>::from(self.slice())).cast::<u8>();
         Ok(Slice {
             allocator: NullableAllocator::default_alloc(),
             ptr,
@@ -1066,7 +1066,7 @@ impl Slice {
         // TODO(port): narrow error set
         let buf = strings::paths::clone_normalizing_separators(self.slice());
         let len = buf.len() as u32;
-        let ptr = Box::into_raw(buf.into_boxed_slice()).cast::<u8>();
+        let ptr = bun_core::heap::leak(buf.into_boxed_slice()).cast::<u8>();
         Ok(Slice {
             allocator: NullableAllocator::default_alloc(),
             ptr,

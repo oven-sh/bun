@@ -1032,7 +1032,7 @@ pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
 // `cache.get()` reaches the disk-backed `RuntimeTranspilerCache::get()` above.
 // On a hit the concrete `Entry` is boxed and stored type-erased in
 // `bun_js_parser::RuntimeTranspilerCache.entry`; the store casts it back via
-// `Box::from_raw(ptr.cast::<Entry>())`.
+// `heap::take(ptr.cast::<Entry>())`.
 // ──────────────────────────────────────────────────────────────────────────
 
 unsafe fn jsc_cache_vtable_get(
@@ -1062,7 +1062,7 @@ unsafe fn jsc_cache_vtable_get(
     this.features_hash = jsc.features_hash;
     this.exports_kind = jsc.exports_kind;
     if let Some(entry) = jsc.entry {
-        this.entry = Some(Box::into_raw(Box::new(entry)).cast::<()>());
+        this.entry = Some(bun_core::heap::leak(Box::new(entry)).cast::<()>());
     }
     hit
 }

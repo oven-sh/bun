@@ -1865,7 +1865,7 @@ pub mod fs {
                 // `entries_option_map()` singleton (process-static).
                 let entries_ptr: *mut DirEntry = match in_place {
                     Some(p) => p,
-                    None => Box::into_raw(Box::new(DirEntry::init(dir, generation))),
+                    None => bun_core::heap::leak(Box::new(DirEntry::init(dir, generation))),
                 };
                 if let Some(original) = in_place {
                     // SAFETY: BSSMap-owned; entries_mutex held.
@@ -1893,7 +1893,7 @@ pub mod fs {
             // ENABLE_ENTRY_CACHE = false: stash in the threadlocal and hand back its
             // address. The leaked Box lives until the next `read_directory` call on
             // this thread (matches Zig — threadlocal `temp_entries_option`).
-            let entries_ptr = Box::into_raw(Box::new(entries));
+            let entries_ptr = bun_core::heap::leak(Box::new(entries));
             // SAFETY: freshly-leaked Box; re-borrow as 'static for the threadlocal slot.
             Ok(temp_entries_option_write(EntriesOption::Entries(unsafe { &mut *entries_ptr })))
         }
@@ -2628,11 +2628,11 @@ pub mod cache {
 
     /// Provenance-tagged backing for [`Entry`] source bytes.
     ///
-    /// Replaces the prior `&'static [u8]` + `Box::leak`/`Box::from_raw` pair
+    /// Replaces the prior `&'static [u8]` + `Box::leak`/`heap::take` pair
     /// (forbidden per docs/PORTING.md §Forbidden patterns). Zig's `string`
     /// field (cache.zig:20) carried an implicit allocator contract; Rust makes
     /// provenance explicit so `deinit` matches on the variant instead of
-    /// guessing — the old scheme would `Box::from_raw` a `MutableString`-owned
+    /// guessing — the old scheme would `heap::take` a `MutableString`-owned
     /// pointer on the `use_shared_buffer=true` path (UB).
     pub enum Contents {
         /// Empty / static literal. No-op on `deinit`.
@@ -2740,7 +2740,7 @@ pub mod cache {
             // Replacing the variant drops `Owned(Vec<u8>)` (matches Zig's
             // `allocator.free(entry.contents)`); `SharedBuffer`/`External`/
             // `Empty` have trivial drops, so the shared-buffer path is a
-            // correct no-op instead of the UB `Box::from_raw` it used to be.
+            // correct no-op instead of the UB `heap::take` it used to be.
             self.contents = Contents::Empty;
         }
 
@@ -6902,7 +6902,7 @@ impl<'a> Resolver<'a> {
                     unsafe { *p = new_entry };
                     p
                 }
-                None => Box::into_raw(Box::new(new_entry)),
+                None => bun_core::heap::leak(Box::new(new_entry)),
             };
 
             // bun.fs.debug("readdir({f}, {s}) = {d}", ...) — TODO(port): scoped log
@@ -7327,7 +7327,7 @@ impl<'a> Resolver<'a> {
         // PORT NOTE: Zig `TSConfigJSON.parse` returns `*TSConfigJSON` (already
         // heap). Return the `Box` so the caller (`dir_info_uncached`) takes
         // ownership — intermediate configs in an extends-chain are dropped via
-        // `Box::from_raw`, the final one is interned into the DirInfo cache.
+        // `heap::take`, the final one is interned into the DirInfo cache.
         Ok(Some(result))
     }
 
@@ -7827,7 +7827,7 @@ impl<'a> Resolver<'a> {
                         unsafe { *p = new_entry };
                         p
                     }
-                    None => Box::into_raw(Box::new(new_entry)),
+                    None => bun_core::heap::leak(Box::new(new_entry)),
                 };
                 dir_entries_option = rfs!()
                     .entries
@@ -9229,7 +9229,7 @@ impl<'a> Resolver<'a> {
                     tsconfigpath,
                     if FeatureFlags::STORE_FILE_DESCRIPTORS { fd } else { FD::ZERO },
                 ) {
-                    Ok(v) => v.map(Box::into_raw),
+                    Ok(v) => v.map(bun_core::heap::leak),
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
@@ -9251,15 +9251,15 @@ impl<'a> Resolver<'a> {
                     parent_configs.append(tsconfig_json)?;
                     let mut current = tsconfig_json;
                     // SAFETY: (loop-wide) `current`/`parent_config_ptr`/`merged_config` are heap
-                    // TSConfigJSON allocations from `parse_tsconfig` (Box::into_raw). They are uniquely
-                    // owned by this extends-chain walk and freed via Box::from_raw below.
+                    // TSConfigJSON allocations from `parse_tsconfig` (heap::alloc). They are uniquely
+                    // owned by this extends-chain walk and freed via heap::take below.
                     while !unsafe { &*current }.extends.is_empty() {
                         // SAFETY: see loop-wide note above.
                         let ts_dir_name = Dirname::dirname(&unsafe { &*current }.abs_path);
                         // SAFETY: see loop-wide note above.
                         let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, &unsafe { &*current }.extends], bun_paths::Platform::AUTO);
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
-                            Ok(v) => v.map(Box::into_raw),
+                            Ok(v) => v.map(bun_core::heap::leak),
                             Err(err) => {
                                 let _ = self.log_mut().add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",
@@ -9324,10 +9324,10 @@ impl<'a> Resolver<'a> {
                         // without this, every intermediate config in an extends chain leaks on
                         // each dirInfoUncached() call, which is especially bad under HMR where
                         // bustDirCache triggers a re-parse of the whole chain on every reload.
-                        // SAFETY: parent_config_ptr came from TSConfigJSON::new (Box::into_raw)
-                        TSConfigJSON::destroy(unsafe { Box::from_raw(parent_config_ptr) });
+                        // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
+                        TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
                     }
-                    // SAFETY: `merged_config` is a leaked Box (Box::into_raw) interned into DirInfo; outlives the resolver.
+                    // SAFETY: `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
                     info.tsconfig_json = Some(unsafe { core::ptr::NonNull::new_unchecked(merged_config) });
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json();

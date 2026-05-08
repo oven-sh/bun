@@ -296,7 +296,7 @@ impl<'a> Installer<'a> {
         struct PatchTaskGuard(*mut install::PatchTask);
         impl Drop for PatchTaskGuard {
             fn drop(&mut self) {
-                // SAFETY: exclusive owner; created by `Box::into_raw` in `new_*`.
+                // SAFETY: exclusive owner; created by `heap::alloc` in `new_*`.
                 unsafe { install::PatchTask::destroy(self.0) };
             }
         }
@@ -1595,7 +1595,7 @@ impl Task {
 
                         if let Some(list) = scripts_list {
                             let clone: *mut package::scripts::List =
-                                Box::into_raw(Box::new(list));
+                                bun_core::heap::leak(Box::new(list));
                             // SAFETY: each Task is the sole writer for its own
                             // `entry_id`'s `scripts` slot; no other thread reads
                             // or writes it until this Task reaches

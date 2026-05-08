@@ -104,7 +104,7 @@ impl JSMySQLConnection {
 
 impl crate::jsc::JsClass for JSMySQLConnection {
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        js::to_js(Box::into_raw(Box::new(self)), global)
+        js::to_js(bun_core::heap::leak(Box::new(self)), global)
     }
     fn from_js(value: JSValue) -> Option<*mut Self> {
         js::from_js(value)
@@ -126,7 +126,7 @@ impl crate::jsc::JsClass for JSMySQLConnection {
 struct DerefOnDrop(*mut JSMySQLConnection);
 impl Drop for DerefOnDrop {
     fn drop(&mut self) {
-        // SAFETY: constructor contract — `self.0` is a live `Box::into_raw`
+        // SAFETY: constructor contract — `self.0` is a live `heap::alloc`
         // pointer with at least one outstanding ref owned by this guard.
         unsafe { JSMySQLConnection::deref(self.0) }
     }
@@ -137,9 +137,9 @@ impl Drop for DerefOnDrop {
 bun_ptr::impl_cell_ref_counted! {
     impl JSMySQLConnection {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: count hit 0; `this` came from `Box::into_raw` in
+        // SAFETY: count hit 0; `this` came from `heap::alloc` in
         // `create_instance`, so we are the unique owner here. `deinit` takes
-        // ownership back via `Box::from_raw` (mirrors Zig `bun.destroy(this)`).
+        // ownership back via `heap::take` (mirrors Zig `bun.destroy(this)`).
         unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
 }
@@ -425,21 +425,21 @@ impl JSMySQLConnection {
     /// Private: only `deref()` calls this when the count hits 0.
     ///
     /// SAFETY: `this` was originally allocated via `Box::new` and leaked via
-    /// `Box::into_raw` in `create_instance`; the caller is the unique owner.
-    /// No `&Self` / `&mut Self` may outlive the `Box::from_raw` drop below —
+    /// `heap::alloc` in `create_instance`; the caller is the unique owner.
+    /// No `&Self` / `&mut Self` may outlive the `heap::take` drop below —
     /// that is why this (and `deref`) are raw-pointer-shaped, mirroring Zig's
     /// `fn deinit(this: *@This())` which has no reference-validity invariant.
     unsafe fn deinit(this: *mut Self) {
-        // SAFETY: see fn-level contract — `this` is a live `Box::into_raw` ptr;
-        // unique owner; no `&`/`&mut Self` outlives the `Box::from_raw` below.
+        // SAFETY: see fn-level contract — `this` is a live `heap::alloc` ptr;
+        // unique owner; no `&`/`&mut Self` outlives the `heap::take` below.
         unsafe {
             (*this).stop_timers();
             (*this).poll_ref.unref((*this).vm_ctx());
             (*this).unregister_auto_flusher();
 
             (*this).connection.cleanup();
-            // bun.destroy(this): reclaim the `Box::into_raw` from `create_instance`.
-            drop(Box::from_raw(this));
+            // bun.destroy(this): reclaim the `heap::alloc` from `create_instance`.
+            drop(bun_core::heap::take(this));
         }
     }
 
@@ -452,7 +452,7 @@ impl JSMySQLConnection {
     pub fn finalize(this: *mut Self) {
         bun_core::scoped_log!(MySQLConnection, "finalize");
         // SAFETY: called on mutator thread during lazy sweep; `this` is the
-        // m_ctx ptr from `Box::into_raw`. Stays raw-pointer-shaped end-to-end
+        // m_ctx ptr from `heap::alloc`. Stays raw-pointer-shaped end-to-end
         // so no `&mut Self` dangles past the potential free in `deref()`.
         unsafe {
             (*this).js_value.finalize();
@@ -602,7 +602,7 @@ impl JSMySQLConnection {
         // connect-fail `ptr.deref()` is the sole cleanup path from here on.
         let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(tls_guard);
 
-        let ptr: *mut JSMySQLConnection = Box::into_raw(Box::new(JSMySQLConnection {
+        let ptr: *mut JSMySQLConnection = bun_core::heap::leak(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsRef::empty(),
             global_object: GlobalRef::from(global_object),
@@ -659,7 +659,7 @@ impl JSMySQLConnection {
                 Err(e) => {
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
                     // Drop the `&mut` borrow (`this`) before freeing so no
-                    // reference outlives the `Box::from_raw` inside `deinit`.
+                    // reference outlives the `heap::take` inside `deinit`.
                     let _ = this;
                     unsafe { Self::deref(ptr) };
                     return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));

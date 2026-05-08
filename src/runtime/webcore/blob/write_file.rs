@@ -224,7 +224,7 @@ impl WriteFile {
         on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<*mut WriteFile, Error> {
-        let write_file = Box::into_raw(Box::new(WriteFile {
+        let write_file = bun_core::heap::leak(Box::new(WriteFile {
             file_blob,
             bytes_blob,
             opened_fd: Fd::INVALID,
@@ -245,7 +245,7 @@ impl WriteFile {
         // PORT NOTE: Zig follows with `file_blob.store.?.ref()` because the Zig
         // caller bitwise-copies `Blob` (no ref bump, no dtor) and `bun.destroy`
         // in `then` does not deref. In Rust the caller passes a `+1` Blob (via
-        // `borrowed_view()`'s `StoreRef::clone`) and `Box::from_raw(this)` in
+        // `borrowed_view()`'s `StoreRef::clone`) and `heap::take(this)` in
         // `then` runs `StoreRef::drop`, so the explicit ref/deref pair is
         // folded into RAII.
         Ok(write_file)
@@ -331,14 +331,14 @@ impl WriteFile {
             total_written = (*this).total_written;
             // Zig: `this.bytes_blob.store.?.deref(); this.file_blob.store.?.deref();
             //       bun.destroy(this);`
-            // Folded into RAII: `Box::from_raw` runs `WriteFile`'s field-drop
+            // Folded into RAII: `heap::take` runs `WriteFile`'s field-drop
             // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
             // StoreRef>` → `Store::deref()` — exactly one deref each, same as
             // the spec. (An earlier explicit `detach()` here was a no-op; the
             // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
             // baseline RSS exceeding the fixture's 256 MB absolute threshold,
             // not an unbalanced ref.)
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
 
         if let Some(err) = system_error {
@@ -614,7 +614,7 @@ mod windows_impl {
             // PORT NOTE: Zig's `file_blob.store.?.ref()` / `bytes_blob.store.?.ref()`
             // are omitted — the Rust caller passes `+1` Blobs via
             // `borrowed_view()` and `deinit` releases them via
-            // `Box::from_raw → StoreRef::drop`.
+            // `heap::take → StoreRef::drop`.
             unsafe {
                 let wf = &mut *write_file;
                 wf.io_request.loop_ = (*event_loop).virtual_machine.event_loop_handle.unwrap();
@@ -991,7 +991,7 @@ mod windows_impl {
         }
 
         pub fn new(init: WriteFileWindows) -> *mut WriteFileWindows {
-            Box::into_raw(Box::new(init))
+            bun_core::heap::leak(Box::new(init))
         }
 
         pub fn deinit(&mut self) {
@@ -1006,9 +1006,9 @@ mod windows_impl {
             // SAFETY: self.io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
             // is safe on a zeroed or previously-used req.
             unsafe { uv::uv_fs_req_cleanup(&mut self.io_request) };
-            // SAFETY: self was allocated via Self::new (Box::into_raw); reclaim and drop here.
+            // SAFETY: self was allocated via Self::new (heap::alloc); reclaim and drop here.
             // self must not be used after this line.
-            unsafe { drop(Box::from_raw(core::ptr::from_mut(self))) };
+            unsafe { drop(bun_core::heap::take(core::ptr::from_mut(self))) };
         }
 
         pub fn create<C>(
@@ -1049,12 +1049,12 @@ impl WriteFilePromise {
     pub fn run(handler: *mut Self, count: WriteFileResultType) -> Result<(), JsTerminated> {
         // SAFETY: handler is a Box-allocated WriteFilePromise (see Blob.zig:1172); consumed here.
         // `swap()` releases the Strong's handle slot and yields a GC-owned `*mut JSPromise`,
-        // which stays valid past `drop(Box::from_raw(handler))`.
+        // which stays valid past `drop(heap::take(handler))`.
         let (promise, global_this): (*mut JSPromise, &JSGlobalObject) = unsafe {
             let h = &mut *handler;
             let promise = std::ptr::from_mut::<JSPromise>(h.promise.swap());
             let global_this = &*h.global_this;
-            drop(Box::from_raw(handler));
+            drop(bun_core::heap::take(handler));
             (promise, global_this)
         };
         // SAFETY: GC-owned cell; sole `&mut` borrow at each call site.
@@ -1098,7 +1098,7 @@ impl WriteFileWaitFromLockedValueTask {
         // SAFETY: this is a Box-allocated task (see Blob.zig:1581).
         let this_ref = unsafe { &mut *this };
         // SAFETY: sole `&mut JSPromise` borrow in this scope; `get()` returns a
-        // GC-owned cell, valid past `Box::from_raw(this)`.
+        // GC-owned cell, valid past `heap::take(this)`.
         let promise: *mut JSPromise = unsafe { this_ref.promise.get() };
         // SAFETY: `global_this` was set from a live `&JSGlobalObject` when this
         // task was scheduled; the global outlives every `Body::Value` callback.
@@ -1106,7 +1106,7 @@ impl WriteFileWaitFromLockedValueTask {
         // PORT NOTE: Zig `var file_blob = this.file_blob;` is a non-owning
         // bitwise copy — both bindings alias the same `*Store` with no ref
         // bump, and `bun.destroy(this)` later frees raw memory without running
-        // field destructors. In Rust `Box::from_raw(this)` *does* drop fields,
+        // field destructors. In Rust `heap::take(this)` *does* drop fields,
         // so leaving the `StoreRef` in `this.file_blob` would double-deref it.
         // Move ownership out instead; the `Locked` arm — the only path that
         // keeps `this` alive for a future callback — moves it back so the next
@@ -1119,7 +1119,7 @@ impl WriteFileWaitFromLockedValueTask {
                 file_blob.detach();
                 let _ = value.use_();
                 // SAFETY: consume Box allocation (drops `promise`/`file_blob` Strongs).
-                unsafe { drop(Box::from_raw(this)) };
+                unsafe { drop(bun_core::heap::take(this)) };
                 // SAFETY: GC-owned cell; sole `&mut` borrow.
                 unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(err))?;
             }
@@ -1127,7 +1127,7 @@ impl WriteFileWaitFromLockedValueTask {
                 file_blob.detach();
                 let _ = value.use_();
                 // SAFETY: consume Box allocation.
-                unsafe { drop(Box::from_raw(this)) };
+                unsafe { drop(bun_core::heap::take(this)) };
                 // SAFETY: GC-owned cell; sole `&mut` borrow.
                 unsafe { &mut *promise }.reject(
                     global_this,
@@ -1155,7 +1155,7 @@ impl WriteFileWaitFromLockedValueTask {
                     Err(err) => {
                         file_blob.detach();
                         // SAFETY: consume Box allocation.
-                        unsafe { drop(Box::from_raw(this)) };
+                        unsafe { drop(bun_core::heap::take(this)) };
                         // SAFETY: GC-owned cell; sole `&mut` borrow.
                         unsafe { &mut *promise }.reject(global_this, Err(err))?;
                         return Ok(());
@@ -1168,7 +1168,7 @@ impl WriteFileWaitFromLockedValueTask {
                 // declared after) drops first.
                 // SAFETY: `this` was Box-allocated (see Self::new). `this_ref` is dead
                 // past this point — all further field access goes through `_this_box`.
-                let _this_box = unsafe { Box::from_raw(this) };
+                let _this_box = unsafe { bun_core::heap::take(this) };
                 let _g = scopeguard::guard((), |()| file_blob.detach());
 
                 if let Some(p) = new_promise.as_any_promise() {

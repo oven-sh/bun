@@ -125,7 +125,7 @@ bun_ptr::impl_cell_ref_counted! {
     impl[const SSL: bool] WebSocket<SSL> {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
         // SAFETY: refcount hit zero; caller held the last owner of the
-        // `Box::into_raw` allocation and `this` carries write provenance.
+        // `heap::alloc` allocation and `this` carries write provenance.
         unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
 }
@@ -248,7 +248,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
         // above guarantees the allocation outlives the guard.
         let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
             // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
@@ -596,7 +596,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     //
     /// # Safety
     /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
-    /// `Box::into_raw` (see `init` / `init_with_tunnel`); no `&`/`&mut`
+    /// `heap::alloc` (see `init` / `init_with_tunnel`); no `&`/`&mut`
     /// borrow of `*this_ptr` may be live across this call.
     pub unsafe fn handle_data(this_ptr: *mut Self, data_: &[u8]) {
         // after receiving close we should ignore the data
@@ -609,7 +609,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: capture the parent raw `this_ptr` so the guard's
         // `deref(p)` runs after every `&mut *this_ptr` reborrow has ended.
         let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the `Box::into_raw` pointer, kept alive by the
+            // SAFETY: `p` is the `heap::alloc` pointer, kept alive by the
             // `r#ref()` above; no Rust borrow of `*p` is live at drop time.
             unsafe { Self::deref(p) }
         });
@@ -624,7 +624,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // We do not free the memory here since the lifetime is managed by the microtask queue (it should free when called from there)
             // SAFETY: `initial_handler` is valid (managed by microtask queue).
             // `handle_without_deinit` re-enters `Self::handle_data` via the
-            // `adopted` raw ptr (same `Box::into_raw` provenance as
+            // `adopted` raw ptr (same `heap::alloc` provenance as
             // `this_ptr`); no `&mut *this_ptr` is live here, so the nested
             // call may freely form its own exclusive reborrow.
             unsafe { (*initial_handler.as_ptr()).handle_without_deinit() };
@@ -1447,7 +1447,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
         // above guarantees the allocation outlives the guard.
         let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
             // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
@@ -1492,7 +1492,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
         // above guarantees the allocation outlives the guard.
         let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
             // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
@@ -1550,7 +1550,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
         // above guarantees the allocation outlives the guard.
         let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
             // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
@@ -1640,7 +1640,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
         // above guarantees the allocation outlives the guard.
         let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
             // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
@@ -1709,7 +1709,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let tcp = input_socket.cast::<us_socket_t>();
         // outlives this call.
         let vm = global_this.bun_vm().as_mut();
-        let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
+        let ws = bun_core::heap::leak(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
             outgoing_websocket: NonNull::new(outgoing),
@@ -1749,7 +1749,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             proxy_tunnel: None,
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
-        // SAFETY: ws was just allocated via Box::into_raw
+        // SAFETY: ws was just allocated via heap::alloc
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
@@ -1785,7 +1785,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `ws_ref` above (Zig's `@field(owner, "tcp") = ...` equivalent).
             |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(sock) },
         ) {
-            // SAFETY: `ws` is the `Box::into_raw` allocation just created
+            // SAFETY: `ws` is the `heap::alloc` allocation just created
             // above; sole owner on this failure path.
             unsafe { Self::deref(ws) };
             return core::ptr::null_mut();
@@ -1800,12 +1800,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             // The upgrade client allocated this buffer via `bun.default_allocator`
             // (mimalloc) and transfers ownership to us — Zig's
             // `InitialDataHandler.deinit` frees it with `bun.default_allocator.free`.
-            // The Rust global allocator is also mimalloc, so `Box::from_raw`
+            // The Rust global allocator is also mimalloc, so `heap::take`
             // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
             let buffered_slice: Box<[u8]> = unsafe {
-                Box::from_raw(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
+                bun_core::heap::take(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
             };
-            let initial_data = Box::into_raw(Box::new(InitialDataHandler::<SSL> {
+            let initial_data = bun_core::heap::leak(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
                 slice: buffered_slice,
                 // We need to ref the outgoing websocket so that it doesn't get
@@ -1862,7 +1862,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // paired with m_connectedWebSocket.
         // outlives this call.
         let vm = global_this.bun_vm().as_mut();
-        let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
+        let ws = bun_core::heap::leak(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(), // No direct socket - using tunnel
             outgoing_websocket: NonNull::new(outgoing),
@@ -1898,7 +1898,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             proxy_tunnel: Some(tunnel_owned),
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
-        // SAFETY: ws was just allocated via Box::into_raw
+        // SAFETY: ws was just allocated via heap::alloc
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
@@ -1916,9 +1916,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: see `init()` — adopt the C++ mimalloc-owned buffer
             // directly so it is freed (not leaked) when the handler drops.
             let buffered_slice: Box<[u8]> = unsafe {
-                Box::from_raw(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
+                bun_core::heap::take(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
             };
-            let initial_data = Box::into_raw(Box::new(InitialDataHandler::<SSL> {
+            let initial_data = bun_core::heap::leak(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
                 slice: buffered_slice,
                 // SAFETY: outgoing is a valid CppWebSocket* (extern-C contract);
@@ -1944,7 +1944,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     ///
     /// # Safety
     /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
-    /// `Box::into_raw`; no `&`/`&mut` borrow of `*this_ptr` may be live across
+    /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
     /// this call (the tunnel calls through its raw `connected_websocket` backref).
     pub unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) {
         // Process the decrypted data as if it came from the socket
@@ -1958,7 +1958,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     ///
     /// # Safety
     /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
-    /// `Box::into_raw`; no `&`/`&mut` borrow of `*this_ptr` may be live across
+    /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
     /// this call.
     pub unsafe fn handle_tunnel_writable(this_ptr: *mut Self) {
         // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
@@ -1973,7 +1973,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: capture the parent raw `this_ptr` so the guard's
         // `deref(p)` runs after every `&mut *this_ptr` reborrow has ended.
         let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the `Box::into_raw` pointer, kept alive by the
+            // SAFETY: `p` is the `heap::alloc` pointer, kept alive by the
             // `r#ref()` above; no Rust borrow of `*p` is live at drop time.
             unsafe { Self::deref(p) }
         });
@@ -2000,7 +2000,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
         // above guarantees the allocation outlives the guard.
         let _guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // SAFETY: `p` is the C++-owned `heap::alloc` pointer, kept alive
             // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
@@ -2026,7 +2026,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     // PORT NOTE: `deinit` is the IntrusiveRc destructor callback; not `impl Drop` because
-    // self is heap-allocated via Box::into_raw and crosses FFI as *mut c_void.
+    // self is heap-allocated via heap::alloc and crosses FFI as *mut c_void.
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: called once when ref_count hits zero
         let this_ref = unsafe { &mut *this };
@@ -2034,8 +2034,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         // deflate already dropped in clear_data; this is defensive parity with Zig
         this_ref.deflate = None;
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
-        // SAFETY: this was allocated via Box::into_raw in init/init_with_tunnel
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub extern "C" fn memory_cost(this: *const Self) -> usize {
@@ -2190,7 +2190,7 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // `WebSocket::handle_data` while that frame may later form its own
         // `&mut *ws_ptr`, so never materialize a `&mut WebSocket` here —
         // touch fields via raw projection only.
-        // SAFETY: `adopted` is a backref to a live WebSocket (Box::into_raw
+        // SAFETY: `adopted` is a backref to a live WebSocket (heap::alloc
         // provenance); raw field write of a `Copy`-sized `Option<NonNull<_>>`.
         unsafe { core::ptr::addr_of_mut!((*ws_ptr).initial_data_handler).write(None) };
         // Zig: `defer ws.unref()` — RAII: take the owned ref so it drops at
@@ -2206,7 +2206,7 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
             unsafe { !(*ws_ptr).tcp.is_closed() || (*ws_ptr).proxy_tunnel.is_some() };
         // SAFETY: `ws_ptr` is live; raw read of a `Copy` field.
         if unsafe { (*ws_ptr).outgoing_websocket.is_some() } && is_connected {
-            // SAFETY: `ws_ptr` carries `Box::into_raw` provenance; `handle_data`
+            // SAFETY: `ws_ptr` carries `heap::alloc` provenance; `handle_data`
             // takes `*mut Self` and forms its own scoped `&mut` internally. No
             // borrow of `*ws_ptr` is live in this frame across the call.
             unsafe { WebSocket::<SSL>::handle_data(ws_ptr, &self.slice) };
@@ -2217,12 +2217,12 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
     pub unsafe extern "C" fn handle(this: *mut c_void) {
         let this = this.cast::<Self>();
         // SAFETY: called from microtask queue with the pointer we passed in
-        // (Box::into_raw in init()/init_with_tunnel()).
+        // (heap::alloc in init()/init_with_tunnel()).
         let this_ref = unsafe { &mut *this };
         this_ref.handle_without_deinit();
         // deinit: free slice + destroy self
-        // SAFETY: allocated via Box::into_raw in init()/init_with_tunnel()
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: allocated via heap::alloc in init()/init_with_tunnel()
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

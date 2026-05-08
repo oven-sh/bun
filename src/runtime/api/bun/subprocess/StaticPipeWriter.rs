@@ -66,9 +66,9 @@ impl<P: StaticPipeWriterProcess> RefCounted for StaticPipeWriter<P> {
         unsafe { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _: ()) {
-        // SAFETY: refcount hit 0; allocated via `Box::into_raw` in `create()`.
+        // SAFETY: refcount hit 0; allocated via `heap::alloc` in `create()`.
         // `Drop` (below) performs `_deinit`'s `writer.end(); source.detach()`.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -235,7 +235,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         result: StdioResult,
         source: Source,
     ) -> IntrusiveRc<Self> {
-        let this = Box::into_raw(Box::new(Self {
+        let this = bun_core::heap::leak(Box::new(Self {
             ref_count: RefCount::init(),
             writer: IOWriter::<P>::default(),
             stdio_result: result,
@@ -262,7 +262,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             std::ptr::from_ref(self) as usize
         );
         // Zig `this.ref()` — intrusive-refcount increment.
-        // SAFETY: `self` is a live `Self` (created via `create()`/`Box::into_raw`).
+        // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // Self-borrow — see `buffer` field note (`RawSlice` invariant).
         self.buffer = bun_ptr::RawSlice::new(self.source.slice());

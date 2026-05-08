@@ -342,14 +342,14 @@ impl<T: Default + 'static> ThreadlocalBuffers<T> {
             node: ThreadlocalBuffersNode,
             data: T,
         }
-        let s = Box::into_raw(Box::new(Storage::<T> {
+        let s = bun_core::heap::leak(Box::new(Storage::<T> {
             node: ThreadlocalBuffersNode {
                 next: THREADLOCAL_BUFFERS_HEAD.with(|h| h.get()),
                 free: Self::free,
             },
             data: T::default(),
         }));
-        // SAFETY: s was just allocated by Box::into_raw, non-null
+        // SAFETY: s was just allocated by heap::alloc, non-null
         unsafe {
             THREADLOCAL_BUFFERS_HEAD
                 .with(|h| h.set(Some(NonNull::new_unchecked(&mut (*s).node))));
@@ -368,7 +368,7 @@ impl<T: Default + 'static> ThreadlocalBuffers<T> {
             let s = node.cast::<u8>()
                 .sub(core::mem::offset_of!(Storage<T>, node))
                 .cast::<Storage<T>>();
-            drop(Box::from_raw(s));
+            drop(bun_core::heap::take(s));
         }
         // TODO(port): clear per-type thread_local instance pointer
     }

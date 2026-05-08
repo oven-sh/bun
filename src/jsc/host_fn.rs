@@ -279,7 +279,7 @@ impl<T> IntoHostConstructReturn for *mut T {
 impl<T> IntoHostConstructReturn for Box<T> {
     #[inline]
     fn into_host_construct_return(self) -> JsResult<*mut c_void> {
-        Ok(Box::into_raw(self).cast())
+        Ok(bun_core::heap::leak(self).cast())
     }
 }
 impl<T> IntoHostConstructReturn for JsResult<*mut T> {
@@ -289,7 +289,7 @@ impl<T> IntoHostConstructReturn for JsResult<*mut T> {
 impl<T> IntoHostConstructReturn for JsResult<Box<T>> {
     #[inline]
     fn into_host_construct_return(self) -> JsResult<*mut c_void> {
-        self.map(|b| Box::into_raw(b).cast())
+        self.map(|b| bun_core::heap::leak(b).cast())
     }
 }
 
@@ -503,7 +503,7 @@ pub unsafe fn host_fn_internal_props<T, R: IntoHostFnReturn>(
 }
 
 /// Finalizer: `fn(*mut T)`. The user impl receives the raw pointer (not
-/// `&mut`) so it may `Box::from_raw` / `drop_in_place` without an outstanding
+/// `&mut`) so it may `heap::take` / `drop_in_place` without an outstanding
 /// borrow. This wrapper exists only so the generated thunk body contains zero
 /// `unsafe` tokens. Takes a closure (not `unsafe fn`) so user impls of any
 /// ABI / safety qualifier coerce.

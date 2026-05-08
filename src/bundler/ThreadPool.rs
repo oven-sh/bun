@@ -220,16 +220,16 @@ impl ThreadPool {
     ) -> Result<ThreadPool, bun_alloc::AllocError> {
         // PORT NOTE: Spec ThreadPool.zig:85 allocated via the bundle arena
         // (`v2.arena().create`), so the `false` ownership flag was
-        // harmless — the arena reclaimed it. Here we `Box::into_raw` (global
-        // heap), so `deinit()` must `Box::from_raw` it back; record ownership.
+        // harmless — the arena reclaimed it. Here we `heap::alloc` (global
+        // heap), so `deinit()` must `heap::take` it back; record ownership.
         let owned = worker_pool.is_none();
         let pool: *mut ThreadPoolLib::ThreadPool = match worker_pool {
             Some(p) => p.as_ptr(),
             None => {
                 let cpu_count = bun_core::get_thread_count();
                 // PERF(port): was `v2.arena().create(ThreadPoolLib)` —
-                // using Box::into_raw (global mimalloc).
-                let pool = Box::into_raw(Box::new(ThreadPoolLib::ThreadPool::init(
+                // using heap::alloc (global mimalloc).
+                let pool = bun_core::heap::leak(Box::new(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config { max_threads: u32::from(cpu_count), ..Default::default() },
                 )));
                 bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
@@ -257,8 +257,8 @@ impl ThreadPool {
     /// owns the storage).
     pub fn deinit(&mut self) {
         if self.worker_pool_is_owned {
-            // SAFETY: worker_pool was Box::into_raw'd in `init()` when owned.
-            unsafe { drop(Box::from_raw(self.worker_pool)) };
+            // SAFETY: worker_pool was heap-allocated in `init()` when owned.
+            unsafe { drop(bun_core::heap::take(self.worker_pool)) };
             self.worker_pool = ptr::null_mut();
         }
         if Self::uses_io_pool() {
@@ -374,7 +374,7 @@ impl ThreadPool {
         self.schedule_with_options(unsafe { &mut *parse_task }, true);
     }
 
-    // PORT NOTE: returns `&'static mut` — the `Worker` is `Box::into_raw`'d
+    // PORT NOTE: returns `&'static mut` — the `Worker` is `heap::alloc`'d
     // below and lives until `Worker::deinit`; detaching from `&self` lets
     // callers re-borrow `ThreadPool` while holding the worker (Zig: `*Worker`).
     // Takes `&self` (not `&mut`) because this is called concurrently from
@@ -388,20 +388,20 @@ impl ThreadPool {
                 MapEntry::Occupied(o) => {
                     let w = *o.into_mut();
                     drop(map);
-                    // SAFETY: map only stores live Box::into_raw'd Workers (inserted below).
+                    // SAFETY: map only stores live heap-allocated Workers (inserted below).
                     return unsafe { &mut *w };
                 }
                 MapEntry::Vacant(v) => {
                     // SAFETY: every field is fully written below before any read.
                     // Zig wrote a struct literal with `undefined` for the
                     // late-init fields; mirrored with `MaybeUninit` slots.
-                    worker = Box::into_raw(unsafe { Box::<Worker>::new_uninit().assume_init() });
+                    worker = bun_core::heap::leak(unsafe { Box::<Worker>::new_uninit().assume_init() });
                     v.insert(worker);
                 }
             }
         }
 
-        // SAFETY: `worker` is freshly Box::into_raw'd and exclusive on this
+        // SAFETY: `worker` is freshly heap-allocated and exclusive on this
         // thread until published via the map (already inserted above, but no
         // other thread looks it up under a different `id`).
         unsafe {
@@ -489,7 +489,7 @@ impl Worker {
                 .cast::<Worker>()
         };
         // SAFETY: deinit_callback is only scheduled via `deinit_soon` on a live
-        // Box::into_raw'd Worker; we hold exclusive ownership on this idle task.
+        // heap-allocated Worker; we hold exclusive ownership on this idle task.
         unsafe { Self::deinit(this) };
     }
 
@@ -502,7 +502,7 @@ impl Worker {
     /// Takes ownership of the heap allocation and frees it.
     ///
     /// # Safety
-    /// `this` must have come from `Box::into_raw` in [`ThreadPool::get_worker`].
+    /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
     pub unsafe fn deinit(this: *mut Worker) {
         // SAFETY: caller contract.
         let worker = unsafe { &mut *this };
@@ -516,13 +516,13 @@ impl Worker {
                 ManuallyDrop::drop(&mut worker.ast_memory_store);
             }
         }
-        // SAFETY: caller contract — `this` was Box::into_raw'd. Reclaim the
+        // SAFETY: caller contract — `this` was heap-allocated. Reclaim the
         // allocation without running field destructors (handled above).
-        drop(unsafe { Box::<MaybeUninit<Worker>>::from_raw(this.cast()) });
+        unsafe { bun_core::heap::destroy(this.cast::<MaybeUninit<Worker>>()) };
     }
 
     // PORT NOTE: returns `&'static mut` (detached) — the `Worker` is
-    // heap-pinned (Box::into_raw in `get_worker`) and outlives any `ctx`
+    // heap-pinned (heap::alloc in `get_worker`) and outlives any `ctx`
     // borrow; Zig returned `*Worker`. Tying it to `ctx`'s lifetime would
     // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
     pub fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {

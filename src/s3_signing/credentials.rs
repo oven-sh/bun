@@ -259,7 +259,7 @@ impl RefCounted for S3Credentials {
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: last ref dropped; allocated via Box in IntrusiveRc::new / dupe().
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

@@ -571,7 +571,7 @@ impl Cmd {
             Exec::Subproc(sub) => sub.child,
             _ => unreachable!(),
         };
-        // SAFETY: `spawn_async` Ok ⇒ wrote a live `Box::into_raw` subprocess
+        // SAFETY: `spawn_async` Ok ⇒ wrote a live `heap::alloc` subprocess
         // pointer into `*child_out` (== `sub.child`); valid until `Cmd::deinit`
         // reclaims the box. Single-threaded.
         let subproc = unsafe { &mut *child };
@@ -584,7 +584,7 @@ impl Cmd {
         if did_exit_immediately {
             // Spec lines 535-544. `watch()` failed → process already gone.
             // SAFETY: `process` was set by `spawn_async` (`to_process` →
-            // `Box::into_raw`); valid until `Cmd::deinit` reclaims the box.
+            // `heap::alloc`); valid until `Cmd::deinit` reclaims the box.
             let process = unsafe { &mut *subproc.process };
             if process.has_exited() {
                 let status = process.status.clone();
@@ -823,7 +823,7 @@ impl Cmd {
             Exec::Builtin(b) => drop(b),
             Exec::Subproc(sub) if !sub.child.is_null() => {
                 // SAFETY: `child` was set by `initSubproc` from a
-                // `Box::into_raw(ShellSubprocess)` and stays valid until
+                // `heap::alloc(ShellSubprocess)` and stays valid until
                 // this drop. Single-threaded.
                 let child = unsafe { &mut *sub.child };
                 if !child.has_exited() {
@@ -832,7 +832,7 @@ impl Cmd {
                 child.unref::<true>();
                 // SAFETY: reclaim the box; `ShellSubprocess::drop` runs
                 // `finalize_sync` (closes stdin/stdout/stderr).
-                drop(unsafe { Box::from_raw(sub.child) });
+                drop(unsafe { bun_core::heap::take(sub.child) });
                 // `sub.buffered_closed` drops here, freeing any captured
                 // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }

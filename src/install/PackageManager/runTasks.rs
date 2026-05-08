@@ -201,10 +201,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             break;
         }
         // SAFETY: `next()` returned non-null; node is exclusively owned by this
-        // batch. `ptask_ptr` was produced by `Box::into_raw` in `PatchTask::new_*`
+        // batch. `ptask_ptr` was produced by `heap::alloc` in `PatchTask::new_*`
         // — reclaim ownership exactly once here so the `Box` drops at end of
         // iteration on every path (Zig: `defer ptask.deinit();`).
-        let mut ptask = unsafe { Box::from_raw(ptask_ptr) };
+        let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }
@@ -1814,13 +1814,13 @@ pub fn generate_network_task_for_tarball<'a>(
             .unwrap();
         let task: *mut PatchTask =
             PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
-        // SAFETY: `task` is a fresh non-null `Box::into_raw` from
+        // SAFETY: `task` is a fresh non-null `heap::alloc` from
         // `new_apply_patch_hash`; we hold the only reference.
         if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {
             apply.task_id = Some(task_id);
         }
         // SAFETY: reclaiming the `Box` produced by `new_apply_patch_hash`.
-        Some(unsafe { Box::from_raw(task) })
+        Some(unsafe { bun_core::heap::take(task) })
     } else {
         None
     };
@@ -1898,7 +1898,7 @@ pub fn generate_network_task_for_tarball<'a>(
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream =
-                Some(Box::from_raw(TarballStream::init(extract_task, net_ptr, this)));
+                Some(bun_core::heap::take(TarballStream::init(extract_task, net_ptr, this)));
         }
     }
 

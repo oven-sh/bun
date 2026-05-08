@@ -109,7 +109,7 @@ impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
 }
 
 struct ProcessSlot {
-    /// Intrusively ref-counted; allocated via `Box::into_raw` in
+    /// Intrusively ref-counted; allocated via `heap::alloc` in
     /// `PosixSpawnResult::to_process`. Freed via `Process::deref`.
     ptr: *mut Process,
     status: Status,
@@ -217,7 +217,7 @@ impl<'a> ProcessHandle<'a> {
         }
 
         self.process = Some(ProcessSlot { ptr: process, status: Status::Running });
-        // SAFETY: `process` was just allocated by `to_process` (Box::into_raw);
+        // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // owner backref set before any reap callback can fire.
         let process = unsafe { &mut *process };
         process.set_exit_handler(std::ptr::from_mut::<Self>(self).cast::<()>(), &PROCESS_HANDLE_EXIT_VTABLE);
@@ -1124,14 +1124,14 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                 #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(Box::into_raw(Box::new(
+                stdout: spawn::Stdio::Buffer(bun_core::heap::leak(Box::new(
                     // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
                     unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
                 ))),
                 #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(Box::into_raw(Box::new(
+                stderr: spawn::Stdio::Buffer(bun_core::heap::leak(Box::new(
                     // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
                     unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
                 ))),

@@ -358,7 +358,7 @@ impl ArrayBuffer {
                 let len = bytes.len();
                 // SAFETY: caller guarantees `bytes` was allocated by the default
                 // (mimalloc) allocator; ownership transfers to JSC.
-                let owned = unsafe { Box::from_raw(core::slice::from_raw_parts_mut(bytes.as_mut_ptr(), len)) };
+                let owned = unsafe { bun_core::heap::take(core::slice::from_raw_parts_mut(bytes.as_mut_ptr(), len)) };
                 jsc::JSUint8Array::from_bytes(global, owned)
             }
             _ => unreachable!("Not implemented yet"), // Zig: @compileError
@@ -387,7 +387,7 @@ impl ArrayBuffer {
         // Ownership transfers to JSC; `to_js` installs a deallocator that
         // `mi_free`s the pointer on GC. `into_raw` (not `leak`) expresses that
         // this is an FFI hand-off, not a leak.
-        let ptr = Box::into_raw(bytes).cast::<u8>();
+        let ptr = bun_core::heap::leak(bytes).cast::<u8>();
         ArrayBuffer {
             len: u32::try_from(len).expect("int cast") as usize,
             byte_len: u32::try_from(len).expect("int cast") as usize,
@@ -881,8 +881,8 @@ impl MarkedArrayBuffer {
         // because the buffer is later freed via mi_free (MarkedArrayBuffer_deallocator).
         let buf: Box<[u8]> = Box::from(str);
         let len = buf.len();
-        let ptr = Box::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from Box::into_raw; backed by global mimalloc.
+        let ptr = bun_core::heap::leak(buf).cast::<u8>();
+        // SAFETY: ptr/len from heap::alloc; backed by global mimalloc.
         let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
     }
@@ -920,7 +920,7 @@ impl MarkedArrayBuffer {
     pub fn destroy(&mut self) {
         if self.owns_buffer {
             self.owns_buffer = false;
-            // SAFETY: buffer.ptr was allocated via global mimalloc (Box::into_raw / allocator.dupe).
+            // SAFETY: buffer.ptr was allocated via global mimalloc (heap::alloc / allocator.dupe).
             unsafe { mimalloc::mi_free(self.buffer.ptr.cast()) };
         }
     }

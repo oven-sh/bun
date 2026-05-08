@@ -235,13 +235,13 @@ impl WTFTimer {
     }
 
     /// # Safety
-    /// `this` must be the unique owner of a `Box::into_raw`-produced `WTFTimer`.
+    /// `this` must be the unique owner of a `heap::alloc`-produced `WTFTimer`.
     pub unsafe fn deinit(this: *mut Self) {
         // SAFETY: per fn contract.
         unsafe { Self::cancel(this) };
-        // SAFETY: `bun.TrivialNew` ↔ `Box::into_raw`, so `Box::from_raw` is
+        // SAFETY: `bun.TrivialNew` ↔ `heap::alloc`, so `heap::take` is
         // the paired free.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -279,7 +279,7 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
         })
     };
 
-    Box::into_raw(this).cast::<c_void>()
+    bun_core::heap::leak(this).cast::<c_void>()
 }
 
 #[unsafe(no_mangle)]
@@ -290,7 +290,7 @@ pub extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bo
 
 #[unsafe(no_mangle)]
 pub extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
-    // SAFETY: `this` was produced by Box::into_raw in WTFTimer__create; reclaiming ownership.
+    // SAFETY: `this` was produced by heap::alloc in WTFTimer__create; reclaiming ownership.
     unsafe { WTFTimer::deinit(this) };
 }
 

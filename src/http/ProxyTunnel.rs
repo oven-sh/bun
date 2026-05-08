@@ -99,8 +99,8 @@ bun_ptr::impl_cell_ref_counted! {
     impl ProxyTunnel {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
         // SAFETY: every live ProxyTunnel was created by `start`/`adopt`
-        // (`Box::into_raw`); ref_count hitting 0 means no other alias remains.
-        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+        // (`heap::alloc`); ref_count hitting 0 means no other alias remains.
+        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 
@@ -514,7 +514,7 @@ impl ProxyTunnel {
         ssl_options: SSLConfig,
         start_payload: &[u8],
     ) {
-        let proxy_tunnel = Box::into_raw(Box::new(ProxyTunnel::default()));
+        let proxy_tunnel = bun_core::heap::leak(Box::new(ProxyTunnel::default()));
         // SAFETY: just allocated, sole owner.
         let proxy_tunnel_ref = unsafe { &mut *proxy_tunnel };
 
@@ -544,7 +544,7 @@ impl ProxyTunnel {
                 return;
             }
         }
-        // SAFETY: proxy_tunnel is a non-null Box::into_raw result.
+        // SAFETY: proxy_tunnel is a non-null heap::alloc result.
         this.proxy_tunnel = Some(unsafe { NonNull::new_unchecked(proxy_tunnel) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
         // End the named &mut borrows before calling into the SSLWrapper. start()
@@ -567,7 +567,7 @@ impl ProxyTunnel {
     }
 
     pub fn close(&mut self, err: Error) {
-        // SAFETY: `&mut self` was derived from the Box::into_raw pointer; the
+        // SAFETY: `&mut self` was derived from the heap::alloc pointer; the
         // receiver is never used again after this line so the raw call's
         // disjoint field projections do not alias it.
         unsafe { Self::close_raw(self, err) };
@@ -684,7 +684,7 @@ impl ProxyTunnel {
         // Zig: detachSocket() BEFORE deref() — if refcount > 1 the tunnel
         // outlives this call and must not retain a dangling socket handle.
         self.detach_socket();
-        // SAFETY: `&mut self` was derived (transitively) from the `Box::into_raw`
+        // SAFETY: `&mut self` was derived (transitively) from the `heap::alloc`
         // pointer in `start`/`adopt`; coercing it back to `*mut` preserves write
         // provenance for the dealloc path.
         unsafe { ProxyTunnel::deref(self) };
@@ -730,7 +730,7 @@ impl ProxyTunnel {
             wrapper.handlers.ctx = client.as_erased_ptr().as_ptr();
         }
         self.socket = Socket::from_generic::<IS_SSL>(socket);
-        // SAFETY: `self` was created by `start` (Box::into_raw); we transfer the
+        // SAFETY: `self` was created by `start` (heap::alloc); we transfer the
         // pool's strong ref to the client by storing the raw pointer here.
         client.proxy_tunnel = Some(unsafe { NonNull::new_unchecked(std::ptr::from_mut::<ProxyTunnel>(self)) });
         client.flags.proxy_tunneling = false;

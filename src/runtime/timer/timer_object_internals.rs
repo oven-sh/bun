@@ -230,7 +230,7 @@ impl TimerObjectInternals {
     }
 
     /// Spec TimerObjectInternals.zig `init` — out-param constructor; `self` is
-    /// the embedded `internals` field of a freshly `Box::into_raw`'d
+    /// the embedded `internals` field of a freshly `heap::alloc`'d
     /// `ImmediateObject`/`TimeoutObject` (Zig: `@fieldParentPtr`). Cannot be
     /// reshaped to `-> Self` because the body needs the parent pointer to
     /// enqueue/reschedule before returning.
@@ -719,7 +719,7 @@ impl TimerObjectInternals {
     /// parent container's intrusive-refcount destructor (`{Timeout,Immediate}
     /// Object::deref` when the count hits zero). Unlinks the parent from every
     /// `Timer::All` data structure it may still be reachable from so the
-    /// imminent `Box::from_raw` free cannot leave a dangling
+    /// imminent `heap::take` free cannot leave a dangling
     /// `*mut EventLoopTimer` in the heap or a leaked keep-alive count.
     ///
     /// PORT NOTE: `this_value.deinit()` (Zig line 499) is intentionally NOT

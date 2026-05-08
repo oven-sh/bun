@@ -93,7 +93,7 @@ impl FileJsc for File {
             // `cached_blob` is typed against the lower crate's opaque `Blob`
             // newtype (it cannot name `webcore::Blob` without a dep cycle), so
             // erase via `.cast()` here and back below.
-            // SAFETY: `Blob::new` returns a fresh non-null `Box::into_raw`.
+            // SAFETY: `Blob::new` returns a fresh non-null `heap::alloc`.
             self.cached_blob = Some(unsafe { NonNull::new_unchecked(Blob::new(b)) }.cast());
         }
 

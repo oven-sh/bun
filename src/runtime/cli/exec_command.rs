@@ -65,7 +65,7 @@ impl ExecCommand {
             }
         };
         // SAFETY: `Transpiler::init` always populates `env` (caller-supplied,
-        // process singleton, or freshly `Box::into_raw`'d) — never null. The
+        // process singleton, or freshly `heap::alloc`'d) — never null. The
         // loader is a thread-/process-lifetime singleton, so `&'static mut` is
         // sound for the single CLI dispatch thread.
         let env = unsafe { &mut *bundle.env.cast::<bun_dotenv::Loader<'static>>() };

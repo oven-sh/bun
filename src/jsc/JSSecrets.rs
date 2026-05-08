@@ -41,7 +41,7 @@ impl SecretsJob {
         promise: JSValue,
     ) -> *mut SecretsJob {
         let vm = global.bun_vm_ptr();
-        let job = Box::into_raw(Box::new(SecretsJob {
+        let job = bun_core::heap::leak(Box::new(SecretsJob {
             vm,
             task: WorkPoolTask {
                 node: Default::default(),
@@ -65,7 +65,7 @@ impl SecretsJob {
 
     pub unsafe fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to SecretsJob.task; SecretsJob was allocated via
-        // Box::into_raw in `create` and is alive until run_from_js drops it.
+        // heap::alloc in `create` and is alive until run_from_js drops it.
         let job: &mut SecretsJob = unsafe {
             &mut *task.cast::<u8>()
                 .sub(offset_of!(SecretsJob, task))
@@ -89,8 +89,8 @@ impl SecretsJob {
 
     pub fn run_from_js(this: *mut SecretsJob) {
         // `defer this.deinit()` — take ownership; Drop runs at scope exit on all paths.
-        // SAFETY: `this` was produced by Box::into_raw in `create` and is uniquely owned here.
-        let this = unsafe { Box::from_raw(this) };
+        // SAFETY: `this` was produced by heap::alloc in `create` and is uniquely owned here.
+        let this = unsafe { bun_core::heap::take(this) };
         let vm = this.vm;
 
         // SAFETY: `vm` is process-lifetime.

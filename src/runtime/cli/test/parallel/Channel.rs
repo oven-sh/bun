@@ -219,8 +219,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     fd.uv(),
                     e.name(),
                 ));
-                // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
-                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
+                // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
+                unsafe { uv::Pipe::close_and_destroy(bun_core::heap::leak(pipe)) };
                 return false;
             }
             if !self.adopt_pipe(vm, pipe) {
@@ -292,8 +292,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // TODO(port): Zig returned false leaving caller owning `pipe`;
             // with Box we'd need to hand it back. Phase B: take `&mut Box` or
             // return the Box on failure.
-            // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
-            unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
+            // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
+            unsafe { uv::Pipe::close_and_destroy(bun_core::heap::leak(pipe)) };
             return false;
         }
         self.backend.pipe = Some(pipe);
@@ -443,8 +443,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         {
             if let Some(p) = self.backend.pipe.take() {
                 if !p.is_closing() {
-                    // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
-                    unsafe { uv::Pipe::close_and_destroy(Box::into_raw(p)) };
+                    // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
+                    unsafe { uv::Pipe::close_and_destroy(bun_core::heap::leak(p)) };
                 } else {
                     // TODO(port): Zig left the field set if already closing;
                     // with Box we cannot put it back without re-taking. Phase B
@@ -525,8 +525,8 @@ impl<Owner> Drop for Channel<Owner> {
         #[cfg(windows)]
         {
             if let Some(p) = self.backend.pipe.take() {
-                // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
-                unsafe { uv::Pipe::close_and_destroy(Box::into_raw(p)) };
+                // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
+                unsafe { uv::Pipe::close_and_destroy(bun_core::heap::leak(p)) };
             }
             // `inflight` Vec drops automatically.
         }
@@ -640,8 +640,8 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         // signalling done so the owner can tell EOF apart from a protocol
         // error (where the pipe is still attached).
         if let Some(p) = self_.backend.pipe.take() {
-            // SAFETY: Box-allocated; close_and_destroy reclaims via Box::from_raw.
-            unsafe { uv::Pipe::close_and_destroy(Box::into_raw(p)) };
+            // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
+            unsafe { uv::Pipe::close_and_destroy(bun_core::heap::leak(p)) };
         }
         self_.mark_done();
     }

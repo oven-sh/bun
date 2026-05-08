@@ -71,32 +71,16 @@ pub struct ConcurrentCppTask {
     pub workpool_task: WorkPoolTask,
 }
 
-impl ConcurrentCppTask {
-    pub fn new(cpp_task: *mut EventLoopTaskNoContext) -> *mut ConcurrentCppTask {
-        Box::into_raw(Box::new(ConcurrentCppTask {
-            cpp_task,
-            workpool_task: WorkPoolTask {
-                node: Default::default(),
-                callback: Self::run_from_workpool,
-            },
-        }))
-    }
+bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
 
-    pub unsafe fn run_from_workpool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to ConcurrentCppTask.workpool_task; recover the parent.
-        let this: *mut ConcurrentCppTask = unsafe {
-            task.cast::<u8>()
-                .sub(core::mem::offset_of!(ConcurrentCppTask, workpool_task))
-                .cast::<ConcurrentCppTask>()
-        };
-        // Extract all the info we need from `this` and `cpp_task` before we call functions that
-        // free them
-        // SAFETY: `this` was allocated via Box::into_raw in `new`/`create_and_run`.
-        let this = unsafe { Box::from_raw(this) };
-        let cpp_task = this.cpp_task;
+impl ConcurrentCppTask {
+    fn run_owned(self: Box<Self>) {
+        // Extract all the info we need from `self` and `cpp_task` before we call functions that
+        // free them.
+        let cpp_task = self.cpp_task;
         // SAFETY: cpp_task is a valid C++ EventLoopTaskNoContext until `run` consumes it below.
         let maybe_vm = unsafe { (*cpp_task).get_vm() };
-        drop(this);
+        drop(self);
         EventLoopTaskNoContext::run(cpp_task);
         if let Some(vm) = maybe_vm {
             // SAFETY: process-lifetime VM; `event_loop()` returns the VM-owned EventLoop.
@@ -113,9 +97,10 @@ pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNo
         // SAFETY: process-lifetime VM; `event_loop()` returns the VM-owned EventLoop.
         unsafe { (*(*vm.as_ptr()).event_loop()).ref_concurrently() };
     }
-    let cpp = ConcurrentCppTask::new(cpp_task);
-    // SAFETY: `cpp` is a freshly boxed ConcurrentCppTask; workpool_task is a valid field ptr.
-    WorkPool::schedule(unsafe { &raw mut (*cpp).workpool_task });
+    WorkPool::schedule_new(ConcurrentCppTask {
+        cpp_task,
+        workpool_task: WorkPoolTask::default(),
+    });
 }
 
 // ported from: src/jsc/CppTask.zig

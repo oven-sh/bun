@@ -639,9 +639,9 @@ impl FileSystemRouter {
         // leaving the self-ref pointers dangling (ASAN use-after-poison). Hand the
         // existing allocation straight to the C++ wrapper instead — matches Zig's
         // `result.toJS(globalThis)` which forwards the `*MatchedRoute` as-is.
-        // SAFETY: `Box::into_raw` yields a uniquely-owned heap payload; ownership
-        // transfers to the GC wrapper (freed via `MatchedRouteClass__finalize`).
-        Ok(unsafe { MatchedRoute::to_js_ptr(Box::into_raw(result), global_this) })
+        // Ownership transfers to the GC wrapper (freed via
+        // `MatchedRouteClass__finalize`); the leak lives once in `to_js_boxed`.
+        Ok(MatchedRoute::to_js_boxed(result, global_this))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -702,8 +702,8 @@ impl FileSystemRouter {
         if let Some(p) = this_ref.base_dir.take() {
             unsafe { (*p).deref() };
         }
-        // SAFETY: codegen guarantees `this` was Box::into_raw'd in constructor.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: codegen guarantees `this` was heap-allocated in constructor.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -845,8 +845,8 @@ impl MatchedRoute {
             unsafe { (*p).deref() };
         }
 
-        // SAFETY: `this` was Box::into_raw'd by codegen at construction.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: `this` was heap-allocated by codegen at construction.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]

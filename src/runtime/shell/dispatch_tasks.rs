@@ -39,11 +39,11 @@ impl ShellAsyncSubprocessDone {
     /// Spec: interpreter.zig `ShellAsyncSubprocessDone.runFromMainThread`.
     ///
     /// # Safety
-    /// `this` is the live `Box::into_raw` payload enqueued by
+    /// `this` is the live `heap::alloc` payload enqueued by
     /// `ShellSubprocess::on_process_exit`.
     pub unsafe fn run_from_main_thread(this: *mut Self) {
         // SAFETY: caller contract.
-        let owned = unsafe { Box::from_raw(this) };
+        let owned = unsafe { bun_core::heap::take(this) };
         // SAFETY: `interp` outlives every spawned subprocess.
         let interp = unsafe { &mut *owned.interp };
         crate::shell::states::cmd::Cmd::on_subprocess_done(interp, owned.cmd, owned.exit_code);
@@ -61,11 +61,11 @@ pub struct AsyncDeinitWriter {
 
 impl AsyncDeinitWriter {
     /// # Safety
-    /// `this` is the live `Box::into_raw` payload enqueued by
+    /// `this` is the live `heap::alloc` payload enqueued by
     /// `IOWriter::async_deinit`.
     pub unsafe fn run_from_main_thread(this: *mut Self) {
         // SAFETY: caller contract.
-        let owned = unsafe { Box::from_raw(this) };
+        let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::io_writer::IOWriter::deinit_on_main_thread(owned.writer);
     }
 }
@@ -79,11 +79,11 @@ pub struct AsyncDeinitReader {
 
 impl AsyncDeinitReader {
     /// # Safety
-    /// `this` is the live `Box::into_raw` payload enqueued by
+    /// `this` is the live `heap::alloc` payload enqueued by
     /// `IOReader::async_deinit`.
     pub unsafe fn run_from_main_thread(this: *mut Self) {
         // SAFETY: caller contract.
-        let owned = unsafe { Box::from_raw(this) };
+        let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::io_reader::IOReader::deinit_on_main_thread(owned.reader);
     }
 }
@@ -110,8 +110,8 @@ impl ShellCondExprStatTask {
         crate::shell::states::cond_expr::CondExpr::on_stat_task_done(
             interp, inner.cond, &inner.stat, &inner.path,
         );
-        // SAFETY: paired with `Box::into_raw` at schedule time.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: paired with `heap::alloc` at schedule time.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -127,7 +127,7 @@ pub struct ShellGlobTask {
 
 impl ShellGlobTask {
     /// # Safety
-    /// `this` is a live `Box::into_raw`'d task.
+    /// `this` is a live `heap::alloc`'d task.
     pub unsafe fn run_from_main_thread(this: *mut Self) {
         // SAFETY: caller contract; `interp` set at schedule.
         let interp = unsafe { &mut *(*this).task.interp };
@@ -142,11 +142,11 @@ impl ShellGlobTask {
 
     /// Spec: ShellGlobTask.deinit — frees the walker arena + the task box.
     /// # Safety
-    /// `this` is a live `Box::into_raw`'d task; called exactly once after
+    /// `this` is a live `heap::alloc`'d task; called exactly once after
     /// `run_from_main_thread`.
     pub unsafe fn deinit(this: *mut Self) {
         // SAFETY: caller contract.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

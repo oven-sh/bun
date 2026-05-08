@@ -773,11 +773,7 @@ struct SharedTempBufferBorrow {
 impl SharedTempBufferBorrow {
     fn new() -> Self {
         let ptr = SHARED_TEMP_BUFFER_PTR.with(|cell| {
-            cell.take().unwrap_or_else(|| {
-                let b = Box::new([0u8; 32 * 1024]);
-                // SAFETY: Box::into_raw is non-null.
-                unsafe { NonNull::new_unchecked(Box::into_raw(b)) }
-            })
+            cell.take().unwrap_or_else(|| crate::heap::alloc_nn([0u8; 32 * 1024]))
         });
         Self { ptr }
     }
@@ -796,8 +792,8 @@ impl Drop for SharedTempBufferBorrow {
             if let Some(existing) = c.get() {
                 if existing != self.ptr {
                     // Recursion restored a different buffer; free ours.
-                    // SAFETY: ptr was allocated via Box::into_raw and is uniquely owned by self.
-                    drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
+                    // SAFETY: ptr was allocated via heap::alloc_nn and is uniquely owned by self.
+                    unsafe { crate::heap::destroy(self.ptr.as_ptr()) };
                 }
             } else {
                 c.set(Some(self.ptr));

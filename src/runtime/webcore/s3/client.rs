@@ -310,7 +310,7 @@ pub fn list_objects(
 
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
 
-    let task_ptr = Box::into_raw(Box::new(S3HttpSimpleTask {
+    let task_ptr = bun_core::heap::leak(Box::new(S3HttpSimpleTask {
         // Zig used `= undefined`; written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
         range: None,
@@ -489,7 +489,7 @@ pub fn writable_stream(
     // MultiPartUpload, matching the Zig pointer field.
     let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;
-    let task_ptr: *mut MultiPartUpload = Box::into_raw(Box::new(MultiPartUpload {
+    let task_ptr: *mut MultiPartUpload = bun_core::heap::leak(Box::new(MultiPartUpload {
         queue: None,
         available: IntegerBitSet::init_full(),
         current_part_number: 0,
@@ -522,14 +522,14 @@ pub fn writable_stream(
         on_writable: None, // assigned below after response_stream exists
         callback_context: core::ptr::null_mut(), // assigned below
     }));
-    // SAFETY: freshly Box::into_raw'd; exclusive access here.
+    // SAFETY: freshly heap-allocated; exclusive access here.
     let task = unsafe { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
 
     // `NetworkSink.new(.{...}).toSink()` — heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
-    let response_stream: *mut NetworkSink = Box::into_raw(NetworkSink::new(NetworkSink {
+    let response_stream: *mut NetworkSink = bun_core::heap::leak(NetworkSink::new(NetworkSink {
         task: NonNull::new(task_ptr),
         global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
         high_water_mark: part_size as BlobSizeType,
@@ -539,7 +539,7 @@ pub fn writable_stream(
     task.callback_context = response_stream.cast::<c_void>();
     task.on_writable = Some(on_writable_thunk);
 
-    // SAFETY: freshly Box::into_raw'd; exclusive access here. Ownership transfers to the JS
+    // SAFETY: freshly heap-allocated; exclusive access here. Ownership transfers to the JS
     // wrapper via `to_js()` (the C++ side stores it as m_ctx and calls `finalize` on collect).
     let sink = unsafe { &mut *response_stream };
     sink.signal = SinkSignal::<NetworkSink>::init(JSValue::ZERO);
@@ -581,14 +581,14 @@ impl S3UploadStreamWrapper {
     }
 
     /// Intrusive `deref()` — decrements ref_count; runs finalizer + frees on zero.
-    /// SAFETY: `this` must be a live Box-allocated `Self` (created via Box::into_raw).
+    /// SAFETY: `this` must be a live Box-allocated `Self` (created via heap::alloc).
     pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: caller contract above.
         let rc = unsafe { (*this).ref_count.get() } - 1;
         unsafe { (*this).ref_count.set(rc) };
         if rc == 0 {
             // SAFETY: ref_count hit zero; reconstitute the Box to run Drop and free.
-            drop(unsafe { Box::from_raw(this) });
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 
@@ -839,7 +839,7 @@ pub fn upload_stream(
     // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static = GlobalRef::from(global_this);
-    let task_ptr: *mut MultiPartUpload = Box::into_raw(Box::new(MultiPartUpload {
+    let task_ptr: *mut MultiPartUpload = bun_core::heap::leak(Box::new(MultiPartUpload {
         queue: None,
         available: IntegerBitSet::init_full(),
         current_part_number: 0,
@@ -871,12 +871,12 @@ pub fn upload_stream(
         on_writable: None, // assigned below after ctx exists
         callback_context: core::ptr::null_mut(), // assigned below
     }));
-    // SAFETY: freshly Box::into_raw'd; exclusive access here.
+    // SAFETY: freshly heap-allocated; exclusive access here.
     let task = unsafe { &mut *task_ptr };
 
     task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
 
-    let ctx_ptr: *mut S3UploadStreamWrapper = Box::into_raw(Box::new(S3UploadStreamWrapper {
+    let ctx_ptr: *mut S3UploadStreamWrapper = bun_core::heap::leak(Box::new(S3UploadStreamWrapper {
         ref_count: core::cell::Cell::new(2), // +1 for the stream sink (only deinit after both sink and task ended)
         sink: None,
         callback,
@@ -886,7 +886,7 @@ pub fn upload_stream(
         end_promise: bun_jsc::JSPromiseStrong::init(global_this),
         global: global_static,
     }));
-    // SAFETY: freshly Box::into_raw'd; exclusive access here.
+    // SAFETY: freshly heap-allocated; exclusive access here.
     let ctx = unsafe { &mut *ctx_ptr };
     // +1 because the ctx refs the sink
     ctx.sink = Some(ResumableSink::init_exact_refs(
@@ -982,7 +982,7 @@ pub fn download_stream(
     } else {
         Box::<[u8]>::default()
     };
-    let task_ptr = Box::into_raw(S3HttpDownloadStreamingTask::new(S3HttpDownloadStreamingTask {
+    let task_ptr = bun_core::heap::leak(S3HttpDownloadStreamingTask::new(S3HttpDownloadStreamingTask {
         // `http: undefined` — fully overwritten by `task.http.write(AsyncHTTP::init(...))` below.
         http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
@@ -1016,8 +1016,8 @@ pub fn download_stream(
         ),
         concurrent_task: Default::default(),
     }));
-    // SAFETY: just allocated via Box::into_raw, non-null; lifetime owned by HTTP callback
-    // (freed via Box::from_raw in S3HttpDownloadStreamingTask::http_callback).
+    // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
+    // (freed via heap::take in S3HttpDownloadStreamingTask::http_callback).
     let task = unsafe { &mut *task_ptr };
     task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
 
@@ -1095,7 +1095,7 @@ pub fn readable_stream(
 
     impl S3DownloadStreamWrapper {
         pub fn new(init: Self) -> *mut Self {
-            Box::into_raw(Box::new(init))
+            bun_core::heap::leak(Box::new(init))
         }
 
         pub fn callback(
@@ -1107,9 +1107,9 @@ pub fn readable_stream(
             // PORT NOTE: reshaped for borrowck — Zig used `defer if (!has_more) self.deinit()`
             let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
                 if !has_more {
-                    // SAFETY: s is a live Box-allocated pointer (Box::into_raw in S3DownloadStreamWrapper::new);
+                    // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);
                     // reconstituting and dropping the Box runs Drop::drop and frees the allocation
-                    drop(unsafe { Box::from_raw(s) });
+                    drop(unsafe { bun_core::heap::take(s) });
                 }
             });
 

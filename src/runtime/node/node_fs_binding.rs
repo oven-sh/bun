@@ -156,7 +156,7 @@ impl Binding {
 
         // SAFETY: `this` was allocated via `Binding::new` (Box::new) and is
         // not the VM-owned singleton (checked above); reclaim it.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -394,9 +394,9 @@ pub fn create_binding(global: &JSGlobalObject) -> JSValue {
     let vm = global.bun_vm_ptr();
     module.node_fs.vm = NonNull::new(vm);
 
-    // SAFETY: `module` was `Box::new`-allocated; ownership transfers to the GC
+    // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.
-    unsafe { Binding::to_js_ptr(Box::into_raw(module), global) }
+    Binding::to_js_boxed(module, global)
 }
 
 #[bun_jsc::host_fn]

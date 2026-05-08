@@ -1849,7 +1849,7 @@ impl JSValkeyClient {
 
         let new_client_ptr = this.clone_without_connecting(global)?;
         // SAFETY: clone_without_connecting returns a freshly allocated, leaked
-        // JSValkeyClient (Box::into_raw); valid for the rest of this scope.
+        // JSValkeyClient (heap::alloc); valid for the rest of this scope.
         let new_client: &mut JSValkeyClient = unsafe { &mut *new_client_ptr };
 
         let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);

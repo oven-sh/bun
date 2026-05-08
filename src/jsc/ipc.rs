@@ -800,9 +800,9 @@ pub struct WindowsWrite {
 #[cfg(windows)]
 impl WindowsWrite {
     pub fn destroy(this: *mut WindowsWrite) {
-        // SAFETY: `this` was produced by Box::into_raw in SendQueue::_write;
+        // SAFETY: `this` was produced by heap::alloc in SendQueue::_write;
         // libuv guarantees the write callback fires exactly once.
-        let _ = unsafe { Box::from_raw(this) };
+        let _ = unsafe { bun_core::heap::take(this) };
         // write_slice freed by Box<[u8]> Drop.
     }
 }
@@ -812,7 +812,7 @@ impl WindowsWrite {
 pub struct WindowsState {
     pub is_server: bool,
     /// Non-owning raw pointer (matches Zig `?*WindowsWrite`). The allocation
-    /// is `Box::into_raw`'d in `_write` and freed exactly once by
+    /// is `heap::alloc`'d in `_write` and freed exactly once by
     /// `_windows_on_write_complete` via `WindowsWrite::destroy`. Nulling this
     /// field never frees.
     pub windows_write: Option<*mut WindowsWrite>,
@@ -990,7 +990,7 @@ impl SendQueue {
         #[cfg(windows)]
         {
             if let Some(windows_write) = self.windows.windows_write {
-                // SAFETY: `windows_write` was leaked via `Box::into_raw` in
+                // SAFETY: `windows_write` was leaked via `heap::alloc` in
                 // `_write`; libuv still holds it and will free it in
                 // `_windows_on_write_complete`. We only clear the backref so
                 // the callback doesn't touch a dead `SendQueue`.
@@ -1050,8 +1050,8 @@ impl SendQueue {
     #[cfg(windows)]
     extern "C" fn _windows_on_closed(windows: *mut uv::Pipe) {
         log!("SendQueue#_windowsOnClosed");
-        // SAFETY: pipe was Box::into_raw'd in windowsConfigureClient / created by caller.
-        let _ = unsafe { Box::from_raw(windows) };
+        // SAFETY: pipe was heap-allocated in windowsConfigureClient / created by caller.
+        let _ = unsafe { bun_core::heap::take(windows) };
     }
 
     pub fn close_socket_next_tick(&mut self, next_tick: bool) {
@@ -1469,7 +1469,7 @@ impl SendQueue {
             write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
             // Hand ownership to libuv; reclaimed exactly once by
             // `_windows_on_write_complete` via `WindowsWrite::destroy`.
-            let write_req: *mut WindowsWrite = Box::into_raw(write_req);
+            let write_req: *mut WindowsWrite = bun_core::heap::leak(write_req);
             debug_assert!(self.windows.windows_write.is_none());
             self.windows.windows_write = Some(write_req);
 
@@ -1579,8 +1579,8 @@ impl SendQueue {
     #[cfg(windows)]
     extern "C" fn on_server_pipe_close(this: *mut uv::Pipe) {
         // safely free the pipes
-        // SAFETY: pipe was Box::into_raw'd by the caller that configured it.
-        let _ = unsafe { Box::from_raw(this) };
+        // SAFETY: pipe was heap-allocated by the caller that configured it.
+        let _ = unsafe { bun_core::heap::take(this) };
     }
 
     #[cfg(windows)]
@@ -1626,13 +1626,13 @@ impl SendQueue {
         log!("configureClient");
         // SAFETY: all-zero is a valid uv::Pipe (C struct, initialized by uv_pipe_init).
         let ipc_pipe: *mut uv::Pipe =
-            Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+            bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
         // SAFETY: ipc_pipe just allocated above.
         if let Some(err) =
             unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)
         {
-            // SAFETY: ipc_pipe was Box::into_raw'd above and init failed before libuv took ownership.
-            let _ = unsafe { Box::from_raw(ipc_pipe) };
+            // SAFETY: ipc_pipe was heap-allocated above and init failed before libuv took ownership.
+            let _ = unsafe { bun_core::heap::take(ipc_pipe) };
             return Err(err.into());
         }
         // SAFETY: ipc_pipe is a live initialized uv_pipe_t.
@@ -1714,7 +1714,7 @@ impl Drop for SendQueue {
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
         if let Some(close_next_tick_task) = self.close_next_tick {
             // SAFETY: the task was created via `ManagedTask::new` (tag ==
-            // ManagedTask) and `Task.ptr` is the Box::into_raw'd ManagedTask.
+            // ManagedTask) and `Task.ptr` is the heap-allocated ManagedTask.
             let managed: &mut ManagedTask =
                 unsafe { &mut *(close_next_tick_task.ptr.cast::<ManagedTask>()) };
             managed.cancel();

@@ -360,8 +360,8 @@ impl Glob {
 
     pub fn finalize(this: *mut Self) {
         // SAFETY: called once by JSC codegen on the mutator thread during sweep;
-        // `this` was produced via Box::into_raw at construction.
-        let _ = unsafe { Box::from_raw(this) };
+        // `this` was produced via heap::alloc at construction.
+        let _ = unsafe { bun_core::heap::take(this) };
         // `pattern: Box<[u8]>` freed by Drop (was `bun.default_allocator.free(this.pattern)`).
     }
 
@@ -418,7 +418,7 @@ impl Glob {
         // and `global_this`. Both referents outlive the task: `Glob` is GC-rooted
         // via `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
         // `into_raw` erases the stack-tied `'_` once the heap allocation escapes.
-        let _ = Box::into_raw(task);
+        let _ = bun_core::heap::leak(task);
         Ok(promise)
     }
 

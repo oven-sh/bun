@@ -796,14 +796,14 @@ impl TimerObjectInternals {
 
     // PORT NOTE: not `impl Drop` — `self` is an embedded field of ImmediateObject/TimeoutObject
     // whose intrusive-refcount destroy hook calls this explicitly and then frees the parent Box.
-    // An `impl Drop` would (a) run a second time when the parent `Box::from_raw` drops its fields,
+    // An `impl Drop` would (a) run a second time when the parent `heap::take` drops its fields,
     // and (b) fire on the `*self = Self { ... }` whole-struct assignment in `init()`. Follows the
     // PORTING.md FFI/.classes.ts exception: explicit `unsafe fn destroy(*mut Self)` instead of `Drop`.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller is the parent's IntrusiveRc destroy hook; `this` is valid and uniquely owned.
         let s = unsafe { &mut *this };
         // PORT NOTE: Zig `this_value.deinit()` is handled by `JsRef: Drop` when the
-        // parent `Box::from_raw` reclaims fields immediately after this returns.
+        // parent `heap::take` reclaims fields immediately after this returns.
         let vm = VirtualMachine::get_mut_ptr();
         let kind = s.flags.kind();
         let timer_all = Self::timer_all();

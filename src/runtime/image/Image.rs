@@ -295,11 +295,11 @@ impl Image {
 
     pub fn finalize(this: *mut Image) {
         // SAFETY: called once by the codegen'd `~JSImage` on the mutator thread
-        // during lazy sweep; `this` was `Box::into_raw`'d at construction.
+        // during lazy sweep; `this` was `heap::alloc`'d at construction.
         unsafe {
             (*this).this_ref.finalize();
-            // `source` is dropped by `Box::from_raw` below.
-            drop(Box::from_raw(this));
+            // `source` is dropped by `heap::take` below.
+            drop(bun_core::heap::take(this));
         }
     }
 
@@ -1056,7 +1056,7 @@ impl Image {
         let promise_value = task.promise.value();
         // Ownership transfers to the WorkPool / event-loop dispatch
         // (`task_tag::AsyncImageTask` → `run_from_js` → `destroy`).
-        let raw = Box::into_raw(task);
+        let raw = bun_core::heap::leak(task);
         // SAFETY: `raw` is freshly leaked; `schedule()` only writes the
         // intrusive `task` field into the work-pool queue. The worker thread
         // touches `ctx`/`task` only; `promise` was read above on this thread.
@@ -1214,7 +1214,7 @@ impl<'a> BlobReadChain<'a> {
         // `on_read_bytes` on the JS thread (sync for in-memory, async for
         // file/S3). Ownership of the chain transfers there; the trait impl
         // below reconstructs the Box and frees it.
-        let raw = Box::into_raw(chain);
+        let raw = bun_core::heap::leak(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
         blob.read_bytes_to_handler(unsafe { &raw mut *raw }, global)
@@ -1291,11 +1291,11 @@ impl<'a> BlobReadChain<'a> {
 
 impl<'a> ReadBytesHandler for BlobReadChain<'a> {
     fn on_read_bytes(&mut self, result: ReadBytesResult) {
-        // SAFETY: `self` is the `&mut *Box::into_raw(chain)` handed to
+        // SAFETY: `self` is the `&mut *heap::alloc(chain)` handed to
         // `read_bytes_to_handler` in `start()`; we are the sole consumer on
         // the JS thread. Reconstruct the Box so the body can move fields out
         // and free the allocation (mirrors Zig `bun.destroy(self)`).
-        let boxed = unsafe { Box::from_raw(std::ptr::from_mut::<Self>(self)) };
+        let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
         boxed.on_read_bytes_impl(result);
     }
 }

@@ -361,12 +361,12 @@ impl Editor {
         // spawned a detached std.Thread to run it. Phase B should replace with
         // crate::process::spawn (async) or a bun_threading worker that owns
         // SpawnedEditorContext and calls bun.spawnSync.
-        let spawned_ptr = Box::into_raw(spawned);
+        let spawned_ptr = bun_core::heap::leak(spawned);
         // PORT NOTE: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
         // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
         // (the JoinHandle is dropped, detaching the thread).
         // SAFETY: `spawned_ptr` is a uniquely-owned Box raw pointer; ownership is
-        // transferred to the spawned thread which reconstitutes it via Box::from_raw.
+        // transferred to the spawned thread which reconstitutes it via heap::take.
         // Smuggled across the thread boundary as `usize` (`*mut T: !Send`).
         let spawned_addr = spawned_ptr as usize;
         std::thread::Builder::new()
@@ -458,9 +458,9 @@ impl Default for SpawnedEditorContext {
 }
 
 fn auto_close(spawned: *mut SpawnedEditorContext) {
-    // SAFETY: `spawned` came from Box::into_raw in `Editor::open`; this thread is the
+    // SAFETY: `spawned` came from heap::alloc in `Editor::open`; this thread is the
     // sole owner and reconstitutes the Box to drop it at scope exit.
-    let spawned = unsafe { Box::from_raw(spawned) };
+    let spawned = unsafe { bun_core::heap::take(spawned) };
 
     Global::set_thread_name(bun_core::zstr!("Open Editor"));
 

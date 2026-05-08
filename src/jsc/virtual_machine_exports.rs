@@ -58,7 +58,7 @@ pub fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
     use crate::virtual_machine::IPCInstanceUnion;
     match &global.bun_vm().as_mut().ipc {
         Some(IPCInstanceUnion::Initialized(inst)) => {
-            // SAFETY: `inst` was produced by `IPCInstance::new` (Box::into_raw)
+            // SAFETY: `inst` was produced by `IPCInstance::new` (heap::alloc)
             // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
             unsafe { (**inst).data.is_connected() }
         }
@@ -159,9 +159,9 @@ struct HandledPromiseContext {
 
 impl HandledPromiseContext {
     fn callback(context: *mut Self) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `context` was produced by `Box::into_raw` below; we are the
+        // SAFETY: `context` was produced by `heap::alloc` below; we are the
         // sole owner and reconstitute the Box to drop it at end of scope.
-        let context = unsafe { Box::from_raw(context) };
+        let context = unsafe { bun_core::heap::take(context) };
         // SAFETY: `global_this` was the live global at enqueue time; the VM is
         // process-lifetime and the global outlives the event-loop tick.
         let global = unsafe { &*context.global_this };
@@ -177,7 +177,7 @@ impl HandledPromiseContext {
 pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     crate::mark_binding!();
     let promise_js = promise.to_js();
-    let context = Box::into_raw(Box::new(HandledPromiseContext {
+    let context = bun_core::heap::leak(Box::new(HandledPromiseContext {
         global_this: global.as_ptr(),
         promise: Strong::create(promise_js, global),
     }));

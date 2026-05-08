@@ -1324,7 +1324,7 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
-        self.source = Some(Source::Pipe(unsafe { Box::from_raw(pipe) }));
+        self.source = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
         self.start_with_current_pipe()
     }
 
@@ -1726,7 +1726,7 @@ impl WindowsBufferedReader {
                 #[cfg(windows)]
                 Source::Pipe(pipe) => {
                     // Hand the Box off to libuv; the close cb reclaims it.
-                    let raw = Box::into_raw(pipe);
+                    let raw = bun_core::heap::leak(pipe);
                     // SAFETY: raw is a live uv::Pipe*; on_pipe_close frees it.
                     unsafe {
                         (*raw).data = raw.cast::<c_void>();
@@ -1809,7 +1809,7 @@ impl WindowsBufferedReader {
         // SAFETY: handle.data was set to the pipe itself before close.
         let this = unsafe { (*handle).data.cast::<uv::Pipe>() };
         // SAFETY: pipe was Box-allocated; reclaim and drop.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[cfg(windows)]
@@ -1817,9 +1817,9 @@ impl WindowsBufferedReader {
         // SAFETY: handle.data was set to the tty itself before close.
         let this = unsafe { (*handle).data.cast::<uv::uv_tty_t>() };
         // Caller already gates on `!is_stdin_tty` before scheduling close, so
-        // `this` is heap-allocated (open_tty Box::into_raw). Reclaim and drop.
+        // `this` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
         debug_assert!(!crate::source::stdin_tty::is_stdin_tty(this));
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {

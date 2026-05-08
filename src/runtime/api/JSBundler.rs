@@ -1939,8 +1939,8 @@ impl BuildArtifact {
     }
 
     pub fn finalize(this: *mut Self) {
-        // SAFETY: called by JSC finalizer; this was Box::into_raw'd
-        unsafe { drop(Box::from_raw(this)) };
+        // SAFETY: called by JSC finalizer; this was heap-allocated
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(

@@ -23,11 +23,11 @@ impl ManagedTask {
         // Zig: @setRuntimeSafety(false) — no Rust equivalent; bounds/overflow checks
         // are already off in release and there is nothing to elide here.
 
-        // SAFETY: `this` was produced by `Box::into_raw` in `new` (Zig:
+        // SAFETY: `this` was produced by `heap::alloc` in `new` (Zig:
         // `bun.default_allocator.create`). Reconstituting the Box here mirrors
         // Zig's `defer bun.default_allocator.destroy(this)` — it drops at scope
         // exit on both the Ok and Err paths.
-        let this = unsafe { Box::from_raw(this) };
+        let this = unsafe { bun_core::heap::take(this) };
         let callback = this.callback;
         let ctx = this.ctx;
         callback(ctx.unwrap().as_ptr())
@@ -49,7 +49,7 @@ impl ManagedTask {
     // Callers: `ManagedTask.New(T, cb).init(ctx)` → `ManagedTask::new(ctx, cb)`.
     // PERF(port): was comptime monomorphization (callmod_inline) — profile in Phase B
     pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
-        let managed = Box::into_raw(Box::new(ManagedTask {
+        let managed = bun_core::heap::leak(Box::new(ManagedTask {
             // SAFETY: `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical
             // ABI for all `T: Sized`; `run` passes back the exact pointer stored
             // in `ctx` below, so the callee observes its original `*mut T`.

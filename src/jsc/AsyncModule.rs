@@ -700,10 +700,10 @@ impl AsyncModule {
         // (`Queue::poll_modules`) removes the element by value and passes it
         // here, so `Box::new(self)` is the same single transfer with no
         // `ptr::read` and no double-Drop.
-        let clone = Box::into_raw(Box::new(self));
+        let clone = bun_core::heap::leak(Box::new(self));
         jsc_vm.modules.scheduled += 1;
-        // SAFETY: clone is a valid Box::into_raw allocation owned by the
-        // task queue until on_done reclaims it via Box::from_raw; we hold
+        // SAFETY: clone is a valid heap::alloc allocation owned by the
+        // task queue until on_done reclaims it via heap::take; we hold
         // the only reference here.
         unsafe {
             // PORT NOTE: Zig `AnyTask.New(AsyncModule, onDone).init(clone)` —
@@ -722,7 +722,7 @@ impl AsyncModule {
 
     pub fn on_done(this: *mut AsyncModule) {
         jsc::mark_binding();
-        // SAFETY: `this` was Box::into_raw'd in `done`; reclaimed at end of this fn.
+        // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
         let this = unsafe { &mut *this };
         let global_this = this.global_this();
         // SAFETY: `VirtualMachine::get()` is the live per-thread VM (one VM per
@@ -774,7 +774,7 @@ impl AsyncModule {
             )
         });
         // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     // TODO(port): narrow error set to bun_alloc::AllocError — Zig body only

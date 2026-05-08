@@ -235,17 +235,17 @@ impl Value {
                 // context. With the global arena, the context collapses to the
                 // (ptr, len) pair already passed to the callback.
                 extern "C" fn on_free(_ctx: *mut c_void, buffer: *mut c_void, len: u32) {
-                    // SAFETY: `buffer`/`len` were produced by `Box::into_raw` on a
+                    // SAFETY: `buffer`/`len` were produced by `heap::alloc` on a
                     // `Box<[u8]>` below; reconstructing and dropping is sound.
                     unsafe {
-                        drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                        drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                             buffer.cast::<u8>(),
                             len as usize,
                         )));
                     }
                 }
                 let len = bytes.len();
-                let ptr = Box::into_raw(bytes).cast::<u8>();
+                let ptr = bun_core::heap::leak(bytes).cast::<u8>();
                 // latin1 flag = true (matches Zig).
                 BunString::create_external::<*mut c_void>(
                     // SAFETY: ptr/len come from a live `Box<[u8]>` leaked into the

@@ -107,8 +107,8 @@ impl SecureContext {
         }
 
         let sc = Self::create_with_digest(global, ctx_opts, d)?;
-        // SAFETY: `sc` is a fresh Box from `create_with_digest`; ownership transfers to the GC wrapper.
-        let value = unsafe { Self::to_js_ptr(Box::into_raw(sc), global) };
+        // `sc` is a fresh Box from `create_with_digest`; ownership transfers to the GC wrapper.
+        let value = Self::to_js_boxed(sc, global);
         // SAFETY: FFI; `global` is valid, `value` is a live JSValue rooted on the stack.
         unsafe { cpp::Bun__SecureContextCache__set(global, key, value) };
         Ok(value)
@@ -183,7 +183,7 @@ impl SecureContext {
             // SAFETY: `this` is the m_ctx payload allocated via Box::new in
             // create_with_digest; finalize runs once on the mutator thread.
             boringssl::SSL_CTX_free((*this).ctx);
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 

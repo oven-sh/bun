@@ -212,7 +212,7 @@ pub(crate) mod sql_hooks {
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value) {
-            Ok(Some(cfg)) => Box::into_raw(Box::new(cfg)).cast::<c_void>(),
+            Ok(Some(cfg)) => bun_core::heap::leak(Box::new(cfg)).cast::<c_void>(),
             Ok(None) => core::ptr::null_mut(),
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();
@@ -222,9 +222,9 @@ pub(crate) mod sql_hooks {
         }
     }
     unsafe fn ssl_config_free(this: *mut c_void) {
-        // SAFETY: `this` was produced by `Box::into_raw` in
+        // SAFETY: `this` was produced by `heap::alloc` in
         // `ssl_config_from_js`; sql_jsc's `SSLConfig::drop` guards null/double.
-        drop(unsafe { Box::from_raw(this.cast::<crate::socket::SSLConfig>()) });
+        drop(unsafe { bun_core::heap::take(this.cast::<crate::socket::SSLConfig>()) });
     }
     unsafe fn ssl_config_as_usockets_client(
         this: *const c_void,

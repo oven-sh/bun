@@ -16,9 +16,9 @@ impl RefCountedStr {
     pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
         let len = u32::try_from(slice.len()).expect("int cast");
-        let ptr = Box::into_raw(slice).cast::<u8>().cast_const();
+        let ptr = bun_core::heap::leak(slice).cast::<u8>().cast_const();
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
-        Box::into_raw(Box::new(RefCountedStr {
+        bun_core::heap::leak(Box::new(RefCountedStr {
             refcount: Cell::new(1),
             len,
             ptr,
@@ -61,7 +61,7 @@ impl RefCountedStr {
                 bstr::BStr::new((*this).byte_slice())
             );
             (*this).free_str();
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 
@@ -72,7 +72,7 @@ impl RefCountedStr {
         // SAFETY: `ptr`/`len` were produced from `Box::<[u8]>::into_raw` in `init`;
         // reconstructing the Box here returns ownership to the global allocator.
         unsafe {
-            drop(Box::from_raw(ptr::slice_from_raw_parts_mut(
+            drop(bun_core::heap::take(ptr::slice_from_raw_parts_mut(
                 self.ptr.cast_mut(),
                 self.len as usize,
             )));

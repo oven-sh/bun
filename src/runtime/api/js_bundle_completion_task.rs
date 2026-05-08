@@ -85,8 +85,8 @@ impl RefCounted for JSBundleCompletionTask {
         unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: last ref dropped; allocation came from `Box::into_raw`.
-        let mut boxed = unsafe { Box::from_raw(this) };
+        // SAFETY: last ref dropped; allocation came from `heap::alloc`.
+        let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.poll_ref.disable();
         if let Some(plugin) = boxed.plugins.take() {
             // SAFETY: `plugin` is the live FFI handle stashed at construction;
@@ -112,7 +112,7 @@ pub fn create_and_schedule_completion_task(
     let vm = global_this.bun_vm_ptr();
     // SAFETY: `bun_vm()` returns the JS-thread VirtualMachine; non-null for a Bun global.
     let env = unsafe { (*vm).transpiler.env };
-    let completion = Box::into_raw(Box::new(JSBundleCompletionTask {
+    let completion = bun_core::heap::leak(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
         jsc_event_loop: event_loop,
@@ -528,7 +528,7 @@ impl JSBundleCompletionTask {
     /// thread posts back via `complete_on_bundle_thread`.
     fn on_complete_anytask(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
         let ctx = ctx.cast::<Self>();
-        // SAFETY: `ctx` is the Box::into_raw allocation registered in `task`.
+        // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
         let _drop_ref = scopeguard::guard(ctx, |p| unsafe { RefCount::<Self>::deref(p) });

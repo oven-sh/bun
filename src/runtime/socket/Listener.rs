@@ -226,7 +226,7 @@ impl Listener {
                 let ssl_cfg_taken = socket_config.ssl.take();
                 core::mem::forget(socket_config);
 
-                let this: *mut Listener = Box::into_raw(Box::new(Listener {
+                let this: *mut Listener = bun_core::heap::leak(Box::new(Listener {
                     handlers: handlers_moved,
                     connection,
                     ssl: ssl_enabled,
@@ -271,7 +271,7 @@ impl Listener {
                         this_ref.strong_data.deinit();
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
-                        drop(unsafe { Box::from_raw(this) });
+                        drop(unsafe { bun_core::heap::take(this) });
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Failed to listen at {}",
                             bstr::BStr::new(&pipe_buf[..pipe_len])
@@ -279,7 +279,7 @@ impl Listener {
                     }
                 }
 
-                // SAFETY: `global` is live; ownership of `this` (Box::into_raw'd above)
+                // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
                 // transfers to the C++ wrapper.
                 let this_value = js_Listener::to_js(this, global);
                 this_ref.strong_self.set(global, this_value);
@@ -311,7 +311,7 @@ impl Listener {
         // Prevent double-drop of `handlers` (moved out above).
         core::mem::forget(socket_config);
 
-        let this: *mut Listener = Box::into_raw(Box::new(Listener {
+        let this: *mut Listener = bun_core::heap::leak(Box::new(Listener {
             handlers: handlers_moved,
             // Placeholder until `this_ref.connection = connection` below; Zig used `undefined`.
             // Cannot `mem::zeroed()` a Rust enum (UB).
@@ -354,7 +354,7 @@ impl Listener {
             // SAFETY: group was init'd above; not concurrently walked.
             unsafe { uws::SocketGroup::destroy(&raw mut this_ref.group) };
             // SAFETY: reclaim the Box we leaked via into_raw
-            drop(unsafe { Box::from_raw(this) });
+            drop(unsafe { bun_core::heap::take(this) });
         });
 
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
@@ -490,7 +490,7 @@ impl Listener {
         }
 
         let this = scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
-        // SAFETY: `global` is live; ownership of `this` (Box::into_raw'd above)
+        // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
         // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
         // `Listener::finalize` → `deinit`).
         let this_value = js_Listener::to_js(this, global);
@@ -809,10 +809,10 @@ impl Listener {
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
         }
 
-        // connection / protos: dropped by Box::from_raw below
+        // connection / protos: dropped by heap::take below
         // PORT NOTE: Zig `this.handlers.deinit()` — Drop on Handlers handles unprotect.
         // SAFETY: reclaim the Box allocated in listen()
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1024,11 +1024,11 @@ impl Listener {
 
                 let mut handlers_box = Box::new(handlers_moved);
                 handlers_box.mode = SocketMode::Client;
-                let handlers_ptr: *mut Handlers = Box::into_raw(handlers_box);
+                let handlers_ptr: *mut Handlers = bun_core::heap::leak(handlers_box);
 
                 let promise = jsc::JSPromise::create(global);
                 let promise_value = promise.to_js();
-                // SAFETY: handlers_ptr was just Box::into_raw'd; exclusive access.
+                // SAFETY: handlers_ptr was just heap-allocated; exclusive access.
                 unsafe { (*handlers_ptr).promise.set(global, promise_value) };
 
                 if ssl_enabled {
@@ -1036,8 +1036,8 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &mut *prev_ptr };
                         if let Some(prev_handlers) = prev.handlers {
-                            // SAFETY: prev_handlers was Box::into_raw'd
-                            unsafe { drop(Box::from_raw(prev_handlers.as_ptr())) };
+                            // SAFETY: prev_handlers was heap-allocated
+                            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                         }
                         debug_assert!(!prev.this_value.is_empty());
                         prev.handlers = NonNull::new(handlers_ptr);
@@ -1114,8 +1114,8 @@ impl Listener {
                         let prev = unsafe { &mut *prev_ptr };
                         debug_assert!(!prev.this_value.is_empty());
                         if let Some(prev_handlers) = prev.handlers {
-                            // SAFETY: prev_handlers was Box::into_raw'd
-                            unsafe { drop(Box::from_raw(prev_handlers.as_ptr())) };
+                            // SAFETY: prev_handlers was heap-allocated
+                            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                         }
                         prev.handlers = NonNull::new(handlers_ptr);
                         debug_assert!(matches!(prev.socket.socket, uws::InternalSocket::Detached));
@@ -1222,11 +1222,11 @@ impl Listener {
 
         let mut handlers_box = Box::new(handlers_moved);
         handlers_box.mode = SocketMode::Client;
-        let handlers_ptr: *mut Handlers = Box::into_raw(handlers_box);
+        let handlers_ptr: *mut Handlers = bun_core::heap::leak(handlers_box);
 
         let promise = jsc::JSPromise::create(global);
         let promise_value = promise.to_js();
-        // SAFETY: handlers_ptr was just Box::into_raw'd above; exclusive access
+        // SAFETY: handlers_ptr was just heap-allocated above; exclusive access
         unsafe { (*handlers_ptr).promise.set(global, promise_value) };
 
         // Ownership of the SSL_CTX is about to move into the socket; disarm the errdefer.
@@ -1340,8 +1340,8 @@ fn connect_finish<const IS_SSL: bool>(
         let prev = unsafe { &mut *prev_ptr };
         // TODO(port): `JsRef::is_not_empty` — assert non-empty wrapper.
         if let Some(prev_handlers) = prev.handlers {
-            // SAFETY: prev_handlers was Box::into_raw'd
-            unsafe { drop(Box::from_raw(prev_handlers.as_ptr())) };
+            // SAFETY: prev_handlers was heap-allocated
+            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
         }
         prev.handlers = NonNull::new(handlers_ptr);
         // TODO(port): debug_assert!(matches!(prev.socket.socket, InternalSocket::Detached))
@@ -1553,7 +1553,7 @@ impl WindowsNamedPipeListeningContext {
     ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
         // `bun.TrivialNew` — heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
-        let this = Box::into_raw(Box::new(WindowsNamedPipeListeningContext {
+        let this = bun_core::heap::leak(Box::new(WindowsNamedPipeListeningContext {
             // SAFETY: all-zero is a valid pre-init `uv_pipe_t` (C struct,
             // initialised by `uv_pipe_init`).
             uv_pipe: unsafe { core::mem::zeroed() },
@@ -1634,13 +1634,13 @@ impl WindowsNamedPipeListeningContext {
     }
 
     fn deinit(this: *mut Self) {
-        // SAFETY: `this` is a live `Box::into_raw` allocation; this is the last owner.
+        // SAFETY: `this` is a live `heap::alloc` allocation; this is the last owner.
         unsafe {
             (*this).listener = None;
             if let Some(ctx) = (*this).ctx.take() {
                 boring_sys::SSL_CTX_free(ctx.as_ptr());
             }
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 }

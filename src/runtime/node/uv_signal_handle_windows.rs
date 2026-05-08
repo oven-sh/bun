@@ -19,12 +19,12 @@ pub extern "C" fn Bun__UVSignalHandle__init(
 ) -> *mut libuv::uv_signal_t {
     // SAFETY: uv_signal_t is #[repr(C)] POD; uv_signal_init fully initializes it below.
     let signal: *mut libuv::uv_signal_t =
-        Box::into_raw(Box::<libuv::uv_signal_t>::new_uninit()).cast();
+        bun_core::heap::leak(Box::<libuv::uv_signal_t>::new_uninit()).cast();
 
     let mut rc = libuv::uv_signal_init(global.bun_vm().uv_loop(), signal);
     if rc.errno().is_some() {
-        // SAFETY: `signal` was just allocated via Box::into_raw above and never handed out.
-        drop(unsafe { Box::from_raw(signal) });
+        // SAFETY: `signal` was just allocated via heap::alloc above and never handed out.
+        drop(unsafe { bun_core::heap::take(signal) });
         return core::ptr::null_mut();
     }
 
@@ -41,9 +41,9 @@ pub extern "C" fn Bun__UVSignalHandle__init(
 
 #[cfg(windows)]
 extern "C" fn free_with_default_allocator(signal: *mut c_void) {
-    // SAFETY: `signal` was allocated via Box::into_raw(Box<uv_signal_t>) in
+    // SAFETY: `signal` was allocated via heap::alloc(Box<uv_signal_t>) in
     // Bun__UVSignalHandle__init; uv_close guarantees the handle is no longer in use.
-    drop(unsafe { Box::from_raw(signal.cast::<libuv::uv_signal_t>()) });
+    drop(unsafe { bun_core::heap::take(signal.cast::<libuv::uv_signal_t>()) });
 }
 
 #[cfg(windows)]

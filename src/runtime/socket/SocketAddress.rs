@@ -446,7 +446,7 @@ impl SocketAddress {
         // SAFETY: called from JSC finalizer on the mutator thread; `this` is the
         // m_ctx payload allocated via `Box::new` in `SocketAddress::new`.
         // Box drop runs `<SocketAddress as Drop>::drop` (releases `_presentation`).
-        unsafe { drop(Box::from_raw(this)); }
+        unsafe { drop(bun_core::heap::take(this)); }
     }
 }
 

@@ -139,7 +139,7 @@ impl<'a> RefCounted for JSBundleCompletionTask<'a> {
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: last ref dropped; allocation came from `IntrusiveArc::new` (Box).
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

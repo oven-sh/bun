@@ -133,7 +133,7 @@ impl Ls {
                                 cmd, opts, task_count_ptr, cwd,
                                 ZBox::from_bytes(path), evtloop, interp_ptr,
                             );
-                            // SAFETY: freshly Box::into_raw'd.
+                            // SAFETY: freshly heap-allocated.
                             unsafe {
                                 (*task).print_directory = print_directory;
                                 ShellTask::schedule_no_ref::<ShellLsTask>(task);
@@ -144,7 +144,7 @@ impl Ls {
                             cmd, opts, task_count_ptr, cwd,
                             ZBox::from_bytes(b"."), evtloop, interp_ptr,
                         );
-                        // SAFETY: freshly Box::into_raw'd.
+                        // SAFETY: freshly heap-allocated.
                         unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
                     }
                     return Yield::suspended();
@@ -193,7 +193,7 @@ impl Ls {
             None
         };
         if let Some(task) = pending {
-            // SAFETY: `task` was Box::into_raw'd in `OutputTask::new` and
+            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
             return unsafe { OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e) };
         }
@@ -206,8 +206,8 @@ impl Ls {
         cmd: NodeId,
         task: *mut ShellLsTask,
     ) {
-        // SAFETY: task was Box::into_raw'd in create(); reclaim.
-        let mut task = unsafe { Box::from_raw(task) };
+        // SAFETY: task was heap-allocated in create(); reclaim.
+        let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -419,7 +419,7 @@ impl ShellLsTask {
             task: ShellTask::new(event_loop),
         });
         task.task.interp = interp;
-        Box::into_raw(task)
+        bun_core::heap::leak(task)
     }
 
     /// Spec: ls.zig `ShellLsTask.enqueue`. Spawns a subtask for a recursively
@@ -438,7 +438,7 @@ impl ShellLsTask {
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
         // outlives every in-flight task (see `next`).
         unsafe { (*self.task_count).fetch_add(1, Ordering::Relaxed) };
-        // SAFETY: freshly Box::into_raw'd. Spec ls.zig `enqueue` calls
+        // SAFETY: freshly heap-allocated. Spec ls.zig `enqueue` calls
         // `subtask.schedule()` = raw `WorkPool.schedule` (no keep-alive ref);
         // this runs on a worker thread with no JS-VM thread-local.
         unsafe {
@@ -469,7 +469,7 @@ impl ShellLsTask {
 
     /// Spec: ls.zig `ShellLsTask.run`.
     pub fn run_from_thread_pool(this: *mut ShellLsTask) {
-        // SAFETY: `this` is a live Box::into_raw'd task.
+        // SAFETY: `this` is a live heap-allocated task.
         let this = unsafe { &mut *this };
 
         // Cache current time once per task for timestamp formatting.
@@ -641,7 +641,7 @@ impl ShellLsTask {
     }
 
     pub fn run_from_main_thread(this: *mut ShellLsTask, interp: &mut Interpreter) {
-        // SAFETY: `this` is a live Box::into_raw'd task.
+        // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Ls::on_shell_ls_task_done(interp, cmd, this);
     }

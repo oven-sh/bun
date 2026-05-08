@@ -119,7 +119,7 @@ impl PathWatcherManager {
         let m = Box::leak(Box::new(PathWatcherManager::default()));
         if let Err(e) = Platform::init(m) {
             // SAFETY: `m` was just leaked from a Box and not yet published.
-            unsafe { drop(Box::from_raw(std::ptr::from_mut::<PathWatcherManager>(m))) };
+            unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<PathWatcherManager>(m))) };
             return Err(e);
         }
         // SAFETY: holding DEFAULT_MANAGER_MUTEX.
@@ -227,7 +227,7 @@ pub type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 impl PathWatcher {
     /// `bun.TrivialNew(PathWatcher)` — heap-allocate and return raw pointer.
     pub fn new(init: PathWatcher) -> *mut PathWatcher {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     /// Called from the platform reader thread with `manager.mutex` held.
@@ -284,7 +284,7 @@ impl PathWatcher {
             let w = unsafe { &mut *this };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() == 0 {
-                // SAFETY: `this` was created via PathWatcher::new (Box::into_raw).
+                // SAFETY: `this` was created via PathWatcher::new (heap::alloc).
                 unsafe { Self::destroy(this) };
             }
             return;
@@ -322,7 +322,7 @@ impl PathWatcher {
             // — so no `&mut PathWatcher` may be live across that call.
             Platform::remove_watch(manager, this);
         }
-        // SAFETY: `this` was created via PathWatcher::new (Box::into_raw); no other thread
+        // SAFETY: `this` was created via PathWatcher::new (heap::alloc); no other thread
         // can reach it after unlink + remove_watch above.
         unsafe { Self::destroy(this) };
     }
@@ -332,7 +332,7 @@ impl PathWatcher {
     /// references (handlers empty, removed from manager maps).
     unsafe fn destroy(this: *mut PathWatcher) {
         // handlers, platform, path all dropped by Box drop.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -1011,9 +1011,9 @@ pub struct DarwinWatch {
 impl Drop for DarwinWatch {
     fn drop(&mut self) {
         if let Some(fse) = self.fsevents.take() {
-            // SAFETY: fse came from `Box::into_raw` in `add_watch`; reconstitute
+            // SAFETY: fse came from `heap::alloc` in `add_watch`; reconstitute
             // to run `FSEventsWatcher::drop` (→ `unregister_watcher`).
-            drop(unsafe { Box::from_raw(fse) });
+            drop(unsafe { bun_core::heap::take(fse) });
         }
     }
 }
@@ -1042,7 +1042,7 @@ impl Darwin {
             ctx,
         ) {
             Ok(fse) => {
-                watcher.platform.fsevents = Some(Box::into_raw(fse));
+                watcher.platform.fsevents = Some(bun_core::heap::leak(fse));
                 Ok(())
             }
             Err(e) => Err(sys::Error::from_code(
@@ -1072,9 +1072,9 @@ impl Darwin {
         // `platform.fsevents` sub-place via the raw pointer; the CF thread's
         // concurrent raw read targets the disjoint `manager` field.
         if let Some(fse) = unsafe { (*watcher).platform.fsevents.take() } {
-            // SAFETY: fse came from `Box::into_raw` in `add_watch`; reconstitute to
+            // SAFETY: fse came from `heap::alloc` in `add_watch`; reconstitute to
             // run `FSEventsWatcher::drop` (→ `unregister_watcher`).
-            drop(unsafe { Box::from_raw(fse) });
+            drop(unsafe { bun_core::heap::take(fse) });
         }
     }
 

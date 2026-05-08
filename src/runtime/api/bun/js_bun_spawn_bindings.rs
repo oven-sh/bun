@@ -124,7 +124,7 @@ pub struct TerminalCreateResult {
 // sees only the `dyn SendQueueOwner` trait object.
 impl IPC::SendQueueOwner for SubprocessT<'static> {
     fn global_this(&self) -> *const JSGlobalObject {
-        self.global_this.as_ptr()
+        self.global_this
     }
     fn handle_ipc_close(&mut self) {
         SubprocessT::handle_ipc_close(self)
@@ -1188,11 +1188,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // `process` twice and (b) run Drop on every field of the placeholder. Build
     // the struct once with its final field values instead, then fill in the
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
-    let subprocess_ptr = Box::into_raw(Box::new(SubprocessT {
-        global_this: bun_ptr::BackRef::new(global_this),
-        // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer; the
-        // intrusive ref is released in `Subprocess::finalize`.
-        process: unsafe { bun_ptr::BackRef::from_raw(process) },
+    let subprocess_ptr = bun_core::heap::leak(Box::new(SubprocessT {
+        global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+        process,
         pid_rusage: None,
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1307,11 +1305,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             subprocess.finalize_streams();
             // SAFETY: see `process_mut` doc.
-            unsafe { process_mut(subprocess.process.as_ptr()) }.detach();
+            unsafe { process_mut(subprocess.process) }.detach();
             // Zig: `subprocess.process.deref()` releases the intrusive ref
             // (finalize() won't run on this error path).
             // SAFETY: this error path returns without ever reading `process` again.
-            unsafe { process_mut(subprocess.process.as_ptr()) }.deref();
+            unsafe { process_mut(subprocess.process) }.deref();
             MaxBuf::remove_from_subprocess(&mut subprocess.stdout_maxbuf);
             MaxBuf::remove_from_subprocess(&mut subprocess.stderr_maxbuf);
             subprocess.deref();
@@ -1360,7 +1358,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
     // SAFETY: see `process_mut` doc.
-    unsafe { process_mut(subprocess.process.as_ptr()) }
+    unsafe { process_mut(subprocess.process) }
         .set_exit_handler(subprocess_ptr.cast::<()>(), &Subprocess::PROCESS_EXIT_VTABLE);
 
     promise_for_stream.ensure_still_alive();
@@ -1460,7 +1458,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // vtable only dereferences this pointer later on the JS thread, after
         // the local `subprocess` borrow has ended.
         // SAFETY: `subprocess_ptr` is the stable boxed `Subprocess` (from
-        // `Box::into_raw` above) and `stdin` was just confirmed to be the
+        // `heap::alloc` above) and `stdin` was just confirmed to be the
         // `Pipe` variant; the signal's stored back-pointer remains valid for
         // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
         unsafe {
@@ -1472,7 +1470,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     let out = if !IS_SYNC {
-        // SAFETY: `subprocess_ptr` came from `Box::into_raw` above and has not
+        // SAFETY: `subprocess_ptr` came from `heap::alloc` above and has not
         // yet been wrapped; ownership transfers to the C++ JS cell (released via
         // `SubprocessClass__finalize`). Zig's `subprocess.toJS(globalThis)` did
         // not re-allocate, so use the raw-ptr entrypoint instead of the
@@ -1539,7 +1537,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
 
         // SAFETY: see `process_mut` doc.
-        match unsafe { process_mut(subprocess.process.as_ptr()) }.watch() {
+        match unsafe { process_mut(subprocess.process) }.watch() {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => {
                 send_exit_notification = true;
@@ -1555,7 +1553,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     scopeguard::defer! {
         if send_exit_notification {
             // SAFETY: subprocess_ptr is live for the lifetime of this defer.
-            let proc = unsafe { process_mut((*subprocess_ptr_exit).process.as_ptr()) };
+            let proc = unsafe { process_mut((*subprocess_ptr_exit).process) };
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
@@ -1635,7 +1633,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     if !IS_SYNC {
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM.
-            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process);
         }
         return Ok(out);
     }
@@ -1649,14 +1647,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         unsafe { &mut *jsc_vm_ptr }.counters.mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
         // SAFETY: see `process_mut` doc.
-        unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
+        unsafe { process_mut(subprocess.process) }.wait(true);
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
     }
 
     // SAFETY: see `process_mut` doc.
-    match unsafe { process_mut(subprocess.process.as_ptr()) }.watch_or_reap() {
+    match unsafe { process_mut(subprocess.process) }.watch_or_reap() {
         sys::Result::Ok(_) => {
             // Once everything is set up, we can add the abort listener
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
@@ -1673,13 +1671,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
         sys::Result::Err(_) => {
             // SAFETY: see `process_mut` doc.
-            unsafe { process_mut(subprocess.process.as_ptr()) }.wait(true);
+            unsafe { process_mut(subprocess.process) }.wait(true);
         }
     }
 
     if !subprocess.has_exited() {
         // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+        unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process);
     }
 
     let mut did_timeout = false;

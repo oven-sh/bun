@@ -232,14 +232,14 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     // Intrusive refcount (Zig `bun.ptr.RefCount`).
     fn ref_(&self);
     /// Decrement the intrusive refcount and free `*this` (via `Self::deinit` /
-    /// `Box::from_raw`) when it hits zero.
+    /// `heap::take`) when it hits zero.
     ///
     /// PORT NOTE: raw-pointer receiver. The previous `fn deref(&self)` cast
     /// `&self → *const Self → *mut Self` and freed through it — UB (writes
     /// through a pointer derived from a shared ref). All call sites already
     /// hold either `&mut T` (which coerces) or `*mut T`.
     ///
-    /// SAFETY: `this` must point to a live `Self` allocated via `Box::into_raw`
+    /// SAFETY: `this` must point to a live `Self` allocated via `heap::alloc`
     /// in `constructor()`. After this returns, `*this` may have been freed.
     unsafe fn deref(this: *mut Self);
 
@@ -920,9 +920,9 @@ macro_rules! __impl_compression_stream {
                     // Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
                     // → calls `deinit(this)` then `bun.destroy(this)`. The
                     // per-type `Self::deinit(*mut Self)` does both (closes the
-                    // stream and `Box::from_raw`s the payload).
+                    // stream and `heap::take`s the payload).
                     // SAFETY: refcount hit zero ⇒ no other borrow remains;
-                    // `this` was `Box::into_raw`'d at construction.
+                    // `this` was `heap::alloc`'d at construction.
                     unsafe { Self::deinit(this) };
                 }
             }

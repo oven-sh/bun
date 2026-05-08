@@ -88,9 +88,9 @@ impl Status {
 bun_ptr::impl_cell_ref_counted! {
     impl PostgresSQLStatement {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: produced by `Box::into_raw`; ref_count is 0; `Drop` handles
+        // SAFETY: produced by `heap::alloc`; ref_count is 0; `Drop` handles
         // field teardown.
-        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 

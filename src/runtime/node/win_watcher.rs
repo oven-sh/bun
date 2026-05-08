@@ -53,7 +53,7 @@ pub struct PathWatcherManager {
 
 impl PathWatcherManager {
     pub fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
-        Box::into_raw(Box::new(PathWatcherManager {
+        bun_core::heap::leak(Box::new(PathWatcherManager {
             watchers: ArrayHashMap::default(),
             vm,
             deinit_on_last_watcher: false,
@@ -83,7 +83,7 @@ impl PathWatcherManager {
         // No early returns above, so this runs in the same place a defer would — and avoids the
         // overlapping `&mut self` borrow a closure-based guard would require.
         if self.deinit_on_last_watcher && self.watchers.len() == 0 {
-            // SAFETY: self was Box::into_raw'd in `init`; no other live borrows after this point.
+            // SAFETY: self was heap-allocated in `init`; no other live borrows after this point.
             unsafe { Self::deinit(core::ptr::from_mut(self)) };
         }
     }
@@ -91,7 +91,7 @@ impl PathWatcherManager {
     /// Tear down the manager. Takes a raw pointer because it frees `self`.
     ///
     /// NOTE: not `impl Drop` — this type is always held via `*mut` (global static + BACKREF from
-    /// PathWatcher) and self-frees via `Box::from_raw`.
+    /// PathWatcher) and self-frees via `heap::take`.
     unsafe fn deinit(this: *mut PathWatcherManager) {
         // enable to create a new manager
         // SAFETY: single-threaded (JS main thread); see `watch()`.
@@ -101,7 +101,7 @@ impl PathWatcherManager {
             }
         }
 
-        // SAFETY: caller guarantees `this` is a live Box::into_raw'd pointer (see `init`).
+        // SAFETY: caller guarantees `this` is a live heap-allocated pointer (see `init`).
         let me = unsafe { &mut *this };
 
         if me.watchers.len() != 0 {
@@ -119,8 +119,8 @@ impl PathWatcherManager {
 
         // Keys (`Box<[u8]>`) are dropped by the map's Drop — replaces the explicit
         // `allocator.free(path)` loop + `watchers.deinit(allocator)`.
-        // SAFETY: `this` was produced by Box::into_raw in `init`.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: `this` was produced by heap::alloc in `init`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -191,7 +191,7 @@ impl PathWatcher {
                 .sub(core::mem::offset_of!(PathWatcher, handle))
                 .cast::<PathWatcher>()
         };
-        // SAFETY: `this` was Box::into_raw'd in `init` and is kept alive until uv_close fires.
+        // SAFETY: `this` was heap-allocated in `init` and is kept alive until uv_close fires.
         let this = unsafe { &mut *this };
         #[cfg(debug_assertions)]
         {
@@ -324,7 +324,7 @@ impl PathWatcher {
             emit_in_progress: false,
             handlers: ArrayHashMap::default(),
         });
-        let this = Box::into_raw(this_box);
+        let this = bun_core::heap::leak(this_box);
 
         // uv_fs_event_init on Windows unconditionally returns 0 (vendor/libuv/src/win/fs-event.c).
         // bun.assert evaluates its argument before the inline early-return, so this runs in release too.
@@ -351,7 +351,7 @@ impl PathWatcher {
             // watcher inline. See #26254.
             // PORT NOTE: no map entry was inserted yet in the Rust version (see reshape above),
             // so there is nothing to swap_remove here.
-            // SAFETY: `this` is the freshly Box::into_raw'd pointer above; deinit consumes it.
+            // SAFETY: `this` is the freshly heap-allocated pointer above; deinit consumes it.
             unsafe {
                 (*this).manager = None; // prevent deinit() from re-entering unregister_watcher
                 PathWatcher::deinit(this);
@@ -376,15 +376,15 @@ impl PathWatcher {
         let event = handler.cast::<uv::uv_fs_event_t>();
         // SAFETY: event.data was set to the PathWatcher* in `init`.
         let this = unsafe { (*event).data.cast::<PathWatcher>() };
-        // SAFETY: `this` was Box::into_raw'd in `init`.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: `this` was heap-allocated in `init`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// JS-thread entry point from `FSWatcher.detach()`. Signature matches the posix
     /// `path_watcher::PathWatcher::detach` (associated fn over `*mut Self`) so the
     /// caller in `node_fs_watcher.rs` is platform-agnostic.
     pub fn detach(this: *mut PathWatcher, handler: *mut c_void) {
-        // SAFETY: `this` is the live `Box::into_raw`'d pointer returned from `watch()`;
+        // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let me = unsafe { &mut *this };
         if me.handlers.swap_remove(&handler).is_some() {
@@ -394,7 +394,7 @@ impl PathWatcher {
 
     fn maybe_deinit(&mut self) {
         if self.handlers.len() == 0 && !self.emit_in_progress {
-            // SAFETY: self was Box::into_raw'd in `init`; no other live borrows after this point.
+            // SAFETY: self was heap-allocated in `init`; no other live borrows after this point.
             unsafe { Self::deinit(core::ptr::from_mut(self)) };
         }
     }
@@ -403,7 +403,7 @@ impl PathWatcher {
     /// frees the box, so this type is always managed via raw `*mut PathWatcher`.
     unsafe fn deinit(this: *mut PathWatcher) {
         bun_output::scoped_log!(fs_watch, "deinit");
-        // SAFETY: caller guarantees `this` is a live Box::into_raw'd pointer (see `init`).
+        // SAFETY: caller guarantees `this` is a live heap-allocated pointer (see `init`).
         let me = unsafe { &mut *this };
         me.handlers.clear();
         // PERF(port): was clearAndFree (shrinks capacity) — profile in Phase B.
@@ -421,8 +421,8 @@ impl PathWatcher {
 
         // SAFETY: handle was initialized via uv_fs_event_init; uv_is_closed only reads flags.
         if unsafe { uv::uv_is_closed(ptr::addr_of!(me.handle).cast()) } {
-            // SAFETY: `this` was Box::into_raw'd in `init`.
-            drop(unsafe { Box::from_raw(this) });
+            // SAFETY: `this` was heap-allocated in `init`.
+            drop(unsafe { bun_core::heap::take(this) });
         } else {
             // SAFETY: handle is open and not yet closing; stop/close are valid in that state.
             unsafe {
@@ -462,7 +462,7 @@ pub fn watch(
         }
     };
 
-    // SAFETY: `manager` is a live Box::into_raw'd pointer stored in DEFAULT_MANAGER (JS main thread only).
+    // SAFETY: `manager` is a live heap-allocated pointer stored in DEFAULT_MANAGER (JS main thread only).
     let watcher = match PathWatcher::init(unsafe { &mut *manager }, path, recursive) {
         sys::Result::Err(err) => return sys::Result::Err(err),
         sys::Result::Ok(w) => w,

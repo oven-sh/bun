@@ -217,7 +217,7 @@ enum ErrorType {
 impl S3HttpSimpleTask {
     // bun.TrivialNew(@This()) — heap-allocate; pointer crosses thread boundary via http callback
     pub fn new(init: Self) -> *mut Self {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     fn error_with_body(&self, error_type: ErrorType) -> JsTerminatedResult<()> {
@@ -297,10 +297,10 @@ impl S3HttpSimpleTask {
 
     /// this is the task callback from the last task result and is always in the main thread
     pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
-        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (Box::into_raw) and ownership is
+        // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract. Dropping
         // `this` at scope exit replaces Zig's `defer this.deinit()`.
-        let mut this = unsafe { Box::from_raw(this) };
+        let mut this = unsafe { bun_core::heap::take(this) };
 
         if !this.result.is_success() {
             this.error_with_body(ErrorType::Failure)?;
@@ -563,7 +563,7 @@ pub fn execute_simple_s3_request(
         proxy_url: Box::default(),
         poll_ref: KeepAlive::init(),
     });
-    // SAFETY: `task_ptr` is a freshly Box::into_raw'd pointer; exclusive access here.
+    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; exclusive access here.
     let task = unsafe { &mut *task_ptr };
     task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
 

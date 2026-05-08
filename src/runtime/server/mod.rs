@@ -146,7 +146,7 @@ pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, st
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
 // PORT NOTE (§Pointers): Zig variants are `bun.ptr.RefCount` payloads. All
 // three concrete route types carry an intrusive `ref_count: Cell<u32>` and are
-// heap-allocated via `Box::into_raw`; their pointers round-trip through uws
+// heap-allocated via `heap::alloc`; their pointers round-trip through uws
 // callback userdata (`ctx: *mut c_void`), so `Rc<T>` is unsuitable (would add
 // a second header and break the round-trip). Hold them as raw intrusive
 // pointers — matches Zig `*StaticRoute` / `*FileRoute` / `*HTMLBundle.Route`.
@@ -188,7 +188,7 @@ impl AnyRoute {
     }
     pub fn deref_(&self) {
         match self {
-            // SAFETY: intrusive refcount; ptr was Box::into_raw'd with rc=1.
+            // SAFETY: intrusive refcount; ptr was heap-allocated with rc=1.
             AnyRoute::Static(p) => unsafe { StaticRoute::deref_(p.as_ptr()) },
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { FileRoute::deref(p.as_ptr()) },
@@ -291,7 +291,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         // remaining owned fields (config, base_url, h3_alt_svc, dev_server,
         // user_routes, all_closed_promise, on_clienterror) drop automatically.
         if let Some(p) = self.plugins.take() {
-            // SAFETY: `plugins` carries the `Box::into_raw` provenance from
+            // SAFETY: `plugins` carries the `heap::alloc` provenance from
             // `ServePlugins::init`; this releases the server's counted ref.
             unsafe { ServePlugins::deref_(p.as_ptr()) };
         }
@@ -692,7 +692,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
         // by `ctx.request_weakref` until `RequestContext::deinit` releases it.
         let request_object: *mut crate::webcore::Request =
-            Box::into_raw(crate::webcore::Request::new(crate::webcore::Request::init(
+            bun_core::heap::leak(crate::webcore::Request::new(crate::webcore::Request::init(
                 ctx_mut.method,
                 AnyRequestContext::init(ctx),
                 SSL,
@@ -1555,7 +1555,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `AnyTask` stores an erased fn-ptr directly (the `New` shim cannot
             // take a comptime fn value on stable Rust).
             let app = self.app.unwrap();
-            let task = Box::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
+            let task = bun_core::heap::leak(Box::new(bun_event_loop::AnyTask::AnyTask {
                 ctx: core::ptr::NonNull::new(app.cast()),
                 callback: |ctx: *mut core::ffi::c_void| {
                     // SAFETY: `ctx` is the `*mut NewApp<SSL>` stored above; the
@@ -1567,7 +1567,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             vm.enqueue_task(bun_event_loop::Task::init(task));
         }
 
-        let task = Box::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
+        let task = bun_core::heap::leak(Box::new(bun_event_loop::AnyTask::AnyTask {
             ctx: core::ptr::NonNull::new(std::ptr::from_mut::<Self>(self).cast()),
             callback: |ctx: *mut core::ffi::c_void| {
                 Self::deinit(ctx.cast::<Self>());
@@ -1684,7 +1684,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// from `schedule_deinit`'s task or synchronously on listen-failure.
     pub fn deinit(this: *mut Self) {
         httplog!("deinit");
-        // SAFETY: `this` was Box::into_raw'd in `init()` and is uniquely owned here.
+        // SAFETY: `this` was heap-allocated in `init()` and is uniquely owned here.
         let this_ref = unsafe { &mut *this };
 
         // This should've already been handled in stop_listening; however, when
@@ -1693,7 +1693,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // PORT NOTE: owned-field cleanup (all_closed_promise / user_routes /
         // config / on_clienterror / h3_alt_svc / dev_server / plugins) is
-        // handled by the Box::from_raw drop below — see `impl Drop for NewServer`.
+        // handled by the heap::take drop below — see `impl Drop for NewServer`.
         if Self::HAS_H3 {
             if let Some(h3a) = this_ref.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.
@@ -1705,8 +1705,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             unsafe { uws_sys::NewApp::<SSL>::destroy(app) };
         }
 
-        // SAFETY: paired with Box::into_raw in `init()`.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: paired with heap::alloc in `init()`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn set_using_custom_expect_handler(&mut self, value: bool) {
@@ -1728,7 +1728,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             bun_str::strings::trim(&config.base_uri, b"/").to_vec().into_boxed_slice();
         // errdefer free(base_url) — Box drops on Err automatically
 
-        let server = Box::into_raw(Box::new(Self {
+        let server = bun_core::heap::leak(Box::new(Self {
             global_this: std::ptr::from_ref(global),
             config: core::mem::take(config),
             base_url_string_for_joining: base_url,
@@ -1783,8 +1783,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }) {
                 Ok(d) => d,
                 Err(e) => {
-                    // SAFETY: paired with Box::into_raw above.
-                    drop(unsafe { Box::from_raw(server) });
+                    // SAFETY: paired with heap::alloc above.
+                    drop(unsafe { bun_core::heap::take(server) });
                     return Err(e);
                 }
             };
@@ -2678,7 +2678,7 @@ macro_rules! impl_server_pools {
             fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
                 static POOL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
                 *POOL.get_or_init(|| {
-                    Box::into_raw(Box::new(
+                    bun_core::heap::leak(Box::new(
                         request_context::RequestContextStackAllocator::<NewServer<$ssl, $debug>, $ssl, $debug, false>::init(),
                     )) as usize
                 }) as *mut _
@@ -2686,7 +2686,7 @@ macro_rules! impl_server_pools {
             fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, true> {
                 static POOL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
                 *POOL.get_or_init(|| {
-                    Box::into_raw(Box::new(
+                    bun_core::heap::leak(Box::new(
                         request_context::RequestContextStackAllocator::<NewServer<$ssl, $debug>, $ssl, $debug, true>::init(),
                     )) as usize
                 }) as *mut _
@@ -3334,7 +3334,7 @@ impl ServerAllConnectionsClosedTask {
     /// Spec server.zig `schedule` — `bun.TrivialNew` heap-allocates `this`,
     /// then `vm.eventLoop().enqueueTask(jsc.Task.init(ptr))`.
     pub fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
-        let ptr = Box::into_raw(Box::new(this));
+        let ptr = bun_core::heap::leak(Box::new(this));
         vm.enqueue_task(bun_event_loop::Task::init(ptr));
     }
 
@@ -3346,10 +3346,10 @@ impl ServerAllConnectionsClosedTask {
     ) -> Result<(), jsc::JsTerminated> {
         httplog!("ServerAllConnectionsClosedTask runFromJSThread");
 
-        // SAFETY: `this` was `Box::into_raw`'d in `schedule()`; reclaim
+        // SAFETY: `this` was `heap::alloc`'d in `schedule()`; reclaim
         // ownership and move out of the Box (Zig: `bun.destroy(this)` after
         // copying the fields it still needs onto the stack).
-        let this = *unsafe { Box::from_raw(this) };
+        let this = *unsafe { bun_core::heap::take(this) };
         // SAFETY: `global_object` is the per-VM JSGlobalObject, kept alive for
         // the VM's lifetime; the task is only dispatched on that VM's JS thread.
         let global_object: &jsc::JSGlobalObject = unsafe { &*this.global_object };

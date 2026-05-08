@@ -1835,35 +1835,30 @@ pub struct Closer {
     pub task: work_pool::Task,
 }
 
+// SAFETY: `TASK_OFFSET` is `offset_of!(Closer, task)`; `task_mut` returns that
+// same field. `Closer` is `Send` (`Fd` + intrusive `Task` are both `Send`).
+unsafe impl bun_threading::work_pool::OwnedTask for Closer {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Closer, task);
+    fn task_mut(&mut self) -> &mut work_pool::Task { &mut self.task }
+    fn run(self: Box<Self>) {
+        // PORT NOTE: Zig `defer bun.destroy(closer)` — `self` drops at scope exit.
+        self.fd.close();
+    }
+}
+
 impl Closer {
     pub fn new(fd: Fd) -> Box<Self> {
-        Box::new(Self {
-            fd,
-            task: work_pool::Task {
-                node: bun_threading::thread_pool::Node::default(),
-                callback: Self::on_close,
-            },
-        })
+        // `task` is overwritten by `WorkPool::schedule_owned`; placeholder callback.
+        Box::new(Self { fd, task: work_pool::Task {
+            node: bun_threading::thread_pool::Node::default(),
+            callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
+        } })
     }
 
     /// `_compat` arg is for compatibility with the windows version.
     pub fn close(fd: Fd, _compat: ()) {
         debug_assert!(fd.is_valid());
-        let closer = Box::into_raw(Self::new(fd));
-        // SAFETY: closer is a valid heap allocation; task is the embedded field.
-        WorkPool::schedule(unsafe { &raw mut (*closer).task });
-    }
-
-    unsafe fn on_close(task: *mut work_pool::Task) {
-        // SAFETY: task points to Closer.task; recover the parent via offset_of.
-        let closer = unsafe {
-            task.cast::<u8>().sub(core::mem::offset_of!(Closer, task)).cast::<Closer>()
-        };
-        // PORT NOTE: Zig `defer bun.destroy(closer)` — recover Box and let it drop after fd.close().
-        // SAFETY: closer was Box::into_raw'd in Closer::close; reclaim ownership here.
-        let closer_box = unsafe { Box::from_raw(closer) };
-        closer_box.fd.close();
-        // closer_box dropped here
+        WorkPool::schedule_owned(Self::new(fd));
     }
 }
 

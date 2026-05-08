@@ -134,7 +134,7 @@ impl CryptoHasher {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
-        // handle was produced by Box::into_raw via getByName/getFromOther
+        // handle was produced by heap::alloc via getByName/getFromOther
         CryptoHasher::finalize(handle);
     }
 
@@ -764,7 +764,7 @@ impl CryptoHasher {
     pub fn finalize(this: *mut CryptoHasher) {
         // SAFETY: `this` was allocated via `CryptoHasher::new` (Box::new) and ownership
         // is being returned to us by the JSC wrapper / extern destroy.
-        let this = unsafe { Box::from_raw(this) };
+        let this = unsafe { bun_core::heap::take(this) };
         match *this {
             CryptoHasher::Evp(_inner) => {
                 // https://github.com/oven-sh/bun/issues/3250
@@ -1518,7 +1518,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
     pub fn finalize(this: *mut Self) {
         // SAFETY: `this` was allocated via `Box::new` in `constructor`.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

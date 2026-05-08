@@ -1198,16 +1198,16 @@ impl<'a> Transpiler<'a> {
                     // an unbounded `&mut Map`, so a `OnceLock<Loader>` here can't
                     // be expressed without changing `bun_dotenv`'s API.
                     // Transfer ownership of both allocations into the global
-                    // singleton via `Box::into_raw` (the AtomicPtr becomes the
+                    // singleton via `heap::alloc` (the AtomicPtr becomes the
                     // owner; matches `MiniEventLoop::init_global`).
                     // TODO(port): replace with a `OnceLock`-backed
                     // `bun_dotenv::instance_or_init()` accessor once
                     // `bun_dotenv` grows one (PORTING.md §Concurrency).
-                    let map: *mut dot_env::Map = Box::into_raw(Box::new(dot_env::Map::init()));
+                    let map: *mut dot_env::Map = bun_core::heap::leak(Box::new(dot_env::Map::init()));
                     // SAFETY: `map` is a fresh heap allocation with no other
                     // alias; `Loader` stores it for process lifetime and is
                     // itself installed into `dot_env::INSTANCE` below.
-                    Box::into_raw(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
+                    bun_core::heap::leak(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
                 }
             },
         };
@@ -1911,7 +1911,7 @@ impl<'a> Transpiler<'a> {
                                         // owned `Box<[u8]>` so it is freed
                                         // with the arena instead of leaking
                                         // (PORTING.md §Forbidden patterns
-                                        // bars `Box::into_raw` for `&'static`).
+                                        // bars `heap::alloc` for `&'static`).
                                         // SAFETY: ARENA — `arena` outlives
                                         // the returned `ParseResult.ast`.
                                         Ok(boxed) => {
@@ -2334,7 +2334,7 @@ impl<'a> Transpiler<'a> {
         W: js_printer::WriterTrait,
     {
         // Spec transpiler.zig:662-663 — both set on this (EsmAscii) arm only.
-        // SAFETY: `module_info` is `ModuleInfo::create`'s `Box::into_raw` (or
+        // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
         // null); it is exclusively owned by this print call until T6 reclaims
         // it after `print_with_source_map` returns.
         let module_info = module_info.map(|p| unsafe { &mut *p });

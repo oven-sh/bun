@@ -149,7 +149,7 @@ pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             native_callback: NativeCallbacks::None,
             twin: None,
         });
-        // SAFETY: `NewSocket::new` returns a live heap pointer (`Box::into_raw`).
+        // SAFETY: `NewSocket::new` returns a live heap pointer (`heap::alloc`).
         unsafe { (*socket).get_this_value(global) }
     }
 

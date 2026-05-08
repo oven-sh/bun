@@ -314,13 +314,13 @@ impl MySQLQuery {
         let writer = connection.get_writer();
         if self.statement.is_null() {
             // Zig: `bun.new(MySQLStatement, .{ .signature = .empty(), .status = .parsing, .ref_count = .initExactRefs(1) })`.
-            // `Box::into_raw` yields a heap allocation with intrusive ref_count == 1
+            // `heap::alloc` yields a heap allocation with intrusive ref_count == 1
             // (the `Default` impl sets `ref_count = Cell::new(1)`).
             // FRU (`..Default::default()`) is illegal for `Drop` types; mutate instead.
             let mut stmt = Box::new(MySQLStatement::default());
             stmt.signature = Signature::empty();
             stmt.status = my_sql_statement::Status::Parsing;
-            self.statement = Box::into_raw(stmt);
+            self.statement = bun_core::heap::leak(stmt);
         }
         mysql_request::execute_query(query_str.slice(), writer)?;
 
@@ -392,7 +392,7 @@ impl MySQLQuery {
                 stmt.status = my_sql_statement::Status::Pending;
                 stmt.statement_id = 0;
                 stmt.init_exact_refs(2);
-                let stmt = Box::into_raw(stmt);
+                let stmt = bun_core::heap::leak(stmt);
                 self.statement = stmt;
                 *entry.value_ptr = stmt;
             }

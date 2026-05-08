@@ -1040,10 +1040,10 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
     config: *mut bun_http::ssl_config::SSLConfig,
 ) {
-    // SAFETY: `config` was produced by `Box::into_raw` (via `Option<Box<_>>`
+    // SAFETY: `config` was produced by `heap::alloc` (via `Option<Box<_>>`
     // FFI niche) in `Bun__WebSocket__parseSSLConfig`; caller transfers
     // ownership back. `bun_http::SSLConfig::drop` runs `deinit()`.
-    drop(unsafe { Box::from_raw(config) });
+    drop(unsafe { bun_core::heap::take(config) });
 }
 
 // ported from: src/runtime/socket/SSLConfig.zig

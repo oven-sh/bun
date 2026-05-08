@@ -669,7 +669,7 @@ impl AnyRoute {
                 }
             }
 
-            // SAFETY: init_from_blob returns a freshly Box::into_raw'd FileRoute (rc=1).
+            // SAFETY: init_from_blob returns a freshly heap-allocated FileRoute (rc=1).
             return Ok(AnyRoute::File(unsafe {
                 NonNull::new_unchecked(FileRoute::init_from_blob(
                     blob,
@@ -678,7 +678,7 @@ impl AnyRoute {
             }));
         }
 
-        // SAFETY: init_from_any_blob returns a freshly Box::into_raw'd StaticRoute (rc=1).
+        // SAFETY: init_from_any_blob returns a freshly heap-allocated StaticRoute (rc=1).
         Ok(AnyRoute::Static(unsafe {
             NonNull::new_unchecked(StaticRoute::init_from_any_blob(
                 AnyBlob::Blob(blob),
@@ -789,11 +789,11 @@ impl AnyRoute {
         }
 
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
-            // SAFETY: from_js returns a freshly Box::into_raw'd FileRoute (rc=1).
+            // SAFETY: from_js returns a freshly heap-allocated FileRoute (rc=1).
             return Ok(Some(AnyRoute::File(unsafe { NonNull::new_unchecked(file_route) })));
         }
         match StaticRoute::from_js(global, argument)? {
-            // SAFETY: from_js returns a freshly Box::into_raw'd StaticRoute (rc=1).
+            // SAFETY: from_js returns a freshly heap-allocated StaticRoute (rc=1).
             Some(s) => Ok(Some(AnyRoute::Static(unsafe { NonNull::new_unchecked(s) }))),
             None => Ok(None),
         }
@@ -853,7 +853,7 @@ pub enum ServePluginsCallback<'a> {
 
 impl ServePlugins {
     pub fn init(plugins: Box<[Box<[u8]>]>) -> *mut ServePlugins {
-        Box::into_raw(Box::new(ServePlugins {
+        bun_core::heap::leak(Box::new(ServePlugins {
             ref_count: core::cell::Cell::new(1),
             state: ServePluginsState::Unqueued(plugins),
         }))
@@ -866,7 +866,7 @@ impl ServePlugins {
     /// Bump the refcount and return an RAII guard that derefs on `Drop`.
     ///
     /// # Safety
-    /// `this` must originate from [`ServePlugins::init`] (carry `Box::into_raw`
+    /// `this` must originate from [`ServePlugins::init`] (carry `heap::alloc`
     /// provenance) so the eventual `deref_` can free it.
     #[inline]
     unsafe fn guard_ref(this: *const Self) -> ServePluginsRef {
@@ -877,8 +877,8 @@ impl ServePlugins {
 
     /// Decrement the intrusive refcount, freeing the allocation when it hits zero.
     ///
-    /// Takes a raw pointer (not `&self`) so the original `Box::into_raw` provenance
-    /// from [`ServePlugins::init`] is preserved for the final `Box::from_raw` — going
+    /// Takes a raw pointer (not `&self`) so the original `heap::alloc` provenance
+    /// from [`ServePlugins::init`] is preserved for the final `heap::take` — going
     /// through `&self` would narrow provenance to read-only and make the drop UB.
     ///
     /// SAFETY: `this` must originate from [`ServePlugins::init`] and the caller must
@@ -889,8 +889,8 @@ impl ServePlugins {
         let n = rc.get() - 1;
         rc.set(n);
         if n == 0 {
-            // SAFETY: refcount hit zero; `this` carries the Box::into_raw provenance from init()
-            unsafe { drop(Box::from_raw(this.cast_mut())) };
+            // SAFETY: refcount hit zero; `this` carries the heap::alloc provenance from init()
+            unsafe { drop(bun_core::heap::take(this.cast_mut())) };
         }
     }
 
@@ -947,13 +947,13 @@ impl ServePlugins {
         let bunfig_folder: &[u8] =
             bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path);
 
-        // SAFETY: `self` originates from a `*mut ServePlugins` (Box::into_raw in init()); the
+        // SAFETY: `self` originates from a `*mut ServePlugins` (heap::alloc in init()); the
         // raw pointer preserves that provenance for the paired deref_ on scope exit.
         let _deref_guard = unsafe { Self::guard_ref(self) };
 
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
-        let plugin: Box<JSBundler::Plugin> = unsafe { Box::from_raw(plugin) };
+        let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
         // PERF(port): was stack-fallback alloc
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
@@ -1091,7 +1091,7 @@ impl ServePluginsRef {
     ///
     /// # Safety
     /// Caller must own one counted reference to `ptr`, and `ptr` must carry the
-    /// `Box::into_raw` provenance from [`ServePlugins::init`].
+    /// `heap::alloc` provenance from [`ServePlugins::init`].
     #[inline]
     unsafe fn adopt(ptr: *const ServePlugins) -> Self {
         Self(ptr)
@@ -1123,7 +1123,7 @@ pub fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsRes
 
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
     let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
+    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
     let _guard = unsafe { ServePluginsRef::adopt(plugins) };
     plugins_result.ensure_still_alive();
 
@@ -1139,7 +1139,7 @@ pub fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
     let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was Box::into_raw'd and ref()'d before .then(); deref pairs with that ref
+    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
     let _guard = unsafe { ServePluginsRef::adopt(plugins) };
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);
@@ -1356,7 +1356,7 @@ where
         if let Some(p) = self.plugins {
             let global = self.global();
             // SAFETY: `plugins` holds a counted ref produced by
-            // `ServePlugins::init` (Box::into_raw); intrusive refcount permits
+            // `ServePlugins::init` (heap::alloc); intrusive refcount permits
             // mutation through any owner. No other `&mut ServePlugins` is live
             // on this (single-threaded) JS thread for the call's duration.
             return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
@@ -2237,12 +2237,12 @@ where
         // Request` into the JS wrapper, which adopts ownership and frees the
         // allocation in its GC finalizer. Relinquish the `Box` here so the
         // local going out of scope does not also drop it (double-free / UAF).
-        let request: *mut Request = Box::into_raw(existing_request);
+        let request: *mut Request = bun_core::heap::leak(existing_request);
 
         debug_assert!(self.config.on_request.is_some()); // confirmed above
         let global_this = self.global();
         let on_request = self.config.on_request.as_ref().unwrap().get();
-        // SAFETY: `request` was just allocated via `Box::into_raw`; ownership
+        // SAFETY: `request` was just allocated via `heap::alloc`; ownership
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
         let response_value = match on_request.call(
@@ -2827,7 +2827,7 @@ where
         let request_object: &mut Request =
             // SAFETY: leak so the ctx (which outlives this stack frame) can
             // hold the borrow; Request is freed via ctx.deinit's request_weakref.
-            unsafe { &mut *Box::into_raw(request_object_box) };
+            unsafe { &mut *bun_core::heap::leak(request_object_box) };
         ctx.set_request_weakref(request_object);
 
         // The lazy `getRequest()` path that backs Request.url / .headers
@@ -3041,7 +3041,7 @@ where
         let request_object: &mut Request =
             // SAFETY: leaked so the ctx (which outlives this stack frame) can
             // hold the borrow; freed via ctx.deinit's request_weakref.
-            unsafe { &mut *Box::into_raw(request_object_box) };
+            unsafe { &mut *bun_core::heap::leak(request_object_box) };
         ctx.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(request_object);
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
@@ -3242,7 +3242,7 @@ macro_rules! impl_server_jsclass {
                 crate::generated_classes::$gen_mod::from_js_direct(value).map(|p| p.as_ptr())
             }
             fn to_js(self, global: &JSGlobalObject) -> JSValue {
-                crate::generated_classes::$gen_mod::to_js(Box::into_raw(Box::new(self)), global)
+                crate::generated_classes::$gen_mod::to_js(bun_core::heap::leak(Box::new(self)), global)
             }
         }
     };

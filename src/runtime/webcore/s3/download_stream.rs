@@ -196,7 +196,7 @@ impl S3HttpDownloadStreamingTask {
         if !has_more {
             // SAFETY: `this` was allocated via `Box::new` in `Self::new`; we are the sole owner
             // once `has_more == false` (HTTP thread will not call back again).
-            unsafe { drop(Box::from_raw(this)) };
+            unsafe { drop(bun_core::heap::take(this)) };
         }
     }
 

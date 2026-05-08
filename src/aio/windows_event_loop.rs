@@ -543,7 +543,7 @@ impl Closer {
     pub fn close(fd: Fd, loop_: *mut uv::Loop) {
         // SAFETY: all-zero is a valid uv::fs_t (libuv C struct, zero-initialized by convention).
         let io_request: uv::fs_t = unsafe { core::mem::zeroed() };
-        let closer = Box::into_raw(Box::new(Closer { io_request }));
+        let closer = bun_core::heap::leak(Box::new(Closer { io_request }));
         // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
         // SAFETY: closer is a freshly-boxed valid pointer.
         unsafe {
@@ -553,7 +553,7 @@ impl Closer {
                     .err_enum()
             {
                 Output::debug_warn(format_args!("libuv close() failed = {}", err));
-                drop(Box::from_raw(closer));
+                drop(bun_core::heap::take(closer));
             }
         }
     }
@@ -583,7 +583,7 @@ impl Closer {
             }
 
             (*req).deinit();
-            drop(Box::from_raw(closer));
+            drop(bun_core::heap::take(closer));
         }
     }
 }

@@ -595,13 +595,14 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                 /// without re-boxing. Mirrors Zig's generated
                 /// `${T}.toJS(this: *T, globalThis)` which forwards the
                 /// existing pointer to `${T}__create`. Use this when `Self`
-                /// was allocated via `Box::into_raw` / intrusive-RC `init()`
+                /// was allocated via `heap::alloc` / intrusive-RC `init()`
                 /// and `JsClass::to_js(self, ..)` would double-allocate.
                 ///
                 /// # Safety
                 /// `ptr` must be a uniquely-owned heap allocation compatible
-                /// with `${T}Class__finalize` (i.e. `Box::into_raw`-produced);
-                /// ownership transfers to the GC wrapper.
+                /// with `${T}Class__finalize` (i.e. produced by
+                /// `bun_core::heap::alloc`/`leak`); ownership transfers to the
+                /// GC wrapper.
                 #[inline]
                 pub unsafe fn to_js_ptr(
                     ptr: *mut Self,
@@ -611,11 +612,23 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     // ownership transfers to the C++ wrapper. See `to_js`.
                     unsafe { __create(global.as_mut_ptr(), ptr) }
                 }
+
+                /// Wrap an owned `Box<Self>` in a JS object. Typed sibling of
+                /// [`to_js_ptr`] — the boxed payload is leaked here and
+                /// reclaimed by `${T}Class__finalize`.
+                #[inline]
+                pub fn to_js_boxed(
+                    this: ::std::boxed::Box<Self>,
+                    global: &::bun_jsc::JSGlobalObject,
+                ) -> ::bun_jsc::JSValue {
+                    // SAFETY: ownership transfers to the C++ wrapper; see `to_js`.
+                    unsafe { __create(global.as_mut_ptr(), ::bun_jsc::heap::leak(this)) }
+                }
             }
 
             impl ::bun_jsc::JsClass for #rust_ty {
                 fn to_js(self, global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
-                    let ptr = ::std::boxed::Box::into_raw(::std::boxed::Box::new(self));
+                    let ptr = ::bun_jsc::heap::alloc(self);
                     // SAFETY: `global` is live; `ptr` ownership transfers to the
                     // C++ wrapper (freed via `${T}Class__finalize`). `as_mut_ptr`
                     // derives `*mut` via `UnsafeCell` so C++ allocating on the

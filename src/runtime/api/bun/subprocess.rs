@@ -135,7 +135,7 @@ impl StdioKind {
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
     /// Intrusively-refcounted `Process` (Zig: `*Process`). Allocated via
-    /// `Box::into_raw` in `Process::init_posix`/`init_windows`; the +1 ref
+    /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
     /// from construction is released in [`Subprocess::finalize`] via
     /// `Process::deref()`. Not `Arc` — `Process` carries its own
     /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
@@ -193,8 +193,8 @@ impl<'a> RefCounted for Subprocess<'a> {
         unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
     unsafe fn destructor(this: *mut Self, _: ()) {
-        // SAFETY: refcount hit 0; allocation came from Box::into_raw in spawn_maybe_sync.
-        unsafe { drop(Box::from_raw(this)) };
+        // SAFETY: refcount hit 0; allocation came from heap::alloc in spawn_maybe_sync.
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 }
 pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
@@ -207,14 +207,14 @@ const _: () = {
     use crate::generated_classes::js_Subprocess as js;
 
     impl<'a> Subprocess<'a> {
-        /// Wrap an already-heap-allocated `Subprocess` (via `Box::into_raw`) in
+        /// Wrap an already-heap-allocated `Subprocess` (via `heap::alloc`) in
         /// its JS cell. `Bun.spawn` boxes early so address-dependent
         /// back-pointers (`stdin.pipe.signal`, MaxBuf owner, IPC owner) can be
         /// wired before `subprocess.toJS(globalThis)` runs; this is the raw-ptr
         /// entrypoint that avoids re-boxing.
         ///
         /// # Safety
-        /// `ptr` must come from `Box::into_raw(Box::new(Subprocess { .. }))` and
+        /// `ptr` must come from `heap::alloc(Box::new(Subprocess { .. }))` and
         /// not yet be owned by any JS wrapper; ownership transfers to the C++
         /// side (released via `SubprocessClass__finalize`).
         #[inline]
@@ -228,7 +228,7 @@ const _: () = {
 
     impl<'a> bun_jsc::JsClass for Subprocess<'a> {
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            let ptr = Box::into_raw(Box::new(self));
+            let ptr = bun_core::heap::leak(Box::new(self));
             // Ownership of `ptr` transfers to the C++ wrapper (freed via
             // `SubprocessClass__finalize`).
             js::to_js(ptr.cast(), global)
@@ -1495,8 +1495,8 @@ impl Source {
 #[cfg(windows)]
 pub extern "C" fn on_pipe_close(this: *mut bun_sys::windows::libuv::Pipe) {
     // safely free the pipes
-    // SAFETY: pipe was Box::into_raw'd when created; we are the close callback owner.
-    drop(unsafe { Box::from_raw(this) });
+    // SAFETY: pipe was heap-allocated when created; we are the close callback owner.
+    drop(unsafe { bun_core::heap::take(this) });
 }
 
 pub mod testing_apis {

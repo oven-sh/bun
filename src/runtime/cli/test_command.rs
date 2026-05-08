@@ -1745,7 +1745,7 @@ impl TestCommand {
         // returns before process exit, so the heap allocation outlives all observers.
         // `Loader::init` borrows the map; erase to `'static` via raw pointer round-trip
         // (the map is never freed — process-lifetime singleton).
-        let env_map: *mut DotEnv::Map = Box::into_raw(Box::new(DotEnv::Map::init()));
+        let env_map: *mut DotEnv::Map = bun_core::heap::leak(Box::new(DotEnv::Map::init()));
         // SAFETY: `env_map` is heap-allocated and never freed; valid for process lifetime.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init(unsafe { &mut *env_map }));
         jsc::initialize(false);

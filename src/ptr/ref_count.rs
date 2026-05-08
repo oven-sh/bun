@@ -174,7 +174,7 @@ pub trait AnyRefCounted: Sized {
 ///     }
 ///     unsafe fn destructor(this: *mut Self, _: ()) {
 ///         println!("deinit {}", unsafe { (*this).other_field });
-///         drop(unsafe { Box::from_raw(this) });
+///         drop(unsafe { heap::take(this) });
 ///     }
 /// }
 /// ```
@@ -576,7 +576,7 @@ pub unsafe trait CellRefCounted: Sized {
     fn ref_count(&self) -> &Cell<u32>;
 
     /// Called exactly once when the refcount reaches zero. Typically
-    /// `drop(Box::from_raw(this))`.
+    /// `drop(heap::take(this))`.
     ///
     /// # Safety
     /// `this` points to a live `Self` whose refcount just hit zero; no other
@@ -594,9 +594,9 @@ pub unsafe trait CellRefCounted: Sized {
     /// it reaches zero.
     ///
     /// Takes a raw `*mut Self` (not `&self`) so the pointer retains the full
-    /// write provenance from `Box::into_raw`; routing through `&self` and
+    /// write provenance from `heap::alloc`; routing through `&self` and
     /// casting back to `*mut` would be UB under Stacked Borrows when
-    /// `Box::from_raw` reclaims the allocation in `destroy`.
+    /// `heap::take` reclaims the allocation in `destroy`.
     ///
     /// # Safety
     /// `this` must point to a live `Self` and the caller must own one ref.
@@ -654,7 +654,7 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 /// bun_ptr::impl_cell_ref_counted! {
 ///     impl ProxyTunnel {
 ///         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-///         unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+///         unsafe fn destroy(this: *mut Self) { drop(heap::take(this)) }
 ///     }
 /// }
 /// // generic types use square-bracket generics (angle brackets aren't a
@@ -662,7 +662,7 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 /// bun_ptr::impl_cell_ref_counted! {
 ///     impl[const SSL: bool] HTTPContext<SSL> {
 ///         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-///         unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+///         unsafe fn destroy(this: *mut Self) { drop(heap::take(this)) }
 ///     }
 /// }
 /// ```
@@ -876,7 +876,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// Allocate a new object, returning a RefPtr to it.
     pub fn new(init_data: T) -> Self {
         // SAFETY: freshly boxed, ref_count == 1
-        unsafe { Self::adopt_ref(Box::into_raw(Box::new(init_data))) }
+        unsafe { Self::adopt_ref(bun_core::heap::leak(Box::new(init_data))) }
     }
 
     /// Initialize a newly allocated pointer, returning a RefPtr to it.
@@ -922,9 +922,9 @@ impl<T: AnyRefCounted> RefPtr<T> {
     }
 
     /// Borrow the inner `*mut T` without affecting the refcount (analogous to
-    /// `Arc::as_ptr`). The pointer carries the original `Box::into_raw`
+    /// `Arc::as_ptr`). The pointer carries the original `heap::alloc`
     /// provenance, so it is sound to thread it back through APIs that may
-    /// eventually `Box::from_raw` it (e.g. allocator-vtable `free`), provided
+    /// eventually `heap::take` it (e.g. allocator-vtable `free`), provided
     /// the caller still holds a ref for the duration.
     ///
     /// This is the only sanctioned way to mutate the pointee: `RefPtr` is a

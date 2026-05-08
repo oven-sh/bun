@@ -294,7 +294,7 @@ impl HTMLRewriterBuilder {
     //
     // PORT NOTE: takes `*mut S` (not `&mut S`) so the userdata pointer stored
     // in the C rewriter retains the caller's raw-pointer provenance (typically
-    // a `Box::into_raw` root). If we took `&mut S`, the userdata would carry a
+    // a `heap::alloc` root). If we took `&mut S`, the userdata would carry a
     // tag derived from that short-lived Unique borrow, and any subsequent
     // access through the caller's original raw pointer would invalidate it
     // under Stacked Borrows — making the re-entrant `&mut *user_data` deref in

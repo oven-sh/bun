@@ -260,8 +260,8 @@ pub struct NewSocket<const SSL: bool> {
     // (the embedded `Listener.handlers` field — Listener.rs:34) so
     // `@fieldParentPtr`-style offset arithmetic in `get_listener` and
     // `Handlers::mark_inactive` can recover the parent `Listener`. In
-    // **client** mode it is `Box::into_raw(Box::new(Handlers))` and
-    // `Handlers::mark_inactive` frees it via `Box::from_raw` once the last
+    // **client** mode it is `heap::alloc(Box::new(Handlers))` and
+    // `Handlers::mark_inactive` frees it via `heap::take` once the last
     // connection drops.
     //
     // ALIASING: this is intentionally a raw pointer, NOT `&mut`/`Rc`/
@@ -309,7 +309,7 @@ impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: refcount reached zero; we are the unique owner of the
-        // `Box::into_raw` allocation and `this` is not used after.
+        // `heap::alloc` allocation and `this` is not used after.
         unsafe { Self::deinit_and_destroy(this) };
     }
 }
@@ -346,7 +346,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn to_js(&mut self, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
         // `self` is a heap-allocated `NewSocket` (every caller goes through
-        // `NewSocket::new` → `Box::into_raw`); ownership is adopted by the C++
+        // `NewSocket::new` → `heap::alloc`); ownership is adopted by the C++
         // JSCell wrapper, which calls `finalize` on GC. The codegen wrappers are
         // monomorphic in `TCPSocket`/`TLSSocket`, so cast through the concrete
         // alias each branch is typed against.
@@ -385,7 +385,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub fn new(init: Self) -> *mut Self {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -780,7 +780,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// Server-mode: the returned pointer addresses the embedded
     /// `Listener.handlers` field, so `@fieldParentPtr` arithmetic on it is
-    /// valid. Client-mode: the pointer is a `Box::into_raw` allocation that
+    /// valid. Client-mode: the pointer is a `heap::alloc` allocation that
     /// `Handlers::mark_inactive` may free — callers null `self.handlers` when
     /// `mark_inactive`/`scope.exit()` returns `true`.
     pub fn get_handlers(&self) -> *mut Handlers {
@@ -1011,7 +1011,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // SAFETY: server-mode `handlers` points at the embedded
             // `Listener.handlers` field, so `mark_inactive`'s
             // `@fieldParentPtr` arithmetic is valid; client-mode it is the
-            // `Box::into_raw` allocation `mark_inactive` frees in place.
+            // `heap::alloc` allocation `mark_inactive` frees in place.
             if unsafe { (*handlers).mark_inactive() } {
                 // Client-mode handlers are allocated per-connection and
                 // `Handlers.markInactive` just freed them. Null the field
@@ -2401,7 +2401,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Called when refcount reaches zero. NOT `impl Drop` — this struct is the
     /// `m_ctx` payload of a `.classes.ts` class; teardown is owned by the
     /// intrusive refcount + `finalize()`.
-    // SAFETY: `this` was allocated via `Box::into_raw` and refcount == 0.
+    // SAFETY: `this` was allocated via `heap::alloc` and refcount == 0.
     unsafe fn deinit_and_destroy(this: *mut Self) {
         let this_ref = unsafe { &mut *this };
         this_ref.mark_inactive();
@@ -2428,8 +2428,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             // SAFETY: BoringSSL FFI; we hold one owned ref.
             unsafe { boringssl_sys::SSL_CTX_free(ctx) };
         }
-        // SAFETY: `this` was Box::into_raw'd in `new()`.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: `this` was heap-allocated in `new()`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn finalize(this: *mut Self) {
@@ -2473,7 +2473,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // In Zig `this_handlers.* = handlers` overwrites the pointee so the
         // listener + all sockets observe the new callbacks. `this.handlers` is
         // a raw `*mut Handlers` (server: `&mut listener.handlers`; client:
-        // `Box::into_raw`), so writing through it has valid provenance.
+        // `heap::alloc`), so writing through it has valid provenance.
         let p: *mut Handlers = this
             .handlers
             .expect("No handlers set on Socket")
@@ -2706,10 +2706,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let vm = handlers_taken.vm;
         // Zig: `bun.default_allocator.create(Handlers)` — client-mode
         // `Handlers` is a standalone heap allocation that
-        // `Handlers::mark_inactive` later frees via `Box::from_raw`.
+        // `Handlers::mark_inactive` later frees via `heap::take`.
         // SAFETY: `Box::new` never returns null.
         let handlers_ptr =
-            unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(handlers_taken))) };
+            unsafe { NonNull::new_unchecked(bun_core::heap::leak(Box::new(handlers_taken))) };
 
         // Ownership of the +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx`
         // below; defuse the errdefer so a later `?` doesn't double-free.
@@ -2738,7 +2738,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             twin: None,
         });
         // Do NOT shadow `tls_ptr` with a long-lived `&mut TLSSocket`: the
-        // allocation-root pointer (from `Box::into_raw`) must be the value
+        // allocation-root pointer (from `heap::alloc`) must be the value
         // stored in the uws ext slot below so dispatch-derived `&mut`s share
         // its provenance. A `&mut *tls_ptr` reborrow that outlives the
         // ext-slot store and the `on_open`/`start_tls_handshake` calls would
@@ -2784,9 +2784,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
                 // Zig: `handlers_ptr.deinit(); allocator.destroy(handlers_ptr)`.
                 // `Handlers` has a `Drop` impl that runs `deinit` (unprotect).
-                // SAFETY: `handlers_ptr` is the `Box::into_raw` allocation
+                // SAFETY: `handlers_ptr` is the `heap::alloc` allocation
                 // created above; sole owner here.
-                drop(unsafe { Box::from_raw(handlers_ptr.as_ptr()) });
+                drop(unsafe { bun_core::heap::take(handlers_ptr.as_ptr()) });
                 if err != 0 && !global.has_exception() {
                     return Err(global.throw_value(boringssl_err_to_js(global, err)));
                 }
@@ -2838,7 +2838,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.detach();
 
         // Only NOW is it safe for dispatch to fire: ext + kind point at `tls`.
-        // Store the allocation-root `tls_ptr` (from `Box::into_raw`), NOT a
+        // Store the allocation-root `tls_ptr` (from `heap::alloc`), NOT a
         // reborrow-derived pointer, so dispatch's `&mut *ext` shares
         // provenance with our per-use reborrows below.
         // SAFETY: ext slot is sized for `*mut TLSSocket`; `new_raw` is the live
@@ -2875,10 +2875,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: NativeCallbacks::None,
             twin: None,
         });
-        // SAFETY: raw just allocated via Box::into_raw.
+        // SAFETY: raw just allocated via heap::alloc.
         let raw_ref = unsafe { &mut *raw };
         raw_ref.ref_();
-        // SAFETY: `raw` came from `TLSSocket::new` (Box::into_raw); intrusive +1 held.
+        // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
         unsafe { (*tls_ptr).twin = Some(IntrusiveRc::from_raw(raw)) };
         // SAFETY: `new_raw` is the live adopted `us_socket_t`.
         unsafe { (*new_raw.as_ptr()).set_ssl_raw_tap(true) };
@@ -3062,7 +3062,7 @@ macro_rules! impl_socket_js_class {
             fn to_js(self, global: &JSGlobalObject) -> JSValue {
                 // Ownership of the boxed `NewSocket` transfers to the C++
                 // wrapper (freed via `${typeName}Class__finalize`).
-                $gen::to_js(Box::into_raw(Box::new(self)), global)
+                $gen::to_js(bun_core::heap::leak(Box::new(self)), global)
             }
             // `noConstructor: true` — no `${name}__getConstructor` export; trait default applies.
         }
@@ -3413,10 +3413,10 @@ impl DuplexUpgradeContext {
             unsafe { boringssl_sys::SSL_CTX_free(ctx) };
         }
         // PORT NOTE: Zig `self.upgrade.deinit()` — `UpgradedDuplex` cleanup
-        // runs via `Drop` when `Box::from_raw(self)` frees the containing
+        // runs via `Drop` when `heap::take(self)` frees the containing
         // struct below; an explicit call here would double-free.
-        // SAFETY: `self` was Box::into_raw'd in `new()`.
-        drop(unsafe { Box::from_raw(std::ptr::from_mut::<Self>(self)) });
+        // SAFETY: `self` was heap-allocated in `new()`.
+        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
     }
 }
 
@@ -3539,10 +3539,10 @@ pub fn js_upgrade_duplex_to_tls(
     };
     // Zig: `bun.default_allocator.create(Handlers)` — client-mode `Handlers`
     // is a standalone heap allocation that `Handlers::mark_inactive` later
-    // frees via `Box::from_raw`.
+    // frees via `heap::take`.
     // SAFETY: `Box::new` never returns null.
     let handlers_ptr =
-        unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(handlers_taken))) };
+        unsafe { NonNull::new_unchecked(bun_core::heap::leak(Box::new(handlers_taken))) };
     let tls = TLSSocket::new(TLSSocket {
         ref_count: bun_ptr::RefCount::init(),
         handlers: Some(handlers_ptr),
@@ -3568,7 +3568,7 @@ pub fn js_upgrade_duplex_to_tls(
         native_callback: NativeCallbacks::None,
         twin: None,
     });
-    // SAFETY: tls just allocated via Box::into_raw.
+    // SAFETY: tls just allocated via heap::alloc.
     let tls_ref = unsafe { &mut *tls };
     let tls_js_value = tls_ref.get_this_value(global);
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
@@ -3585,7 +3585,7 @@ pub fn js_upgrade_duplex_to_tls(
     // Allocate uninit, leak to a raw pointer for the stable address, then
     // field-write everything in place — `upgrade` last, once the address is
     // known. Mirrors Zig `bun.new(...)` then `.upgrade = .from(...)`.
-    let duplex_context: *mut DuplexUpgradeContext = Box::into_raw(Box::new(
+    let duplex_context: *mut DuplexUpgradeContext = bun_core::heap::leak(Box::new(
         core::mem::MaybeUninit::<DuplexUpgradeContext>::uninit(),
     ))
     .cast();

@@ -1214,7 +1214,7 @@ impl<'a> CopyFileWindows<'a> {
         destination_mode: Option<Mode>,
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
-        let result = Box::into_raw(CopyFileWindows::new(CopyFileWindows {
+        let result = bun_core::heap::leak(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
             promise: jsc::JSPromiseStrong::init(event_loop.global),
@@ -1474,7 +1474,7 @@ impl<'a> CopyFileWindows<'a> {
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
-        // SAFETY: self was Box::into_raw'd in init(); destroy reclaims and drops it. self is not accessed afterward.
+        // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
     }
@@ -1546,7 +1546,7 @@ impl<'a> CopyFileWindows<'a> {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
 
-        // SAFETY: self was Box::into_raw'd in init(); destroy reclaims and drops it. self is not accessed afterward.
+        // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
     }
@@ -1566,14 +1566,14 @@ impl<'a> CopyFileWindows<'a> {
         );
     }
 
-    /// SAFETY: `this` must have been produced by `Box::into_raw` in `init()` and
+    /// SAFETY: `this` must have been produced by `heap::alloc` in `init()` and
     /// not yet destroyed. After this call `this` is dangling.
     pub unsafe fn destroy(this: *mut Self) {
         (*this).read_write_loop.close();
         // destination_file_store.deref() / source_file_store.deref() — Arc Drop on Box drop
         (*this).promise.deinit();
         (*this).io_request.deinit();
-        drop(Box::from_raw(this));
+        drop(bun_core::heap::take(this));
     }
 
     fn mkdirp(&mut self) {

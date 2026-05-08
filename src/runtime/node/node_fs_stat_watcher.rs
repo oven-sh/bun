@@ -68,7 +68,7 @@ impl ThreadSafeRefCounted for StatWatcherScheduler {
         unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
     unsafe fn destructor(this: *mut Self) {
-        // SAFETY: refcount hit 0; allocation came from RefPtr::new (Box::into_raw).
+        // SAFETY: refcount hit 0; allocation came from RefPtr::new (heap::alloc).
         unsafe { Self::deinit(this) };
     }
 }
@@ -196,8 +196,8 @@ impl StatWatcherScheduler {
             this_ref.watchers.is_empty(),
             "destroying StatWatcherScheduler while it still has watchers",
         );
-        // SAFETY: matches Zig `bun.destroy(this)` — Box::from_raw drops the allocation.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: matches Zig `bun.destroy(this)` — heap::take drops the allocation.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn append(this: *mut Self, watcher: *mut StatWatcher) {
@@ -279,8 +279,8 @@ impl StatWatcherScheduler {
         }
 
         fn update_timer(self_: *mut c_void) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `self_` was Box::into_raw'd below; reclaim and drop at end of scope.
-            let self_ = unsafe { Box::from_raw(self_.cast::<Holder>()) };
+            // SAFETY: `self_` was heap-allocated below; reclaim and drop at end of scope.
+            let self_ = unsafe { bun_core::heap::take(self_.cast::<Holder>()) };
             // SAFETY: `scheduler` is kept alive by the ref taken in `set_interval`.
             let interval = unsafe { (*self_.scheduler).get_interval() };
             StatWatcherScheduler::set_timer(self_.scheduler, interval);
@@ -288,16 +288,16 @@ impl StatWatcherScheduler {
         }
 
         // Leak FIRST, then derive `ctx` from the leaked pointer. Deriving `ctx` from a
-        // `&mut *box` reborrow and then re-dereffing the Box (or calling `Box::into_raw`)
+        // `&mut *box` reborrow and then re-dereffing the Box (or calling `heap::alloc`)
         // would create a sibling Unique borrow under Stacked Borrows that pops the tag
-        // backing `ctx`; `update_timer` would then `Box::from_raw` an out-of-provenance
+        // backing `ctx`; `update_timer` would then `heap::take` an out-of-provenance
         // pointer. With this ordering, `ctx` and `holder_ptr` share the same SRW tag and
-        // `Box::from_raw(ctx)` satisfies the "must originate from `Box::into_raw`" contract.
-        let holder_ptr = Box::into_raw(Box::new(Holder {
+        // `heap::take(ctx)` satisfies the "must originate from `heap::alloc`" contract.
+        let holder_ptr = bun_core::heap::leak(Box::new(Holder {
             scheduler: this,
             task: AnyTask::default(),
         }));
-        // SAFETY: `holder_ptr` was just `Box::into_raw`'d and is exclusively owned here
+        // SAFETY: `holder_ptr` was just `heap::alloc`'d and is exclusively owned here
         // until `update_timer` reclaims it; `vm` is the live per-thread VM (JSC_BORROW).
         // `addr_of_mut!` so the field pointer inherits whole-Box provenance.
         unsafe {
@@ -430,7 +430,7 @@ impl ThreadSafeRefCounted for StatWatcher {
         unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
     unsafe fn destructor(this: *mut Self) {
-        // SAFETY: refcount hit 0; allocation came from Box::into_raw in `init`.
+        // SAFETY: refcount hit 0; allocation came from heap::alloc in `init`.
         unsafe { Self::deinit(this) };
     }
 }
@@ -588,7 +588,7 @@ impl StatWatcher {
         // `path` freed by ZBox Drop below.
 
         // SAFETY: matches Zig `bun.default_allocator.destroy(this)`.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(method)]
@@ -841,10 +841,10 @@ impl StatWatcher {
             last_stat: Guarded::init(unsafe { core::mem::zeroed::<PosixStat>() }),
             scheduler: Self::lazy_scheduler(vm),
         });
-        let this_ptr = Box::into_raw(this);
+        let this_ptr = bun_core::heap::leak(this);
         // errdefer this.deinit()
         let guard = scopeguard::guard(this_ptr, |p| {
-            // SAFETY: `p` was Box::into_raw'd above; on the error path we own the only reference.
+            // SAFETY: `p` was heap-allocated above; on the error path we own the only reference.
             unsafe { Self::deinit(p) }
         });
         // SAFETY: `this_ptr` just leaked from Box; alive until deref drops it.
@@ -976,44 +976,24 @@ pub struct InitialStatTask {
     task: WorkPoolTask,
 }
 
+bun_threading::owned_task!(InitialStatTask, task);
+
 impl InitialStatTask {
     pub fn create_and_schedule(watcher: *mut StatWatcher) {
         // SAFETY: `watcher` is alive; we bump its intrusive refcount, held across
-        // the task lifetime (balanced by `deref()` in work_pool_callback's closed
-        // path or by the main-thread `initial_stat_*_on_main_thread` callbacks).
+        // the task lifetime (balanced by `deref()` in run_owned's closed path or
+        // by the main-thread `initial_stat_*_on_main_thread` callbacks).
         StatWatcher::ref_(watcher);
-        let task = Box::new(InitialStatTask {
+        WorkPool::schedule_new(InitialStatTask {
             watcher,
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: Self::work_pool_callback,
-            },
+            task: WorkPoolTask::default(),
         });
-        let task_ptr = Box::into_raw(task);
-        // SAFETY: `task_ptr` leaked until `work_pool_callback` reclaims it. Use
-        // `addr_of_mut!` so the field pointer inherits `task_ptr`'s full-Box
-        // provenance — `&mut (*task_ptr).task` would narrow provenance to just
-        // the `task` field, making the later `.sub(offset_of!)` +
-        // `Box::from_raw` in `work_pool_callback` out-of-provenance under
-        // Stacked Borrows.
-        WorkPool::schedule(unsafe { core::ptr::addr_of_mut!((*task_ptr).task) });
     }
 
-    unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
-        // SAFETY: `task` points to `InitialStatTask.task`; recover parent via
-        // offset_of. The incoming pointer carries whole-allocation provenance
-        // (see `addr_of_mut!` in `create_and_schedule`), required for both the
-        // `.sub(offset_of!)` and the subsequent `Box::from_raw`.
-        let initial_stat_task: *mut InitialStatTask = unsafe {
-            task.cast::<u8>()
-                .sub(core::mem::offset_of!(InitialStatTask, task))
-                .cast::<InitialStatTask>()
-        };
-        // SAFETY: matches Zig `bun.destroy(initial_stat_task)` — reclaim Box,
-        // drop at end of scope. `watcher` is a raw `*mut` (Copy), so dropping
-        // the Box does not touch the refcount.
-        let initial_stat_task = unsafe { Box::from_raw(initial_stat_task) };
-        let this: *mut StatWatcher = initial_stat_task.watcher;
+    fn run_owned(self: Box<Self>) {
+        // `watcher` is a raw `*mut` (Copy), so dropping the Box does not touch
+        // the refcount; matches Zig `bun.destroy(initial_stat_task)`.
+        let this: *mut StatWatcher = self.watcher;
         // SAFETY: `this` is kept alive by the intrusive ref taken in
         // `create_and_schedule`. We only need shared access here — `closed` is
         // read-only, `path` is borrowed, and `set_last_stat`/

@@ -48,7 +48,7 @@ impl RefCounted for TimeoutObject {
     #[inline]
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit` consumes the
-        // `Box::into_raw`'d allocation from `init()`.
+        // `heap::alloc`'d allocation from `init()`.
         unsafe { Self::deinit(this) }
     }
 }
@@ -75,7 +75,7 @@ impl TimeoutObject {
     /// Increment the intrusive refcount.
     ///
     /// # Safety
-    /// `this` must point to a live, `Box::into_raw`-allocated `TimeoutObject`.
+    /// `this` must point to a live, `heap::alloc`-allocated `TimeoutObject`.
     #[inline]
     pub unsafe fn ref_(this: *mut Self) {
         // SAFETY: caller contract.
@@ -86,7 +86,7 @@ impl TimeoutObject {
     /// (drops `internals`, frees the `Box`). After this returns `this` may dangle.
     ///
     /// # Safety
-    /// `this` must point to a live, `Box::into_raw`-allocated `TimeoutObject`.
+    /// `this` must point to a live, `heap::alloc`-allocated `TimeoutObject`.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
@@ -104,8 +104,8 @@ impl TimeoutObject {
         // internals are initialized by init()
         // `bun.new(Self, .{...})` ⇒ heap-allocate; `*mut Self` is the `m_ctx`
         // payload of the codegen'd JSCell wrapper. Ownership transfers to the
-        // wrapper via `to_js_ptr`; freed by `deref → deinit → Box::from_raw`.
-        let timeout: *mut Self = Box::into_raw(Box::new(Self::default()));
+        // wrapper via `to_js_ptr`; freed by `deref → deinit → heap::take`.
+        let timeout: *mut Self = bun_core::heap::leak(Box::new(Self::default()));
         // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `Timeout__create`
         // shim; `timeout` is a fresh heap payload whose ownership transfers to
         // the GC wrapper.
@@ -147,13 +147,13 @@ impl TimeoutObject {
     /// Not `impl Drop`: this fn frees the backing `Box` itself (Zig: `bun.destroy(self)`).
     ///
     /// # Safety
-    /// `this` must be the unique owner (refcount == 0) of a `Box::into_raw`'d `Self`.
+    /// `this` must be the unique owner (refcount == 0) of a `heap::alloc`'d `Self`.
     unsafe fn deinit(this: *mut Self) {
-        // SAFETY: `this` was allocated via `Box::into_raw` in `init` and the refcount
+        // SAFETY: `this` was allocated via `heap::alloc` in `init` and the refcount
         // has reached zero, so we hold the unique reference.
         unsafe {
             (*this).internals.deinit();
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 

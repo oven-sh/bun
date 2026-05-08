@@ -94,7 +94,7 @@ impl ReadDuringJSOnPullResult {
 pub enum Lazy {
     None,
     /// Intrusively-refcounted `*Blob.Store`. Uses `StoreRef` (not `Arc`) so the
-    /// raw pointer carries mutable provenance from `Box::into_raw`, matching
+    /// raw pointer carries mutable provenance from `heap::alloc`, matching
     /// Zig's `*Blob.Store` direct-field-write usage in `openFileBlob`.
     Blob(blob::StoreRef),
 }
@@ -360,7 +360,7 @@ impl FileReader {
         let mut file_type = FileType::File;
         if let Lazy::Blob(store) = &self.lazy {
             // SAFETY: `StoreRef::as_ptr` yields `*mut Store` with mutable provenance
-            // (originating from `Box::into_raw`). Store is single-threaded here and we
+            // (originating from `heap::alloc`). Store is single-threaded here and we
             // hold the only mutating handle; matches Zig's `*Blob.Store` direct field
             // access. No `&` to `*store_ptr` is live across this `&mut` — `store` only
             // borrows the `StoreRef` wrapper (the `NonNull`), not the pointee.
@@ -529,7 +529,7 @@ impl FileReader {
         // SAFETY: see `parent()`. `Source` is always `Box`-allocated
         // (`bun.TrivialNew`); this is the terminal owner-release matching Zig
         // `this.parent().deinit()` → `bun.destroy(this)`.
-        unsafe { drop(Box::from_raw(self.parent())) };
+        unsafe { drop(bun_core::heap::take(self.parent())) };
     }
 
     #[inline]

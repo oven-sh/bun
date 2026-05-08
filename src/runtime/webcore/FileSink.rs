@@ -75,7 +75,7 @@ bun_ptr::impl_cell_ref_counted! {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
         // SAFETY: refcount hit zero; sole remaining reference. `this` retains
         // write provenance (no `&self` in the chain) so `deinit` can write
-        // through and `Box::from_raw` can reclaim.
+        // through and `heap::take` can reclaim.
         unsafe fn destroy(this: *mut Self) { Self::deinit(this) }
     }
 }
@@ -522,7 +522,7 @@ impl FileSink {
     ) -> *mut FileSink {
         let evtloop: EventLoopHandle = event_loop_.into();
 
-        let this = Box::into_raw(Box::new(FileSink {
+        let this = bun_core::heap::leak(Box::new(FileSink {
             ref_count: Cell::new(1),
             event_loop_handle: evtloop,
             // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
@@ -544,7 +544,7 @@ impl FileSink {
 
     pub fn create(event_loop_: impl Into<EventLoopHandle>, fd: Fd) -> *mut FileSink {
         let evtloop: EventLoopHandle = event_loop_.into();
-        let this = Box::into_raw(Box::new(FileSink {
+        let this = bun_core::heap::leak(Box::new(FileSink {
             ref_count: Cell::new(1),
             event_loop_handle: evtloop,
             fd,
@@ -868,7 +868,7 @@ impl FileSink {
     }
 
     pub fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> *mut FileSink {
-        let this = Box::into_raw(Box::new(FileSink {
+        let this = bun_core::heap::leak(Box::new(FileSink {
             ref_count: Cell::new(1),
             writer: IOWriter::default(),
             fd,
@@ -963,7 +963,7 @@ impl FileSink {
     /// Called when the intrusive refcount reaches zero. Frees `self`.
     ///
     /// # Safety
-    /// `this` must have been allocated via `Box::into_raw` (see `create`/`init`)
+    /// `this` must have been allocated via `heap::alloc` (see `create`/`init`)
     /// and the caller must hold the last reference.
     unsafe fn deinit(this: *mut FileSink) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
@@ -976,8 +976,8 @@ impl FileSink {
             let vm = global.bun_vm().as_mut();
             AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, vm);
         }
-        // SAFETY: `this` was produced by `Box::into_raw` in the constructors.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: `this` was produced by `heap::alloc` in the constructors.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {

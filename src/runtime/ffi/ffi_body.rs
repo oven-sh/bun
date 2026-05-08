@@ -1339,8 +1339,8 @@ impl FFI {
     }
 
     pub fn close_callback(_global_this: &JSGlobalObject, ctx: JSValue) -> JSValue {
-        // SAFETY: ctx encodes a Box::into_raw(*mut Function) created by `callback`
-        drop(unsafe { Box::from_raw(ctx.as_ptr_address() as *mut Function) });
+        // SAFETY: ctx encodes a heap::alloc(*mut Function) created by `callback`
+        drop(unsafe { bun_core::heap::take(ctx.as_ptr_address() as *mut Function) });
         JSValue::UNDEFINED
     }
 
@@ -1394,8 +1394,8 @@ impl FFI {
                 .to_error_instance(global_this))
             }
             Step::Compiled(_) => {
-                let function_ = Box::into_raw(Box::new(core::mem::take(func)));
-                // SAFETY: function_ is a valid Box::into_raw pointer
+                let function_ = bun_core::heap::leak(Box::new(core::mem::take(func)));
+                // SAFETY: function_ is a valid heap::alloc pointer
                 let compiled_ptr = unsafe { (*function_).step.compiled_ptr() };
                 Ok(create_object_2(
                     global_this,

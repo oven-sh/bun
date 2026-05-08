@@ -76,7 +76,7 @@ impl Drop for StringBuilder {
         if let Some(ptr) = self.ptr {
             if self.cap != 0 {
                 // SAFETY: reconstitutes the Box<[u8]> forgotten in `allocate()`.
-                drop(unsafe { Box::from_raw(core::slice::from_raw_parts_mut(ptr.as_ptr(), self.cap)) });
+                drop(unsafe { bun_core::heap::take(core::slice::from_raw_parts_mut(ptr.as_ptr(), self.cap)) });
             }
         }
     }

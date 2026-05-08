@@ -235,7 +235,7 @@ impl Watcher {
     // `shutdown` (not `close(self)` because ownership may transfer to the
     // watcher thread instead of dropping here).
     // TODO(port): ownership model — Zig allocator.destroy(this); Rust needs
-    // Box::from_raw or an Arc to make this sound.
+    // heap::take or an Arc to make this sound.
     pub fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
@@ -252,8 +252,8 @@ impl Watcher {
                 }
             }
             // watchlist freed by Drop on Box
-            // SAFETY: this was Box::into_raw'd by caller of init()
-            drop(unsafe { Box::from_raw(this) });
+            // SAFETY: this was heap-allocated by caller of init()
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 
@@ -296,7 +296,7 @@ impl Watcher {
 
         // SAFETY: self is the heap allocation from init(); thread owns it now.
         // TODO(port): ownership model — see shutdown()
-        drop(unsafe { Box::from_raw(std::ptr::from_mut::<Self>(self)) });
+        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
         Ok(())
     }
 

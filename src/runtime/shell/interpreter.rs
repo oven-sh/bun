@@ -1348,11 +1348,11 @@ impl Interpreter {
     /// whatever teardown `finish()` didn't, then frees the box.
     ///
     /// # Safety
-    /// `this` must be the `Box::into_raw`'d pointer stored in the JS wrapper's
+    /// `this` must be the `heap::alloc`'d pointer stored in the JS wrapper's
     /// `m_ctx`; called exactly once from the GC thread's finalizer.
     pub unsafe fn deinit_from_finalizer(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `Box::into_raw` payload.
-        let mut this = unsafe { Box::from_raw(this) };
+        // SAFETY: caller contract — `this` is a live `heap::alloc` payload.
+        let mut this = unsafe { bun_core::heap::take(this) };
         log!(
             "Interpreter(0x{:x}) deinitFromFinalizer (cleanup_state={})",
             &raw const *this as usize,
@@ -1811,20 +1811,20 @@ impl ShellExecEnv {
             cwd_fd: dupedfd,
             async_pids: SmolList::default(),
         });
-        Ok(Box::into_raw(duped))
+        Ok(bun_core::heap::leak(duped))
     }
 
     /// Spec: interpreter.zig `ShellExecEnv.deinit` — wraps `deinitImpl(true,
     /// true)` for the heap-allocated subshell/pipeline-child case.
     ///
     /// SAFETY: `this` was returned by `dupe_for_subshell` (or otherwise
-    /// `Box::into_raw`'d) and not yet freed.
+    /// `heap::alloc`'d) and not yet freed.
     pub fn deinit_impl(this: *mut ShellExecEnv) {
         log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
         // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
         // maps / vecs / owned `Bufio` runs on drop. Only `cwd_fd` needs an
         // explicit close (Zig: `closefd(this.cwd_fd)`).
-        let boxed = unsafe { Box::from_raw(this) };
+        let boxed = unsafe { bun_core::heap::take(this) };
         closefd(boxed.cwd_fd);
         // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
         // is a raw ptr so its drop is a no-op (matches Zig's
@@ -2061,7 +2061,7 @@ pub struct CowFd {
 
 impl CowFd {
     pub fn init(fd: Fd) -> *mut CowFd {
-        let new = Box::into_raw(Box::new(CowFd { __fd: fd, refcount: 1, being_used: false }));
+        let new = bun_core::heap::leak(Box::new(CowFd { __fd: fd, refcount: 1, being_used: false }));
         bun_core::scoped_log!(CowFd, "init {:x} fd={}", new as usize, fd);
         new
     }
@@ -2111,7 +2111,7 @@ impl CowFd {
                 // before freeing. `closefd` tolerates EBADF like Zig's
                 // `closeAllowingBadFileDescriptor`.
                 closefd((*this).__fd);
-                drop(Box::from_raw(this));
+                drop(bun_core::heap::take(this));
             }
         }
     }
@@ -2543,7 +2543,7 @@ pub trait OutputTaskVTable: Sized {
 /// A task that can write to stdout and/or stderr. Spec: interpreter.zig
 /// `OutputTask(Parent, vtable)`.
 ///
-/// Heap-allocated (`Box::into_raw`) so the IOWriter can hold a raw pointer to
+/// Heap-allocated (`heap::alloc`) so the IOWriter can hold a raw pointer to
 /// it across async chunks; freed by `deinit`.
 pub struct OutputTask<P: OutputTaskVTable> {
     /// Owning Cmd node (the builtin's `cmd` id). Replaces Zig's `*Parent`.
@@ -2555,7 +2555,7 @@ pub struct OutputTask<P: OutputTaskVTable> {
 
 impl<P: OutputTaskVTable> OutputTask<P> {
     pub fn new(parent: NodeId, output: OutputSrc) -> *mut Self {
-        Box::into_raw(Box::new(OutputTask {
+        bun_core::heap::leak(Box::new(OutputTask {
             parent,
             output,
             state: OutputTaskState::WaitingWriteErr,
@@ -2633,8 +2633,8 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         debug_assert!(unsafe { (*this).state } == OutputTaskState::Done);
         log!("OutputTask(0x{:x}) deinit", this as usize);
         let parent = unsafe { (*this).parent };
-        // SAFETY: `this` was Box::into_raw'd in `new`; reclaim and drop.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: `this` was heap-allocated in `new`; reclaim and drop.
+        drop(unsafe { bun_core::heap::take(this) });
         P::on_done(interp, parent)
     }
 }
@@ -2921,7 +2921,7 @@ pub fn create_shell_interpreter(
         return Err(crate::jsc::JsError::Thrown);
     }
 
-    let interpreter = Box::into_raw(interpreter);
+    let interpreter = bun_core::heap::leak(interpreter);
     // SAFETY: `interpreter` is a fresh heap allocation.
     unsafe {
         (*interpreter).flags.set_quiet(quiet);

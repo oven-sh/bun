@@ -321,7 +321,7 @@ impl Rm {
                                 cmd, opts, root, cwd, sig, out_count, is_absolute, evtloop,
                                 interp_ptr,
                             );
-                            // SAFETY: freshly Box::into_raw'd.
+                            // SAFETY: freshly heap-allocated.
                             unsafe { ShellRmTask::schedule(task) };
                         }
                     }
@@ -413,7 +413,7 @@ impl Rm {
         // In verbose mode the root DirTask may also be queued for write_verbose;
         // both callbacks hold a pending count and the last one to run frees the
         // ShellRmTask.
-        // SAFETY: `task` is a live Box::into_raw'd allocation; main thread.
+        // SAFETY: `task` is a live heap-allocated allocation; main thread.
         scopeguard::defer! { unsafe { ShellRmTask::decr_pending_and_maybe_deinit(task) }; }
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
@@ -626,7 +626,7 @@ pub struct ShellRmTask {
     #[cfg(windows)]
     pub cwd_path: Option<ZBox>,
     /// PORT NOTE: in Zig the root DirTask is an inline field. Here it lives in
-    /// its own `Box::into_raw`'d allocation so that `&ShellRmTask` (held as
+    /// its own `heap::alloc`'d allocation so that `&ShellRmTask` (held as
     /// the `&self` receiver throughout `remove_entry*`) never overlaps the
     /// `&mut DirTask` borrows those methods take on the root — embedding it
     /// would make every `verbose_deleted` call on the root UB under Stacked
@@ -692,7 +692,7 @@ impl ShellRmTask {
         let root_path_z = ZBox::from_bytes(root_path);
         let join_style = JoinStyle::from_path(root_path);
         // Separate allocation — see PORT NOTE on `root_task`.
-        let root_task = Box::into_raw(Box::new(DirTask {
+        let root_task = bun_core::heap::leak(Box::new(DirTask {
             // task_manager is fixed up below once we have the ShellRmTask address.
             task_manager: core::ptr::null_mut(),
             parent_task: core::ptr::null_mut(),
@@ -727,7 +727,7 @@ impl ShellRmTask {
             task: ShellTask::new(evtloop),
         });
         boxed.task.interp = interp;
-        let raw = Box::into_raw(boxed);
+        let raw = bun_core::heap::leak(boxed);
         // SAFETY: both freshly leaked; exclusive.
         unsafe { (*root_task).task_manager = raw };
         raw
@@ -739,7 +739,7 @@ impl ShellRmTask {
     /// DirTask tree owns the bounce-back via [`finish_concurrently`].
     ///
     /// # Safety
-    /// `this` must be a fresh `Box::into_raw`'d task (see [`create`]).
+    /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
     pub unsafe fn schedule(this: *mut ShellRmTask) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
@@ -762,7 +762,7 @@ impl ShellRmTask {
             task.cast::<u8>()
                 .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET).cast::<ShellRmTask>()
         };
-        // SAFETY: `this` is a live Box::into_raw'd task; the worker thread has
+        // SAFETY: `this` is a live heap-allocated task; the worker thread has
         // exclusive access to `root_task` until it spawns subtasks.
         unsafe { DirTask::run_from_thread_pool_impl((*this).root_task) };
     }
@@ -771,7 +771,7 @@ impl ShellRmTask {
     /// concurrent queue; routed by `dispatch.rs` → [`run_from_main_thread`].
     ///
     /// # Safety
-    /// `this` is the live `Box::into_raw`'d task; not touched again on this
+    /// `this` is the live `heap::alloc`'d task; not touched again on this
     /// thread after return (unless a verbose pending-count keeps it alive).
     unsafe fn finish_concurrently(this: *mut ShellRmTask) {
         // SAFETY: caller contract.
@@ -779,7 +779,7 @@ impl ShellRmTask {
     }
 
     pub fn run_from_main_thread(this: *mut ShellRmTask, interp: &mut Interpreter) {
-        // SAFETY: `this` is a live Box::into_raw'd task.
+        // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Rm::on_shell_rm_task_done(interp, cmd, this);
     }
@@ -787,12 +787,12 @@ impl ShellRmTask {
     /// Spec: rm.zig `decrPendingAndMaybeDeinit`.
     ///
     /// # Safety
-    /// `this` is a live `Box::into_raw`'d task; main thread.
+    /// `this` is a live `heap::alloc`'d task; main thread.
     pub unsafe fn decr_pending_and_maybe_deinit(this: *mut ShellRmTask) {
         // SAFETY: caller contract.
         if unsafe { (*this).pending_main_callbacks.fetch_sub(1, Ordering::SeqCst) } == 1 {
-            // SAFETY: paired with `Box::into_raw` in `create`.
-            drop(unsafe { Box::from_raw(this) });
+            // SAFETY: paired with `heap::alloc` in `create`.
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 
@@ -827,10 +827,10 @@ impl ShellRmTask {
             return;
         }
         // SAFETY: `parent` is live; reuse its `task_manager` (preserves the
-        // original `*mut` provenance from `Box::into_raw` rather than deriving
+        // original `*mut` provenance from `heap::alloc` rather than deriving
         // a writeable pointer from `&self`).
         let task_manager = unsafe { (*parent).task_manager };
-        let subtask = Box::into_raw(Box::new(DirTask {
+        let subtask = bun_core::heap::leak(Box::new(DirTask {
             task_manager,
             parent_task: parent,
             path,
@@ -849,7 +849,7 @@ impl ShellRmTask {
         // SAFETY: `parent` is live until its subtask_count drains to 0.
         let count = unsafe { (*parent).subtask_count.fetch_add(1, Ordering::Relaxed) };
         debug_assert!(count > 0);
-        // SAFETY: freshly Box::into_raw'd.
+        // SAFETY: freshly heap-allocated.
         unsafe { bun_threading::work_pool::WorkPool::schedule(&raw mut (*subtask).work_task) };
     }
 
@@ -1215,9 +1215,9 @@ impl ShellRmTask {
 
 impl Drop for ShellRmTask {
     fn drop(&mut self) {
-        // SAFETY: `root_task` was `Box::into_raw`'d in `create` and is never
+        // SAFETY: `root_task` was `heap::alloc`'d in `create` and is never
         // freed by `DirTask::deinit` (root has `parent_task == null`).
-        drop(unsafe { Box::from_raw(self.root_task) });
+        drop(unsafe { bun_core::heap::take(self.root_task) });
     }
 }
 
@@ -1259,7 +1259,7 @@ impl DirTask {
                 Ok(p) => {
                     // SAFETY: root runs before any subtasks are spawned, so
                     // this write is unique. Stay on the raw `*mut` from
-                    // `Box::into_raw` — no `&ShellRmTask` exists yet, so no
+                    // `heap::alloc` — no `&ShellRmTask` exists yet, so no
                     // shared-read tag is invalidated by the write.
                     unsafe { (*tm_ptr).cwd_path = Some(ZBox::from_bytes(&*p)) };
                 }
@@ -1451,7 +1451,7 @@ impl DirTask {
         // The root task is owned by `ShellRmTask` (freed in its `Drop`); only
         // non-root children are reclaimed here.
         // SAFETY: caller contract.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

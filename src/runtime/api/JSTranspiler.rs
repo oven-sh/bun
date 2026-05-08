@@ -62,7 +62,7 @@ impl bun_ptr::RefCounted for JSTranspiler {
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: last ref dropped; allocated via Box in constructor().
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -1108,7 +1108,7 @@ pub fn constructor(
     transpiler.options.react_fast_refresh = false;
     transpiler.options.repl_mode = config.repl_mode;
 
-    Ok(Box::into_raw(this))
+    Ok(bun_core::heap::leak(this))
 }
 
     pub fn finalize(this: *mut JSTranspiler) {
@@ -1408,7 +1408,7 @@ impl JSTranspiler {
         task.schedule();
         // Ownership passes to the work pool / event loop; freed via
         // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
-        let _ = Box::into_raw(task);
+        let _ = bun_core::heap::leak(task);
         Ok(promise)
     }
 

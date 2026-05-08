@@ -35,7 +35,7 @@ pub enum SSRKind {
 /// Create the JS `BakeResponse` wrapper for `this`. The C++ wrapper **adopts**
 /// the `*mut Response` allocation (freed in `BakeResponseClass__finalize`), so
 /// callers must hand over a heap pointer they no longer own — typically via
-/// `Box::into_raw`.
+/// `heap::alloc`.
 ///
 /// # Safety
 /// `this` must be a valid heap-allocated `Response` whose ownership is being
@@ -122,14 +122,14 @@ pub fn construct_redirect(
     if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
         assert_streaming_disabled(global_this, async_local_storage, b"Response.redirect")?;
         // Ownership of the allocation transfers to the JS wrapper.
-        let ptr = Box::into_raw(response);
+        let ptr = bun_core::heap::leak(response);
         // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
         return Ok(unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Redirect) });
     }
 
     // Ownership of the allocation transfers to the JS wrapper (freed in
     // `ResponseClass__finalize`).
-    let ptr = Box::into_raw(response);
+    let ptr = bun_core::heap::leak(response);
     // SAFETY: `ptr` is a fresh heap allocation; `Response::to_js` hands it to
     // the C++ wrapper which owns it thereafter.
     Ok(unsafe { &mut *ptr }.to_js(global_this))
@@ -204,7 +204,7 @@ pub fn construct_render(
     ));
 
     // Ownership of the allocation transfers to the JS wrapper.
-    let ptr = Box::into_raw(response);
+    let ptr = bun_core::heap::leak(response);
     // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
     let response_js = unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Render) };
     response_js.ensure_still_alive();

@@ -204,12 +204,12 @@ impl NativeZlib {
     /// box is freed here (`bun.destroy(this)` in Zig).
     fn deinit(this: *mut Self) {
         // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
-        // is the Box::into_raw pointer produced at construction. `this_value`
+        // is the heap::alloc pointer produced at construction. `this_value`
         // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
-        // Box::from_raw below.
+        // heap::take below.
         unsafe {
             (*this).stream.close();
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 }

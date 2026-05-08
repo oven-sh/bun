@@ -97,7 +97,7 @@ impl Drop for Route {
             // contiguous [BunString; param_names_len]. Reconstructing the Box drops each
             // element (deref) and frees the backing storage.
             let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
-            drop(unsafe { Box::from_raw(slice) });
+            drop(unsafe { bun_core::heap::take(slice) });
             self.param_names = core::ptr::null_mut();
             self.param_names_len = 0;
         }

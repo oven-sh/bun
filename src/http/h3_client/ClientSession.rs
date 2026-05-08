@@ -42,7 +42,7 @@ pub struct ClientSession {
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
     /// FIFO; `lsquic_conn_make_stream` was already called once per entry.
-    // BACKREF/INTRUSIVE: Stream is Box::into_raw'd by Stream::new and destroyed in detach().
+    // BACKREF/INTRUSIVE: Stream is heap-allocated by Stream::new and destroyed in detach().
     pub pending: Vec<*mut Stream>,
 }
 
@@ -51,8 +51,8 @@ bun_ptr::impl_cell_ref_counted! {
     impl ClientSession {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
         // SAFETY: ref_count hitting 0 means no other alias remains; `this`
-        // carries the original `Box::into_raw` provenance from `new`.
-        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+        // carries the original `heap::alloc` provenance from `new`.
+        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 
@@ -60,7 +60,7 @@ impl ClientSession {
     /// `bun.TrivialNew(@This())` — heap-allocate and return raw; pointer is
     /// stashed in the `quic.Socket` ext slot and the `ClientContext` registry.
     pub fn new(hostname: Vec<u8>, port: u16, reject_unauthorized: bool) -> *mut ClientSession {
-        Box::into_raw(Box::new(ClientSession {
+        bun_core::heap::leak(Box::new(ClientSession {
             ref_count: Cell::new(1),
             qsocket: None,
             hostname,
@@ -146,7 +146,7 @@ impl ClientSession {
 
     pub fn detach(&mut self, stream: *mut Stream) {
         // SAFETY: caller passes a live Stream that is in (or was just removed from)
-        // self.pending; it remains valid until the Box::from_raw at the bottom.
+        // self.pending; it remains valid until the heap::take at the bottom.
         let st = unsafe { &mut *stream };
         if let Some(cl) = st.client {
             // SAFETY: stream.client is a live backref while attached.
@@ -170,9 +170,9 @@ impl ClientSession {
         if let Some(i) = self.pending.iter().position(|&s| core::ptr::eq(s, stream)) {
             self.pending.remove(i);
         }
-        // SAFETY: stream was Box::into_raw'd by Stream::new; ownership is reclaimed
+        // SAFETY: stream was heap-allocated by Stream::new; ownership is reclaimed
         // here. `Stream::Drop` decrements live_streams.
-        unsafe { drop(Box::from_raw(stream)) };
+        unsafe { drop(bun_core::heap::take(stream)) };
         // SAFETY: `self` is a live heap allocation produced by `new`.
         unsafe { ClientSession::deref(self) };
     }
@@ -417,7 +417,7 @@ impl Drop for ClientSession {
     fn drop(&mut self) {
         debug_assert!(self.pending.is_empty());
         // pending: Vec and hostname: Vec<u8> drop automatically.
-        // `bun.destroy(this)` is handled by `deref()` via Box::from_raw.
+        // `bun.destroy(this)` is handled by `deref()` via heap::take.
     }
 }
 

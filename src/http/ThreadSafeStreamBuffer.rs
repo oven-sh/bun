@@ -55,9 +55,9 @@ impl Default for ThreadSafeStreamBuffer {
 impl ThreadSafeStreamBuffer {
     /// `bun.TrivialNew(@This())` — heap-allocate with the given field values.
     /// Callers on both threads hold raw `*mut ThreadSafeStreamBuffer` and
-    /// release via `deref()`, so return a raw pointer (Box::into_raw).
+    /// release via `deref()`, so return a raw pointer (heap::alloc).
     pub fn new(init: Self) -> *mut Self {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     pub fn ref_(this: *mut Self) {
@@ -71,7 +71,7 @@ impl ThreadSafeStreamBuffer {
         // SAFETY: `this` is a live heap allocation produced by `new`.
         unsafe {
             if (*this).ref_count.fetch_sub(1, core::sync::atomic::Ordering::AcqRel) == 1 {
-                drop(Box::from_raw(this));
+                drop(bun_core::heap::take(this));
             }
         }
     }

@@ -166,15 +166,15 @@ impl Handlers {
                 }
             } else {
                 // Client-mode Handlers is heap-allocated per-connection
-                // (Listener::connect_inner via `Box::into_raw`). Zig does
+                // (Listener::connect_inner via `heap::alloc`). Zig does
                 // `this.deinit(); vm.allocator.destroy(this);` here — match
                 // that: free in place so callers that only hold a `*mut`
                 // (and thus can't `drop(Box)`) don't leak the allocation or
                 // its `protect()`ed JSValues. Caller must still null its
                 // field when this returns true.
-                // SAFETY: client-mode `self` is always the `Box::into_raw`
+                // SAFETY: client-mode `self` is always the `heap::alloc`
                 // allocation; no other live `&`/`&mut` outlives this call.
-                unsafe { drop(Box::from_raw(std::ptr::from_mut::<Handlers>(self))) };
+                unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Handlers>(self))) };
                 return true;
             }
         }

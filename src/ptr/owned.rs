@@ -134,11 +134,11 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // ── fromRaw ──────────────────────────────────────────────────────────────────────────────────
 // Creates an owned pointer from a raw pointer.
 //   fromRaw(data: Pointer) Self
-//     .single:   → unsafe { Box::from_raw(data) }
-//     .slice:    → unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(ptr, len)) }
+//     .single:   → unsafe { bun_core::heap::take(data) }
+//     .slice:    → unsafe { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(ptr, len)) }
 //                  or, when `data` came from `Vec::into_raw_parts`:
 //                  unsafe { Vec::from_raw_parts(ptr, len, cap) }.into_boxed_slice()
-//     optional:  → if data.is_null() { None } else { Some(unsafe { Box::from_raw(data) }) }
+//     optional:  → if data.is_null() { None } else { Some(unsafe { bun_core::heap::take(data) }) }
 //
 // PORT NOTE: the Zig doc's caveat about `bun.new` vs `bun.default_allocator.create` is the
 // typed-mimalloc-heap distinction; in Rust both paths go through the same `#[global_allocator]`,
@@ -157,13 +157,13 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // ── deinitShallow ────────────────────────────────────────────────────────────────────────────
 // Frees the memory without calling `deinit` on the underlying data.
 //   deinitShallow(self: *Self) void
-//     → let _ = Box::into_raw(ManuallyDrop::into_inner(/* ... */));
+//     → let _ = bun_core::heap::leak(ManuallyDrop::into_inner(/* ... */));
 //   PORT NOTE: "free the box allocation but don't drop T" is unusual in Rust. The two real uses:
 //     (a) T has no Drop → plain `drop(boxed)` is already shallow.
 //     (b) caller moved the payload out first → use `*boxed` to move out, then `drop(boxed)`.
 //   If a literal "dealloc without dropping" is needed:
 //     unsafe {
-//         let raw = Box::into_raw(boxed);
+//         let raw = bun_core::heap::leak(boxed);
 //         core::ptr::drop_in_place(raw as *mut ManuallyDrop<T>); // no-op
 //         alloc::alloc::dealloc(raw.cast(), Layout::new::<T>());
 //     }
@@ -179,14 +179,14 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // ── intoRaw ──────────────────────────────────────────────────────────────────────────────────
 // Converts an owned pointer into a raw pointer, releasing ownership.
 //   intoRaw(self: *Self) Pointer
-//     .single:   → Box::into_raw(boxed)
-//     .slice:    → Box::into_raw(boxed)          (yields *mut [T]; use .as_mut_ptr()/.len())
-//     optional:  → opt.map(Box::into_raw).unwrap_or(core::ptr::null_mut())
+//     .single:   → bun_core::heap::leak(boxed)
+//     .slice:    → bun_core::heap::leak(boxed)          (yields *mut [T]; use .as_mut_ptr()/.len())
+//     optional:  → opt.map(bun_core::heap::leak).unwrap_or(core::ptr::null_mut())
 //   `bun.memory.deinit(&self.#allocator)` → no-op.
 
 // ── PointerAndAllocator / intoRawWithAllocator ───────────────────────────────────────────────
 //   intoRawWithAllocator(self: *Self) (Pointer, Allocator) | ?(NonOptionalPointer, Allocator)
-//     → Box::into_raw(boxed)                     (allocator dropped from tuple)
+//     → bun_core::heap::leak(boxed)                     (allocator dropped from tuple)
 //   // TODO(port): if any caller actually inspects the returned allocator, it needs rethinking.
 
 // ── initNull ─────────────────────────────────────────────────────────────────────────────────
@@ -285,22 +285,22 @@ pub fn alloc_dupe_slice<T: Clone>(data: &[T]) -> Box<[T]> {
     Box::<[T]>::from(data)
 }
 
-/// `Owned(*T).fromRaw(ptr)` → `unsafe { Box::from_raw(ptr) }`
+/// `Owned(*T).fromRaw(ptr)` → `bun_core::heap::take(ptr)`
 ///
 /// # Safety
-/// `data` must have been produced by `Box::into_raw` (or equivalently allocated via the global
-/// allocator with the layout of `T`) and must not be freed elsewhere for the life of the
-/// returned `Box`.
+/// `data` must have been produced by `bun_core::heap::leak`/`alloc` (or
+/// equivalently allocated via the global allocator with the layout of `T`)
+/// and must not be freed elsewhere for the life of the returned `Box`.
 #[inline]
 pub unsafe fn from_raw<T>(data: *mut T) -> Box<T> {
     // SAFETY: caller contract above mirrors Zig `fromRaw` requirements.
-    unsafe { Box::from_raw(data) }
+    unsafe { bun_core::heap::take(data) }
 }
 
-/// `Owned(*T).intoRaw()` → `Box::into_raw(boxed)`
+/// `Owned(*T).intoRaw()` → `bun_core::heap::leak(boxed)`
 #[inline]
 pub fn into_raw<T>(boxed: Box<T>) -> *mut T {
-    Box::into_raw(boxed)
+    bun_core::heap::leak(boxed)
 }
 
 // Suppress unused-import warnings until Phase B prunes.

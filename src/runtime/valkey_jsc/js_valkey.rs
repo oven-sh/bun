@@ -418,8 +418,8 @@ impl JSValkeyClient {
     }
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
-        // bun.TrivialNew(@This()) → Box::into_raw(Box::new(init))
-        Box::into_raw(Box::new(init))
+        // bun.TrivialNew(@This()) → heap::alloc(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     /// Convenience accessor for the per-thread JS VM stored on `client`.
@@ -1467,8 +1467,8 @@ impl JSValkeyClient {
         }
         impl Holder {
             fn run(self_: *mut Holder) {
-                // SAFETY: allocated via Box::into_raw below; reclaimed here.
-                let self_ = unsafe { Box::from_raw(self_) };
+                // SAFETY: allocated via heap::alloc below; reclaimed here.
+                let self_ = unsafe { bun_core::heap::take(self_) };
                 let ctx = self_.ctx;
                 // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
                 unsafe {
@@ -1478,7 +1478,7 @@ impl JSValkeyClient {
                 // self_ dropped here (Box freed).
             }
         }
-        let holder = Box::into_raw(Box::new(Holder {
+        let holder = bun_core::heap::leak(Box::new(Holder {
             ctx: std::ptr::from_mut::<JSValkeyClient>(self),
             task: jsc::AnyTask::AnyTask::default(), // overwritten below
         }));
@@ -1696,8 +1696,8 @@ impl JSValkeyClient {
         this.ref_count.assert_no_refs();
 
         // bun.destroy(this) → reclaim the Box allocated in `new()`.
-        // SAFETY: `this` was created via Box::into_raw in `new()`.
-        drop(unsafe { Box::from_raw(std::ptr::from_mut::<JSValkeyClient>(this)) });
+        // SAFETY: `this` was created via heap::alloc in `new()`.
+        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<JSValkeyClient>(this)) });
     }
 
     /// Keep the event loop alive, or don't keep it alive

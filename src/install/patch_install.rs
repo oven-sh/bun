@@ -183,11 +183,11 @@ impl PatchTask {
     /// `pt.deinit()` → `unsafe { PatchTask::destroy(pt) }`.
     ///
     /// # Safety
-    /// `this` must have been produced by `Box::into_raw` in the `new_*` constructors below and
+    /// `this` must have been produced by `heap::alloc` in the `new_*` constructors below and
     /// ownership must be returned here exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // TODO: how to deinit `this.callback.calc_hash.network_task` (carried over from Zig)
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
@@ -844,7 +844,7 @@ impl PatchTask {
             next: ptr::null_mut(),
         });
 
-        Box::into_raw(pt)
+        bun_core::heap::leak(pt)
     }
 
     pub fn new_apply_patch_hash(
@@ -921,7 +921,7 @@ impl PatchTask {
             next: ptr::null_mut(),
         });
 
-        Box::into_raw(pt)
+        bun_core::heap::leak(pt)
     }
 }
 

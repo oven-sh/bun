@@ -380,7 +380,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                                     blob.content_type = std::ptr::from_ref::<[u8]>(s);
                                 }
                                 std::borrow::Cow::Owned(v) => {
-                                    blob.content_type = Box::into_raw(v.into_boxed_slice());
+                                    blob.content_type = bun_core::heap::leak(v.into_boxed_slice());
                                     blob.content_type_allocated = true;
                                 }
                             }
@@ -388,7 +388,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                         }
                         let mut content_type_buf = vec![0u8; slice.len()];
                         strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type = Box::into_raw(content_type_buf.into_boxed_slice());
+                        blob.content_type = bun_core::heap::leak(content_type_buf.into_boxed_slice());
                         blob.content_type_allocated = true;
                     }
                 }
@@ -444,7 +444,7 @@ pub fn construct_s3_file_with_s3_credentials(
                                     blob.content_type = std::ptr::from_ref::<[u8]>(s);
                                 }
                                 std::borrow::Cow::Owned(v) => {
-                                    blob.content_type = Box::into_raw(v.into_boxed_slice());
+                                    blob.content_type = bun_core::heap::leak(v.into_boxed_slice());
                                     blob.content_type_allocated = true;
                                 }
                             }
@@ -452,7 +452,7 @@ pub fn construct_s3_file_with_s3_credentials(
                         }
                         let mut content_type_buf = vec![0u8; slice.len()];
                         strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type = Box::into_raw(content_type_buf.into_boxed_slice());
+                        blob.content_type = bun_core::heap::leak(content_type_buf.into_boxed_slice());
                         blob.content_type_allocated = true;
                     }
                 }
@@ -480,15 +480,15 @@ pub struct S3BlobStatTask {
 
 impl S3BlobStatTask {
     pub fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     pub fn on_s3_exists_resolved(
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: `this` was allocated via Box::into_raw in `exists`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
+        // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
+        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // SAFETY: `global` was live when the task was created and the VM is single-threaded;
         // deref the raw pointer field directly so the borrow is not tied to `this`.
         let global = unsafe { &*this.global };
@@ -521,8 +521,8 @@ impl S3BlobStatTask {
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: `this` was allocated via Box::into_raw in `size`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
+        // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
+        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // SAFETY: see on_s3_exists_resolved — deref raw pointer to avoid borrowing `this`.
         let global = unsafe { &*this.global };
 
@@ -548,8 +548,8 @@ impl S3BlobStatTask {
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
     ) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: `this` was allocated via Box::into_raw in `stat`; reconstructing here replaces `defer this.deinit()`
-        let mut this = unsafe { Box::from_raw(this.cast::<S3BlobStatTask>()) };
+        // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
+        let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // SAFETY: see on_s3_exists_resolved — deref raw pointer to avoid borrowing `this`.
         let global = unsafe { &*this.global };
         match result {

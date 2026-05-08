@@ -346,9 +346,9 @@ impl Stdio {
         }
     }
 
-    /// On windows this function allocates a `*mut uv::Pipe` (via `Box::into_raw`);
+    /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
     /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
-    /// via `Box::from_raw`) or free it with `close_and_destroy`.
+    /// via `heap::take`) or free it with `close_and_destroy`.
     pub fn as_spawn_option(&mut self, i: i32) -> Result {
         #[cfg(windows)]
         {
@@ -701,13 +701,13 @@ impl Drop for Stdio {
 /// whether `uv_close` is needed.
 #[cfg(windows)]
 fn create_zeroed_pipe() -> *mut uv::Pipe {
-    // `bun.new` → Box::into_raw(Box::new(..)). WindowsSpawnOptions.Stdio.{buffer,ipc}
+    // `bun.new` → heap::alloc(Box::new(..)). WindowsSpawnOptions.Stdio.{buffer,ipc}
     // store the pipe as a raw FFI-owned `*mut uv::Pipe` so `spawn_process_windows`
     // can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    // `Box::from_raw` without aliasing a live `Box` (which would double-free).
+    // `heap::take` without aliasing a live `Box` (which would double-free).
     // SAFETY: all-zero is a valid uv::Pipe (#[repr(C)] POD; libuv treats a
     // zeroed pipe as "uninitialized" and `pipe.loop == null` is the sentinel).
-    Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))
+    bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))
 }
 
 // ported from: src/runtime/api/bun/spawn/stdio.zig

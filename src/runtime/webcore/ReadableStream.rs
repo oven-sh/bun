@@ -699,7 +699,7 @@ macro_rules! source_context_codegen {
 impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         // `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
-        // (`Box::into_raw`); ownership transfers to the JS wrapper as `m_ctx`. C++ side
+        // (`heap::alloc`); ownership transfers to the JS wrapper as `m_ctx`. C++ side
         // stores it as `void*` and the GC finalizer drives `decrement_count` → `deinit`.
         C::js_create(std::ptr::from_mut::<Self>(self).cast::<c_void>(), global_this)
     }
@@ -730,7 +730,7 @@ impl<C: SourceContext> NewSource<C> {
     /// the JS cell still points at it (UAF), so this mirrors Zig's `TrivialNew`
     /// exactly and returns `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
     // `bun.TrivialDeinit(@This())` → see `deinit()` below.
 
@@ -884,10 +884,10 @@ impl<C: SourceContext> NewSource<C> {
     /// `bun.TrivialDeinit(@This())` — drops the heap allocation. Called from
     /// context `deinit` (e.g. `ByteStream::finalize` → `parent().deinit()`).
     /// SAFETY: `self` must have been produced by [`Self::new`] (i.e.
-    /// `Box::into_raw(Box::new(..))`) and must not be used after this call.
+    /// `heap::alloc(Box::new(..))`) and must not be used after this call.
     pub unsafe fn deinit(&mut self) {
         // SAFETY: see fn-level doc — caller guarantees Box provenance.
-        drop(unsafe { Box::from_raw(std::ptr::from_mut::<Self>(self)) });
+        drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) });
     }
 }
 

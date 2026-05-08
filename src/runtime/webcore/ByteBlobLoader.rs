@@ -190,7 +190,7 @@ impl ByteBlobLoader {
         if !self.content_type.is_empty() {
             let ct = core::mem::take(&mut self.content_type);
             blob.content_type_was_set = !ct.is_empty();
-            blob.content_type = Box::into_raw(ct).cast_const();
+            blob.content_type = bun_core::heap::leak(ct).cast_const();
             blob.content_type_allocated = self.content_type_allocated;
             self.content_type_allocated = false;
         }

@@ -239,7 +239,7 @@ pub fn to_js_from_multipart_data(
                     let ct = field.content_type.slice(buf);
                     blob.content_type_allocated = true;
                     blob.content_type =
-                        Box::into_raw(Box::<[u8]>::from(ct)).cast_const();
+                        bun_core::heap::leak(Box::<[u8]>::from(ct)).cast_const();
                     blob.content_type_was_set = true;
                 } else {
                     let mime = 'brk: {
@@ -266,7 +266,7 @@ pub fn to_js_from_multipart_data(
                                 // by_extension/sniff currently always yield Borrowed,
                                 // but handle Owned defensively to avoid a dangling ptr.
                                 blob.content_type =
-                                    Box::into_raw(v.into_boxed_slice()).cast_const();
+                                    bun_core::heap::leak(v.into_boxed_slice()).cast_const();
                                 blob.content_type_was_set = false;
                                 blob.content_type_allocated = true;
                             }

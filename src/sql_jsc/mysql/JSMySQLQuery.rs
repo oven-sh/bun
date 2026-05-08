@@ -49,7 +49,7 @@ impl JSMySQLQuery {
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
-            // SAFETY: self was allocated via Box::into_raw in create_instance; count hit 0.
+            // SAFETY: self was allocated via heap::alloc in create_instance; count hit 0.
             unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
         }
     }
@@ -80,10 +80,10 @@ impl JSMySQLQuery {
     }
 
     unsafe fn deinit(this: *mut Self) {
-        // SAFETY: called once when ref_count reaches 0; `this` came from Box::into_raw.
+        // SAFETY: called once when ref_count reaches 0; `this` came from heap::alloc.
         unsafe {
             (*this).query.cleanup();
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 
@@ -143,7 +143,7 @@ impl JSMySQLQuery {
             return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
         }
 
-        let this = Box::into_raw(Box::new(Self {
+        let this = bun_core::heap::leak(Box::new(Self {
             this_value: JsRef::empty(),
             ref_count: Cell::new(1),
             // SAFETY: `sql_vm_ptr()` is non-null (asserted in debug builds);

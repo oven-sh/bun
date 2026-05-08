@@ -150,7 +150,7 @@ impl Blob {
     #[inline]
     pub fn new(mut blob: Blob) -> *mut Blob {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
-        Box::into_raw(Box::new(blob))
+        bun_core::heap::leak(Box::new(blob))
     }
 
     #[inline]
@@ -184,15 +184,15 @@ impl Blob {
     }
 
     /// Free a heap-owned `content_type` (if any) and reset to the empty
-    /// static slice. Centralizes the `Box::from_raw` so callers replacing
+    /// static slice. Centralizes the `heap::take` so callers replacing
     /// `content_type` don't each carry their own `unsafe` block.
     #[inline]
     pub fn free_content_type(&mut self) {
         if self.content_type_allocated {
             // SAFETY: `content_type_allocated` implies `content_type` was set
-            // via `Box::into_raw(_.into_boxed_slice())` and is solely owned
+            // via `heap::alloc(_.into_boxed_slice())` and is solely owned
             // by this `Blob`.
-            unsafe { drop(Box::from_raw(self.content_type.cast_mut())) };
+            unsafe { drop(bun_core::heap::take(self.content_type.cast_mut())) };
             self.content_type = std::ptr::from_ref::<[u8]>(b"" as &'static [u8]);
             self.content_type_allocated = false;
         }
@@ -327,7 +327,7 @@ impl Blob {
         // side doesn't dangle the other (Blob.zig:3700).
         if duped.content_type_allocated {
             let copy = self.content_type_slice().to_vec().into_boxed_slice();
-            duped.content_type = Box::into_raw(copy);
+            duped.content_type = bun_core::heap::leak(copy);
         }
         duped
     }
@@ -417,8 +417,8 @@ impl Blob {
 
         if self.is_heap_allocated() {
             // SAFETY: `self` is the `*mut Blob` originally produced by
-            // `Blob::new` (`Box::into_raw`).
-            unsafe { drop(Box::from_raw(std::ptr::from_mut::<Blob>(self))) };
+            // `Blob::new` (`heap::alloc`).
+            unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Blob>(self))) };
         }
     }
 }
@@ -447,7 +447,7 @@ pub extern "C" fn Blob__deref(self_: &mut Blob) {
     debug_assert!(self_.is_heap_allocated(), "cannot deref: this Blob is not heap-allocated");
     if self_.ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
         // `deinit` has its own `is_heap_allocated()` guard around the
-        // `drop(Box::from_raw)`, so re-arm so it returns true (Blob.zig:5112).
+        // `drop(heap::take)`, so re-arm so it returns true (Blob.zig:5112).
         self_.ref_count.increment();
         self_.deinit();
     }
@@ -606,7 +606,7 @@ pub mod store {
         /// `is_temporary` handoff in `read_file`.
         pub fn init_owned(bytes: Box<[u8]>) -> Bytes {
             let len = bytes.len();
-            let ptr = Box::into_raw(bytes).cast::<u8>();
+            let ptr = bun_core::heap::leak(bytes).cast::<u8>();
             Bytes {
                 ptr: NonNull::new(ptr),
                 len: len as SizeType,
@@ -968,7 +968,7 @@ pub mod store {
             debug_assert!(old >= 1);
             if old == 1 {
                 // SAFETY: refcount hit zero; we are the sole remaining owner.
-                drop(unsafe { Box::from_raw(this.as_ptr()) });
+                drop(unsafe { bun_core::heap::take(this.as_ptr()) });
             }
         }
 
@@ -982,7 +982,7 @@ pub mod store {
         ) {
             let Some(this) = NonNull::new(ptr.cast::<Store>()) else { return };
             // SAFETY: caller passes a `*Store` (originally leaked via
-            // `Box::into_raw`) as the opaque pointer; mirrors Zig
+            // `heap::alloc`) as the opaque pointer; mirrors Zig
             // `bun.cast(*Store, ptr)`.
             unsafe { Store::deref(this) };
         }
@@ -1034,7 +1034,7 @@ pub mod store {
     /// `Store::ref_count` field. Mirrors Zig's `*Store` with `.ref()`/`.deref()`.
     ///
     /// Not `Arc<Store>`: `Store::deref()` (reachable from `Store::external` and
-    /// other FFI callbacks) frees via `Box::from_raw` when the intrusive count
+    /// other FFI callbacks) frees via `heap::take` when the intrusive count
     /// hits zero; `Arc` would own the allocation itself, and the two refcounts
     /// would diverge. One refcount, one deallocation path.
     #[repr(transparent)]
@@ -1103,8 +1103,8 @@ pub mod store {
         #[inline]
         fn from(b: Box<Store>) -> Self {
             // `Store::new` initializes `ref_count` to 1 — adopt that +1.
-            // SAFETY: `Box::into_raw` never returns null.
-            Self { ptr: unsafe { NonNull::new_unchecked(Box::into_raw(b)) } }
+            // SAFETY: `heap::alloc` never returns null.
+            Self { ptr: unsafe { NonNull::new_unchecked(bun_core::heap::leak(b)) } }
         }
     }
 
@@ -1121,7 +1121,7 @@ pub mod store {
         #[inline]
         fn drop(&mut self) {
             // SAFETY: invariant — `ptr` is live and originated from
-            // `Box::into_raw` (mutable provenance); `deref()` frees on last ref.
+            // `heap::alloc` (mutable provenance); `deref()` frees on last ref.
             unsafe { Store::deref(self.ptr) };
         }
     }

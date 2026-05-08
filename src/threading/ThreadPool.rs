@@ -306,6 +306,28 @@ pub struct Task {
     pub callback: unsafe fn(*mut Task),
 }
 
+// SAFETY: `Task` is the unit handed across threads by `ThreadPool::schedule`;
+// the intrusive `node.next` raw pointer is only dereferenced under the pool's
+// internal synchronization (lock-free `Node.Queue` / `Node.Buffer` below). The
+// auto-trait opt-out is purely from the raw `*mut Node`, not a real !Send
+// invariant. (Zig had no auto-trait notion; this matches `ThreadPool.zig`'s
+// cross-thread `*Task` usage.)
+unsafe impl Send for Task {}
+
+impl Default for Task {
+    /// Placeholder for fields where the callback is installed later
+    /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
+    /// `unreachable` callback panics if scheduled un-initialized — same
+    /// failure mode as Zig's `.callback = undefined`.
+    #[inline]
+    fn default() -> Self {
+        unsafe fn unreachable_cb(_: *mut Task) {
+            unreachable!("ThreadPool.Task scheduled with default() callback");
+        }
+        Task { node: Node::default(), callback: unreachable_cb }
+    }
+}
+
 impl Task {
     #[inline]
     unsafe fn from_node(node: *mut Node) -> *mut Task {

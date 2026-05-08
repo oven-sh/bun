@@ -59,7 +59,7 @@ impl RefCounted for PipeReader {
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: refcount hit zero; we are the last owner of this heap allocation
-        // created in `create()` via Box::into_raw.
+        // created in `create()` via heap::alloc.
         unsafe { PipeReader::deinit(this) };
     }
 }
@@ -83,7 +83,7 @@ impl PipeReader {
     ///
     /// # Safety
     /// `this` must point to a live `PipeReader` created by `create()` (i.e. boxed
-    /// via `Box::into_raw`) with `ref_count > 0`. No `&`/`&mut` borrows of `*this`
+    /// via `heap::alloc`) with `ref_count > 0`. No `&`/`&mut` borrows of `*this`
     /// may outlive this call on the zero path.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
@@ -135,7 +135,7 @@ impl PipeReader {
             this.reader.source = Some(bun_io::Source::Pipe(this.stdio_result.buffer));
         }
 
-        let raw: *mut PipeReader = Box::into_raw(this);
+        let raw: *mut PipeReader = bun_core::heap::leak(this);
         // SAFETY: `raw` is a valid, freshly-boxed PipeReader.
         unsafe {
             (*raw).reader.set_parent(raw.cast::<core::ffi::c_void>());
@@ -325,8 +325,8 @@ impl PipeReader {
                 // `MarkedArrayBuffer::from_string`.
                 let boxed = bytes.into_boxed_slice();
                 let len = boxed.len();
-                let ptr = Box::into_raw(boxed).cast::<u8>();
-                // SAFETY: ptr/len from Box::into_raw; backed by global mimalloc.
+                let ptr = bun_core::heap::leak(boxed).cast::<u8>();
+                // SAFETY: ptr/len from heap::alloc; backed by global mimalloc.
                 let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
@@ -411,8 +411,8 @@ impl PipeReader {
         // Zig: if state == .done, free state.done — handled by Drop of `state` when Box drops.
         // Zig: this.reader.deinit() — handled by Drop of `reader` field when Box drops.
 
-        // SAFETY: `this` was created via Box::into_raw in `create()`.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: `this` was created via heap::alloc in `create()`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

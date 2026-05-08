@@ -1741,9 +1741,9 @@ impl NodeHTTPResponse {
         self.body_read_ref.unref(vm_get());
 
         self.promise.deinit();
-        // SAFETY: self was allocated via Box::into_raw in `create`; refcount is zero so no
+        // SAFETY: self was allocated via heap::alloc in `create`; refcount is zero so no
         // other references remain.
-        unsafe { drop(Box::from_raw(std::ptr::from_mut::<Self>(self))) };
+        unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<Self>(self))) };
     }
 
     // Intrusive refcount helpers (mirrors Zig `bun.ptr.RefCount(@This(), ...)` mixin).
@@ -1810,7 +1810,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
         uws::AnyResponse::TCP(response_ptr.cast())
     };
 
-    let response = Box::into_raw(Box::new(NodeHTTPResponse {
+    let response = bun_core::heap::leak(Box::new(NodeHTTPResponse {
         // 1 - the HTTP response
         // 1 - the JS object
         // 1 - the Server handler.
@@ -1844,7 +1844,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
         response_ref.body_read_ref.r#ref(vm);
     }
     response_ref.poll_ref.r#ref(vm);
-    // SAFETY: `response` is a fresh `Box::into_raw` heap payload; ownership of
+    // SAFETY: `response` is a fresh `heap::alloc` heap payload; ownership of
     // the +1 wrapper ref transfers to the GC (`NodeHTTPResponseClass__finalize`
     // calls `finalize` → `deref`). `to_js_ptr` is the `#[JsClass]`-generated
     // no-rebox wrapper around `NodeHTTPResponse__create`.

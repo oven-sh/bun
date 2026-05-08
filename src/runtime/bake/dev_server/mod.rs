@@ -344,7 +344,7 @@ impl ResponseLike for bun_uws::AnyResponse {
         sec_web_socket_extensions: &[u8],
         ctx: &mut bun_uws::WebSocketUpgradeContext,
     ) {
-        let boxed = Box::into_raw(Box::new(data));
+        let boxed = bun_core::heap::leak(Box::new(data));
         let _ = (*self).upgrade(
             boxed,
             sec_web_socket_key,
@@ -359,7 +359,7 @@ impl ResponseLike for bun_uws::AnyResponse {
 /// message handlers) live in `hmr_socket_body` (`../DevServer/HmrSocket.rs`).
 pub struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
-    /// `remove` + `Box::from_raw` in `on_close`.
+    /// `remove` + `heap::take` in `on_close`.
     pub dev: NonNull<DevServer>,
     pub underlying: Option<bun_uws::AnyWebSocket>,
     pub subscriptions: super::dev_server_body::HmrTopicBits,

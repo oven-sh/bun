@@ -47,11 +47,11 @@ impl bun_ptr::ThreadSafeRefCounted for LinuxMemFdAllocator {
 
     unsafe fn destructor(this: *mut Self) {
         // Zig `deinit`: close fd, then `bun.destroy(self)`.
-        // SAFETY: refcount hit 0; `this` came from `Box::into_raw` in
+        // SAFETY: refcount hit 0; `this` came from `heap::alloc` in
         // `IntrusiveArc::new`. Closing fd before reclaiming the Box.
         unsafe { (*this).fd.close() };
         // SAFETY: sole owner; reconstruct the Box so the allocation is freed.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -90,7 +90,7 @@ impl LinuxMemFdAllocator {
     //
     // PORT NOTE: takes `*mut Self` (not `&self`) to mirror Zig's
     // `RefCount.deref(self: *Self)`. Taking `&self` and then freeing the
-    // allocation via `Box::from_raw(self as *const _ as *mut _)` is UB:
+    // allocation via `heap::take(self as *const _ as *mut _)` is UB:
     // it materializes `&mut Self` (via `Drop`) while a shared `&self`
     // borrow is still live.
     pub unsafe fn deref(this: *mut Self) {
@@ -102,11 +102,11 @@ impl LinuxMemFdAllocator {
     /// Zig: `.{ .ptr = self, .vtable = AllocatorInterface.VTable }`
     ///
     /// # Safety
-    /// `this` must be the `*mut Self` originally produced by `Box::into_raw`
+    /// `this` must be the `*mut Self` originally produced by `heap::alloc`
     /// (via [`Self::new`] / `IntrusiveArc::new`) — the returned allocator's
     /// `free` will call [`Self::deref`] on it, which on the final ref drops
     /// the `Box`. A `*mut Self` derived from `&self` (SharedReadOnly
-    /// provenance) would make that `Box::from_raw` UB.
+    /// provenance) would make that `heap::take` UB.
     pub unsafe fn allocator(this: *mut Self) -> StdAllocator {
         StdAllocator {
             ptr: this.cast::<c_void>(),
@@ -291,13 +291,13 @@ impl LinuxMemFdAllocator {
             }
 
             // PORT NOTE: Zig's `Self.new` returns a raw `*Self` (refcount=1).
-            // `into_raw()` extracts the `Box::into_raw` pointer and transfers
+            // `into_raw()` extracts the `heap::alloc` pointer and transfers
             // the +1 to us (RefPtr has no `Drop`); on `Ok` that ref moves into
             // `res.allocator`, on `Err` we `deref` it explicitly — exactly the
             // Zig flow.
             let memfd: *mut Self = Self::new(fd, bytes.len()).into_raw();
 
-            // SAFETY: `memfd` is the `Box::into_raw` pointer
+            // SAFETY: `memfd` is the `heap::alloc` pointer
             // (full provenance) with one live ref — required by `Self::alloc`.
             match unsafe {
                 Self::alloc(
@@ -328,7 +328,7 @@ impl LinuxMemFdAllocator {
 // Zig defined a private `AllocatorInterface` struct holding alloc/free/VTable.
 // `bun_alloc::AllocatorVTable` is the `std.mem.Allocator.VTable` shape; the
 // vtable functions are kept as raw-ptr free functions matching Zig's
-// `*anyopaque` signatures so that `free` retains the `Box::into_raw` *mut
+// `*anyopaque` signatures so that `free` retains the `heap::alloc` *mut
 // provenance it needs to drop `self`.
 
 mod allocator_interface {
@@ -346,7 +346,7 @@ mod allocator_interface {
     ///
     /// # Safety
     /// `ptr` must be the `*mut LinuxMemFdAllocator` originally produced by
-    /// `Box::into_raw` (via [`LinuxMemFdAllocator::new`] / `IntrusiveArc::new`)
+    /// `heap::alloc` (via [`LinuxMemFdAllocator::new`] / `IntrusiveArc::new`)
     /// and the caller must own one outstanding ref on it. No `&Self`/`&mut Self`
     /// borrow of `*ptr` may be live across this call — when the refcount hits
     /// zero, `*ptr` is dropped and freed.
@@ -360,9 +360,9 @@ mod allocator_interface {
         //
         // PORT NOTE: takes the raw vtable data pointer (Zig's `*anyopaque`)
         // directly rather than `&self`. `deref` may free the allocation, which
-        // requires `*mut Self` with full `Box::into_raw` provenance; deriving
+        // requires `*mut Self` with full `heap::alloc` provenance; deriving
         // it from a `&self` (`as *const _ as *mut _`) would be SharedReadOnly
-        // provenance and the `Box::from_raw` → `Drop` write would be UB under
+        // provenance and the `heap::take` → `Drop` write would be UB under
         // Stacked Borrows.
         let this = ptr.cast::<LinuxMemFdAllocator>();
         match sys::munmap(buf.as_mut_ptr(), buf.len()) {

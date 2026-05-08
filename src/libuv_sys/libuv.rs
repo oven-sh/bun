@@ -587,6 +587,35 @@ pub unsafe trait UvHandle: Sized {
         // SAFETY: handle prefix invariant.
         unsafe { uv_handle_set_data(self.as_handle_mut(), ptr_) };
     }
+    /// Typed `Box<T>`-taking sibling of [`set_data`] for the common case where
+    /// `handle->data` owns a heap allocation freed in the close callback.
+    /// Ownership of `data` transfers to the handle; reclaim with
+    /// [`take_owned_data`](UvHandle::take_owned_data) (typically in the
+    /// `uv_close_cb`). This is the centralized `Box::into_raw` for the
+    /// `handle.data = bun.new(T, ..)` Zig pattern — callers never spell the
+    /// raw round-trip themselves.
+    #[inline]
+    fn set_owned_data<T>(&mut self, data: Box<T>) {
+        self.set_data(Box::into_raw(data).cast::<c_void>());
+    }
+    /// Reclaim a `Box<T>` previously installed via [`set_owned_data`]. Clears
+    /// the `data` slot to null so a second call (or a later `uv_close_cb`)
+    /// observes `None` rather than a dangling pointer.
+    ///
+    /// # Safety
+    /// The handle's `data` must either be null or the unique live pointer
+    /// from a prior [`set_owned_data::<T>`](UvHandle::set_owned_data) call
+    /// with the **same** `T`.
+    #[inline]
+    unsafe fn take_owned_data<T>(&mut self) -> Option<Box<T>> {
+        let p = self.get_data::<T>();
+        if p.is_null() {
+            return None;
+        }
+        self.set_data(ptr::null_mut());
+        // SAFETY: caller contract — `p` came from `set_owned_data::<T>`.
+        Some(unsafe { Box::from_raw(p) })
+    }
     #[inline]
     fn get_loop(&self) -> *mut Loop {
         // SAFETY: handle prefix invariant.

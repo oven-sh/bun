@@ -361,6 +361,52 @@ impl PropertyModifierKeyword {
         b"set" => PropertyModifierKeyword::PSet,
         b"static" => PropertyModifierKeyword::PStatic,
     };
+
+    /// Hot path: queried in `parse_property` once per identifier-keyed
+    /// property (every method/field name in a class body). Same length-bucket
+    /// strategy as [`keyword`] — avoids the SipHash round-trip inside
+    /// `phf::Map::get`. All entries are 3..=9 ASCII bytes; class-heavy inputs
+    /// like three.js have property names that are overwhelmingly *not* in this
+    /// set, so the `match s.len()` rejects most lookups in one branch.
+    #[inline]
+    pub fn find(s: &[u8]) -> Option<PropertyModifierKeyword> {
+        macro_rules! by_len {
+            ($n:literal: $($lit:literal => $tok:expr,)*) => {{
+                let arr: &[u8; $n] = s.try_into().unwrap();
+                match arr {
+                    $($lit => Some($tok),)*
+                    _ => None,
+                }
+            }};
+        }
+        match s.len() {
+            3 => by_len!(3:
+                b"get" => PropertyModifierKeyword::PGet,
+                b"set" => PropertyModifierKeyword::PSet,
+            ),
+            5 => by_len!(5:
+                b"async" => PropertyModifierKeyword::PAsync,
+            ),
+            6 => by_len!(6:
+                b"public" => PropertyModifierKeyword::PPublic,
+                b"static" => PropertyModifierKeyword::PStatic,
+            ),
+            7 => by_len!(7:
+                b"declare" => PropertyModifierKeyword::PDeclare,
+                b"private" => PropertyModifierKeyword::PPrivate,
+            ),
+            8 => by_len!(8:
+                b"abstract" => PropertyModifierKeyword::PAbstract,
+                b"accessor" => PropertyModifierKeyword::PAccessor,
+                b"override" => PropertyModifierKeyword::POverride,
+                b"readonly" => PropertyModifierKeyword::PReadonly,
+            ),
+            9 => by_len!(9:
+                b"protected" => PropertyModifierKeyword::PProtected,
+            ),
+            _ => None,
+        }
+    }
 }
 
 pub static TYPE_SCRIPT_ACCESSIBILITY_MODIFIER: phf::Set<&'static [u8]> = phf_set! {
@@ -814,6 +860,19 @@ mod tests {
             b"function", b"interfac", b"interfaces",
         ] {
             assert!(!is_strict_mode_reserved_word(k), "{:?}", k);
+        }
+    }
+
+    #[test]
+    fn property_modifier_find_matches_phf_map() {
+        for (k, v) in PropertyModifierKeyword::LIST.entries() {
+            assert_eq!(PropertyModifierKeyword::find(k), Some(*v), "{:?}", k);
+        }
+        for k in [
+            b"" as &[u8], b"ge", b"gett", b"asyn", b"asyncc", b"static_",
+            b"abstrac", b"abstractt", b"protecte", b"protecteds", b"const",
+        ] {
+            assert_eq!(PropertyModifierKeyword::find(k), None, "{:?}", k);
         }
     }
 }

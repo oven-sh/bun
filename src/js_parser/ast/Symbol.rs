@@ -625,27 +625,91 @@ impl Map {
         }
     }
 
-    /// Equivalent to followSymbols in esbuild
+    /// Equivalent to followSymbols in esbuild.
+    ///
+    /// PORT NOTE: Zig's body is naturally recursive (`follow(symbol.link)`).
+    /// Reshaped to an iterative two-phase walk so the per-hop work is just two
+    /// raw pointer adds and a load — no call frame, no `Option` unwrap, no
+    /// repeated tag/null guards. Semantics are identical to Zig's: every node
+    /// on the path from `ref_` to the union-find root has its `link` rewritten
+    /// to the root (full path compression).
     pub fn follow(&self, ref_: Ref) -> Ref {
+        // Entry guard — `ref_` may be `Ref::None` / a SourceContentsSlice ref
+        // (callers pass arbitrary Refs read out of AST nodes). After this,
+        // `symbol_ptr` is a valid in-bounds slot.
         let Some(symbol_ptr) = self.get(ref_) else {
             return ref_;
         };
-        // SAFETY: see note on `get` — union-find path compression mutates through *mut
-        // derived from Vec's raw NonNull. Raw-ptr-only access; no `&mut` held across
-        // the recursive call (which may write other symbols' `link` fields).
-        if !unsafe { (*symbol_ptr).has_link() } {
+        // SAFETY: see note on `get` — `*mut Symbol` derived from Vec's raw
+        // NonNull (write provenance preserved). Raw-ptr-only access; no `&`/
+        // `&mut` materialized across mutation.
+        let mut link = unsafe { (*symbol_ptr).link };
+        // `has_link()` is `link.is_valid()` (tag != RefTag::Invalid). This is
+        // the overwhelmingly common exit — most symbols are roots, especially
+        // after `follow_all` has run once.
+        if !link.is_valid() {
             return ref_;
         }
 
-        let cur_link = unsafe { (*symbol_ptr).link };
-        let link = Self::follow(self, cur_link);
+        // Phase 1: find the root. `link.is_valid()` holds here. The only
+        // writers of `Symbol::link` are (a) the default `Ref::NONE`
+        // (tag=Invalid — rejected by `is_valid()` above), (b) `merge()`,
+        // which stores a Ref that came from `declare_symbol` / `new_symbol` /
+        // `LinkerGraph::generate_symbol`, and (c) prior `follow()` path
+        // compression, which stores a `root` that itself satisfied (b). All
+        // such refs satisfy the `get_unchecked` contract: in-bounds
+        // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
+        // never `SourceContentsSlice` and never the null source sentinel.
+        // We can therefore index without re-checking the entry guards on
+        // every hop.
+        let outer = self.symbols_for_source.as_ptr().cast_mut();
+        let outer_len = self.symbols_for_source.len();
+        // SAFETY: invariant above — every valid `link` on the chain satisfies
+        // the `get_unchecked` contract; `symbols_for_source` is never
+        // reallocated during link/print. Same provenance argument as `get()`.
+        let lookup = |r: Ref| -> *mut Symbol {
+            let src = r.source_index() as usize;
+            let idx = r.inner_index() as usize;
+            debug_assert!(!r.is_source_contents_slice());
+            debug_assert!(src < outer_len);
+            unsafe {
+                let inner: *mut List = outer.add(src);
+                debug_assert!(idx < (*inner).len());
+                (*inner).as_mut_ptr().add(idx)
+            }
+        };
 
-        // SAFETY: storage not reallocated by recursion; ptr still valid.
-        if !unsafe { (*symbol_ptr).link }.eql(link) {
-            unsafe { (*symbol_ptr).link = link };
+        let mut root = link;
+        loop {
+            let next = unsafe { (*lookup(root)).link };
+            if !next.is_valid() {
+                break;
+            }
+            root = next;
         }
 
-        link
+        // Phase 2: path compression. Rewrite `link` on the entry node and every
+        // intermediate node to point directly at `root` (matches the Zig
+        // recursion's post-order `symbol.link = link` writes). The `!=` gate
+        // mirrors Zig's `if (!symbol.link.eql(link))` to avoid a redundant
+        // store when the chain was already length-1.
+        if !link.eql(root) {
+            // SAFETY: `symbol_ptr` from `get()` above; storage not reallocated.
+            unsafe { (*symbol_ptr).link = root };
+            loop {
+                let p = lookup(link);
+                let next = unsafe { (*p).link };
+                if !next.is_valid() {
+                    break;
+                }
+                // SAFETY: `p` is a valid in-bounds slot per `lookup` invariant;
+                // raw-ptr write, no aliasing `&mut` exists.
+                unsafe { (*p).link = root };
+                link = next;
+            }
+        }
+
+        root
     }
 }
 

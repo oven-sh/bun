@@ -1593,18 +1593,30 @@ pub enum AsyncPrefixExpression {
     IsAwait = 3,
 }
 
-static ASYNC_PREFIX_MAP: phf::Map<&'static [u8], AsyncPrefixExpression> = phf::phf_map! {
-    b"yield" => AsyncPrefixExpression::IsYield,
-    b"await" => AsyncPrefixExpression::IsAwait,
-    b"async" => AsyncPrefixExpression::IsAsync,
-};
-
 impl AsyncPrefixExpression {
+    /// Hot path: called once for *every* identifier-prefix expression in
+    /// `pfx_t_identifier`, i.e. once per non-keyword identifier token in the
+    /// source. The previous `phf::phf_map!` lookup was the dominant caller of
+    /// `phf_shared::hash` (SipHash) in the three.js bundle profile (~1.3%
+    /// self time, mis-attributed to `bun_resolver` after ICF folded the
+    /// duplicate `hash<[u8]>` bodies). All three keywords are exactly 5 ASCII
+    /// bytes and start with 'a'/'y', so a length gate plus one fixed-array
+    /// match rejects the overwhelming majority of identifiers in a single
+    /// branch with no hashing — same shape as Zig's `ComptimeStringMap`
+    /// length-bucket prefilter.
+    #[inline]
     pub fn find(ident: &[u8]) -> AsyncPrefixExpression {
-        ASYNC_PREFIX_MAP
-            .get(ident)
-            .copied()
-            .unwrap_or(AsyncPrefixExpression::None)
+        if ident.len() != 5 {
+            return AsyncPrefixExpression::None;
+        }
+        // `try_into().unwrap()` folds away — len just checked.
+        let arr: &[u8; 5] = ident.try_into().unwrap();
+        match arr {
+            b"async" => AsyncPrefixExpression::IsAsync,
+            b"await" => AsyncPrefixExpression::IsAwait,
+            b"yield" => AsyncPrefixExpression::IsYield,
+            _ => AsyncPrefixExpression::None,
+        }
     }
 }
 

@@ -909,15 +909,53 @@ pub enum UnusedName {
     Renamed(NameStr),
 }
 
+/// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
+/// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`). This is
+/// the exact condition under which Zig's `ensureValidIdentifier` returns the
+/// input slice unchanged (modulo the strict-mode-reserved-word remap, handled
+/// by the caller). The Rust port of that function currently always allocates
+/// a `Box<[u8]>` even on the borrow path — see its `TODO(port)` — so hoisting
+/// this check into the renamer restores Zig's zero-alloc behaviour for the
+/// overwhelmingly common case (`symbol.original_name` is parser-produced and
+/// almost always satisfies this).
+#[inline]
+fn is_simple_ascii_identifier(s: &[u8]) -> bool {
+    let Some((&first, rest)) = s.split_first() else { return false };
+    if !(first.is_ascii_alphabetic() || first == b'_' || first == b'$') {
+        return false;
+    }
+    for &c in rest {
+        if !(c.is_ascii_alphanumeric() || c == b'_' || c == b'$') {
+            return false;
+        }
+    }
+    true
+}
+
 impl NumberScope {
     /// Caller must use an arena allocator
     pub fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
-        // PERF(port): was arena temp_allocator — profile in Phase B
-        let owned_name = MutableString::ensure_valid_identifier(input_name).expect("unreachable");
+        // PORT NOTE: Zig's `MutableString.ensureValidIdentifier` borrows the
+        // input when it is already a valid ASCII identifier; the Rust port
+        // always heap-allocates (Box<[u8]>). Skip the call entirely for the
+        // common case so this stays alloc-free, matching the .zig fast path.
+        // The strict-mode-reserved-word remap (`let` → `_let`, etc.) is the
+        // only transform that fires for an otherwise-valid ASCII name, so
+        // gate on that too and fall through to the full normalizer when it
+        // would apply.
+        let owned_name;
+        let mut name: &[u8] = if is_simple_ascii_identifier(input_name)
+            && !bun_js_parser::lexer_tables::is_strict_mode_reserved_word(input_name)
+        {
+            input_name
+        } else {
+            owned_name =
+                MutableString::ensure_valid_identifier(input_name).expect("unreachable");
+            &owned_name
+        };
         // PORT NOTE: hoisted from inside the match arm so `name` (which may borrow
         // it) stays valid through the trailing `eql_long`/dupe.
         let mut mutable_name = MutableString::init_empty();
-        let mut name: &[u8] = &owned_name;
 
         match NameUse::find(self, name) {
             NameUse::Unused => {}

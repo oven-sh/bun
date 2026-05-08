@@ -1230,7 +1230,14 @@ lexer_impl_header! {
         &self.source.contents[self.current..]
     }
 
-    #[inline]
+    /// PORT NOTE: split into an `#[inline(always)]` ASCII/EOF fast path plus
+    /// an outlined multibyte tail. `step()` is called from ~50 sites inside
+    /// the giant `next()` switch and inlines into it; with the multibyte
+    /// decode in the same body LLVM declined to inline `next_codepoint`
+    /// (showing as a separate ~2.7% symbol). The fast path is now 4 insns
+    /// (bounds cmp, load, cmp 0x80, store) so it folds into every `step()`
+    /// site, matching Zig's per-byte `ptr[current]` increment.
+    #[inline(always)]
     fn next_codepoint(&mut self) -> CodePoint {
         let contents: &[u8] = self.source.contents.as_ref();
         let len = contents.len();
@@ -1251,6 +1258,18 @@ lexer_impl_header! {
             return first as CodePoint;
         }
 
+        self.next_codepoint_multibyte(first)
+    }
+
+    /// Non-ASCII tail of [`next_codepoint`]. Kept out-of-line so the hot
+    /// ASCII path stays small enough to inline into every `step()` site.
+    /// `#[cold]` is intentionally omitted — non-ASCII source is uncommon in
+    /// the bundle bench but not pathological, and `cold` would pessimize
+    /// register allocation at the boundary.
+    #[inline(never)]
+    fn next_codepoint_multibyte(&mut self, first: u8) -> CodePoint {
+        let contents: &[u8] = self.source.contents.as_ref();
+        let len = contents.len();
         let cp_len = strings::wtf8_byte_sequence_length_with_invalid(first) as usize;
         let avail = len - self.current;
 
@@ -1294,6 +1313,7 @@ lexer_impl_header! {
         code_point
     }
 
+    #[inline]
     pub fn step(&mut self) {
         self.code_point = self.next_codepoint();
 

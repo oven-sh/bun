@@ -1399,9 +1399,9 @@ impl<'a> Parser<'a> {
                     // An example is react-dom/index.js, which does a DCE check.
                     // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
                     // arena slice doesn't conflict with the `part.stmts = …` rewrite
-                    // below. SAFETY: arena-owned slice valid for 'a.
+                    // below.
                     let part_stmts_ss = part.stmts;
-                    let part_stmts: &mut [Stmt] = unsafe { part_stmts_ss.slice_mut() };
+                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
                     if part_stmts.len() > 1 {
                         break;
                     }

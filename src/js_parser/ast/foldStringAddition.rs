@@ -13,19 +13,18 @@ fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
 }
 
 /// Zig `E.String.push` — link `other` onto `lhs`'s rope tail.
-fn estring_push(lhs: &mut E::EString, other: StoreRef<E::EString>) {
+fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
     debug_assert!(lhs.is_utf8());
     debug_assert!(other.is_utf8());
 
-    // SAFETY: `other` is a freshly Store-appended node; single-threaded visitor.
-    let other_mut = unsafe { &mut *other.as_ptr() };
-    if other_mut.rope_len == 0 {
-        other_mut.rope_len = other_mut.data.len() as u32;
+    // `other` is a freshly Store-appended node; mutate via `StoreRef::DerefMut`.
+    if other.rope_len == 0 {
+        other.rope_len = other.data.len() as u32;
     }
     if lhs.rope_len == 0 {
         lhs.rope_len = lhs.data.len() as u32;
     }
-    lhs.rope_len += other_mut.rope_len;
+    lhs.rope_len += other.rope_len;
 
     if lhs.next.is_none() {
         lhs.next = Some(other);
@@ -35,9 +34,9 @@ fn estring_push(lhs: &mut E::EString, other: StoreRef<E::EString>) {
         while end.get().next.is_some() {
             end = end.get().end.unwrap();
         }
-        // SAFETY: `end` points into the live Store; rope nodes are mutated in
-        // place per Zig semantics (no concurrent reader during visiting).
-        unsafe { (*end.as_ptr()).next = Some(other) };
+        // `end` points into the live Store; rope nodes are mutated in place
+        // via `StoreRef::DerefMut` (single-threaded visitor).
+        end.next = Some(other);
         lhs.end = Some(other);
     }
 }

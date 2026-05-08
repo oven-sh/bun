@@ -738,9 +738,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             _ => stmt,
                         };
 
-                        // SAFETY: `inner_stmts` aliases `stmts.all_stmts.items` which is not
+                        // `inner_stmts` aliases `stmts.all_stmts.items` which is not
                         // resized in this loop; `end <= i < len`.
-                        unsafe { inner_stmts.slice_mut()[end] = transformed };
+                        inner_stmts.slice_mut()[end] = transformed;
                         end += 1;
                     }
                     inner_stmts.truncate(end);
@@ -873,7 +873,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // SAFETY: `out_stmts` aliases either `stmts.all_stmts` or `stmts.outside_wrapper_prefix`,
     // both of which remain live for the rest of this function.
-    let out_stmts: &mut [Stmt] = unsafe { out_stmts.slice_mut() };
+    let out_stmts: &mut [Stmt] = out_stmts.slice_mut();
 
     if out_stmts.is_empty() {
         return PrintResult::Result(PrintResultSuccess {

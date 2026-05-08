@@ -1646,9 +1646,9 @@ impl EString {
             while end.get().next.is_some() {
                 end = end.get().end.unwrap();
             }
-            // SAFETY: `end` points into the live Store; rope nodes are mutated
-            // in place per Zig semantics (single-threaded visitor).
-            unsafe { (*end.as_ptr()).next = Some(other_ref) };
+            // `end` points into the live Store; rope nodes are mutated in
+            // place via `StoreRef::DerefMut` (single-threaded visitor).
+            end.next = Some(other_ref);
             self.end = Some(other_ref);
         }
     }
@@ -1801,9 +1801,7 @@ impl Template {
 
     #[inline]
     pub fn parts_mut(&mut self) -> &mut [TemplatePart] {
-        // SAFETY: `&mut self` establishes unique access; arena-owned slice
-        // valid for the AST arena lifetime.
-        unsafe { self.parts.slice_mut() }
+        self.parts.slice_mut()
     }
 }
 

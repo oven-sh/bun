@@ -3139,22 +3139,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         loc: logger::Loc,
     ) -> Result<usize, bun_core::Error> {
         let parent: *mut Scope = self.current_scope;
+        // `current_scope` is arena-owned and non-null after `init()`.
+        let parent_nn = NonNull::new(parent).expect("current_scope non-null after init()");
         let arena = self.arena;
-        let scope: *mut Scope = arena.alloc(Scope {
+        let scope: &mut Scope = arena.alloc(Scope {
             kind: KIND,
             label_ref: None,
-            // SAFETY: parent is the live current_scope (arena-owned, non-null after init()).
-            parent: Some(unsafe { NonNull::new_unchecked(parent) }),
+            parent: Some(parent_nn),
             generated: Default::default(),
             ..Default::default()
         });
+        let scope_nn = NonNull::from(&mut *scope);
 
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut unsafe { &mut *parent }.children, unsafe { NonNull::new_unchecked(scope) })?;
-        // SAFETY: arena-owned Scope pointers valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { (*scope).strict_mode = (*parent).strict_mode };
+        // SAFETY: arena-owned Scope; `parent != scope` (fresh alloc) so the two
+        // `&mut` do not alias.
+        let parent_mut = unsafe { &mut *parent };
+        VecExt::append(&mut parent_mut.children, scope_nn)?;
+        scope.strict_mode = parent_mut.strict_mode;
 
-        self.current_scope = scope;
+        self.current_scope = scope_nn.as_ptr();
 
         if KIND == js_ast::scope::Kind::With {
             // "with" statements change the default from ESModule to CommonJS at runtime.
@@ -3192,18 +3195,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // errors if a statement in the function body tries to re-declare any of the
         // arguments.
         if KIND == js_ast::scope::Kind::FunctionBody {
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            debug_assert!(unsafe { &*parent }.kind == js_ast::scope::Kind::FunctionArgs);
+            // SAFETY: arena-owned Scope; parent != scope (fresh alloc) so no alias.
+            let parent_ref = unsafe { &*parent };
+            debug_assert!(parent_ref.kind == js_ast::scope::Kind::FunctionArgs);
 
-            // SAFETY: arena-owned Scope pointers valid for parser 'a lifetime; parent != scope so no alias.
-            let (parent_ref, scope_ref) = unsafe { (&*parent, &mut *scope) };
             for (key, value) in parent_ref.members.iter() {
                 // Don't copy down the optional function expression name. Re-declaring
                 // the name of a function expression is allowed.
                 let value = *value;
                 let adjacent_kind = self.symbols[value.ref_.inner_index() as usize].kind;
                 if adjacent_kind != js_ast::symbol::Kind::HoistedFunction {
-                    scope_ref.members.put(key, value)?;
+                    scope.members.put(key, value)?;
                 }
             }
         }
@@ -3611,8 +3613,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         let mut end: usize = 0;
 
-        // SAFETY: arena-owned slice valid for parser 'a lifetime; exclusive via `stmt`.
-        let items_slice: &mut [js_ast::ClauseItem] = unsafe { stmt.items.slice_mut() };
+        let items_slice: &mut [js_ast::ClauseItem] = stmt.items.slice_mut();
         for i in 0..items_slice.len() {
             // PORT NOTE: Zig copied `ClauseItem` by value (POD struct). Rust's
             // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
@@ -5975,7 +5976,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
-                // SAFETY: `class.properties` is an arena-owned slice valid for 'a.
                 for prop in unsafe { (*class).properties.slice_mut() }.iter_mut() {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
@@ -6173,8 +6173,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             value: Some(value_expr),
                             ..Default::default()
                         });
-                        // SAFETY: arena-owned slice valid for 'a; moved (not copied) into new list.
-                        for old in unsafe { old_props.slice_mut() }.iter_mut() {
+                        for old in old_props.slice_mut().iter_mut() {
                             properties.push(core::mem::take(old));
                         }
 
@@ -7167,8 +7166,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // Bake does not care about 'import =', as it handles it on it's own
                 let _ = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, true>(
                     self,
-                    // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                    unsafe { part.stmts.slice_mut() },
+                    part.stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
                     Some(&mut hmr_transform_ctx),
                 )?;
@@ -7178,9 +7176,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let last_stmts = hmr_transform_ctx.last_part.stmts;
                 let _ = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, true>(
                     self,
-                    // SAFETY: arena-owned slice valid for 'a; `last_part` is uniquely
-                    // borrowed inside `hmr_transform_ctx`.
-                    unsafe { last_stmts.slice_mut() },
+                    last_stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
                     Some(&mut hmr_transform_ctx),
                 )?;
@@ -7215,8 +7211,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                     let result = match ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, false>(
                         self,
-                        // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                        unsafe { part.stmts.slice_mut() },
+                        part.stmts.slice_mut(),
                         wrap_mode != WrapMode::None,
                         None,
                     ) {

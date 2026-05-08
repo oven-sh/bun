@@ -555,8 +555,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
-                        // SAFETY: extract_string_values returns live arena pointers (rope-resolved).
-                        let ord = unsafe { (*vals[0]).order(&*vals[1]) };
+                        let ord = vals[0].order(vals[1].get());
                         return p.new_expr(
                             E::Boolean { value: ord == Ordering::Less },
                             v.loc,
@@ -574,8 +573,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
-                        // SAFETY: see BinLt.
-                        let ord = unsafe { (*vals[0]).order(&*vals[1]) };
+                        let ord = vals[0].order(vals[1].get());
                         return p.new_expr(
                             E::Boolean { value: ord == Ordering::Greater },
                             v.loc,
@@ -593,8 +591,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
-                        // SAFETY: see BinLt.
-                        let ord = unsafe { (*vals[0]).order(&*vals[1]) };
+                        let ord = vals[0].order(vals[1].get());
                         return p.new_expr(
                             E::Boolean {
                                 value: matches!(ord, Ordering::Equal | Ordering::Less),
@@ -614,8 +611,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if let Some(vals) =
                         Expr::extract_string_values(&e_.left.data, &e_.right.data, p.arena)
                     {
-                        // SAFETY: see BinLt.
-                        let ord = unsafe { (*vals[0]).order(&*vals[1]) };
+                        let ord = vals[0].order(vals[1].get());
                         return p.new_expr(
                             E::Boolean {
                                 value: matches!(ord, Ordering::Equal | Ordering::Greater),
@@ -660,10 +656,10 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
 
         Expr {
             loc: v.loc,
+            // `e_ptr` is `&raw mut *v.e` (non-null `&'arena mut E::Binary`); same
+            // arena slot Zig threads as `*E.Binary`.
             data: ExprData::EBinary(StoreRef::from_non_null(
-                // SAFETY: `e_ptr` is derived from `v.e: &'arena mut E::Binary` which is non-null
-                // and arena-backed (same slot Zig threads as `*E.Binary`).
-                unsafe { core::ptr::NonNull::new_unchecked(e_ptr) },
+                core::ptr::NonNull::new(e_ptr).expect("e_ptr from &mut"),
             )),
         }
     }

@@ -831,8 +831,7 @@ impl SideEffects {
                 ok: true,
             },
             ExprData::EBigInt(e) => {
-                // SAFETY: arena-owned slice valid for the parse
-                let v = unsafe { &*e.value };
+                let v = e.value.slice();
                 Result {
                     value: !bun_string::strings::eql_comptime(v, b"0"),
                     side_effects: SideEffects::NoSideEffects,

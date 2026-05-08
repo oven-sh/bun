@@ -198,8 +198,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         data: &mut S::ExportClause,
     ) -> Result<(), Error> {
         // "export {foo}"
-        // SAFETY: arena-owned slice valid for 'a; exclusive via `&mut data`.
-        let items = unsafe { data.items.slice_mut() };
+        let items = data.items.slice_mut();
         let items_len = items.len();
         let mut end: usize = 0;
         let mut any_replaced = false;
@@ -297,8 +296,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         VecExt::append(&mut p.cur_scope().generated, data.namespace_ref).expect("oom");
         p.record_declared_symbol(data.namespace_ref);
 
-        // SAFETY: arena-owned slice valid for 'a; exclusive via `&mut data`.
-        let items = unsafe { data.items.slice_mut() };
+        let items = data.items.slice_mut();
 
         if p.options.features.replace_exports.count() > 0 {
             let mut j: usize = 0;
@@ -1841,8 +1839,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc).expect("unreachable");
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
-            // SAFETY: arena-owned slice valid for 'a.
-            let cases = unsafe { data.cases.slice_mut() };
+            let cases = data.cases.slice_mut();
             for i in 0..cases.len() {
                 if let Some(val) = cases[i].value.as_mut() {
                     p.visit_expr(val);
@@ -1894,8 +1891,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // ahead of time before visiting any statements inside the namespace
         // because we may end up visiting the uses before the declarations.
         // We need to convert the uses into property accesses on the namespace.
-        // SAFETY: arena-owned slice valid for 'a.
-        let values = unsafe { data.values.slice_mut() };
+        let values = data.values.slice_mut();
         for value in values.iter() {
             if value.ref_.is_valid() {
                 p.is_exported_inside_namespace.insert(value.ref_, data.arg);

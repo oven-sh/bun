@@ -969,17 +969,15 @@ impl Expr {
         left: &Data,
         right: &Data,
         bump: &Bump,
-    ) -> Option<[*mut E::String; 2]> {
-        let l_string = Data::extract_string_value(*left)?;
-        let r_string = Data::extract_string_value(*right)?;
-        // SAFETY: `extract_string_value` returns a live arena pointer (StoreRef::as_ptr).
-        unsafe {
-            (*l_string).resolve_rope_if_needed(bump);
-            (*r_string).resolve_rope_if_needed(bump);
+    ) -> Option<[crate::ast::StoreRef<E::String>; 2]> {
+        let mut l_string = Data::extract_string_value(*left)?;
+        let mut r_string = Data::extract_string_value(*right)?;
+        // `extract_string_value` returns the arena `StoreRef`; mutate via DerefMut.
+        l_string.resolve_rope_if_needed(bump);
+        r_string.resolve_rope_if_needed(bump);
 
-            if (*l_string).is_utf8() != (*r_string).is_utf8() {
-                return None;
-            }
+        if l_string.is_utf8() != r_string.is_utf8() {
+            return None;
         }
 
         Some([l_string, r_string])
@@ -2935,11 +2933,11 @@ impl Data {
         }
     }
 
-    pub fn extract_string_value(data: Data) -> Option<*mut E::String> {
+    pub fn extract_string_value(data: Data) -> Option<crate::ast::StoreRef<E::String>> {
         match data {
-            Data::EString(s) => Some(s.as_ptr()),
+            Data::EString(s) => Some(s),
             Data::EInlinedEnum(inlined) => match inlined.value.data {
-                Data::EString(str) => Some(str.as_ptr()),
+                Data::EString(str) => Some(str),
                 _ => None,
             },
             _ => None,

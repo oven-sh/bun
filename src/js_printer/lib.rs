@@ -735,8 +735,8 @@ where
     let mut i: usize = 0;
     let n = str.len().min(1024);
     while i < n {
-        // SAFETY: loop invariant `i < n ≤ str.len()`.
-        match unsafe { *str.get_unchecked(i) }.into() {
+        // Loop invariant `i < n ≤ str.len()`; LLVM elides the bounds check.
+        match str[i].into() {
             0x27 /* ' */ => single_cost += 1,
             0x22 /* " */ => double_cost += 1,
             0x60 /* ` */ => backtick_cost += 1,

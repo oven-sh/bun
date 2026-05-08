@@ -128,8 +128,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
-        // SAFETY: arena-owned slice valid for 'a; exclusive via `&mut func`.
-        let args: &mut [G::Arg] = unsafe { func.args.slice_mut() };
+        let args: &mut [G::Arg] = func.args.slice_mut();
         self.visit_args(
             args,
             VisitArgsOpts {
@@ -877,8 +876,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // — manual restore at block end below; no early returns in this block.
 
             let mut constructor_function: Option<*mut E::Function> = None;
-            // SAFETY: arena-owned slice valid for 'a; exclusive during visit pass.
-            let properties: &mut [G::Property] = unsafe { class.properties.slice_mut() };
+            let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
                     let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;

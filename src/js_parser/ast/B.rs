@@ -99,8 +99,7 @@ impl Array {
     pub fn items(&self) -> &[ArrayBinding] { self.items.slice() }
     #[inline]
     pub fn items_mut(&mut self) -> &mut [ArrayBinding] {
-        // SAFETY: exclusive via `&mut self`; arena-owned slice valid for self's lifetime.
-        unsafe { self.items.slice_mut() }
+        self.items.slice_mut()
     }
 }
 impl Object {
@@ -108,8 +107,7 @@ impl Object {
     pub fn properties(&self) -> &[Property] { self.properties.slice() }
     #[inline]
     pub fn properties_mut(&mut self) -> &mut [Property] {
-        // SAFETY: exclusive via `&mut self`; arena-owned slice valid for self's lifetime.
-        unsafe { self.properties.slice_mut() }
+        self.properties.slice_mut()
     }
 }
 

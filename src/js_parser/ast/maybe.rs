@@ -43,10 +43,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
     if !s.is_utf16 {
         s.data == other
     } else {
-        // SAFETY: when is_utf16, `data.ptr` was originally a `*const u16` and
-        // `data.len()` is the u16 element count.
-        let s16 =
-            unsafe { core::slice::from_raw_parts(s.data.as_ptr().cast::<u16>(), s.data.len()) };
+        let s16 = s.slice16();
         s16.len() == other.len() && s16.iter().zip(other).all(|(&c, &b)| c == b as u16)
     }
 }

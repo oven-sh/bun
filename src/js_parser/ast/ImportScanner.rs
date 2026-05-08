@@ -206,9 +206,7 @@ impl<'a> ImportScanner<'a> {
                         }
 
                         // Remove items if they are unused
-                        // SAFETY: `st.items` is an arena-owned slice valid for the AST
-                        // arena's lifetime; no aliasing &mut outstanding.
-                        let items: &mut [js_ast::ClauseItem] = unsafe { st.items.slice_mut() };
+                        let items: &mut [js_ast::ClauseItem] = st.items.slice_mut();
                         if !items.is_empty() {
                             found_imports = true;
                             let mut items_end: usize = 0;

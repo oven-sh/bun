@@ -221,6 +221,10 @@ pub fn find_imported_files_in_css_order<'a>(
                                 &mut nested_conditions,
                                 wrapping_import_records,
                             );
+                            // `visit` stores a bitwise copy of `nested_conditions` into
+                            // `self.order`; the buffer must outlive this scope.
+                            core::mem::forget(nested_conditions);
+                            core::mem::forget(nested_import_records);
                             import_record_idx += 1;
                             continue;
                         }
@@ -732,12 +736,10 @@ pub fn find_imported_files_in_css_order<'a>(
 
 /// Zig: `wrapping_conditions.deepCloneInfallible(visitor.arena)`.
 ///
-/// Allocates in the bump arena (`Origin::Borrowed`) so `Drop` is a no-op:
-/// the returned list is later bitwise-copied into multiple `CssImportOrder`
-/// entries via `bitwise_copy(wrapping_conditions)` (lines tagged PORT NOTE
-/// above), and the local also falls out of scope after the recursive
-/// `visit()` — neither path may free. Reserves one extra slot for the
-/// single `append_assume_capacity` each call site performs.
+/// The returned list is later bitwise-copied into `CssImportOrder` entries via
+/// `bitwise_copy(wrapping_conditions)`, so callers `mem::forget` the local after
+/// the recursive `visit()` to transfer ownership. Reserves one extra slot for
+/// the single `append_assume_capacity` each call site performs.
 #[cfg(feature = "css")]
 #[inline]
 fn deep_clone_conditions(

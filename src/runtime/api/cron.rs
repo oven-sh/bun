@@ -1744,15 +1744,27 @@ impl CronJob {
     }
 }
 
-// TODO(port): move to <area>_sys / codegen exports.
-// PORT NOTE: `#[bun_jsc::host_fn]` already emits an extern-"C" shim
-// `__jsc_host_<name>`; expose those under the C++ export names.
+// These MUST be *function* symbols: C++ `promiseHandlerID` compares the handler
+// pointer passed to `JSValue::then` against `&Bun__CronJob__onPromiseResolve`
+// by identity. A `static JSHostFn` would export a data slot whose address never
+// matches the inner shim, tripping RELEASE_ASSERT_NOT_REACHED.
 #[unsafe(no_mangle)]
-pub static Bun__CronJob__onPromiseResolve: jsc::JSHostFn = __jsc_host_on_promise_resolve;
+pub unsafe extern "C" fn Bun__CronJob__onPromiseResolve(
+    global: *mut JSGlobalObject,
+    frame: *mut CallFrame,
+) -> JSValue {
+    let (global, frame) = unsafe { (&*global, &*frame) };
+    jsc::host_fn::to_js_host_fn_result(global, on_promise_resolve(global, frame))
+}
 #[unsafe(no_mangle)]
-pub static Bun__CronJob__onPromiseReject: jsc::JSHostFn = __jsc_host_on_promise_reject;
+pub unsafe extern "C" fn Bun__CronJob__onPromiseReject(
+    global: *mut JSGlobalObject,
+    frame: *mut CallFrame,
+) -> JSValue {
+    let (global, frame) = unsafe { (&*global, &*frame) };
+    jsc::host_fn::to_js_host_fn_result(global, on_promise_reject(global, frame))
+}
 
-#[bun_jsc::host_fn]
 fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();
@@ -1768,7 +1780,6 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
 fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     let this: *mut CronJob = args[args.len() - 1].as_promise_ptr::<CronJob>();

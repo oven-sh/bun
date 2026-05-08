@@ -26,18 +26,8 @@ type StmtList<'bump> = BumpVec<'bump, Stmt>;
 use crate::StmtNodeList;
 
 // ─── file-local arena helpers ────────────────────────────────────────────────
-// Slice fields are `StoreStr` / `StoreSlice<T>` (see ast/mod.rs); these wrap
-// the visit-time round-trips so the visitor bodies stay readable. All slices
+// Slice fields are `StoreStr` / `StoreSlice<T>` (see ast/mod.rs). All slices
 // are arena-owned and outlive the visit pass.
-//
-// `Symbol.original_name` / `ClauseItem.alias` are `StoreStr` (Deref<[u8]>);
-// `arena_str` is the legacy spelling kept so the visitor bodies below read
-// uniformly. Takes by value (Copy) so the returned borrow is detached from
-// any `&self.symbols[..]` temporary.
-#[inline(always)]
-fn arena_str<'a>(p: js_ast::StoreStr) -> &'a [u8] {
-    p.slice()
-}
 
 // Helper: visit a `StmtNodeList` arena slice in-place. Mirrors the
 // `ListManaged.fromOwnedSlice` → `visitStmts` → `.items` pattern from Zig: copy the
@@ -462,8 +452,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if !ident.ref_.is_source_contents_slice() {
                             let symbol = &p.symbols[ident.ref_.inner_index() as usize];
                             if symbol.kind == js_ast::symbol::Kind::Unbound {
-                                // SAFETY: original_name is arena-owned, valid for 'a.
-                                let original_name = arena_str(symbol.original_name);
+                                let original_name = symbol.original_name.slice();
                                 if p.local_type_names.get(original_name).copied() == Some(true) {
                                     // the name points to a type — don't try to declare
                                     // this symbol, drop the statement.
@@ -864,8 +853,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let name_ref = data.func.name.expect("infallible: name checked").ref_.expect("infallible: ref bound");
         debug_assert!(name_ref.is_symbol());
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
-        // SAFETY: original_name is arena-owned, valid for 'a.
-        let original_name: &'a [u8] = arena_str(name_symbol.original_name);
+        let original_name: &'a [u8] = name_symbol.original_name.slice();
         let remove_overwritten = name_symbol.remove_overwritten_function_declaration;
 
         // Handle exporting this function from a namespace
@@ -1017,8 +1005,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if was_export_inside_namespace {
             let class_name = data.class.class_name.expect("infallible: name checked");
             let class_name_ref = class_name.ref_.expect("infallible: ref bound");
-            // SAFETY: original_name is arena-owned, valid for 'a.
-            let original_name = arena_str(p.symbols[class_name_ref.inner_index() as usize].original_name);
+            let original_name = p.symbols[class_name_ref.inner_index() as usize].original_name.slice();
             stmts.push(Stmt::assign(
                 p.new_expr(
                     E::Dot {
@@ -1149,7 +1136,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         js_ast::binding::Data::BIdentifier(b) => unsafe { (*b).r#ref },
                         _ => break 'try_register,
                     };
-                    let original_name = arena_str(p.symbols[id.inner_index() as usize].original_name);
+                    let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
                     p.handle_react_refresh_register(
                         stmts,
                         original_name,
@@ -1170,7 +1157,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => break 'try_annotate,
                     };
                     let original_name =
-                        arena_str(p.symbols[id.inner_index() as usize].original_name);
+                        p.symbols[id.inner_index() as usize].original_name.slice();
                     decl.value =
                         Some(p.wrap_value_for_server_component_reference(val, original_name));
                 }
@@ -1748,7 +1735,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => unreachable!("for-of using must bind an identifier"),
                     };
                     let id_original_name =
-                        arena_str(p.symbols[id.r#ref.inner_index() as usize].original_name);
+                        p.symbols[id.r#ref.inner_index() as usize].original_name.slice();
                     let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
                     let mut first_decls = G::DeclList::init_capacity(1).expect("oom");
@@ -1935,8 +1922,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Create an assignment for each enum value
         for value in values.iter_mut() {
-            // SAFETY: name is arena-owned, valid for 'a.
-            let name: &'a [u8] = arena_str(value.name);
+            let name: &'a [u8] = value.name.slice();
 
             let mut has_string_value = false;
             if let Some(enum_value) = value.value {

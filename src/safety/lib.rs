@@ -44,19 +44,27 @@ static KNOWN_ALLOC_LEN: AtomicUsize = AtomicUsize::new(0);
 /// Register a higher-tier allocator's vtable so `alloc::has_ptr` recognizes it.
 /// Called from `bun_runtime::allocators::register_safety_vtables` (and any
 /// other crate that owns a `StdAllocator` vtable above this tier).
+///
+/// **Registration is single-threaded at startup** (`bun_bin::main` step 6,
+/// before reader threads spawn). Slot is written first, then `len` published
+/// (Release/Acquire) so a concurrent `known_alloc_vtable` reader never observes
+/// `len=N` with `slot[N-1]` still null — matching the "len written last / read
+/// first" pattern. Not safe for concurrent *registration* (would clobber a
+/// slot); the single-threaded-init contract makes that a non-issue.
 pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
     let p = vtable as *const _ as *mut ();
-    let i = KNOWN_ALLOC_LEN.fetch_add(1, Ordering::Relaxed);
+    let i = KNOWN_ALLOC_LEN.load(Ordering::Relaxed);
     debug_assert!(i < KNOWN_ALLOC_CAP, "KNOWN_ALLOC_VTABLES overflow; bump KNOWN_ALLOC_CAP");
     if i < KNOWN_ALLOC_CAP {
-        KNOWN_ALLOC_VTABLES[i].store(p, Ordering::Relaxed);
+        KNOWN_ALLOC_VTABLES[i].store(p, Ordering::Release);
+        KNOWN_ALLOC_LEN.store(i + 1, Ordering::Release);
     }
 }
 
 #[inline]
 pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
     let needle = alloc.vtable as *const _ as *mut ();
-    let n = KNOWN_ALLOC_LEN.load(Ordering::Relaxed).min(KNOWN_ALLOC_CAP);
+    let n = KNOWN_ALLOC_LEN.load(Ordering::Acquire).min(KNOWN_ALLOC_CAP);
     KNOWN_ALLOC_VTABLES[..n]
         .iter()
         .any(|s| s.load(Ordering::Relaxed) == needle)

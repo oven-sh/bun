@@ -28,7 +28,7 @@ pub use bv2_impl::{
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 pub use bv2_impl::{
     singleton, BuildResult, BundleV2Result, CompletionStruct, CrossChunkImport,
-    DependenciesScanner, DependenciesScannerResult,
+    DependenciesScanner, DependenciesScannerResult, EXTERNAL_FREE_VTABLE,
 };
 pub use crate::ungate_support::RefImportData;
 use self::bake_types as bake;
@@ -6987,7 +6987,10 @@ impl ExternalFreeFunctionAllocator {
     }
 }
 
-static EXTERNAL_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
+/// `pub` so `bun_runtime::allocators::register_safety_vtables` can push the
+/// address into the `bun_safety` registry (Zig spec: `bun.bundle_v2.
+/// allocatorHasPointer` is one of the `safety/alloc.zig:hasPtr` arms).
+pub static EXTERNAL_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
     alloc: |_, _, _, _| core::ptr::null_mut(),
     resize: |_, _, _, _, _| false,
     remap: |_, _, _, _, _| core::ptr::null_mut(),

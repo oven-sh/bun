@@ -38,13 +38,23 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // equivalent. For a cache-key digest we only need (mtime, size) to change
     // when the file changes, so go straight to `GetFileAttributesExW` — same
     // resolution as `uv_fs_stat`'s `ftLastWriteTime`, no event-loop dependency.
-    let mut wbuf = [0u16; bun_core::MAX_PATH_BYTES];
-    let wpath = bun_core::strings::to_w_path_normalized(&mut wbuf, path.as_bytes())?;
+    //
+    // `bun_string::to_w_path_normalized` lives above this crate, so widen
+    // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
+    // NUL-terminate. Heap-allocated (cold init path; avoids a 64KB stack
+    // `WPathBuffer` and the wrong-unit `MAX_PATH_BYTES` previously used here).
+    let bytes = path.as_bytes();
+    let mut wbuf = vec![0u16; bytes.len() + 1];
+    let n = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, bytes).len();
+    for w in &mut wbuf[..n] {
+        if *w == u16::from(b'/') { *w = u16::from(b'\\'); }
+    }
+    wbuf[n] = 0;
     // SAFETY: POD, zero-valid.
     let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = unsafe { core::mem::zeroed() };
-    // SAFETY: `wpath` is NUL-terminated; `data` is a valid out-ptr.
+    // SAFETY: `wbuf` is NUL-terminated at `[n]`; `data` is a valid out-ptr.
     let ok = unsafe {
-        fs::GetFileAttributesExW(wpath.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
+        fs::GetFileAttributesExW(wbuf.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
     };
     if ok == 0 {
         return None;

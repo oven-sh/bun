@@ -1,6 +1,7 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{c_char, c_int, c_void};
+#[allow(unused_imports)]
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 use const_format::{concatcp, formatcp};
@@ -20,30 +21,26 @@ use crate::ZStr;
 // `FileSystem::init` writes it once via `set_top_level_dir`.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Stored as a raw (ptr,len) pair so the read path is two Relaxed atomic loads
-// (matches the pre-refactor single-AtomicPtr cost). Writes happen only during
-// init (`FileSystem::init` FORCE re-init then the explicit setter), serially
-// and before reader threads spawn, so a torn (ptr,len) read is not possible in
-// practice; len is written last / read first as a belt-and-suspenders fence.
-static TOP_LEVEL_DIR_PTR: AtomicPtr<u8> = AtomicPtr::new(b".".as_ptr() as *mut u8);
-static TOP_LEVEL_DIR_LEN: AtomicUsize = AtomicUsize::new(1);
+// Stored behind a `RwLock<&'static [u8]>` rather than a split (AtomicPtr,
+// AtomicUsize) pair: `install::PackageManager` calls `fs.set_top_level_dir()`
+// during workspace discovery (potentially after worker threads exist), so a
+// reader could otherwise observe an OLD len with a NEW ptr (or vice-versa) and
+// build an out-of-bounds `from_raw_parts`. The read path is cold (display /
+// path-relative formatting) so one uncontended read-lock is cheaper than a UB
+// window; writes are rare and serial.
+static TOP_LEVEL_DIR: parking_lot::RwLock<&'static [u8]> = parking_lot::RwLock::new(b".");
 
 /// Record the top-level directory (interned `'static` slice). Idempotent;
 /// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
 #[inline]
 pub fn set_top_level_dir(dir: &'static [u8]) {
-    TOP_LEVEL_DIR_PTR.store(dir.as_ptr() as *mut u8, Ordering::Release);
-    TOP_LEVEL_DIR_LEN.store(dir.len(), Ordering::Release);
+    *TOP_LEVEL_DIR.write() = dir;
 }
 
 /// Top-level directory recorded at startup (defaults to `"."`).
 #[inline]
 pub fn top_level_dir() -> &'static [u8] {
-    let len = TOP_LEVEL_DIR_LEN.load(Ordering::Acquire);
-    let ptr = TOP_LEVEL_DIR_PTR.load(Ordering::Relaxed);
-    // SAFETY: (ptr,len) were stored from a `&'static [u8]`; init-time writes
-    // are serial (see module note), so the pair is coherent.
-    unsafe { core::slice::from_raw_parts(ptr, len) }
+    *TOP_LEVEL_DIR.read()
 }
 
 /// Set by `bun_crash_handler::init()` once it has installed its segfault
@@ -152,6 +149,10 @@ pub type DumpOptions = DumpStackTraceOptions;
 /// uses `std::backtrace` and stays symbolicated. Crash-report paths that need
 /// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
 /// directly — that crate sits above us so it owns the rich impl without a hook.
+///
+/// `limits.stop_at_jsc_llint` / `skip_stdlib` / `skip_*_patterns` are accepted
+/// for signature parity but **ignored** here (they require symbol names to
+/// match against). Only `frame_count` is honoured.
 pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     crate::output::flush();
     let n = trace.index.min(trace.instruction_addresses.len()).min(limits.frame_count);

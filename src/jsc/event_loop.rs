@@ -1104,7 +1104,7 @@ pub fn __bun_js_event_loop_iteration_number(owner: *mut ()) -> u64 {
     // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
     // code paths. Route through `usockets_loop()` to match spec semantics.
     // SAFETY: `usockets_loop()` returns the live VM-owned uws loop.
-    unsafe { (*el_ref(owner).usockets_loop()).iteration_number() }
+    unsafe { &*el_ref(owner).usockets_loop() }.iteration_number()
 }
 
 #[unsafe(no_mangle)]

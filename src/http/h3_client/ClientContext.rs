@@ -65,10 +65,14 @@ impl ClientContext {
         // SAFETY: qctx is a fresh live us_quic_socket_context_t.
         callbacks::register(unsafe { qctx.as_mut() });
 
-        let self_ = NonNull::from(Box::leak(Box::new(ClientContext {
+        // Process-lifetime singleton — published into `INSTANCE` below and
+        // never torn down (the lsquic engine outlives every request, same as
+        // `h3_client.zig`'s process-global `var instance`). `alloc_nn` is the
+        // `Box::into_raw`-as-`NonNull` spelling of that one-time hand-off.
+        let self_ = bun_core::heap::alloc_nn(ClientContext {
             qctx,
             sessions: Vec::new(),
-        })));
+        });
         // SAFETY: single-threaded access (HTTP thread only).
         unsafe { INSTANCE.write(Some(self_)) };
         Some(self_)

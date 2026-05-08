@@ -558,7 +558,7 @@ impl MacroModeGuard {
     #[inline]
     pub unsafe fn new(vm: *mut VirtualMachine) -> Self {
         // SAFETY: caller contract.
-        unsafe { (*vm).enable_macro_mode() };
+        unsafe { &mut *vm }.enable_macro_mode();
         Self { vm }
     }
 }
@@ -767,7 +767,7 @@ impl VirtualMachine {
         // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
         // process-lifetime `Fs::FileSystem` singleton; never null while a VM
         // is installed. `top_level_dir` borrows that singleton's storage.
-        unsafe { (*self.transpiler.fs).top_level_dir }
+        unsafe { &*self.transpiler.fs }.top_level_dir
     }
 
     /// Safe `&mut Debugger` accessor — the [`JsCell`] escape hatch applied to
@@ -927,7 +927,7 @@ impl VirtualMachine {
         // SAFETY: event_loop_handle is live for the VM lifetime when set.
         let active = self
             .event_loop_handle
-            .map(|h| unsafe { (*h).is_active() })
+            .map(|h| unsafe { &*h }.is_active())
             .unwrap_or(false);
         self.unhandled_error_counter == 0
             && ((active as usize)
@@ -1211,7 +1211,7 @@ impl VirtualMachine {
         // collapses into a captured local.
         // SAFETY: `entry_point` was just inserted (heap-allocated) or fetched
         // from the cache; it lives for the VM lifetime.
-        let path: &[u8] = unsafe { (*entry_point).source.path.text };
+        let path: &[u8] = unsafe { &*entry_point }.source.path.text;
         let promise = self.run_with_api_lock(|| {
             // SAFETY: per-thread VM; the API lock guarantees JSC is held.
             VirtualMachine::get().as_mut()._load_macro_entry_point(path)
@@ -2432,7 +2432,7 @@ pub fn process_fetch_log(
             // C++ `Zig::toString` does `createWithoutCopying`, so the buffer
             // must outlive the AggregateError. Mark it global so JSC adopts it
             // as an ExternalStringImpl and frees it via `free_global_string`.
-            let message_text: &'static mut [u8] = Box::leak(
+            let message_text: &'static mut [u8] = bun_core::heap::release(
                 format!("{} errors building \"{specifier}\"", errors.len())
                     .into_bytes()
                     .into_boxed_slice(),
@@ -2978,7 +2978,7 @@ impl VirtualMachine {
         // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
         // SAFETY: `transpiler.env` is a process-lifetime allocation; `&mut`
         // needed for the cached-result write inside.
-        unsafe { (*self.transpiler.env).get_tls_reject_unauthorized() }
+        unsafe { &mut *self.transpiler.env }.get_tls_reject_unauthorized()
     }
 
     /// Spec VirtualMachine.zig:302 `onSubprocessSpawn`.
@@ -3246,11 +3246,11 @@ impl VirtualMachine {
                     // call below.
                     let global_ref = self.global();
                     // SAFETY: `promise` is a live JSC heap cell.
-                    let result = unsafe { (*promise).result(global_ref.vm()) };
+                    let result = unsafe { &mut *promise }.result(global_ref.vm());
                     let promise_js = JSValue::from_cell(promise);
                     self.unhandled_rejection(global_ref, result, promise_js);
                     // SAFETY: see above.
-                    unsafe { (*promise).set_handled() };
+                    unsafe { &mut *promise }.set_handled();
                 }
             }
             crate::js_promise::Status::Fulfilled => {}
@@ -3545,7 +3545,7 @@ impl VirtualMachine {
         vm_ref.regular_event_loop.global = NonNull::new(new_global);
         // SAFETY: `new_global` is freshly created and live for VM lifetime.
         // `vm_ptr()` returns the FFI `*mut VM` directly (no `&VM` reborrow).
-        vm_ref.jsc_vm = unsafe { (*new_global).vm_ptr() };
+        vm_ref.jsc_vm = unsafe { &*new_global }.vm_ptr();
         // SAFETY: per-thread uws loop is live.
         unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
         vm_ref.event_loop_mut().ensure_waker();
@@ -3563,7 +3563,7 @@ impl VirtualMachine {
     /// `RefString::destroy` (the WTF external-string finalizer).
     pub unsafe fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
         // SAFETY: per fn contract.
-        let hash = unsafe { (*ref_string).hash };
+        let hash = unsafe { &*ref_string }.hash;
         // SAFETY: `get()` is the live per-thread VM.
         VirtualMachine::get().as_mut().ref_strings.remove(&hash);
     }

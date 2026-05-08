@@ -1095,26 +1095,55 @@ pub fn get_total_memory_size() -> usize {
 
 /// PHASE-C: stack capture for `Global::StoredTrace` / `bun_crash_handler`.
 /// Zig used `std.debug.captureStackTrace`; route through libc `backtrace()`.
+///
+/// Only platforms whose libc actually exports `backtrace()` go through it:
+/// glibc, macOS, the BSDs. musl and Android's bionic don't have `<execinfo.h>`
+/// (the `libc` crate doesn't expose `backtrace` for them at all), so those
+/// targets — and Windows — fall back to reporting an empty trace. The crash
+/// handler already tolerates a 0-frame capture (it prints what it has), and
+/// the symbolizer path is glibc/macOS-only anyway.
+#[cfg(any(
+    all(target_os = "linux", target_env = "gnu"),
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd",
+))]
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
     if out.is_null() || cap == 0 {
         return 0;
     }
-    #[cfg(unix)]
     unsafe {
         // FreeBSD's libexecinfo backtrace() takes/returns size_t; glibc/macOS use int.
-        #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+        #[cfg(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))]
         let n = libc::backtrace(out.cast::<*mut core::ffi::c_void>(), cap) as usize;
-        #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly")))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd")))]
         let n = libc::backtrace(out.cast::<*mut core::ffi::c_void>(), cap as core::ffi::c_int);
-        #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly")))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd")))]
         let n = if n < 0 { 0 } else { n as usize };
         if begin > 0 && begin < n {
             core::ptr::copy(out.add(begin), out, n - begin);
             return n - begin;
         }
-        return n;
+        n
     }
-    #[cfg(not(unix))]
-    { let _ = begin; 0 }
+}
+
+/// Fallback for targets without `libc::backtrace` (musl, Android, Windows, …).
+/// Returns 0 frames so callers degrade to a frame-less crash report instead of
+/// failing to compile.
+#[cfg(not(any(
+    all(target_os = "linux", target_env = "gnu"),
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd",
+)))]
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
+    let _ = (begin, out, cap);
+    0
 }

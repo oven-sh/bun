@@ -1821,7 +1821,7 @@ impl Terminal {
         // Refcounted: the trailing `deref_()` releases the JS wrapper's +1;
         // allocation may outlive this call if other refs remain, so hand
         // ownership back to the raw refcount.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         this.this_value.finalize();
         this.flags.insert(Flags::FINALIZED);
         this.close_internal();

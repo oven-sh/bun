@@ -2510,7 +2510,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Refcounted: the trailing `deref()` releases the JS wrapper's +1;
         // allocation may outlive this call if other refs remain, so hand
         // ownership back to the raw refcount.
-        let this_ref = Box::leak(self);
+        let this_ref = bun_core::heap::release(self);
         log!("finalize() {}", core::ptr::from_mut(this_ref) as usize);
         this_ref.flags.insert(Flags::FINALIZING);
         this_ref.this_value.finalize();

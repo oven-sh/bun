@@ -90,7 +90,11 @@ const SEED: &[&str] = &[
 // `bun_errno`'s per-platform `SystemErrno` enums because `bun_errno` depends
 // on `bun_core` (cycle); keep in lockstep with `src/errno/*_errno.rs`.
 
-#[cfg(any(target_os = "linux", target_family = "wasm"))]
+// Android shares the Linux kernel errno space; bionic's `errno.h` is a
+// straight import of `<asm/errno.h>`. Rust splits `target_os` into
+// `linux`/`android` (Zig keeps both as `os.tag == .linux`), so the gate must
+// list both for the Android cross-targets to see this table.
+#[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
 pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
     "SUCCESS", "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",
     "ECHILD", "EAGAIN", "ENOMEM", "EACCES", "EFAULT", "ENOTBLK", "EBUSY", "EEXIST", "EXDEV",
@@ -272,7 +276,7 @@ pub(crate) const SYSTEM_ERRNO_NAMES: &[&str] = &[
 // Lock each table's length to the Zig `SystemErrno` enum's cardinality
 // (`src/errno/*_errno.zig`). A mismatch here means the duplicated table has
 // drifted from its source of truth — fix the table, not the assertion.
-#[cfg(any(target_os = "linux", target_family = "wasm"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
 const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 134); // linux_errno.zig: 0..=EHWPOISON(133)
 #[cfg(windows)]
 const _: () = assert!(SYSTEM_ERRNO_NAMES.len() == 138); // windows_errno.zig: 0..=EFTYPE(137); UV_* sparse range in `uv_errno_name`
@@ -478,7 +482,9 @@ pub mod coreutils_error_map {
 
     // macOS and Linux have slightly different error messages.
     // Since windows is just an emulation of linux, it derives the linux messages.
-    #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+    // Android shares the Linux kernel errno → strerror() text (bionic copies
+    // glibc's strings), so it derives the linux messages too.
+    #[cfg(any(target_os = "linux", target_os = "android", windows, target_family = "wasm"))]
     static MESSAGES: phf::Map<&'static str, &'static str> = phf::phf_map! {
         "EPERM" => "Operation not permitted",
         "ENOENT" => "No such file or directory",

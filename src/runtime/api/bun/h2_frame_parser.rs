@@ -5881,7 +5881,7 @@ impl H2FrameParser {
         // Refcounted: release the JS wrapper's +1; the allocation outlives this
         // call if other refs remain, so hand ownership back to the raw refcount
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         this.strong_this = JsRef::empty();
         this.deref();

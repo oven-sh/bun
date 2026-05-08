@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JsResult};
 use bun_uws::ResponseKind;
@@ -47,12 +48,71 @@ impl CookieMap {
         })
     }
 
-    pub fn deref(&mut self) {
-        CookieMap__deref(self)
+    // NOTE: no inherent `ref`/`deref` on `CookieMap` — `CookieMapRef` is the
+    // sanctioned owner of the intrusive C++ refcount. Exposing bare refcount
+    // mutators on the pointee would let `&mut *cookie_map_ref` corrupt the
+    // count relative to the ref's owned `+1` (double-unref / UAF on Drop),
+    // mirroring how `RefPtr` discourages bare `ref`/`deref` on its pointee.
+}
+
+/// Intrusive smart pointer over a C++-refcounted `CookieMap`.
+///
+/// Owns exactly one strong ref: `new_ref` bumps it (for a borrowed handle)
+/// and `Drop` releases it. Mirrors `AbortSignalRef` — a raw FFI handle (opaque
+/// C++ object) cannot live inside `Box`/`Arc`, so this newtype is the
+/// sanctioned owning representation.
+///
+/// (A `+1`-transfer constructor — adopting an already-bumped raw pointer
+/// without a fresh `ref()` — is deliberately omitted until a caller needs it;
+/// every construction site in the tree goes through `new_ref`.)
+#[repr(transparent)]
+pub struct CookieMapRef(NonNull<CookieMap>);
+
+impl CookieMapRef {
+    /// Bump the refcount of a borrowed `CookieMap` and wrap it (the caller
+    /// keeps its own ref; this `CookieMapRef` owns the freshly-added one).
+    #[inline]
+    pub fn new_ref(cookie_map: &CookieMap) -> Self {
+        CookieMap__ref(cookie_map);
+        Self(NonNull::from(cookie_map))
     }
 
-    pub fn ref_(&mut self) {
-        CookieMap__ref(self)
+    #[inline]
+    pub fn as_ptr(&self) -> *mut CookieMap {
+        self.0.as_ptr()
+    }
+}
+
+impl core::ops::Deref for CookieMapRef {
+    type Target = CookieMap;
+    #[inline]
+    fn deref(&self) -> &CookieMap {
+        // SAFETY: held +1 ref keeps the C++ object alive for `'_`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for CookieMapRef {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut CookieMap {
+        // SAFETY: held +1 ref keeps the C++ object alive; `&mut self` makes
+        // this the unique live handle to that ref.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Clone for CookieMapRef {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self::new_ref(self)
+    }
+}
+
+impl Drop for CookieMapRef {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: held +1 ref keeps the C++ object alive until this deref.
+        CookieMap__deref(unsafe { self.0.as_ref() })
     }
 }
 

@@ -1502,7 +1502,7 @@ impl JSValkeyClient {
         // Refcounted: `deref_guard` releases the JS wrapper's +1 at scope end;
         // allocation may outlive this call if other refs remain, so hand
         // ownership back to the raw refcount.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         let _d = deref_guard(this);
 
         this.stop_timers();

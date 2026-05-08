@@ -14,7 +14,7 @@ use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine
 use crate::server::{RangeRequest, ServerLike};
 use crate::webcore::{
     self as WebCore, blob::SizeType as BlobSizeType, body, readable_stream, request, response,
-    AbortSignal, AnyBlob, ByteStream, CookieMap, FetchHeaders, Request, Response,
+    AbortSignal, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders, Request, Response,
 };
 
 /// Q: Why is this needed?
@@ -131,7 +131,9 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
     // `shim::signal_release` in `on_abort`/`finalize_without_deinit`.
     pub signal: Option<NonNull<AbortSignal>>,
     pub method: Method,
-    pub cookies: Option<*mut CookieMap>,
+    /// Owned `+1` ref on a C++ `CookieMap` (taken in `set_cookies`, released
+    /// when the field is dropped/replaced — `CookieMapRef` handles the unref).
+    pub cookies: Option<CookieMapRef>,
 
     pub flags: Flags<DEBUG_MODE>,
 
@@ -536,15 +538,9 @@ where
     }
 
     pub fn set_cookies(&mut self, cookie_map: Option<*mut CookieMap>) {
-        if let Some(cookies) = self.cookies.take() {
-            // SAFETY: opaque FFI handle with intrusive refcount; we held a ref.
-            unsafe { (*cookies).deref() };
-        }
-        self.cookies = cookie_map;
-        if let Some(cookies) = self.cookies {
-            // SAFETY: caller passes a live CookieMap*; we take a ref for storage.
-            unsafe { (*cookies).ref_() };
-        }
+        // SAFETY: caller passes a live `CookieMap*` (or None); `new_ref` takes a
+        // ref for storage. Assigning replaces (and so drops/unrefs) the old one.
+        self.cookies = cookie_map.map(|p| CookieMapRef::new_ref(unsafe { &*p }));
     }
 
     pub fn set_timeout_handler(&mut self) {
@@ -1323,10 +1319,8 @@ where
 
         self.request_body_readable_stream_ref.deinit();
 
-        if let Some(cookies) = self.cookies.take() {
-            // SAFETY: opaque FFI handle; release the ref we took in set_cookies.
-            unsafe { (*cookies).deref() };
-        }
+        // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
+        drop(self.cookies.take());
 
         if let Some(request) = self.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
@@ -3229,19 +3223,15 @@ where
             self.do_write_status(status);
         }
 
-        if let Some(cookies) = self.cookies.take() {
+        if let Some(mut cookies) = self.cookies.take() {
             // SAFETY: BACKREF
             let global_this = self.server().global_this();
-            // SAFETY: cookies is a live opaque FFI handle; we held a ref.
-            let r = unsafe {
-                (*cookies).write(
-                    global_this,
-                    Self::RESP_KIND,
-                    any_response_as_ptr(self.resp.expect("infallible: resp bound")),
-                )
-            };
-            // SAFETY: release the ref we took in set_cookies.
-            unsafe { (*cookies).deref() };
+            let r = cookies.write(
+                global_this,
+                Self::RESP_KIND,
+                any_response_as_ptr(self.resp.expect("infallible: resp bound")),
+            );
+            // `cookies` drops here, releasing the ref taken in `set_cookies`.
             if r.is_err() {
                 return;
             } // TODO: properly propagate exception upwards

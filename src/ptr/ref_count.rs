@@ -683,6 +683,24 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 /// If you want to enforce usage of RefPtr for memory management, you
 /// can remove the forwarded `ref` and `deref` methods from `RefCount`.
 ///
+/// # ⚠️ No `Drop` impl — the owned ref must be released *manually*
+///
+/// This mirrors the Zig original, which (having no destructors) never released
+/// on scope exit. `RefPtr` does **not** implement `Drop`: dropping a `RefPtr`
+/// value — including `Option::take()`-then-drop, or letting a struct field
+/// holding one go out of scope — **leaks** the strong ref it owns. On every
+/// path that gives up a `RefPtr` you must explicitly call one of:
+///
+/// - [`deref`](Self::deref) / [`deref_with_context`](Self::deref_with_context)
+///   — release the ref (and destroy `T` if it was the last);
+/// - [`leak`](Self::leak) / [`into_raw`](Self::into_raw) — hand the ref off to
+///   someone else (the inverse of [`from_raw`](Self::from_raw)).
+///
+/// Any new struct field of `RefPtr<T>` type must document, at the field site,
+/// which of its owners' methods discharges this obligation. (Newtypes like
+/// `CookieMapRef` wrap a single owned ref *and* implement `Drop` themselves —
+/// `RefPtr` itself does not.)
+///
 /// See [`RefCount`]'s comment for examples & best practices.
 pub struct RefPtr<T: AnyRefCounted> {
     pub data: NonNull<T>,

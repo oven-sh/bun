@@ -21,7 +21,9 @@ bun_core::declare_scope!(Postgres, visible);
 // `ref`/`deref` are provided by `IntrusiveRc`, not as inherent methods.
 pub struct PostgresSQLStatement {
     pub cached_structure: PostgresCachedStructure,
-    pub ref_count: Cell<u32>,
+    // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
+    // [`Self::init_exact_refs`] at construction time.
+    ref_count: Cell<u32>,
     pub fields: Vec<protocol::FieldDescription>,
     pub parameters: Box<[int4]>,
     pub signature: Signature,
@@ -93,6 +95,17 @@ bun_ptr::impl_cell_ref_counted! {
 }
 
 impl PostgresSQLStatement {
+    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
+    /// refcount at construction time, before any `ref_()`/`deref()`. The
+    /// `ref_count` field is private (refcount invariant), so callers building
+    /// a statement with >1 owner (query + connection-map entry) go through
+    /// this instead of writing the field directly.
+    #[inline]
+    pub fn init_exact_refs(&mut self, n: u32) {
+        debug_assert!(n > 0);
+        self.ref_count.set(n);
+    }
+
     pub fn check_for_duplicate_fields(&mut self) {
         if !self.needs_duplicate_check {
             return;

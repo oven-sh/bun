@@ -23,7 +23,9 @@ bun_core::declare_scope!(MySQLStatement, hidden);
 // `ref()`/`deref()` are methods on `IntrusiveRc`, not on this struct.
 pub struct MySQLStatement {
     pub cached_structure: CachedStructure,
-    pub ref_count: Cell<u32>,
+    // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
+    // [`Self::init_exact_refs`] at construction time.
+    ref_count: Cell<u32>,
     pub statement_id: u32,
     pub params: Vec<Param>,
     pub params_received: u32,
@@ -105,6 +107,17 @@ bun_ptr::impl_cell_ref_counted! {
 }
 
 impl MySQLStatement {
+    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
+    /// refcount at construction time, before any `ref_()`/`deref()`. The
+    /// `ref_count` field is private (refcount invariant), so callers building
+    /// a statement with >1 owner (query + connection-map entry) go through
+    /// this instead of writing the field directly.
+    #[inline]
+    pub fn init_exact_refs(&mut self, n: u32) {
+        debug_assert!(n > 0);
+        self.ref_count.set(n);
+    }
+
     pub fn reset(&mut self) {
         self.result_count = 0;
         self.columns_received = 0;

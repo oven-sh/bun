@@ -61,13 +61,45 @@ pub struct JSMySQLConnection {
     pub connection_timeout_ms: u32,
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
-    pub timer: EventLoopTimer,
+    // Private — intrusive heap node; cross-crate `@fieldParentPtr` goes through
+    // [`Self::from_timer_ptr`] instead of `offset_of!` on the field.
+    timer: EventLoopTimer,
 
     /// This timer controls the maximum lifetime of a connection.
     /// It starts when the connection successfully starts (i.e. after handshake is complete).
     /// It stops when the connection is closed.
     pub max_lifetime_interval_ms: u32,
-    pub max_lifetime_timer: EventLoopTimer,
+    // Private — see `timer`; recovered via [`Self::from_max_lifetime_timer_ptr`].
+    max_lifetime_timer: EventLoopTimer,
+}
+
+impl JSMySQLConnection {
+    /// `@fieldParentPtr("timer", t)` — recover the embedding connection from a
+    /// pointer to its intrusive `timer` node. Exposed so the cross-crate
+    /// `bun_runtime` timer dispatch (`__bun_fire_timer`) does not need
+    /// field-level visibility into this struct.
+    ///
+    /// # Safety
+    /// `t` must point at the `timer` field of a live `JSMySQLConnection`
+    /// (i.e. the timer's tag is `MySQLConnectionTimeout`).
+    #[inline]
+    pub unsafe fn from_timer_ptr(t: *mut EventLoopTimer) -> *mut Self {
+        // SAFETY: caller contract.
+        unsafe { t.cast::<u8>().sub(core::mem::offset_of!(Self, timer)).cast::<Self>() }
+    }
+
+    /// `@fieldParentPtr("max_lifetime_timer", t)` — see [`Self::from_timer_ptr`].
+    ///
+    /// # Safety
+    /// `t` must point at the `max_lifetime_timer` field of a live
+    /// `JSMySQLConnection` (tag `MySQLConnectionMaxLifetime`).
+    #[inline]
+    pub unsafe fn from_max_lifetime_timer_ptr(t: *mut EventLoopTimer) -> *mut Self {
+        // SAFETY: caller contract.
+        unsafe {
+            t.cast::<u8>().sub(core::mem::offset_of!(Self, max_lifetime_timer)).cast::<Self>()
+        }
+    }
 }
 
 impl crate::jsc::JsClass for JSMySQLConnection {

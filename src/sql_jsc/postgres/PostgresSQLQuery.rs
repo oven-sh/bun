@@ -745,7 +745,7 @@ impl PostgresSQLQuery {
                     let stmt = {
                         let mut s = PostgresSQLStatement::default();
                         s.signature = signature;
-                        s.ref_count = Cell::new(2);
+                        s.init_exact_refs(2);
                         s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
                         Box::into_raw(Box::new(s))
                     };

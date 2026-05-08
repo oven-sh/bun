@@ -25,7 +25,8 @@ extern crate bun_string as bun_str;
 // `src/js_parser/lexer.zig` with `is_json = true` arms taken. Breaks the
 // GENUINE T4 cycle (`bun_js_parser` → `bun_interchange` → `bun_js_parser`)
 // so `json.rs` can build without an upward dep. See module doc-comment.
-pub mod json_lexer;
+// Crate-private: implementation detail of `json.rs`; no external consumers.
+mod json_lexer;
 
 // ───── json ───────────────────────────────────────────────────────────────
 // Real port — wired against `crate::json_lexer` (the cycle-break above) and

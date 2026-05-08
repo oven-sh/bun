@@ -302,7 +302,7 @@ where
     /// `json.rs`, which must rebuild a fresh `Lexer` over the same `Log`
     /// without introducing a second `&mut` provenance chain.
     #[inline]
-    pub fn log_ptr(&self) -> *mut logger::Log {
+    pub(crate) fn log_ptr(&self) -> *mut logger::Log {
         self.log
     }
 

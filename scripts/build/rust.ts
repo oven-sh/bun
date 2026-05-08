@@ -215,6 +215,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // workarounds.ts for the auto-fallback.
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
+    // Any cdylib/staticlib in the dep graph (lol_html_c_api) gets linked by
+    // rustc itself; default `cc` driver picks BFD `/usr/bin/ld` which doesn't
+    // understand `-plugin-opt`. Force lld so the bitcode link goes through
+    // the same LTO-aware linker our final link uses.
+    rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   }
 
   // ─── Environment ───

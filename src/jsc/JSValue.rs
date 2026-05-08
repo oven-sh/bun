@@ -2039,6 +2039,7 @@ impl JSValue {
     }
     /// `JSValue.forEachProperty` (JSValue.zig:96) — enumerate own props,
     /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
+    #[inline(always)]
     pub fn for_each_property(
         self,
         global: &JSGlobalObject,
@@ -2084,6 +2085,7 @@ impl JSValue {
     /// [`for_each_property`](Self::for_each_property) but visits keys in
     /// stable enumeration order (used by `console.log` with
     /// `ordered_properties`).
+    #[inline(always)]
     pub fn for_each_property_ordered(
         self,
         global: &JSGlobalObject,

@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
 
@@ -237,13 +238,14 @@ pub fn enqueue_tarball_for_reading(
     task_context: TaskCallbackContext,
 ) {
     // PORT NOTE: reshaped for borrowck — `path` borrows
-    // `this.lockfile.buffers.string_bytes`; route through a raw root.
-    let this_ptr: *mut PackageManager = this;
+    // `this.lockfile.buffers.string_bytes`; detach the slice lifetime so the
+    // `&mut PackageManager` reborrow for `enqueue_local_tarball` below does
+    // not conflict (Zig passes the aliased `*PackageManager` freely).
     // SAFETY: caller passes `resolution.tag == LocalTarball`; the
     // `local_tarball` arm is the active union field. `string_bytes` is not
-    // resized in this fn.
-    let path =
-        unsafe { &*this_ptr }.lockfile.str(resolution.local_tarball());
+    // resized in this fn — `enqueue_local_tarball` copies `path` into the
+    // filename store before any append.
+    let path = unsafe { detach_lifetime(this.lockfile.str(resolution.local_tarball())) };
     let task_id = Task::Id::for_tarball(path);
     let task_queue = this.task_queue.get_or_put(task_id).expect("unreachable");
     if !task_queue.found_existing {
@@ -259,10 +261,8 @@ pub fn enqueue_tarball_for_reading(
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
 
-    // SAFETY: `path` is a slice into `lockfile.buffers.string_bytes`;
-    // `enqueue_local_tarball` only reads it (copied into the filename store).
     let task = enqueue_local_tarball(
-        unsafe { &mut *this_ptr },
+        this,
         task_id,
         dependency_id,
         alias,
@@ -286,13 +286,14 @@ pub fn enqueue_git_for_checkout(
     // `*resolution` while `*this` is mutably reborrowed below.
     let repository: Repository = *resolution.git();
     // PORT NOTE: reshaped for borrowck — `url`/`resolved` borrow
-    // `this.lockfile.buffers.string_bytes`; route through a raw root.
-    let this_ptr: *mut PackageManager = this;
+    // `this.lockfile.buffers.string_bytes`; detach the slice lifetimes so the
+    // `&mut PackageManager` reborrows for the enqueue callees below do not
+    // conflict (Zig passes the aliased `*PackageManager` freely).
     // SAFETY: the enqueue callees copy these slices into the filename store
     // and never resize `string_bytes` while they are live.
-    let url = unsafe { &*this_ptr }.lockfile.str(&repository.repo);
+    let url = unsafe { detach_lifetime(this.lockfile.str(&repository.repo)) };
     let clone_id = Task::Id::for_git_clone(url);
-    let resolved = unsafe { &*this_ptr }.lockfile.str(&repository.resolved);
+    let resolved = unsafe { detach_lifetime(this.lockfile.str(&repository.resolved)) };
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
     let checkout_queue = this.task_queue.get_or_put(checkout_id).expect("unreachable");
     if !checkout_queue.found_existing {
@@ -306,10 +307,8 @@ pub fn enqueue_git_for_checkout(
     }
 
     if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-        // SAFETY: `enqueue_git_checkout` copies `alias`/`resolved` into the
-        // filename store and never resizes `string_bytes` while they are live.
         let task = enqueue_git_checkout(
-            unsafe { &mut *this_ptr },
+            this,
             checkout_id,
             repo_fd,
             dependency_id,
@@ -334,9 +333,8 @@ pub fn enqueue_git_for_checkout(
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
-        // SAFETY: see `this_ptr` note above.
         let task = enqueue_git_clone(
-            unsafe { &mut *this_ptr },
+            this,
             clone_id,
             alias,
             &repository,
@@ -989,7 +987,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // SAFETY: `string_bytes` is not resized in the
                         // manifest-lookup path; every call below either copies
                         // `name_str` out or only reads it before any append.
-                        let name_str = unsafe { &*this_ptr }.lockfile.str(&name);
+                        // Detach the slice lifetime so the `&mut PackageManager`
+                        // reborrows below do not conflict with it.
+                        let name_str = unsafe { detach_lifetime(this.lockfile.str(&name)) };
                         let task_id = Task::Id::for_manifest(name_str);
 
                         if cfg!(debug_assertions) {
@@ -1126,9 +1126,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     ));
                                 }
 
-                                // SAFETY: see `this_ptr` note above; `get_network_task`
-                                // touches only the preallocated pool, not `string_bytes`.
-                                let network_task = unsafe { &mut *this_ptr }.get_network_task();
+                                // `get_network_task` touches only the
+                                // preallocated pool, not `string_bytes`; with
+                                // `name_str` lifetime-detached above, `this`
+                                // is free to reborrow `&mut`.
+                                let network_task = this.get_network_task();
                                 // SAFETY: `network_task` is the unique handle to a
                                 // freshly-vended pool slot. Zig's `network_task.* = .{ ... }`
                                 // resets every defaulted field; `write_init` mirrors that
@@ -1142,8 +1144,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     );
                                 }
 
-                                // SAFETY: see `this_ptr` note above.
-                                let scope = unsafe { &*this_ptr }.scope_for_package_name(name_str);
+                                let scope = this.scope_for_package_name(name_str);
                                 // SAFETY: network_task points to a valid initialized NetworkTask slot
                                 unsafe {
                                     (*network_task).for_manifest(
@@ -1191,13 +1192,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             // PORT NOTE: reshaped for borrowck — `alias`/`url` borrow
-            // `this.lockfile.buffers.string_bytes`; route through a raw root
-            // so the `&mut PackageManager` calls below can coexist.
-            let this_ptr: *mut PackageManager = this;
+            // `this.lockfile.buffers.string_bytes`; detach the slice
+            // lifetimes so the `&mut PackageManager` reborrows for the
+            // enqueue callees below do not conflict.
             // SAFETY: `string_bytes` is not resized in this branch; the
             // enqueue callees copy the slices into the filename store.
-            let alias = unsafe { &*this_ptr }.lockfile.str(&dependency.name);
-            let url = unsafe { &*this_ptr }.lockfile.str(&dep.repo);
+            let alias = unsafe { detach_lifetime(this.lockfile.str(&dependency.name)) };
+            let url = unsafe { detach_lifetime(this.lockfile.str(&dep.repo)) };
             let clone_id = Task::Id::for_git_clone(url);
             let ctx = if success_fn as usize == assign_root_resolution as usize {
                 TaskCallbackContext::RootDependency(id)
@@ -1253,9 +1254,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
 
-                // SAFETY: see `this_ptr` note above.
                 let task = enqueue_git_checkout(
-                    unsafe { &mut *this_ptr },
+                    this,
                     checkout_id,
                     repo_fd,
                     id,
@@ -1286,9 +1286,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
 
-                // SAFETY: see `this_ptr` note above.
                 let task = enqueue_git_clone(
-                    unsafe { &mut *this_ptr },
+                    this,
                     clone_id,
                     alias,
                     &dep,
@@ -1531,14 +1530,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             // PORT NOTE: reshaped for borrowck — `url` borrows `string_bytes`;
-            // route through a raw root so the `&mut PackageManager` calls
-            // below can coexist (Zig passes the aliased `*PackageManager`).
-            let this_ptr: *mut PackageManager = this;
+            // detach the slice lifetime so the `&mut PackageManager` reborrows
+            // for the enqueue callees below do not conflict.
             // SAFETY: the enqueue callees copy `url` into the filename store
             // before any `string_bytes` resize.
-            let url = match &tarball.uri {
-                dependency::tarball::Uri::Local(path) => unsafe { &*this_ptr }.lockfile.str(path),
-                dependency::tarball::Uri::Remote(url) => unsafe { &*this_ptr }.lockfile.str(url),
+            let url = unsafe {
+                detach_lifetime(match &tarball.uri {
+                    dependency::tarball::Uri::Local(path) => this.lockfile.str(path),
+                    dependency::tarball::Uri::Remote(url) => this.lockfile.str(url),
+                })
             };
             let task_id = Task::Id::for_tarball(url);
 
@@ -1584,10 +1584,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         return Ok(());
                     }
 
-                    let dep_name = unsafe { &*this_ptr }.lockfile.str(&dependency.name);
-                    // SAFETY: see `this_ptr` note above.
+                    // SAFETY: `string_bytes` is not resized before
+                    // `enqueue_local_tarball` copies `dep_name` into the
+                    // filename store.
+                    let dep_name =
+                        unsafe { detach_lifetime(this.lockfile.str(&dependency.name)) };
                     let task = enqueue_local_tarball(
-                        unsafe { &mut *this_ptr },
+                        this,
                         task_id,
                         id,
                         dep_name,
@@ -1598,9 +1601,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 dependency::tarball::Uri::Remote(_) => {
-                    // SAFETY: see `this_ptr` note above.
-                    if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
-                        unsafe { &mut *this_ptr },
+                    // PORT NOTE: `generate_network_task_for_tarball` returns
+                    // `&'a mut NetworkTask` tied to `this`; coerce to `*mut`
+                    // immediately so the `&mut *this` borrow ends before
+                    // `enqueue_network_task(this, …)` reborrows it (NLL).
+                    let network_task: Option<*mut NetworkTask> =
+                        run_tasks::generate_network_task_for_tarball(
+                        this,
                         task_id,
                         url,
                         dependency.behavior.is_required(),
@@ -1613,7 +1620,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         },
                         None,
                         crate::network_task::Authorization::NoAuthorization,
-                    )? {
+                    )?
+                    .map(|r| r as *mut NetworkTask);
+                    if let Some(network_task) = network_task {
                         enqueue_network_task(this, network_task);
                     }
                 }
@@ -2347,8 +2356,9 @@ fn get_or_put_resolved_package(
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `string_bytes` is not resized between here and the
             // `find_result` lookup; `manifest` lives in `this.manifests` and
-            // is only read.
-            let name_str = unsafe { &*this_ptr }.lockfile.str(&name);
+            // is only read. Detach the slice lifetime so `name_str` does not
+            // borrow `*this`.
+            let name_str = unsafe { detach_lifetime(this.lockfile.str(&name)) };
 
             let scope: *const crate::npm::registry::Scope =
                 unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
@@ -2520,12 +2530,12 @@ fn get_or_put_resolved_package(
                 if this.lockfile.is_workspace_dependency(dependency_id) {
                     // relative to cwd
                     // PORT NOTE: reshaped for borrowck — `folder_path` borrows
-                    // `string_bytes`; route through a raw root so the
-                    // `&mut PackageManager` for `get_or_put` is reachable.
-                    let this_ptr: *mut PackageManager = this;
+                    // `string_bytes`; detach the slice lifetime so the
+                    // `&mut PackageManager` reborrow for `get_or_put` below
+                    // does not conflict.
                     // SAFETY: `get_or_put` copies `folder_path_abs` into the
                     // lockfile string buffer before any other mutation.
-                    let folder_path = unsafe { &*this_ptr }.lockfile.str(&folder);
+                    let folder_path = unsafe { detach_lifetime(this.lockfile.str(&folder)) };
                     let mut buf2 = PathBuffer::uninit();
                     let folder_path_abs = if bun_paths::is_absolute(folder_path) {
                         folder_path
@@ -2552,7 +2562,7 @@ fn get_or_put_resolved_package(
                         GlobalOrRelative::Relative(dependency::version::Tag::Folder),
                         version,
                         folder_path_abs,
-                        unsafe { &mut *this_ptr },
+                        this,
                     );
                 }
 
@@ -2622,12 +2632,12 @@ fn get_or_put_resolved_package(
                 .copied()
                 .unwrap_or(*version.workspace());
             // PORT NOTE: reshaped for borrowck — `workspace_path` may borrow
-            // `string_bytes`; route through a raw root so the
-            // `&mut PackageManager` for `get_or_put` is reachable.
-            let this_ptr: *mut PackageManager = this;
+            // `string_bytes`; detach the slice lifetime so the
+            // `&mut PackageManager` reborrow for `get_or_put` below does not
+            // conflict.
             // SAFETY: `get_or_put` copies `workspace_path_u8` into the
             // lockfile string buffer before any other mutation.
-            let workspace_path = unsafe { &*this_ptr }.lockfile.str(&workspace_path_raw);
+            let workspace_path = unsafe { detach_lifetime(this.lockfile.str(&workspace_path_raw)) };
             let mut buf2 = PathBuffer::uninit();
             let workspace_path_u8 = if bun_paths::is_absolute(workspace_path) {
                 workspace_path
@@ -2643,7 +2653,7 @@ fn get_or_put_resolved_package(
                 GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
                 version,
                 workspace_path_u8,
-                unsafe { &mut *this_ptr },
+                this,
             );
 
             match res {
@@ -2666,18 +2676,23 @@ fn get_or_put_resolved_package(
             }
         }
         dependency::version::Tag::Symlink => {
-            // PORT NOTE: reshaped for borrowck — args borrow `*this`; route
-            // through a raw root so `&mut PackageManager` is reachable.
-            let this_ptr: *mut PackageManager = this;
-            // SAFETY: `get_or_put` copies the slice into the lockfile string
-            // buffer before any other mutation; `version.tag == Symlink`.
+            // PORT NOTE: reshaped for borrowck — `link_dir` / `symlink_path`
+            // borrow into `*this`; detach their lifetimes so the
+            // `&mut PackageManager` reborrow for `get_or_put` does not
+            // conflict.
+            // SAFETY: `global_link_dir_path` returns a slice into the lazily-
+            // initialized `PackageManager.global_link_dir_path` (a `Box<[u8]>`
+            // set once and never freed); `get_or_put` copies `symlink_path`
+            // into the lockfile string buffer before any other mutation.
+            // `version.tag == Symlink`.
+            let link_dir =
+                unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
+            let symlink_path = unsafe { detach_lifetime(this.lockfile.str(version.symlink())) };
             let res = FolderResolution::get_or_put(
-                GlobalOrRelative::Global(package_manager_real::global_link_dir_path(unsafe {
-                    &mut *this_ptr
-                })),
+                GlobalOrRelative::Global(link_dir),
                 version.clone(),
-                unsafe { &*this_ptr }.lockfile.str(version.symlink()),
-                unsafe { &mut *this_ptr },
+                symlink_path,
+                this,
             );
 
             match res {

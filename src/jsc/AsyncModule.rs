@@ -1228,8 +1228,8 @@ impl AsyncModule {
         // slices into it remain valid across the `&mut self` reborrows below
         // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
         // tie `path`/`specifier` to `&self`.
-        let specifier: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(self.specifier()) };
-        let path_text: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(self.path_text()) };
+        let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
+        let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
         let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread);

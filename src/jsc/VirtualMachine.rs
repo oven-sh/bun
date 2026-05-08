@@ -3754,7 +3754,7 @@ impl VirtualMachine {
         // bytes that outlive `ResolveFunctionResult` (`'static` per the
         // struct's TODO(port) lifetime note). Erase to `'static` to seat the
         // result paths without threading a lifetime parameter through the VM.
-        let specifier: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(specifier) };
+        let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
@@ -3823,11 +3823,13 @@ impl VirtualMachine {
                 // the resolve call (and the resolver only borrows it for the
                 // synchronous `resolve_and_auto_install`).
                 unsafe {
-                    &*std::ptr::from_ref::<[u8]>(bun_resolver::fs::PathName::init(source).dir_with_trailing_slash())
+                    bun_ptr::detach_lifetime(
+                        bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
+                    )
                 }
             } else {
                 // SAFETY: see `specifier` lifetime erasure note above.
-                unsafe { &*std::ptr::from_ref::<[u8]>(source) }
+                unsafe { bun_ptr::detach_lifetime(source) }
             }
         } else {
             top_level_dir
@@ -3918,13 +3920,13 @@ impl VirtualMachine {
         }
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
-        ret.query_string = unsafe { &*std::ptr::from_ref::<[u8]>(query_string) };
+        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
         let result_path = result
             .path_const()
             .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see field TODO(port) lifetime).
-        ret.path = unsafe { &*std::ptr::from_ref::<[u8]>(result_path.text) };
+        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
         ret.result = Some(result);
         self.resolved_count += 1;
 

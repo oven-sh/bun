@@ -866,14 +866,17 @@ impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
     fn set_timeout_minutes(&self, minutes: c_uint) { uws::NewSocketHandler::<SSL>::set_timeout_minutes(self, minutes) }
 }
 
-/// Raw pointer to the HTTP-thread abort tracker. Callers reborrow per-access —
-/// PORTING.md §Global mutable state.
+/// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
+/// HTTP-thread-only, so the `&'static mut` is the unique live borrow at every
+/// call site. Callers must not hold the result across a call that re-enters
+/// this accessor (per-statement reborrow shape — same contract the prior
+/// `*mut` API imposed, now centralized here so 5 call sites drop their
+/// `unsafe` block).
 #[inline]
-fn abort_tracker() -> *mut ArrayHashMap<u32, uws::AnySocket> {
-    // SAFETY: same single-thread invariant as http_thread()
-    unsafe {
-        (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) as *mut _
-    }
+pub(crate) fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
+    // SAFETY: same single-thread invariant as http_thread(). Every call site
+    // is a per-statement reborrow (audited in r3); no two `&mut` overlap.
+    unsafe { (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
 /// Returns the hostname to use for TLS SNI and certificate verification.
@@ -1335,14 +1338,14 @@ impl<'a> HTTPClient<'a> {
                 uws::AnySocket::SocketTcp(uws::SocketTCP::from_any(socket.socket))
             };
             // SAFETY: HTTP-thread only; per-statement reborrow.
-            let _ = unsafe { &mut *abort_tracker() }.put(self.async_http_id, any);
+            let _ = abort_tracker().put(self.async_http_id, any);
         }
     }
 
     pub fn unregister_abort_tracker(&mut self) {
         if self.signals.aborted.is_some() {
             // SAFETY: HTTP-thread only; per-statement reborrow.
-            let _ = unsafe { &mut *abort_tracker() }.swap_remove(&self.async_http_id);
+            let _ = abort_tracker().swap_remove(&self.async_http_id);
         }
     }
 

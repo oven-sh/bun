@@ -134,14 +134,16 @@ struct Record {
 // PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
 static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::RacyCell::new(None);
 
-/// Raw pointer to the (lazily-initialized) per-HTTP-thread cache. Callers
-/// reborrow per-access (`unsafe { &mut *cache() }`) so no `&mut` outlives a
-/// single statement — PORTING.md §Global mutable state ("hold *mut T and
-/// deref per-access").
-fn cache() -> *mut StringHashMap<Record> {
-    // SAFETY: only ever accessed from the single HTTP thread (see module doc),
-    // so the lazy init cannot race.
-    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::default) as *mut _ }
+/// Borrow the (lazily-initialized) per-HTTP-thread cache. PORTING.md §Global
+/// mutable state: only ever accessed from the single HTTP thread (see module
+/// doc), so the `&'static mut` is the unique live borrow at every call site.
+/// Callers must not hold the result across a call that re-enters this
+/// accessor (per-statement reborrow shape — same contract the prior `*mut`
+/// API imposed, now centralized here).
+fn cache() -> &'static mut StringHashMap<Record> {
+    // SAFETY: HTTP-thread only; lazy init cannot race. Every call site is a
+    // per-statement reborrow (audited in r3); no two `&mut` overlap.
+    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::default) }
 }
 
 /// Hard cap on cached origins. When reached, `record()` first sweeps expired
@@ -162,8 +164,7 @@ fn key<'a>(buf: &'a mut [u8], hostname: &[u8], port: u16) -> &'a [u8] {
 }
 
 fn sweep_expired(now: i64) {
-    // SAFETY: HTTP-thread only; sole live borrow for the loop's duration.
-    let cache = unsafe { &mut *cache() };
+    let cache = cache();
     // Unmanaged hash-map iteration is not removal-safe; restart after each removal.
     // TODO(port): `StringHashMap` API — assumes `iter()` yielding `(&Box<[u8]>, &Record)`
     // and `remove(&[u8])` that drops the owned key. Adjust to actual bun_collections API.
@@ -199,7 +200,7 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
     let entry = match parse(field_value) {
         Err(ParseError::Clear) => {
             // `clear`
-            unsafe { (*cache()).remove(k) };
+            cache().remove(k);
             bun_core::scoped_log!(h3_client, "alt-svc clear {}", bstr::BStr::new(k));
             return;
         }
@@ -208,14 +209,14 @@ pub fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
     };
 
     let now = timestamp();
-    if unsafe { (*cache()).len() } >= MAX_ENTRIES && !unsafe { (*cache()).contains_key(k) } {
+    if cache().len() >= MAX_ENTRIES && !cache().contains_key(k) {
         sweep_expired(now);
-        if unsafe { (*cache()).len() } >= MAX_ENTRIES {
+        if cache().len() >= MAX_ENTRIES {
             return;
         }
     }
     // PORT NOTE: `StringHashMap::put` dupes the key on insert (matches Zig getOrPut).
-    let _ = unsafe { &mut *cache() }.put(k, Record {
+    let _ = cache().put(k, Record {
         h3_port: entry.port,
         expires_at: now + i64::from(entry.ma),
     });
@@ -237,10 +238,9 @@ pub fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
         return None;
     }
     let k = key(&mut buf, origin_host, origin_port);
-    // SAFETY: HTTP-thread only; per-statement reborrow.
-    let rec = *unsafe { &*cache() }.get(k)?;
+    let rec = *cache().get(k)?;
     if timestamp() >= rec.expires_at {
-        unsafe { (*cache()).remove(k) };
+        cache().remove(k);
         return None;
     }
     Some(rec.h3_port)

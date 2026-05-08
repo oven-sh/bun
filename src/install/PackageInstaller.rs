@@ -84,15 +84,21 @@ pub struct PackageInstaller<'a> {
     // `(*manager).options`). Dropped — every caller reads via
     // `self.manager().options` so the shared borrow stays a child of the live
     // `&mut PackageManager` Unique tag rather than a sibling raw.
-    // TODO(port): the following slice fields alias into `self.lockfile.packages` (BACKREF);
-    // borrowck will reject `&'a mut Lockfile` + `&'a [T]` into it. Phase B: store as raw
-    // `*const [T]` or re-fetch via `fix_cached_lockfile_package_slices` helper accessors.
-    pub metas: &'a [Package::Meta],
-    pub names: &'a [String],
-    pub pkg_dependencies: &'a [DependencySlice],
-    pub pkg_name_hashes: &'a [PackageNameHash],
-    pub bins: &'a [Bin],
-    pub resolutions: &'a mut [Resolution],
+    // The following slice fields alias into `self.lockfile.packages` (BACKREF).
+    // Stored as `RawSlice<T>` (raw `*const [T]`, `usize` len) — the lockfile's
+    // `MultiArrayList<Package>` column buffers outlive this `PackageInstaller`
+    // and are only ever *grown*, never freed; `fix_cached_lockfile_package_slices`
+    // re-snapshots after a grow. `RawSlice` carries no lifetime, so the
+    // assignment sites do not need a `&'a → &'a` lifetime-detach round-trip.
+    // `resolutions` was `&'a mut [Resolution]` in the Zig spec but every Rust
+    // call site is a read (`&raw const self.resolutions[i]`), so it is also
+    // `RawSlice` here.
+    pub metas: bun_ptr::RawSlice<Package::Meta>,
+    pub names: bun_ptr::RawSlice<String>,
+    pub pkg_dependencies: bun_ptr::RawSlice<DependencySlice>,
+    pub pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
+    pub bins: bun_ptr::RawSlice<Bin>,
+    pub resolutions: bun_ptr::RawSlice<Resolution>,
     pub node: &'a mut ProgressNode,
     pub destination_dir_subpath_buf: PathBuffer,
     pub folder_path_buf: PathBuffer,
@@ -807,19 +813,20 @@ impl<'a> PackageInstaller<'a> {
                 // Drain by move (`mem::take`) to transfer ownership without the
                 // O(pending_installs) extra `.clone()` allocations and to leave
                 // `pending_installs` empty as the spec's defer does.
+                // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy
+                // it out so the `&Resolution` argument below borrows the
+                // local, not `*self`, across the `&mut self` call.
+                let resolutions = self.resolutions;
                 for context in core::mem::take(&mut self.trees[i].pending_installs) {
                     let package_id =
                         self.lockfile().buffers.resolutions.as_slice()[context.dependency_id as usize];
                     let name = self.names[package_id as usize];
-                    let resolution = &raw const self.resolutions[package_id as usize];
                     self.node_modules.tree_id = context.tree_id;
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
 
                     const NEEDS_VERIFY: bool = false;
                     const IS_PENDING_PACKAGE_INSTALL: bool = true;
-                    // SAFETY: resolution points into self.resolutions which is not resized here.
-                    // TODO(port): reshape to pass by value or index to avoid raw ptr.
                     self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
                         // This id might be different from the id used to enqueue the task. Important
                         // to use the correct one because the package might be aliased with a different
@@ -828,7 +835,7 @@ impl<'a> PackageInstaller<'a> {
                         package_id,
                         log_level,
                         name,
-                        unsafe { &*resolution },
+                        &resolutions[package_id as usize],
                     );
                 }
             }
@@ -947,19 +954,21 @@ impl<'a> PackageInstaller<'a> {
 
     /// Call when you mutate the length of `lockfile.packages`
     pub fn fix_cached_lockfile_package_slices(&mut self) {
-        // PORT NOTE: these `&'a [T]` fields alias into `self.lockfile.packages` (BACKREF).
-        // Borrowck rejects reassigning `&'a [T]` from a `&'a mut Lockfile` borrow inside a
-        // method, so detach the lifetime via raw pointers (Zig stored raw slice ptr+len).
-        // SAFETY: `self.lockfile` is a BACKREF whose pointee outlives `'a`; the packages
-        // buffer is not freed for the lifetime of this `PackageInstaller` (only grows,
-        // which is why this fn exists — to re-point after growth).
-        let mut packages = self.lockfile_mut().packages.slice();
-        self.metas = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_meta()) };
-        self.names = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_name()) };
-        self.pkg_name_hashes = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_name_hash()) };
-        self.bins = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_bin()) };
-        self.resolutions = unsafe { &mut *std::ptr::from_mut::<[_]>(packages.items_resolution_mut()) };
-        self.pkg_dependencies = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_dependencies()) };
+        // These `RawSlice<T>` fields alias into `self.lockfile.packages`
+        // (BACKREF). `RawSlice::new` stores the raw `(ptr, len)` without a
+        // lifetime, so the borrow of `packages` ends at the end of each
+        // statement — no `&'a → &'a` detach round-trip needed.
+        // SAFETY (RawSlice invariant): `self.lockfile` is a BACKREF whose
+        // pointee outlives `'a`; the packages column buffers are not freed for
+        // the lifetime of this `PackageInstaller` (only grow, which is why
+        // this fn exists — to re-snapshot after growth).
+        let packages = self.lockfile_mut().packages.slice();
+        self.metas = bun_ptr::RawSlice::new(packages.items_meta());
+        self.names = bun_ptr::RawSlice::new(packages.items_name());
+        self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());
+        self.bins = bun_ptr::RawSlice::new(packages.items_bin());
+        self.resolutions = bun_ptr::RawSlice::new(packages.items_resolution());
+        self.pkg_dependencies = bun_ptr::RawSlice::new(packages.items_dependencies());
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
@@ -1022,6 +1031,9 @@ impl<'a> PackageInstaller<'a> {
                 return;
             }
 
+            // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy out
+            // so the `&Resolution` argument borrows the local, not `*self`.
+            let resolutions = self.resolutions;
             for cb in callbacks.iter() {
                 let TaskCallbackContext::DependencyInstallContext(context) = cb else {
                     debug_assert!(false, "expected DependencyInstallContext");
@@ -1029,8 +1041,6 @@ impl<'a> PackageInstaller<'a> {
                 };
                 let callback_package_id =
                     self.lockfile().buffers.resolutions.as_slice()[context.dependency_id as usize];
-                let callback_resolution =
-                    &raw const self.resolutions[callback_package_id as usize];
                 self.node_modules.tree_id = context.tree_id;
                 // PORT NOTE: zig assigns `context.path` (ArrayList struct copy).
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
@@ -1038,7 +1048,6 @@ impl<'a> PackageInstaller<'a> {
                 self.current_tree_id = context.tree_id;
                 const NEEDS_VERIFY: bool = false;
                 const IS_PENDING_PACKAGE_INSTALL: bool = false;
-                // SAFETY: callback_resolution points into self.resolutions which is not resized here.
                 self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
                     // This id might be different from the id used to enqueue the task. Important
                     // to use the correct one because the package might be aliased with a different
@@ -1047,7 +1056,7 @@ impl<'a> PackageInstaller<'a> {
                     callback_package_id,
                     log_level,
                     name,
-                    unsafe { &*callback_resolution },
+                    &resolutions[callback_package_id as usize],
                 );
             }
             self.node_modules = prev_node_modules;
@@ -2267,9 +2276,10 @@ impl<'a> PackageInstaller<'a> {
         let package_id = self.lockfile().buffers.resolutions.as_slice()[dep_id as usize];
 
         let name = self.names[package_id as usize];
-        // SAFETY: resolution points into self.resolutions which is not resized here.
-        // TODO(port): reshape to avoid raw ptr aliasing &mut self.
-        let resolution = &raw const self.resolutions[package_id as usize];
+        // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy out so the
+        // `&Resolution` argument borrows the local, not `*self`, across the
+        // `&mut self` call.
+        let resolutions = self.resolutions;
 
         const NEEDS_VERIFY: bool = true;
         const IS_PENDING_PACKAGE_INSTALL: bool = false;
@@ -2278,7 +2288,7 @@ impl<'a> PackageInstaller<'a> {
             package_id,
             log_level,
             name,
-            unsafe { &*resolution },
+            &resolutions[package_id as usize],
         );
     }
 }

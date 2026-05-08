@@ -317,23 +317,23 @@ pub fn install_hoisted_packages(
             // PORT NOTE: BACKREF — Zig's `var parts = packages.slice()` is a
             // by-value `MultiArrayList.Slice` (raw ptr+len per column), so
             // `parts.items(.field)` yields independent `[]T` regardless of
-            // mutability. Rust borrowck rejects holding `&mut Lockfile` +
-            // `&[T]` into `lockfile.packages` simultaneously (and `&[A]` +
-            // `&mut [B]` from the same `&PackageList`). Derive each column
-            // slice through the raw `lockfile_ptr` so they share `mgr_ptr`
-            // provenance with `installer.lockfile`/`installer.manager`, then
-            // detach the borrow lifetime via raw-ptr round-trip (same pattern
-            // as `PackageInstaller::fix_cached_lockfile_package_slices`).
-            // SAFETY: `lockfile_ptr` derived from `mgr_ptr`; the packages buffer
-            // is not freed for the lifetime of `installer` (only grows, which is
-            // why `fix_cached_lockfile_package_slices` re-snapshots).
-            let mut parts = unsafe { (*lockfile_ptr).packages.slice() };
-            let metas = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_meta()) };
-            let bins = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_bin()) };
-            let names = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_name()) };
-            let pkg_name_hashes = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_name_hash()) };
-            let resolutions = unsafe { &mut *std::ptr::from_mut::<[_]>(parts.items_resolution_mut()) };
-            let pkg_dependencies = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_dependencies()) };
+            // mutability. The `PackageInstaller` slice fields are
+            // `bun_ptr::RawSlice<T>` (raw `*const [T]`, no lifetime), so
+            // wrapping each column with `RawSlice::new` stores the (ptr, len)
+            // without keeping a borrow live — no `&'a → &'a` detach
+            // round-trip needed. Derive through `lockfile_ptr` so the
+            // provenance root matches `installer.lockfile`/`installer.manager`.
+            // SAFETY (RawSlice invariant): `lockfile_ptr` derived from
+            // `mgr_ptr`; the packages column buffers are not freed for the
+            // lifetime of `installer` (only grow, which is why
+            // `fix_cached_lockfile_package_slices` re-snapshots).
+            let parts = unsafe { (*lockfile_ptr).packages.slice() };
+            let metas = bun_ptr::RawSlice::new(parts.items_meta());
+            let bins = bun_ptr::RawSlice::new(parts.items_bin());
+            let names = bun_ptr::RawSlice::new(parts.items_name());
+            let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
+            let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
+            let pkg_dependencies = bun_ptr::RawSlice::new(parts.items_dependencies());
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for

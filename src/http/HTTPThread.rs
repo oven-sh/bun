@@ -38,11 +38,16 @@ const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 * std.tim
 static CUSTOM_SSL_CONTEXT_MAP: bun_core::RacyCell<
     Option<ArrayHashMap<*const SSLConfig, SslContextCacheEntry>>,
 > = bun_core::RacyCell::new(None);
-/// Raw pointer to the (lazily-initialized) SSL-context cache. Callers reborrow
-/// per-access — PORTING.md §Global mutable state.
-fn custom_ssl_context_map() -> *mut ArrayHashMap<*const SSLConfig, SslContextCacheEntry> {
-    // SAFETY: HTTP-thread-only; initialized on first call.
-    unsafe { (*CUSTOM_SSL_CONTEXT_MAP.get()).get_or_insert_with(ArrayHashMap::new) as *mut _ }
+/// Borrow the (lazily-initialized) SSL-context cache. PORTING.md §Global
+/// mutable state: only ever accessed from the single HTTP client thread after
+/// `on_start`, so the `&'static mut` is the unique live borrow at every call
+/// site (callers must not hold the result across a call that re-enters this
+/// accessor; the prior `*mut` API enforced the same per-statement reborrow
+/// shape).
+fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslContextCacheEntry> {
+    // SAFETY: HTTP-thread-only; initialized on first call. Every call site is
+    // a per-statement reborrow (audited in r3), so no two `&mut` overlap.
+    unsafe { (*CUSTOM_SSL_CONTEXT_MAP.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
 // TODO(b2-blocked): `bun_event_loop` is a higher-tier crate (not in bun_http
@@ -393,8 +398,7 @@ impl HttpThread {
                 self.evict_stale_ssl_contexts();
 
                 // Look up by pointer equality (configs are interned)
-                // SAFETY: HTTP-thread only; per-statement reborrow.
-                if let Some(entry) = unsafe { &mut *custom_ssl_context_map() }.get_mut(&requested_config) {
+                if let Some(entry) = custom_ssl_context_map().get_mut(&requested_config) {
                     // Cache hit - reuse existing SSL context
                     entry.last_used_ns = self.timer_read();
                     client.set_custom_ssl_ctx(entry.ctx);
@@ -444,8 +448,7 @@ impl HttpThread {
                 let now = self.timer_read();
                 // SAFETY: custom_context is a live Box::leak'd allocation.
                 let ctx_nn = unsafe { NonNull::new_unchecked(std::ptr::from_mut(custom_context)) };
-                // SAFETY: HTTP-thread only.
-                let _ = unsafe { &mut *custom_ssl_context_map() }.put(
+                let _ = custom_ssl_context_map().put(
                     requested_config,
                     SslContextCacheEntry {
                         ctx: ctx_nn,
@@ -456,8 +459,7 @@ impl HttpThread {
                 );
 
                 // Enforce max cache size - evict oldest entry
-                // SAFETY: HTTP-thread only.
-                if unsafe { (*custom_ssl_context_map()).count() } > SSL_CONTEXT_CACHE_MAX_SIZE {
+                if custom_ssl_context_map().count() > SSL_CONTEXT_CACHE_MAX_SIZE {
                     evict_oldest_ssl_context();
                 }
 
@@ -498,8 +500,7 @@ impl HttpThread {
     /// Evict SSL context cache entries that haven't been used for ssl_context_cache_ttl_ns.
     fn evict_stale_ssl_contexts(&mut self) {
         let now = self.timer_read();
-        // SAFETY: HTTP-thread only; sole live `&mut` for the loop below.
-        let map = unsafe { &mut *custom_ssl_context_map() };
+        let map = custom_ssl_context_map();
         let mut i: usize = 0;
         while i < map.count() {
             let entry_last_used = map.values()[i].last_used_ns;
@@ -518,8 +519,7 @@ impl HttpThread {
         if self.https_context.abort_pending_h2_waiter(async_http_id) {
             return true;
         }
-        // SAFETY: HTTP-thread only; iterator borrows for the loop body.
-        for entry in unsafe { &mut *custom_ssl_context_map() }.values_mut() {
+        for entry in custom_ssl_context_map().values_mut() {
             // SAFETY: cache holds a strong ref; ctx alive.
             if unsafe { (*entry.ctx.as_ptr()).abort_pending_h2_waiter(async_http_id) } {
                 return true;
@@ -538,8 +538,7 @@ impl HttpThread {
             };
 
             for http in &queued_shutdowns {
-                // SAFETY: HTTP-thread only; reborrowed each iteration.
-                let tracker = unsafe { &mut *abort_tracker() };
+                let tracker = abort_tracker();
                 let found_idx = tracker
                     .keys()
                     .iter()
@@ -620,8 +619,7 @@ impl HttpThread {
                 let message = write.kind;
                 let ended = message == WriteMessageType::End;
 
-                // SAFETY: HTTP-thread only; per-statement reborrow.
-                if let Some(socket_ptr) = unsafe { &*abort_tracker() }.get(&write.async_http_id) {
+                if let Some(socket_ptr) = abort_tracker().get(&write.async_http_id) {
                     match *socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
                             if socket.is_closed() || socket.is_shutdown() {
@@ -691,8 +689,7 @@ impl HttpThread {
             };
 
             for drain in &queued_response_body_drains {
-                // SAFETY: HTTP-thread only; per-statement reborrow.
-                if let Some(socket_ptr) = unsafe { &*abort_tracker() }.get(&drain.async_http_id) {
+                if let Some(socket_ptr) = abort_tracker().get(&drain.async_http_id) {
                     match *socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
@@ -896,8 +893,7 @@ impl HttpThread {
 
 /// Evict the least-recently-used SSL context cache entry.
 fn evict_oldest_ssl_context() {
-    // SAFETY: HTTP-thread only; sole live `&mut` for the body below.
-    let map = unsafe { &mut *custom_ssl_context_map() };
+    let map = custom_ssl_context_map();
     if map.count() == 0 {
         return;
     }
@@ -932,15 +928,11 @@ fn start_queued_task(http: *mut AsyncHttp) {
     cloned.async_http.on_start();
 }
 
-/// Raw pointer to the HTTP-thread abort tracker. Callers reborrow per-access —
-/// PORTING.md §Global mutable state.
+/// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
+/// HTTP-thread-only, per-statement reborrow.
 #[inline]
-fn abort_tracker() -> *mut ArrayHashMap<u32, uws::AnySocket> {
-    // SAFETY: same single-thread invariant as http_thread().
-    unsafe {
-        (*crate::SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new)
-            as *mut _
-    }
+fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
+    crate::abort_tracker()
 }
 
 use core::cell::Cell;

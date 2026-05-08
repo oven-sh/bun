@@ -352,10 +352,10 @@ impl LinkerContext<'_> {
             ($value:expr) => {{
                 // SAFETY: `stmts_head < stmts_count` by construction (counts above).
                 let cell = unsafe { &mut (*stmts_slab)[stmts_head] };
-                cell.write($value);
+                // `MaybeUninit::write` returns `&mut T` to the now-initialized slot.
+                let written: &mut Stmt = cell.write($value);
                 stmts_head += 1;
-                // SAFETY: just initialized.
-                core::ptr::slice_from_raw_parts_mut(cell.as_mut_ptr(), 1)
+                js_ast::StoreSlice::new_mut(core::slice::from_mut(written))
             }};
         }
         let loc = Loc::EMPTY;
@@ -598,13 +598,13 @@ impl LinkerContext<'_> {
                     // of `stmts_slab` is fully initialized above; the worker
                     // arena outlives the link pass.
                     unsafe {
-                        std::ptr::from_mut::<[Stmt]>(core::slice::from_raw_parts_mut(
+                        js_ast::StoreSlice::new_mut(core::slice::from_raw_parts_mut(
                             (*stmts_slab)[all_export_stmts_base].as_mut_ptr(),
                             all_export_stmts_len,
                         ))
                     }
                 } else {
-                    std::ptr::from_mut::<[Stmt]>(&mut [])
+                    js_ast::StoreSlice::EMPTY
                 },
                 symbol_uses: ns_export_symbol_uses,
                 dependencies: ns_export_dependencies,

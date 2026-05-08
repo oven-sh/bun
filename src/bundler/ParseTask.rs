@@ -688,7 +688,7 @@ fn css_symbols_to_parser_symbols(
             core::mem::transmute::<bun_logger::Ref, bun_js_parser::ast::Ref>(s.link)
         };
         out.append_assume_capacity(PSym {
-            original_name: std::ptr::from_ref::<[u8]>(s.original_name),
+            original_name: bun_js_parser::StoreStr::new(s.original_name),
             // CSS-module locals are never ES6 namespace-aliased (the CSS parser
             // never assigns `namespace_alias`); drop rather than bridge the
             // distinct `NamespaceAlias` mirrors.
@@ -1079,10 +1079,7 @@ fn get_ast(
             // this feature could ship.
             ast.has_lazy_export = false;
             ast.parts.slice_mut()[1] = Part {
-                stmts: core::ptr::slice_from_raw_parts_mut(
-                    core::ptr::NonNull::<ast::Stmt>::dangling().as_ptr(),
-                    0,
-                ),
+                stmts: ast::StoreSlice::EMPTY,
                 is_live: true,
                 import_record_indices: 'brk2: {
                     // Generate a single part that depends on all the import records.

@@ -23,53 +23,41 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
 
-// ─── file-local arena helpers ────────────────────────────────────────────────
-// Phase-A keeps slice fields as `*const [u8]` / `*mut [T]` (see ast/mod.rs);
-// these wrap the unsafe deref so the visitor bodies stay readable. All pointers
-// are arena-owned and outlive the visit pass.
-#[inline(always)]
-unsafe fn arena_str<'a>(p: *const [u8]) -> &'a [u8] {
-    // SAFETY: arena-owned slice valid for the parse lifetime.
-    unsafe { &*p }
-}
-#[inline(always)]
-unsafe fn items_mut<'a, T>(p: *mut [T]) -> &'a mut [T] {
-    // SAFETY: arena-owned slice valid for the parse lifetime.
-    unsafe { &mut *p }
-}
+use crate::StmtNodeList;
 
-// Helper: visit a `*mut [Stmt]` arena slice in-place. Mirrors the
+// ─── file-local arena helpers ────────────────────────────────────────────────
+// Slice fields are `StoreStr` / `StoreSlice<T>` (see ast/mod.rs). All slices
+// are arena-owned and outlive the visit pass.
+
+// Helper: visit a `StmtNodeList` arena slice in-place. Mirrors the
 // `ListManaged.fromOwnedSlice` → `visitStmts` → `.items` pattern from Zig: copy the
 // slice into a fresh arena-backed Vec, visit (which may grow/shrink it), then
-// leak the result back into the bump arena and return the new fat pointer.
+// leak the result back into the bump arena and return the new view.
 #[inline]
 fn visit_stmt_slice<'a, const TS: bool, J: JsxT, const SO: bool>(
     p: &mut P<'a, TS, J, SO>,
-    slice: *mut [Stmt],
+    slice: StmtNodeList,
     kind: StmtsKind,
-) -> *mut [Stmt] {
-    // SAFETY: arena-owned slice valid for 'a.
-    let src: &[Stmt] = unsafe { &*slice };
+) -> StmtNodeList {
+    let src: &[Stmt] = slice.slice();
     let mut list: StmtList<'a> = BumpVec::with_capacity_in(src.len(), p.arena);
     list.extend_from_slice(src);
     p.visit_stmts(&mut list, kind).expect("unreachable");
-    std::ptr::from_mut::<[Stmt]>(list.into_bump_slice_mut())
+    StmtNodeList::from_bump(list)
 }
 
 // ─── arena slice ↔ BumpVec helpers ──────────────────────────────────────────
-// `StmtNodeList = *mut [Stmt]` (arena-owned). Zig's `ListManaged.fromOwnedSlice`
+// `StmtNodeList = StoreSlice<Stmt>` (arena-owned). Zig's `ListManaged.fromOwnedSlice`
 // adopts the existing backing storage; bumpalo Vec cannot, so we copy. The arena
 // reclaims both at end-of-parse.
 // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B.
 #[inline]
-fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: *mut [Stmt]) -> StmtList<'a> {
-    // SAFETY: arena-owned slice valid for 'a; Stmt is Copy.
-    let slice: &[Stmt] = unsafe { &*ptr };
-    bun_alloc::vec_from_iter_in(slice.iter().copied(), arena)
+fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList<'a> {
+    bun_alloc::vec_from_iter_in(ptr.iter().copied(), arena)
 }
 #[inline]
-fn list_to_stmts<'a>(list: StmtList<'a>) -> *mut [Stmt] {
-    std::ptr::from_mut::<[Stmt]>(list.into_bump_slice_mut())
+fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
+    StmtNodeList::from_bump(list)
 }
 
 // Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
@@ -175,8 +163,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.record_declared_symbol(default_name.ref_.expect("infallible: ref bound"));
         }
 
-        // SAFETY: arena-owned slice; valid for 'a.
-        let items = unsafe { &*data.items };
+        let items = data.items.slice();
         if !items.is_empty() {
             for item in items.iter() {
                 p.record_declared_symbol(item.name.ref_.expect("infallible: ref bound"));
@@ -211,8 +198,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         data: &mut S::ExportClause,
     ) -> Result<(), Error> {
         // "export {foo}"
-        // SAFETY: arena-owned slice; valid for 'a.
-        let items = unsafe { items_mut::<js_ast::ClauseItem>(data.items) };
+        // SAFETY: arena-owned slice valid for 'a; exclusive via `&mut data`.
+        let items = unsafe { data.items.slice_mut() };
         let items_len = items.len();
         let mut end: usize = 0;
         let mut any_replaced = false;
@@ -292,8 +279,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let remove_for_tree_shaking =
             any_replaced && end == 0 && items_len > 0 && p.options.tree_shaking;
-        // Truncate `data.items` to `end` by reslicing the raw arena ptr.
-        data.items = core::ptr::slice_from_raw_parts_mut(items.as_mut_ptr(), end);
+        // Truncate `data.items` to `end` by reslicing the arena view.
+        data.items.truncate(end);
 
         if remove_for_tree_shaking {
             return Ok(());
@@ -316,8 +303,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         VecExt::append(&mut p.cur_scope().generated, data.namespace_ref).expect("oom");
         p.record_declared_symbol(data.namespace_ref);
 
-        // SAFETY: arena-owned slice; valid for 'a.
-        let items = unsafe { items_mut::<js_ast::ClauseItem>(data.items) };
+        // SAFETY: arena-owned slice valid for 'a; exclusive via `&mut data`.
+        let items = unsafe { data.items.slice_mut() };
 
         if p.options.features.replace_exports.count() > 0 {
             let mut j: usize = 0;
@@ -325,8 +312,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             for i in 0..items.len() {
                 let old_ref = items[i].name.ref_.expect("infallible: ref bound");
 
-                // SAFETY: alias is arena-owned, valid for 'a.
-                let alias = unsafe { arena_str(items[i].alias) };
+                // alias is arena-owned (`ArenaStr`), valid for 'a.
+                let alias = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
                     let _ = p.inject_replacement_export(stmts, old_ref, logger::Loc::EMPTY, &entry);
                     continue;
@@ -344,13 +331,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 j += 1;
             }
 
-            // Truncate `data.items` to `j` by reslicing the raw arena ptr.
-            data.items = core::ptr::slice_from_raw_parts_mut(items.as_mut_ptr(), j);
+            // Truncate `data.items` to `j` by reslicing the arena view.
+            data.items.truncate(j);
 
             // TODO(port): dead branch in Zig — `data.items.len = j;` runs first, so
             // `j == 0 and data.items.len > 0` is always false. Mirrored bug-for-bug.
             #[allow(unreachable_code)]
-            if j == 0 && unsafe { &*data.items }.len() > 0 {
+            if j == 0 && data.items.len() > 0 {
                 return Ok(());
             }
         } else {
@@ -383,8 +370,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // "export * as ns from 'path'"
         if let Some(alias) = &data.alias {
             if p.options.features.replace_exports.count() > 0 {
-                // SAFETY: original_name is arena-owned, valid for 'a.
-                let alias_name = unsafe { arena_str(alias.original_name) };
+                let alias_name = alias.original_name.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias_name).cloned() {
                     let declared = p
                         .declare_symbol(js_ast::symbol::Kind::Other, logger::Loc::EMPTY, alias_name)
@@ -466,8 +452,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if !ident.ref_.is_source_contents_slice() {
                             let symbol = &p.symbols[ident.ref_.inner_index() as usize];
                             if symbol.kind == js_ast::symbol::Kind::Unbound {
-                                // SAFETY: original_name is arena-owned, valid for 'a.
-                                let original_name = unsafe { arena_str(symbol.original_name) };
+                                let original_name = symbol.original_name.slice();
                                 if p.local_type_names.get(original_name).copied() == Some(true) {
                                     // the name points to a type — don't try to declare
                                     // this symbol, drop the statement.
@@ -545,14 +530,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         stmt.loc,
                     ));
                     let items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
-                        alias: std::ptr::from_ref::<[u8]>(b"default"),
+                        alias: js_ast::StoreStr::new(b"default"),
                         alias_loc: data.default_name.loc,
                         name: data.default_name,
                         ..Default::default()
                     }));
                     // PERF(port): was assume_capacity
                     stmts.push(p.s(
-                        S::ExportClause { items: std::ptr::from_mut::<[_]>(items), is_single_line: false },
+                        S::ExportClause { items: crate::StoreSlice::new_mut(items), is_single_line: false },
                         stmt.loc,
                     ));
                 }
@@ -868,8 +853,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let name_ref = data.func.name.expect("infallible: name checked").ref_.expect("infallible: ref bound");
         debug_assert!(name_ref.is_symbol());
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
-        // SAFETY: original_name is arena-owned, valid for 'a.
-        let original_name: &'a [u8] = unsafe { arena_str(name_symbol.original_name) };
+        let original_name: &'a [u8] = name_symbol.original_name.slice();
         let remove_overwritten = name_symbol.remove_overwritten_function_declaration;
 
         // Handle exporting this function from a namespace
@@ -1021,8 +1005,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if was_export_inside_namespace {
             let class_name = data.class.class_name.expect("infallible: name checked");
             let class_name_ref = class_name.ref_.expect("infallible: ref bound");
-            // SAFETY: original_name is arena-owned, valid for 'a.
-            let original_name = unsafe { arena_str(p.symbols[class_name_ref.inner_index() as usize].original_name) };
+            let original_name = p.symbols[class_name_ref.inner_index() as usize].original_name.slice();
             stmts.push(Stmt::assign(
                 p.new_expr(
                     E::Dot {
@@ -1153,7 +1136,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         js_ast::binding::Data::BIdentifier(b) => unsafe { (*b).r#ref },
                         _ => break 'try_register,
                     };
-                    let original_name = unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
+                    let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
                     p.handle_react_refresh_register(
                         stmts,
                         original_name,
@@ -1174,7 +1157,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => break 'try_annotate,
                     };
                     let original_name =
-                        unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
+                        p.symbols[id.inner_index() as usize].original_name.slice();
                     decl.value =
                         Some(p.wrap_value_for_server_component_reference(val, original_name));
                 }
@@ -1314,10 +1297,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if bin.op == js_ast::OpCode::BinAssign
                                 && matches!(bin.left.data, js_ast::ExprData::ECommonjsExportIdentifier(_))
                             {
-                                // last entry's value
-                                let key: &'a [u8] = unsafe {
-                                    arena_str(&raw const p.commonjs_named_exports.keys()[to_convert as usize][..])
-                                };
+                                // last entry's value — `keys()` borrows the map; wrap as
+                                // `StoreStr` so the borrow is detached before re-borrowing
+                                // `commonjs_named_exports` mutably below.
+                                let key: &'a [u8] = js_ast::StoreStr::new(
+                                    &p.commonjs_named_exports.keys()[to_convert as usize][..],
+                                )
+                                .slice();
                                 let last = &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
                                 if !last.needs_decl {
                                     break 'convert;
@@ -1344,7 +1330,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.had_commonjs_named_exports_this_visit = true;
                                 let clause_items = core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
                                     // We want the generated name to not conflict
-                                    alias: std::ptr::from_ref::<[u8]>(key),
+                                    alias: js_ast::StoreStr::new(key),
                                     alias_loc: bin.left.loc,
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: last_loc },
                                     ..Default::default()
@@ -1361,7 +1347,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 );
                                 let export = p.s(
                                     S::ExportClause {
-                                        items: std::ptr::from_mut::<[_]>(clause_items),
+                                        items: crate::StoreSlice::new_mut(clause_items),
                                         is_single_line: true,
                                     },
                                     stmt.loc,
@@ -1374,16 +1360,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                     } else if p.commonjs_replacement_stmts.len() > 0 {
                         // PORT NOTE: Zig directly swaps backing storage; commonjs_replacement_stmts
-                        // is `StmtNodeList = *mut [Stmt]` here, so copy then clear.
-                        // SAFETY: arena-owned slice valid for 'a.
-                        let repl: &[Stmt] = unsafe { &*p.commonjs_replacement_stmts };
+                        // is `StmtNodeList = StoreSlice<Stmt>` here, so copy then clear.
+                        let repl: &[Stmt] = p.commonjs_replacement_stmts.slice();
                         if stmts.is_empty() {
                             *stmts = bun_alloc::vec_from_iter_in(repl.iter().copied(), p.arena);
                         } else {
                             stmts.extend_from_slice(repl);
                         }
-                        p.commonjs_replacement_stmts =
-                            core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0);
+                        p.commonjs_replacement_stmts = StmtNodeList::EMPTY;
 
                         restore_stmt_expr!();
                         return Ok(());
@@ -1465,8 +1449,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if p.options.features.minify_syntax {
             // // trim empty statements
-            // SAFETY: arena-owned slice valid for 'a.
-            let block_stmts: &[Stmt] = unsafe { &*data.stmts };
+            let block_stmts: &[Stmt] = data.stmts.slice();
             if block_stmts.is_empty() {
                 stmts.push(Stmt { data: Stmt::empty().data, loc: stmt.loc });
                 return Ok(());
@@ -1752,7 +1735,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => unreachable!("for-of using must bind an identifier"),
                     };
                     let id_original_name =
-                        unsafe { arena_str(p.symbols[id.r#ref.inner_index() as usize].original_name) };
+                        p.symbols[id.r#ref.inner_index() as usize].original_name.slice();
                     let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
                     let mut first_decls = G::DeclList::init_capacity(1).expect("oom");
@@ -1767,14 +1750,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     );
 
                     let length = if let StmtData::SBlock(b) = data.body.data {
-                        unsafe { &*b.stmts }.len()
+                        b.stmts.len()
                     } else {
                         1
                     };
                     let mut statements: BumpVec<'a, Stmt> = BumpVec::with_capacity_in(1 + length, p.arena);
                     statements.push(first);
                     if let StmtData::SBlock(b) = data.body.data {
-                        statements.extend_from_slice(unsafe { &*b.stmts });
+                        statements.extend_from_slice(b.stmts.slice());
                     } else {
                         statements.push(data.body);
                     }
@@ -1856,7 +1839,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
             // SAFETY: arena-owned slice valid for 'a.
-            let cases = unsafe { &mut *data.cases };
+            let cases = unsafe { data.cases.slice_mut() };
             for i in 0..cases.len() {
                 if let Some(val) = cases[i].value {
                     cases[i].value = Some(p.visit_expr(val));
@@ -1909,7 +1892,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // because we may end up visiting the uses before the declarations.
         // We need to convert the uses into property accesses on the namespace.
         // SAFETY: arena-owned slice valid for 'a.
-        let values = unsafe { &mut *data.values };
+        let values = unsafe { data.values.slice_mut() };
         for value in values.iter() {
             if value.ref_.is_valid() {
                 p.is_exported_inside_namespace.insert(value.ref_, data.arg);
@@ -1939,8 +1922,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Create an assignment for each enum value
         for value in values.iter_mut() {
-            // SAFETY: name is arena-owned, valid for 'a.
-            let name: &'a [u8] = unsafe { arena_str(value.name) };
+            let name: &'a [u8] = value.name.slice();
 
             let mut has_string_value = false;
             if let Some(enum_value) = value.value {
@@ -2096,8 +2078,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // ahead of time before visiting any statements inside the namespace
         // because we may end up visiting the uses before the declarations.
         // We need to convert the uses into property accesses on the namespace.
-        // SAFETY: arena-owned slice valid for 'a.
-        let child_stmts: &[Stmt] = unsafe { &*data.stmts };
+        let child_stmts: &[Stmt] = data.stmts.slice();
         for child_stmt in child_stmts.iter() {
             if let StmtData::SLocal(local) = child_stmt.data {
                 if local.is_export {

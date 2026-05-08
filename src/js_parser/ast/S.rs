@@ -2,15 +2,15 @@
 //!
 //! All slice fields in this module are arena-owned by the parser's
 //! `Stmt.Data.Store` / AST arena and are bulk-freed; they are represented as
-//! raw fat pointers per PORTING.md (arena-owned struct field → raw `*const [T]`).
-// TODO(port): once the AST arena type (`StoreRef` / `&'bump [T]`) is settled,
-// replace every `*const [T]` / `*mut [T]` field below with it in one pass.
+//! `StoreSlice<T>` / `StoreStr` (lifetime-erased arena slice newtypes — see
+//! `crate::StoreSlice` doc).
 
 use crate::ast::{
     Case, Catch, ClauseItem, EnumValue, ExprNodeIndex, Finally, LocRef, Ref, StmtData,
     StmtNodeIndex, StmtNodeList, StmtOrExpr,
 };
 use crate::ast::g as G;
+use crate::{StoreSlice, StoreStr};
 use bun_logger as logger;
 
 pub struct Block {
@@ -20,11 +20,7 @@ pub struct Block {
 
 impl Default for Block {
     fn default() -> Self {
-        Self {
-            // Zig: `&.{}` — empty arena slice. Dangling zero-length fat pointer.
-            stmts: core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
-            close_brace_loc: logger::Loc::EMPTY,
-        }
+        Self { stmts: StmtNodeList::EMPTY, close_brace_loc: logger::Loc::EMPTY }
     }
 }
 
@@ -39,25 +35,17 @@ pub struct SExpr {
 }
 
 pub struct Comment {
-    pub text: *const [u8], // arena-owned
+    pub text: StoreStr, // arena-owned
 }
 
 pub struct Directive {
-    pub value: *const [u8], // arena-owned
+    pub value: StoreStr, // arena-owned
 }
 
+#[derive(Default)]
 pub struct ExportClause {
-    pub items: *mut [ClauseItem], // arena-owned
+    pub items: StoreSlice<ClauseItem>, // arena-owned
     pub is_single_line: bool,
-}
-
-impl Default for ExportClause {
-    fn default() -> Self {
-        Self {
-            items: core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
-            is_single_line: false,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -87,7 +75,7 @@ pub struct TypeScript {}
 pub struct Debugger {}
 
 pub struct ExportFrom {
-    pub items: *mut [ClauseItem], // arena-owned
+    pub items: StoreSlice<ClauseItem>, // arena-owned
     pub namespace_ref: Ref,
     pub import_record_index: u32,
     pub is_single_line: bool,
@@ -114,7 +102,7 @@ impl ExportDefault {
 pub struct Enum {
     pub name: LocRef,
     pub arg: Ref,
-    pub values: *mut [EnumValue], // arena-owned
+    pub values: StoreSlice<EnumValue>, // arena-owned
     pub is_export: bool,
 }
 
@@ -191,7 +179,7 @@ pub struct Try {
 pub struct Switch {
     pub test_: ExprNodeIndex,
     pub body_loc: logger::Loc,
-    pub cases: *mut [Case], // arena-owned
+    pub cases: StoreSlice<Case>, // arena-owned
 }
 
 /// This object represents all of these types of import statements:
@@ -213,7 +201,7 @@ pub struct Import {
     /// when converting this module to a CommonJS module.
     pub namespace_ref: Ref,
     pub default_name: Option<LocRef>, // = None
-    pub items: *mut [ClauseItem], // arena-owned; = &[]
+    pub items: StoreSlice<ClauseItem>, // arena-owned; = &[]
     pub star_name_loc: Option<logger::Loc>, // = None
     pub import_record_index: u32,
     pub is_single_line: bool, // = false
@@ -224,9 +212,7 @@ impl Default for Import {
         Self {
             namespace_ref: Ref::NONE,
             default_name: None,
-            // Zig: `&[_]ClauseItem{}` — empty arena slice. Model as a dangling
-            // zero-length fat pointer so callers can `..Default::default()`.
-            items: core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
+            items: StoreSlice::EMPTY,
             star_name_loc: None,
             import_record_index: u32::MAX,
             is_single_line: false,

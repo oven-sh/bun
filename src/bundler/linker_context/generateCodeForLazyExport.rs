@@ -389,8 +389,9 @@ pub fn generate_code_for_lazy_export(
                     // PORT NOTE: Zig used an arena-backed ArrayList and moved `.items`
                     // into `E.Template`; mirror that by moving into the linker arena
                     // (freed when the linker arena drops).
-                    let parts_slice: *mut [E::TemplatePart] =
-                        arena.alloc_slice_fill_iter(template_parts.into_iter());
+                    let parts_slice = js_ast::StoreSlice::new_mut(
+                        arena.alloc_slice_fill_iter(template_parts.into_iter()),
+                    );
                     value = Expr::init(
                         E::Template {
                             tag: None,
@@ -426,7 +427,7 @@ pub fn generate_code_for_lazy_export(
         js_ast::ExportsKind::Cjs => {
             // SAFETY: `part.stmts` non-empty arena slice.
             // PORT NOTE: parenthesized — `unsafe { … }` at stmt-head parses as a block stmt, not an expr.
-            (unsafe { &mut *part.stmts })[0] = Stmt::assign(
+            (unsafe { part.stmts.slice_mut() })[0] = Stmt::assign(
                 Expr::init(
                     E::Dot {
                         target: Expr::init_identifier(module_ref, stmt.loc),
@@ -464,7 +465,7 @@ pub fn generate_code_for_lazy_export(
             // Otherwise, generate ES6 export statements. These are added as additional
             // parts so they can be tree shaken individually.
             // PORT NOTE: Zig `part.stmts.len = 0` truncates the slice.
-            part.stmts = &mut [];
+            part.stmts = js_ast::StoreSlice::EMPTY;
 
             if let ExprData::EObject(e_object) = &expr.data {
                 for property in e_object.properties.slice() {
@@ -506,7 +507,7 @@ pub fn generate_code_for_lazy_export(
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
                     // PERF(port): was `this.arena().alloc(Stmt, 1)` (arena).
-                    let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
+                    let new_stmts: &mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
                         Stmt::alloc(
                             S::Local {
                                 is_export: true,
@@ -525,7 +526,7 @@ pub fn generate_code_for_lazy_export(
                     ));
                     // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
                     let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
-                    parts[generated.1 as usize].stmts = new_stmts;
+                    parts[generated.1 as usize].stmts = js_ast::StoreSlice::new_mut(new_stmts);
                 }
             }
 
@@ -552,7 +553,7 @@ pub fn generate_code_for_lazy_export(
                     name,
                     b"default",
                 )?;
-                let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
+                let new_stmts: &mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
                     Stmt::alloc(
                         S::ExportDefault {
                             default_name: js_ast::LocRef {
@@ -565,7 +566,7 @@ pub fn generate_code_for_lazy_export(
                     ),
                 ));
                 let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
-                parts[generated.1 as usize].stmts = new_stmts;
+                parts[generated.1 as usize].stmts = js_ast::StoreSlice::new_mut(new_stmts);
             }
         }
     }

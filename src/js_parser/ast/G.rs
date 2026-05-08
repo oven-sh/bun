@@ -6,16 +6,16 @@ use crate::ast::binding::Binding as BindingNodeIndex;
 use crate::ast::expr::Expr as ExprNodeIndex;
 use crate::ast::stmt::Stmt;
 use crate::ast::TypeScript;
-use crate::{flags, ExprData, ExprNodeList, LocRef, StmtNodeList};
+use crate::{flags, ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr};
 
 /// Zig: `G.Fn.flags: Flags.Function.Set`. Downstream crates address the flag
 /// enum via `G::FnFlags::IsExport` etc.; re-export the enum + set type here.
 pub use crate::flags::Function as FnFlags;
 pub use crate::flags::FunctionSet as FnFlagsSet;
 
-// PORT NOTE: all `&'ast mut [T]` arena slices are raw `*mut [T]` in Phase A (per
-// the lib.rs file-doc and S.rs convention). 'ast/'bump threaded crate-wide in
-// Phase B in one pass.
+// PORT NOTE: all `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
+// erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
+// adding a `PhantomData<&'arena ()>` to `StoreSlice` in one pass.
 
 #[derive(Clone, Copy)]
 pub struct Decl {
@@ -35,8 +35,7 @@ impl Default for Decl {
 
 pub struct NamespaceAlias {
     pub namespace_ref: Ref,
-    // TODO(port): arena-owned string slice; revisit as `&'ast [u8]` / StoreRef in Phase B
-    pub alias: *const [u8],
+    pub alias: StoreStr,
 
     pub was_originally_property_access: bool,
 
@@ -47,7 +46,7 @@ impl Default for NamespaceAlias {
     fn default() -> Self {
         Self {
             namespace_ref: Ref::default(),
-            alias: std::ptr::from_ref::<[u8]>(&[]),
+            alias: StoreStr::EMPTY,
             was_originally_property_access: false,
             import_record_index: u32::MAX,
         }
@@ -60,8 +59,7 @@ pub struct ExportStarAlias {
     // Although this alias name starts off as being the same as the statement's
     // namespace symbol, it may diverge if the namespace symbol name is minified.
     // The original alias name is preserved here to avoid this scenario.
-    // TODO(port): arena-owned string slice; revisit as `&'ast [u8]` / StoreRef in Phase B
-    pub original_name: *const [u8],
+    pub original_name: StoreStr,
 }
 
 pub struct Class {
@@ -71,8 +69,7 @@ pub struct Class {
     pub extends: Option<ExprNodeIndex>,
     pub body_loc: logger::Loc,
     pub close_brace_loc: logger::Loc,
-    // TODO(port): arena-owned slice — &'bump mut [Property] once 'bump threaded.
-    pub properties: *mut [Property],
+    pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
 }
@@ -86,7 +83,7 @@ impl Default for Class {
             extends: None,
             body_loc: logger::Loc::EMPTY,
             close_brace_loc: logger::Loc::EMPTY,
-            properties: crate::empty_arena_slice_mut(),
+            properties: StoreSlice::EMPTY,
             has_decorators: false,
             should_lower_standard_decorators: false,
         }
@@ -103,10 +100,7 @@ impl Class {
             return false;
         }
 
-        // SAFETY: `properties` is an arena-owned slice valid for the lifetime of
-        // the AST arena that owns this `Class` (Zig: `[]Property`).
-        let properties = unsafe { &*self.properties };
-        for property in properties.iter() {
+        for property in self.properties.iter() {
             if property.kind == PropertyKind::ClassStaticBlock {
                 return false;
             }
@@ -139,8 +133,7 @@ impl Class {
 // invalid shadowing if left as Comment
 pub struct Comment {
     pub loc: logger::Loc,
-    // TODO(port): arena-owned string slice
-    pub text: *const [u8],
+    pub text: StoreStr,
 }
 
 pub struct ClassStaticBlock {
@@ -270,18 +263,14 @@ impl FnBody {
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(crate::ast::s::Return { value: Some(expr) }, expr.loc)
         });
-        Ok(FnBody {
-            stmts: std::ptr::from_mut::<[Stmt]>(stmts),
-            loc: expr.loc,
-        })
+        Ok(FnBody { stmts: StoreSlice::new_mut(stmts), loc: expr.loc })
     }
 }
 
 pub struct Fn {
     pub name: Option<LocRef>,
     pub open_parens_loc: logger::Loc,
-    // TODO(port): arena-owned slice — &'bump mut [Arg]
-    pub args: *mut [Arg],
+    pub args: StoreSlice<Arg>,
     // This was originally nullable, but doing so I believe caused a miscompilation
     // Specifically, the body was always null.
     pub body: FnBody,
@@ -297,8 +286,8 @@ impl Default for Fn {
         Self {
             name: None,
             open_parens_loc: logger::Loc::EMPTY,
-            args: crate::empty_arena_slice_mut(),
-            body: FnBody { loc: logger::Loc::EMPTY, stmts: crate::empty_arena_slice_mut() },
+            args: StoreSlice::EMPTY,
+            body: FnBody { loc: logger::Loc::EMPTY, stmts: StmtNodeList::EMPTY },
             arguments_ref: None,
             flags: flags::FUNCTION_NONE,
             return_ts_metadata: TypeScript::Metadata::MNone,
@@ -309,9 +298,7 @@ impl Default for Fn {
 impl Fn {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Fn, bun_alloc::AllocError> {
         // PERF(port): Zig arena.alloc + per-index assign; bumpalo equivalent.
-        // SAFETY: `self.args` is an arena-owned `*mut [Arg]` valid for the AST arena lifetime
-        // (Zig: `[]Arg`).
-        let src_args: &[Arg] = unsafe { &*self.args };
+        let src_args: &[Arg] = self.args.slice();
         let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
             args[i] = src_args[i].deep_clone(bump)?;
@@ -319,7 +306,7 @@ impl Fn {
         Ok(Fn {
             name: self.name,
             open_parens_loc: self.open_parens_loc,
-            args: std::ptr::from_mut::<[Arg]>(args),
+            args: StoreSlice::new_mut(args),
             body: FnBody {
                 loc: self.body.loc,
                 stmts: self.body.stmts,

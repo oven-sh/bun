@@ -749,11 +749,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        // `Template.parts` is `*mut [TemplatePart]` (arena-owned, mutable provenance
-        // preserved end-to-end; Zig: `[]E.TemplatePart`).
-        // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
-        let parts: &mut [E::TemplatePart] = unsafe { &mut *e_.parts };
-        for part in parts.iter_mut() {
+        // `Template.parts` is arena-owned (Zig: `[]E.TemplatePart`).
+        for part in e_.parts_mut().iter_mut() {
             part.value = p.visit_expr(part.value);
         }
 
@@ -1484,14 +1481,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.decorator_class_name = None;
 
                         if matches!(e2.left.data.tag(), Tag::EIdentifier) {
+                            let name = p.symbols
+                                [e2.left.data.e_identifier().expect("infallible: variant checked").ref_.inner_index()
+                                    as usize]
+                                .original_name;
                             e2.right = p.maybe_keep_expr_symbol_name(
                                 e2.right,
-                                unsafe {
-                                    &*p.symbols
-                                        [e2.left.data.e_identifier().expect("infallible: variant checked").ref_.inner_index()
-                                            as usize]
-                                        .original_name
-                                },
+                                name.slice(),
                                 was_anonymous_named_expr,
                             );
                         }
@@ -1630,13 +1626,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if let Some(val) = property.value {
                     if matches!(val.data.tag(), Tag::EIdentifier) {
+                        let name = p.symbols
+                            [val.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
+                            .original_name;
                         property.initializer = Some(p.maybe_keep_expr_symbol_name(
                             property.initializer.expect("unreachable"),
-                            unsafe {
-                                &*p.symbols
-                                    [val.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
-                                    .original_name
-                            },
+                            name.slice(),
                             was_anonymous_named_expr,
                         ));
                     }
@@ -1738,7 +1733,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // https://github.com/tc39/ecma262/issues/2062.
                 if e_.optional_chain.is_none()
                     && target_was_identifier_before_visit
-                    && unsafe { &*p.symbols[ident.ref_.inner_index() as usize].original_name }
+                    && p.symbols[ident.ref_.inner_index() as usize].original_name.slice()
                         == b"eval"
                 {
                     e_.is_direct_eval = true;
@@ -2068,15 +2063,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if p.options.features.react_fast_refresh || p.options.features.server_components.is_server_side() {
             'try_record_hook: {
                 let original_name: &[u8] = match &e_.target.data {
-                    Data::EIdentifier(id) => unsafe {
-                        &*p.symbols[id.ref_.inner_index() as usize].original_name
-                    },
-                    Data::EImportIdentifier(id) => unsafe {
-                        &*p.symbols[id.ref_.inner_index() as usize].original_name
-                    },
-                    Data::ECommonjsExportIdentifier(id) => unsafe {
-                        &*p.symbols[id.ref_.inner_index() as usize].original_name
-                    },
+                    Data::EIdentifier(id) => p.symbols[id.ref_.inner_index() as usize].original_name.slice(),
+                    Data::EImportIdentifier(id) => p.symbols[id.ref_.inner_index() as usize].original_name.slice(),
+                    Data::ECommonjsExportIdentifier(id) => p.symbols[id.ref_.inner_index() as usize].original_name.slice(),
                     Data::EDot(dot) => dot.name.slice(),
                     _ => break 'try_record_hook,
                 };
@@ -2103,9 +2092,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // Also check for `React.useState(...)`
                     if let Data::EDot(dot) = &e_.target.data {
                         if let Data::EImportIdentifier(id) = &dot.target.data {
-                            let name = unsafe {
-                                &*p.symbols[id.ref_.inner_index() as usize].original_name
-                            };
+                            let name = p.symbols[id.ref_.inner_index() as usize].original_name.slice();
                             break 'check_for_usestate name == b"React";
                         }
                     }
@@ -2291,9 +2278,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         // PERF(port): was arena dupe — profile in Phase B
-        // SAFETY: `body.stmts` is an arena-owned slice (StmtNodeList = *mut [Stmt]).
-        let body_slice: &[Stmt] = unsafe { &*e_.body.stmts };
-        let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(body_slice);
+        let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
 
         // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
         let args_mut: &mut [G::Arg] = unsafe { e_.args.slice_mut() };
@@ -2349,12 +2334,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 unsafe { stmts.as_mut().push(decl) };
 
                 p.handle_react_refresh_post_visit_function_body(&mut stmts_list, hook);
-                e_.body.stmts = std::ptr::from_mut::<[Stmt]>(stmts_list.into_bump_slice_mut());
+                e_.body.stmts = crate::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
 
                 return p.get_react_refresh_hook_signal_init(hook, expr);
             }
         }
-        e_.body.stmts = std::ptr::from_mut::<[Stmt]>(stmts_list.into_bump_slice_mut());
+        e_.body.stmts = crate::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
         expr
     }
     fn e_function(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
@@ -2413,7 +2398,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             final_expr = p.keep_expr_symbol_name(
                 final_expr,
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                unsafe { &*p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize].original_name },
+                p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize].original_name.slice(),
             );
         }
 

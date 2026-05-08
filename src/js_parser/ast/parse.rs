@@ -271,7 +271,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             ts_decorators,
             class_keyword,
             body_loc,
-            properties: std::ptr::from_mut::<[G::Property]>(properties.into_bump_slice_mut()),
+            properties: crate::StoreSlice::new_mut(properties.into_bump_slice_mut()),
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
@@ -281,7 +281,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn parse_template_parts(
         &mut self,
         include_raw: bool,
-    ) -> Result<(*mut [E::TemplatePart], logger::Loc), Error> {
+    ) -> Result<(crate::StoreSlice<E::TemplatePart>, logger::Loc), Error> {
         let p = self;
         let mut parts = BumpVec::<E::TemplatePart>::with_capacity_in(1, p.arena);
         // Allow "in" inside template literals
@@ -314,11 +314,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         p.allow_in = old_allow_in;
 
-        // `into_bump_slice_mut()` leaks into the arena and returns the unique
-        // `&'bump mut [T]`; decay to `*mut` for storage in `E::Template.parts`
+        // `from_bump` leaks into the arena and wraps the unique `&'bump mut [T]`
         // so mutable provenance is preserved for the visit pass.
-        let slice: *mut [E::TemplatePart] = parts.into_bump_slice_mut();
-        Ok((slice, tail_loc))
+        Ok((crate::StoreSlice::from_bump(parts), tail_loc))
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
@@ -1045,7 +1043,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     p.lexer.expect(T::TCloseBracket)?;
                     return Ok(p.b(
                         B::Array {
-                            items: std::ptr::from_mut::<[ArrayBinding]>(items.into_bump_slice_mut()),
+                            items: crate::StoreSlice::new_mut(items.into_bump_slice_mut()),
                             has_spread,
                             is_single_line,
                         },
@@ -1103,7 +1101,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     return Ok(p.b(
                         B::Object {
-                            properties: std::ptr::from_mut::<[B::Property]>(properties.into_bump_slice_mut()),
+                            properties: crate::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                             is_single_line,
                         },
                         loc,
@@ -1464,8 +1462,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
-                                let value: *const [u8] = std::ptr::from_ref::<[u8]>(bytes);
-                                stmt = Stmt::alloc(S::Directive { value }, stmt.loc);
+                                stmt = Stmt::alloc(S::Directive { value: crate::StoreStr::new(bytes) }, stmt.loc);
                             }
                         }
                     }

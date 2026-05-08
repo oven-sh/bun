@@ -238,8 +238,7 @@ pub fn rename_symbols_in_chunk(
                 if c.options.output_format.keep_es6_import_export_syntax() {
                     let import_records = all_import_records[source_index as usize].slice();
                     for part in parts.iter() {
-                        // SAFETY: `Part.stmts` is an arena-owned slice valid for the AST lifetime.
-                        for stmt in unsafe { &*part.stmts } {
+                        for stmt in part.stmts.slice() {
                             match stmt.data {
                                 StmtData::SImport(import) => {
                                     if !import_records[import.import_record_index as usize]
@@ -253,8 +252,7 @@ pub fn rename_symbols_in_chunk(
                                             }
                                         }
 
-                                        // SAFETY: `S::Import.items` is an arena-owned slice.
-                                        for item in unsafe { &*import.items } {
+                                        for item in import.items.slice() {
                                             if let Some(ref_) = item.name.ref_ {
                                                 r.add_top_level_symbol(ref_);
                                             }
@@ -276,8 +274,7 @@ pub fn rename_symbols_in_chunk(
                                     {
                                         r.add_top_level_symbol(export_.namespace_ref);
 
-                                        // SAFETY: `S::ExportFrom.items` is an arena-owned slice.
-                                        for item in unsafe { &*export_.items } {
+                                        for item in export_.items.slice() {
                                             if let Some(ref_) = item.name.ref_ {
                                                 r.add_top_level_symbol(ref_);
                                             }

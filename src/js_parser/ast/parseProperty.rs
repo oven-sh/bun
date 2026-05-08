@@ -109,8 +109,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // E::Function payload after boxing rather than copying `func`.
         let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
-        // SAFETY: G::Fn.args is an arena-owned slice valid for 'a.
-        let args = unsafe { &*func.args };
+        let args = func.args.slice();
         let value = p.new_expr(E::Function { func }, loc);
 
         // Enforce argument rules for accessors

@@ -1698,7 +1698,7 @@ fn on_incremental_visualizer_corked(resp: AnyResponse) {
     let code = if Environment::CODEGEN_EMBED {
         include_bytes!("incremental_visualizer.html").as_slice()
     } else {
-        bun_core::runtime_embed_file(bun_core::EmbedKind::SrcEager, "bake/incremental_visualizer.html").as_bytes()
+        bun_core::runtime_embed_file!(bun_core::EmbedKind::SrcEager, "bake/incremental_visualizer.html").as_bytes()
     };
     resp.end(code, false);
 }
@@ -1711,7 +1711,7 @@ fn on_memory_visualizer_corked(resp: AnyResponse) {
     let code = if Environment::CODEGEN_EMBED {
         include_bytes!("memory_visualizer.html").as_slice()
     } else {
-        bun_core::runtime_embed_file(bun_core::EmbedKind::SrcEager, "bake/memory_visualizer.html").as_bytes()
+        bun_core::runtime_embed_file!(bun_core::EmbedKind::SrcEager, "bake/memory_visualizer.html").as_bytes()
     };
     resp.end(code, false);
 }
@@ -5047,10 +5047,10 @@ impl DevServer {
         #[cfg(not(feature = "codegen_embed"))]
         {
             buf.extend_from_slice(pre.as_bytes());
-            buf.extend_from_slice(bun_core::runtime_embed_file(
-                bun_core::EmbedKind::CodegenEager,
-                "bake.error.js",
-            ).as_bytes());
+            buf.extend_from_slice(
+                bun_core::runtime_embed_file!(bun_core::EmbedKind::CodegenEager, "bake.error.js")
+                    .as_bytes(),
+            );
             buf.extend_from_slice(post.as_bytes());
         }
 

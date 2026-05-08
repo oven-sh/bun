@@ -126,11 +126,11 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const survey = await agent(
     `Survey ALL tests in /root/bun-5. Round ${round}.
 
-\`mkdir -p ${DIAG} ${GDIAG}; touch ${GDIAG}/triaged-slow.txt\`. **Cap at ${FILE_CAP} files, EXCLUDING triaged-slow**: \`ls ${TEST_GLOB} | sort | grep -vxFf ${GDIAG}/triaged-slow.txt | shuf --random-source=/dev/zero | head -${FILE_CAP} > ${GDIAG}/all.txt\`.
+\`mkdir -p ${DIAG} ${GDIAG}; touch ${GDIAG}/triaged-slow.txt ${GDIAG}/passing.txt\`. **List ALL files, EXCLUDING triaged-slow + already-passing**: \`find ${TEST_GLOB.replace("/**/*.test.{js,ts}", "")} \\( -name '*.test.ts' -o -name '*.test.js' \\) | sort | grep -vxFf ${GDIAG}/triaged-slow.txt | grep -vxFf ${GDIAG}/passing.txt > ${GDIAG}/all.txt\`. **Round-${round} working set** (${round === 1 ? `first ${FILE_CAP}` : `next ${FILE_CAP} not-yet-covered + still-failing from round ${round - 1}`}): \`{ ${round === 1 ? "" : `cat ${GDIAG}/failing-r${round - 1}.txt 2>/dev/null; `}head -${FILE_CAP * round} ${GDIAG}/all.txt | tail -${FILE_CAP}; } | sort -u > ${GDIAG}/working-r${round}.txt\`.
 
 **Baseline (cache, only first time):** \`cat ${GDIAG}/all.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); test -f ${DIAG}/\$slug.baseline || USE_SYSTEM_BUN=1 timeout 15 bun test {} > ${DIAG}/\$slug.baseline 2>&1'\`
 
-**Probe (parallel 16):** ${round === 1 ? `\`cat ${GDIAG}/all.txt` : `Only re-run previously-failing files (round-${round - 1} failures + 10 random previously-passing for regression check): \`{ cat ${GDIAG}/failing-r${round - 1}.txt; shuf -n 10 ${GDIAG}/passing.txt; }`} | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); timeout 15 ./build/debug/bun-debug test {} > ${DIAG}/\$slug.log 2>&1; echo "{}|\$?" >> ${GDIAG}/results-r${round}.txt'\`. Write \`${GDIAG}/failing-r${round}.txt\` and update \`${GDIAG}/passing.txt\` (cumulative).
+**Probe (parallel 16):** \`cat ${GDIAG}/working-r${round}.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); timeout 15 ./build/debug/bun-debug test {} > ${DIAG}/\$slug.log 2>&1; echo "{}|\$?" >> ${GDIAG}/results-r${round}.txt'\`. Write \`${GDIAG}/failing-r${round}.txt\` (exit≠0/1) and append exit-0 files to \`${GDIAG}/passing.txt\` (cumulative — never re-surveyed).
 
 **Triage — only DIVERGENCES from baseline are bugs:**
 For each file: rust_rc from results, baseline_rc = parse \`${DIAG}/<slug>.baseline\` (look for "X pass" or exit marker; if .baseline is empty/timeout-only, baseline_rc=124).

@@ -629,6 +629,10 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(output);
+  // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
+  // must wait on it — `zigInputs` is the implicit-dep list both zig and the
+  // cargo edge consume.
+  o.zigInputs.push(output);
 }
 
 function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {

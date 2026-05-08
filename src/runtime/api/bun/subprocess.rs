@@ -141,7 +141,7 @@ pub struct Subprocess<'a> {
     /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
     /// boundary by raw identity, so wrapping in `Arc` would double-count and
     /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
-    pub process: *mut Process,
+    pub process: bun_ptr::BackRef<Process>,
     pub stdin: Writable<'a>,
     pub stdout: Readable,
     pub stderr: Readable,
@@ -151,8 +151,8 @@ pub struct Subprocess<'a> {
     /// Terminal attached to this subprocess (if spawned with terminal option)
     pub terminal: Option<NonNull<Terminal>>,
 
-    // Raw pointer (Zig: `*jsc.JSGlobalObject`) — JSC global outlives every Subprocess.
-    pub global_this: *const JSGlobalObject,
+    // Zig: `*jsc.JSGlobalObject` — JSC global outlives every Subprocess.
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub observable_getters: EnumSet<ObservableGetter>,
     pub closed: EnumSet<StdioKind>,
     pub this_value: JsRef,
@@ -266,10 +266,7 @@ impl<'a> Subprocess<'a> {
     /// original semantics.
     #[inline]
     pub fn process(&self) -> &Process {
-        // SAFETY: `process` is set at construction from a freshly-boxed
-        // `Process` and released only in `finalize()`; every caller is on the
-        // owning JS thread before `finalize()` runs.
-        unsafe { &*self.process }
+        self.process.get()
     }
 
     /// # Safety
@@ -279,16 +276,14 @@ impl<'a> Subprocess<'a> {
         // SAFETY: see `process()` — Zig `*Process` semantics. `&mut self`
         // guarantees no other `&Process`/`&mut Process` is live through this
         // `Subprocess`; `Process` itself is single-mutator (JS thread).
-        unsafe { &mut *self.process }
+        unsafe { self.process.get_mut() }
     }
 
     /// Borrow the stored JSC global. Zig stores `*jsc.JSGlobalObject` raw; the
     /// global is guaranteed to outlive every Subprocess it created.
     #[inline]
-    pub fn global_this(&self) -> &'a JSGlobalObject {
-        // SAFETY: `global_this` is set at construction from a live `&JSGlobalObject`
-        // and the JSC global outlives this Subprocess (it owns the heap that owns us).
-        unsafe { &*self.global_this }
+    pub fn global_this(&self) -> &JSGlobalObject {
+        self.global_this.get()
     }
 
     /// Intrusive `ref()` — Zig's `pub const ref = ref_count.ref`.
@@ -477,7 +472,8 @@ impl Subprocess<'_> {
 
         // Upgrade or downgrade the reference based on pending activity
         if has_pending {
-            self.this_value.upgrade(self.global_this());
+            let global_this = self.global_this;
+            self.this_value.upgrade(global_this.get());
         } else {
             self.this_value.downgrade();
         }
@@ -953,7 +949,10 @@ impl Subprocess<'_> {
     pub fn on_process_exit(&mut self, process: *mut Process, status: Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.try_get().unwrap_or(JSValue::ZERO);
-        let global_this = self.global_this();
+        // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
+        // (mirrors the original `&'a` return — the global outlives `self`).
+        let global_this = self.global_this;
+        let global_this = global_this.get();
         let jsc_vm = global_this.bun_vm().as_mut();
         this_jsvalue.ensure_still_alive();
         self.pid_rusage = Some(*rusage);
@@ -1298,7 +1297,7 @@ impl Subprocess<'_> {
         // no code path reads `this.process` after this (finalize runs once).
         // SAFETY: `process` is the live Box-backed Process; deref() frees it
         // when its own ThreadSafeRefCount reaches zero.
-        unsafe { (*this.process).deref() };
+        unsafe { (*this.process.as_ptr()).deref() };
 
         if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             // SAFETY: single JS thread; `timer_all()` points into the boxed
@@ -1408,9 +1407,9 @@ impl Subprocess<'_> {
             }
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
-                let global_this = self.global_this();
+                let global_this = self.global_this;
                 let _ =
-                    node_cluster_binding::handle_internal_message_primary(global_this, self, data);
+                    node_cluster_binding::handle_internal_message_primary(global_this.get(), self, data);
             }
         }
     }
@@ -1419,7 +1418,8 @@ impl Subprocess<'_> {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
         let this_jsvalue = self.this_value.try_get().unwrap_or(JSValue::ZERO);
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
-        let global_this = self.global_this();
+        let global_this = self.global_this;
+        let global_this = global_this.get();
         self.update_has_pending_activity();
 
         if !this_jsvalue.is_empty() {

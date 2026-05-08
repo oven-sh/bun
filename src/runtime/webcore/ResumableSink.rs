@@ -70,12 +70,11 @@ pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
     js_this: JsRef,
     /// We can have a detached self, and still have a strong reference to the stream
     stream: crate::webcore::readable_stream::Strong,
-    /// Raw pointer rather than `&'a JSGlobalObject` because this struct is the
+    /// `BackRef` rather than `&'a JSGlobalObject` because this struct is the
     /// `m_ctx` payload of a JSC heap cell — it crosses the FFI boundary
     /// (`${T}__create`/`${T}__fromJS`) and outlives any Rust borrow scope. The
-    /// global outlives every JS object it allocates, so dereferencing in
-    /// [`Self::global`] is sound for the lifetime of `self`.
-    global_this: *const JSGlobalObject,
+    /// global outlives every JS object it allocates (back-reference invariant).
+    global_this: bun_ptr::BackRef<JSGlobalObject>,
     context: *mut Context,
     high_water_mark: i64,
     status: Status,
@@ -92,7 +91,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     /// directly so the borrow is not tied to `&self`.
     #[inline]
     pub fn global(&self) -> &JSGlobalObject {
-        unsafe { &*self.global_this }
+        self.global_this.get()
     }
 
     /// Current backpressure high-water mark in bytes (initialized to 16384,
@@ -169,7 +168,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             ref_count: Cell::new(ref_count),
             js_this: JsRef::empty(),
             stream: crate::webcore::readable_stream::Strong::default(),
-            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+            global_this: bun_ptr::BackRef::new(global_this),
             context,
             high_water_mark: 16384,
             status: Status::Started,
@@ -385,8 +384,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             return;
         }
         if let Some(js_this) = self.js_this.try_get() {
-            // SAFETY: see [`Self::global`].
-            let global_object = unsafe { &*self.global_this };
+            let global_object = self.global_this;
+            let global_object = global_object.get();
 
             if let Some(ondrain) = Self::get_drain(js_this) {
                 self.status = Status::Started;
@@ -422,8 +421,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             js_this.ensure_still_alive();
 
             let on_cancel_callback = Self::get_cancel(js_this);
-            // SAFETY: see [`Self::global`].
-            let global_object = unsafe { &*self.global_this };
+            let global_object = self.global_this;
+            let global_object = global_object.get();
 
             // detach first so if cancel calls end will be a no-op
             self.detach_js();
@@ -453,8 +452,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 
     fn detach_js(&mut self) {
         if let Some(js_this) = self.js_this.try_get() {
-            // SAFETY: see [`Self::global`].
-            let global = unsafe { &*self.global_this };
+            let global = self.global_this;
+            let global = global.get();
             Self::set_drain(js_this, global, JSValue::ZERO);
             Self::set_cancel(js_this, global, JSValue::ZERO);
             Self::set_stream(js_this, global, JSValue::ZERO);
@@ -491,8 +490,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         if is_done {
             let err: Option<JSValue> = 'brk_err: {
                 if let StreamResult::Err(e) = &stream {
-                    // SAFETY: see [`Self::global`].
-                    let (js_err, was_strong) = e.to_js_weak(unsafe { &*self.global_this });
+                    let (js_err, was_strong) = e.to_js_weak(self.global_this.get());
                     js_err.ensure_still_alive();
                     if was_strong == crate::webcore::streams::WasStrong::Strong {
                         js_err.unprotect();
@@ -517,8 +515,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             return;
         }
         self.status = Status::Done;
-        // SAFETY: see [`Self::global`].
-        let global_object = unsafe { &*self.global_this };
+        let global_object = self.global_this;
+        let global_object = global_object.get();
         if let Some(stream_) = self.stream.get(global_object) {
             if let crate::webcore::readable_stream::Source::Bytes(bytes_ptr) = stream_.ptr {
                 // SAFETY: ByteStream is live while the ReadableStream.Strong holds it.

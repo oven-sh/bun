@@ -2600,10 +2600,12 @@ impl H2FrameParser {
             return;
         }
         self.ref_();
+        // global_this is `GlobalRef` (JSC_BORROW); copy out so the borrow is
+        // detached from `&mut self` for the call below.
+        let global_this = self.global_this;
         AutoFlusher::register_deferred_microtask_with_type_unchecked::<H2FrameParser>(
             self,
-            // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null.
-            unsafe { &*self.global_this }.bun_vm(),
+            global_this.bun_vm(),
         );
     }
 
@@ -2611,10 +2613,10 @@ impl H2FrameParser {
         if !self.auto_flusher.registered {
             return;
         }
+        let global_this = self.global_this;
         AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<H2FrameParser>(
             self,
-            // SAFETY: global_this is JSC_BORROW (set at construction from &JSGlobalObject); outlives self, never null.
-            unsafe { &*self.global_this }.bun_vm(),
+            global_this.bun_vm(),
         );
         self.deref();
     }

@@ -115,35 +115,9 @@ impl<T: ?Sized> BackRef<T> {
         BackRef(unsafe { core::ptr::NonNull::new_unchecked(p) })
     }
 
-    /// Wrap a raw const pointer.
-    ///
-    /// # Safety
-    /// Same as [`from_raw`]: `p` must be non-null, aligned, and the pointee
-    /// must outlive every `BackRef` derived from the result. The pointee is
-    /// only ever accessed via `&T` (shared) through this constructor's result;
-    /// callers must not later use [`get_mut`] on a `BackRef` built from a
-    /// genuinely read-only location.
-    #[inline]
-    pub const unsafe fn from_raw_const(p: *const T) -> Self {
-        // SAFETY: caller contract — `p` is non-null. `cast_mut` is a
-        // provenance-preserving no-op; mutation is gated by `get_mut`'s
-        // separate contract.
-        BackRef(unsafe { core::ptr::NonNull::new_unchecked(p as *mut T) })
-    }
-
-    #[inline]
-    pub const fn from_non_null(p: core::ptr::NonNull<T>) -> Self {
-        BackRef(p)
-    }
-
     #[inline]
     pub const fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
-    }
-
-    #[inline]
-    pub const fn as_non_null(self) -> core::ptr::NonNull<T> {
-        self.0
     }
 
     /// Borrow the pointee.
@@ -325,10 +299,16 @@ impl<T: core::fmt::Debug> core::fmt::Debug for RawSlice<T> {
     }
 }
 
-// SAFETY: same rationale as `StoreSlice` / `BackRef` — wraps a raw pointer
-// whose pointee's thread-safety is governed by `T`. Shared access (`slice()`)
-// yields `&[T]`, which requires `T: Sync` to share across threads; sending the
-// pointer requires `T: Send` so the eventual `&[T]` on the receiving thread is
-// sound. This matches `&[T]: Send/Sync` auto-trait bounds.
+// SAFETY: `RawSlice<T>` only ever vends `&[T]` (never `&mut [T]` / owned `T`),
+// so its auto-trait bounds follow `&[T]` exactly: `&[T]: Send ⇔ T: Sync` and
+// `&[T]: Sync ⇔ T: Sync`. The wrapped raw pointer carries no ownership.
 unsafe impl<T: Sync> Send for RawSlice<T> {}
 unsafe impl<T: Sync> Sync for RawSlice<T> {}
+
+// SAFETY: `BackRef<T>` is morally `&T` (Deref/get) with an unsafe `get_mut`
+// escape hatch whose exclusivity is the caller's per-site obligation. Match
+// `&T` auto-trait bounds: `&T: Send ⇔ T: Sync`, `&T: Sync ⇔ T: Sync`. Holders
+// that additionally call `get_mut` across threads must separately ensure
+// `T: Send` at the call site (no different from `NonNull<T>` today).
+unsafe impl<T: ?Sized + Sync> Send for BackRef<T> {}
+unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}

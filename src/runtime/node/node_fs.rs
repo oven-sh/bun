@@ -562,7 +562,7 @@ pub type UVFSRequest<R, A, const F: NodeFSFunctionEnum> = AsyncFSTask<R, A, F>;
 pub struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
     pub promise: JSPromiseStrong,
     pub args: A,
-    pub global_object: *const JSGlobalObject,
+    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     pub req: uv::fs_t,
     pub result: Maybe<R>,
     pub r#ref: KeepAlive,
@@ -579,8 +579,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
     /// null; the JSC global outlives every task (JSC_BORROW per LIFETIMES.tsv).
     #[inline]
     pub fn global_object(&self) -> &JSGlobalObject {
-        // SAFETY: never null (set in `create`); JSC_BORROW — global outlives task.
-        unsafe { &*self.global_object }
+        self.global_object.get()
     }
 
     pub fn create(
@@ -597,7 +596,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
             // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
             // `R`; never construct an all-zero `Result` value.
             result: Err(sys::Error::default()),
-            global_object: global_object as *const _,
+            global_object: bun_ptr::BackRef::new(global_object),
             // SAFETY: all-zero is a valid uv::fs_t (libuv `#[repr(C)]` POD).
             req: unsafe { core::mem::zeroed() },
             r#ref: KeepAlive::default(),
@@ -1006,7 +1005,7 @@ impl<R, A, const F: NodeFSFunctionEnum> bun_event_loop::Taskable for UVFSRequest
 pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
     pub promise: JSPromiseStrong,
     pub args: A,
-    pub global_object: *const JSGlobalObject,
+    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     pub task: WorkPoolTask,
     pub result: Maybe<R>,
     pub r#ref: KeepAlive,
@@ -1029,8 +1028,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
     /// Safe to call from the work-pool thread for `bun_vm_concurrently()`.
     #[inline]
     pub fn global_object(&self) -> &JSGlobalObject {
-        // SAFETY: never null (set in `create`); JSC_BORROW — global outlives task.
-        unsafe { &*self.global_object }
+        self.global_object.get()
     }
 
     pub fn create(
@@ -1046,7 +1044,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
             // the JS thread. `Maybe<R>` is `Result<R, sys::Error>` and may be
             // niche-optimised; never construct an all-zero `Result` value.
             result: Err(sys::Error::default()),
-            global_object: std::ptr::from_ref(global_object),
+            global_object: bun_ptr::BackRef::new(global_object),
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
@@ -1815,7 +1813,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 pub struct AsyncReaddirRecursiveTask {
     pub promise: JSPromiseStrong,
     pub args: args::Readdir,
-    pub global_object: *const JSGlobalObject,
+    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     pub task: WorkPoolTask,
     pub r#ref: KeepAlive,
     pub tracker: AsyncTaskTracker,
@@ -1949,7 +1947,7 @@ impl AsyncReaddirRecursiveTask {
     /// is sound from both the JS thread and the work pool.
     #[inline]
     pub fn global_object(&self) -> &JSGlobalObject {
-        unsafe { &*self.global_object }
+        self.global_object.get()
     }
 
     /// `bun.default_allocator.free(this.root_path.slice())` — paired with the
@@ -2019,7 +2017,7 @@ impl AsyncReaddirRecursiveTask {
             promise: JSPromiseStrong::init(global_object),
             args,
             has_result: AtomicBool::new(false),
-            global_object: std::ptr::from_ref(global_object),
+            global_object: bun_ptr::BackRef::new(global_object),
             task: work_pool_task(Self::work_pool_callback),
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
@@ -2193,8 +2191,9 @@ impl AsyncReaddirRecursiveTask {
         // NOTE: cannot route through `self.global_object()` here -- the returned
         // borrow would be tied to `&self` and conflict with the `&mut self.*`
         // field accesses below, and it must also stay valid past `Self::destroy`.
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
-        let global_object = unsafe { &*self.global_object };
+        // BackRef is `Copy`; copy it to a local so the borrow is detached from `self`.
+        let global_object = self.global_object;
+        let global_object = global_object.get();
         let success = self.pending_err.is_none();
         let promise_value = self.promise.value();
         // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).

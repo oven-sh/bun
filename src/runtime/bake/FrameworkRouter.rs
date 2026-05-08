@@ -1962,10 +1962,9 @@ impl JSFrameworkRouter {
                     let params_obj =
                         JSValue::create_empty_object(global, params_out.params.len() as usize);
                     for param in params_out.params.slice() {
-                        // SAFETY: key/value borrow from `path`/pattern, both live here
-                        let (key, value) = unsafe { (&*param.key, &*param.value) };
-                        let value_str = bun_str::String::clone_utf8(value);
-                        params_obj.put(global, key, value_str.to_js(global)?);
+                        // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
+                        let value_str = bun_str::String::clone_utf8(param.value.slice());
+                        params_obj.put(global, param.key.slice(), value_str.to_js(global)?);
                     }
                     params_obj
                 } else {

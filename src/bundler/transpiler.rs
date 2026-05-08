@@ -27,8 +27,8 @@ pub type ResolveQueue = std::collections::VecDeque<resolver::Result>;
 
 /// Spec `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig:265). Defined at
 /// this tier (lowest crate that needs to name it) and re-exported from
-/// `bun_jsc::BunPluginTarget` so there is exactly one enum — no transmute
-/// between mirror types.
+/// `bun_jsc::BunPluginTarget` so there is exactly one enum (no bridge between
+/// mirror types).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BunPluginTarget {

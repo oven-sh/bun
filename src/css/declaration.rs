@@ -235,7 +235,7 @@ impl<'bump> DeclarationBlock<'bump> {
 // the crate-wide `'bump`-erasure placeholder until `'bump` threads through
 // `CssRule`. `parse()` therefore lives on the `'static` instantiation and
 // erases the parser arena's lifetime at the boundary; this collapses together
-// with the `transmute` in `rules/style.rs::minify` when `CssRule<'bump, R>`
+// with the lifetime cast in `rules/style.rs::minify` when `CssRule<'bump, R>`
 // lands.
 
 impl DeclarationBlock<'static> {

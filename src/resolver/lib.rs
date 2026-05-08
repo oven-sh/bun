@@ -50,8 +50,7 @@ pub use bun_options_types::GlobalCache::GlobalCache;
 /// `FilenameStore::append_*` / `DirnameStore::append_*`, both of which are
 /// `'static` BSS singletons that never free (LIFETIMES.tsv:
 /// `resolver/fs.zig:Entry.abs_path → STATIC`). Centralizing the lifetime
-/// extension here removes the per-call-site `transmute::<&[u8], &'static [u8]>`
-/// (PORTING.md §Forbidden patterns).
+/// extension here removes the per-call-site erasure.
 ///
 /// TODO(port): once `bun_string::PathString::slice` is changed to return
 /// `&'static [u8]` directly, this helper becomes a no-op forwarder.

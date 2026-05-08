@@ -248,9 +248,8 @@ pub(super) mod dc {
     /// PORT NOTE) forces `DeclarationBlock::minify` to expect
     /// `DeclarationHandler<'static>`; the handlers in `MinifyContext` carry the
     /// real `'bump`. Both reference the same arena. Centralized here so the
-    /// erasure lives in ONE place (PORTING.md §Forbidden: do not add new
-    /// open-coded lifetime-extension transmutes); collapses together with
-    /// `decl_block_static` when `CssRule<'bump, R>` lands.
+    /// erasure lives in ONE place; collapses together with `decl_block_static`
+    /// when `CssRule<'bump, R>` lands.
     #[inline]
     pub fn decl_handler_static<'a>(
         h: &'a mut crate::DeclarationHandler<'_>,

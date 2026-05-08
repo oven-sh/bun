@@ -943,14 +943,14 @@ impl uv_write_t {
         on_write: fn(&mut T, ReturnCode),
     ) -> ReturnCode {
         // Stash the Rust fn-pointer in `reserved[0]` (libuv never touches the
-        // 6-slot `reserved` array on `uv_req_t`) as a `usize`, recovered via
-        // `transmute<usize, fn>` in the thunk.
+        // 6-slot `reserved` array on `uv_req_t`) as a `usize`, recovered in the
+        // thunk below.
         self.data = context.cast();
         self.reserved[0] = on_write as usize as *mut c_void;
         unsafe extern "C" fn thunk<T>(req: *mut uv_write_t, status: ReturnCode) {
             // SAFETY: `data`/`reserved[0]` were set immediately before
             // `uv_write` below; libuv invokes this exactly once with the same
-            // `req` pointer. `usize` → `fn` transmute round-trips the address
+            // `req` pointer. The `usize` → `fn` cast round-trips the address
             // written by `on_write as usize` above (Win64: same width).
             unsafe {
                 let cb: fn(&mut T, ReturnCode) =

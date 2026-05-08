@@ -1845,7 +1845,7 @@ impl<'a> LinkerContext<'a> {
         // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
         // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
         // Zig threads it as a raw pointer (no lifetimes). Rebind via a
-        // lifetime-only transmute — sound because the renamer's borrowed data
+        // lifetime-only cast — sound because the renamer's borrowed data
         // (symbol map, source) strictly outlives this call.
         // SAFETY: lifetime-only erase; layout identical across instantiations.
         let r: renamer::Renamer<'_, '_> =

@@ -260,15 +260,13 @@ pub(crate) const fn empty_arena_str() -> ArenaStr {
 // ─── StoreStr — arena-owned string slice (StoreRef's [u8] sibling) ──────────
 //
 // AST string fields (`E::Dot.name`, `E::String.data`, …) borrow from the parse
-// arena and are bulk-freed at `Store::reset()`. Phase A modeled them as
-// `&'static [u8]`, forcing `transmute::<&[u8], &'static [u8]>` at every
-// construction site. `StoreStr` mirrors `StoreRef<T>` (raw `NonNull<T>`) and
-// `StmtNodeList` (`StoreSlice<Stmt>`): a thin lifetime-erased pointer with safe
-// construction and `Deref<Target=[u8]>` under the same callers-must-not-
-// outlive-the-arena contract that `StoreRef` already imposes. This collapses
-// the ~40 string-slice transmutes to zero without cascading `<'arena>` through
-// `Expr`/`Stmt`/`Data` (~100 types, 12 downstream crates) — that cascade is
-// the follow-up round once `StoreRef` itself carries `'arena`.
+// arena and are bulk-freed at `Store::reset()`. `StoreStr` mirrors
+// `StoreRef<T>` (raw `NonNull<T>`) and `StmtNodeList` (`StoreSlice<Stmt>`): a
+// thin lifetime-erased pointer with safe construction and `Deref<Target=[u8]>`
+// under the same callers-must-not-outlive-the-arena contract that `StoreRef`
+// already imposes. Avoids cascading `<'arena>` through `Expr`/`Stmt`/`Data`
+// (~100 types, 12 downstream crates) — that cascade is the follow-up round
+// once `StoreRef` itself carries `'arena`.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct StoreStr {
@@ -438,9 +436,8 @@ impl core::fmt::Debug for StoreStr {
 // ─── StoreSlice<T> — arena-owned typed slice (StoreStr's generic sibling) ───
 //
 // Generalizes `StoreStr` to `[T]` for AST list fields (`E::Arrow.args`,
-// per-node `[Stmt]`/`[Expr]` views, …) that borrow from the parse arena and
-// were previously typed `&'static [T]`, forcing a `transmute` at every
-// construction site. Same contract as `StoreRef`/`StoreStr`: safe `::new`,
+// per-node `[Stmt]`/`[Expr]` views, …) that borrow from the parse arena.
+// Same contract as `StoreRef`/`StoreStr`: safe `::new`,
 // raw `NonNull<T>` + `u32` length, `Deref<Target=[T]>`, valid until the
 // owning arena resets. The `u32` length matches Zig's `[]T` (`u32` len under
 // `-Dwasm32` and the AST's practical bounds) and keeps the field at 12 bytes
@@ -1697,9 +1694,8 @@ pub mod defines {
         }
         #[inline]
         pub fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
-            // 2-bit field; explicit match avoids transmute-to-enum UB if both
-            // bits are ever set (PORTING.md §Forbidden — `E::CallUnwrap` only
-            // has discriminants 0/1/2, bit-pattern 3 would be UB via transmute).
+            // 2-bit field; `E::CallUnwrap` only has discriminants 0/1/2, so
+            // an explicit match keeps bit-pattern 3 sound.
             match (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT {
                 1 => E::CallUnwrap::IfUnused,
                 2 => E::CallUnwrap::IfUnusedAndToStringSafe,
@@ -2049,7 +2045,7 @@ pub mod defines_full_draft {
         /// have any observable side effects.
         #[inline]
         pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
-            // 2-bit field; explicit match avoids transmute-to-enum UB if both bits are ever set.
+            // 2-bit field; explicit match keeps bit-pattern 3 sound.
             match (self.flags.bits() & CALL_UNWRAP_MASK) >> CALL_UNWRAP_SHIFT {
                 0 => E::CallUnwrap::Never,
                 1 => E::CallUnwrap::IfUnused,

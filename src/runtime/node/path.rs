@@ -66,6 +66,8 @@ pub trait PathChar: Copy + Eq + Ord + Default + 'static {
     fn as_u32(self) -> u32;
     /// `bun.strings.literal(T, "...")` — yields a `&'static [T]` for an ASCII literal.
     fn lit(s: &'static [u8]) -> &'static [Self];
+    /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
+    fn get_cwd(buf: &mut [Self]) -> bun_sys::Result<&mut [Self]>;
 }
 impl PathChar for u8 {
     const IS_U16: bool = false;
@@ -80,6 +82,10 @@ impl PathChar for u8 {
     #[inline]
     fn lit(s: &'static [u8]) -> &'static [u8] {
         s
+    }
+    #[inline]
+    fn get_cwd(buf: &mut [u8]) -> bun_sys::Result<&mut [u8]> {
+        get_cwd_u8(buf)
     }
 }
 impl PathChar for u16 {
@@ -135,6 +141,10 @@ impl PathChar for u16 {
                 &[]
             }
         }
+    }
+    #[inline]
+    fn get_cwd(buf: &mut [u16]) -> bun_sys::Result<&mut [u16]> {
+        get_cwd_u16(buf)
     }
 }
 
@@ -391,19 +401,9 @@ pub fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
     Ok(result)
 }
 
+#[inline]
 pub fn get_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
-    // Dispatch on `T::IS_U16` (poor-man's specialization); T is u8 or u16 by trait bound.
-    if T::IS_U16 {
-        // SAFETY: T == u16 when IS_U16
-        let buf16: &mut [u16] = unsafe { core::mem::transmute(buf) };
-        let r = get_cwd_u16(buf16)?;
-        Ok(unsafe { core::mem::transmute::<&mut [u16], &mut [T]>(r) })
-    } else {
-        // SAFETY: T == u8 when !IS_U16
-        let buf8: &mut [u8] = unsafe { core::mem::transmute(buf) };
-        let r = get_cwd_u8(buf8)?;
-        Ok(unsafe { core::mem::transmute::<&mut [u8], &mut [T]>(r) })
-    }
+    T::get_cwd(buf)
 }
 
 // Alias for naming consistency.

@@ -16,7 +16,7 @@ pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16384;
 // TODO(port): Zig `enum(u8) { ... , _ }` is non-exhaustive (any u8 is a valid
 // value). A #[repr(u8)] Rust enum is UB for unknown discriminants received off
 // the wire — Phase B should consider a `#[repr(transparent)] struct FrameType(u8)`
-// with associated consts if values are ever transmuted from raw bytes.
+// with associated consts if values are ever decoded from raw bytes.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum FrameType {

@@ -3462,9 +3462,8 @@ export default db;
 /// `bun.options.Loader.Optional.fromAPI` (spec options.zig) — maps the wire
 /// `bun.schema.api.Loader` (`#[repr(u8)]`, `_none = 254`) discriminant that
 /// crosses the C++ boundary as `force_loader: u8` to the runtime
-/// `options::Loader`. PORT NOTE: PORTING.md §Forbidden bars
-/// `transmute::<u8, enum>`, so this is an exhaustive match (any unknown tag —
-/// including 0, which `api::Loader` never uses — collapses to `None`).
+/// `options::Loader`. Exhaustive match (any unknown tag — including 0, which
+/// `api::Loader` never uses — collapses to `None`).
 #[inline]
 fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
     use Loader as L;

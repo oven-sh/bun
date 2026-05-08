@@ -199,8 +199,7 @@ impl IniTestingAPIs {
         // env is `'static`, so erase `src` to match. SAFETY: `parser` is dropped
         // before `utf8str` (drop order is reverse of declaration); no borrow
         // escapes this function. Same pattern as `bun_ini::load_npmrc`.
-        let src: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(utf8str.slice()) };
+        let src: &'static [u8] = bun_logger::IntoStr::into_str(utf8str.slice());
         let mut parser = Parser::init(b"<src>", src, env);
 
         // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena` (Zig passed

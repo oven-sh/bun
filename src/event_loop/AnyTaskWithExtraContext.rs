@@ -106,8 +106,8 @@ impl AnyTaskWithExtraContext {
 /// Zig: `fn New(comptime Type: type, comptime ContextType: type, comptime Callback: anytype) type`
 ///
 /// Stable Rust cannot take a fn value as a const generic, so `Callback` moves to
-/// a runtime argument on `init` and is type-erased via transmute (ABI-identical:
-/// both forms are thin fn pointers taking two thin data pointers).
+/// a runtime argument on `init` and is type-erased (ABI-identical: both forms
+/// are thin fn pointers taking two thin data pointers).
 // TODO(port): if Phase B needs the zero-storage comptime form, switch to a
 // `trait TaskCallback<C> { fn call(&mut self, extra: *mut C); }` bound on `T`.
 pub struct New<T, C>(PhantomData<(*mut T, *mut C)>);
@@ -128,8 +128,8 @@ impl<T, C> New<T, C> {
 
     // TODO(port): Zig's `New(...).wrap(this: ?*anyopaque, extra: ?*anyopaque)` was
     // the type-erasing thunk stored in `.callback = wrap`. Because stable Rust
-    // can't take `Callback` as a const generic, `init` transmutes the typed fn
-    // pointer directly instead — so `wrap` is folded into that transmute and
+    // can't take `Callback` as a const generic, `init` erases the typed fn
+    // pointer directly instead — so `wrap` is folded into that cast and
     // intentionally omitted here. If Phase B switches to a `TaskCallback<C>`
     // trait bound on `T`, reintroduce `wrap` as the 2-arg stored thunk.
     // PERF(port): Zig used `@call(bun.callmod_inline, Callback, ...)` — profile in Phase B.

@@ -1696,20 +1696,7 @@ pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
 
         // TODO(port): Zig inspected std.meta.Elem(@TypeOf(part)); we always
         // receive u8 parts, so transcode iff T == u16.
-        if T::IS_U16 {
-            let wrote = strings::convert_utf8_to_utf16_in_buffer(
-                // SAFETY: T::IS_U16 implies T == u16
-                unsafe { core::mem::transmute::<&mut [T], &mut [u16]>(&mut temp_buf[written..]) },
-                part,
-            );
-            written += wrote.len();
-        } else {
-            // SAFETY: T == u8 here
-            let dst =
-                unsafe { core::mem::transmute::<&mut [T], &mut [u8]>(&mut temp_buf[written..]) };
-            dst[..part.len()].copy_from_slice(part);
-            written += part.len();
-        }
+        written += T::write_u8_part(&mut temp_buf[written..], part);
     }
 
     if written == 0 {
@@ -2706,6 +2693,9 @@ pub trait PathChar: Copy + Eq + Ord + 'static {
         let c = self.to_u8();
         c.is_ascii_alphabetic()
     }
+    /// Write a u8 path part into `dest` (transcoding to UTF-16 when
+    /// `Self == u16`, else memcpy). Returns units written.
+    fn write_u8_part(dest: &mut [Self], part: &[u8]) -> usize;
 }
 
 impl PathChar for u8 {
@@ -2725,6 +2715,11 @@ impl PathChar for u8 {
     #[inline]
     fn lit(s: &'static str) -> &'static [Self] {
         s.as_bytes()
+    }
+    #[inline]
+    fn write_u8_part(dest: &mut [u8], part: &[u8]) -> usize {
+        dest[..part.len()].copy_from_slice(part);
+        part.len()
     }
 }
 
@@ -2750,8 +2745,8 @@ impl PathChar for u16 {
     #[inline]
     fn lit(s: &'static str) -> &'static [Self] {
         // PORT NOTE: Zig `strings.literal(u16, "...")` is a comptime constant. Rust
-        // has no stable const UTF-16 transmute for arbitrary literals, so dispatch on
-        // the closed set of ASCII literals actually passed by callers in this file.
+        // cannot widen an arbitrary `&'static str` to UTF-16 at const time, so
+        // dispatch on the closed set of ASCII literals actually passed by callers.
         // Zero allocation; matches Zig's zero-runtime-cost behavior.
         // Box::leak is forbidden here (PORTING.md §Forbidden) — it leaked per call.
         static SLASH_BSLASH: [u16; 2] = [b'/' as u16, b'\\' as u16];
@@ -2768,6 +2763,10 @@ impl PathChar for u16 {
             // Unreachable for current callers; fail loudly rather than leak.
             _ => unreachable!("PathChar::<u16>::lit: unhandled literal {:?}", s),
         }
+    }
+    #[inline]
+    fn write_u8_part(dest: &mut [u16], part: &[u8]) -> usize {
+        strings::convert_utf8_to_utf16_in_buffer(dest, part).len()
     }
 }
 

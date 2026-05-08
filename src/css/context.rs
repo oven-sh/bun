@@ -112,7 +112,7 @@ impl<'a> PropertyHandlerContext<'a> {
     /// crate-wide `'bump`-erasure placeholder until `CssRule<'bump, R>`
     /// re-threads the arena lifetime. The arena outlives every rule built
     /// from it; centralized here so call-sites below don't open-code the
-    /// transmute (PORTING.md §Forbidden).
+    /// lifetime erasure.
     #[inline]
     fn bump_static(&self) -> &'static Bump {
         unsafe { core::mem::transmute::<&Bump, &'static Bump>(self.arena) }

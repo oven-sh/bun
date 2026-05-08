@@ -11,7 +11,7 @@ use crate::Task;
 /// not name `bun_jsc`, so callbacks return this 1-byte tag and the high-tier
 /// dispatcher recovers the real enum via `From` (defined in `bun_jsc`). The
 /// `#[repr(u8)]` discriminants match `bun_jsc::JsError` exactly so the
-/// conversion is a no-op transmute.
+/// conversion is a no-op.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ErasedJsError {

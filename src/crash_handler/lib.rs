@@ -1094,7 +1094,7 @@ pub fn panic_impl(msg: &[u8], error_return_trace: Option<&StackTrace>, begin_add
         if msg == b"reached unreachable code" {
             CrashReason::Unreachable
         } else {
-            // TODO(port): lifetime — Zig borrows msg; we transmute to &'static for the noreturn path.
+            // TODO(port): lifetime — Zig borrows msg; erased to &'static for the noreturn path.
             // SAFETY: process is about to abort; the borrow is never invalidated.
             CrashReason::Panic(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(msg) })
         },
@@ -2886,7 +2886,7 @@ pub extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
     // SAFETY: name is non-null (Zig dereferences it unconditionally with `.?`)
     let name_bytes = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
     // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
-    // buffer suffices — `panic_impl` transmutes to &'static for the abort path.
+    // buffer suffices — `panic_impl` erases to &'static for the abort path.
     let mut msg = BoundedArray::<u8, 256>::default();
     let _ = write!(msg.writer(), "unsupported uv function: {}", bstr::BStr::new(name_bytes));
     panic_impl(msg.slice(), None, None);

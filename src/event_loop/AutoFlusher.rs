@@ -22,7 +22,7 @@ pub trait HasAutoFlusher: Sized {
 /// Erase a typed `T::on_auto_flush` to the `DeferredRepeatingTask` ABI
 /// (`unsafe extern "C" fn(*mut c_void) -> bool`). Mirrors Zig's
 /// `@ptrCast(&Type.onAutoFlush)` at the `postTask` call site, but via a
-/// monomorphic `extern "C"` trampoline rather than a fn-ptr transmute so the
+/// monomorphic `extern "C"` trampoline rather than a fn-ptr cast so the
 /// calling convention is honest.
 #[inline]
 pub fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {

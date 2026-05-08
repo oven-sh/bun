@@ -294,7 +294,7 @@ impl<R> StyleRule<R> {
         // PORT NOTE: `DeclarationBlock<'static>` (struct PORT NOTE above) forces
         // `minify` to want `DeclarationHandler<'static>`; route through the
         // single centralized `'bump`-erasure helper instead of open-coding the
-        // transmute (PORTING.md §Forbidden). Collapses when `CssRule<'bump, R>`
+        // lifetime cast. Collapses when `CssRule<'bump, R>`
         // re-threads the arena lifetime.
         self.declarations.minify(
             super::dc::decl_handler_static(&mut *context.handler),

@@ -33,7 +33,7 @@ use bun_collections::ArrayHashMap;
 
 // PORT NOTE: Zig `*const fn(*anyopaque) bool`. Declared `extern "C"` so the
 // same fn-pointer type can flow across the FFI boundary (e.g.
-// `Bun__VM__postDeferredTask`) without an ABI-crossing transmute. All in-tree
+// `Bun__VM__postDeferredTask`) without an ABI-crossing fn-ptr cast. All in-tree
 // producers go through monomorphic `extern "C"` trampolines (see
 // `AutoFlusher::erase_flush_callback`).
 pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;

@@ -411,9 +411,13 @@ pub(crate) mod kind {
 
             #[inline]
             pub(crate) fn get_cached(&self) -> Output {
-                let cached = self.value.load(Ordering::Relaxed);
-                // SAFETY: only ever stored from StoredType discriminants.
-                let cached: StoredType = unsafe { core::mem::transmute::<u8, StoredType>(cached) };
+                // only ever stored from StoredType discriminants
+                let cached: StoredType = match self.value.load(Ordering::Relaxed) {
+                    1 => StoredType::NotSet,
+                    2 => StoredType::No,
+                    3 => StoredType::Yes,
+                    _ => StoredType::Unknown,
+                };
                 match cached {
                     StoredType::Unknown => {
                         #[cold]

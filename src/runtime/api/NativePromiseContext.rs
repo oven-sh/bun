@@ -63,9 +63,16 @@ impl Tag {
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
-        debug_assert!((n as usize) < Self::COUNT);
-        // SAFETY: #[repr(u8)] and n is range-checked above in debug.
-        unsafe { core::mem::transmute::<u8, Tag>(n) }
+        match n {
+            0 => Tag::HTTPServerRequestContext,
+            1 => Tag::HTTPSServerRequestContext,
+            2 => Tag::DebugHTTPServerRequestContext,
+            3 => Tag::DebugHTTPSServerRequestContext,
+            4 => Tag::BodyValueBufferer,
+            5 => Tag::HTTPSServerH3RequestContext,
+            6 => Tag::DebugHTTPSServerH3RequestContext,
+            _ => unreachable!(),
+        }
     }
 }
 

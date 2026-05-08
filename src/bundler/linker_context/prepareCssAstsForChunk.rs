@@ -89,8 +89,8 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 
 /// `ImportRecord.path` is `bun_paths::fs::Path<'static>`; `CssImportOrderKind::ExternalPath`
 /// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
-/// CYCLEBREAK mirrors of Zig `Fs.Path`. Re-construct field-by-field rather than transmute
-/// non-`repr(C)` structs. Inverse of `findImportedFilesInCSSOrder::fs_path_from_import_record`.
+/// CYCLEBREAK mirrors of Zig `Fs.Path`. Re-construct field-by-field (non-`repr(C)`).
+/// Inverse of `findImportedFilesInCSSOrder::fs_path_from_import_record`.
 #[cfg(feature = "css")]
 #[inline]
 fn import_record_path_from_fs(p: &Path<'static>) -> bun_paths::fs::Path<'static> {

@@ -116,7 +116,7 @@ fn relative_paths_list_ptr() -> *mut ImportPathsList {
 // `&'static [u8]` for `import_record.path.text` (the table stores `&'static
 // ZStr`). `BundleTarget` and `bun_resolve_builtins::Target` are the same
 // `bun_options_types::BundleEnums::Target`; ditto `ImportRecordTag` /
-// `import_record::Tag`, so no transmutes are needed.
+// `import_record::Tag`, so no bridge is needed.
 mod hardcoded_module {
     use super::*;
     #[derive(Default, Clone, Copy)]

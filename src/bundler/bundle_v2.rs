@@ -1654,8 +1654,7 @@ pub fn generic_path_with_pretty_initialized<'a>(
 /// PORT NOTE: `bun_logger::fs::Path`, `bun_resolver::fs::Path<'a>`, and
 /// `bun_paths::fs::Path<'a>` are field-identical mirrors of `fs.zig:Path` that
 /// haven't been unified yet (TYPE_ONLY split). These shims rebuild one from the
-/// other field-by-field; the previous whole-struct `transmute` was removed
-/// (PORTING.md §Forbidden — lifetime extension via cast). The proper fix is to
+/// other field-by-field. The proper fix is to
 /// collapse all three into a single `bun_paths::fs::Path<'a>` re-exported by
 /// `bun_logger`/`bun_resolver`; until then, callers must pass slices that are
 /// either `'static` literals, `FilenameStore`/`DirnameStore`-interned, or
@@ -5144,7 +5143,7 @@ pub struct ResolveImportRecordResult {
 
 // CYCLEBREAK TYPE_ONLY: `bun_paths::fs::Path` / `bun_resolver::fs::Path` /
 // `bun_logger::fs::Path` are field-identical mirrors of the same Zig `Fs.Path`.
-// Re-construct field-by-field rather than transmute non-`repr(C)` structs.
+// Re-construct field-by-field (non-`repr(C)`, layout not guaranteed identical).
 // SAFETY: Phase-A lifetime erasure — backing slices are arena/BSSStringList-owned
 // and outlive the bundle pass (TODO(port): unify Path types to remove this).
 #[inline]
@@ -6546,7 +6545,7 @@ impl JSMetaFlags {
     pub const fn wrap(self) -> WrapKind {
         // Bits 6-7 store a WrapKind discriminant. `set_wrap` only ever writes
         // 0/1/2, but a raw `JSMetaFlags(u8)` constructed in-module could carry
-        // 3 — match defensively instead of `transmute` (UB on invalid tag).
+        // 3 — match defensively (UB on invalid tag otherwise).
         match (self.0 >> 6) & 0b11 {
             1 => WrapKind::Cjs,
             2 => WrapKind::Esm,

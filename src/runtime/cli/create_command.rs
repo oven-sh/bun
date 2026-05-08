@@ -1943,7 +1943,7 @@ fn run_on_entry_point(
         ctx: (&raw mut analyzer).cast::<()>(),
         entry_points: vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
         // PORT NOTE: Zig used `@ptrCast` on the fn pointer; in Rust the HRTB lifetime
-        // on `Analyzer<'_>` prevents a direct transmute, so route through a thin
+        // on `Analyzer<'_>` prevents a direct cast, so route through a thin
         // type-erased trampoline matching DependenciesScanner.on_fetch's exact signature.
         on_fetch: analyzer_on_fetch_trampoline,
     };

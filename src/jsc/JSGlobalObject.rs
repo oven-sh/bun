@@ -35,7 +35,7 @@ pub struct JSGlobalObject {
 /// Replaces the `&'static`-lifetime `JSGlobalObject` borrows scattered across
 /// heap structs. `'static` was a lie — the global lives as long as its
 /// `VirtualMachine`, not the process — and the lie forced every constructor to
-/// `transmute` a short-lived `&JSGlobalObject` to `'static`. `GlobalRef`
+/// erase a short-lived `&JSGlobalObject` to `'static`. `GlobalRef`
 /// centralises that one `unsafe` inside [`Deref`] (the global outlives any
 /// struct that holds a `GlobalRef`; see `LIFETIMES.tsv` JSC_BORROW), and the
 /// `From<&JSGlobalObject>` impl makes construction safe at every call site.
@@ -65,7 +65,7 @@ impl core::ops::Deref for GlobalRef {
     fn deref(&self) -> &JSGlobalObject {
         // SAFETY: constructed only from a live `&JSGlobalObject`; the global is
         // owned by the VM and outlives every JSC_BORROW holder (LIFETIMES.tsv).
-        // Single `unsafe` for what was previously ~90 `transmute`s to `'static`.
+        // Single `unsafe` for what was previously ~90 lifetime erasures to `'static`.
         unsafe { &*self.0 }
     }
 }

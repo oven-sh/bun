@@ -3543,7 +3543,7 @@ impl Resolver {
         let this: *mut Self = self;
         // PORT NOTE: caller (`dispatch.rs::fire_timer`) hands us the event-loop's
         // local `ElTimespec`; `add_timer` works in `bun_core::timespec`. Same
-        // `{ sec: i64, nsec: i64 }` layout — convert by field, not transmute.
+        // `{ sec: i64, nsec: i64 }` layout — convert by field.
         let now = bun::timespec { sec: now.sec, nsec: now.nsec };
         let uws_loop = vm.uws_loop();
         // PORT NOTE: reshaped for borrowck — `defer!`'s closure captures by
@@ -3676,7 +3676,7 @@ impl Resolver {
             ($f:ident) => {
                 // SAFETY: the matched arm guarantees `self.$f` *is*
                 // `HiveArray<PendingCacheKey<T>, 32>` for this `T::CACHE_FIELD`; the cast is
-                // an identity transmute (same layout, same lifetime).
+                // an identity (same layout, same lifetime).
                 unsafe {
                     &mut *(&raw mut self.$f)
                         .cast::<HiveArray<resolve_info_request::PendingCacheKey<T>, 32>>()

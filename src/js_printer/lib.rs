@@ -134,12 +134,18 @@ pub mod analyze_transpiled_module {
         }
         #[inline]
         pub fn try_from_u8(v: u8) -> Option<Self> {
-            if v <= Self::ExportInfoStar as u8 {
-                // SAFETY: RecordKind is #[repr(u8)] with contiguous discriminants 0..=8.
-                Some(unsafe { core::mem::transmute::<u8, Self>(v) })
-            } else {
-                None
-            }
+            Some(match v {
+                0 => Self::DeclaredVariable,
+                1 => Self::LexicalVariable,
+                2 => Self::ImportInfoSingle,
+                3 => Self::ImportInfoSingleTypeScript,
+                4 => Self::ImportInfoNamespace,
+                5 => Self::ExportInfoIndirect,
+                6 => Self::ExportInfoLocal,
+                7 => Self::ExportInfoNamespace,
+                8 => Self::ExportInfoStar,
+                _ => return None,
+            })
         }
     }
 

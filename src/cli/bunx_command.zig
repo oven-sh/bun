@@ -911,7 +911,7 @@ const std = @import("std");
 const Run = @import("./run_command.zig").RunCommand;
 const Allocator = std.mem.Allocator;
 
-const cli = @import("../cli.zig");
+const cli = @import("./cli.zig");
 const Command = cli.Command;
 
 const bun = @import("bun");

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import path from "path";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
@@ -164,11 +164,6 @@ const fixtureEnv = {
 // `--timeout` (90s in CI, 5s locally) stays in effect.
 const fixtureTimeout = isDebug ? 180_000 : undefined;
 
-// JSC's JSPI side-stack switching currently segfaults on Windows x64
-// (Win64 calling convention). Mark those fixtures as todo there so the
-// suite still runs and we get a signal when the upstream crash is fixed.
-const isJSPICrashPlatform = isWindows && process.arch === "x64";
-
 describe.concurrent("JSC JIT Stress Tests", () => {
   describe("JS (Baseline/DFG/FTL)", () => {
     for (const fixture of jsFixtures) {
@@ -204,8 +199,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
 
   describe("Wasm (BBQ/OMG)", () => {
     for (const fixture of wasmFixtures) {
-      const isExpectedCrash = isJSPICrashPlatform && fixture.startsWith("jspi-");
-      test.todoIf(isExpectedCrash)(
+      test(
         fixture,
         async () => {
           const fixturePath = path.join(wasmFixturesDir, fixture);
@@ -225,10 +219,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
             proc.exited,
           ]);
 
-          // Don't echo crash output for known-crashing fixtures; the CI
-          // runner greps for "Segmentation fault" in the test output and
-          // would attribute the subprocess crash to this file.
-          if (exitCode !== 0 && !isExpectedCrash) {
+          if (exitCode !== 0) {
             console.log("stdout:", stdout);
             console.log("stderr:", stderr);
           }

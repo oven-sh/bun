@@ -172,10 +172,10 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
-const Logger = @import("../logger.zig");
-const Timer = @import("../system_timer.zig");
-const linker = @import("../linker.zig");
-const options = @import("../options.zig");
+const Logger = @import("../logger/logger.zig");
+const Timer = @import("../perf/system_timer.zig");
+const linker = @import("./linker.zig");
+const options = @import("./options.zig");
 const std = @import("std");
 
 const bun = @import("bun");

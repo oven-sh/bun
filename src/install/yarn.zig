@@ -1700,7 +1700,7 @@ const Integrity = @import("./integrity.zig").Integrity;
 const Resolution = @import("./resolution.zig").Resolution;
 const Allocator = std.mem.Allocator;
 
-const Semver = @import("../semver.zig");
+const Semver = @import("../semver/semver.zig");
 const String = Semver.String;
 const stringHash = String.Builder.stringHash;
 

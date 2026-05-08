@@ -6,7 +6,11 @@ const cwd = tmpdirSync();
 console.log([0, cwd]);
 
 let proc = Bun.spawn({
-  cmd: [bunExe(), "create", "rsbuild@latest", "app", "--template", "solid-ts"],
+  // Pinned: rsbuild 2.0.x bundles mimalloc v3 inside @rspack/binding-win32-arm64-msvc.
+  // Two static mimalloc instances in one process deterministically segfault in ntdll
+  // during ExitProcess on Windows arm64 (FLS / process-detach cleanup). Tracked
+  // separately; this test exists to guard the napi TSFN finalizer, not rsbuild HEAD.
+  cmd: [bunExe(), "create", "rsbuild@1", "app", "--template", "solid-ts"],
   stdio: ["ignore", "inherit", "inherit"],
   cwd,
   env: bunEnv,

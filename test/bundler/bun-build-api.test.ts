@@ -1,7 +1,7 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
 import { buildNoThrow } from "./buildNoThrow";
 
@@ -356,6 +356,39 @@ describe("Bun.build", () => {
   //   expect(blob.sourcemap).toBe(null);
   //   throw new Error("test was not fully written");
   // });
+
+  test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
+    // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
+    // indexed by the property position instead of a dense counter, leaving garbage in
+    // the skipped slot that was later read/freed. Run in a subprocess so a crash in the
+    // bundler thread surfaces as a test failure instead of taking down the test runner.
+    const dir = tempDirWithFiles("bun-build-loader-empty-key", {
+      "entry.ts": `export const x: number = 42;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const result = await Bun.build({
+            entrypoints: [${JSON.stringify(join(dir, "entry.ts"))}],
+            loader: { "": "js", ".ts": "ts", ".js": "js" },
+          });
+          if (!result.success) throw new AggregateError(result.logs, "build failed");
+          console.log(JSON.stringify({ success: result.success, outputs: result.outputs.length }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ success: true, outputs: 1 });
+    expect(exitCode).toBe(0);
+  });
 
   test.concurrent("rebuilding busts the directory entries cache", async () => {
     Bun.gc(true);
@@ -1123,3 +1156,58 @@ export { greeting };`,
     expect(result.success).toBeDefined();
   });
 });
+
+// On release builds mimalloc's large-allocation arenas make RSS growth too
+// non-deterministic to draw a clean line between "leaking" and "not leaking"
+// for this path. Under debug/ASAN the allocator behaviour is stable enough to
+// measure reliably, so we only assert there.
+test.skipIf(!isDebug && !isASAN)(
+  "Bun.build sourcemap: 'inline' with no outdir does not leak sourcemap JSON",
+  async () => {
+    // The in-memory build path used to leak the intermediate sourcemap JSON
+    // buffer: it is base64-encoded into the output and then dropped without a
+    // free. To make the leak observable we make the sourcemap JSON huge —
+    // "sourcesContent" embeds the full input source, so a ~30MB comment in the
+    // entry produces a ~30MB sourcemap JSON while keeping the actual bundle
+    // work trivial. 8 leaked builds ≈ ~240MB that can never be reclaimed.
+    //
+    // RSS is noisy between builds, so we settle with several GC+sleep cycles
+    // before each sample to let JSC collect the output blobs and mimalloc
+    // purge freed pages.
+    const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
+      "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
+      "run.ts": `
+        const entry = process.argv[2];
+        async function build() {
+          const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
+          if (!res.success) throw new AggregateError(res.logs, "build failed");
+        }
+        async function settle() {
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await Bun.sleep(10); }
+        }
+        for (let i = 0; i < 2; i++) await build();
+        await settle();
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 8; i++) await build();
+        await settle();
+        const after = process.memoryUsage.rss();
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", join(dir, "run.ts"), join(dir, "entry.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { growth } = JSON.parse(stdout.trim());
+    // Observed (2 warmup + 8 measured, settled): ~220-250MB with the free,
+    // ~590-650MB without it.
+    expect(growth).toBeLessThan(400 * 1024 * 1024);
+  },
+  120_000,
+);

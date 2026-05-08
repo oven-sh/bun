@@ -459,14 +459,14 @@ pub const HTTPChannelContext = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
 const HTTPThread = @import("./HTTPThread.zig");
 const Headers = @import("./Headers.zig");
 const std = @import("std");
-const Encoding = @import("./Encoding.zig").Encoding;
+const Encoding = @import("../http_types/Encoding.zig").Encoding;
 
-const PercentEncoding = @import("../url.zig").PercentEncoding;
-const URL = @import("../url.zig").URL;
+const PercentEncoding = @import("../url/url.zig").PercentEncoding;
+const URL = @import("../url/url.zig").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

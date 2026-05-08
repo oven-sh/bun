@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -1423,6 +1423,70 @@ describe("global virtual store", () => {
         ),
       ).json(),
     ).toMatchObject({ name: "two-range-deps", version: "1.0.0" });
+  });
+
+  test("--force replaces a corrupted global-store entry", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-force-heal",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    const gvsTarget = readlinkSync(entry);
+    const pkgDir = join(gvsTarget, "node_modules", "no-deps");
+    const pkgJsonPath = join(pkgDir, "package.json");
+    const indexPath = join(pkgDir, "index.js");
+    const original = await file(pkgJsonPath).text();
+
+    // Corrupt the published global-store entry: delete files (the directory
+    // still exists, so the warm-hit `directoryExistsAt` check is satisfied
+    // and a plain reinstall takes the symlink-only fast path). The
+    // extraction cache the entry was hardlinked from keeps its own
+    // hardlinks, so the source bytes for --force to rebuild from are intact.
+    await rm(pkgJsonPath, { force: true });
+    await rm(indexPath, { force: true });
+
+    // Sanity: a non-force reinstall does NOT heal — it sees the directory
+    // present and reuses it. (This pins the warm-hit semantics so the
+    // assertion below is meaningful.)
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(existsSync(pkgJsonPath)).toBe(false);
+
+    // --force must rebuild staging and swap it into place over the corrupt
+    // final directory instead of discarding the fresh tree on EEXIST.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--force"],
+        cwd: packageDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(readlinkSync(entry)).toBe(gvsTarget);
+    expect(await file(pkgJsonPath).text()).toBe(original);
+    expect(existsSync(indexPath)).toBe(true);
+
+    // The swap-aside `.old-<rand>` tree is removed once publish succeeds, so
+    // the links/ directory is left with only final entries (no `.old-` and no
+    // `.tmp-` siblings).
+    const linksDir = dirname(gvsTarget);
+    const siblings = await readdirSorted(linksDir);
+    expect(siblings.some(n => n.includes(".old-") || n.includes(".tmp-"))).toBe(false);
   });
 
   test("can be disabled via BUN_INSTALL_GLOBAL_STORE=0", async () => {

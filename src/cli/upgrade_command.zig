@@ -15,7 +15,7 @@ pub const Version = struct {
     pub fn name(this: Version) ?string {
         if (this.tag.len <= "bun-v".len or !strings.hasPrefixComptime(this.tag, "bun-v")) {
             if (strings.eqlComptime(this.tag, "canary")) {
-                const Cli = @import("../cli.zig");
+                const Cli = @import("./cli.zig");
 
                 return std.fmt.allocPrint(
                     bun.default_allocator,
@@ -985,14 +985,14 @@ pub fn @"export"() void {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const DotEnv = @import("../env_loader.zig");
-const fs = @import("../fs.zig");
-const linker = @import("../linker.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
+const fs = @import("../resolver/fs.zig");
+const linker = @import("../bundler/linker.zig");
 const std = @import("std");
 const Archive = @import("../libarchive/libarchive.zig").Archive;
-const Command = @import("../cli.zig").Command;
-const URL = @import("../url.zig").URL;
-const which = @import("../which.zig").which;
+const Command = @import("./cli.zig").Command;
+const URL = @import("../url/url.zig").URL;
+const which = @import("../which/which.zig").which;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -24,6 +24,9 @@ Bun statically links these libraries:
 | [`brotli`](https://github.com/google/brotli) | MIT |
 | [`libarchive`](https://github.com/libarchive/libarchive) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
+| [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) | MIT |
+| [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
+| [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
 | [`picohttp`](https://github.com/h2o/picohttpparser) | dual-licensed under the Perl License or the MIT License |
 | [`zstd`](https://github.com/facebook/zstd) | dual-licensed under the BSD License or GPLv2 license |
@@ -36,6 +39,10 @@ Bun statically links these libraries:
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
+| [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
+| [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
+| [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
+| [`highway`](https://github.com/google/highway) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |
 | Parts of [Tigerbeetle's IO code](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) | Apache 2.0 licensed |

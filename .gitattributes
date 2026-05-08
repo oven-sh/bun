@@ -30,17 +30,17 @@ src/api/schema.d.ts linguist-generated
 fixture.*.c linguist-generated
 src/api/schema.js linguist-generated
 *-fixture* linguist-generated
-src/bun.js/bindings/ZigGeneratedCode.h linguist-generated
-src/bun.js/bindings/ZigGeneratedCode.cpp linguist-generated
-src/bun.js/bindings/headers.h linguist-generated
-src/bun.js/bindings/headers.zig linguist-generated
+src/jsc/bindings/ZigGeneratedCode.h linguist-generated
+src/jsc/bindings/ZigGeneratedCode.cpp linguist-generated
+src/jsc/bindings/headers.h linguist-generated
+src/jsc/bindings/headers.zig linguist-generated
 
 packages/bun-uws/fuzzing/seed-corpus/**/* linguist-generated
 
-src/bun.js/bindings/sqlite/sqlite3.c linguist-vendored
-src/bun.js/bindings/sqlite/sqlite3_local.h linguist-vendored
-src/bun.js/bindings/simdutf.cpp linguist-vendored
-src/bun.js/bindings/simdutf.h linguist-vendored
+src/jsc/bindings/sqlite/sqlite3.c linguist-vendored
+src/jsc/bindings/sqlite/sqlite3_local.h linguist-vendored
+src/simdutf_sys/bun-simdutf.cpp linguist-vendored
+src/simdutf_sys/bun-simdutf.h linguist-vendored
 
 docs/**/* linguist-documentation
 

@@ -109,6 +109,24 @@ describe("--print for cjs/esm", () => {
     expect(exitCode).toBe(0);
     rmSync(cwd, { recursive: true, force: true });
   });
+  // https://github.com/oven-sh/bun/issues/30207
+  describe.each([
+    { expr: "(await 1) + 1", expected: "2" },
+    { expr: 'await Promise.resolve("hello") + " world"', expected: "hello world" },
+    { expr: "(await 1) + (await 2)", expected: "3" },
+    // no top-level await — still returns the expression value.
+    { expr: "1 + 1", expected: "2" },
+  ])("bun -p $expr", ({ expr, expected }) => {
+    test(`→ ${expected}`, async () => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "-p", expr],
+        env: bunEnv,
+      });
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toBe(`${expected}\n`);
+      expect(exitCode).toBe(0);
+    });
+  });
   test("forced cjs", async () => {
     let { stdout, stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "--print", "module.exports; 123"],

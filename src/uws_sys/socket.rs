@@ -367,9 +367,9 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
                 unsafe { (**socket).get_error() }
             }
             InternalSocket::Detached => 0,
-            InternalSocket::UpgradedDuplex(socket) => socket.ssl_error().error,
+            InternalSocket::UpgradedDuplex(socket) => socket.ssl_error().error_no,
             #[cfg(windows)]
-            InternalSocket::Pipe(pipe) => pipe.ssl_error().error,
+            InternalSocket::Pipe(pipe) => pipe.ssl_error().error_no,
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
         }
@@ -490,7 +490,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         // write must match that layout — NOT `Option<*mut This>` (16 bytes).
         let raw = g.from_fd(
             k,
-            core::ptr::null_mut(),
+            None,
             size_of::<Option<core::ptr::NonNull<This>>>() as c_int,
             fd_raw,
             is_ipc,
@@ -559,7 +559,6 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         // PERF(port): @intCast — profile in Phase B
         let port: c_int = port.try_into().expect("infallible: size matches");
 
-        let ssl_ctx_ptr: *mut SslCtx = ssl_ctx.unwrap_or(core::ptr::null_mut());
         // Zig `?*Owner` is null-niche optimized (8 bytes); the dispatch
         // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
         // write must match that layout — NOT `Option<*mut Owner>` (16 bytes,
@@ -567,7 +566,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         // the owner pointer.
         match g.connect(
             kind,
-            ssl_ctx_ptr,
+            ssl_ctx,
             // SAFETY: `host_z` is NUL-terminated by construction above.
             unsafe { core::ffi::CStr::from_ptr(host_z.as_ptr()) },
             port,
@@ -603,11 +602,10 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
         let opts: c_int = if allow_half_open { LIBUS_SOCKET_ALLOW_HALF_OPEN } else { 0 };
-        let ssl_ctx_ptr: *mut SslCtx = ssl_ctx.unwrap_or(core::ptr::null_mut());
         // Zig `?*Owner` — see connect_group above for layout rationale.
         let s = g.connect_unix(
             kind,
-            ssl_ctx_ptr,
+            ssl_ctx,
             path,
             opts,
             size_of::<Option<core::ptr::NonNull<Owner>>>() as c_int,

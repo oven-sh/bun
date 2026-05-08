@@ -332,7 +332,7 @@ impl UpgradedDuplex {
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        self.wrapper = Some(WrapperType::init(
+        self.wrapper = Some(super::ssl_wrapper::init(
             ssl_options,
             is_client,
             super::ssl_wrapper::Handlers {

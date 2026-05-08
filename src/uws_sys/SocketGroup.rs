@@ -21,8 +21,8 @@ pub struct SocketGroup {
     pub vtable: Option<&'static VTable>,
     /// Embedding owner — typed access via `owner<T>()`. `*mut c_void` only
     /// because the C ABI slot is heterogenous (Listener / uWS App / RareData /
-    /// null); never read this field directly.
-    ext: *mut c_void,
+    /// null); prefer `owner::<T>()` over reading this directly.
+    pub ext: *mut c_void,
     pub head_sockets: *mut us_socket_t,
     pub head_connecting_sockets: *mut ConnectingSocket,
     pub head_listen_sockets: *mut ListenSocket,
@@ -159,7 +159,7 @@ impl SocketGroup {
     pub fn listen(
         &mut self,
         kind: SocketKind,
-        ssl_ctx: *mut SslCtx,
+        ssl_ctx: Option<*mut SslCtx>,
         host: Option<&core::ffi::CStr>,
         port: c_int,
         options: c_int,
@@ -171,7 +171,7 @@ impl SocketGroup {
             us_socket_group_listen(
                 self,
                 kind as u8,
-                ssl_ctx,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
                 host.map_or(ptr::null(), |h| h.as_ptr()),
                 port,
                 options,
@@ -184,7 +184,7 @@ impl SocketGroup {
     pub fn listen_unix(
         &mut self,
         kind: SocketKind,
-        ssl_ctx: *mut SslCtx,
+        ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
         options: c_int,
         socket_ext_size: c_int,
@@ -195,7 +195,7 @@ impl SocketGroup {
             us_socket_group_listen_unix(
                 self,
                 kind as u8,
-                ssl_ctx,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
                 path.as_ptr(),
                 path.len(),
                 options,
@@ -208,7 +208,7 @@ impl SocketGroup {
     pub fn connect(
         &mut self,
         kind: SocketKind,
-        ssl_ctx: *mut SslCtx,
+        ssl_ctx: Option<*mut SslCtx>,
         host: &core::ffi::CStr,
         port: c_int,
         options: c_int,
@@ -224,7 +224,7 @@ impl SocketGroup {
             us_socket_group_connect(
                 self,
                 kind as u8,
-                ssl_ctx,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
                 host.as_ptr(),
                 port,
                 options,
@@ -245,7 +245,7 @@ impl SocketGroup {
     pub fn connect_unix(
         &mut self,
         kind: SocketKind,
-        ssl_ctx: *mut SslCtx,
+        ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
         options: c_int,
         socket_ext_size: c_int,
@@ -255,7 +255,7 @@ impl SocketGroup {
             us_socket_group_connect_unix(
                 self,
                 kind as u8,
-                ssl_ctx,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
                 path.as_ptr(),
                 path.len(),
                 options,
@@ -267,13 +267,15 @@ impl SocketGroup {
     pub fn from_fd(
         &mut self,
         kind: SocketKind,
-        ssl_ctx: *mut SslCtx,
+        ssl_ctx: Option<*mut SslCtx>,
         socket_ext_size: c_int,
         fd: LIBUS_SOCKET_DESCRIPTOR,
         ipc: bool,
     ) -> *mut us_socket_t {
         // SAFETY: forwarding to C.
-        unsafe { us_socket_from_fd(self, kind as u8, ssl_ctx, socket_ext_size, fd, ipc as c_int) }
+        unsafe {
+            us_socket_from_fd(self, kind as u8, ssl_ctx.unwrap_or(ptr::null_mut()), socket_ext_size, fd, ipc as c_int)
+        }
     }
 
     pub fn pair(

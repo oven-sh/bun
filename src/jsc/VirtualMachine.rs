@@ -4379,11 +4379,7 @@ impl VirtualMachine {
                 // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
                 let next = unsafe { (*group.as_ptr()).next };
                 let g = group.as_ptr();
-                // PORT NOTE: `head` is `*mut bun_uws_sys::SocketGroup`; the
-                // skip-set above is typed against the `bun_uws::SocketGroup`
-                // mirror — `.cast()` for the pointer-equality check until the
-                // duplicate collapses.
-                if g != skip_spawn_ipc.cast() && g != skip_process_ipc.cast() && g != skip_test_parallel_ipc.cast() {
+                if g != skip_spawn_ipc && g != skip_process_ipc && g != skip_test_parallel_ipc {
                     // SAFETY: see above.
                     unsafe { (*g).close_all() };
                 }

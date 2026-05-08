@@ -2767,13 +2767,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
         // taken from SecureContext/ssl_ctx_cache and never null here.
         let new_raw: NonNull<uws::us_socket_t> = match unsafe {
-            // `adopt_tls` lives on `bun_uws_sys::us_socket_t` and takes the
-            // sys-level `SocketGroup`/`SocketKind`; `bun_uws::SocketGroup` is a
-            // separate `#[repr(C)]` mirror of the same C struct, so cast through
-            // raw pointer (layout-identical FFI handles).
             (*raw_socket).adopt_tls(
-                &mut *std::ptr::from_mut::<uws::SocketGroup>(group).cast::<bun_uws_sys::SocketGroup>(),
-                bun_uws_sys::SocketKind::BunSocketTls,
+                group,
+                uws::SocketKind::BunSocketTls,
                 &mut *((*tls_ptr).owned_ssl_ctx.unwrap()),
                 sni,
                 core::mem::size_of::<*mut c_void>() as i32,

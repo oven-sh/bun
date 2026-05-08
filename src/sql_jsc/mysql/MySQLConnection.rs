@@ -351,13 +351,10 @@ impl MySQLConnection {
 
         // SAFETY: `raw` is a live connected `us_socket_t*`; `tls_group` is a
         // live SocketGroup; adopt_tls may realloc and return a different ptr.
-        // PORT NOTE: `adopt_tls` lives in `bun_uws_sys` and takes the sys-level
-        // `SocketGroup`/`SocketKind`; both are `#[repr(C)]`-layout-identical to the
-        // `bun_uws` mirrors, so cast the group pointer through.
         let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
             // SAFETY: `tls_group` is non-null (lazy-init in `mysql_group`).
-            unsafe { &mut *tls_group.cast::<bun_uws_sys::SocketGroup>() },
-            bun_uws_sys::SocketKind::MysqlTls,
+            unsafe { &mut *tls_group },
+            bun_uws::SocketKind::MysqlTls,
             ssl_ctx,
             sni,
             ext_size,

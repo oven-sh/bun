@@ -94,8 +94,7 @@ impl JSS3Error {
 
     pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
-        // SAFETY: `self` lives for the duration of the FFI call; C++ does not retain the pointer.
-        unsafe { S3Error__toErrorInstance(&raw const self, global) }
+        S3Error__toErrorInstance(&self, global)
     }
 }
 
@@ -103,7 +102,9 @@ impl JSS3Error {
 // TODO(port): callconv(jsc.conv) — "sysv64" on Windows-x64, "C" elsewhere; Rust cannot
 // take a macro in ABI position, so Phase B must cfg-gate or wrap via bun_jsc helper.
 unsafe extern "C" {
-    fn S3Error__toErrorInstance(this: *const JSS3Error, global: *const JSGlobalObject) -> JSValue;
+    // C++ copies the three `BunString` fields out and does not write through
+    // `this`, so `&JSS3Error` (readonly) is sound.
+    safe fn S3Error__toErrorInstance(this: &JSS3Error, global: &JSGlobalObject) -> JSValue;
 }
 
 pub fn s3_error_to_js(err: &S3Error, global_object: &JSGlobalObject, path: Option<&[u8]>) -> JSValue {

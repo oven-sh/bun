@@ -1606,18 +1606,72 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// Full body in `server_body.rs::on_listen_failed()` — drains BoringSSL
-    /// error stack, formats the bind/listen failure, and `globalThis.throwValue`s
-    /// it. Until that detailed formatting is ported, throw the spec's fallback
-    /// message (server.zig:1933) so `listen()`'s `has_exception()` gate fires
-    /// and the server is `deinit()`ed instead of silently coming up listenerless.
+    /// Build the bind/listen failure as a `SystemError` (so JS sees
+    /// `err.code`/`err.syscall`) and `globalThis.throwValue` it. The BoringSSL
+    /// error-stack drain (server.zig:1847-1906) is still TODO; the EADDRINUSE/
+    /// EACCES paths below cover the node:http `server.listen` error contract.
     #[cold]
     pub fn on_listen_failed(&mut self) {
         self.listener = None;
         let global = self.global_this();
-        // TODO(b2-blocked): full error_instance (EADDRINUSE/EACCES/OpenSSL string)
-        // per server.zig:1847-1952 — see server_body.rs::on_listen_failed.
-        let _ = global.throw(format_args!("Failed to start server. Is port in use?"));
+
+        let error_instance = match &self.config.address {
+            server_config::Address::Tcp { port, hostname } => {
+                #[cfg(target_os = "linux")]
+                if bun_sys::get_errno(-1i32) == bun_sys::E::EACCES {
+                    let host = hostname
+                        .as_ref()
+                        .map(|h| h.to_bytes())
+                        .unwrap_or(b"0.0.0.0");
+                    let err = jsc::SystemError {
+                        message: bun_str::String::create_format(format_args!(
+                            "permission denied {}:{}",
+                            bstr::BStr::new(host),
+                            port
+                        )),
+                        code: bun_str::String::static_("EACCES"),
+                        syscall: bun_str::String::static_("listen"),
+                        ..Default::default()
+                    };
+                    let _ = global.throw_value(err.to_error_instance(global));
+                    return;
+                }
+                jsc::SystemError {
+                    message: bun_str::String::create_format(format_args!(
+                        "Failed to start server. Is port {} in use?",
+                        port
+                    )),
+                    code: bun_str::String::static_("EADDRINUSE"),
+                    syscall: bun_str::String::static_("listen"),
+                    ..Default::default()
+                }
+                .to_error_instance(global)
+            }
+            server_config::Address::Unix(unix) => {
+                let unix = unix.to_bytes();
+                match bun_sys::get_errno(-1i32) {
+                    bun_sys::E::SUCCESS => jsc::SystemError {
+                        message: bun_str::String::create_format(format_args!(
+                            "Failed to listen on unix socket {}",
+                            bun_core::fmt::QuotedFormatter { text: unix }
+                        )),
+                        code: bun_str::String::static_("EADDRINUSE"),
+                        syscall: bun_str::String::static_("listen"),
+                        ..Default::default()
+                    }
+                    .to_error_instance(global),
+                    e => jsc::SystemError::from(
+                        bun_sys::Error::from_code(e, bun_sys::Tag::listen)
+                            .with_path(unix)
+                            .to_system_error(),
+                    )
+                    .to_error_instance(global),
+                }
+            }
+        };
+
+        error_instance.ensure_still_alive();
+        let _ = global.throw_value(error_instance);
     }
 
     pub fn on_h3_listen(&mut self, socket: Option<*mut uws_sys::h3::ListenSocket>) {

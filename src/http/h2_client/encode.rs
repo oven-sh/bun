@@ -291,11 +291,10 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
     if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
         return;
     }
-    let Some(mut client_ptr) = stream.client else {
+    let Some(client_ptr) = stream.client else {
         return;
     };
-    // SAFETY: stream.client is a live HTTPClient back-ref while set.
-    let client = unsafe { client_ptr.as_mut() };
+    let client = super::client_session::stream_client_mut(client_ptr);
     match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
             let pending = stream.pending_body;

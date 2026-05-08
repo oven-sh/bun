@@ -154,6 +154,28 @@ fn pending_client_mut<'a>(ptr: *mut HTTPClient<'static>) -> &'a mut HTTPClient<'
     unsafe { &mut *ptr }
 }
 
+/// Upgrade a `NonNull<HTTPClient>` taken from `Stream.client` to `&mut`.
+///
+/// INVARIANT: `Stream.client` is a back-ref to the live `HTTPClient` embedded
+/// in its `AsyncHTTP`, set in `attach()` and cleared before the terminal
+/// callback. Disjoint allocation from both `Stream` and `ClientSession`, so
+/// the returned `&mut` does not alias either. HTTP-thread-only.
+#[inline(always)]
+pub(super) fn stream_client_mut<'a>(mut c: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
+    // SAFETY: see INVARIANT above.
+    unsafe { c.as_mut() }
+}
+
+/// Reclaim and drop a `Stream` previously `heap::alloc`-boxed in `attach()`.
+///
+/// INVARIANT (module): `stream` was removed from `ClientSession.streams`
+/// immediately before this call, so the session is the sole remaining owner.
+#[inline(always)]
+fn drop_stream(stream: *mut Stream) {
+    // SAFETY: see INVARIANT above.
+    unsafe { drop(bun_core::heap::take(stream)) };
+}
+
 impl ClientSession {
     /// Bump the refcount and return a guard that releases it on Drop, so
     /// reentrant callbacks (delivering bodies, failing clients) cannot free
@@ -404,8 +426,7 @@ impl ClientSession {
             // RFC 9113 §5.1).
             self.encoder_poisoned = true;
             self.streams.swap_remove(&stream_ref.id);
-            // SAFETY: stream was heap-allocated above and removed from the map; sole owner.
-            unsafe { drop(bun_core::heap::take(stream)) };
+            drop_stream(stream);
             client.h2 = None;
             client.h2_fail(err);
             // The poisoned session is dead for new work; bounce any waiters
@@ -459,8 +480,7 @@ impl ClientSession {
             self.orphan_header_block = core::mem::take(&mut s.header_block);
         }
         self.streams.swap_remove(&s.id);
-        // SAFETY: stream was heap-allocated in attach(); we are the sole owner after map removal.
-        unsafe { drop(bun_core::heap::take(stream)) };
+        drop_stream(stream);
     }
 
     /// Remove `stream` from the session, RST it, and fail its client. The
@@ -470,14 +490,12 @@ impl ClientSession {
         self.rst_stream(s, wire::ErrorCode::CANCEL);
         let _ = self.flush();
         let client = s.client.take();
-        if let Some(mut c) = client {
-            // SAFETY: stream.client is a live HTTPClient back-ref while set.
-            unsafe { c.as_mut() }.h2 = None;
+        if let Some(c) = client {
+            stream_client_mut(c).h2 = None;
         }
         self.remove_stream(stream);
-        if let Some(mut c) = client {
-            // SAFETY: same as above.
-            unsafe { c.as_mut() }.h2_fail(err);
+        if let Some(c) = client {
+            stream_client_mut(c).h2_fail(err);
         }
     }
 
@@ -755,15 +773,12 @@ impl ClientSession {
         }
         for &e in self.streams.values() {
             let client = stream_mut(e).client.take();
-            if let Some(mut c) = client {
-                // SAFETY: live back-ref while set; disjoint allocation.
-                unsafe { c.as_mut() }.h2 = None;
+            if let Some(c) = client {
+                stream_client_mut(c).h2 = None;
             }
-            // SAFETY: stream was heap-allocated in attach(); sole owner here.
-            unsafe { drop(bun_core::heap::take(e)) };
-            if let Some(mut c) = client {
-                // SAFETY: live back-ref.
-                unsafe { c.as_mut() }.h2_fail(err);
+            drop_stream(e);
+            if let Some(c) = client {
+                stream_client_mut(c).h2_fail(err);
             }
         }
         self.streams.clear_retaining_capacity();
@@ -864,7 +879,7 @@ impl ClientSession {
             // Pool stores the live *ClientSession so a later fetch can resume
             // the multiplexed connection. SAFETY: `self` is heap-owned and
             // outlives the pool entry (release_socket takes the strong ref).
-            let self_ptr = unsafe { NonNull::new_unchecked(std::ptr::from_mut::<ClientSession>(self)) };
+            let self_ptr = NonNull::from(&mut *self);
             // SAFETY: ctx back-ref is valid for the session's lifetime. Unlike
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry
@@ -898,13 +913,12 @@ impl ClientSession {
     /// may be touched.
     fn deliver_stream(&mut self, stream_ptr: *mut Stream) -> bool {
         let stream = stream_mut(stream_ptr);
-        let Some(mut client_ptr) = stream.client else {
+        let Some(client_ptr) = stream.client else {
             return true;
         };
-        // SAFETY: stream.client is a live back-ref while set; the client is a
-        // disjoint allocation from `stream`, so `&mut HTTPClient` here does not
-        // overlap the `&mut Stream` above.
-        let client = unsafe { client_ptr.as_mut() };
+        // `stream.client` is a disjoint allocation from `stream`, so this
+        // `&mut HTTPClient` does not overlap the `&mut Stream` above.
+        let client = stream_client_mut(client_ptr);
 
         if client.signals.get(signals::Field::Aborted) {
             self.rst_stream(stream, wire::ErrorCode::CANCEL);
@@ -1114,8 +1128,7 @@ impl Drop for ClientSession {
         // write_buffer / read_buffer / pending_attach / orphan_header_block /
         // encode_scratch / hostname / ssl_config are dropped automatically.
         for &e in self.streams.values() {
-            // SAFETY: streams values are heap-allocated in attach(); sole owner here.
-            unsafe { drop(bun_core::heap::take(e)) };
+            drop_stream(e);
         }
         // streams map storage drops automatically.
         // bun.destroy(this) — handled by heap::take in `deref`.

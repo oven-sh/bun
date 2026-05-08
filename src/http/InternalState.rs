@@ -140,8 +140,7 @@ impl<'a> InternalState<'a> {
 
         let body_msg = self.body_out_str;
         if let Some(body) = body_msg {
-            // SAFETY: body_out_str is a live user-owned buffer for the lifetime of this state
-            unsafe { (*body.as_ptr()).reset() };
+            crate::body_out::as_mut(body).reset();
         }
         // Decompressor::deinit → handled by Drop on assignment below
         // TODO(port): Decompressor may need explicit deinit if it holds FFI handles not freed by Drop
@@ -176,8 +175,7 @@ impl<'a> InternalState<'a> {
     /// any field of `self`.
     #[inline]
     fn body_out_mut(&mut self) -> &mut MutableString {
-        // SAFETY: see INVARIANT above.
-        unsafe { self.body_out_str.unwrap().as_mut() }
+        crate::body_out::as_mut(self.body_out_str.unwrap())
     }
 
     pub fn get_body_buffer(&mut self) -> &mut MutableString {
@@ -200,10 +198,9 @@ impl<'a> InternalState<'a> {
         if self.encoding.is_compressed() {
             (&mut self.chunked_decoder, &mut self.compressed_body)
         } else {
-            // SAFETY: body_out_str is a live user-owned buffer for the lifetime
-            // of this state; it is a separate heap allocation, never aliasing
+            // body_out_str is a separate heap allocation, never aliasing
             // `chunked_decoder` (a value field of `self`).
-            let body = unsafe { self.body_out_str.unwrap().as_mut() };
+            let body = crate::body_out::as_mut(self.body_out_str.unwrap());
             (&mut self.chunked_decoder, body)
         }
     }
@@ -414,10 +411,9 @@ impl<'a> InternalState<'a> {
 
         // PORT NOTE: not `self.body_out_mut()` — `decompress_bytes` below takes
         // `&mut self` alongside `body_out_str`; the accessor would tie the
-        // borrow to `self`. The raw deref yields an unbounded `&mut` to the
-        // disjoint caller-owned allocation.
-        // SAFETY: see [`Self::body_out_mut`] INVARIANT.
-        let body_out_str = unsafe { self.body_out_str.unwrap().as_mut() };
+        // borrow to `self`. The free `body_out::as_mut` yields an unbounded
+        // `&mut` to the disjoint caller-owned allocation.
+        let body_out_str = crate::body_out::as_mut(self.body_out_str.unwrap());
 
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {

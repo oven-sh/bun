@@ -567,7 +567,7 @@ impl<'a> HTTPClient<'a> {
     #[inline(always)]
     pub fn as_erased_ptr(&self) -> NonNull<HTTPClient<'static>> {
         // SAFETY: `self` is a valid reference (non-null, aligned).
-        unsafe { NonNull::new_unchecked(std::ptr::from_ref::<Self>(self).cast_mut().cast::<HTTPClient<'static>>()) }
+        NonNull::from(self).cast::<HTTPClient<'static>>()
     }
 }
 
@@ -758,6 +758,38 @@ static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> 
 // so we can avoid allocating a temporary buffer to copy the data in
 static SINGLE_PACKET_SMALL_BUFFER: bun_core::RacyCell<[u8; 16 * 1024]> =
     bun_core::RacyCell::new([0; 16 * 1024]);
+
+/// Accessors for the HTTP-thread-only `RacyCell` scratch buffers.
+///
+/// INVARIANT: every caller is on the dedicated HTTP thread (the only thread
+/// that runs `HTTPClient` methods after `on_start`), and each buffer is fully
+/// overwritten before being read, so a fresh `&mut` here is the sole live
+/// borrow. Centralised so the SAFETY argument lives in one place instead of
+/// being repeated at every `&mut *X.get()` call site.
+mod scratch {
+    use super::*;
+    #[inline]
+    pub(super) fn request_headers() -> &'static mut [picohttp::Header; MAX_REQUEST_HEADERS] {
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
+    }
+    #[inline]
+    pub(super) fn response_headers() -> &'static mut [picohttp::Header; 256] {
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }
+    }
+    #[inline]
+    pub(super) fn single_packet_small_buffer() -> &'static mut [u8; 16 * 1024] {
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *SINGLE_PACKET_SMALL_BUFFER.get() }
+    }
+    #[inline]
+    pub fn temp_hostname() -> &'static mut [u8; 8192] {
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *TEMP_HOSTNAME.get() }
+    }
+}
+pub use scratch::temp_hostname;
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
 // PORT NOTE: Zig used `boringssl.SSL.AlpnOffer`; bun_boringssl doesn't yet
@@ -1257,13 +1289,11 @@ impl<'a> HTTPClient<'a> {
     }
     #[inline]
     fn body_out_str(&self) -> Option<&MutableString> {
-        // SAFETY: body_out_str is set in `start()` and lives for the request.
-        self.state.body_out_str.map(|p| unsafe { p.as_ref() })
+        body_out::opt_mut(self.state.body_out_str).map(|b| &*b)
     }
     #[inline]
     fn body_out_str_mut(&mut self) -> Option<&mut MutableString> {
-        // SAFETY: see body_out_str()
-        self.state.body_out_str.map(|mut p| unsafe { p.as_mut() })
+        body_out::opt_mut(self.state.body_out_str)
     }
     #[inline]
     fn proxy_tunnel_mut(&mut self) -> Option<&mut ProxyTunnel> {
@@ -1317,6 +1347,62 @@ impl<'a> HTTPClient<'a> {
         // SAFETY: progress_node is owned by the caller (e.g. `bun install`'s
         // Progress) and outlives this client.
         self.progress_node.map(|mut p| unsafe { p.as_mut() })
+    }
+    /// Common `progress.activate(); set_completed_items(n); maybe_refresh()`
+    /// triple used at every body-chunk boundary. Centralises the raw deref of
+    /// `progress.context` (a backref into the owning `Progress` whose `&mut`
+    /// would alias the embedded `Node` — see `Progress::Node::context_ptr`).
+    fn report_progress(&mut self, completed: usize) {
+        if let Some(progress) = self.progress_node_mut() {
+            progress.activate();
+            progress.set_completed_items(completed);
+            // SAFETY: `context` is a non-null backref to the owning Progress.
+            // `&mut Progress` would alias the node tree (the Progress embeds
+            // `root: Node`), so this stays a narrowly-scoped raw deref.
+            unsafe { (*progress.context_ptr()).maybe_refresh() };
+        }
+    }
+}
+
+/// Module-private accessors for the caller-owned `body_out_str` buffer.
+///
+/// `state.body_out_str` is a `NonNull<MutableString>` set in `start()` to a
+/// buffer owned by the request initiator (FetchTasklet/NetworkTask/…) that
+/// strictly outlives the HTTPClient. The buffer is a separate heap allocation
+/// from `HTTPClient`/`InternalState`, so a `&mut MutableString` derived here
+/// never overlaps a `&mut self` on the client.
+///
+/// Centralising the SAFETY argument removes a dozen open-coded
+/// `unsafe { p.as_mut() }` derefs at call sites.
+pub(crate) mod body_out {
+    use super::{MutableString, NonNull};
+
+    /// Upgrade the body-out NonNull to `&mut MutableString`.
+    /// INVARIANT (module): `p` was obtained from `state.body_out_str`.
+    #[inline]
+    pub(crate) fn as_mut<'a>(mut p: NonNull<MutableString>) -> &'a mut MutableString {
+        // SAFETY: see module-level invariant.
+        unsafe { p.as_mut() }
+    }
+    /// `Option`-lifted [`as_mut`].
+    #[inline]
+    pub(super) fn opt_mut<'a>(p: Option<NonNull<MutableString>>) -> Option<&'a mut MutableString> {
+        p.map(as_mut)
+    }
+    /// Snapshot the body buffer's contents by value (http.zig
+    /// `const body = out_str.*`) so a following `state.reset()` doesn't
+    /// deliver an empty body.
+    #[inline]
+    pub(super) fn take_list(p: Option<NonNull<MutableString>>) -> Option<Vec<u8>> {
+        p.map(|p| core::mem::take(&mut as_mut(p).list))
+    }
+    /// Restore the body bytes that `state.reset()` cleared (http.zig
+    /// `result.body.?.* = body`).
+    #[inline]
+    pub(super) fn restore_list(p: Option<NonNull<MutableString>>, v: Option<Vec<u8>>) {
+        if let (Some(p), Some(v)) = (p, v) {
+            as_mut(p).list = v;
+        }
     }
 }
 
@@ -1438,7 +1524,7 @@ impl<'a> HTTPClient<'a> {
                 let mut owned: Vec<u8>; // drops on scope exit
                 let host_z: *const core::ffi::c_char = if !strings::is_ip_address(raw_hostname) {
                     // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
-                    let temp = unsafe { &mut *TEMP_HOSTNAME.get() };
+                    let temp = scratch::temp_hostname();
                     if raw_hostname.len() < temp.len() {
                         temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
                         temp[raw_hostname.len()] = 0;
@@ -1591,10 +1677,9 @@ impl<'a> HTTPClient<'a> {
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
         );
-        let mut body_out = self.state.body_out_str.take().unwrap();
+        let body_out = self.state.body_out_str.take().unwrap();
         self.state.reset();
-        // SAFETY: body_out_str points at the caller-owned MutableString, valid for the request.
-        self.start(body, unsafe { body_out.as_mut() });
+        self.start(body, body_out::as_mut(body_out));
     }
 
     /// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
@@ -1669,9 +1754,8 @@ impl<'a> HTTPClient<'a> {
                 &mut self.state.original_request_body,
                 HTTPRequestBody::Bytes(b""),
             );
-            let mut body_out = self.state.body_out_str.take().unwrap();
-            // SAFETY: body_out points at the caller-owned MutableString
-            self.start(body, unsafe { body_out.as_mut() });
+            let body_out = self.state.body_out_str.take().unwrap();
+            self.start(body, body_out::as_mut(body_out));
             return;
         }
 
@@ -1852,8 +1936,7 @@ impl<'a> HTTPClient<'a> {
         let header_entries = self.header_entries.slice();
         let header_names = header_entries.items_name();
         let header_values = header_entries.items_value();
-        // SAFETY: shared buffer only accessed from single HTTP thread
-        let request_headers_buf = unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() };
+        let request_headers_buf = scratch::request_headers();
 
         let mut override_accept_encoding = false;
         let mut override_accept_header = false;
@@ -2072,7 +2155,7 @@ impl<'a> HTTPClient<'a> {
         // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:1098 reads
         // `this.state.body_out_str.?` without clearing it, so the
         // TooManyRedirects `fail()` below still sees a populated body pointer.
-        let mut body_out_str = self.state.body_out_str.unwrap();
+        let body_out_str = self.state.body_out_str.unwrap();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -2133,8 +2216,7 @@ impl<'a> HTTPClient<'a> {
         self.close_proxy_tunnel(false);
         self.flags.protocol = Protocol::Http1_1;
 
-        // SAFETY: body_out_str points at the caller-owned MutableString.
-        self.start(HTTPRequestBody::Bytes(request_body), unsafe { body_out_str.as_mut() });
+        self.start(HTTPRequestBody::Bytes(request_body), body_out::as_mut(body_out_str));
     }
 
     /// **Not thread safe while request is in-flight**
@@ -2841,8 +2923,7 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
 
-            // SAFETY: shared buffer only accessed from single HTTP thread
-            let shared_resp = unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() };
+            let shared_resp = scratch::response_headers();
             let response = match picohttp::Response::parse_parts(to_read!(), shared_resp, Some(&mut amount_read))
             {
                 Ok(r) => r,
@@ -2873,11 +2954,7 @@ impl<'a> HTTPClient<'a> {
                 }
                 // special case for websocket upgrade
                 self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
-                if let Some(upgraded) = self.signals.upgraded {
-                    // SAFETY: points into a Signals::Store owned by the caller;
-                    // AtomicBool::store takes &self so a shared borrow suffices.
-                    unsafe { upgraded.as_ref() }.store(true, Ordering::Relaxed);
-                }
+                self.signals.store(signals::Field::Upgraded, true, Ordering::Relaxed);
                 // start draining the request body
                 self.flush_stream::<IS_SSL>(socket);
                 break;
@@ -3253,8 +3330,7 @@ impl<'a> HTTPClient<'a> {
         // `body.reset()` and clears the list — doesn't deliver an empty body
         // when `is_done`. Restored below before the callback (http.zig:2307
         // `result.body.?.* = body`).
-        // SAFETY: body points at the caller-owned MutableString.
-        let body_snapshot = body.map(|p| unsafe { core::mem::take(&mut (*p.as_ptr()).list) });
+        let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
         let (has_more, redirected, can_stream, is_http2, fail, metadata, body_size, certificate_info) = {
@@ -3345,16 +3421,12 @@ impl<'a> HTTPClient<'a> {
         }
 
         // Restore the body bytes that `state.reset()` cleared (http.zig:2307).
-        if let (Some(p), Some(v)) = (body, body_snapshot) {
-            // SAFETY: p points at the caller-owned MutableString.
-            unsafe { (*p.as_ptr()).list = v };
-        }
+        body_out::restore_list(body, body_snapshot);
         let async_http = self.parent_async_http();
         // Rebuild the result from snapshotted fields now that all `&mut self`
         // mutations are finished — no aliased borrows remain.
         let result = HTTPClientResult {
-            // SAFETY: body points at the caller-owned MutableString which outlives the callback.
-            body: body.map(|mut p| unsafe { p.as_mut() }),
+            body: body_out::opt_mut(body),
             has_more,
             redirected,
             can_stream,
@@ -3391,8 +3463,7 @@ impl<'a> HTTPClient<'a> {
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value (http.zig:2326-2327
         // `const body = out_str.*`); restored below (http.zig:2340).
-        // SAFETY: body points at the caller-owned MutableString.
-        let body_snapshot = body.map(|p| unsafe { core::mem::take(&mut (*p.as_ptr()).list) });
+        let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
         let (has_more, redirected, can_stream, is_http2, fail, metadata, body_size, certificate_info) = {
@@ -3419,16 +3490,12 @@ impl<'a> HTTPClient<'a> {
             self.flags.proxy_tunneling = false;
         }
         // Restore the body bytes that `state.reset()` cleared (http.zig:2340).
-        if let (Some(p), Some(v)) = (body, body_snapshot) {
-            // SAFETY: p points at the caller-owned MutableString.
-            unsafe { (*p.as_ptr()).list = v };
-        }
+        body_out::restore_list(body, body_snapshot);
         let async_http = self.parent_async_http();
         // Rebuild the result from snapshotted fields now that all `&mut self`
         // mutations are finished — no aliased borrows remain.
         let result = HTTPClientResult {
-            // SAFETY: body points at the caller-owned MutableString which outlives the callback.
-            body: body.map(|mut p| unsafe { p.as_mut() }),
+            body: body_out::opt_mut(body),
             has_more,
             redirected,
             can_stream,
@@ -3465,7 +3532,7 @@ impl<'a> HTTPClient<'a> {
         // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:2360 reads
         // `this.state.body_out_str.?` without clearing it, so the
         // TooManyRedirects `fail()` below still sees a populated body pointer.
-        let mut body_out_str = self.state.body_out_str.unwrap();
+        let body_out_str = self.state.body_out_str.unwrap();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -3480,7 +3547,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
         // SAFETY: body_out_str points at the caller-owned MutableString.
-        self.start(HTTPRequestBody::Bytes(request_body), unsafe { body_out_str.as_mut() });
+        self.start(HTTPRequestBody::Bytes(request_body), body_out::as_mut(body_out_str));
     }
 
     pub fn progress_update_h3(&mut self) {
@@ -3578,8 +3645,7 @@ impl<'a> HTTPClient<'a> {
             // transfer owner ship of the metadata here
             return HTTPClientResult {
                 metadata: Some(metadata),
-                // SAFETY: body_out_str points at the caller-owned MutableString
-                body: self.state.body_out_str.map(|mut p| unsafe { p.as_mut() }),
+                body: body_out::opt_mut(self.state.body_out_str),
                 redirected: self.flags.redirected,
                 fail: self.state.fail,
                 // check if we are reporting cert errors, do not have a fail state and we are not done
@@ -3594,8 +3660,7 @@ impl<'a> HTTPClient<'a> {
             };
         }
         HTTPClientResult {
-            // SAFETY: body_out_str points at the caller-owned MutableString
-                body: self.state.body_out_str.map(|mut p| unsafe { p.as_mut() }),
+            body: body_out::opt_mut(self.state.body_out_str),
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
@@ -3649,10 +3714,9 @@ impl<'a> HTTPClient<'a> {
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
-                let mut body_out = self.state.body_out_str.unwrap();
-                // SAFETY: body_out points at the caller-owned MutableString
+                let body_out = self.state.body_out_str.unwrap();
                 self.state
-                    .decompress_bytes(incoming_data, unsafe { body_out.as_mut() }, true)?;
+                    .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
             } else {
                 self.state.get_body_buffer().append_slice_exact(incoming_data)?;
             }
@@ -3670,12 +3734,7 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if let Some(progress) = self.progress_node_mut() {
-            progress.activate();
-            progress.set_completed_items(incoming_data.len());
-            // SAFETY: progress.context is a non-null backref to its owning Progress
-            unsafe { (*progress.context).maybe_refresh() };
-        }
+        self.report_progress(incoming_data.len());
         Ok(())
     }
 
@@ -3714,12 +3773,7 @@ impl<'a> HTTPClient<'a> {
             self.state.total_body_received
         );
         let total_received = self.state.total_body_received;
-        if let Some(progress) = self.progress_node_mut() {
-            progress.activate();
-            progress.set_completed_items(total_received);
-            // SAFETY: progress.context is a non-null backref to its owning Progress
-            unsafe { (*progress.context).maybe_refresh() };
-        }
+        self.report_progress(total_received);
 
         // done or streaming
         let is_done =
@@ -3738,12 +3792,7 @@ impl<'a> HTTPClient<'a> {
             self.state.flags.is_libdeflate_fast_path_disabled = true;
 
             let total_received = self.state.total_body_received;
-            if let Some(progress) = self.progress_node_mut() {
-                progress.activate();
-                progress.set_completed_items(total_received);
-                // SAFETY: progress.context is a non-null backref to its owning Progress
-                unsafe { (*progress.context).maybe_refresh() };
-            }
+            self.report_progress(total_received);
             return Ok(is_done || processed);
         }
         Ok(false)
@@ -3811,12 +3860,7 @@ impl<'a> HTTPClient<'a> {
             -1 => return Err(err!(InvalidHTTPResponse)),
             // Needs more data
             -2 => {
-                if let Some(progress) = self.progress_node_mut() {
-                    progress.activate();
-                    progress.set_completed_items(buffer_len);
-                    // SAFETY: progress.context is a non-null backref to its owning Progress
-                    unsafe { (*progress.context).maybe_refresh() };
-                }
+                self.report_progress(buffer_len);
                 // streaming chunks
                 if self.signals.get(signals::Field::ResponseBodyStreaming) {
                     // If we're streaming, we cannot use the libdeflate fast path
@@ -3837,12 +3881,7 @@ impl<'a> HTTPClient<'a> {
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
                 let _ = self.state.process_body_buffer(buffer_snap, true)?;
 
-                if let Some(progress) = self.progress_node_mut() {
-                    progress.activate();
-                    progress.set_completed_items(buffer_len);
-                    // SAFETY: progress.context is a non-null backref to its owning Progress
-                    unsafe { (*progress.context).maybe_refresh() };
-                }
+                self.report_progress(buffer_len);
 
                 return Ok(true);
             }
@@ -3855,8 +3894,7 @@ impl<'a> HTTPClient<'a> {
     ) -> Result<bool, bun_core::Error> {
         // PORT NOTE: reshaped for borrowck — raw ptr so later self.state.* compile.
         let decoder: *mut picohttp::phr_chunked_decoder = &raw mut self.state.chunked_decoder;
-        // SAFETY: HTTP-thread-only static
-        let small = unsafe { &mut *SINGLE_PACKET_SMALL_BUFFER.get() };
+        let small = scratch::single_packet_small_buffer();
         debug_assert!(incoming_data.len() <= small.len());
 
         // set consume_trailer to 1 to discard the trailing header
@@ -3907,12 +3945,7 @@ impl<'a> HTTPClient<'a> {
             -1 => Err(err!(InvalidHTTPResponse)),
             // Needs more data
             -2 => {
-                if let Some(progress) = self.progress_node_mut() {
-                    progress.activate();
-                    progress.set_completed_items(buffer.len());
-                    // SAFETY: progress.context is a non-null backref to its owning Progress
-            unsafe { (*progress.context).maybe_refresh() };
-                }
+                self.report_progress(buffer.len());
                 self.state.get_body_buffer().append_slice_exact(buffer)?;
 
                 // streaming chunks
@@ -3936,12 +3969,7 @@ impl<'a> HTTPClient<'a> {
                 debug_assert!(
                     self.body_out_str().map(|b| b.list.as_ptr()).unwrap_or(core::ptr::null()) != buffer.as_ptr()
                 );
-                if let Some(progress) = self.progress_node_mut() {
-                    progress.activate();
-                    progress.set_completed_items(buffer.len());
-                    // SAFETY: progress.context is a non-null backref to its owning Progress
-            unsafe { (*progress.context).maybe_refresh() };
-                }
+                self.report_progress(buffer.len());
 
                 Ok(true)
             }

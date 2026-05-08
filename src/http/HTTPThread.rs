@@ -447,8 +447,7 @@ impl HttpThread {
                 }
 
                 let now = self.timer_read();
-                // SAFETY: custom_context is a live Box::leak'd allocation.
-                let ctx_nn = unsafe { NonNull::new_unchecked(std::ptr::from_mut(custom_context)) };
+                let ctx_nn = NonNull::from(&mut *custom_context);
                 let _ = custom_ssl_context_map().put(
                     requested_config,
                     SslContextCacheEntry {

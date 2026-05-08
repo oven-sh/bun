@@ -337,20 +337,13 @@ impl<'a> AsyncHTTP<'a> {
     }
 
     pub fn signal_header_progress(&mut self) {
-        let Some(progress) = self.signals.header_progress else {
-            return;
-        };
-        // SAFETY: `progress` was created via `Signals::Store::to()` and the
-        // Store outlives this AsyncHTTP.
-        unsafe { progress.as_ref() }.store(true, Ordering::Release);
+        self.signals
+            .store(crate::signals::Field::HeaderProgress, true, Ordering::Release);
     }
 
     pub fn enable_response_body_streaming(&mut self) {
-        let Some(stream) = self.signals.response_body_streaming else {
-            return;
-        };
-        // SAFETY: see signal_header_progress.
-        unsafe { stream.as_ref() }.store(true, Ordering::Release);
+        self.signals
+            .store(crate::signals::Field::ResponseBodyStreaming, true, Ordering::Release);
     }
 
     /// Copy HTTP-thread progress state into the JS-thread "real" instance.

@@ -311,20 +311,18 @@ impl FrameworkRouter {
 // Clone: bitwise OK — `data` borrows from `pattern_string_arena`; the arena owns it.
 #[derive(Clone)]
 pub struct EncodedPattern {
-    // ARENA: backed by pattern_string_arena (raw slice; arena owns the bytes)
-    pub data: *const [u8],
+    // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
+    // every `EncodedPattern` — see `RawSlice` invariant in `bun_ptr`).
+    pub data: bun_ptr::RawSlice<u8>,
 }
 
 impl EncodedPattern {
     /// `/` is represented by zero bytes
-    pub const ROOT: EncodedPattern = EncodedPattern {
-        data: std::ptr::from_ref::<[u8]>(&[]),
-    };
+    pub const ROOT: EncodedPattern = EncodedPattern { data: bun_ptr::RawSlice::EMPTY };
 
     #[inline]
     fn data(&self) -> &[u8] {
-        // SAFETY: data points into pattern_string_arena which outlives self
-        unsafe { &*self.data }
+        self.data.slice()
     }
 
     pub fn pattern_serialized_length(parts: &[Part]) -> usize {
@@ -346,9 +344,7 @@ impl EncodedPattern {
             }
             debug_assert!(fbs.pos == len);
         }
-        Ok(EncodedPattern {
-            data: &raw const *slice,
-        })
+        Ok(EncodedPattern { data: bun_ptr::RawSlice::new(slice) })
     }
 
     pub fn iterate(&self) -> EncodedPatternIterator<'_> {
@@ -424,8 +420,8 @@ impl EncodedPattern {
                     }
                     params.params.resize(param_num + 1).unwrap();
                     params.params.slice()[param_num] = MatchedParamEntry {
-                        key: name,
-                        value: &raw const path[i..end],
+                        key: bun_ptr::RawSlice::new(name),
+                        value: bun_ptr::RawSlice::new(&path[i..end]),
                     };
                     param_num += 1;
                     i = if end == path.len() { end } else { end + 1 };
@@ -449,8 +445,8 @@ impl EncodedPattern {
                                 }
                                 params.params.resize(param_num + 1).unwrap();
                                 params.params.slice()[param_num] = MatchedParamEntry {
-                                    key: name,
-                                    value: &raw const path[segment_start..segment_end],
+                                    key: bun_ptr::RawSlice::new(name),
+                                    value: bun_ptr::RawSlice::new(&path[segment_start..segment_end]),
                                 };
                                 param_num += 1;
                             }
@@ -530,15 +526,15 @@ impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
 /// but with the allocation being backed by a plain string, which each
 /// part separated by slashes.
 pub struct StaticPattern {
-    // ARENA: backed by pattern_string_arena
-    pub route_path: *const [u8],
+    // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
+    // every `StaticPattern` — see `RawSlice` invariant in `bun_ptr`).
+    pub route_path: bun_ptr::RawSlice<u8>,
 }
 
 impl StaticPattern {
     #[inline]
     fn route_path(&self) -> &[u8] {
-        // SAFETY: route_path points into pattern_string_arena which outlives self
-        unsafe { &*self.route_path }
+        self.route_path.slice()
     }
 
     pub fn iterate(&self) -> StaticPatternIterator<'_> {
@@ -1305,9 +1301,10 @@ impl Default for MatchedParams {
 
 #[derive(Copy, Clone)]
 pub struct MatchedParamEntry {
-    // TODO(port): lifetime — these borrow from the input path/pattern; Zig used []const u8.
-    pub key: *const [u8],
-    pub value: *const [u8],
+    // Borrow from the input `path`/`pattern` buffers; both outlive the
+    // `MatchedParams` stack frame (Zig: `[]const u8`). See `RawSlice` invariant.
+    pub key: bun_ptr::RawSlice<u8>,
+    pub value: bun_ptr::RawSlice<u8>,
 }
 
 impl MatchedParams {
@@ -1326,10 +1323,8 @@ impl MatchedParams {
         // Create a JavaScript object with params
         let obj = JSValue::create_empty_object(global, params_array.len());
         for param in params_array {
-            // SAFETY: key/value point into live path/pattern buffers for the duration of this call
-            let (key, value) = unsafe { (&*param.key, &*param.value) };
-            let key_str = bun_str::String::clone_utf8(key);
-            let value_str = bun_str::String::clone_utf8(value);
+            let key_str = bun_str::String::clone_utf8(param.key.slice());
+            let value_str = bun_str::String::clone_utf8(param.value.slice());
 
             obj.put_bun_string_one_or_array(
                 global,
@@ -1765,7 +1760,7 @@ impl FrameworkRouter {
                             }
                             debug_assert!(pos == allocation.len());
                             let pattern = StaticPattern {
-                                route_path: &raw const *allocation,
+                                route_path: bun_ptr::RawSlice::new(allocation),
                             };
                             self.insert(
                                 t_index,

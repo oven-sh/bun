@@ -18,7 +18,9 @@ pub enum AssignCtx {
 
 pub struct Assigns {
     pub base: Base,
-    pub node: *const [ast::Assign],
+    /// Points into the AST arena, which outlives every state node — `RawSlice`
+    /// invariant.
+    pub node: bun_ptr::RawSlice<ast::Assign>,
     pub io: IO,
     pub state: AssignsState,
     pub ctx: AssignCtx,
@@ -38,14 +40,15 @@ impl Assigns {
     pub fn init(
         interp: &mut Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const [ast::Assign],
+        node: &[ast::Assign],
         parent: NodeId,
         ctx: AssignCtx,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Assigns(Assigns {
             base: Base::new(StateKind::Assign, parent, shell),
-            node,
+            // AST arena outlives every state node — `RawSlice` invariant.
+            node: bun_ptr::RawSlice::new(node),
             io,
             state: AssignsState::Idle,
             ctx,
@@ -62,9 +65,7 @@ impl Assigns {
                 let me = interp.as_assigns(this);
                 (me.base.shell, me.node)
             };
-            // SAFETY: `node` points into the AST arena which outlives every
-            // state node.
-            let assigns = unsafe { &*node };
+            let assigns = node.slice();
             match interp.as_assigns(this).state {
                 AssignsState::Idle => {
                     interp.as_assigns_mut(this).state = AssignsState::Expanding { idx: 0 };
@@ -119,9 +120,8 @@ impl Assigns {
         let AssignsState::Expanding { idx } = &mut interp.as_assigns_mut(this).state else {
             unreachable!("Assigns child_done outside Expanding")
         };
-        // SAFETY: `node` points into the AST arena which outlives every state
-        // node; `idx` was bounds-checked in `next` before spawning the child.
-        let label = unsafe { (*node)[*idx as usize].label };
+        // `idx` was bounds-checked in `next` before spawning the child.
+        let label = node.slice()[*idx as usize].label;
         *idx += 1;
 
         // Join multi-word expansions with a single space (Spec: Assigns.zig

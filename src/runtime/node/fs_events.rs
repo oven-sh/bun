@@ -576,9 +576,10 @@ impl FSEventsLoop {
             let Some(handle) = *watcher else { continue };
             // SAFETY: handle is alive while held under mutex (see comment above)
             let handle = unsafe { &mut *handle.as_ptr() };
-            // SAFETY: `path` borrows from the owning PathWatcher, which outlives this
-            // FSEventsWatcher (its drop runs `unregister_watcher` under this mutex).
-            let handle_path = unsafe { &*handle.path };
+            // Copy the `RawSlice` (it is `Copy`) so the re-borrow is not tied
+            // to `handle` — `handle.emit` below needs `&mut *handle`.
+            let path_ref = handle.path;
+            let handle_path = path_ref.slice();
 
             for (i, path_ptr) in paths.iter().enumerate() {
                 let mut flags = event_flags[i];
@@ -693,7 +694,7 @@ impl FSEventsLoop {
                     let watcher = &*watcher.as_ptr();
                     let path = (cf.string_create_with_file_system_representation)(
                         ptr::null_mut(),
-                        (*watcher.path).as_ptr().cast(),
+                        watcher.path.slice().as_ptr().cast(),
                     );
                     paths[count as usize] = path;
                     count += 1;
@@ -879,13 +880,13 @@ impl Drop for FSEventsLoop {
 }
 
 pub struct FSEventsWatcher {
-    /// Borrowed from the owning `PathWatcher` (Zig: `[]const u8`). Stored raw
-    /// because the lifetime can't be named here — the PathWatcher heap-allocates
-    /// this watcher and only frees it after `Drop` (→ `unregister_watcher`) has
-    /// run, so the bytes outlive every read in `_events_cb` / `_schedule`.
-    /// The backing buffer is a `ZBox`, so `(*path).as_ptr()` is NUL-terminated
-    /// (required by `CFStringCreateWithFileSystemRepresentation`).
-    pub path: *const [u8],
+    /// Borrowed from the owning `PathWatcher` (Zig: `[]const u8`). The
+    /// PathWatcher heap-allocates this watcher and only frees it after `Drop`
+    /// (→ `unregister_watcher`) has run, so the bytes outlive every read in
+    /// `_events_cb` / `_schedule` — `RawSlice` invariant. The backing buffer is
+    /// a `ZBox`, so `path.slice().as_ptr()` is NUL-terminated (required by
+    /// `CFStringCreateWithFileSystemRepresentation`).
+    pub path: bun_ptr::RawSlice<u8>,
     pub callback: Callback,
     pub flush_callback: UpdateEndCallback,
     // Zig: `loop: ?*FSEventsLoop`. Stored as a raw pointer because the loop is
@@ -910,7 +911,7 @@ impl FSEventsWatcher {
         ctx: *mut c_void,
     ) -> Box<FSEventsWatcher> {
         let mut this = Box::new(FSEventsWatcher {
-            path: std::ptr::from_ref::<[u8]>(path),
+            path: bun_ptr::RawSlice::new(path),
             callback,
             flush_callback: update_end,
             loop_: NonNull::new(loop_),

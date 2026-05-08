@@ -47,9 +47,10 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     pub process: *mut P,
     pub event_loop: EventLoopHandle,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
-    // TODO(port): lifetime — self-borrow into `self.source`; Phase B may store an
-    // offset+len pair and re-slice from `self.source` instead of a raw self-pointer.
-    pub buffer: *const [u8],
+    // Self-borrow into `self.source` (the `RawSlice` invariant is satisfied:
+    // `source` is owned by `self` and detached only in `on_error`/`on_close`/
+    // `Drop`, after which `buffer` is no longer read).
+    pub buffer: bun_ptr::RawSlice<u8>,
 }
 
 // Zig: `const WriterRefCount = bun.ptr.RefCount(@This(), "ref_count", _deinit, .{});`
@@ -110,10 +111,10 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
     }
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
         // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
-        // Deref the raw `*const [u8]` directly (rather than via the inherent
+        // Re-borrow the `RawSlice` directly (rather than via the inherent
         // `get_buffer(&self)` accessor) so the returned lifetime `'a` is
         // unbound from `P`'s lifetime parameter.
-        unsafe { &*(*this).buffer }
+        unsafe { &*(*this).buffer.as_ptr() }
     }
     const HAS_ON_WRITABLE: bool = false;
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -157,10 +158,10 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsBufferedWriterParen
     }
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
         // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
-        // Deref the raw `*const [u8]` directly (rather than via the inherent
+        // Re-borrow the `RawSlice` directly (rather than via the inherent
         // `get_buffer(&self)` accessor) so the returned lifetime `'a` is
         // unbound from `P`'s lifetime parameter.
-        unsafe { &*(*this).buffer }
+        unsafe { &*(*this).buffer.as_ptr() }
     }
     const HAS_ON_WRITABLE: bool = false;
 }
@@ -192,8 +193,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     /// read. The pointee bytes are immutable for the lifetime of `self`.
     #[inline]
     pub fn get_buffer(&self) -> &[u8] {
-        // SAFETY: see doc comment — non-null, points into owned `self.source`.
-        unsafe { &*self.buffer }
+        self.buffer.slice()
     }
 
     /// Raw backref to the owning process.
@@ -242,7 +242,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             source,
             process: subprocess,
             event_loop,
-            buffer: std::ptr::from_ref::<[u8]>(b""),
+            buffer: bun_ptr::RawSlice::EMPTY,
         }));
         // SAFETY: `this` was just allocated above and is non-null.
         let this_ref = unsafe { &mut *this };
@@ -264,8 +264,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // Zig `this.ref()` — intrusive-refcount increment.
         // SAFETY: `self` is a live `Self` (created via `create()`/`Box::into_raw`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
-        // TODO(port): self-borrow — see `buffer` field note.
-        self.buffer = std::ptr::from_ref::<[u8]>(self.source.slice());
+        // Self-borrow — see `buffer` field note (`RawSlice` invariant).
+        self.buffer = bun_ptr::RawSlice::new(self.source.slice());
         #[cfg(windows)]
         {
             return self.writer.start_with_current_pipe();
@@ -305,7 +305,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             }
         );
         let buf = self.get_buffer();
-        self.buffer = std::ptr::from_ref::<[u8]>(&buf[amount.min(buf.len())..]);
+        self.buffer = bun_ptr::RawSlice::new(&buf[amount.min(buf.len())..]);
         if status == WriteStatus::EndOfFile || self.get_buffer().is_empty() {
             self.writer.close();
         }

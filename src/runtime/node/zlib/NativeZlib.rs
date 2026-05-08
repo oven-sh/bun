@@ -227,10 +227,10 @@ pub struct Context {
     pub state: c::z_stream,
     pub err: c::ReturnCode,
     pub flush: c::FlushValue,
-    // TODO(port): lifetime — borrows a JS ArrayBuffer kept alive via
-    // js::dictionary_set_cached (BACKREF/FFI class). Stored raw to avoid a
-    // 'static lifetime lie; default is the empty static slice.
-    pub dictionary: *const [u8],
+    // Borrows a JS ArrayBuffer kept alive via `js::dictionary_set_cached`
+    // (BACKREF/FFI class) for the lifetime of the JS wrapper, which strictly
+    // outlives this Context — `RawSlice` invariant. Default is `EMPTY`.
+    pub dictionary: bun_ptr::RawSlice<u8>,
     pub gzip_id_bytes_read: u8,
 }
 
@@ -242,7 +242,7 @@ impl Default for Context {
             state: unsafe { mem::zeroed::<c::z_stream>() },
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
-            dictionary: std::ptr::from_ref::<[u8]>(b""),
+            dictionary: bun_ptr::RawSlice::EMPTY,
             gzip_id_bytes_read: 0,
         }
     }
@@ -254,10 +254,7 @@ impl Context {
 
     #[inline]
     fn dictionary(&self) -> &[u8] {
-        // SAFETY: backing ArrayBuffer is rooted via js::dictionary_set_cached for
-        // the lifetime of the JS wrapper, which strictly outlives this Context;
-        // default value is `b""` (static).
-        unsafe { &*self.dictionary }
+        self.dictionary.slice()
     }
 
     pub fn init(
@@ -282,10 +279,10 @@ impl Context {
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         };
 
-        // TODO(port): lifetime — see field comment on `dictionary`.
+        // See field comment on `dictionary` — `RawSlice` invariant.
         self.dictionary = match dictionary {
-            Some(d) => std::ptr::from_ref::<[u8]>(d),
-            None => std::ptr::from_ref::<[u8]>(b""),
+            Some(d) => bun_ptr::RawSlice::new(d),
+            None => bun_ptr::RawSlice::EMPTY,
         };
 
         // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion()

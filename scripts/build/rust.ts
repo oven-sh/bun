@@ -182,11 +182,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // are PIC-compatible with the no-PIE link, and forcing `static`
   // workspace-wide would break proc-macro dylibs.
   const rustflags: string[] = [];
+  // `bun_core::build_options::ENABLE_ASAN = cfg!(bun_asan)` — must agree with
+  // the C++ `ASAN_ENABLED` macro so Global::exit() picks the same libc exit
+  // path (`exit` vs `quick_exit`) that c-bindings.cpp registered Bun__onExit on.
+  rustflags.push("--check-cfg=cfg(bun_asan)");
   if (cfg.asan) {
     // Match the C/C++ side's instrumentation so cross-language stack traces
     // and shadow-memory bookkeeping agree. Nightly-only flag; the pinned
     // toolchain in `rust-toolchain.toml` is nightly.
     rustflags.push("-Zsanitizer=address");
+    rustflags.push("--cfg=bun_asan");
   }
 
   // ─── Environment ───

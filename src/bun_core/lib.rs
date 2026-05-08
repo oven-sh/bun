@@ -93,7 +93,7 @@ pub mod build_options {
         None => concat!(env!("CARGO_MANIFEST_DIR"), "/../..").as_bytes(),
     };
     pub const ENABLE_LOGS: bool = cfg!(debug_assertions);
-    pub const ENABLE_ASAN: bool = false;
+    pub const ENABLE_ASAN: bool = cfg!(bun_asan);
     pub const ENABLE_FUZZILLI: bool = false;
     pub const ENABLE_TINYCC: bool = true;
     /// `<build>/codegen`. `scripts/build/rust.ts` exports `BUN_CODEGEN_DIR` to

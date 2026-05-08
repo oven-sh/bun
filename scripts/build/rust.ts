@@ -171,7 +171,7 @@ export interface RustBuildInputs {
   /**
    * Generated files Rust `include!`s / `include_bytes!`s — content tracked.
    * The `.rs` files (`generated_classes.rs` etc.) are undeclared side
-   * effects of the same scripts that produce `CodegenOutputs.zigInputs`, so
+   * effects of the same scripts that produce `CodegenOutputs.rustInputs`, so
    * passing that set here is sufficient to order codegen before cargo.
    */
   codegenInputs: string[];

@@ -210,10 +210,10 @@ export interface CodegenOutputs {
   all: string[];
 
   /** Outputs that zig `@embedFile`s or imports. */
-  zigInputs: string[];
+  rustInputs: string[];
 
   /** Outputs that zig needs to exist but doesn't embed (debug bake runtime). */
-  zigOrderOnly: string[];
+  rustOrderOnly: string[];
 
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
   cppSources: string[];
@@ -273,8 +273,8 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 
   const o: CodegenOutputs = {
     all: [],
-    zigInputs: [],
-    zigOrderOnly: [],
+    rustInputs: [],
+    rustOrderOnly: [],
     cppSources: [],
     cppHeaders: [],
     cppAll: [],
@@ -408,7 +408,7 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
 }
 
 function emitFallbackDecoder({ n, cfg, o, dirStamp }: Ctx): void {
@@ -437,7 +437,7 @@ function emitFallbackDecoder({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(out);
-  o.zigInputs.push(out);
+  o.rustInputs.push(out);
 }
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
@@ -468,7 +468,7 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(out);
-  o.zigInputs.push(out);
+  o.rustInputs.push(out);
 }
 
 function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -498,7 +498,7 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
 
   // ─── react-refresh (separate bundle, uses node-fallbacks' node_modules) ───
   const rrSrc = resolve(sourceDir, "node_modules", "react-refresh", "cjs", "react-refresh-runtime.development.js");
@@ -525,7 +525,7 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(rrOut);
-  o.zigInputs.push(rrOut);
+  o.rustInputs.push(rrOut);
 }
 
 function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
@@ -560,7 +560,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
   o.cppHeaders.push(outputs[0]!, outputs[1]!);
 }
 
@@ -591,7 +591,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[1]!); // .cpp
   o.cppHeaders.push(outputs[0]!, outputs[2]!, outputs[3]!, outputs[4]!, outputs[5]!); // .h files
   // .lut.txt is consumed by emitObjectLuts below
@@ -629,9 +629,9 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(output);
   // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
-  // must wait on it — `zigInputs` is the implicit-dep list both zig and the
+  // must wait on it — `rustInputs` is the implicit-dep list both zig and the
   // cargo edge consume.
-  o.zigInputs.push(output);
+  o.rustInputs.push(output);
 }
 
 function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -682,7 +682,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(output);
-  o.zigInputs.push(output);
+  o.rustInputs.push(output);
 }
 
 function emitCiInfo({ n, cfg, o, dirStamp }: Ctx): void {
@@ -705,7 +705,7 @@ function emitCiInfo({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(output);
-  o.zigInputs.push(output);
+  o.rustInputs.push(output);
 }
 
 function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -746,7 +746,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[0]!); // WebCoreJSBuiltins.cpp
   o.cppHeaders.push(...outputs.filter(p => p.endsWith(".h")));
 }
@@ -786,9 +786,9 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // Debug: read at RUNTIME (not embedded) → the build only needs existence.
   // Release: embedded into the binary → content changes must trigger a relink.
   if (cfg.debug) {
-    o.zigOrderOnly.push(...outputs);
+    o.rustOrderOnly.push(...outputs);
   } else {
-    o.zigInputs.push(...outputs);
+    o.rustInputs.push(...outputs);
   }
 }
 
@@ -849,7 +849,7 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.all.push(...allOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
   o.bindgenV2Zig.push(...zigOutputs);
-  o.zigInputs.push(...zigOutputs);
+  o.rustInputs.push(...zigOutputs);
 }
 
 function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -876,7 +876,7 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(cppOut, zigOut);
   o.cppSources.push(cppOut);
-  o.zigInputs.push(zigOut);
+  o.rustInputs.push(zigOut);
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
@@ -912,12 +912,12 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   o.cppSources.push(outputs[0]!); // .cpp
   o.cppHeaders.push(outputs[1]!, outputs[2]!); // .h + .lut.h
   // bun_runtime/build.rs panics if generated_jssink.rs is absent, so the
-  // rust_build edge must order after this codegen step — `zigInputs` is the
+  // rust_build edge must order after this codegen step — `rustInputs` is the
   // implicit-dep list the cargo edge consumes (same as generated_host_exports).
   // Without this, `mode: "rust-only"` (CI's build-rust job, which compiles no
   // C++ so nothing else pulls JSSink.cpp/.h) never runs this edge and cargo
   // hits the missing file.
-  o.zigInputs.push(jssinkRs);
+  o.rustInputs.push(jssinkRs);
 }
 
 /**

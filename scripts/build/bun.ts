@@ -220,8 +220,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   let rustObjects: string[] = [];
   if (cfg.mode !== "cpp-only") {
     rustObjects = emitRust(n, cfg, {
-      codegenInputs: codegen.zigInputs,
-      codegenOrderOnly: codegen.zigOrderOnly,
+      codegenInputs: codegen.rustInputs,
+      codegenOrderOnly: codegen.rustOrderOnly,
       rustSources: sources.rust,
       // lol-html is consumed as a path dep of `bun_lolhtml_sys`, not built
       // into a separate archive — cargo needs `vendor/lolhtml/` on disk
@@ -545,8 +545,8 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegen = emitCodegen(n, cfg, sources);
 
   const rustObjects = emitRust(n, cfg, {
-    codegenInputs: codegen.zigInputs,
-    codegenOrderOnly: codegen.zigOrderOnly,
+    codegenInputs: codegen.rustInputs,
+    codegenOrderOnly: codegen.rustOrderOnly,
     rustSources: sources.rust,
     vendorStamps: lolhtmlDep.outputs,
   });

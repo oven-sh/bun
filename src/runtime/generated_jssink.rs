@@ -12,9 +12,7 @@
     non_upper_case_globals,
     unused_variables,
     unused_imports,
-    unused_unsafe,
     dead_code,
-    clippy::missing_safety_doc,
     clippy::not_unsafe_ptr_arg_deref,
     clippy::all
 )]

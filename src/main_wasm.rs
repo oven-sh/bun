@@ -51,24 +51,29 @@ impl Default for Uint8Array {
     }
 }
 
+/// Pack `(ptr, len)` into the wasm-ABI `u64` slice handle (Zig `@bitCast([2]u32 → u64)`).
+/// wasm32 is little-endian, so field 0 occupies the low 32 bits and field 1 the high 32;
+/// composing via native-endian byte arrays is byte-identical to a raw bitcast.
+#[inline]
+fn pack_wasm_slice(ptr: *const u8, len: usize) -> u64 {
+    let mut b = [0u8; 8];
+    b[..4].copy_from_slice(&(ptr as usize as u32).to_ne_bytes());
+    b[4..].copy_from_slice(&(u32::try_from(len).expect("int cast")).to_ne_bytes());
+    u64::from_ne_bytes(b)
+}
+
 impl Uint8Array {
     pub fn from_slice(slice: &[u8]) -> u64 {
-        // SAFETY: wasm32 — pointers are 32-bit; pack (ptr, len) into a u64 exactly as Zig did.
-        unsafe {
-            core::mem::transmute::<[u32; 2], u64>([
-                slice.as_ptr() as usize as u32,
-                u32::try_from(slice.len()).expect("int cast"),
-            ])
-        }
+        pack_wasm_slice(slice.as_ptr(), slice.len())
     }
 
     pub fn from_js(data: u64) -> &'static mut [u8] {
-        // SAFETY: wasm32 — unpack (ptr, len) from a u64; caller (JS host) guarantees the
-        // region was produced by `bun_malloc` and is live.
-        unsafe {
-            let ptrs = core::mem::transmute::<u64, [u32; 2]>(data);
-            core::slice::from_raw_parts_mut(ptrs[0] as usize as *mut u8, ptrs[1] as usize)
-        }
+        let b = data.to_ne_bytes();
+        let ptr = u32::from_ne_bytes([b[0], b[1], b[2], b[3]]) as usize as *mut u8;
+        let len = u32::from_ne_bytes([b[4], b[5], b[6], b[7]]) as usize;
+        // SAFETY: wasm32 — caller (JS host) guarantees the region was produced by
+        // `bun_malloc` and is live for the program lifetime.
+        unsafe { core::slice::from_raw_parts_mut(ptr, len) }
     }
 }
 
@@ -214,13 +219,7 @@ pub extern "C" fn bun_malloc(size: usize) -> u64 {
     let mut v = vec![0u8; size].into_boxed_slice();
     let ptr = v.as_mut_ptr();
     core::mem::forget(v);
-    // SAFETY: wasm32 — pack (ptr, len) into u64.
-    unsafe {
-        core::mem::transmute::<[u32; 2], u64>([
-            ptr as usize as u32,
-            u32::try_from(size).expect("int cast"),
-        ])
-    }
+    pack_wasm_slice(ptr, size)
 }
 
 #[unsafe(no_mangle)]
@@ -619,14 +618,9 @@ pub extern "C" fn getTests(opts_array: u64) -> u64 {
     let boxed = output.into_boxed_slice();
     let len = boxed.len();
     let ptr = Box::into_raw(boxed).cast::<u8>();
-    // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
-    // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
-    unsafe {
-        core::mem::transmute::<[u32; 2], u64>([
-            ptr as usize as u32,
-            u32::try_from(len).expect("int cast"),
-        ])
-    }
+    // Boxed slice (len == capacity) is leaked to JS and freed via bun_free's
+    // Box::<[u8]>::from_raw, so dealloc layout matches.
+    pack_wasm_slice(ptr, len)
 }
 
 #[unsafe(no_mangle)]
@@ -722,12 +716,9 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
         let ptr = Box::into_raw(boxed).cast::<u8>();
-        // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
-        // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
-        core::mem::transmute::<[u32; 2], u64>([
-            ptr as usize as u32,
-            u32::try_from(len).expect("int cast"),
-        ])
+        // Boxed slice (len == capacity) is leaked to JS and freed via bun_free's
+        // Box::<[u8]>::from_raw, so dealloc layout matches.
+        pack_wasm_slice(ptr, len)
     }
 }
 
@@ -802,14 +793,9 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
         let ptr = Box::into_raw(boxed).cast::<u8>();
-        // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
-        // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
-        unsafe {
-            core::mem::transmute::<[u32; 2], u64>([
-                ptr as usize as u32,
-                u32::try_from(len).expect("int cast"),
-            ])
-        }
+        // Boxed slice (len == capacity) is leaked to JS and freed via bun_free's
+        // Box::<[u8]>::from_raw, so dealloc layout matches.
+        pack_wasm_slice(ptr, len)
     } else {
         let mut output: Vec<u8> = Vec::new();
         let scan_result = api::ScanResult {
@@ -822,14 +808,9 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
         let ptr = Box::into_raw(boxed).cast::<u8>();
-        // SAFETY: wasm32 — pack (ptr, len) into u64; boxed slice (len == capacity) is leaked
-        // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
-        unsafe {
-            core::mem::transmute::<[u32; 2], u64>([
-                ptr as usize as u32,
-                u32::try_from(len).expect("int cast"),
-            ])
-        }
+        // Boxed slice (len == capacity) is leaked to JS and freed via bun_free's
+        // Box::<[u8]>::from_raw, so dealloc layout matches.
+        pack_wasm_slice(ptr, len)
     }
 }
 

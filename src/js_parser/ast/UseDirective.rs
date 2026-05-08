@@ -33,12 +33,14 @@ impl UseDirective {
     }
 
     pub fn boundering(self, other: UseDirective) -> Option<Boundering> {
-        if self == other || other == UseDirective::None {
+        if self == other {
             return None;
         }
-        // SAFETY: `other` is Client or Server here (None excluded above), and
-        // Boundering's discriminants are defined to equal UseDirective's.
-        Some(unsafe { core::mem::transmute::<u8, Boundering>(other as u8) })
+        match other {
+            UseDirective::None => None,
+            UseDirective::Client => Some(Boundering::Client),
+            UseDirective::Server => Some(Boundering::Server),
+        }
     }
 
     pub fn parse(contents: &[u8]) -> Option<UseDirective> {

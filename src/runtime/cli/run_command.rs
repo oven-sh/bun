@@ -3620,17 +3620,13 @@ impl RunCommand {
     /// `cli_body::bun_getcompletes`.
     pub fn completions<const FILTER: Filter>(
         ctx: &mut ContextData,
-        default_completions: Option<&[&[u8]]>,
+        default_completions: Option<&'static [&'static [u8]]>,
         reject_list: &[&[u8]],
     ) -> Result<ShellCompletions, bun_core::Error> {
         let mut shell_out = ShellCompletions::default();
         if FILTER != Filter::ScriptExclude {
             if let Some(defaults) = default_completions {
-                // SAFETY: callers pass `'static` const tables; erase the elided
-                // lifetime back to `'static` (Zig stored the borrowed slice).
-                shell_out.commands = std::borrow::Cow::Borrowed(unsafe {
-                    ::core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(defaults)
-                });
+                shell_out.commands = std::borrow::Cow::Borrowed(defaults);
             }
         }
 

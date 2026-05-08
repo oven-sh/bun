@@ -215,10 +215,9 @@ impl JSGlobalObject {
 
     #[inline]
     pub fn to_js_value(&self) -> JSValue {
-        // SAFETY: JSValue is #[repr(transparent)] i64; encoding a cell pointer as
-        // a JSValue is the same operation Zig's `@enumFromInt(@intFromPtr(globalThis))`
-        // performs.
-        unsafe { core::mem::transmute::<i64, JSValue>(std::ptr::from_ref::<Self>(self) as i64) }
+        // JSValue is #[repr(transparent)] over the encoded pointer-width word; encoding a
+        // cell pointer is exactly Zig's `@enumFromInt(@intFromPtr(globalThis))`.
+        JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
     }
 
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {

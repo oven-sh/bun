@@ -674,15 +674,14 @@ fn css_symbols_to_parser_symbols(
     for s in src.slice() {
         // SAFETY: both `Kind`/`ImportItemStatus` are `#[repr(u8)]` ports of the
         // same Zig enums (Symbol.zig:192, ImportItemStatus); discriminants are
-        // identical by construction. `Ref` is `#[repr(transparent)] u64` on
-        // both sides (ast/base.rs:178, logger/lib.rs:346).
+        // identical by construction.
         let kind: PKind = unsafe { core::mem::transmute::<u8, PKind>(s.kind as u8) };
         let import_item_status = unsafe {
             core::mem::transmute::<u8, bun_js_parser::ImportItemStatus>(s.import_item_status as u8)
         };
-        let link = unsafe {
-            core::mem::transmute::<bun_logger::Ref, bun_js_parser::ast::Ref>(s.link)
-        };
+        // `bun_js_parser::ast::Ref` is a re-export of `bun_logger::Ref` (ast/base.rs:172)
+        // — same nominal type, no bridge needed.
+        let link: bun_js_parser::ast::Ref = s.link;
         out.append_assume_capacity(PSym {
             original_name: bun_js_parser::StoreStr::new(s.original_name),
             // CSS-module locals are never ES6 namespace-aliased (the CSS parser

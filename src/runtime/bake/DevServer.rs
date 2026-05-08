@@ -3157,10 +3157,7 @@ impl DevServer {
             );
 
             for removed in &self.incremental_result.failures_removed {
-                payload.extend_from_slice(
-                    // SAFETY: encode() returns a #[repr(transparent)] u32 wrapper (@bitCast in Zig)
-                    &unsafe { ::core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
-                );
+                payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
                 removed.deinit(self);
             }
 
@@ -3222,10 +3219,7 @@ impl DevServer {
             );
 
             for removed in &self.incremental_result.failures_removed {
-                payload.extend_from_slice(
-                    // SAFETY: encode() returns a #[repr(transparent)] u32 wrapper (@bitCast in Zig)
-                    &unsafe { ::core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
-                );
+                payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
                 removed.deinit(self);
             }
 

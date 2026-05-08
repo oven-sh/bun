@@ -22,10 +22,9 @@ pub struct Generic {
 impl Generic {
     pub fn value(&self) -> JSValue {
         // Zig: @enumFromInt(@as(JSValue.backing_int, @bitCast(@intFromPtr(this))))
-        // SAFETY: JSValue is #[repr(transparent)] over i64. The JSC C API hands out
-        // JSValueRef as the cell pointer itself; reinterpreting the pointer bits as
-        // an encoded JSValue is exactly what JSC::JSValue(JSCell*) does.
-        unsafe { core::mem::transmute::<i64, JSValue>(std::ptr::from_ref::<Self>(self) as usize as i64) }
+        // The JSC C API hands out JSValueRef as the cell pointer itself; reinterpreting the
+        // pointer bits as an encoded JSValue is exactly what JSC::JSValue(JSCell*) does.
+        JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
     }
 }
 

@@ -217,23 +217,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 
     pub fn context() -> *mut Self {
-        // PORT NOTE: const-generic dispatch over two distinct fields needs
-        // transmute; `&mut http_thread().https_context` and `&mut Self` are
-        // the same type when `SSL` matches, just spelled differently.
+        // PORT NOTE: const-generic dispatch over two distinct fields — `HTTPContext<true>`
+        // and `HTTPContext<SSL>` are the same type when `SSL` matches, just spelled
+        // differently. A raw-pointer `.cast()` is the identity here.
         if SSL {
-            // SAFETY: HTTPContext<true> and HTTPContext<SSL> are identical when SSL.
-            unsafe {
-                core::mem::transmute::<*mut HTTPContext<true>, *mut Self>(
-                    &raw mut http::http_thread().https_context,
-                )
-            }
+            (&raw mut http::http_thread().https_context).cast::<Self>()
         } else {
-            // SAFETY: same as above for false.
-            unsafe {
-                core::mem::transmute::<*mut HTTPContext<false>, *mut Self>(
-                    &raw mut http::http_thread().http_context,
-                )
-            }
+            (&raw mut http::http_thread().http_context).cast::<Self>()
         }
     }
 

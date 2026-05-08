@@ -265,8 +265,11 @@ impl Kind {
     /// `{i32, u32}` pair `bitcast`s to a `u64` async-id. Zig: `Kind.big()`.
     #[inline]
     pub fn big(self) -> KindBig {
-        // SAFETY: shared discriminant values 0..=2
-        unsafe { core::mem::transmute::<u32, KindBig>(self as u32) }
+        match self {
+            Kind::SetTimeout => KindBig::SetTimeout,
+            Kind::SetInterval => KindBig::SetInterval,
+            Kind::SetImmediate => KindBig::SetImmediate,
+        }
     }
 }
 

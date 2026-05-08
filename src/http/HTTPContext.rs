@@ -725,8 +725,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         client.connected_url = client.http_proxy.clone().unwrap_or_else(|| client.url.clone());
         // TODO(port): URL.hostname is a borrowed slice — assigning a local
-        // overwrites lifetime. Preserved as-is via raw transmute matching the
-        // Zig pointer assignment semantics.
+        // overwrites lifetime. Preserved as-is via raw lifetime erasure matching
+        // the Zig pointer assignment semantics.
         client.connected_url.hostname =
             // SAFETY: hostname borrows either a static literal or `client.url`/
             // `client.http_proxy` which outlive `connected_url` for the

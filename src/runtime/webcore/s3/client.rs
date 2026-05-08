@@ -484,9 +484,9 @@ pub fn writable_stream(
 
     let proxy_url = proxy.unwrap_or(b"");
     // `credentials` ref adopted by value — moved into the MultiPartUpload below.
-    // SAFETY (JSC_BORROW): `global_this` outlives the task (it owns the VM/heap that owns the
-    // JS objects which keep the task alive); transmute the borrow to `'static` for storage in
-    // the heap-allocated MultiPartUpload, matching the Zig pointer field.
+    // JSC_BORROW: `global_this` outlives the task (it owns the VM/heap that owns the JS
+    // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
+    // MultiPartUpload, matching the Zig pointer field.
     let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;
     let task_ptr: *mut MultiPartUpload = Box::into_raw(Box::new(MultiPartUpload {

@@ -4351,7 +4351,7 @@ const MAX_THREE_B: u32 = 0x10000;
 
 /// Erase a source-slice borrow to `'static` for storing in `Token` payloads.
 ///
-/// PORTING.md §Forbidden flags this transmute. The proper fix is to thread a
+/// PORTING.md §Forbidden flags this erasure. The proper fix is to thread a
 /// real `'a` lifetime through `Token<'a>` / `Dimension<'a>` / `CachedToken<'a>`
 /// so `slice_from`/`to_slice` return `&'a [u8]` (matching Zig's plain
 /// `[]const u8` borrows in css_parser.zig:5879/6461). That change is blocked

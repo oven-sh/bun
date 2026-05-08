@@ -59,8 +59,9 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
     consumed
 }
 
-// PORT NOTE: Zig's `wire.FrameType` is non-exhaustive (any u8 valid). Rather
-// than transmute (UB for unknown discriminants) we dispatch on the raw u8.
+// PORT NOTE: Zig's `wire.FrameType` is non-exhaustive (any u8 valid). A
+// `#[repr(u8)]` Rust enum is UB for unknown discriminants, so dispatch on the
+// raw u8.
 const FT_DATA: u8 = wire::FrameType::HTTP_FRAME_DATA as u8;
 const FT_HEADERS: u8 = wire::FrameType::HTTP_FRAME_HEADERS as u8;
 const FT_PRIORITY: u8 = wire::FrameType::HTTP_FRAME_PRIORITY as u8;

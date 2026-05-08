@@ -33,7 +33,7 @@ impl Opcode {
     /// Zig `@enumFromInt(@as(u4, n))`. Caller must guarantee `n <= 0xF`;
     /// debug-asserted. Public so call sites that already range-check the raw
     /// nibble (e.g. the WS client's extern-C `op: u8` entry points) don't have
-    /// to repeat the `unsafe` transmute.
+    /// to repeat the `unsafe` block.
     #[inline]
     pub const fn from_raw(n: u8) -> Opcode {
         debug_assert!(n <= 0xF);

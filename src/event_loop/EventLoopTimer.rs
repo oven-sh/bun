@@ -327,8 +327,13 @@ impl TimerFlags {
     /// Kind does not include AbortSignal's timeout since it has no
     /// corresponding ID callback.
     #[inline] pub fn kind(self) -> Kind {
-        // SAFETY: stored value always written via set_kind (range 0..=2)
-        unsafe { core::mem::transmute::<u8, Kind>(((self.0 & Self::KIND_MASK) >> Self::KIND_SHIFT) as u8) }
+        // stored value always written via set_kind (range 0..=2)
+        match ((self.0 & Self::KIND_MASK) >> Self::KIND_SHIFT) as u8 {
+            0 => Kind::SetTimeout,
+            1 => Kind::SetInterval,
+            2 => Kind::SetImmediate,
+            _ => unreachable!(),
+        }
     }
     #[inline] pub fn set_kind(&mut self, k: Kind) {
         self.0 = (self.0 & !Self::KIND_MASK) | ((k as u32) << Self::KIND_SHIFT);

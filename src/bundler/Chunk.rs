@@ -1002,8 +1002,7 @@ impl Query {
     #[inline]
     pub fn kind(self) -> QueryKind {
         // Zig `enum(u3)` type-checks the field on assignment so 5..=7 are
-        // unrepresentable; transmuting an out-of-range tag is UB in Rust
-        // (PORTING.md §Forbidden: transmute-to-enum). Match exhaustively.
+        // unrepresentable; match exhaustively (out-of-range tag would be UB).
         match (self.0 >> 29) as u8 {
             0 => QueryKind::None,
             1 => QueryKind::Asset,

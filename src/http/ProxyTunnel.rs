@@ -41,7 +41,7 @@ impl Socket {
     fn from_generic<const IS_SSL: bool>(socket: HTTPSocket<IS_SSL>) -> Self {
         if IS_SSL {
             // SAFETY: `HTTPSocket<IS_SSL>` and `HTTPSocket<true>` are the same
-            // type when `IS_SSL == true`; transmute_copy bridges the const-generic.
+            // type when `IS_SSL == true`; the copy bridges the const-generic.
             Socket::Ssl(unsafe { core::mem::transmute_copy::<HTTPSocket<IS_SSL>, HTTPSocket<true>>(&socket) })
         } else {
             // SAFETY: same as above for the `false` arm.

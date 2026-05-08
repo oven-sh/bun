@@ -1333,9 +1333,11 @@ impl<'a> PatchLinesParser<'a> {
 
                             if self.current_hunk_mutation_part.is_none() {
                                 self.current_hunk_mutation_part = Some(PatchMutationPart {
-                                    // SAFETY: HunkLineType discriminants 0..=2 map 1:1 to PartType.
-                                    ty: unsafe {
-                                        mem::transmute::<u8, PartType>(hunk_line_type as u8)
+                                    ty: match hunk_line_type {
+                                        HunkLineType::Context => PartType::Context,
+                                        HunkLineType::Insertion => PartType::Insertion,
+                                        HunkLineType::Deletion => PartType::Deletion,
+                                        _ => unreachable!(),
                                     },
                                     ..Default::default()
                                 });

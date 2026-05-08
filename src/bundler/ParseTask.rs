@@ -672,12 +672,16 @@ fn css_symbols_to_parser_symbols(
     use bun_js_parser::ast::symbol::{Kind as PKind, Symbol as PSym};
     let mut out = bun_core::handle_oom(Vec::<PSym>::init_capacity(src.len() as usize));
     for s in src.slice() {
-        // SAFETY: both `Kind`/`ImportItemStatus` are `#[repr(u8)]` ports of the
-        // same Zig enums (Symbol.zig:192, ImportItemStatus); discriminants are
-        // identical by construction.
+        // Both `Kind`/`ImportItemStatus` are `#[repr(u8)]` ports of the same
+        // Zig enums (Symbol.zig:192, ImportItemStatus); discriminants are
+        // identical by construction. `Kind` has 25 variants — bridge via
+        // `#[repr(u8)]` round-trip rather than a 25-arm match.
+        // SAFETY: identical `#[repr(u8)]` discriminant set.
         let kind: PKind = unsafe { core::mem::transmute::<u8, PKind>(s.kind as u8) };
-        let import_item_status = unsafe {
-            core::mem::transmute::<u8, bun_js_parser::ImportItemStatus>(s.import_item_status as u8)
+        let import_item_status = match s.import_item_status as u8 {
+            1 => bun_js_parser::ImportItemStatus::Generated,
+            2 => bun_js_parser::ImportItemStatus::Missing,
+            _ => bun_js_parser::ImportItemStatus::None,
         };
         // `bun_js_parser::ast::Ref` is a re-export of `bun_logger::Ref` (ast/base.rs:172)
         // — same nominal type, no bridge needed.

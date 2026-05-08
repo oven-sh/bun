@@ -204,6 +204,24 @@ pub trait PathUnit: Copy + Eq + 'static {
     /// `crate::windows::long_path_prefix_for::<U>()` can pick the right width without a runtime
     /// switch. Mirrors Zig's comptime branch on `.u8`/`.u16` in `paths/Path.zig`.
     const LONG_PATH_PREFIX: &'static [Self];
+
+    // ── identity downcasts ────────────────────────────────────────────────
+    // Trait-dispatched no-op identity casts. The default body is unreachable
+    // for the non-matching impl; callers gate on `TypeId` so the dead arm is
+    // const-folded out, and in the live arm the cast is a safe
+    // `fn(&[u8]) -> &[u8]` in the monomorphized code.
+    #[inline(always)]
+    fn id_u8(_: &[Self]) -> &[u8] { unreachable!("PathUnit::id_u8 on non-u8") }
+    #[inline(always)]
+    fn id_u8_mut(_: &mut [Self]) -> &mut [u8] { unreachable!("PathUnit::id_u8_mut on non-u8") }
+    #[inline(always)]
+    fn id_u16(_: &[Self]) -> &[u16] { unreachable!("PathUnit::id_u16 on non-u16") }
+    #[inline(always)]
+    fn id_u16_mut(_: &mut [Self]) -> &mut [u16] { unreachable!("PathUnit::id_u16_mut on non-u16") }
+
+    /// `convert_into_buffer` — write `src` (the *other* width) into `dest`
+    /// transcoding UTF-8↔UTF-16. Returns units written.
+    fn convert_from_other(dest: &mut [Self], src: &[Self::Other]) -> usize;
 }
 
 impl PathUnit for u8 {
@@ -243,6 +261,16 @@ impl PathUnit for u8 {
     fn buffer_as_slice(buf: &PathBuffer) -> &[u8] {
         &buf[..]
     }
+    #[inline(always)]
+    fn id_u8(s: &[u8]) -> &[u8] { s }
+    #[inline(always)]
+    fn id_u8_mut(s: &mut [u8]) -> &mut [u8] { s }
+    #[inline]
+    fn convert_from_other(dest: &mut [u8], src: &[u16]) -> usize {
+        strings::convert_utf16_to_utf8_in_buffer(dest, src)
+            .expect("unreachable")
+            .len()
+    }
 }
 
 impl PathUnit for u16 {
@@ -281,6 +309,14 @@ impl PathUnit for u16 {
     #[inline]
     fn buffer_as_slice(buf: &WPathBuffer) -> &[u16] {
         &buf[..]
+    }
+    #[inline(always)]
+    fn id_u16(s: &[u16]) -> &[u16] { s }
+    #[inline(always)]
+    fn id_u16_mut(s: &mut [u16]) -> &mut [u16] { s }
+    #[inline]
+    fn convert_from_other(dest: &mut [u16], src: &[u8]) -> usize {
+        strings::convert_utf8_to_utf16_in_buffer(dest, src).len()
     }
 }
 
@@ -529,25 +565,9 @@ fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
     0
 }
 
-// TODO(port): proper trait-based dispatch for cross-width conversion; this is a
-// placeholder mirroring the two Zig arms (u8→u16 / u16→u8).
+#[inline]
 fn convert_into_buffer<U: PathUnit>(dest: &mut [U], src: &[U::Other]) -> usize {
-    // SAFETY: U is exactly u8 or u16; both arms are covered below via transmute of slices.
-    // Phase B: replace with a sealed-trait method on PathUnit.
-    use core::any::TypeId;
-    if TypeId::of::<U>() == TypeId::of::<u16>() {
-        // src: &[u8], dest: &mut [u16]
-        let dest: &mut [u16] = unsafe { core::mem::transmute(dest) };
-        let src: &[u8] = unsafe { core::mem::transmute(src) };
-        strings::convert_utf8_to_utf16_in_buffer(dest, src).len()
-    } else {
-        // src: &[u16], dest: &mut [u8]
-        let dest: &mut [u8] = unsafe { core::mem::transmute(dest) };
-        let src: &[u16] = unsafe { core::mem::transmute(src) };
-        strings::convert_utf16_to_utf8_in_buffer(dest, src)
-            .expect("unreachable")
-            .len()
-    }
+    U::convert_from_other(dest, src)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -678,9 +698,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut this = Self::init();
 
         if TypeId::of::<U>() == TypeId::of::<u8>() {
-            // SAFETY: TypeId check above proves U == u8; identity slice cast.
-            let buf: &mut [u8] =
-                unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
+            let buf: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
             // SAFETY: buf is valid for buf.len() writable bytes.
             let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
@@ -692,9 +710,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             this._buf.len = trimmed.len();
         } else {
             // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
-            // SAFETY: PathUnit is sealed to {u8, u16}; not-u8 ⇒ u16; identity slice cast.
-            let buf: &mut [u16] =
-                unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
+            let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
 
             // SAFETY: buf is valid for buf.len() writable u16 units.
             let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
@@ -1029,14 +1045,13 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         // match BufType::Pool
         {
-            // SAFETY: TypeId check above proves U == u8; transmute is an identity slice cast.
-            let pooled: &mut [u8] = unsafe {
-                core::mem::transmute(U::buffer_as_mut_slice(&mut self._buf.pooled))
-            };
-            // SAFETY: TypeId check above proves U == u8; identity slice cast.
-            let cloned_slice: &[u8] = unsafe { core::mem::transmute(cloned.slice()) };
-            // SAFETY: TypeId check above proves U == u8; &[&[U]] and &[&[u8]] have identical layout.
-            let parts_u8: &[&[u8]] = unsafe { core::mem::transmute(parts) };
+            let pooled: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
+            let cloned_slice: &[u8] = U::id_u8(cloned.slice());
+            // SAFETY: TypeId check above proves U == u8; &[&[U]] and &[&[u8]]
+            // have identical layout (slice of slices, only the inner element
+            // type differs nominally). No `id_*` helper covers nested slices.
+            let parts_u8: &[&[u8]] =
+                unsafe { core::slice::from_raw_parts(parts.as_ptr().cast(), parts.len()) };
             let joined = sep_dispatch!(join_abs_string_buf(cloned_slice, pooled, parts_u8));
 
             let trimmed = trim_input(TrimInputKind::Abs, joined);
@@ -1068,16 +1083,13 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // part: &[u8], unit: u8
                 let mut cwd_path_buf = crate::path_buffer_pool::get();
                 // RAII guard puts back on Drop.
-                // SAFETY: TypeId check above proves U == u8; transmute is an identity slice cast.
-                let current_slice: &[u8] = unsafe { core::mem::transmute(self.slice()) };
+                let current_slice: &[u8] = U::id_u8(self.slice());
                 let cwd_path = &mut cwd_path_buf[..current_slice.len()];
                 cwd_path.copy_from_slice(current_slice);
 
-                // SAFETY: TypeId check above proves U == u8; identity slice cast.
                 let pooled: &mut [u8] =
-                    unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut self._buf.pooled)) };
-                // SAFETY: TypeId check above proves C == u8; identity slice cast.
-                let part_u8: &[u8] = unsafe { core::mem::transmute(part) };
+                    U::id_u8_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
+                let part_u8: &[u8] = C::id_u8(part);
                 let joined = sep_dispatch!(join_string_buf(pooled, &[cwd_path, part_u8]));
 
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
@@ -1086,27 +1098,21 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             (true, false) => {
                 // part: &[u8], unit: u16 → transcode then recurse
                 let mut path_buf = crate::w_path_buffer_pool::get();
-                // SAFETY: TypeId check above proves C == u8; identity slice cast.
-                let part_u8: &[u8] = unsafe { core::mem::transmute(part) };
+                let part_u8: &[u8] = C::id_u8(part);
                 let converted = strings::convert_utf8_to_utf16_in_buffer(&mut path_buf[..], part_u8);
-                // TODO(port): recursive call with C=u16; the Zig recurses on `appendJoin(converted)`.
-                // SAFETY: TypeId check above proves U == u16; &[u16] → &[u16] identity cast for the
-                // monomorphized recursion arm.
-                return self.append_join_u16(unsafe { core::mem::transmute(converted) });
+                // Zig recurses on `appendJoin(converted)`.
+                return self.append_join::<u16>(converted);
             }
             (false, false) => {
                 // part: &[u16], unit: u16
                 let mut cwd_path_buf = crate::w_path_buffer_pool::get();
-                // SAFETY: TypeId check above proves U == u16; identity slice cast.
-                let current_slice: &[u16] = unsafe { core::mem::transmute(self.slice()) };
+                let current_slice: &[u16] = U::id_u16(self.slice());
                 let cwd_path = &mut cwd_path_buf[..current_slice.len()];
                 cwd_path.copy_from_slice(current_slice);
 
-                // SAFETY: TypeId check above proves U == u16; identity slice cast.
                 let pooled: &mut [u16] =
-                    unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut self._buf.pooled)) };
-                // SAFETY: TypeId check above proves C == u16; identity slice cast.
-                let part_u16: &[u16] = unsafe { core::mem::transmute(part) };
+                    U::id_u16_mut(U::buffer_as_mut_slice(&mut self._buf.pooled));
+                let part_u16: &[u16] = C::id_u16(part);
                 let joined =
                     sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
                 let trimmed = trim_input(TrimInputKind::Abs, joined);
@@ -1115,23 +1121,16 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             (false, true) => {
                 // part: &[u16], unit: u8 → transcode then recurse
                 let mut path_buf = crate::path_buffer_pool::get();
-                // SAFETY: TypeId check above proves C == u16; identity slice cast.
-                let part_u16: &[u16] = unsafe { core::mem::transmute(part) };
+                let part_u16: &[u16] = C::id_u16(part);
                 let converted =
                     match strings::convert_utf16_to_utf8_in_buffer(&mut path_buf[..], part_u16) {
                         Ok(c) => c,
                         Err(_) => return Err(PathError::MaxPathExceeded),
                     };
-                return self.append_join(converted);
+                return self.append_join::<u8>(converted);
             }
         }
         Ok(())
-    }
-
-    // TODO(port): helper for the (part:u8, unit:u16) recursion arm above; collapse
-    // into trait dispatch in Phase B.
-    fn append_join_u16(&mut self, part: &[u16]) -> options::Result<()> {
-        self.append_join(part)
     }
 
     pub fn relative<const K2: u8>(
@@ -1149,13 +1148,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
 
         if TypeId::of::<U>() == TypeId::of::<u8>() {
-            // SAFETY: TypeId check above proves U == u8; identity slice casts.
             let pooled: &mut [u8] =
-                unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut output._buf.pooled)) };
-            // SAFETY: TypeId check above proves U == u8; identity slice cast.
-            let from_u8: &[u8] = unsafe { core::mem::transmute(self.slice()) };
-            // SAFETY: TypeId check above proves U == u8; identity slice cast.
-            let to_u8: &[u8] = unsafe { core::mem::transmute(to.slice()) };
+                U::id_u8_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
+            let from_u8: &[u8] = U::id_u8(self.slice());
+            let to_u8: &[u8] = U::id_u8(to.slice());
             let rel = path::relative_buf_z(pooled, from_u8, to_u8);
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
             output._buf.len = trimmed.len();
@@ -1165,10 +1161,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             // output buffer. Mirrors the cross-width arms in `append_join`.
             // PERF(port): three pooled buffers + two transcodes — profile in
             // Phase B; only ever reached on Windows wide-path callers.
-            // SAFETY: PathUnit is sealed to {u8, u16}; not-u8 ⇒ u16; identity slice casts.
-            let from_u16: &[u16] = unsafe { core::mem::transmute(self.slice()) };
-            // SAFETY: PathUnit is sealed to {u8, u16}; not-u8 ⇒ u16; identity slice cast.
-            let to_u16: &[u16] = unsafe { core::mem::transmute(to.slice()) };
+            let from_u16: &[u16] = U::id_u16(self.slice());
+            let to_u16: &[u16] = U::id_u16(to.slice());
 
             let mut from_buf = crate::path_buffer_pool::get();
             let mut to_buf = crate::path_buffer_pool::get();
@@ -1182,9 +1176,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let rel = path::relative_buf_z(&mut rel_buf[..], from_u8, to_u8);
             let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
 
-            // SAFETY: PathUnit is sealed to {u8, u16}; not-u8 ⇒ u16; identity slice cast.
             let pooled: &mut [u16] =
-                unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut output._buf.pooled)) };
+                U::id_u16_mut(U::buffer_as_mut_slice(&mut output._buf.pooled));
             let converted = strings::convert_utf8_to_utf16_in_buffer(pooled, trimmed);
             output._buf.len = converted.len();
         }

@@ -44,8 +44,7 @@ impl Key {
 pub struct SourceId(pub u64);
 impl SourceId {
     #[inline] pub const fn kind(self) -> ChunkKind {
-        // SAFETY: ChunkKind is #[repr(u8)] with variants {0,1}; bit 0 is always valid.
-        unsafe { core::mem::transmute::<u8, ChunkKind>((self.0 & 1) as u8) }
+        if self.0 & 1 == 0 { ChunkKind::InitialResponse } else { ChunkKind::HmrChunk }
     }
     /// `bits.initial_response.generation_id` (top 32 bits)
     #[inline] pub const fn initial_response_generation_id(self) -> u32 { (self.0 >> 32) as u32 }

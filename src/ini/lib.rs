@@ -255,7 +255,7 @@ use bun_core::{Global, Output};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_js_parser::E::Rope;
 use bun_js_parser::{self as js_ast, E, Expr, ExprData};
-use bun_logger::{self as logger, Loc, Log, Source};
+use bun_logger::{self as logger, IntoStr, Loc, Log, Source};
 use bun_string::{strings, ZStr};
 use bun_url::URL;
 
@@ -330,11 +330,11 @@ impl<'a> Parser<'a> {
     pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
         // TODO(b2-blocked): bun_logger::Source<'bump> — `Source::init_path_string`
         // currently takes `Str = &'static [u8]`; once the lower tier threads a
-        // lifetime through `Source`, drop both transmutes and pass `path`/`src`
-        // directly. `path`/`src` outlive the `Parser` and its `Source`/`Expr`
-        // tree (arena-freed in lockstep), so no wrong value is produced today.
-        let path_s: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path) };
-        let src_s: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(src) };
+        // lifetime through `Source`, pass `path`/`src` directly. They outlive
+        // the `Parser` and its `Source`/`Expr` tree (arena-freed in lockstep),
+        // so no wrong value is produced today.
+        let path_s: &'static [u8] = path.into_str();
+        let src_s: &'static [u8] = src.into_str();
         Parser {
             opts: Options::default(),
             logger: Log::init(),
@@ -603,11 +603,10 @@ impl<'a> Parser<'a> {
                 // `bun_js_parser::Expr` (via the `From` impl in
                 // `bun_js_parser::ast::expr`) so the rest of this body works
                 // against a single `ExprData`.
-                // SAFETY: Phase-A `Str = &'static [u8]` lifetime erasure (see
+                // Phase-A `Str = &'static [u8]` lifetime erasure (see
                 // PORTING.md §Allocators / `Parser::init` above). `val` is a
                 // sub-slice of `self.src` and outlives the temporary `Source`.
-                let val_s: &'static [u8] =
-                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(val) };
+                let val_s: &'static [u8] = val.into_str();
                 let src = Source::init_path_string(self.source.path.text, val_s);
                 let mut log = Log::init();
                 // Try to parse it and if it fails will just treat it as a string
@@ -1340,12 +1339,11 @@ pub fn load_npmrc(
     // to a single invariant `'a`; threading that through this fn signature poisons
     // the `load_npmrc_config` loop (env borrowed-for-'a across iterations). The
     // local `parser` is dropped before this fn returns, so erase both to a fresh
-    // `'p` (matches `Parser::init`'s own transmutes for `path`/`src`).
+    // `'p` (matches `Parser::init`'s own erasures for `path`/`src`).
     // SAFETY: `parser` does not outlive `env`/`source.contents`.
-    let contents: &'static [u8] =
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&source.contents) };
+    let contents: &'static [u8] = source.contents.as_ref().into_str();
     // Round-trip through a raw pointer to erase both the borrow and the inner
-    // lifetime; identical bit-pattern to the prior `transmute` form.
+    // lifetime; identical bit-pattern.
     let env = unsafe { &mut *(env as *mut DotEnvLoader<'_> as *mut DotEnvLoader<'static>) };
     let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
     // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.

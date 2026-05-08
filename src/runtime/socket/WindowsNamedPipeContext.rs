@@ -291,19 +291,24 @@ impl WindowsNamedPipeContext {
             Box::into_raw(Box::<core::mem::MaybeUninit<WindowsNamedPipeContext>>::new_uninit()).cast();
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
+        // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the
+        // erased ctx ptr back to `*mut Self` and dereferences for the duration
+        // of the callback.
+        // SAFETY (per closure): `ctx` was set to `this.cast::<c_void>()` above
+        // and the WindowsNamedPipe never invokes a handler after `on_close`
+        // schedules deinit; the deref is exclusive for the callback's scope.
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
-            // SAFETY: fn pointers cast to erased callback ABI; receiver layout matches ctx type
-            ref_ctx: unsafe { core::mem::transmute(Self::ref_ as fn(*mut Self)) },
-            deref_ctx: unsafe { core::mem::transmute(Self::deref as fn(*mut Self)) },
-            on_open: unsafe { core::mem::transmute(Self::on_open as fn(&mut Self)) },
-            on_data: unsafe { core::mem::transmute(Self::on_data as fn(&mut Self, &[u8])) },
-            on_handshake: unsafe { core::mem::transmute(Self::on_handshake as fn(&mut Self, bool, us_bun_verify_error_t)) },
-            on_end: unsafe { core::mem::transmute(Self::on_end as fn(&mut Self)) },
-            on_writable: unsafe { core::mem::transmute(Self::on_writable as fn(&mut Self)) },
-            on_error: unsafe { core::mem::transmute(Self::on_error as fn(&mut Self, SysError)) },
-            on_timeout: unsafe { core::mem::transmute(Self::on_timeout as fn(&mut Self)) },
-            on_close: unsafe { core::mem::transmute(Self::on_close as fn(*mut Self)) },
+            ref_ctx: |p| Self::ref_(p.cast::<Self>()),
+            deref_ctx: |p| Self::deref(p.cast::<Self>()),
+            on_open: |p| unsafe { (*p.cast::<Self>()).on_open() },
+            on_data: |p, d| unsafe { (*p.cast::<Self>()).on_data(d) },
+            on_handshake: |p, ok, err| unsafe { (*p.cast::<Self>()).on_handshake(ok, err) },
+            on_end: |p| unsafe { (*p.cast::<Self>()).on_end() },
+            on_writable: |p| unsafe { (*p.cast::<Self>()).on_writable() },
+            on_error: |p, e| unsafe { (*p.cast::<Self>()).on_error(e) },
+            on_timeout: |p| unsafe { (*p.cast::<Self>()).on_timeout() },
+            on_close: |p| Self::on_close(p.cast::<Self>()),
         };
         #[cfg(windows)]
         let named_pipe = {

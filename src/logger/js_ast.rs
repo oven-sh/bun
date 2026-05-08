@@ -266,9 +266,8 @@ pub mod E {
         /// `data` is arena-owned (source text or bump arena) and bulk-freed;
         /// per the Phase-A `Str` convention the lifetime is erased.
         pub fn init(data: &[u8]) -> Self {
-            // SAFETY: arena-owned slice; lifetime erased pending Phase-B `'bump`.
-            let data: &'static [u8] = unsafe { core::mem::transmute(data) };
-            Self { data, ..Default::default() }
+            // arena-owned slice; lifetime erased pending Phase-B `'bump`.
+            Self { data: crate::IntoStr::into_str(data), ..Default::default() }
         }
         /// Construct from a UTF-16 slice (arena-owned). `data.len()` stores the
         /// **u16 element count** (not byte count); ptr reinterpreted to `*u8`.
@@ -277,8 +276,7 @@ pub mod E {
             // `is_utf16` and re-slice via `slice16`.
             let bytes =
                 unsafe { core::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len()) };
-            let bytes_static: &'static [u8] = unsafe { core::mem::transmute(bytes) };
-            Self { data: bytes_static, is_utf16: true, ..Default::default() }
+            Self { data: crate::IntoStr::into_str(bytes), is_utf16: true, ..Default::default() }
         }
         #[inline]
         pub fn len(&self) -> usize {
@@ -342,9 +340,9 @@ pub mod E {
             }
             let v = strings::to_utf8_alloc(self.slice16());
             let buf = bump.alloc_slice_copy(&v);
-            // SAFETY: arena-owned slice; lifetime erased per Phase-A `Str`
-            // alias (`&'static [u8]` standing in for arena lifetime).
-            self.data = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(buf) };
+            // arena-owned slice; lifetime erased per Phase-A `Str` alias
+            // (`&'static [u8]` standing in for arena lifetime).
+            self.data = crate::IntoStr::into_str(&buf[..]);
             self.is_utf16 = false;
             Ok(())
         }
@@ -395,10 +393,8 @@ pub mod E {
                 bytes.extend_from_slice(part.get().data);
                 str_ = part.get().next;
             }
-            // SAFETY: arena-owned slice; lifetime erased per Phase-A `Str`.
-            self.data = unsafe {
-                core::mem::transmute::<&[u8], &'static [u8]>(bytes.into_bump_slice())
-            };
+            // arena-owned slice; lifetime erased per Phase-A `Str`.
+            self.data = crate::IntoStr::into_str(bytes.into_bump_slice());
             self.next = None;
         }
         pub fn hash(&self) -> u64 {
@@ -1221,10 +1217,9 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
     }
     DATA_STORE.with(|s| {
         let store = s.borrow();
-        let copied: &[u8] = store.alloc_slice_copy(bytes);
-        // SAFETY: erase to match `EString::init`'s `&'static [u8]` field;
-        // arena ownership, freed only on `data_store_reset`.
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(copied) }
+        // erase to match `EString::init`'s `&'static [u8]` field; arena
+        // ownership, freed only on `data_store_reset`.
+        crate::IntoStr::into_str(&*store.alloc_slice_copy(bytes))
     })
 }
 

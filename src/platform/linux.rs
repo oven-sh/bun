@@ -87,9 +87,11 @@ impl RWFFlagSupport {
         if !cfg!(target_os = "linux") {
             return false;
         }
-        // SAFETY: RWF_BOOL only ever stores valid RWFFlagSupport discriminants.
-        let current: RWFFlagSupport =
-            unsafe { core::mem::transmute::<u8, RWFFlagSupport>(RWF_BOOL.load(Ordering::Relaxed)) };
+        let current: RWFFlagSupport = match RWF_BOOL.load(Ordering::Relaxed) {
+            0 => RWFFlagSupport::Unknown,
+            1 => RWFFlagSupport::Supported,
+            _ => RWFFlagSupport::Unsupported,
+        };
         match current {
             RWFFlagSupport::Unknown => {
                 if Self::is_linux_kernel_version_with_buggy_rwf_nonblock()

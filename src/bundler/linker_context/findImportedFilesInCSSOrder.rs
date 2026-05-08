@@ -41,7 +41,7 @@ unsafe fn bitwise_copy<T>(src: &T) -> T {
 /// `ImportRecord.path` is `bun_paths::fs::Path<'static>`; `CssImportOrderKind::ExternalPath`
 /// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
 /// ports of the same Zig `Fs.Path` struct (CYCLEBREAK TYPE_ONLY mirrors). Re-construct
-/// field-by-field rather than transmute non-`repr(C)` structs.
+/// field-by-field (non-`repr(C)`, layout not guaranteed identical).
 #[inline]
 fn fs_path_from_import_record(p: &bun_paths::fs::Path<'static>) -> bun_fs::Path<'static> {
     bun_fs::Path {

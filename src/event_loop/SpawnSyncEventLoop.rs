@@ -258,7 +258,7 @@ impl Drop for SpawnSyncEventLoop {
                     (*timer.as_ptr()).stop();
                     (*timer.as_ptr()).unref();
                     // `UvHandle::close` already does the `*mut Timer` →
-                    // `*mut uv_handle_t` cb transmute internally.
+                    // `*mut uv_handle_t` cb cast internally.
                     (*timer.as_ptr()).close(on_close_uv_timer);
                 }
             }

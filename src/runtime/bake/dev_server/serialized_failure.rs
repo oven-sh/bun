@@ -26,8 +26,7 @@ impl OwnerPacked {
         Self(file | ((side as u32) << 31))
     }
     #[inline] pub fn side(self) -> Side {
-        // SAFETY: Side is #[repr(u8)] with variants {0,1}.
-        unsafe { core::mem::transmute::<u8, Side>((self.0 >> 31) as u8) }
+        if self.0 >> 31 == 0 { Side::Client } else { Side::Server }
     }
     #[inline] pub fn file(self) -> u32 { self.0 & 0x7FFF_FFFF }
 }
@@ -78,8 +77,12 @@ impl Packed {
     #[inline] pub const fn data(self) -> u32 { self.0 & Self::DATA_MASK }
     #[inline]
     pub const fn kind(self) -> PackedKind {
-        // SAFETY: bits 30..32 always hold a value in 0..=3, all valid PackedKind discriminants.
-        unsafe { core::mem::transmute::<u8, PackedKind>((self.0 >> 30) as u8) }
+        match (self.0 >> 30) as u8 {
+            0 => PackedKind::None,
+            1 => PackedKind::Route,
+            2 => PackedKind::Client,
+            _ => PackedKind::Server,
+        }
     }
     #[inline] pub const fn bits(self) -> u32 { self.0 }
     #[inline] pub const fn from_bits(bits: u32) -> Self { Packed(bits) }

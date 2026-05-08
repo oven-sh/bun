@@ -619,8 +619,15 @@ impl SerializedHeader {
     }
     #[inline]
     fn tag(self) -> PartTag {
-        // SAFETY: tag is written from PartTag, which is in range 0..=4
-        unsafe { core::mem::transmute::<u8, PartTag>((self.0 & 0b111) as u8) }
+        // tag is written from PartTag, which is in range 0..=4
+        match (self.0 & 0b111) as u8 {
+            0 => PartTag::Text,
+            1 => PartTag::Param,
+            2 => PartTag::CatchAllOptional,
+            3 => PartTag::CatchAll,
+            4 => PartTag::Group,
+            _ => unreachable!(),
+        }
     }
     #[inline]
     fn len(self) -> usize {

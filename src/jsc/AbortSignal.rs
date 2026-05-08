@@ -128,9 +128,11 @@ impl AbortSignal {
         };
         if reason > 0 {
             debug_assert!(js_reason.is_undefined());
-            // SAFETY: C++ guarantees `reason` is a valid CommonAbortReason discriminant when > 0.
-            return Some(AbortReason::Common(unsafe {
-                core::mem::transmute::<u8, CommonAbortReason>(reason)
+            // C++ guarantees `reason` is a valid CommonAbortReason discriminant when > 0.
+            return Some(AbortReason::Common(match reason {
+                1 => CommonAbortReason::Timeout,
+                2 => CommonAbortReason::UserAbort,
+                _ => CommonAbortReason::ConnectionClosed,
             }));
         }
         if js_reason.is_empty() {

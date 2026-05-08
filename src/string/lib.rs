@@ -197,7 +197,7 @@ impl String {
     /// invoked immediately and a `dead` string is returned (string.zig:404).
     ///
     /// `Ctx` must be a pointer-sized type (raw pointer or `&T`); enforced by
-    /// the const-assert below to keep the C-ABI transmute sound.
+    /// the const-assert below to keep the C-ABI cast sound.
     pub fn create_external<Ctx>(
         bytes: &[u8],
         is_latin1: bool,

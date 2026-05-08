@@ -76,8 +76,12 @@ impl Packed {
 
     #[inline]
     pub const fn kind(self) -> PackedKind {
-        // SAFETY: bits 30..32 always hold a value in 0..=3, all of which are valid PackedKind discriminants
-        unsafe { core::mem::transmute::<u8, PackedKind>((self.0 >> 30) as u8) }
+        match (self.0 >> 30) as u8 {
+            0 => PackedKind::None,
+            1 => PackedKind::Route,
+            2 => PackedKind::Client,
+            _ => PackedKind::Server,
+        }
     }
 
     #[inline]

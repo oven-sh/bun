@@ -7,8 +7,8 @@
 //! All the value types (`Dependency`, `DependencyVersion`, `Behavior`,
 //! `Features`, `ExternalSlice`, `OperatingSystem`, …) are MOVE_DOWN'd into
 //! `bun_install_types` and re-exported here, so `dependency::Version` and
-//! `hooks::DependencyVersion` name the SAME type — no transmute needed for
-//! the dependency-side surface.
+//! `hooks::DependencyVersion` name the SAME type — no bridge needed for the
+//! dependency-side surface.
 //!
 //! `resolution::Resolution` is still the install-side `ResolutionType<u64>`
 //! (a `#[repr(C)]` struct whose `Value` union mirrors

@@ -832,7 +832,7 @@ mod holder {
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`
     /// (Zig: `allocator.dupeZ` into a leaked singleton field). `OnceLock` per
-    /// PORTING.md §Forbidden — never `Box::leak`/`transmute` to mint `&'static`.
+    /// PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
     pub static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
@@ -934,8 +934,8 @@ impl PackageManager {
         // returns `Option<URL<'a>>` where `'a` is the loader's map lifetime —
         // i.e. `'static` here. The lifetime contract (env-map values are
         // process-lifetime `Box<[u8]>`) is encapsulated in `bun_dotenv`, not at
-        // every call site (PORTING.md §Forbidden: never transmute to mint
-        // `'static`).
+        // every call site (PORTING.md §Forbidden: never mint `'static` from
+        // a borrowed reference).
         self.env_mut().get_http_proxy_for(url)
     }
 
@@ -2218,7 +2218,7 @@ pub fn init(
     // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
     // string (Zig: `allocator.dupeZ` into a leaked singleton field). Park it in
     // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden
-    // (never `Box::leak`/`transmute` to mint `&'static`). `init()` runs once on
+    // (never `Box::leak` to mint `&'static`). `init()` runs once on
     // the main thread, so `.set()` cannot race; ignore the already-set case for
     // hot-reload re-entry (the existing CA path stays valid for the process).
     let abs_ca_file_name_static: &'static [u8] = if abs_ca_file_name.is_empty() {

@@ -2,7 +2,7 @@ use crate::SendFile;
 use crate::ThreadSafeStreamBuffer;
 
 /// Request body payload. Parameterized over `'a` so callers can hand in
-/// stack-/arena-borrowed bytes without the `&'static` transmute that the
+/// stack-/arena-borrowed bytes without the `&'static` lifetime erasure the
 /// Phase-A port used at every `AsyncHTTP::init` call site.
 pub enum HTTPRequestBody<'a> {
     /// Borrowed bytes — caller guarantees they outlive the request.

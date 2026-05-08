@@ -1114,8 +1114,7 @@ impl VirtualMachine {
                     // boxed into `macro_entry_points` and lives for the VM
                     // lifetime, and `entry_path` is only borrowed for the
                     // duration of `generate` (it copies into `code_buffer`).
-                    let entry_path_static: &'static [u8] =
-                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(entry_path) };
+                    let entry_path_static: &'static [u8] = logger::IntoStr::into_str(entry_path);
                     MacroEntryPoint::generate(
                         &mut *ep,
                         &mut self.transpiler,

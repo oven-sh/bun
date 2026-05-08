@@ -51,11 +51,10 @@ impl ASTMemoryAllocator {
     }
 
     pub fn enter(&mut self) -> Scope<'_> {
-        // Zig: this.arena = arena;
-        //      this.stack_allocator = SFA{ .buffer = undefined, .fallback_allocator = arena, .fixed_buffer_allocator = undefined };
+        // Zig: this.stack_allocator = SFA{ .fallback_allocator = arena, .. };
         //      this.bump_allocator = this.stack_allocator.get();
-        self.arena = Arena::new();
-        // PERF(port): was stack-fallback — profile in Phase B
+        // The arena was already created fresh in `new()`/`default()`; Zig's
+        // SFA init here is zero-alloc, so don't allocate another mi_heap.
         self.previous = ptr::null_mut();
         let mut ast_scope = Scope {
             current: Some(self),

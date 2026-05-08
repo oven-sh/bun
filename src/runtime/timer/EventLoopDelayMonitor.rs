@@ -95,10 +95,7 @@ impl EventLoopDelayMonitor {
 
             if actual_ns > expected_ns {
                 let delay_ns = i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
-                // SAFETY: js_histogram is a live JSValue rooted by the JS closure scope (see field doc).
-                unsafe {
-                    JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
-                }
+                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
             }
         }
 
@@ -116,7 +113,7 @@ impl EventLoopDelayMonitor {
 // Record delay to histogram
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
-    fn JSNodePerformanceHooksHistogram_recordDelay(histogram: JSValue, delay_ns: i64);
+    safe fn JSNodePerformanceHooksHistogram_recordDelay(histogram: JSValue, delay_ns: i64);
 }
 
 // Export functions for C++

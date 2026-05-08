@@ -140,7 +140,7 @@ type SyncProcess = sync::SyncWindowsProcess;
 #[cfg(not(windows))]
 #[repr(C)]
 pub struct SyncProcessPosix {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 #[cfg(not(windows))]

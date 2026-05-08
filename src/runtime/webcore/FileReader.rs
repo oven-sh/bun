@@ -119,7 +119,7 @@ impl Default for OpenedFileBlob {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
+    pub safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
 }
 
 impl Lazy {
@@ -134,8 +134,7 @@ impl Lazy {
                     'brk: {
                         #[cfg(unix)]
                         {
-                            // SAFETY: FFI call with valid native fd and O_RDONLY flag
-                            let rc = unsafe { open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY) };
+                            let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
                             if rc > -1 {
                                 is_nonblocking = true;
                                 file.is_atty = Some(true);

@@ -19,9 +19,9 @@ unsafe extern "C" {
         uws_http_response: *mut c_void,
     );
 
-    fn CookieMap__deref(cookie_map: *mut CookieMap);
+    safe fn CookieMap__deref(cookie_map: &CookieMap);
 
-    fn CookieMap__ref(cookie_map: *mut CookieMap);
+    safe fn CookieMap__ref(cookie_map: &CookieMap);
 }
 
 impl CookieMap {
@@ -48,13 +48,11 @@ impl CookieMap {
     }
 
     pub fn deref(&mut self) {
-        // SAFETY: self is a valid *mut CookieMap by construction (opaque FFI handle)
-        unsafe { CookieMap__deref(std::ptr::from_mut::<CookieMap>(self)) }
+        CookieMap__deref(self)
     }
 
     pub fn ref_(&mut self) {
-        // SAFETY: self is a valid *mut CookieMap by construction (opaque FFI handle)
-        unsafe { CookieMap__ref(std::ptr::from_mut::<CookieMap>(self)) }
+        CookieMap__ref(self)
     }
 }
 

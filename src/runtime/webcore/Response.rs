@@ -24,8 +24,8 @@ use bun_ptr::weak_ptr::WeakPtrData;
 // C++ helper functions for AsyncLocalStorage integration
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub fn Response__getAsyncLocalStorageStore(global: *mut JSGlobalObject, als: JSValue) -> JSValue;
-    pub fn Response__mergeAsyncLocalStorageOptions(global: *mut JSGlobalObject, als_store: JSValue, init_options: JSValue);
+    pub safe fn Response__getAsyncLocalStorageStore(global: &JSGlobalObject, als: JSValue) -> JSValue;
+    pub safe fn Response__mergeAsyncLocalStorageOptions(global: &JSGlobalObject, als_store: JSValue, init_options: JSValue);
 }
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.

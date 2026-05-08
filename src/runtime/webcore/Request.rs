@@ -626,7 +626,7 @@ impl Request {
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
     #[link_name = "Bun__getParamsIfBunRequest"]
-    fn Bun__getParamsIfBunRequest(this_value: JSValue) -> JSValue;
+    safe fn Bun__getParamsIfBunRequest(this_value: JSValue) -> JSValue;
     // Zig: `extern "JS"` — JS-side builtin; Phase B wires the actual link section.
 }
 
@@ -647,8 +647,7 @@ impl Request {
         // payload either.
         let js_err = |_: JsError| core::fmt::Error;
 
-        // SAFETY: FFI call into JS builtin; this_value is a valid JSValue on stack
-        let params_object = unsafe { Bun__getParamsIfBunRequest(this_value) };
+        let params_object = Bun__getParamsIfBunRequest(this_value);
 
         let class_label = if params_object.is_empty() {
             "Request"

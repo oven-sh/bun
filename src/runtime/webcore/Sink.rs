@@ -20,28 +20,28 @@ pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 mod array_buffer_sink_abi {
     use super::*;
     unsafe extern "C" {
-        pub(super) fn ArrayBufferSink__fromJS(value: JSValue) -> usize;
+        pub(super) safe fn ArrayBufferSink__fromJS(value: JSValue) -> usize;
         pub(super) fn ArrayBufferSink__createObject(
             global: *mut JSGlobalObject,
             object: *mut c_void,
             destructor: usize,
         ) -> JSValue;
-        pub(super) fn ArrayBufferSink__setDestroyCallback(value: JSValue, callback: usize);
+        pub(super) safe fn ArrayBufferSink__setDestroyCallback(value: JSValue, callback: usize);
         pub(super) fn ArrayBufferSink__assignToStream(
             global: *mut JSGlobalObject,
             stream: JSValue,
             ptr: *mut c_void,
             jsvalue_ptr: *mut *mut c_void,
         ) -> JSValue;
-        pub(super) fn ArrayBufferSink__onClose(ptr: JSValue, reason: JSValue);
-        pub(super) fn ArrayBufferSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
-        pub(super) fn ArrayBufferSink__detachPtr(ptr: JSValue);
+        pub(super) safe fn ArrayBufferSink__onClose(ptr: JSValue, reason: JSValue);
+        pub(super) safe fn ArrayBufferSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
+        pub(super) safe fn ArrayBufferSink__detachPtr(ptr: JSValue);
     }
 }
 
 impl JsSinkAbi for ArrayBufferSink {
-    unsafe fn from_js_extern(value: JSValue) -> usize {
-        unsafe { array_buffer_sink_abi::ArrayBufferSink__fromJS(value) }
+    fn from_js_extern(value: JSValue) -> usize {
+        array_buffer_sink_abi::ArrayBufferSink__fromJS(value)
     }
     unsafe fn create_object_extern(
         global: *mut JSGlobalObject,
@@ -50,8 +50,8 @@ impl JsSinkAbi for ArrayBufferSink {
     ) -> JSValue {
         unsafe { array_buffer_sink_abi::ArrayBufferSink__createObject(global, object, destructor) }
     }
-    unsafe fn set_destroy_callback_extern(value: JSValue, callback: usize) {
-        unsafe { array_buffer_sink_abi::ArrayBufferSink__setDestroyCallback(value, callback) }
+    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
+        array_buffer_sink_abi::ArrayBufferSink__setDestroyCallback(value, callback)
     }
     unsafe fn assign_to_stream_extern(
         global: *mut JSGlobalObject,
@@ -63,11 +63,11 @@ impl JsSinkAbi for ArrayBufferSink {
             array_buffer_sink_abi::ArrayBufferSink__assignToStream(global, stream, ptr, jsvalue_ptr)
         }
     }
-    unsafe fn on_close_extern(ptr: JSValue, reason: JSValue) {
-        unsafe { array_buffer_sink_abi::ArrayBufferSink__onClose(ptr, reason) }
+    fn on_close_extern(ptr: JSValue, reason: JSValue) {
+        array_buffer_sink_abi::ArrayBufferSink__onClose(ptr, reason)
     }
-    unsafe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
-        unsafe { array_buffer_sink_abi::ArrayBufferSink__onReady(ptr, amount, offset) }
+    fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
+        array_buffer_sink_abi::ArrayBufferSink__onReady(ptr, amount, offset)
     }
 }
 
@@ -438,7 +438,7 @@ pub struct JSSink<T> {
 /// extern fn-pointers here so the generic `JSSink<T>` stub can dispatch.
 pub trait JsSinkAbi {
     /// `${abi_name}__fromJS` — encodes `*ThisSink` (or 0/1 sentinel) as `usize`.
-    unsafe fn from_js_extern(value: crate::webcore::jsc::JSValue) -> usize;
+    fn from_js_extern(value: crate::webcore::jsc::JSValue) -> usize;
     /// `${abi_name}__createObject`.
     unsafe fn create_object_extern(
         global: *mut crate::webcore::jsc::JSGlobalObject,
@@ -446,7 +446,7 @@ pub trait JsSinkAbi {
         destructor: usize,
     ) -> crate::webcore::jsc::JSValue;
     /// `${abi_name}__setDestroyCallback`.
-    unsafe fn set_destroy_callback_extern(value: crate::webcore::jsc::JSValue, callback: usize);
+    fn set_destroy_callback_extern(value: crate::webcore::jsc::JSValue, callback: usize);
     /// `${abi_name}__assignToStream`.
     unsafe fn assign_to_stream_extern(
         global: *mut crate::webcore::jsc::JSGlobalObject,
@@ -455,9 +455,9 @@ pub trait JsSinkAbi {
         jsvalue_ptr: *mut *mut c_void,
     ) -> crate::webcore::jsc::JSValue;
     /// `${abi_name}__onClose`.
-    unsafe fn on_close_extern(ptr: crate::webcore::jsc::JSValue, reason: crate::webcore::jsc::JSValue);
+    fn on_close_extern(ptr: crate::webcore::jsc::JSValue, reason: crate::webcore::jsc::JSValue);
     /// `${abi_name}__onReady`.
-    unsafe fn on_ready_extern(
+    fn on_ready_extern(
         ptr: crate::webcore::jsc::JSValue,
         amount: crate::webcore::jsc::JSValue,
         offset: crate::webcore::jsc::JSValue,
@@ -465,7 +465,7 @@ pub trait JsSinkAbi {
     /// `${abi_name}__detachPtr`. Defaulted to a no-op for sinks that never
     /// route through `JSSink::detach` (only `HTTPServerWritable` uses this
     /// path today via `RequestContext::do_render_stream`).
-    unsafe fn detach_ptr_extern(_ptr: crate::webcore::jsc::JSValue) {}
+    fn detach_ptr_extern(_ptr: crate::webcore::jsc::JSValue) {}
 }
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
@@ -496,15 +496,13 @@ impl<T: JsSinkAbi> JSSink<T> {
     }
 
     pub fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
-        // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__setDestroyCallback`).
-        unsafe { T::set_destroy_callback_extern(value, callback) }
+        T::set_destroy_callback_extern(value, callback)
     }
 
     /// `JSSink.fromJS(value)` — recover `*mut JSSink<T>` (= `*mut ThisSink`) from
     /// the JS wrapper, or `None` if detached / wrong type.
     pub fn from_js(value: crate::webcore::jsc::JSValue) -> Option<*mut JSSink<T>> {
-        // SAFETY: FFI call into generated C++ sink glue.
-        let raw = unsafe { T::from_js_extern(value) };
+        let raw = T::from_js_extern(value);
         match raw {
             from_js_result::DETACHED | from_js_result::CAST_FAILED => None,
             ptr => Some(ptr as *mut JSSink<T>),
@@ -546,8 +544,7 @@ impl<T: JsSinkAbi> JSSink<T> {
         // Zig: `detachPtr(globalThis, value) catch {}` — fromJSHostCallGeneric
         // wrapper omitted; the extern itself does not throw (the Zig wrapper
         // only re-surfaces a pending JS exception, which the catch discards).
-        // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__detachPtr`).
-        unsafe { T::detach_ptr_extern(value) };
+        T::detach_ptr_extern(value);
     }
 }
 
@@ -568,9 +565,9 @@ impl<T: JsSinkAbi> SinkSignal<T> {
         // `&mut SinkSignal<T>` ref); build the vtable directly so `this` stays
         // a raw bit-pattern (`@setRuntimeSafety(false)` in Zig).
         fn close<T: JsSinkAbi>(this: *mut c_void, _err: Option<SysError>) {
-            // SAFETY: `this` is the JSValue bits stashed by `init`; bitcast back.
+            // `this` is the JSValue bits stashed by `init`; bitcast back.
             let cpp = JSValue::from_encoded(this as usize);
-            unsafe { T::on_close_extern(cpp, JSValue::UNDEFINED) };
+            T::on_close_extern(cpp, JSValue::UNDEFINED);
         }
         fn ready<T: JsSinkAbi>(
             this: *mut c_void,
@@ -578,7 +575,7 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             _o: Option<crate::webcore::BlobSizeType>,
         ) {
             let cpp = JSValue::from_encoded(this as usize);
-            unsafe { T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED) };
+            T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED);
         }
         fn start(_this: *mut c_void) {}
         Signal {
@@ -682,8 +679,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<&'a mut JSSink<T>> {
         use crate::webcore::jsc::JsError;
-        // SAFETY: FFI call into generated C++ sink glue.
-        let raw = unsafe { T::from_js_extern(frame.this()) };
+        let raw = T::from_js_extern(frame.this());
         match raw {
             from_js_result::DETACHED => Err(global.throw(format_args!(
                 "This {} has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.",
@@ -1091,11 +1087,11 @@ macro_rules! js_sink {
                     jsvalue_ptr: *mut *mut c_void,
                 ) -> JSValue;
                 #[link_name = concat!($abi_name, "__onClose")]
-                fn on_close_extern(ptr: JSValue, reason: JSValue);
+                safe fn on_close_extern(ptr: JSValue, reason: JSValue);
                 #[link_name = concat!($abi_name, "__onReady")]
-                fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue);
+                safe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue);
                 #[link_name = concat!($abi_name, "__onStart")]
-                fn on_start_extern(ptr: JSValue, global: *mut JSGlobalObject);
+                safe fn on_start_extern(ptr: JSValue, global: &JSGlobalObject);
                 #[link_name = concat!($abi_name, "__createObject")]
                 fn create_object_extern(
                     global: *mut JSGlobalObject,
@@ -1103,11 +1099,11 @@ macro_rules! js_sink {
                     destructor: usize,
                 ) -> JSValue;
                 #[link_name = concat!($abi_name, "__setDestroyCallback")]
-                fn set_destroy_callback_extern(value: JSValue, callback: usize);
+                safe fn set_destroy_callback_extern(value: JSValue, callback: usize);
                 #[link_name = concat!($abi_name, "__detachPtr")]
-                fn detach_ptr_extern(ptr: JSValue);
+                safe fn detach_ptr_extern(ptr: JSValue);
                 #[link_name = concat!($abi_name, "__fromJS")]
-                fn from_js_extern(value: JSValue) -> usize;
+                safe fn from_js_extern(value: JSValue) -> usize;
             }
 
             pub fn assign_to_stream(
@@ -1127,22 +1123,18 @@ macro_rules! js_sink {
                 let global = ::bun_jsc::VirtualMachine::get().global();
                 // TODO: properly propagate exception upwards
                 let _ = ::bun_jsc::from_js_host_call_generic(global, || {
-                    // SAFETY: FFI call into generated C++ sink glue.
-                    unsafe { on_close_extern(ptr, reason) }
+                    on_close_extern(ptr, reason)
                 });
             }
 
             pub fn on_ready(ptr: JSValue, amount: JSValue, offset: JSValue) {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // SAFETY: FFI call into generated C++ sink glue.
-                unsafe { on_ready_extern(ptr, amount, offset) }
+                on_ready_extern(ptr, amount, offset)
             }
 
             pub fn on_start(ptr: JSValue, global: &JSGlobalObject) {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
-                // opaque ZST handle; `.as_ptr()` is the sanctioned &self → *mut for FFI.
-                unsafe { on_start_extern(ptr, global.as_ptr()) }
+                on_start_extern(ptr, global)
             }
 
             pub fn create_object(global: &JSGlobalObject, object: *mut c_void, destructor: usize) -> JSValue {
@@ -1154,15 +1146,11 @@ macro_rules! js_sink {
 
             pub fn set_destroy_callback(value: JSValue, callback: usize) {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
-                // SAFETY: FFI call into generated C++ sink glue.
-                unsafe { set_destroy_callback_extern(value, callback) }
+                set_destroy_callback_extern(value, callback)
             }
 
             pub fn detach_ptr(global: &JSGlobalObject, ptr: JSValue) -> JsResult<()> {
-                ::bun_jsc::from_js_host_call_generic(global, || {
-                    // SAFETY: FFI call into generated C++ sink glue.
-                    unsafe { detach_ptr_extern(ptr) }
-                })
+                ::bun_jsc::from_js_host_call_generic(global, || detach_ptr_extern(ptr))
             }
 
             #[bun_jsc::host_fn]
@@ -1228,8 +1216,7 @@ macro_rules! js_sink {
             }
 
             pub fn from_js(value: JSValue) -> Option<*mut ThisSink> {
-                // SAFETY: FFI call.
-                let raw = unsafe { from_js_extern(value) };
+                let raw = from_js_extern(value);
                 match raw {
                     from_js_result::DETACHED | from_js_result::CAST_FAILED => None,
                     ptr => Some(ptr as *mut ThisSink),
@@ -1237,8 +1224,7 @@ macro_rules! js_sink {
             }
 
             fn get_this<'a>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<&'a mut ThisSink> {
-                // SAFETY: FFI call.
-                let raw = unsafe { from_js_extern(frame.this()) };
+                let raw = from_js_extern(frame.this());
                 match raw {
                     from_js_result::DETACHED => global.throw(
                         concat!(

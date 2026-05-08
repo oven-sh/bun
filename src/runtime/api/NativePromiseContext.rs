@@ -116,7 +116,7 @@ unsafe extern "C" {
         ctx: *mut c_void,
         tag: u8,
     ) -> JSValue;
-    fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
+    safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
 }
 
 /// The caller must have already taken a ref on `ctx`. The returned cell owns
@@ -130,8 +130,7 @@ pub fn create<T: NativePromiseContextType>(global: &JSGlobalObject, ctx: *mut T)
 /// is a no-op. Returns null if already taken (e.g., the connection aborted
 /// and the ref was released via the destructor on a prior GC cycle).
 pub fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
-    // SAFETY: cell was produced by `create` above; FFI returns the original ctx or null.
-    NonNull::new(unsafe { Bun__NativePromiseContext__take(cell) }.cast::<T>())
+    NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
 }
 
 /// Called from the C++ destructor when a cell is collected with a non-null

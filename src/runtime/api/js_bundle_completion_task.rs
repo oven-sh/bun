@@ -651,16 +651,11 @@ impl JSBundleCompletionTask {
                     };
                     let result = output_file.to_js(Some(&path), global_this);
                     if to_assign_on_sourcemap != JSValue::ZERO {
-                        // SAFETY: codegen FFI — `to_assign_on_sourcemap` is the
-                        // `BuildArtifact` JS wrapper produced by the previous
-                        // iteration's `to_js`; `result` is a fresh JS cell.
-                        unsafe {
-                            BuildArtifactPrototype__sourcemapSetCachedValue(
-                                to_assign_on_sourcemap,
-                                global_this.as_ptr(),
-                                result,
-                            );
-                        }
+                        BuildArtifactPrototype__sourcemapSetCachedValue(
+                            to_assign_on_sourcemap,
+                            global_this,
+                            result,
+                        );
                         if let Some(artifact) = to_assign_on_sourcemap.as_::<BuildArtifact>() {
                             // SAFETY: `as_` returned a live `*mut BuildArtifact`
                             // owned by the JS wrapper; the borrow lasts only for
@@ -703,15 +698,12 @@ impl JSBundleCompletionTask {
                         }
                         None => JSValue::UNDEFINED,
                     };
-                    // SAFETY: FFI into C++; all args are valid encoded JSValues / live global ptr.
-                    unsafe {
-                        Bun__setupLazyMetafile(
-                            global_this.as_ptr(),
-                            build_output,
-                            metafile_js_str,
-                            metafile_md_str,
-                        );
-                    }
+                    Bun__setupLazyMetafile(
+                        global_this,
+                        build_output,
+                        metafile_js_str,
+                        metafile_md_str,
+                    );
                 }
 
                 let did_handle_callbacks = if let Some(plugin) = this.plugins {
@@ -749,29 +741,29 @@ impl JSBundleCompletionTask {
 // Rust fn).
 #[cfg(all(windows, target_arch = "x86_64"))]
 unsafe extern "sysv64" {
-    fn Bun__setupLazyMetafile(
-        global_this: *mut JSGlobalObject,
+    safe fn Bun__setupLazyMetafile(
+        global_this: &JSGlobalObject,
         build_output: JSValue,
         metafile_json_string: JSValue,
         metafile_markdown_string: JSValue,
     );
-    fn BuildArtifactPrototype__sourcemapSetCachedValue(
+    safe fn BuildArtifactPrototype__sourcemapSetCachedValue(
         this_value: JSValue,
-        global: *mut JSGlobalObject,
+        global: &JSGlobalObject,
         value: JSValue,
     );
 }
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 unsafe extern "C" {
-    fn Bun__setupLazyMetafile(
-        global_this: *mut JSGlobalObject,
+    safe fn Bun__setupLazyMetafile(
+        global_this: &JSGlobalObject,
         build_output: JSValue,
         metafile_json_string: JSValue,
         metafile_markdown_string: JSValue,
     );
-    fn BuildArtifactPrototype__sourcemapSetCachedValue(
+    safe fn BuildArtifactPrototype__sourcemapSetCachedValue(
         this_value: JSValue,
-        global: *mut JSGlobalObject,
+        global: &JSGlobalObject,
         value: JSValue,
     );
 }

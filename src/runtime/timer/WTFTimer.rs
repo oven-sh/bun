@@ -33,9 +33,8 @@ pub struct RunLoopTimer {
 
 impl RunLoopTimer {
     #[inline]
-    pub fn fire(this: *mut RunLoopTimer) {
-        // SAFETY: `this` is a valid `WTF::RunLoop::TimerBase*` handed to us by WebKit.
-        unsafe { WTFTimer__fire(this) }
+    pub fn fire(&self) {
+        WTFTimer__fire(self)
     }
 }
 
@@ -92,7 +91,8 @@ impl WTFTimer {
 
     #[inline]
     fn run_without_removing(&self) {
-        RunLoopTimer::fire(self.run_loop_timer.as_ptr());
+        // SAFETY: `run_loop_timer` is a non-null FFI handle owned by C++ for our lifetime.
+        unsafe { self.run_loop_timer.as_ref() }.fire();
     }
 
     #[bun_uws::uws_callback(export = "WTFTimer__isActive", no_catch)]
@@ -302,7 +302,7 @@ pub extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn WTFTimer__fire(this: *mut RunLoopTimer);
+    safe fn WTFTimer__fire(this: &RunLoopTimer);
 }
 
 // ported from: src/runtime/timer/WTFTimer.zig

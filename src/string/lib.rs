@@ -70,8 +70,8 @@ unsafe extern "C" {
     fn BunString__fromUTF8(bytes: *const u8, len: usize) -> String;
     fn BunString__fromUTF16(bytes: *const u16, len: usize) -> String;
     fn BunString__fromUTF16ToLatin1(bytes: *const u16, len: usize) -> String;
-    fn BunString__fromLatin1Unitialized(len: usize) -> String;
-    fn BunString__fromUTF16Unitialized(len: usize) -> String;
+    safe fn BunString__fromLatin1Unitialized(len: usize) -> String;
+    safe fn BunString__fromUTF16Unitialized(len: usize) -> String;
     fn BunString__toWTFString(this: *mut String);
     fn BunString__toThreadSafe(this: *mut String);
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
@@ -276,7 +276,7 @@ impl String {
     /// `(dead, null)` if WTF allocation failed (string.zig:128 checks
     /// `tag == .Dead` before using the buffer).
     pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
-        let s = unsafe { BunString__fromLatin1Unitialized(len) };
+        let s = BunString__fromLatin1Unitialized(len);
         if s.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }
@@ -289,7 +289,7 @@ impl String {
         (s, unsafe { core::slice::from_raw_parts_mut(ptr, len) })
     }
     pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
-        let s = unsafe { BunString__fromUTF16Unitialized(len) };
+        let s = BunString__fromUTF16Unitialized(len);
         if s.tag != Tag::WTFStringImpl {
             return (s, &mut []);
         }

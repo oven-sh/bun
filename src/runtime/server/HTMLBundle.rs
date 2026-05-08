@@ -61,9 +61,9 @@ const _: () = {
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "HTMLBundle__fromJS"]
-        fn __from_js(value: JSValue) -> *mut HTMLBundle;
+        safe fn __from_js(value: JSValue) -> *mut HTMLBundle;
         #[link_name = "HTMLBundle__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
+        safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
         #[link_name = "HTMLBundle__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
     }
@@ -71,22 +71,20 @@ const _: () = {
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "HTMLBundle__fromJS"]
-        fn __from_js(value: JSValue) -> *mut HTMLBundle;
+        safe fn __from_js(value: JSValue) -> *mut HTMLBundle;
         #[link_name = "HTMLBundle__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
+        safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
         #[link_name = "HTMLBundle__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
     }
 
     impl bun_jsc::JsClass for HTMLBundle {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast; returns null on type mismatch.
-            let p = unsafe { __from_js(value) };
+            let p = __from_js(value);
             if p.is_null() { None } else { Some(p) }
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: exact-structure FFI downcast; null on miss.
-            let p = unsafe { __from_js_direct(value) };
+            let p = __from_js_direct(value);
             if p.is_null() { None } else { Some(p) }
         }
         fn to_js(self, _global: &JSGlobalObject) -> JSValue {

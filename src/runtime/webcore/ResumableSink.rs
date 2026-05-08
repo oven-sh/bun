@@ -265,8 +265,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         this_ref.js_this.set_strong(self_, global_this);
         Self::set_stream(self_, global_this, js_stream);
 
-        // SAFETY: FFI call; all args are valid JSC handles.
-        let _ = unsafe { Bun__assignStreamIntoResumableSink(global_this, js_stream, self_) };
+        let _ = Bun__assignStreamIntoResumableSink(global_this, js_stream, self_);
 
         this
     }
@@ -682,8 +681,8 @@ pub type ResumableFetchSink = ResumableSink<JSResumableFetchSink, FetchTasklet>;
 pub type ResumableS3UploadSink = ResumableSink<JSResumableS3UploadSink, S3UploadStreamWrapper>;
 
 unsafe extern "C" {
-    fn Bun__assignStreamIntoResumableSink(
-        global_this: *const JSGlobalObject,
+    safe fn Bun__assignStreamIntoResumableSink(
+        global_this: &JSGlobalObject,
         stream: JSValue,
         sink: JSValue,
     ) -> JSValue;

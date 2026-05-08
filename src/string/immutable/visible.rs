@@ -671,8 +671,7 @@ pub fn visible_codepoint_width(cp: u32, ambiguous_as_wide: bool) -> U3Fast {
 
 pub fn visible_codepoint_width_maybe_emoji(cp: u32, maybe_emoji: bool, ambiguous_as_wide: bool) -> U3Fast {
     // UCHAR_EMOJI=57,
-    // SAFETY: ICU FFI; cp and property index are valid by construction.
-    if maybe_emoji && unsafe { icu_hasBinaryProperty(cp, 57) } {
+    if maybe_emoji && icu_hasBinaryProperty(cp, 57) {
         return 2;
     }
     visible_codepoint_width(cp, ambiguous_as_wide)
@@ -1044,8 +1043,7 @@ pub mod visible {
 
             // Use ICU for accurate emoji detection
             // UCHAR_EMOJI = 57
-            // SAFETY: ICU FFI; cp is a valid codepoint, 57 is a valid UProperty.
-            unsafe { icu_hasBinaryProperty(cp, 57) }
+            icu_hasBinaryProperty(cp, 57)
         }
 
         fn is_regional_indicator(cp: u32) -> bool {
@@ -1499,7 +1497,7 @@ pub mod visible {
 // extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
 // TODO(port): move to bun_str_sys (or icu sys crate).
 unsafe extern "C" {
-    fn icu_hasBinaryProperty(c: u32, which: c_uint) -> bool;
+    safe fn icu_hasBinaryProperty(c: u32, which: c_uint) -> bool;
 }
 
 // C exports for wrapAnsi.cpp
@@ -1561,8 +1559,7 @@ pub(super) extern "C" fn Bun__isEmojiPresentation(cp: u32) -> bool {
         return false;
     }
     // UCHAR_EMOJI = 57
-    // SAFETY: ICU FFI.
-    unsafe { icu_hasBinaryProperty(cp, 57) }
+    icu_hasBinaryProperty(cp, 57)
 }
 
 // ported from: src/string/immutable/visible.zig

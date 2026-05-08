@@ -94,7 +94,10 @@ else if (Environment.isFreeBSD)
         nivcsw: isize,
     }
 else
-    std.posix.rusage;
+    // `std.posix.rusage` is oversized on Android (musl's `__reserved`
+    // tail, which bionic doesn't have). `bun.sys.rusage` is a transparent
+    // alias everywhere else.
+    bun.sys.rusage;
 
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {

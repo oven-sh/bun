@@ -88,6 +88,42 @@ pub const TestingAPIs = struct {
             .sizeof = @as(f64, @floatFromInt(@sizeOf(bun.sys.Sigaction))),
         }, globalThis)).toJS();
     }
+
+    /// Verifies `bun.sys.rusage`'s layout matches the host libc by filling
+    /// one via `getrusage(RUSAGE_SELF)`. On Android, `std.posix.rusage`
+    /// carries musl's 128B `__reserved` tail that bionic doesn't write,
+    /// leaving the struct partially uninitialized; `bun.sys.rusage` drops
+    /// that tail. On every other POSIX it's a transparent alias.
+    ///
+    /// Returned fields let the test check that (a) libc populated the
+    /// struct through our type (non-zero CPU time / sane maxrss) and
+    /// (b) `@sizeOf` agrees with `bun.spawn.Rusage` — the thing actually
+    /// handed to `wait4()`. POSIX-only.
+    pub fn rusageLayout(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (comptime !Environment.isPosix) return .js_undefined;
+
+        // Go through libc with our type rather than `std.posix.getrusage`,
+        // whose return type is the possibly-oversized `std.posix.rusage`.
+        const getrusage = @extern(
+            *const fn (who: c_int, usage: *bun.sys.rusage) callconv(.c) c_int,
+            .{ .name = "getrusage" },
+        );
+        var r: bun.sys.rusage = std.mem.zeroes(bun.sys.rusage);
+        _ = getrusage(bun.sys.rusage.SELF, &r);
+
+        return (try jsc.JSObject.create(.{
+            .sizeof = @as(f64, @floatFromInt(@sizeOf(bun.sys.rusage))),
+            .sizeofSpawnRusage = @as(f64, @floatFromInt(@sizeOf(bun.spawn.Rusage))),
+            .sizeofStdPosixRusage = @as(f64, @floatFromInt(@sizeOf(std.posix.rusage))),
+            .hasReservedTail = @hasField(bun.sys.rusage, "__reserved"),
+            .isAndroid = Environment.isAndroid,
+            .maxrss = @as(f64, @floatFromInt(r.maxrss)),
+            .utime_usec = @as(f64, @floatFromInt(r.utime.sec)) * 1_000_000 +
+                @as(f64, @floatFromInt(r.utime.usec)),
+            .stime_usec = @as(f64, @floatFromInt(r.stime.sec)) * 1_000_000 +
+                @as(f64, @floatFromInt(r.stime.usec)),
+        }, globalThis)).toJS();
+    }
 };
 
 const std = @import("std");

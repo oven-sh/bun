@@ -2292,6 +2292,49 @@ pub fn sigaction(sig: u8, noalias act: ?*const Sigaction, noalias oact: ?*Sigact
     _ = libc_sigaction(sig, act, oact);
 }
 
+/// bionic's `struct rusage` is the bare kernel struct (144B on LP64) — it
+/// does NOT carry the `__reserved: [16]long` tail that musl (and therefore
+/// `std.os.linux.rusage`, which `std.c.rusage` aliases on Linux) appends.
+/// `wait4()` / `getrusage()` are output-only and bionic writes only the
+/// first 144B, so the oversized Zig type doesn't corrupt anything today —
+/// but it leaves 128B of uninitialized stack in the tail, which breaks any
+/// future `@memcmp` / "is this still zero" / serialization of the struct
+/// and makes `@sizeOf` lie. Until the Zig stdlib grows an `abi.isAndroid()`
+/// case for `rusage`, use this instead of `std.posix.rusage`.
+pub const rusage = if (Environment.isAndroid) extern struct {
+    // bionic libc/include/sys/resource.h -> <linux/resource.h> (kernel
+    // layout, no reserved tail). Bun only targets LP64 Android.
+    comptime {
+        bun.assert(@sizeOf(usize) == 8);
+        // Trip when the Zig stdlib drops the musl `__reserved` tail on
+        // Android so this workaround can be removed.
+        if (!@hasField(std.posix.rusage, "__reserved") and
+            @sizeOf(std.posix.rusage) == @sizeOf(@This()))
+            @compileError("std.posix.rusage now matches bionic; remove the bun.sys.rusage workaround");
+    }
+
+    utime: std.c.timeval,
+    stime: std.c.timeval,
+    maxrss: c_long,
+    ixrss: c_long,
+    idrss: c_long,
+    isrss: c_long,
+    minflt: c_long,
+    majflt: c_long,
+    nswap: c_long,
+    inblock: c_long,
+    oublock: c_long,
+    msgsnd: c_long,
+    msgrcv: c_long,
+    nsignals: c_long,
+    nvcsw: c_long,
+    nivcsw: c_long,
+
+    pub const SELF = 0;
+    pub const CHILDREN = -1;
+    pub const THREAD = 1;
+} else std.posix.rusage;
+
 pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*const std.posix.sigset_t) Maybe(usize) {
     while (true) {
         const rc = switch (Environment.os) {

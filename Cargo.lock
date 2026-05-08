@@ -108,7 +108,6 @@ dependencies = [
  "bstr",
  "bun_collections",
  "bun_core",
- "bun_io",
  "bun_ptr",
  "bun_spawn_sys",
  "bun_string",
@@ -1060,6 +1059,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_aio",
  "bun_collections",
  "bun_core",
  "bun_errno",
@@ -1507,6 +1507,7 @@ dependencies = [
  "bun_spawn",
  "bun_string",
  "bun_sys",
+ "bun_which",
  "const_format",
  "enum-map",
  "enumset",

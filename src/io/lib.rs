@@ -1172,13 +1172,22 @@ impl Poll {
 
 pub const RETRY: E = E::EAGAIN;
 
-// ─── Cycle-break: opaque upward types (CYCLEBREAK.md §io) ─────────────────────
-// io (T2) must not name bun_aio (T3) / bun_jsc (T6) / bun_runtime (T6) / bun_uws
-// types directly. These vtable + opaque-handle definitions let higher tiers
-// register concrete impls at init; io calls through them.
+// ─── EventLoopHandle / FilePoll bridge ───────────────────────────────────────
+// `bun_io` now depends on `bun_aio` directly, so `FilePoll` and its accessors
+// are direct calls into `bun_aio::FilePoll` (no per-method extern shim). The
+// only remaining upward indirection is recovering a typed
+// `bun_event_loop::EventLoopHandle` from the opaque `*mut c_void` newtype
+// below — that crate is still a higher tier (it depends on `bun_io`), so the
+// two link-time externs `__bun_io_event_loop_to_ctx` / `__bun_io_pipe_read_buffer`
+// remain as the canonical T1→T1+ seam.
+
+use bun_aio::FilePoll as AioFilePoll;
+use bun_aio::posix_event_loop::{
+    Flags as AioFlags, FlagsSet as AioFlagsSet, OneShotFlag, Owner as AioOwner,
+};
 
 /// Opaque event-loop handle. Concrete repr is `*const bun_event_loop::
-/// EventLoopHandle` (T4); io only stores it and passes it through link-time
+/// EventLoopHandle`; io only stores it and passes it through the two
 /// `extern "Rust"` shims defined in `bun_event_loop`.
 /// CYCLEBREAK(forward-decl): pointer-sized opaque newtype.
 #[repr(transparent)]
@@ -1191,17 +1200,33 @@ impl EventLoopHandle {
     pub fn init(h: EventLoopHandle) -> EventLoopHandle {
         h
     }
-    /// Extract the underlying uws/uv loop pointer. Routed through a link-time
-    /// extern since only T4+ knows the `EventLoopHandle` layout.
+    /// Recover the `bun_aio::EventLoopCtx` (vtable + owner) for this handle.
+    /// Routed through a link-time extern since only `bun_event_loop` knows the
+    /// `EventLoopHandle` enum layout.
     #[inline]
-    pub fn loop_(self) -> *mut c_void {
+    pub fn as_event_loop_ctx(self) -> bun_aio::EventLoopCtx {
         // SAFETY: link-time extern; `self.0` is a `*const EventLoopHandle`
         // round-tripped from a `bun_runtime` caller.
-        unsafe { __bun_io_event_loop_to_loop(self) }
+        unsafe { __bun_io_event_loop_to_ctx(self) }
+    }
+    /// Extract the underlying uws/uv loop pointer (Zig: `handle.loop()`).
+    /// Derived from `EventLoopCtx::platform_event_loop` — there is exactly one
+    /// uws loop per event-loop handle, so this matches the former dedicated
+    /// `__bun_io_event_loop_to_loop` shim.
+    #[inline]
+    pub fn loop_(self) -> *mut c_void {
+        // SAFETY: vtable contract — returns the live uws loop for this handle.
+        unsafe {
+            (self.as_event_loop_ctx().vtable.platform_event_loop)(
+                self.as_event_loop_ctx().owner,
+            )
+            .cast()
+        }
     }
     /// `bun.jsc.EventLoopHandle.pipeReadBuffer()` — per-loop scratch buffer for
-    /// streaming pipe reads. Routed through a link-time extern since T2 cannot
-    /// name `bun_event_loop::EventLoopHandle`'s layout.
+    /// streaming pipe reads. Routed through a link-time extern since the
+    /// buffer lives on the concrete `jsc::EventLoop` / `MiniEventLoop`, not on
+    /// `EventLoopCtx`.
     #[inline]
     pub fn pipe_read_buffer(self) -> *mut [u8] {
         // SAFETY: link-time extern. The buffer is owned by the
@@ -1211,10 +1236,12 @@ impl EventLoopHandle {
     }
 }
 
-/// Opaque pointer to a `bun_aio::FilePoll` (T3). Stored in `PollOrFd::Poll`.
-pub type FilePollPtr = *mut c_void;
+/// Pointer to a `bun_aio::FilePoll` hive slot. Stored in `PollOrFd::Poll`.
+pub type FilePollPtr = *mut AioFilePoll;
 
-/// Subset of `bun_aio::FilePoll::Flags` that io inspects/mutates.
+/// Subset of `bun_aio::Flags` that io callers inspect/mutate. Kept as a
+/// distinct enum so downstream call sites (`bun_runtime`, `bun_install`, …)
+/// keep spelling `bun_io::FilePollFlag::Socket` without naming `bun_aio`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FilePollFlag {
@@ -1226,8 +1253,20 @@ pub enum FilePollFlag {
     Fifo,
 }
 
-/// Which edge to register on (mirrors `bun_aio::Pollable::{Readable,Writable}`
-/// with `bun_aio::PollMode::Dispatch`).
+#[inline]
+fn io_flag(f: FilePollFlag) -> AioFlags {
+    match f {
+        FilePollFlag::PollWritable => AioFlags::PollWritable,
+        FilePollFlag::Nonblocking => AioFlags::Nonblocking,
+        FilePollFlag::Hup => AioFlags::Hup,
+        FilePollFlag::WasEverRegistered => AioFlags::WasEverRegistered,
+        FilePollFlag::Socket => AioFlags::Socket,
+        FilePollFlag::Fifo => AioFlags::Fifo,
+    }
+}
+
+/// Which edge to register on (mirrors `bun_aio::Flags::{Readable,Writable}`
+/// with `OneShotFlag::Dispatch`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FilePollKind {
@@ -1235,58 +1274,42 @@ pub enum FilePollKind {
     Writable,
 }
 
-// CYCLEBREAK: link-time `extern "Rust"` shims for `bun_aio::FilePoll` (T3) and
-// `bun_event_loop::EventLoopHandle` (T4). Bodies are `#[no_mangle]` in
-// `bun_event_loop::AnyEventLoop` (which can name both). Replaces the former
-// runtime-registered `FILE_POLL_VTABLE: AtomicPtr` — there was only ever one
-// provider, so the indirection was pure init-order hazard.
-// PERF(port): was direct field access / inline calls — cold path
-// (per-register, not per-tick).
+// LAYERING: `bun_event_loop` is the only crate that knows the
+// `EventLoopHandle` enum layout (Js vs Mini), and it depends on `bun_io`, so
+// these two accessors stay as link-time `extern "Rust"` (genuine upward calls
+// per docs/LAYERING_AUDIT.md §extern-rust-is-correct). The former 16-function
+// `__bun_io_file_poll_*` surface is gone — `bun_io` now calls
+// `bun_aio::FilePoll` directly.
 unsafe extern "Rust" {
-    /// Allocate + init a FilePoll. `owner_tag`/`owner` form the
-    /// `bun_aio::Owner` pair (tag is one of `bun_aio::poll_tag::*`).
-    fn __bun_io_file_poll_init(ev: EventLoopHandle, fd: Fd, owner_tag: u8, owner: *mut c_void) -> FilePollPtr;
-    fn __bun_io_file_poll_fd(p: FilePollPtr) -> Fd;
-    fn __bun_io_file_poll_set_owner(p: FilePollPtr, owner_tag: u8, owner: *mut c_void);
-    fn __bun_io_file_poll_deinit_force_unregister(p: FilePollPtr);
-    /// Register for `kind` with `PollMode::Dispatch` on `loop_` (opaque uws/uv loop).
-    fn __bun_io_file_poll_register(p: FilePollPtr, loop_: *mut c_void, kind: FilePollKind, fd: Fd) -> sys::Result<()>;
-    fn __bun_io_file_poll_unregister(p: FilePollPtr, loop_: *mut c_void, force_unregister: bool) -> sys::Result<()>;
-    fn __bun_io_file_poll_has_flag(p: FilePollPtr, f: FilePollFlag) -> bool;
-    /// `poll.flags.insert(flag)` — direct flag mutation (Zig field write).
-    fn __bun_io_file_poll_set_flag(p: FilePollPtr, f: FilePollFlag);
-    fn __bun_io_file_poll_file_type(p: FilePollPtr) -> crate::pipes::FileType;
-    fn __bun_io_file_poll_is_registered(p: FilePollPtr) -> bool;
-    /// `poll.isWatching()` — `is_registered() && !flags.NeedsRearm`. Distinct
-    /// from `is_registered`: after a one-shot poll fires, `PollWritable` stays
-    /// set but `NeedsRearm` is set, so `is_registered() == true` while
-    /// `is_watching() == false` until re-armed.
-    fn __bun_io_file_poll_is_watching(p: FilePollPtr) -> bool;
-    fn __bun_io_file_poll_is_active(p: FilePollPtr) -> bool;
-    fn __bun_io_file_poll_can_enable_keeping_process_alive(p: FilePollPtr) -> bool;
-    fn __bun_io_file_poll_enable_keeping_process_alive(p: FilePollPtr, ev: EventLoopHandle);
-    fn __bun_io_file_poll_disable_keeping_process_alive(p: FilePollPtr, ev: EventLoopHandle);
-    /// Extract the uws/uv `*mut Loop` from an opaque `EventLoopHandle`.
-    fn __bun_io_event_loop_to_loop(ev: EventLoopHandle) -> *mut c_void;
+    /// `bun_event_loop::EventLoopHandle::as_event_loop_ctx` for the opaque
+    /// `bun_io::EventLoopHandle` newtype.
+    fn __bun_io_event_loop_to_ctx(ev: EventLoopHandle) -> bun_aio::EventLoopCtx;
     /// `bun.jsc.EventLoopHandle.pipeReadBuffer()` — returns the per-loop
     /// 256 KiB scratch buffer for streaming pipe reads.
     fn __bun_io_pipe_read_buffer(ev: EventLoopHandle) -> *mut [u8];
 }
 
-/// Thin method-style wrapper over `FilePollPtr` so PipeReader/PipeWriter call
-/// sites read like the original `bun_aio::FilePoll` API.
+/// Thin `Copy` handle over `*mut bun_aio::FilePoll` so PipeReader/PipeWriter
+/// call sites read like the original Zig `bun.aio.FilePoll` API. The pointee
+/// is a hive-array slot owned by the event loop's `Store`; this wrapper never
+/// drops it (release goes through `deinit_force_unregister`, matching Zig).
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct FilePoll(pub FilePollPtr);
 
 impl FilePoll {
-    /// `owner_tag` is one of `bun_aio::poll_tag::*` (passed through opaquely
-    /// since T2 cannot name `bun_aio`). Zig threaded the tag via `Owner.init(ptr)`
+    /// Allocate + init a FilePoll on `ev`'s hive store. `owner_tag` is one of
+    /// `bun_aio::poll_tag::*`; Zig threaded the tag via `Owner.init(ptr)`
     /// (TaggedPointerUnion derives the tag from `@TypeOf`).
     #[inline]
     pub fn init(ev: EventLoopHandle, fd: Fd, owner_tag: u8, owner: *mut c_void) -> FilePoll {
-        // SAFETY: link-time extern; args forwarded opaquely.
-        FilePoll(unsafe { __bun_io_file_poll_init(ev, fd, owner_tag, owner) })
+        let ctx = ev.as_event_loop_ctx();
+        FilePoll(AioFilePoll::init(
+            ctx,
+            fd,
+            AioFlagsSet::empty(),
+            AioOwner::new(owner_tag, owner.cast()),
+        ))
     }
     #[inline]
     pub fn as_ptr(self) -> FilePollPtr {
@@ -1294,59 +1317,133 @@ impl FilePoll {
     }
     #[inline]
     pub fn fd(self) -> Fd {
-        unsafe { __bun_io_file_poll_fd(self.0) }
+        // SAFETY: `self.0` is a hive slot returned by `FilePoll::init`.
+        unsafe { (*self.0).fd }
     }
     #[inline]
     pub fn set_owner(self, owner_tag: u8, owner: *mut c_void) {
-        unsafe { __bun_io_file_poll_set_owner(self.0, owner_tag, owner) }
+        // SAFETY: `self.0` is a live hive slot; field write only.
+        unsafe { (*self.0).owner = AioOwner::new(owner_tag, owner.cast()) };
     }
     #[inline]
     pub fn deinit_force_unregister(self) {
-        unsafe { __bun_io_file_poll_deinit_force_unregister(self.0) }
+        // SAFETY: `self.0` is a live hive slot; `deinit_force_unregister`
+        // returns it to the pool (caller must not touch `self` afterwards —
+        // matches Zig).
+        unsafe { (*self.0).deinit_force_unregister() };
     }
+    /// `loop_` is the `*mut UwsLoop` returned by `EventLoopHandle::loop_()`
+    /// (erased to `*mut c_void` at call sites for historical reasons).
     #[inline]
     pub fn unregister(self, loop_: *mut c_void, force: bool) -> sys::Result<()> {
-        unsafe { __bun_io_file_poll_unregister(self.0, loop_, force) }
+        // SAFETY: `self.0` is a live hive slot; `loop_` is the uws loop for the
+        // same event-loop handle that allocated this poll.
+        #[cfg(not(windows))]
+        unsafe {
+            (*self.0).unregister(&mut *loop_.cast::<bun_uws_sys::Loop>(), force)
+        }
+        #[cfg(windows)]
+        unsafe {
+            let _ = force;
+            // Windows `FilePoll::unregister` returns `bool` (always `true`
+            // today); map to the `Result<()>` contract so a future failing
+            // `uv_unref` can surface instead of being silently dropped.
+            if (*self.0).unregister(&mut *loop_.cast::<bun_uws_sys::Loop>()) {
+                Ok(())
+            } else {
+                Err(sys::Error::from_code(sys::E::INVAL, sys::Tag::TODO))
+            }
+        }
     }
+    /// Spec PipeReader.zig:330 / PipeWriter.zig:64: `registerWithFd(loop,
+    /// .{read,writ}able, .dispatch, fd)` — the *request* flag, not the
+    /// registered-state flag.
     #[inline]
     pub fn register_with_fd(self, loop_: *mut c_void, kind: FilePollKind, fd: Fd) -> sys::Result<()> {
-        unsafe { __bun_io_file_poll_register(self.0, loop_, kind, fd) }
+        let flag = match kind {
+            FilePollKind::Readable => AioFlags::Readable,
+            FilePollKind::Writable => AioFlags::Writable,
+        };
+        // SAFETY: `self.0` is a live hive slot; `loop_` is the uws loop for the
+        // same event-loop handle (see `unregister`).
+        #[cfg(not(windows))]
+        unsafe {
+            (*self.0).register_with_fd(
+                &mut *loop_.cast::<bun_uws_sys::Loop>(),
+                flag,
+                OneShotFlag::Dispatch,
+                fd,
+            )
+        }
+        // Windows: `bun_io` never holds a `PollOrFd::Poll` (the Windows
+        // reader/writer use `Source` + libuv handles), so this is unreachable.
+        #[cfg(windows)]
+        {
+            let _ = (loop_, flag, fd);
+            unreachable!("FilePoll fd registration is POSIX-only");
+        }
     }
     #[inline]
     pub fn has_flag(self, f: FilePollFlag) -> bool {
-        unsafe { __bun_io_file_poll_has_flag(self.0, f) }
+        // SAFETY: `self.0` is a live hive slot; field read only.
+        unsafe { (*self.0).flags.contains(io_flag(f)) }
     }
     #[inline]
     pub fn set_flag(self, f: FilePollFlag) {
-        unsafe { __bun_io_file_poll_set_flag(self.0, f) }
+        // SAFETY: `self.0` is a live hive slot; field write only.
+        unsafe { (*self.0).flags.insert(io_flag(f)) };
     }
     #[inline]
     pub fn file_type(self) -> crate::pipes::FileType {
-        unsafe { __bun_io_file_poll_file_type(self.0) }
+        // SAFETY: `self.0` is a live hive slot.
+        #[cfg(not(windows))]
+        unsafe { (*self.0).file_type() }
+        // Windows `FilePoll` carries no `file_type` (the libuv `Source` knows
+        // its own kind); the POSIX `PollOrFd::Poll` path is never taken there.
+        #[cfg(windows)]
+        { crate::pipes::FileType::File }
     }
     #[inline]
     pub fn is_registered(self) -> bool {
-        unsafe { __bun_io_file_poll_is_registered(self.0) }
+        // SAFETY: `self.0` is a live hive slot.
+        unsafe { (*self.0).is_registered() }
     }
+    /// `poll.isWatching()` — `is_registered() && !flags.NeedsRearm`. Distinct
+    /// from `is_registered`: after a one-shot poll fires, `PollWritable` stays
+    /// set but `NeedsRearm` is set, so `is_registered() == true` while
+    /// `is_watching() == false` until re-armed.
     #[inline]
     pub fn is_watching(self) -> bool {
-        unsafe { __bun_io_file_poll_is_watching(self.0) }
+        // SAFETY: `self.0` is a live hive slot.
+        unsafe { (*self.0).is_watching() }
     }
     #[inline]
     pub fn is_active(self) -> bool {
-        unsafe { __bun_io_file_poll_is_active(self.0) }
+        // SAFETY: `self.0` is a live hive slot.
+        unsafe { (*self.0).is_active() }
     }
     #[inline]
     pub fn can_enable_keeping_process_alive(self) -> bool {
-        unsafe { __bun_io_file_poll_can_enable_keeping_process_alive(self.0) }
+        // SAFETY: `self.0` is a live hive slot.
+        #[cfg(not(windows))]
+        unsafe { (*self.0).can_enable_keeping_process_alive() }
+        // Windows variant: equivalent to `!closed && can_ref()` (Zig parity).
+        #[cfg(windows)]
+        unsafe {
+            !(*self.0).flags.contains(AioFlags::Closed) && (*self.0).can_ref()
+        }
     }
     #[inline]
     pub fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
-        unsafe { __bun_io_file_poll_enable_keeping_process_alive(self.0, ev) }
+        let ctx = ev.as_event_loop_ctx();
+        // SAFETY: `self.0` is a live hive slot.
+        unsafe { (*self.0).enable_keeping_process_alive(ctx) };
     }
     #[inline]
     pub fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
-        unsafe { __bun_io_file_poll_disable_keeping_process_alive(self.0, ev) }
+        let ctx = ev.as_event_loop_ctx();
+        // SAFETY: `self.0` is a live hive slot.
+        unsafe { (*self.0).disable_keeping_process_alive(ctx) };
     }
     #[inline]
     pub fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {

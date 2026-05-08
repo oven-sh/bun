@@ -57,7 +57,7 @@ pub use posix_event_loop::{Closer, FilePoll, KeepAlive, Loop, Waker};
 pub use windows_event_loop::{Closer, FilePoll, KeepAlive, Loop, Waker};
 
 pub use posix_event_loop::{
-    AllocatorType, EventLoopCtx, EventLoopCtxVTable, OpaqueCallback, Owner, PollTag,
+    AllocatorType, EventLoopCtx, EventLoopCtxVTable, FileType, OpaqueCallback, Owner, PollTag,
 };
 #[cfg(not(windows))]
 pub use posix_event_loop::Store;

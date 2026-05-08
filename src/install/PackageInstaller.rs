@@ -950,9 +950,9 @@ impl<'a> PackageInstaller<'a> {
         // PORT NOTE: these `&'a [T]` fields alias into `self.lockfile.packages` (BACKREF).
         // Borrowck rejects reassigning `&'a [T]` from a `&'a mut Lockfile` borrow inside a
         // method, so detach the lifetime via raw pointers (Zig stored raw slice ptr+len).
-        // SAFETY: `self.lockfile: &'a mut Lockfile` outlives `'a`; the packages buffer is
-        // not freed for the lifetime of this `PackageInstaller` (only grows, which is why
-        // this fn exists — to re-point after growth).
+        // SAFETY: `self.lockfile` is a BACKREF whose pointee outlives `'a`; the packages
+        // buffer is not freed for the lifetime of this `PackageInstaller` (only grows,
+        // which is why this fn exists — to re-point after growth).
         let mut packages = self.lockfile_mut().packages.slice();
         self.metas = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_meta()) };
         self.names = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_name()) };

@@ -470,7 +470,15 @@ impl Cmd {
         let mut arena = bun_alloc::Arena::new();
         let mut spawn_args =
             SpawnArgs::default::<false>(&mut arena, interp as *mut Interpreter, event_loop);
-        spawn_args.cwd = interp.as_cmd(this).base.shell().cwd();
+        // Cache the raw `*mut ShellExecEnv` and deref it directly so the
+        // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
+        // `*interp` — `Base::shell()` would tie the slice's lifetime to
+        // `&interp`, blocking every `interp.as_cmd_mut(...)` below for the
+        // life of `spawn_args`. The env is a separate heap allocation that
+        // outlives this Cmd, so the slice remains valid across reborrows.
+        let shell_ptr: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
+        // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
+        spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
         // Resolve argv[0] via PATH (`bun_which::which`). Spec lines 487-498.
         let resolved: Option<Vec<u8>> = {
@@ -956,7 +964,9 @@ impl Cmd {
         // with a `captured` slot and the redirect didn't send stdout
         // elsewhere.
         if let IoOutKind::Fd(fd) = &self.io.stdout {
-            if let Some(captured) = fd.captured_mut() {
+            // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
+            // owning `ShellExecEnv` and no other borrow of it is live here.
+            if let Some(captured) = unsafe { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stdout) {
                     if let Readable::Pipe(pipe) = &child.stdout {
                         bun_core::handle_oom(captured.append_slice(pipe.slice()));
@@ -987,7 +997,9 @@ impl Cmd {
         // SAFETY: `child` is the live subprocess owned by this Cmd.
         let child = unsafe { &mut *sub.child };
         if let IoOutKind::Fd(fd) = &self.io.stderr {
-            if let Some(captured) = fd.captured_mut() {
+            // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
+            // owning `ShellExecEnv` and no other borrow of it is live here.
+            if let Some(captured) = unsafe { fd.captured_mut() } {
                 if !redirect.redirects_elsewhere(ast::IoKind::Stderr) {
                     if let Readable::Pipe(pipe) = &child.stderr {
                         bun_core::handle_oom(captured.append_slice(pipe.slice()));

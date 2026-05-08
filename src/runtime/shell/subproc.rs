@@ -55,10 +55,15 @@ unsafe fn arc_mut<T>(a: &Arc<T>) -> &mut T {
 /// the Zig spec mutates through any `*StaticPipeWriter` alias. Localises the
 /// `(*buffer.as_ptr()).method()` pattern at the five `Writable::Buffer`
 /// callsites.
+///
+/// # Safety
+/// Caller must ensure no other `&`/`&mut StaticPipeWriter` to the same
+/// payload is live for the returned borrow. The `(&RefPtr<T>) -> &mut T`
+/// shape cannot encode this; `unsafe fn` keeps the obligation at the callsite.
 #[inline]
-fn buffer_mut(buf: &RefPtr<StaticPipeWriter>) -> &mut StaticPipeWriter {
-    // SAFETY: single-threaded shell; `RefPtr` data is live while the handle
-    // exists. No `&StaticPipeWriter` is held across these calls.
+unsafe fn buffer_mut(buf: &RefPtr<StaticPipeWriter>) -> &mut StaticPipeWriter {
+    // SAFETY: caller contract — single-threaded shell; `RefPtr` data is live
+    // while the handle exists.
     unsafe { &mut *buf.as_ptr() }
 }
 
@@ -371,7 +376,9 @@ impl ShellSubprocess {
                     self.on_static_pipe_writer_done();
                     // PORT NOTE: reshaped for borrowck — re-match after the &mut self call above.
                     if let Writable::Buffer(buffer) = &mut self.stdin {
-                        buffer_mut(buffer).source.detach();
+                        // SAFETY: single-threaded; no other borrow of the
+                        // payload is live across this temporary `&mut`.
+                        unsafe { buffer_mut(buffer) }.source.detach();
                     }
                     self.stdin = Writable::Ignore;
                 }
@@ -434,11 +441,15 @@ impl ShellSubprocess {
             for r in [&mut subproc.stdout, &mut subproc.stderr] {
                 if let Readable::Pipe(pipe) = r {
                     // `start()` failed before any reader callback registered,
-                    // so the `Arc` is uniquely held — `get_mut` succeeds.
-                    if let Some(p) = Arc::get_mut(pipe) {
-                        if matches!(p.state, PipeReaderState::Pending) {
-                            p.state = PipeReaderState::Err(None);
-                        }
+                    // so the `Arc` is expected to be uniquely held. Write
+                    // unconditionally (matching Zig spec) rather than via
+                    // `Arc::get_mut`, which would silently skip the state
+                    // transition if a future change bumped the strong count.
+                    debug_assert_eq!(Arc::strong_count(pipe), 1);
+                    // SAFETY: single-threaded shell; no other borrow live.
+                    let p = unsafe { &mut *Arc::as_ptr(pipe).cast_mut() };
+                    if matches!(p.state, PipeReaderState::Pending) {
+                        p.state = PipeReaderState::Err(None);
                     }
                 }
             }
@@ -691,15 +702,28 @@ impl ShellSubprocess {
         // life of the subprocess. Only reachable on Windows (POSIX
         // `Writable::init` never returns `Pipe` for shell stdio).
         {
-            let stdin_ptr: *mut Writable = &raw mut subproc.stdin;
-            if let Writable::Pipe(pipe) = &mut subproc.stdin {
+            // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
+            // the local `subproc: &mut` reborrow — the pointer is stored
+            // long-term in `FileSink::signal` and dereferenced from
+            // `Writable::on_close` after this frame returns. Under Stacked
+            // Borrows a child of `subproc`'s tag would be invalidated when
+            // that borrow ends; rooting in the allocation's provenance keeps
+            // it valid for the box's lifetime.
+            // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
+            let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
+            // SAFETY: reborrow as a child of `stdin_ptr` so it does not
+            // invalidate the sibling we store in `signal`.
+            if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
                 // SAFETY: `Arc<FileSink>` is single-thread (mirrors Zig's
                 // intrusive `*FileSink`); the FileSink allocation is disjoint
                 // from `*stdin_ptr`. `stdin_ptr` outlives the sink — the
                 // Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the Arc.
-                unsafe { arc_mut(pipe) }.signal =
-                    webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr);
+                // path that drops the Arc. `init_with_type` is `unsafe fn`
+                // (caller asserts the handler outlives the `Signal`).
+                unsafe {
+                    arc_mut(pipe).signal =
+                        webcore::streams::Signal::init_with_type::<Writable>(stdin_ptr);
+                }
             }
         }
 
@@ -712,7 +736,8 @@ impl ShellSubprocess {
         }
 
         if let Writable::Buffer(buffer) = &mut subproc.stdin {
-            if let Err(err) = buffer_mut(buffer).start() {
+            // SAFETY: single-threaded; `subproc` uniquely owned here.
+            if let Err(err) = unsafe { buffer_mut(buffer) }.start() {
                 let sys_err = err.to_shell_system_error();
                 let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
@@ -820,7 +845,8 @@ impl Writable {
                 unsafe { arc_mut(pipe) }.update_ref(add);
             }
             Writable::Buffer(buffer) => {
-                buffer_mut(buffer).update_ref(add);
+                // SAFETY: single-threaded; temporary `&mut` for the call only.
+                unsafe { buffer_mut(buffer) }.update_ref(add);
             }
             _ => {}
         }
@@ -1028,7 +1054,8 @@ impl Writable {
                 *self = Writable::Ignore;
             }
             Writable::Buffer(buffer) => {
-                buffer_mut(buffer).update_ref(false);
+                // SAFETY: single-threaded; temporary `&mut` for the call only.
+                unsafe { buffer_mut(buffer) }.update_ref(false);
                 // Spec: `this.buffer.deref()` but does NOT reassign `this.*` —
                 // the variant tag is left as `.buffer`. RefPtr's Drop (on
                 // Subprocess teardown) handles the final deref.
@@ -1053,7 +1080,8 @@ impl Writable {
                 *self = Writable::Ignore;
             }
             Writable::Buffer(buffer) => {
-                buffer_mut(buffer).close();
+                // SAFETY: single-threaded; temporary `&mut` for the call only.
+                unsafe { buffer_mut(buffer) }.close();
             }
             Writable::Ignore => {}
             Writable::Inherit => {}
@@ -1926,15 +1954,17 @@ impl PipeReader {
     /// drop its `Readable::Pipe` handle. `guard` keeps `self` alive across
     /// the latter; `arc_mut`'s short-lived `&mut` ends before `on_close_io`
     /// re-derives a `&PipeReader` via `Arc::deref`.
+    ///
+    /// NOTE: this does **not** gate on `is_done()` — Zig spec
+    /// `onReaderError` (subproc.zig:1369) runs unconditionally. The
+    /// `is_done()` early-return is `onReaderDone`-only and lives in
+    /// [`on_reader_done`].
     fn finish_after_state_set(guard: &Arc<Self>) {
         {
             // SAFETY: single-threaded shell; see `arc_mut`. The borrow ends
             // before `on_close_io` below reborrows the same allocation via
             // `Arc::as_ptr` (raw, no `&PipeReader`).
             let me = unsafe { arc_mut(guard) };
-            if !me.is_done() {
-                return;
-            }
             let y = me.try_signal_done_to_cmd();
             me.run_yield(y);
         }
@@ -1968,6 +1998,11 @@ impl PipeReader {
             let me = unsafe { arc_mut(&guard) };
             let owned = me.to_owned_slice();
             me.state = PipeReaderState::Done(owned);
+            // Spec subproc.zig:1245 — `onReaderDone` (only) waits for the
+            // captured-writer tee to drain before signalling.
+            if !me.is_done() {
+                return;
+            }
         }
         Self::finish_after_state_set(&guard);
         // Dropping `guard` is the matching `deref()`; may free `this`.

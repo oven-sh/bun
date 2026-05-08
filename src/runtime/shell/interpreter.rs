@@ -1749,35 +1749,45 @@ impl ShellExecEnv {
     }
 
     pub fn buffered_stdout(&mut self) -> *mut Vec<u8> {
-        std::ptr::from_mut(self.buffered_stdout_mut())
+        // SAFETY: returning a raw `*mut` defers the aliasing obligation to
+        // whoever later dereferences it; no `&mut` escapes this call.
+        std::ptr::from_mut(unsafe { self.buffered_stdout_mut() })
     }
 
     pub fn buffered_stderr(&mut self) -> *mut Vec<u8> {
-        std::ptr::from_mut(self.buffered_stderr_mut())
+        // SAFETY: see `buffered_stdout`.
+        std::ptr::from_mut(unsafe { self.buffered_stderr_mut() })
     }
 
     /// Mutably borrow the captured-stdout buffer (owned, or the parent env's
     /// buffer for subshell/pipeline children — see `Bufio`).
     ///
-    /// Returning `&mut Vec<u8>` (rather than the raw `*mut` of
-    /// [`buffered_stdout`]) is sound because `Bufio::Borrowed` always points
-    /// into a parent `ShellExecEnv` that strictly outlives this child env
-    /// (parents `deinit` after children) and the shell is single-threaded.
+    /// # Safety
+    /// In the `Bufio::Borrowed` arm the returned `&mut Vec<u8>` aliases the
+    /// PARENT `ShellExecEnv`'s buffer. Caller must ensure no other
+    /// `&`/`&mut` to that buffer is live (including via a `&mut` of the
+    /// parent env). The shell trampoline mutates one node at a time so this
+    /// holds in practice, but `&mut self` alone does not encode it — hence
+    /// `unsafe fn`. The parent env strictly outlives this child (parents
+    /// `deinit` after children), so the pointer is never dangling.
     #[inline]
-    pub fn buffered_stdout_mut(&mut self) -> &mut Vec<u8> {
+    pub unsafe fn buffered_stdout_mut(&mut self) -> &mut Vec<u8> {
         match &mut self._buffered_stdout {
             Bufio::Owned(o) => o,
-            // SAFETY: see doc comment.
+            // SAFETY: caller contract.
             Bufio::Borrowed(b) => unsafe { &mut **b },
         }
     }
 
     /// See [`buffered_stdout_mut`].
+    ///
+    /// # Safety
+    /// See [`buffered_stdout_mut`].
     #[inline]
-    pub fn buffered_stderr_mut(&mut self) -> &mut Vec<u8> {
+    pub unsafe fn buffered_stderr_mut(&mut self) -> &mut Vec<u8> {
         match &mut self._buffered_stderr {
             Bufio::Owned(o) => o,
-            // SAFETY: see `buffered_stdout_mut`.
+            // SAFETY: caller contract; see `buffered_stdout_mut`.
             Bufio::Borrowed(b) => unsafe { &mut **b },
         }
     }

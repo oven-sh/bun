@@ -429,12 +429,16 @@ impl Expansion {
         // Child is a Script (command substitution). Its captured stdout lives
         // in the duped `ShellExecEnv` it owns; read it before deinit.
         debug_assert!(matches!(interp.node(child).kind(), StateKind::Script));
-        let stdout = interp
-            .as_script_mut(child)
-            .base
-            .shell_mut()
-            .buffered_stdout_mut()
-            .clone();
+        // SAFETY: single trampoline frame; the child script's env (and its
+        // parent buffer in the `Borrowed` case) has no other live borrow.
+        let stdout = unsafe {
+            interp
+                .as_script_mut(child)
+                .base
+                .shell_mut()
+                .buffered_stdout_mut()
+        }
+        .clone();
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command). Spec: childDone:517.

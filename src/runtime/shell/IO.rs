@@ -95,9 +95,15 @@ impl OutFd {
     /// (see field doc); the owning `ShellExecEnv` outlives every `Cmd`/builtin
     /// that holds an `OutFd`. Localises the per-callsite raw deref so callers
     /// can `if let Some(buf) = fd.captured_mut() { buf.extend_from_slice(...) }`.
+    ///
+    /// # Safety
+    /// Caller must ensure no other `&`/`&mut` to the target `Vec<u8>` is live
+    /// (including via the parent `ShellExecEnv`) for the returned borrow's
+    /// lifetime. The `(&self) -> &mut T` shape cannot encode this, hence
+    /// `unsafe fn`.
     #[inline]
-    pub fn captured_mut(&self) -> Option<&mut Vec<u8>> {
-        // SAFETY: see doc comment — single-threaded shell, env outlives `self`.
+    pub unsafe fn captured_mut(&self) -> Option<&mut Vec<u8>> {
+        // SAFETY: caller contract — single-threaded shell, env outlives `self`.
         self.captured.map(|p| unsafe { &mut *p })
     }
 }

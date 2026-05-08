@@ -162,13 +162,14 @@ pub fn filter<'a>(
     // packages enum mapping (PackagesOption -> resolver::Packages) needs the projector.
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
+    // Zig: `jsc.AnyEventLoop.init(allocator)` — Mini loop that
+    // `wait_for_parse` ticks to drain parse tasks; `None` panics there.
+    let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
+
     let bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
-        // TODO(port): bundler `EventLoop` is an opaque `Option<NonNull<()>>`
-        // (CYCLEBREAK). Zig passed `jsc.AnyEventLoop.init(allocator)`; the
-        // bundler currently treats `None` as "spin a mini loop".
-        None,
+        Some(core::ptr::NonNull::from(event_loop)),
         &entry_points,
     ) {
         Ok(b) => b,

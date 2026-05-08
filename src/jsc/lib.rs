@@ -687,7 +687,7 @@ pub mod __macro_support {
     }
     impl<T> IntoConstructResult for alloc::boxed::Box<T> {
         #[inline] fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
-            Ok(bun_core::heap::leak(self).cast())
+            Ok(bun_core::heap::into_raw(self).cast())
         }
     }
     impl<T> IntoConstructResult for JsResult<*mut T> {
@@ -695,7 +695,7 @@ pub mod __macro_support {
     }
     impl<T> IntoConstructResult for JsResult<alloc::boxed::Box<T>> {
         #[inline] fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
-            self.map(|b| bun_core::heap::leak(b).cast())
+            self.map(|b| bun_core::heap::into_raw(b).cast())
         }
     }
 

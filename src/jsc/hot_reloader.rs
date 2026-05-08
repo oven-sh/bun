@@ -185,7 +185,7 @@ impl HotReloaderCtx for VirtualMachine {
             ImportWatcher::None => unreachable!(),
         };
         // The VM holds `bun_watcher` type-erased as `*mut c_void` (b2-cycle).
-        self.bun_watcher = bun_core::heap::leak(iw).cast::<core::ffi::c_void>();
+        self.bun_watcher = bun_core::heap::into_raw(iw).cast::<core::ffi::c_void>();
 
         // Wire the resolver's directory-watch callback at the same time.
         // Zig: `ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`;
@@ -604,7 +604,7 @@ where
 
         // SAFETY: extern "C" fn with no preconditions.
         unsafe { BunDebugger__willHotReload() };
-        let that = bun_core::heap::leak(Box::new(Self {
+        let that = bun_core::heap::into_raw(Box::new(Self {
             reloader: self.reloader,
             count: self.count,
             paths: self.paths,
@@ -651,7 +651,7 @@ where
         verbose: bool,
         clear_screen_flag: bool,
     ) -> Box<Watcher> {
-        let reloader = bun_core::heap::leak(Box::new(Self {
+        let reloader = bun_core::heap::into_raw(Box::new(Self {
             ctx,
             verbose: cfg!(feature = "debug_logs") || verbose,
             pending_count: AtomicU32::new(0),
@@ -719,7 +719,7 @@ where
             return;
         }
 
-        let reloader = bun_core::heap::leak(Box::new(Self {
+        let reloader = bun_core::heap::into_raw(Box::new(Self {
             ctx: this,
             verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
             pending_count: AtomicU32::new(0),

@@ -279,7 +279,7 @@ impl<T> IntoHostConstructReturn for *mut T {
 impl<T> IntoHostConstructReturn for Box<T> {
     #[inline]
     fn into_host_construct_return(self) -> JsResult<*mut c_void> {
-        Ok(bun_core::heap::leak(self).cast())
+        Ok(bun_core::heap::into_raw(self).cast())
     }
 }
 impl<T> IntoHostConstructReturn for JsResult<*mut T> {
@@ -289,7 +289,7 @@ impl<T> IntoHostConstructReturn for JsResult<*mut T> {
 impl<T> IntoHostConstructReturn for JsResult<Box<T>> {
     #[inline]
     fn into_host_construct_return(self) -> JsResult<*mut c_void> {
-        self.map(|b| bun_core::heap::leak(b).cast())
+        self.map(|b| bun_core::heap::into_raw(b).cast())
     }
 }
 

@@ -229,7 +229,7 @@ impl ThreadPool {
                 let cpu_count = bun_core::get_thread_count();
                 // PERF(port): was `v2.arena().create(ThreadPoolLib)` —
                 // using heap::alloc (global mimalloc).
-                let pool = bun_core::heap::leak(Box::new(ThreadPoolLib::ThreadPool::init(
+                let pool = bun_core::heap::into_raw(Box::new(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config { max_threads: u32::from(cpu_count), ..Default::default() },
                 )));
                 bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
@@ -395,7 +395,7 @@ impl ThreadPool {
                     // SAFETY: every field is fully written below before any read.
                     // Zig wrote a struct literal with `undefined` for the
                     // late-init fields; mirrored with `MaybeUninit` slots.
-                    worker = bun_core::heap::leak(unsafe { Box::<Worker>::new_uninit().assume_init() });
+                    worker = bun_core::heap::into_raw(unsafe { Box::<Worker>::new_uninit().assume_init() });
                     v.insert(worker);
                 }
             }

@@ -387,7 +387,7 @@ impl ArrayBuffer {
         // Ownership transfers to JSC; `to_js` installs a deallocator that
         // `mi_free`s the pointer on GC. `into_raw` (not `leak`) expresses that
         // this is an FFI hand-off, not a leak.
-        let ptr = bun_core::heap::leak(bytes).cast::<u8>();
+        let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         ArrayBuffer {
             len: u32::try_from(len).expect("int cast") as usize,
             byte_len: u32::try_from(len).expect("int cast") as usize,
@@ -881,7 +881,7 @@ impl MarkedArrayBuffer {
         // because the buffer is later freed via mi_free (MarkedArrayBuffer_deallocator).
         let buf: Box<[u8]> = Box::from(str);
         let len = buf.len();
-        let ptr = bun_core::heap::leak(buf).cast::<u8>();
+        let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
         // SAFETY: ptr/len from heap::alloc; backed by global mimalloc.
         let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))

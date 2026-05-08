@@ -386,7 +386,7 @@ pub mod singleton {
     // Blocks the calling thread until the bun build thread is created.
     // std.once also blocks other callers of this function until the first caller is done.
     fn load_once_impl<C: CompletionStruct>() {
-        let bundle_thread = bun_core::heap::leak(Box::new(BundleThread::<C>::uninitialized()));
+        let bundle_thread = bun_core::heap::into_raw(Box::new(BundleThread::<C>::uninitialized()));
         // Only called once under ONCE; Release pairs with `get`'s Acquire (via
         // `Once`'s own synchronization, but the explicit ordering is harmless).
         INSTANCE.store(bundle_thread.cast::<()>(), core::sync::atomic::Ordering::Release);

@@ -224,7 +224,7 @@ impl WriteFile {
         on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<*mut WriteFile, Error> {
-        let write_file = bun_core::heap::leak(Box::new(WriteFile {
+        let write_file = bun_core::heap::into_raw(Box::new(WriteFile {
             file_blob,
             bytes_blob,
             opened_fd: Fd::INVALID,
@@ -991,7 +991,7 @@ mod windows_impl {
         }
 
         pub fn new(init: WriteFileWindows) -> *mut WriteFileWindows {
-            bun_core::heap::leak(Box::new(init))
+            bun_core::heap::into_raw(Box::new(init))
         }
 
         pub fn deinit(&mut self) {

@@ -1062,7 +1062,7 @@ unsafe fn jsc_cache_vtable_get(
     this.features_hash = jsc.features_hash;
     this.exports_kind = jsc.exports_kind;
     if let Some(entry) = jsc.entry {
-        this.entry = Some(bun_core::heap::leak(Box::new(entry)).cast::<()>());
+        this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
     }
     hit
 }

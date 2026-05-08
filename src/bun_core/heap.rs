@@ -19,7 +19,7 @@
 //!   - `#[js_class]`-generated `T::to_js_boxed`
 //!   - `bun_libuv_sys::UvHandle::set_owned_data` / `take_owned_data`
 //!
-//! New code should reach for one of those. Direct `heap::leak`/`heap::take`
+//! New code should reach for one of those. Direct `heap::into_raw`/`heap::take`
 //! calls are for the residual cases that don't fit a typed scheduler
 //! (intrusive refcounts, self-referential payloads where the raw pointer is
 //! observed after hand-off, FFI ownership protocols outside the four above).
@@ -35,8 +35,18 @@ pub fn alloc<T>(value: T) -> *mut T {
     Box::into_raw(Box::new(value))
 }
 
-/// Leak an existing `Box<T>` to its raw pointer. Type-preserving — works for
-/// `Box<[T]>`, `Box<dyn Trait>`, etc. Pair with [`take`] or [`destroy`].
+/// Hand off an existing `Box<T>` as its raw pointer. Type-preserving — works
+/// for `Box<[T]>`, `Box<dyn Trait>`, etc. Pair with [`take`] or [`destroy`].
+///
+/// NOT a leak — this is `Box::into_raw`. Named `into_raw` (not `leak`) so the
+/// pairing with `take`/`destroy` (= `from_raw`) reads correctly at call sites.
+#[inline(always)]
+pub fn into_raw<T: ?Sized>(boxed: Box<T>) -> *mut T {
+    Box::into_raw(boxed)
+}
+
+/// Deprecated alias — see [`into_raw`].
+#[deprecated(note = "renamed to heap::into_raw — this is paired hand-off, not a leak")]
 #[inline(always)]
 pub fn leak<T: ?Sized>(boxed: Box<T>) -> *mut T {
     Box::into_raw(boxed)

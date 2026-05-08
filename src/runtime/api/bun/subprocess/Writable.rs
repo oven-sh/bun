@@ -157,7 +157,7 @@ impl<'a> Writable<'a> {
                         // Ownership of the `Box<uv::Pipe>` transfers to the
                         // FileSink's writer (mirrors Zig where `result.buffer`
                         // is a heap pointer the sink takes over).
-                        let uv_pipe: *mut _ = bun_core::heap::leak(buffer);
+                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
                         let pipe_ptr = FileSink::create_with_pipe(evtloop, uv_pipe);
                         // SAFETY: `create_with_pipe` returns a freshly-boxed non-null pointer.
                         let pipe = unsafe { &mut *pipe_ptr };

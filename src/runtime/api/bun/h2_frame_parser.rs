@@ -3541,7 +3541,7 @@ impl H2FrameParser {
         } else {
             self.local_settings.initial_window_size
         };
-        let stream = bun_core::heap::leak(Box::new(Stream::init(
+        let stream = bun_core::heap::into_raw(Box::new(Stream::init(
             stream_identifier,
             local_window_size,
             self.remote_settings.map(|s| s.initial_window_size).unwrap_or(DEFAULT_WINDOW_SIZE as u32),
@@ -5694,7 +5694,7 @@ impl H2FrameParser {
                 slot
             })
         } else {
-            bun_core::heap::leak(Box::new(init))
+            bun_core::heap::into_raw(Box::new(init))
         };
         // Zig: `errdefer this.deinit()`. The remaining `?` sites below may throw a JS
         // exception; the guard returns the slot to the pool / frees the Box on that

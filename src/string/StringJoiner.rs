@@ -103,7 +103,7 @@ impl StringJoiner {
         if data.is_empty() {
             return;
         }
-        let raw: *const [u8] = bun_core::heap::leak(data);
+        let raw: *const [u8] = bun_core::heap::into_raw(data);
         self.push_raw(raw, true);
     }
 
@@ -114,7 +114,7 @@ impl StringJoiner {
         }
         // bun.handleOom(this.allocator.dupe(u8, data)) → Box<[u8]> (aborts on OOM)
         let owned: Box<[u8]> = Box::from(data);
-        let raw: *const [u8] = bun_core::heap::leak(owned);
+        let raw: *const [u8] = bun_core::heap::into_raw(owned);
         self.push_raw(raw, true);
     }
 
@@ -146,7 +146,7 @@ impl StringJoiner {
             self.watcher.needs_newline = data_slice[data_slice.len() - 1] != b'\n';
         }
 
-        let new_tail_ptr = bun_core::heap::leak(new_tail);
+        let new_tail_ptr = bun_core::heap::into_raw(new_tail);
         if let Some(current_tail) = self.tail {
             // SAFETY: `tail` always points to the last node in the chain owned via `head`.
             unsafe { (*current_tail.as_ptr()).next = new_tail_ptr };
@@ -169,7 +169,7 @@ impl StringJoiner {
         self.tail = None;
         let len = self.len;
         self.len = 0;
-        let mut current: *mut Node = bun_core::heap::leak(head);
+        let mut current: *mut Node = bun_core::heap::into_raw(head);
 
         // Zig: `allocator.alloc(u8, this.len)` — allocates uninitialized.
         // Avoid the redundant zero-fill of `vec![0u8; len]`.
@@ -218,7 +218,7 @@ impl StringJoiner {
         self.tail = None;
         let len = self.len;
         self.len = 0;
-        let mut current: *mut Node = bun_core::heap::leak(head);
+        let mut current: *mut Node = bun_core::heap::into_raw(head);
 
         let mut slice = vec![0u8; len + end.len()].into_boxed_slice();
 
@@ -318,7 +318,7 @@ impl Drop for StringJoiner {
             return;
         };
         self.tail = None;
-        let mut current: *mut Node = bun_core::heap::leak(head);
+        let mut current: *mut Node = bun_core::heap::into_raw(head);
 
         while !current.is_null() {
             // SAFETY: `current` walks the singly-linked chain of Box-allocated nodes.

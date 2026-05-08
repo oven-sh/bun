@@ -95,7 +95,7 @@ pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver
         Some(nn) => nn.as_ptr().cast::<GlobalData>(),
         None => {
             // SAFETY: `vm_ptr` is live; the prior `&mut` borrow ended above.
-            let gd = bun_core::heap::leak(GlobalData::init(unsafe { &*vm_ptr }));
+            let gd = bun_core::heap::into_raw(GlobalData::init(unsafe { &*vm_ptr }));
             // SAFETY: `vm_ptr` is live; re-acquire the slot to publish `gd`.
             *unsafe { &mut *vm_ptr }.rare_data().global_dns_data_slot() =
                 // SAFETY: `gd` was just `heap::alloc`'d (non-null).
@@ -410,7 +410,7 @@ pub mod lib_uv_backend {
         // SAFETY: data was set to the GetAddrInfoRequest pointer before uv_getaddrinfo
         let this: *mut GetAddrInfoRequest = unsafe { (*uv_info).data.cast() };
 
-        let holder = bun_core::heap::leak(Box::new(Holder {
+        let holder = bun_core::heap::into_raw(Box::new(Holder {
             uv_info,
             task: unsafe { MaybeUninit::zeroed().assume_init() },
         }));
@@ -634,7 +634,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         let hash = wyhash(name);
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let request = bun_core::heap::leak(Box::new(Self {
+        let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
             hash,
             cache: CacheConfig::default(),
@@ -772,7 +772,7 @@ impl GetHostByAddrInfoRequest {
         let hash = wyhash(name);
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let request = bun_core::heap::leak(Box::new(Self {
+        let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
             hash,
             cache: CacheConfig::default(),
@@ -874,7 +874,7 @@ impl CAresNameInfo {
     pub fn init(global_this: &JSGlobalObject, name: Box<[u8]>) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        bun_core::heap::leak(Box::new(Self {
+        bun_core::heap::into_raw(Box::new(Self {
             global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
@@ -1012,7 +1012,7 @@ impl GetNameInfoRequest {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let name_len = name.len();
-        let request = bun_core::heap::leak(Box::new(Self {
+        let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
             hash,
             cache: CacheConfig::default(),
@@ -1300,7 +1300,7 @@ impl GetAddrInfoRequest {
         bun_output::scoped_log!(GetAddrInfoRequest, "init");
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let request = bun_core::heap::leak(Box::new(Self {
+        let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
             resolver_for_caching: resolver,
             hash: query.hash(),
@@ -1562,7 +1562,7 @@ impl CAresReverse {
     pub fn init(resolver: Option<*mut Resolver>, global_this: &JSGlobalObject, name: &[u8]) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        bun_core::heap::leak(Box::new(Self {
+        bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
@@ -1658,7 +1658,7 @@ pub struct CAresLookup<T: CAresRecordType> {
 impl<T: CAresRecordType> CAresLookup<T> {
     pub fn new(data: Self) -> *mut Self {
         debug_assert!(data.allocated); // deinit will not free this otherwise
-        bun_core::heap::leak(Box::new(data))
+        bun_core::heap::into_raw(Box::new(data))
     }
 
     pub fn init(resolver: Option<*mut Resolver>, global_this: &JSGlobalObject, name: &[u8]) -> *mut Self {
@@ -1797,7 +1797,7 @@ impl DNSLookup {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
 
-        bun_core::heap::leak(Box::new(Self {
+        bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver: Some(unsafe { bun_ptr::IntrusiveRc::init_ref(resolver) }),
             global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
@@ -2091,7 +2091,7 @@ pub mod internal {
 
     impl Request {
         pub fn new(key: RequestKeyOwned, refcount: u32, created_at: u32) -> *mut Self {
-            bun_core::heap::leak(Box::new(Self {
+            bun_core::heap::into_raw(Box::new(Self {
                 key,
                 result: None,
                 result_buf: None,
@@ -3044,7 +3044,7 @@ impl c_ares::AnyHandler for ResolveInfoRequest<c_ares::struct_any_reply> {
         timeouts: i32,
         results: Option<Box<c_ares::struct_any_reply>>,
     ) {
-        Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, results.map(bun_core::heap::leak));
+        Self::on_cares_complete(std::ptr::from_mut::<Self>(self), status, timeouts, results.map(bun_core::heap::into_raw));
     }
 }
 
@@ -3112,7 +3112,7 @@ macro_rules! hostent_ttls_newtype {
                 results: Option<Box<c_ares::hostent_with_ttls>>,
             ) {
                 // SAFETY: `#[repr(transparent)]` — `*mut hostent_with_ttls` casts to `*mut $name`.
-                let result = results.map(|b| bun_core::heap::leak(b).cast::<$name>());
+                let result = results.map(|b| bun_core::heap::into_raw(b).cast::<$name>());
                 Self::on_cares_complete(core::ptr::from_mut(self), status, timeouts, result);
             }
         }
@@ -3215,7 +3215,7 @@ pub struct UvDnsPoll {
 #[cfg(windows)]
 impl UvDnsPoll {
     pub fn new(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
-        bun_core::heap::leak(Box::new(Self {
+        bun_core::heap::into_raw(Box::new(Self {
             parent,
             socket,
             // SAFETY: POD, zero-valid — uv_poll_t is C POD; uv_poll_init writes it before use.
@@ -3516,7 +3516,7 @@ impl Resolver {
 
     pub fn init(vm: &VirtualMachine) -> *mut Self {
         bun_output::scoped_log!(DNSResolver, "init");
-        bun_core::heap::leak(Box::new(Self::setup(vm)))
+        bun_core::heap::into_raw(Box::new(Self::setup(vm)))
     }
 
     pub fn finalize(this: *mut Self) {

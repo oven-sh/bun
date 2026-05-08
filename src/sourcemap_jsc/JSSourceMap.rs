@@ -204,7 +204,7 @@ impl JSSourceMap {
         // ownership transfers to the C++ JSCell wrapper (`m_ctx`). The extern takes
         // an erased `*mut ()` (matching `src/jsc/generated.rs::__create`) since
         // C++ stores it opaquely; cast back in `finalize`.
-        unsafe { SourceMap__create(global.as_ptr(), bun_core::heap::leak(this).cast::<()>()) }
+        unsafe { SourceMap__create(global.as_ptr(), bun_core::heap::into_raw(this).cast::<()>()) }
     }
     #[inline]
     fn payload_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {

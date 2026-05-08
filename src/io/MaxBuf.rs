@@ -45,7 +45,7 @@ impl MaxBuf {
         };
         // SAFETY: `owner` outlives this MaxBuf's `owned_by_subprocess` slot — the Subprocess
         // clears it via `remove_from_subprocess` in its finalize path before being dropped.
-        let maxbuf = bun_core::heap::leak(Box::new(MaxBuf {
+        let maxbuf = bun_core::heap::into_raw(Box::new(MaxBuf {
             owned_by_subprocess: Some((owner, vtable)),
             owned_by_reader: false,
             remaining_bytes: initial,

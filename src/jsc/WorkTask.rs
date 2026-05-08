@@ -83,7 +83,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // PORT NOTE: intrusive `task` field is recovered via container_of in
         // run_from_thread_pool, so this must live at a stable heap address as a
         // raw pointer. Paired with `heap::take` in `destroy`.
-        bun_core::heap::leak(this)
+        bun_core::heap::into_raw(this)
     }
 
     // PORT NOTE: not `impl Drop` — `ref_.unref` is also called from `run_from_js`,

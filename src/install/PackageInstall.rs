@@ -437,7 +437,7 @@ impl HardLinkWindowsInstallTask {
         remaining[..dest.len()].copy_from_slice(dest);
         remaining[dest.len()] = 0;
 
-        bun_core::heap::leak(Box::new(Self {
+        bun_core::heap::into_raw(Box::new(Self {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
@@ -1907,7 +1907,7 @@ impl<'a> PackageInstall<'a> {
                     bun_fs::FileSystem::instance().top_level_dir(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
                 );
-                let task = bun_core::heap::leak(Box::new(UninstallTask {
+                let task = bun_core::heap::into_raw(Box::new(UninstallTask {
                     absolute_path: absolute_path.to_vec().into_boxed_slice(),
                     task: WorkPoolTask { callback: UninstallTask::run, node: ThreadPoolNode::default() },
                 }));

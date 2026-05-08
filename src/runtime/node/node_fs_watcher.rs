@@ -188,7 +188,7 @@ impl FSWatchTaskPosix {
         // if false is closed or detached (can still contain valid refs but will not create a new one)
         if self.ctx().ref_task() {
             // PORT NOTE: reshaped for borrowck — clone self into a heap task, then reset.
-            let that = bun_core::heap::leak(Box::new(FSWatchTaskPosix {
+            let that = bun_core::heap::into_raw(Box::new(FSWatchTaskPosix {
                 ctx: self.ctx,
                 count: self.count,
                 entries: core::mem::replace(
@@ -357,7 +357,7 @@ impl FSWatchTaskWindows {
         if !unsafe { &mut *ctx }.ref_task() {
             return;
         }
-        let task = bun_core::heap::leak(Box::new(FSWatchTaskWindows {
+        let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
             ctx,
             event: Event::Abort,
             count: 0,
@@ -485,7 +485,7 @@ impl FSWatcher {
             return;
         }
 
-        let task = bun_core::heap::leak(Box::new(FSWatchTaskWindows {
+        let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
             ctx: this,
             event,
             count: 0,
@@ -957,7 +957,7 @@ impl FSWatcher {
 
         let vm = args.global_this.bun_vm_ptr();
 
-        let ctx = bun_core::heap::leak(Box::new(FSWatcher {
+        let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
             current_task: FSWatchTask {
                 ctx: core::ptr::null_mut(),

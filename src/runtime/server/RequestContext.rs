@@ -1771,7 +1771,7 @@ where
         // PORT NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
         // local `response_stream` view can coexist with `&mut *this` calls below.
         let response_stream_ptr =
-            unsafe { NonNull::new_unchecked(bun_core::heap::leak(response_stream_box)) };
+            unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(response_stream_box)) };
         this.sink = Some(response_stream_ptr);
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };

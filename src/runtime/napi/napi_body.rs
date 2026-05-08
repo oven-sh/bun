@@ -1446,7 +1446,7 @@ pub extern "C" fn napi_create_promise(
     let deferred = get_out!(env, deferred_);
     let promise = get_out!(env, promise_);
     let strong = Box::new(JSPromiseStrong::init(env.to_js()));
-    let strong_ptr = bun_core::heap::leak(strong);
+    let strong_ptr = bun_core::heap::into_raw(strong);
     *deferred = strong_ptr;
     // SAFETY: strong_ptr was just created from heap::alloc and is non-null.
     let prom_value = unsafe { (*strong_ptr).get() }.as_value(env.to_js());
@@ -1598,7 +1598,7 @@ impl napi_async_work {
     ) -> *mut napi_async_work {
         let global = env.to_js();
 
-        bun_core::heap::leak(Box::new(napi_async_work {
+        bun_core::heap::into_raw(Box::new(napi_async_work {
             task: WorkPoolTask {
                 node: bun_threading::thread_pool::Node::default(),
                 callback: Self::run_from_thread_pool,
@@ -2214,7 +2214,7 @@ impl TsfnQueue {
 
 impl ThreadSafeFunction {
     pub fn new(init: ThreadSafeFunction) -> *mut ThreadSafeFunction {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     // This has two states:
@@ -3170,7 +3170,7 @@ impl NapiFinalizerTask {
         // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
         let vm: &VirtualMachine = global_this.bun_vm();
         let is_main_thread = VirtualMachine::get_or_null().is_some();
-        let this = bun_core::heap::leak(self);
+        let this = bun_core::heap::into_raw(self);
 
         if !is_main_thread {
             // TODO(@heimskr): do we need to handle the case where the vm is shutting down?

@@ -310,7 +310,7 @@ pub fn list_objects(
 
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
 
-    let task_ptr = bun_core::heap::leak(Box::new(S3HttpSimpleTask {
+    let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
         // Zig used `= undefined`; written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
         range: None,
@@ -489,7 +489,7 @@ pub fn writable_stream(
     // MultiPartUpload, matching the Zig pointer field.
     let global_static = GlobalRef::from(global_this);
     let part_size = options.part_size;
-    let task_ptr: *mut MultiPartUpload = bun_core::heap::leak(Box::new(MultiPartUpload {
+    let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         queue: None,
         available: IntegerBitSet::init_full(),
         current_part_number: 0,
@@ -529,7 +529,7 @@ pub fn writable_stream(
 
     // `NetworkSink.new(.{...}).toSink()` — heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
-    let response_stream: *mut NetworkSink = bun_core::heap::leak(NetworkSink::new(NetworkSink {
+    let response_stream: *mut NetworkSink = bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
         task: NonNull::new(task_ptr),
         global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
         high_water_mark: part_size as BlobSizeType,
@@ -839,7 +839,7 @@ pub fn upload_stream(
     // `credentials` ref adopted by value — moved into the MultiPartUpload below.
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static = GlobalRef::from(global_this);
-    let task_ptr: *mut MultiPartUpload = bun_core::heap::leak(Box::new(MultiPartUpload {
+    let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         queue: None,
         available: IntegerBitSet::init_full(),
         current_part_number: 0,
@@ -876,7 +876,7 @@ pub fn upload_stream(
 
     task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
 
-    let ctx_ptr: *mut S3UploadStreamWrapper = bun_core::heap::leak(Box::new(S3UploadStreamWrapper {
+    let ctx_ptr: *mut S3UploadStreamWrapper = bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
         ref_count: core::cell::Cell::new(2), // +1 for the stream sink (only deinit after both sink and task ended)
         sink: None,
         callback,
@@ -982,7 +982,7 @@ pub fn download_stream(
     } else {
         Box::<[u8]>::default()
     };
-    let task_ptr = bun_core::heap::leak(S3HttpDownloadStreamingTask::new(S3HttpDownloadStreamingTask {
+    let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(S3HttpDownloadStreamingTask {
         // `http: undefined` — fully overwritten by `task.http.write(AsyncHTTP::init(...))` below.
         http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
@@ -1095,7 +1095,7 @@ pub fn readable_stream(
 
     impl S3DownloadStreamWrapper {
         pub fn new(init: Self) -> *mut Self {
-            bun_core::heap::leak(Box::new(init))
+            bun_core::heap::into_raw(Box::new(init))
         }
 
         pub fn callback(

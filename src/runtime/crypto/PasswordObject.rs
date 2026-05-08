@@ -606,7 +606,7 @@ struct HashResult {
 
 impl HashResult {
     pub fn new(init: HashResult) -> *mut HashResult {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
@@ -936,7 +936,7 @@ struct VerifyResult {
 
 impl VerifyResult {
     pub fn new(init: VerifyResult) -> *mut VerifyResult {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`

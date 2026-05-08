@@ -460,7 +460,7 @@ pub struct UDPSocket {
 
 impl UDPSocket {
     pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {

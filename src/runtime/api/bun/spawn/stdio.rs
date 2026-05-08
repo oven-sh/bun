@@ -707,7 +707,7 @@ fn create_zeroed_pipe() -> *mut uv::Pipe {
     // `heap::take` without aliasing a live `Box` (which would double-free).
     // SAFETY: all-zero is a valid uv::Pipe (#[repr(C)] POD; libuv treats a
     // zeroed pipe as "uninitialized" and `pipe.loop == null` is the sentinel).
-    bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))
+    bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))
 }
 
 // ported from: src/runtime/api/bun/spawn/stdio.zig

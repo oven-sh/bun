@@ -188,7 +188,7 @@ impl Worker {
             use bun_sys::windows::libuv as uv;
 
             // SAFETY: all-zero is a valid uv::Pipe (matches Zig std.mem.zeroes).
-            let ipc_pipe = bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+            let ipc_pipe = bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
             // TODO(port): errdefer — if adoptPipe below is never reached, closeAndDestroy(ipc_pipe).
             // A nested scopeguard cannot hold `&mut *this` here while the outer guard already
             // holds it; Phase B should fold this into the outer cleanup path (check
@@ -198,9 +198,9 @@ impl Worker {
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 // SAFETY: all-zero is a valid uv::Pipe.
-                stdout: Stdio::Buffer(bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
+                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
                 // SAFETY: all-zero is a valid uv::Pipe.
-                stderr: Stdio::Buffer(bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
+                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))),
                 extra_fds: &mut this.extra_fd_stdio,
                 cwd: coord.cwd,
                 windows: spawn::WindowsOptions { loop_: jsc::EventLoopHandle::init(coord.vm), ..Default::default() },

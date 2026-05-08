@@ -1394,7 +1394,7 @@ impl FFI {
                 .to_error_instance(global_this))
             }
             Step::Compiled(_) => {
-                let function_ = bun_core::heap::leak(Box::new(core::mem::take(func)));
+                let function_ = bun_core::heap::into_raw(Box::new(core::mem::take(func)));
                 // SAFETY: function_ is a valid heap::alloc pointer
                 let compiled_ptr = unsafe { (*function_).step.compiled_ptr() };
                 Ok(create_object_2(

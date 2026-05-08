@@ -150,7 +150,7 @@ impl Blob {
     #[inline]
     pub fn new(mut blob: Blob) -> *mut Blob {
         blob.ref_count = bun_ptr::RawRefCount::init(1);
-        bun_core::heap::leak(Box::new(blob))
+        bun_core::heap::into_raw(Box::new(blob))
     }
 
     #[inline]
@@ -327,7 +327,7 @@ impl Blob {
         // side doesn't dangle the other (Blob.zig:3700).
         if duped.content_type_allocated {
             let copy = self.content_type_slice().to_vec().into_boxed_slice();
-            duped.content_type = bun_core::heap::leak(copy);
+            duped.content_type = bun_core::heap::into_raw(copy);
         }
         duped
     }
@@ -606,7 +606,7 @@ pub mod store {
         /// `is_temporary` handoff in `read_file`.
         pub fn init_owned(bytes: Box<[u8]>) -> Bytes {
             let len = bytes.len();
-            let ptr = bun_core::heap::leak(bytes).cast::<u8>();
+            let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
             Bytes {
                 ptr: NonNull::new(ptr),
                 len: len as SizeType,
@@ -1104,7 +1104,7 @@ pub mod store {
         fn from(b: Box<Store>) -> Self {
             // `Store::new` initializes `ref_count` to 1 — adopt that +1.
             // SAFETY: `heap::alloc` never returns null.
-            Self { ptr: unsafe { NonNull::new_unchecked(bun_core::heap::leak(b)) } }
+            Self { ptr: unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(b)) } }
         }
     }
 

@@ -844,7 +844,7 @@ impl PatchTask {
             next: ptr::null_mut(),
         });
 
-        bun_core::heap::leak(pt)
+        bun_core::heap::into_raw(pt)
     }
 
     pub fn new_apply_patch_hash(
@@ -921,7 +921,7 @@ impl PatchTask {
             next: ptr::null_mut(),
         });
 
-        bun_core::heap::leak(pt)
+        bun_core::heap::into_raw(pt)
     }
 }
 

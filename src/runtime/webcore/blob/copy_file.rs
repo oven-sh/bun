@@ -1214,7 +1214,7 @@ impl<'a> CopyFileWindows<'a> {
         destination_mode: Option<Mode>,
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
-        let result = bun_core::heap::leak(CopyFileWindows::new(CopyFileWindows {
+        let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
             promise: jsc::JSPromiseStrong::init(event_loop.global),

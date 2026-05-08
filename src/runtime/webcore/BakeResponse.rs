@@ -122,14 +122,14 @@ pub fn construct_redirect(
     if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
         assert_streaming_disabled(global_this, async_local_storage, b"Response.redirect")?;
         // Ownership of the allocation transfers to the JS wrapper.
-        let ptr = bun_core::heap::leak(response);
+        let ptr = bun_core::heap::into_raw(response);
         // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
         return Ok(unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Redirect) });
     }
 
     // Ownership of the allocation transfers to the JS wrapper (freed in
     // `ResponseClass__finalize`).
-    let ptr = bun_core::heap::leak(response);
+    let ptr = bun_core::heap::into_raw(response);
     // SAFETY: `ptr` is a fresh heap allocation; `Response::to_js` hands it to
     // the C++ wrapper which owns it thereafter.
     Ok(unsafe { &mut *ptr }.to_js(global_this))
@@ -204,7 +204,7 @@ pub fn construct_render(
     ));
 
     // Ownership of the allocation transfers to the JS wrapper.
-    let ptr = bun_core::heap::leak(response);
+    let ptr = bun_core::heap::into_raw(response);
     // SAFETY: `ptr` is a fresh heap allocation; JS wrapper adopts it.
     let response_js = unsafe { to_js_for_ssr(ptr, global_this, SSRKind::Render) };
     response_js.ensure_still_alive();

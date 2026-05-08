@@ -734,7 +734,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
         }
-        let job = bun_core::heap::leak(Box::new(CronRegisterJob {
+        let job = bun_core::heap::into_raw(Box::new(CronRegisterJob {
             promise: jsc::JSPromiseStrong::init(global),
             global: GlobalRef::from(global),
             poll: KeepAlive::default(),
@@ -1218,7 +1218,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             )));
         }
 
-        let job = bun_core::heap::leak(Box::new(CronRemoveJob {
+        let job = bun_core::heap::into_raw(Box::new(CronRemoveJob {
             promise: jsc::JSPromiseStrong::init(global),
             global: GlobalRef::from(global),
             poll: KeepAlive::default(),
@@ -1695,7 +1695,7 @@ impl CronJob {
         // SAFETY: `bun_vm()` returns the per-thread singleton.
         let vm = global.bun_vm().as_mut();
 
-        let job = bun_core::heap::leak(Box::new(CronJob {
+        let job = bun_core::heap::into_raw(Box::new(CronJob {
             ref_count: Cell::new(1),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CronJob),
             global: GlobalRef::from(global),

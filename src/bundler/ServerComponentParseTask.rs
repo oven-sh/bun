@@ -98,7 +98,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         external: ExternalFreeFunction::NONE,
         watcher_data: WatcherData::NONE,
     });
-    let result = bun_core::heap::leak(result);
+    let result = bun_core::heap::into_raw(result);
 
     // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
     // SAFETY: `worker.ctx` is a live BACKREF.

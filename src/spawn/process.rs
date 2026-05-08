@@ -304,7 +304,7 @@ impl Process {
             Status::Running
         };
         // bun.new → heap::alloc (pointer crosses FFI / intrusive refcount)
-        bun_core::heap::leak(Box::new(Process {
+        bun_core::heap::into_raw(Box::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: posix.pid,
             #[cfg(target_os = "linux")]
@@ -1064,7 +1064,7 @@ pub mod waiter_thread_posix {
     impl<T: ProcessLike> ResultTask<T> {
         #[inline]
         pub fn new(v: ResultTask<T>) -> *mut ResultTask<T> {
-            bun_core::heap::leak(Box::new(v))
+            bun_core::heap::into_raw(Box::new(v))
         }
 
         pub fn run_from_js_thread(self: Box<Self>) {
@@ -1098,7 +1098,7 @@ pub mod waiter_thread_posix {
     impl<T: ProcessLike> ResultTaskMini<T> {
         #[inline]
         pub fn new(v: ResultTaskMini<T>) -> *mut ResultTaskMini<T> {
-            bun_core::heap::leak(Box::new(v))
+            bun_core::heap::into_raw(Box::new(v))
         }
 
         pub fn run_from_main_thread(self: Box<Self>) {
@@ -1164,7 +1164,7 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub fn append(&self, process: *mut T) {
-            self.queue.push(bun_core::heap::leak(Box::new(TaskQueueEntry {
+            self.queue.push(bun_core::heap::into_raw(Box::new(TaskQueueEntry {
                 process,
                 next: core::ptr::null_mut(),
             })));
@@ -1953,7 +1953,7 @@ pub fn spawn_process_windows(
     uv_process_options.stdio_count = c_int::try_from(stdio_containers.len()).expect("int cast");
     uv_process_options.exit_cb = Some(Process::on_exit_uv);
 
-    let process = bun_core::heap::leak(Box::new(Process {
+    let process = bun_core::heap::into_raw(Box::new(Process {
         ref_count: bun_ptr::ThreadSafeRefCount::init(),
         event_loop: options.windows.loop_,
         pid: 0,
@@ -2132,7 +2132,7 @@ pub mod sync {
                     #[cfg(windows)]
                     {
                         // SAFETY: all-zero is valid uv::Pipe
-                        SpawnOptionsStdio::buffer(bun_core::heap::leak(Box::new(unsafe {
+                        SpawnOptionsStdio::buffer(bun_core::heap::into_raw(Box::new(unsafe {
                             core::mem::zeroed::<uv::Pipe>()
                         })))
                     }
@@ -2351,7 +2351,7 @@ pub mod sync {
             // callbacks and the `heap::take` in `on_close`) goes through
             // this pointer, so no Stacked Borrows tag is invalidated by an
             // interleaved Box deref.
-            let this: *mut SyncWindowsPipeReader = bun_core::heap::leak(self);
+            let this: *mut SyncWindowsPipeReader = bun_core::heap::into_raw(self);
             // SAFETY: just allocated; sole owner.
             unsafe {
                 (*this).pipe.set_data(this.cast());
@@ -2546,7 +2546,7 @@ pub mod sync {
         // reasserts a Unique tag and pops the callbacks' tags under Stacked
         // Borrows.
         let this_ptr: *mut SyncWindowsProcess =
-            bun_core::heap::leak(SyncWindowsProcess::new(SyncWindowsProcess {
+            bun_core::heap::into_raw(SyncWindowsProcess::new(SyncWindowsProcess {
                 process: spawned.to_process((), true),
                 stderr: Vec::new(),
                 stdout: Vec::new(),

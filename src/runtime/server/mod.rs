@@ -692,7 +692,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
         // by `ctx.request_weakref` until `RequestContext::deinit` releases it.
         let request_object: *mut crate::webcore::Request =
-            bun_core::heap::leak(crate::webcore::Request::new(crate::webcore::Request::init(
+            bun_core::heap::into_raw(crate::webcore::Request::new(crate::webcore::Request::init(
                 ctx_mut.method,
                 AnyRequestContext::init(ctx),
                 SSL,
@@ -1555,7 +1555,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `AnyTask` stores an erased fn-ptr directly (the `New` shim cannot
             // take a comptime fn value on stable Rust).
             let app = self.app.unwrap();
-            let task = bun_core::heap::leak(Box::new(bun_event_loop::AnyTask::AnyTask {
+            let task = bun_core::heap::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
                 ctx: core::ptr::NonNull::new(app.cast()),
                 callback: |ctx: *mut core::ffi::c_void| {
                     // SAFETY: `ctx` is the `*mut NewApp<SSL>` stored above; the
@@ -1567,7 +1567,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             vm.enqueue_task(bun_event_loop::Task::init(task));
         }
 
-        let task = bun_core::heap::leak(Box::new(bun_event_loop::AnyTask::AnyTask {
+        let task = bun_core::heap::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
             ctx: core::ptr::NonNull::new(std::ptr::from_mut::<Self>(self).cast()),
             callback: |ctx: *mut core::ffi::c_void| {
                 Self::deinit(ctx.cast::<Self>());
@@ -1728,7 +1728,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             bun_str::strings::trim(&config.base_uri, b"/").to_vec().into_boxed_slice();
         // errdefer free(base_url) — Box drops on Err automatically
 
-        let server = bun_core::heap::leak(Box::new(Self {
+        let server = bun_core::heap::into_raw(Box::new(Self {
             global_this: std::ptr::from_ref(global),
             config: core::mem::take(config),
             base_url_string_for_joining: base_url,
@@ -2678,7 +2678,7 @@ macro_rules! impl_server_pools {
             fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
                 static POOL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
                 *POOL.get_or_init(|| {
-                    bun_core::heap::leak(Box::new(
+                    bun_core::heap::into_raw(Box::new(
                         request_context::RequestContextStackAllocator::<NewServer<$ssl, $debug>, $ssl, $debug, false>::init(),
                     )) as usize
                 }) as *mut _
@@ -2686,7 +2686,7 @@ macro_rules! impl_server_pools {
             fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, true> {
                 static POOL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
                 *POOL.get_or_init(|| {
-                    bun_core::heap::leak(Box::new(
+                    bun_core::heap::into_raw(Box::new(
                         request_context::RequestContextStackAllocator::<NewServer<$ssl, $debug>, $ssl, $debug, true>::init(),
                     )) as usize
                 }) as *mut _
@@ -3334,7 +3334,7 @@ impl ServerAllConnectionsClosedTask {
     /// Spec server.zig `schedule` — `bun.TrivialNew` heap-allocates `this`,
     /// then `vm.eventLoop().enqueueTask(jsc.Task.init(ptr))`.
     pub fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
-        let ptr = bun_core::heap::leak(Box::new(this));
+        let ptr = bun_core::heap::into_raw(Box::new(this));
         vm.enqueue_task(bun_event_loop::Task::init(ptr));
     }
 

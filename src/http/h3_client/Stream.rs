@@ -47,7 +47,7 @@ impl Stream {
     /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
     /// `heap::take`.
     pub fn new(session: *mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
-        bun_core::heap::leak(Box::new(Stream {
+        bun_core::heap::into_raw(Box::new(Stream {
             session,
             client: Some(client.as_erased_ptr()),
             qstream: None,

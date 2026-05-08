@@ -478,7 +478,7 @@ impl ShellCpTask {
         // Back-ref so `ShellTask::run_from_main_thread::<ShellCpTask>` (the
         // dispatch.rs bounce-back) can recover `&mut Interpreter`.
         task.task.interp = interp;
-        bun_core::heap::leak(task)
+        bun_core::heap::into_raw(task)
     }
 
     /// Spec: cp.zig `onCopyImpl` — appends `"{src} -> {dest}\n"` to the verbose

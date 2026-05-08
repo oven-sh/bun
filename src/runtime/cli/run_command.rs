@@ -897,7 +897,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // never returns, so the allocation is process-lifetime by construction.
         // `mut` because the cron-execution branch below may swap in a synthetic
         // `cwd/[eval]` path (Zig: `run.entry_path = heap_entry_path`).
-        let mut entry_ptr: *const [u8] = bun_core::heap::leak(entry_path);
+        let mut entry_ptr: *const [u8] = bun_core::heap::into_raw(entry_path);
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
         let entry: &[u8] = unsafe { &*entry_ptr };
         vm.set_main(entry);
@@ -1111,7 +1111,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `allocator.dupe` + never-free) so the address is stable for both
         // `set_main` and the `RUN` write below. The runner never returns, so
         // the allocation is process-lifetime by construction.
-        let entry_ptr: *const [u8] = bun_core::heap::leak(entry_path);
+        let entry_ptr: *const [u8] = bun_core::heap::into_raw(entry_path);
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
         vm.set_main(unsafe { &*entry_ptr });
 
@@ -3370,7 +3370,7 @@ impl RunCommand {
             unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
             // SAFETY: every field of `RemoteImageDownload` was `ptr::write`n above.
             let mut d: Box<RemoteImageDownload> = unsafe {
-                bun_core::heap::take(bun_core::heap::leak(d).cast::<RemoteImageDownload>())
+                bun_core::heap::take(bun_core::heap::into_raw(d).cast::<RemoteImageDownload>())
             };
             d.async_http.schedule(&mut batch);
             downloads.push(d);

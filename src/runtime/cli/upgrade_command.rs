@@ -612,7 +612,7 @@ impl UpgradeCommand {
             // `&mut refresher` and `&mut progress` to `get_latest_version` (Zig
             // freely aliased these).
             let refresher: *mut Progress::Progress =
-                bun_core::heap::leak(Box::new(Progress::Progress::default()));
+                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
             // SAFETY: refresher is a fresh leaked allocation.
             let progress: *mut Progress::Node =
                 unsafe { (*refresher).start(b"Fetching version tags", 0) };
@@ -687,7 +687,7 @@ impl UpgradeCommand {
 
         {
             let refresher: *mut Progress::Progress =
-                bun_core::heap::leak(Box::new(Progress::Progress::default()));
+                bun_core::heap::into_raw(Box::new(Progress::Progress::default()));
             // SAFETY: refresher is a fresh leaked allocation.
             let progress: *mut Progress::Node =
                 unsafe { (*refresher).start(b"Downloading", version.size as usize) };

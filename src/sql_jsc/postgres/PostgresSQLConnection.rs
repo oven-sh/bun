@@ -64,7 +64,7 @@ pub use js::{from_js, from_js_direct, to_js};
 impl jsc::JsClass for PostgresSQLConnection {
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         // Ownership transfers to the JSC wrapper's m_ctx; freed via `finalize`.
-        js::to_js(bun_core::heap::leak(Box::new(self)), global)
+        js::to_js(bun_core::heap::into_raw(Box::new(self)), global)
     }
     fn from_js(value: JSValue) -> Option<*mut Self> {
         js::from_js(value)
@@ -1195,7 +1195,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     // moved `secure`/`tls_config` for the struct literal below.
     let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
 
-    let ptr: *mut PostgresSQLConnection = bun_core::heap::leak(Box::new(PostgresSQLConnection {
+    let ptr: *mut PostgresSQLConnection = bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
         socket: Socket::SocketTcp(uws::SocketTCP { socket: uws::InternalSocket::Detached }),
         status: Status::Connecting,
         ref_count: Cell::new(1),

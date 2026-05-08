@@ -364,7 +364,7 @@ impl PostgresSQLQuery {
             return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
         }
 
-        let ptr = bun_core::heap::leak(Box::new(PostgresSQLQuery::default()));
+        let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
         // SAFETY: ptr was just allocated and is the m_ctx payload; toJS wraps it in the JSCell.
         let this_value = js::to_js(ptr, global_this);
@@ -489,7 +489,7 @@ impl PostgresSQLQuery {
                 let mut s = PostgresSQLStatement::default();
                 s.signature = Signature::empty();
                 s.status = StatementStatus::Parsing;
-                bun_core::heap::leak(Box::new(s))
+                bun_core::heap::into_raw(Box::new(s))
             };
             // Query is simple and it's the only owner of the statement
             this.statement = Some(stmt);
@@ -747,7 +747,7 @@ impl PostgresSQLQuery {
                         s.signature = signature;
                         s.init_exact_refs(2);
                         s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
-                        bun_core::heap::leak(Box::new(s))
+                        bun_core::heap::into_raw(Box::new(s))
                     };
                     this.statement = Some(stmt);
 
@@ -761,7 +761,7 @@ impl PostgresSQLQuery {
                         let mut s = PostgresSQLStatement::default();
                         s.signature = signature;
                         s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
-                        bun_core::heap::leak(Box::new(s))
+                        bun_core::heap::into_raw(Box::new(s))
                     };
                     this.statement = Some(stmt);
                 }

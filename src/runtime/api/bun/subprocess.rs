@@ -228,7 +228,7 @@ const _: () = {
 
     impl<'a> bun_jsc::JsClass for Subprocess<'a> {
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            let ptr = bun_core::heap::leak(Box::new(self));
+            let ptr = bun_core::heap::into_raw(Box::new(self));
             // Ownership of `ptr` transfers to the C++ wrapper (freed via
             // `SubprocessClass__finalize`).
             js::to_js(ptr.cast(), global)

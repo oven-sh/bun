@@ -514,7 +514,7 @@ impl ProxyTunnel {
         ssl_options: SSLConfig,
         start_payload: &[u8],
     ) {
-        let proxy_tunnel = bun_core::heap::leak(Box::new(ProxyTunnel::default()));
+        let proxy_tunnel = bun_core::heap::into_raw(Box::new(ProxyTunnel::default()));
         // SAFETY: just allocated, sole owner.
         let proxy_tunnel_ref = unsafe { &mut *proxy_tunnel };
 

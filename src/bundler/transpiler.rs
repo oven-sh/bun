@@ -1203,11 +1203,11 @@ impl<'a> Transpiler<'a> {
                     // TODO(port): replace with a `OnceLock`-backed
                     // `bun_dotenv::instance_or_init()` accessor once
                     // `bun_dotenv` grows one (PORTING.md §Concurrency).
-                    let map: *mut dot_env::Map = bun_core::heap::leak(Box::new(dot_env::Map::init()));
+                    let map: *mut dot_env::Map = bun_core::heap::into_raw(Box::new(dot_env::Map::init()));
                     // SAFETY: `map` is a fresh heap allocation with no other
                     // alias; `Loader` stores it for process lifetime and is
                     // itself installed into `dot_env::INSTANCE` below.
-                    bun_core::heap::leak(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
+                    bun_core::heap::into_raw(Box::new(dot_env::Loader::init(unsafe { &mut *map })))
                 }
             },
         };

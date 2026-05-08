@@ -418,7 +418,7 @@ impl Glob {
         // and `global_this`. Both referents outlive the task: `Glob` is GC-rooted
         // via `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
         // `into_raw` erases the stack-tied `'_` once the heap allocation escapes.
-        let _ = bun_core::heap::leak(task);
+        let _ = bun_core::heap::into_raw(task);
         Ok(promise)
     }
 

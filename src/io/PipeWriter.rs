@@ -1153,7 +1153,7 @@ pub trait BaseWindowsPipeWriter {
             }
             Source::Pipe(pipe) => {
                 // Hand the Box off to libuv; on_pipe_close reclaims it.
-                let raw = bun_core::heap::leak(pipe);
+                let raw = bun_core::heap::into_raw(pipe);
                 // SAFETY: raw is heap-allocated by Source::open; freed in on_pipe_close.
                 unsafe {
                     (*raw).data = raw.cast::<c_void>();

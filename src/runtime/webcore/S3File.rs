@@ -380,7 +380,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                                     blob.content_type = std::ptr::from_ref::<[u8]>(s);
                                 }
                                 std::borrow::Cow::Owned(v) => {
-                                    blob.content_type = bun_core::heap::leak(v.into_boxed_slice());
+                                    blob.content_type = bun_core::heap::into_raw(v.into_boxed_slice());
                                     blob.content_type_allocated = true;
                                 }
                             }
@@ -388,7 +388,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                         }
                         let mut content_type_buf = vec![0u8; slice.len()];
                         strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type = bun_core::heap::leak(content_type_buf.into_boxed_slice());
+                        blob.content_type = bun_core::heap::into_raw(content_type_buf.into_boxed_slice());
                         blob.content_type_allocated = true;
                     }
                 }
@@ -444,7 +444,7 @@ pub fn construct_s3_file_with_s3_credentials(
                                     blob.content_type = std::ptr::from_ref::<[u8]>(s);
                                 }
                                 std::borrow::Cow::Owned(v) => {
-                                    blob.content_type = bun_core::heap::leak(v.into_boxed_slice());
+                                    blob.content_type = bun_core::heap::into_raw(v.into_boxed_slice());
                                     blob.content_type_allocated = true;
                                 }
                             }
@@ -452,7 +452,7 @@ pub fn construct_s3_file_with_s3_credentials(
                         }
                         let mut content_type_buf = vec![0u8; slice.len()];
                         strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type = bun_core::heap::leak(content_type_buf.into_boxed_slice());
+                        blob.content_type = bun_core::heap::into_raw(content_type_buf.into_boxed_slice());
                         blob.content_type_allocated = true;
                     }
                 }
@@ -480,7 +480,7 @@ pub struct S3BlobStatTask {
 
 impl S3BlobStatTask {
     pub fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     pub fn on_s3_exists_resolved(

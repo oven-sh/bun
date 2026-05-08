@@ -1108,7 +1108,7 @@ pub fn constructor(
     transpiler.options.react_fast_refresh = false;
     transpiler.options.repl_mode = config.repl_mode;
 
-    Ok(bun_core::heap::leak(this))
+    Ok(bun_core::heap::into_raw(this))
 }
 
     pub fn finalize(this: *mut JSTranspiler) {
@@ -1408,7 +1408,7 @@ impl JSTranspiler {
         task.schedule();
         // Ownership passes to the work pool / event loop; freed via
         // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
-        let _ = bun_core::heap::leak(task);
+        let _ = bun_core::heap::into_raw(task);
         Ok(promise)
     }
 

@@ -187,7 +187,7 @@ macro_rules! new_store {
                     PreAlloc::zero(prealloc.as_mut_ptr());
                     // SAFETY: `zero` fully initialized `metadata` and the non-buffer
                     // fields of `first_block`; `buffer` is MaybeUninit.
-                    let prealloc = bun_core::heap::leak(unsafe { prealloc.assume_init() });
+                    let prealloc = bun_core::heap::into_raw(unsafe { prealloc.assume_init() });
                     // SAFETY: prealloc is a valid leaked Box.
                     unsafe { addr_of_mut!((*prealloc).metadata) }
                 }

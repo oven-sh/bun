@@ -196,7 +196,7 @@ fn spawn(
         let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
         let process = NonNull::new(spawned.to_process(event_loop, false))
             .expect("toProcess returned null");
-        let self_ptr = bun_core::heap::leak(Box::new(HostProcess { process }));
+        let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));
         // SAFETY: self_ptr is a freshly-allocated, exclusively-owned Box.
         unsafe {
             (*process.as_ptr()).set_exit_handler(self_ptr.cast(), &HOST_EXIT_VTABLE);

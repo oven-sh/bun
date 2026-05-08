@@ -217,7 +217,7 @@ enum ErrorType {
 impl S3HttpSimpleTask {
     // bun.TrivialNew(@This()) — heap-allocate; pointer crosses thread boundary via http callback
     pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     fn error_with_body(&self, error_type: ErrorType) -> JsTerminatedResult<()> {

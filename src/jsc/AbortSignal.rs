@@ -338,7 +338,7 @@ impl Timeout {
 
         // PORT NOTE: `bun.TrivialNew` → `heap::alloc(Box::new(...))` (mimalloc
         // is the global allocator per PORTING.md §Prereq).
-        let this: *mut Timeout = bun_core::heap::leak(Box::new(Timeout {
+        let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec { sec: deadline.sec, nsec: deadline.nsec },
                 tag: TimerTag::AbortSignalTimeout,

@@ -476,7 +476,7 @@ impl FSEventsLoop {
 
     pub fn init() -> Result<*mut FSEventsLoop, bun_core::Error> {
         // TODO(port): narrow error set
-        let this = bun_core::heap::leak(Box::new(FSEventsLoop {
+        let this = bun_core::heap::into_raw(Box::new(FSEventsLoop {
             signal_source: ptr::null_mut(),
             mutex: Mutex::new(),
             loop_: ptr::null_mut(),
@@ -532,7 +532,7 @@ impl FSEventsLoop {
 
     fn enqueue_task_concurrent(&mut self, task: Task) {
         let cf = CoreFoundation::get();
-        let concurrent = bun_core::heap::leak(Box::new(ConcurrentTask {
+        let concurrent = bun_core::heap::into_raw(Box::new(ConcurrentTask {
             task: Task { ctx: ptr::null_mut(), callback: |_| {} },
             next: ptr::null_mut(),
             auto_delete: false,

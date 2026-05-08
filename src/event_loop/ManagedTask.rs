@@ -49,7 +49,7 @@ impl ManagedTask {
     // Callers: `ManagedTask.New(T, cb).init(ctx)` → `ManagedTask::new(ctx, cb)`.
     // PERF(port): was comptime monomorphization (callmod_inline) — profile in Phase B
     pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
-        let managed = bun_core::heap::leak(Box::new(ManagedTask {
+        let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
             // SAFETY: `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical
             // ABI for all `T: Sized`; `run` passes back the exact pointer stored
             // in `ctx` below, so the callee observes its original `*mut T`.

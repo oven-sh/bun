@@ -228,7 +228,7 @@ impl Task {
     /// callers use instead of open-coding `heap::alloc`.
     #[inline]
     pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
-        Task::new(T::TAG, bun_core::heap::leak(task).cast::<()>())
+        Task::new(T::TAG, bun_core::heap::into_raw(task).cast::<()>())
     }
 
     /// Zig: `TaggedPointerUnion.initWithType(comptime Type, _ptr)` — for the
@@ -391,7 +391,7 @@ impl ConcurrentTask {
     /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
     #[inline]
     pub fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     /// `bun.TrivialDeinit(@This())` — free a ConcurrentTask previously returned by `new`.

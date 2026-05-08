@@ -45,7 +45,7 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         // No store (empty bytes). Zig still assigns `blob.content_type` from the
         // loader's mime so `contentTypeOrMimeType()` keeps returning a value.
         let owned: Box<[u8]> = Box::from(mime.value.as_ref());
-        blob.content_type = bun_core::heap::leak(owned);
+        blob.content_type = bun_core::heap::into_raw(owned);
         blob.content_type_allocated = true;
     }
 }

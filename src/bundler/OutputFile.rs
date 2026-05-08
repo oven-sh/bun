@@ -245,7 +245,7 @@ impl Value {
                     }
                 }
                 let len = bytes.len();
-                let ptr = bun_core::heap::leak(bytes).cast::<u8>();
+                let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
                 // latin1 flag = true (matches Zig).
                 BunString::create_external::<*mut c_void>(
                     // SAFETY: ptr/len come from a live `Box<[u8]>` leaked into the

@@ -419,7 +419,7 @@ impl JSValkeyClient {
     #[inline]
     pub fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
         // bun.TrivialNew(@This()) → heap::alloc(Box::new(init))
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     /// Convenience accessor for the per-thread JS VM stored on `client`.
@@ -1478,7 +1478,7 @@ impl JSValkeyClient {
                 // self_ dropped here (Box freed).
             }
         }
-        let holder = bun_core::heap::leak(Box::new(Holder {
+        let holder = bun_core::heap::into_raw(Box::new(Holder {
             ctx: std::ptr::from_mut::<JSValkeyClient>(self),
             task: jsc::AnyTask::AnyTask::default(), // overwritten below
         }));

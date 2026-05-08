@@ -359,7 +359,7 @@ impl Job {
         // (`node_crypto_binding::pbkdf2`) owns it and hands it over.
         data: PBKDF2,
     ) -> *mut Job {
-        let job = bun_core::heap::leak(Box::new(Job {
+        let job = bun_core::heap::into_raw(Box::new(Job {
             pbkdf2: data,
             output: Vec::new(),
             task: WorkPoolTask {

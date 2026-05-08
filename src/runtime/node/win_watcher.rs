@@ -53,7 +53,7 @@ pub struct PathWatcherManager {
 
 impl PathWatcherManager {
     pub fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
-        bun_core::heap::leak(Box::new(PathWatcherManager {
+        bun_core::heap::into_raw(Box::new(PathWatcherManager {
             watchers: ArrayHashMap::default(),
             vm,
             deinit_on_last_watcher: false,
@@ -324,7 +324,7 @@ impl PathWatcher {
             emit_in_progress: false,
             handlers: ArrayHashMap::default(),
         });
-        let this = bun_core::heap::leak(this_box);
+        let this = bun_core::heap::into_raw(this_box);
 
         // uv_fs_event_init on Windows unconditionally returns 0 (vendor/libuv/src/win/fs-event.c).
         // bun.assert evaluates its argument before the inline early-return, so this runs in release too.

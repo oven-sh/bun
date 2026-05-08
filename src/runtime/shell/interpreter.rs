@@ -1811,7 +1811,7 @@ impl ShellExecEnv {
             cwd_fd: dupedfd,
             async_pids: SmolList::default(),
         });
-        Ok(bun_core::heap::leak(duped))
+        Ok(bun_core::heap::into_raw(duped))
     }
 
     /// Spec: interpreter.zig `ShellExecEnv.deinit` — wraps `deinitImpl(true,
@@ -2061,7 +2061,7 @@ pub struct CowFd {
 
 impl CowFd {
     pub fn init(fd: Fd) -> *mut CowFd {
-        let new = bun_core::heap::leak(Box::new(CowFd { __fd: fd, refcount: 1, being_used: false }));
+        let new = bun_core::heap::into_raw(Box::new(CowFd { __fd: fd, refcount: 1, being_used: false }));
         bun_core::scoped_log!(CowFd, "init {:x} fd={}", new as usize, fd);
         new
     }
@@ -2555,7 +2555,7 @@ pub struct OutputTask<P: OutputTaskVTable> {
 
 impl<P: OutputTaskVTable> OutputTask<P> {
     pub fn new(parent: NodeId, output: OutputSrc) -> *mut Self {
-        bun_core::heap::leak(Box::new(OutputTask {
+        bun_core::heap::into_raw(Box::new(OutputTask {
             parent,
             output,
             state: OutputTaskState::WaitingWriteErr,
@@ -2921,7 +2921,7 @@ pub fn create_shell_interpreter(
         return Err(crate::jsc::JsError::Thrown);
     }
 
-    let interpreter = bun_core::heap::leak(interpreter);
+    let interpreter = bun_core::heap::into_raw(interpreter);
     // SAFETY: `interpreter` is a fresh heap allocation.
     unsafe {
         (*interpreter).flags.set_quiet(quiet);

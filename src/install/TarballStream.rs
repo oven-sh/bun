@@ -199,7 +199,7 @@ impl TarballStream {
         // bun.TrivialNew(@This()) → heap::alloc(Box::new(...)). Pointer is
         // recovered via @fieldParentPtr from the thread-pool callback and
         // freed in `finish()` via heap::take.
-        bun_core::heap::leak(Box::new(TarballStream {
+        bun_core::heap::into_raw(Box::new(TarballStream {
             mutex: Mutex::new(),
             pending: Vec::new(),
             closed: false,

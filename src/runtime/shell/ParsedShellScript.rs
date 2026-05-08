@@ -307,7 +307,7 @@ fn create_parsed_shell_script_impl(
         ..Default::default()
     });
     parsed_shell_script.estimated_size_for_gc = parsed_shell_script.compute_estimated_size_for_gc();
-    let parsed_shell_script_ptr = bun_core::heap::leak(parsed_shell_script);
+    let parsed_shell_script_ptr = bun_core::heap::into_raw(parsed_shell_script);
     // SAFETY: `parsed_shell_script_ptr` is a fresh `heap::alloc`; ownership
     // transfers to the C++ wrapper. `marked_argument_buffer` is the live
     // stack-allocated buffer C++ handed us via `MarkedArgumentBuffer::run`.

@@ -67,7 +67,7 @@ impl DeprecatedStrong {
             // #[repr(transparent)], so the cast to *mut DeprecatedStrong is sound.
             ptr: unsafe {
                 NonNull::new_unchecked(
-                    bun_core::heap::leak(Box::new(ManuallyDrop::new(DeprecatedStrong {
+                    bun_core::heap::into_raw(Box::new(ManuallyDrop::new(DeprecatedStrong {
                         raw: JSValue::from_encoded(0xAEBCFA),
                         safety: None,
                     })))

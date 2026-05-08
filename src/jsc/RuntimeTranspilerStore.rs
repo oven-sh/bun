@@ -283,7 +283,7 @@ impl RuntimeTranspilerStore {
         let job: *mut TranspilerJob = self.store.get();
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
-        let owned_text: *mut [u8] = bun_core::heap::leak(Box::<[u8]>::from(path.text));
+        let owned_text: *mut [u8] = bun_core::heap::into_raw(Box::<[u8]>::from(path.text));
         // SAFETY: owned_text was just allocated via heap::alloc and lives until
         // `reset_for_pool` reconstructs and drops the Box. The unbounded
         // lifetime from raw-ptr deref coerces to `'static` for `logger::fs::Path`.
@@ -576,7 +576,7 @@ impl TranspilerJob {
             if cell.get().is_none() {
                 let boxed = Box::new(ASTMemoryAllocator::new(arena_ref));
                 // SAFETY: heap::alloc never null
-                cell.set(Some(unsafe { NonNull::new_unchecked(bun_core::heap::leak(boxed)) }));
+                cell.set(Some(unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(boxed)) }));
             }
             cell.get().unwrap()
         });
@@ -894,7 +894,7 @@ impl TranspilerJob {
                 analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
                     &entry.esm_record,
                 )
-                .map(|b| bun_core::heap::leak(b).cast())
+                .map(|b| bun_core::heap::into_raw(b).cast())
                 .unwrap_or(ptr::null_mut())
             } else {
                 ptr::null_mut()
@@ -971,7 +971,7 @@ impl TranspilerJob {
                 let mut bp = Box::new(BufferPrinter::init(writer));
                 bp.ctx.append_null_byte = false;
                 // SAFETY: heap::alloc never null
-                cell.set(Some(unsafe { NonNull::new_unchecked(bun_core::heap::leak(bp)) }));
+                cell.set(Some(unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(bp)) }));
             }
             cell.get().unwrap()
         });
@@ -1098,7 +1098,7 @@ impl TranspilerJob {
             module_info: module_info
                 .map(|mi| {
                     use analyze_transpiled_module::ModuleInfoExt;
-                    bun_core::heap::leak(mi.into_deserialized()).cast()
+                    bun_core::heap::into_raw(mi.into_deserialized()).cast()
                 })
                 .unwrap_or(ptr::null_mut()),
             tag: this_tag,

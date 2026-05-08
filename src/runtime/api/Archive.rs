@@ -113,7 +113,7 @@ const _: () = {
             if p.is_null() { None } else { Some(p) }
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            let ptr = bun_core::heap::leak(Box::new(self));
+            let ptr = bun_core::heap::into_raw(Box::new(self));
             // SAFETY: `global` is live; ownership of `ptr` transfers to the
             // C++ wrapper (freed via `ArchiveClass__finalize` → `finalize()`).
             // `as_ptr()` routes through `JSGlobalObject`'s `UnsafeCell`
@@ -707,7 +707,7 @@ impl<C: TaskContext> AsyncTask<C> {
             concurrent_task: ConcurrentTask::default(),
             keep_alive: KeepAlive::default(),
         });
-        let raw = bun_core::heap::leak(this);
+        let raw = bun_core::heap::into_raw(this);
         // SAFETY: raw was just produced by heap::alloc; not yet shared. Keep the event
         // loop alive until `run_from_js` unrefs after the threadpool work completes.
         unsafe { (*raw).keep_alive.ref_(vm_ctx()) };

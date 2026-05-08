@@ -193,7 +193,7 @@ mod hash_map_pool {
         }
 
         // default_allocator.create(LinkedList.Node) catch unreachable
-        bun_core::heap::leak(Box::new(Node {
+        bun_core::heap::into_raw(Box::new(Node {
             data: HashMap::default(),
             next: core::ptr::null_mut(),
         }))

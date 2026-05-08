@@ -224,7 +224,7 @@ unsafe fn init_runtime_state(
     // freed in worker `destroy()`; PORTING.md §Forbidden permits
     // `into_raw`-without-reclaim only for true process-lifetime singletons via
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).
-    let state = bun_core::heap::leak(Box::new(RuntimeState {
+    let state = bun_core::heap::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
         sql_rare: bun_sql_jsc::jsc::RareData {
             mysql_context: Default::default(),
@@ -1073,7 +1073,7 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
     } else {
         None
     };
-    bun_core::heap::leak(Box::new(NodeFS {
+    bun_core::heap::into_raw(Box::new(NodeFS {
         sync_error_buf: bun_paths::PathBuffer::uninit(),
         vm: vm_field,
     }))
@@ -1298,7 +1298,7 @@ mod vm_loader_vtable {
     unsafe fn resolve_blob(spec: &[u8]) -> Option<OpaqueBlob> {
         crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
             .resolve_and_dupe(spec)
-            .map(|blob| bun_core::heap::leak(Box::new(blob)).cast::<()>())
+            .map(|blob| bun_core::heap::into_raw(Box::new(blob)).cast::<()>())
     }
     unsafe fn blob_loader(b: OpaqueBlob, p: *const ()) -> Option<Loader> {
         // SAFETY: `b` was produced by `resolve_blob` above; `p` is the live VM.
@@ -2483,7 +2483,7 @@ fn transpile_source_code_inner(
                             } else {
                                 // C++ side becomes the owner (matches Zig
                                 // default_allocator semantics).
-                                (bun_core::heap::leak(bytes).cast::<u8>(), len)
+                                (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
                             }
                         }
                         _ => (core::ptr::null_mut(), 0),
@@ -3428,7 +3428,7 @@ export default db;
                     module_info: if module_info_len > 0 {
                         bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
                             ::create_from_cached_record(&*file.module_info)
-                            .map(bun_core::heap::leak)
+                            .map(bun_core::heap::into_raw)
                             .unwrap_or(core::ptr::null_mut())
                             .cast::<c_void>()
                     } else {
@@ -4014,7 +4014,7 @@ unsafe fn transpile_file(
             let writer = bun_js_printer::BufferWriter::init();
             let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
-            p = bun_core::heap::leak(bp);
+            p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }
         p
@@ -4198,7 +4198,7 @@ unsafe fn transpile_virtual_module(
             let writer = bun_js_printer::BufferWriter::init();
             let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
-            p = bun_core::heap::leak(bp);
+            p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }
         p
@@ -4956,7 +4956,7 @@ pub fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys:
         ref_count: core::sync::atomic::AtomicU32::new(2),
         is_all_ascii: None,
     });
-    bun_core::heap::leak(store).cast()
+    bun_core::heap::into_raw(store).cast()
 }
 
 /// `bun_options_types::__bun_http_sync_download_init_thread` body —

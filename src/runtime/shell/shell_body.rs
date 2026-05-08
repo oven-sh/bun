@@ -413,7 +413,7 @@ impl<'a> GlobalMini<'a> {
         // Spec shell.zig GlobalMini.enqueueTaskConcurrentWaitPid:
         //   `var anytask = create(AnyTaskWithExtraContext); _ = anytask.from(task, "runFromMainThreadMini");
         //    mini.enqueueTaskConcurrent(anytask);`
-        let anytask = bun_core::heap::leak(Box::new(AnyTaskWithExtraContext::default()));
+        let anytask = bun_core::heap::into_raw(Box::new(AnyTaskWithExtraContext::default()));
         // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
         unsafe { (*anytask).from(task, run_from_main_thread_mini) };
         // SAFETY: `mini` is a long-lived loop; the concurrent queue is thread-safe.

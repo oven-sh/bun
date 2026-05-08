@@ -189,7 +189,7 @@ impl ClientSession {
         socket: Socket,
         client: &HTTPClient,
     ) -> *mut ClientSession {
-        let this = bun_core::heap::leak(Box::new(ClientSession {
+        let this = bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
             hpack: lshpack::HPACK::init(4096),
             socket,
@@ -353,7 +353,7 @@ impl ClientSession {
 
         let send_window =
             i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE)).expect("int cast");
-        let stream = bun_core::heap::leak(Stream::new(
+        let stream = bun_core::heap::into_raw(Stream::new(
             self.next_stream_id,
             std::ptr::from_mut(self),
             Some(client.as_erased_ptr()),

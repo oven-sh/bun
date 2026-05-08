@@ -622,7 +622,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     global: &::bun_jsc::JSGlobalObject,
                 ) -> ::bun_jsc::JSValue {
                     // SAFETY: ownership transfers to the C++ wrapper; see `to_js`.
-                    unsafe { __create(global.as_mut_ptr(), ::bun_jsc::heap::leak(this)) }
+                    unsafe { __create(global.as_mut_ptr(), ::bun_jsc::heap::into_raw(this)) }
                 }
             }
 

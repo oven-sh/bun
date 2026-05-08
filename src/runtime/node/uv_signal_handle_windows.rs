@@ -19,7 +19,7 @@ pub extern "C" fn Bun__UVSignalHandle__init(
 ) -> *mut libuv::uv_signal_t {
     // SAFETY: uv_signal_t is #[repr(C)] POD; uv_signal_init fully initializes it below.
     let signal: *mut libuv::uv_signal_t =
-        bun_core::heap::leak(Box::<libuv::uv_signal_t>::new_uninit()).cast();
+        bun_core::heap::into_raw(Box::<libuv::uv_signal_t>::new_uninit()).cast();
 
     let mut rc = libuv::uv_signal_init(global.bun_vm().uv_loop(), signal);
     if rc.errno().is_some() {

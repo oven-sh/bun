@@ -112,7 +112,7 @@ impl StaticRoute {
         }
 
         let cached_blob_size = blob.size();
-        bun_core::heap::leak(Box::new(StaticRoute {
+        bun_core::heap::into_raw(Box::new(StaticRoute {
             ref_count: Cell::new(1),
             blob,
             cached_blob_size,
@@ -139,7 +139,7 @@ impl StaticRoute {
         let duped = blob.dupe();
         self.blob = AnyBlob::Blob(blob);
 
-        Ok(bun_core::heap::leak(Box::new(StaticRoute {
+        Ok(bun_core::heap::into_raw(Box::new(StaticRoute {
             ref_count: Cell::new(1),
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
@@ -236,7 +236,7 @@ impl StaticRoute {
             }
 
             let cached_blob_size = blob.size();
-            return Ok(Some(bun_core::heap::leak(Box::new(StaticRoute {
+            return Ok(Some(bun_core::heap::into_raw(Box::new(StaticRoute {
                 ref_count: Cell::new(1),
                 blob,
                 cached_blob_size,

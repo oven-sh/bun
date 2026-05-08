@@ -161,7 +161,7 @@ impl HTMLRewriter {
     // struct already emits the C-ABI constructor shim that calls
     // `<HTMLRewriter>::constructor(__g, __f)`.
     pub fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut HTMLRewriter> {
-        let rewriter = bun_core::heap::leak(Box::new(HTMLRewriter {
+        let rewriter = bun_core::heap::into_raw(Box::new(HTMLRewriter {
             builder: lolhtml::HTMLRewriterBuilder::init(),
             context: Rc::new(RefCell::new(LOLHTMLContext::default())),
         }));
@@ -314,7 +314,7 @@ impl HTMLRewriter {
 
         if kind != ResponseKind::Other {
             let body_value = webcore::body::extract(global, response_value)?;
-            let resp = bun_core::heap::leak(Box::new(Response::init(
+            let resp = bun_core::heap::into_raw(Box::new(Response::init(
                 webcore::response::Init { status_code: 200, ..Default::default() },
                 body_value,
                 BunString::empty(),
@@ -681,7 +681,7 @@ impl BufferOutputSink {
         original: *mut Response,
         builder: *mut lolhtml_sys::HTMLRewriterBuilder,
     ) -> JsResult<JSValue> {
-        let sink = bun_core::heap::leak(Box::new(BufferOutputSink {
+        let sink = bun_core::heap::into_raw(Box::new(BufferOutputSink {
             ref_count: Cell::new(1),
             global: GlobalRef::from(global),
             bytes: MutableString::init_empty(),
@@ -699,7 +699,7 @@ impl BufferOutputSink {
         // output-sink callback during `bufferer.run()` and by `deref(sink)`
         // below. Access fields via raw-pointer place expressions instead.
 
-        let result = bun_core::heap::leak(Box::new(Response::init(
+        let result = bun_core::heap::into_raw(Box::new(Response::init(
             webcore::response::Init { status_code: 200, ..Default::default() },
             webcore::Body {
                 value: {
@@ -1530,7 +1530,7 @@ impl TextChunk {
     }
 
     pub fn init(text_chunk: *mut lolhtml::TextChunk) -> *mut TextChunk {
-        bun_core::heap::leak(Box::new(TextChunk {
+        bun_core::heap::into_raw(Box::new(TextChunk {
             ref_count: Cell::new(1),
             text_chunk,
         }))
@@ -1697,7 +1697,7 @@ impl DocType {
     }
 
     pub fn init(doctype: *mut lolhtml::DocType) -> *mut DocType {
-        bun_core::heap::leak(Box::new(DocType {
+        bun_core::heap::into_raw(Box::new(DocType {
             ref_count: Cell::new(1),
             doctype,
         }))
@@ -1806,7 +1806,7 @@ impl DocEnd {
     }
 
     pub fn init(doc_end: *mut lolhtml::DocEnd) -> *mut DocEnd {
-        bun_core::heap::leak(Box::new(DocEnd {
+        bun_core::heap::into_raw(Box::new(DocEnd {
             ref_count: Cell::new(1),
             doc_end,
         }))
@@ -1897,7 +1897,7 @@ impl Comment {
     }
 
     pub fn init(comment: *mut lolhtml::Comment) -> *mut Comment {
-        bun_core::heap::leak(Box::new(Comment {
+        bun_core::heap::into_raw(Box::new(Comment {
             ref_count: Cell::new(1),
             comment,
         }))
@@ -2096,7 +2096,7 @@ impl EndTag {
     }
 
     pub fn init(end_tag: *mut lolhtml::EndTag) -> *mut EndTag {
-        bun_core::heap::leak(Box::new(EndTag {
+        bun_core::heap::into_raw(Box::new(EndTag {
             ref_count: Cell::new(1),
             end_tag,
         }))
@@ -2257,7 +2257,7 @@ impl AttributeIterator {
     }
 
     pub fn init(iterator: *mut lolhtml::AttributeIterator) -> *mut AttributeIterator {
-        bun_core::heap::leak(Box::new(AttributeIterator {
+        bun_core::heap::into_raw(Box::new(AttributeIterator {
             ref_count: Cell::new(1),
             iterator,
         }))
@@ -2360,7 +2360,7 @@ impl Element {
     }
 
     pub fn init(element: *mut lolhtml::Element) -> *mut Element {
-        bun_core::heap::leak(Box::new(Element {
+        bun_core::heap::into_raw(Box::new(Element {
             ref_count: Cell::new(1),
             element,
             attribute_iterators: Vec::new(),
@@ -2407,7 +2407,7 @@ impl Element {
             return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
         }
 
-        let end_tag_handler = bun_core::heap::leak(Box::new(EndTagHandler {
+        let end_tag_handler = bun_core::heap::into_raw(Box::new(EndTagHandler {
             global: GlobalRef::from(global_object),
             callback: Some(function),
         }));
@@ -2745,7 +2745,7 @@ impl Element {
         let Some(iter) = (unsafe { lolhtml::Element::attributes(self.element) }) else {
             return create_lolhtml_error(global_object);
         };
-        let attr_iter = bun_core::heap::leak(Box::new(AttributeIterator {
+        let attr_iter = bun_core::heap::into_raw(Box::new(AttributeIterator {
             ref_count: Cell::new(1),
             iterator: iter,
         }));

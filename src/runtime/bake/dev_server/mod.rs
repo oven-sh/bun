@@ -344,7 +344,7 @@ impl ResponseLike for bun_uws::AnyResponse {
         sec_web_socket_extensions: &[u8],
         ctx: &mut bun_uws::WebSocketUpgradeContext,
     ) {
-        let boxed = bun_core::heap::leak(Box::new(data));
+        let boxed = bun_core::heap::into_raw(Box::new(data));
         let _ = (*self).upgrade(
             boxed,
             sec_web_socket_key,

@@ -60,7 +60,7 @@ impl AnyTaskWithExtraContext {
             (that.callback)(ctx, extra.cast::<c_void>());
         }
 
-        let task = bun_core::heap::leak(Box::new(Wrapper::<T> {
+        let task = bun_core::heap::into_raw(Box::new(Wrapper::<T> {
             any_task: AnyTaskWithExtraContext {
                 callback: function::<T>,
                 ctx: None, // patched below to point at the Box itself

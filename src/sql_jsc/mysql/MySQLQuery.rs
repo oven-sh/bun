@@ -320,7 +320,7 @@ impl MySQLQuery {
             let mut stmt = Box::new(MySQLStatement::default());
             stmt.signature = Signature::empty();
             stmt.status = my_sql_statement::Status::Parsing;
-            self.statement = bun_core::heap::leak(stmt);
+            self.statement = bun_core::heap::into_raw(stmt);
         }
         mysql_request::execute_query(query_str.slice(), writer)?;
 
@@ -392,7 +392,7 @@ impl MySQLQuery {
                 stmt.status = my_sql_statement::Status::Pending;
                 stmt.statement_id = 0;
                 stmt.init_exact_refs(2);
-                let stmt = bun_core::heap::leak(stmt);
+                let stmt = bun_core::heap::into_raw(stmt);
                 self.statement = stmt;
                 *entry.value_ptr = stmt;
             }

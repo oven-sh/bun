@@ -381,7 +381,7 @@ impl Terminal {
 
         // `bun.new(Terminal, .{...})` → heap::alloc; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
-        let terminal: *mut Terminal = bun_core::heap::leak(Box::new(Terminal {
+        let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: pty_result.master,
             read_fd: pty_result.read_fd,
@@ -1783,7 +1783,7 @@ impl Terminal {
         // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
         // via mimalloc on the C++ side) — leak the Box and hand over the slice.
         let len = duped.len();
-        let ptr = bun_core::heap::leak(duped).cast::<u8>();
+        let ptr = bun_core::heap::into_raw(duped).cast::<u8>();
         // SAFETY: ptr/len from heap::alloc above; ownership transfers to JSC.
         let bytes = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
         let data = MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)

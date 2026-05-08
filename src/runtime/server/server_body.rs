@@ -853,7 +853,7 @@ pub enum ServePluginsCallback<'a> {
 
 impl ServePlugins {
     pub fn init(plugins: Box<[Box<[u8]>]>) -> *mut ServePlugins {
-        bun_core::heap::leak(Box::new(ServePlugins {
+        bun_core::heap::into_raw(Box::new(ServePlugins {
             ref_count: core::cell::Cell::new(1),
             state: ServePluginsState::Unqueued(plugins),
         }))
@@ -2237,7 +2237,7 @@ where
         // Request` into the JS wrapper, which adopts ownership and frees the
         // allocation in its GC finalizer. Relinquish the `Box` here so the
         // local going out of scope does not also drop it (double-free / UAF).
-        let request: *mut Request = bun_core::heap::leak(existing_request);
+        let request: *mut Request = bun_core::heap::into_raw(existing_request);
 
         debug_assert!(self.config.on_request.is_some()); // confirmed above
         let global_this = self.global();
@@ -2827,7 +2827,7 @@ where
         let request_object: &mut Request =
             // SAFETY: leak so the ctx (which outlives this stack frame) can
             // hold the borrow; Request is freed via ctx.deinit's request_weakref.
-            unsafe { &mut *bun_core::heap::leak(request_object_box) };
+            unsafe { &mut *bun_core::heap::into_raw(request_object_box) };
         ctx.set_request_weakref(request_object);
 
         // The lazy `getRequest()` path that backs Request.url / .headers
@@ -3041,7 +3041,7 @@ where
         let request_object: &mut Request =
             // SAFETY: leaked so the ctx (which outlives this stack frame) can
             // hold the borrow; freed via ctx.deinit's request_weakref.
-            unsafe { &mut *bun_core::heap::leak(request_object_box) };
+            unsafe { &mut *bun_core::heap::into_raw(request_object_box) };
         ctx.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(request_object);
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
@@ -3242,7 +3242,7 @@ macro_rules! impl_server_jsclass {
                 crate::generated_classes::$gen_mod::from_js_direct(value).map(|p| p.as_ptr())
             }
             fn to_js(self, global: &JSGlobalObject) -> JSValue {
-                crate::generated_classes::$gen_mod::to_js(bun_core::heap::leak(Box::new(self)), global)
+                crate::generated_classes::$gen_mod::to_js(bun_core::heap::into_raw(Box::new(self)), global)
             }
         }
     };

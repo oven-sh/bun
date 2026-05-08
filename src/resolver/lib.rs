@@ -1865,7 +1865,7 @@ pub mod fs {
                 // `entries_option_map()` singleton (process-static).
                 let entries_ptr: *mut DirEntry = match in_place {
                     Some(p) => p,
-                    None => bun_core::heap::leak(Box::new(DirEntry::init(dir, generation))),
+                    None => bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation))),
                 };
                 if let Some(original) = in_place {
                     // SAFETY: BSSMap-owned; entries_mutex held.
@@ -1893,7 +1893,7 @@ pub mod fs {
             // ENABLE_ENTRY_CACHE = false: stash in the threadlocal and hand back its
             // address. The leaked Box lives until the next `read_directory` call on
             // this thread (matches Zig — threadlocal `temp_entries_option`).
-            let entries_ptr = bun_core::heap::leak(Box::new(entries));
+            let entries_ptr = bun_core::heap::into_raw(Box::new(entries));
             // SAFETY: freshly-leaked Box; re-borrow as 'static for the threadlocal slot.
             Ok(temp_entries_option_write(EntriesOption::Entries(unsafe { &mut *entries_ptr })))
         }
@@ -6902,7 +6902,7 @@ impl<'a> Resolver<'a> {
                     unsafe { *p = new_entry };
                     p
                 }
-                None => bun_core::heap::leak(Box::new(new_entry)),
+                None => bun_core::heap::into_raw(Box::new(new_entry)),
             };
 
             // bun.fs.debug("readdir({f}, {s}) = {d}", ...) — TODO(port): scoped log
@@ -7830,7 +7830,7 @@ impl<'a> Resolver<'a> {
                         unsafe { *p = new_entry };
                         p
                     }
-                    None => bun_core::heap::leak(Box::new(new_entry)),
+                    None => bun_core::heap::into_raw(Box::new(new_entry)),
                 };
                 dir_entries_option = rfs!()
                     .entries
@@ -9232,7 +9232,7 @@ impl<'a> Resolver<'a> {
                     tsconfigpath,
                     if FeatureFlags::STORE_FILE_DESCRIPTORS { fd } else { FD::ZERO },
                 ) {
-                    Ok(v) => v.map(bun_core::heap::leak),
+                    Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
@@ -9262,7 +9262,7 @@ impl<'a> Resolver<'a> {
                         // SAFETY: see loop-wide note above.
                         let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, &unsafe { &*current }.extends], bun_paths::Platform::AUTO);
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
-                            Ok(v) => v.map(bun_core::heap::leak),
+                            Ok(v) => v.map(bun_core::heap::into_raw),
                             Err(err) => {
                                 let _ = self.log_mut().add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",

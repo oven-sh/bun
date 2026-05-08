@@ -1188,7 +1188,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // `process` twice and (b) run Drop on every field of the placeholder. Build
     // the struct once with its final field values instead, then fill in the
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
-    let subprocess_ptr = bun_core::heap::leak(Box::new(SubprocessT {
+    let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
         global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
         process,
         pid_rusage: None,

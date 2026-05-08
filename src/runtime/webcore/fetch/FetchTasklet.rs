@@ -785,7 +785,7 @@ impl FetchTasklet {
                 .map_err(|_| bun_event_loop::ErasedJsError::Terminated)
         }
 
-        let holder = bun_core::heap::leak(Box::new(Holder {
+        let holder = bun_core::heap::into_raw(Box::new(Holder {
             held: result,
             // we need the promise to be alive until the task is done
             promise: self.promise.take(),
@@ -1245,7 +1245,7 @@ impl FetchTasklet {
 
     pub fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
-        let response = bun_core::heap::leak(Box::new(self.to_response()));
+        let response = bun_core::heap::into_raw(Box::new(self.to_response()));
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
         let response_js = Response::make_maybe_pooled(&global_this, response);
@@ -1371,7 +1371,7 @@ impl FetchTasklet {
             fetch_tasklet.signals.cert_errors = None;
         }
 
-        let fetch_tasklet_ptr = bun_core::heap::leak(fetch_tasklet);
+        let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
         // SAFETY: just allocated; exclusive access until returned
         let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
 

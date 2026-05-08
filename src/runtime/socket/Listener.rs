@@ -226,7 +226,7 @@ impl Listener {
                 let ssl_cfg_taken = socket_config.ssl.take();
                 core::mem::forget(socket_config);
 
-                let this: *mut Listener = bun_core::heap::leak(Box::new(Listener {
+                let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
                     handlers: handlers_moved,
                     connection,
                     ssl: ssl_enabled,
@@ -311,7 +311,7 @@ impl Listener {
         // Prevent double-drop of `handlers` (moved out above).
         core::mem::forget(socket_config);
 
-        let this: *mut Listener = bun_core::heap::leak(Box::new(Listener {
+        let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
             handlers: handlers_moved,
             // Placeholder until `this_ref.connection = connection` below; Zig used `undefined`.
             // Cannot `mem::zeroed()` a Rust enum (UB).
@@ -1024,7 +1024,7 @@ impl Listener {
 
                 let mut handlers_box = Box::new(handlers_moved);
                 handlers_box.mode = SocketMode::Client;
-                let handlers_ptr: *mut Handlers = bun_core::heap::leak(handlers_box);
+                let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
 
                 let promise = jsc::JSPromise::create(global);
                 let promise_value = promise.to_js();
@@ -1222,7 +1222,7 @@ impl Listener {
 
         let mut handlers_box = Box::new(handlers_moved);
         handlers_box.mode = SocketMode::Client;
-        let handlers_ptr: *mut Handlers = bun_core::heap::leak(handlers_box);
+        let handlers_ptr: *mut Handlers = bun_core::heap::into_raw(handlers_box);
 
         let promise = jsc::JSPromise::create(global);
         let promise_value = promise.to_js();
@@ -1553,7 +1553,7 @@ impl WindowsNamedPipeListeningContext {
     ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
         // `bun.TrivialNew` — heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
-        let this = bun_core::heap::leak(Box::new(WindowsNamedPipeListeningContext {
+        let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
             // SAFETY: all-zero is a valid pre-init `uv_pipe_t` (C struct,
             // initialised by `uv_pipe_init`).
             uv_pipe: unsafe { core::mem::zeroed() },

@@ -346,7 +346,7 @@ impl Route {
                         resp.end_without_body(true);
                         return;
                     };
-                    let pending = bun_core::heap::leak(Box::new(PendingResponse {
+                    let pending = bun_core::heap::into_raw(Box::new(PendingResponse {
                         method,
                         resp,
                         server: route.server.get(),
@@ -643,7 +643,7 @@ impl Route {
                     let cached_blob_size = blob.size() as u64;
                     // SAFETY: heap::alloc never returns null.
                     let static_route = unsafe {
-                        core::ptr::NonNull::new_unchecked(bun_core::heap::leak(Box::new(StaticRoute {
+                        core::ptr::NonNull::new_unchecked(bun_core::heap::into_raw(Box::new(StaticRoute {
                             ref_count: Cell::new(1),
                             blob,
                             server: Cell::new(Some(server)),

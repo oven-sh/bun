@@ -1056,7 +1056,7 @@ impl Image {
         let promise_value = task.promise.value();
         // Ownership transfers to the WorkPool / event-loop dispatch
         // (`task_tag::AsyncImageTask` → `run_from_js` → `destroy`).
-        let raw = bun_core::heap::leak(task);
+        let raw = bun_core::heap::into_raw(task);
         // SAFETY: `raw` is freshly leaked; `schedule()` only writes the
         // intrusive `task` field into the work-pool queue. The worker thread
         // touches `ctx`/`task` only; `promise` was read above on this thread.
@@ -1214,7 +1214,7 @@ impl<'a> BlobReadChain<'a> {
         // `on_read_bytes` on the JS thread (sync for in-memory, async for
         // file/S3). Ownership of the chain transfers there; the trait impl
         // below reconstructs the Box and frees it.
-        let raw = bun_core::heap::leak(chain);
+        let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
         blob.read_bytes_to_handler(unsafe { &raw mut *raw }, global)

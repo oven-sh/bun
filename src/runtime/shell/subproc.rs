@@ -635,7 +635,7 @@ impl ShellSubprocess {
         // teardown). `MaybeUninit<T>` and `T` share layout, so the cast is
         // sound.
         // SAFETY: fully initialised by the `write` above.
-        let _ = bun_core::heap::leak(unsafe { slot.assume_init() });
+        let _ = bun_core::heap::into_raw(unsafe { slot.assume_init() });
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
         subproc.proc().set_exit_handler(subprocess.cast::<()>(), &SHELL_EXIT_VTABLE);
@@ -2064,7 +2064,7 @@ impl PipeReader {
                 // `heap::alloc` — this is an FFI hand-off, not a leak.
                 let owned = core::mem::take(bytes);
                 let len = owned.len();
-                let ptr = bun_core::heap::leak(owned).cast::<u8>();
+                let ptr = bun_core::heap::into_raw(owned).cast::<u8>();
                 // SAFETY: `ptr`/`len` come from `heap::alloc` of the slice
                 // just taken; ownership moves into the MarkedArrayBuffer.
                 let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };

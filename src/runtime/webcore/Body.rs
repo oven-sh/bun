@@ -1173,7 +1173,7 @@ impl Value {
                                     blob.content_type_allocated = false;
                                 } else {
                                     blob.content_type = match mime_type.value {
-                                        Cow::Owned(v) => bun_core::heap::leak(v.into_boxed_slice()),
+                                        Cow::Owned(v) => bun_core::heap::into_raw(v.into_boxed_slice()),
                                         Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                                     };
                                     blob.content_type_allocated = allocated;
@@ -2045,7 +2045,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                         blob.content_type_allocated = false;
                     } else {
                         blob.content_type = match mime_type.value {
-                            Cow::Owned(v) => bun_core::heap::leak(v.into_boxed_slice()),
+                            Cow::Owned(v) => bun_core::heap::into_raw(v.into_boxed_slice()),
                             Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                         };
                         blob.content_type_allocated = allocated;

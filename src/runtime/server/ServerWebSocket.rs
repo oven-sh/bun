@@ -166,7 +166,7 @@ impl ServerWebSocket {
         signal: Option<NonNull<AbortSignal>>,
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
-        let this = bun_core::heap::leak(Box::new(ServerWebSocket {
+        let this = bun_core::heap::into_raw(Box::new(ServerWebSocket {
             handler: std::ptr::from_ref::<WebSocketServerHandler>(handler),
             this_value: JsRef::empty(),
             flags: Flags::default(),

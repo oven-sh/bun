@@ -933,14 +933,14 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
                 #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::leak(Box::new(
+                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
                     // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
                     unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
                 ))),
                 #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::leak(Box::new(
+                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
                     // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
                     unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
                 ))),

@@ -177,7 +177,7 @@ impl HandledPromiseContext {
 pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     crate::mark_binding!();
     let promise_js = promise.to_js();
-    let context = bun_core::heap::leak(Box::new(HandledPromiseContext {
+    let context = bun_core::heap::into_raw(Box::new(HandledPromiseContext {
         global_this: global.as_ptr(),
         promise: Strong::create(promise_js, global),
     }));

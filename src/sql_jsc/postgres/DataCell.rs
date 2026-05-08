@@ -34,7 +34,7 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
 
     let written = bun_string::strings::decode_hex_to_bytes(&mut buf, hex)
         .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-    let ptr = bun_core::heap::leak(buf).cast::<u8>();
+    let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
 
     Ok(SQLDataCell {
         tag: Tag::Bytea,

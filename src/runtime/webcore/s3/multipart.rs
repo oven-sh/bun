@@ -507,7 +507,7 @@ impl MultiPartUpload {
         let (data, allocated_len): (*const [u8], usize) = if needs_clone {
             let owned = Box::<[u8]>::from(chunk);
             let len = owned.len();
-            (bun_core::heap::leak(owned).cast_const(), len)
+            (bun_core::heap::into_raw(owned).cast_const(), len)
         } else {
             (std::ptr::from_ref::<[u8]>(chunk), allocated_size)
         };

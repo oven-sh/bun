@@ -384,7 +384,7 @@ impl BlobExt for Blob {
         // The callback may read context.content_type (e.g. to_form_data_with_bytes),
         // which is heap-owned by the source JS Blob and freed on finalize(). Take
         // an owning dupe so the handler outliving the source can't dangle.
-        let handler = bun_core::heap::leak(Box::new(Handler::<'_, F>::new(self.dupe(), global)));
+        let handler = bun_core::heap::into_raw(Box::new(Handler::<'_, F>::new(self.dupe(), global)));
 
         #[cfg(windows)]
         {
@@ -414,7 +414,7 @@ impl BlobExt for Blob {
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             let read_file_task =
-                read_file::ReadFileTask::create_on_js_thread(global, bun_core::heap::leak(file_read));
+                read_file::ReadFileTask::create_on_js_thread(global, bun_core::heap::into_raw(file_read));
 
             // Create the Promise only after the store has been ref()'d.
             // The garbage collector runs on memory allocations
@@ -546,7 +546,7 @@ impl BlobExt for Blob {
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
             // it stays valid until `Task::done` deinits the blob in the callback.
             let path = unsafe { &*path };
-            let t_ptr = bun_core::heap::leak(t).cast::<c_void>();
+            let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset > 0 || self.size != MAX_SIZE {
                 let len: Option<usize> =
                     if self.size != MAX_SIZE { Some(self.size as usize) } else { None };
@@ -606,7 +606,7 @@ impl BlobExt for Blob {
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             let read_file_task =
-                read_file::ReadFileTask::create_on_js_thread(global, bun_core::heap::leak(file_read));
+                read_file::ReadFileTask::create_on_js_thread(global, bun_core::heap::into_raw(file_read));
             read_file::ReadFileTask::schedule(read_file_task);
         }
     }
@@ -855,7 +855,7 @@ impl BlobExt for Blob {
             )
             .unwrap();
         }
-        blob.content_type = bun_core::heap::leak(ct.into_boxed_slice());
+        blob.content_type = bun_core::heap::into_raw(ct.into_boxed_slice());
         blob.content_type_allocated = true;
         blob.content_type_was_set = true;
 
@@ -1194,7 +1194,7 @@ impl BlobExt for Blob {
                         } else {
                             let mut buf = vec![0u8; slice.len()];
                             strings::copy_lowercase(slice, &mut buf);
-                            self.content_type = bun_core::heap::leak(buf.into_boxed_slice());
+                            self.content_type = bun_core::heap::into_raw(buf.into_boxed_slice());
                             self.content_type_allocated = true;
                         }
                     }
@@ -1475,7 +1475,7 @@ impl BlobExt for Blob {
             if let Some(promise) = assignment_result.as_any_promise() {
                 match promise.status() {
                     jsc::js_promise::Status::Pending => {
-                        let wrapper = bun_core::heap::leak(Box::new(FileStreamWrapper {
+                        let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
                             promise: jsc::JSPromiseStrong::init(global_this),
                             readable_stream_ref: webcore::readable_stream::ReadableStreamStrong::init(readable_stream, global_this),
                             sink: file_sink,
@@ -1575,7 +1575,7 @@ impl BlobExt for Blob {
                         } else {
                             let mut buf = vec![0u8; slice.len()];
                             strings::copy_lowercase(slice, &mut buf);
-                            self.content_type = bun_core::heap::leak(buf.into_boxed_slice());
+                            self.content_type = bun_core::heap::into_raw(buf.into_boxed_slice());
                             self.content_type_allocated = true;
                         }
                     }
@@ -1867,7 +1867,7 @@ impl BlobExt for Blob {
                             ::std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                             ::std::borrow::Cow::Owned(v) => {
                                 content_type_was_allocated = true;
-                                bun_core::heap::leak(v.into_boxed_slice())
+                                bun_core::heap::into_raw(v.into_boxed_slice())
                             }
                         };
                         break 'inner;
@@ -1876,7 +1876,7 @@ impl BlobExt for Blob {
                     content_type_was_allocated = !slice.is_empty();
                     let mut buf = vec![0u8; slice.len()];
                     strings::copy_lowercase(slice, &mut buf);
-                    content_type = bun_core::heap::leak(buf.into_boxed_slice());
+                    content_type = bun_core::heap::into_raw(buf.into_boxed_slice());
                 }
             }
         }
@@ -2228,14 +2228,14 @@ impl BlobExt for Blob {
                                         ::std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                                         ::std::borrow::Cow::Owned(v) => {
                                             blob.content_type_allocated = true;
-                                            bun_core::heap::leak(v.into_boxed_slice())
+                                            bun_core::heap::into_raw(v.into_boxed_slice())
                                         }
                                     };
                                         break 'inner;
                                     }
                                     let mut buf = vec![0u8; slice.len()];
                                     strings::copy_lowercase(slice, &mut buf);
-                                    blob.content_type = bun_core::heap::leak(buf.into_boxed_slice());
+                                    blob.content_type = bun_core::heap::into_raw(buf.into_boxed_slice());
                                     blob.content_type_allocated = true;
                                 }
                             }
@@ -2480,7 +2480,7 @@ impl BlobExt for Blob {
                 // `into_raw` is the explicit ownership-transfer-to-FFI API; the
                 // matching free lives on the C++ side.
                 let len = external.len();
-                let ptr = bun_core::heap::leak(external.into_boxed_slice()).cast::<u16>().cast_const();
+                let ptr = bun_core::heap::into_raw(external.into_boxed_slice()).cast::<u16>().cast_const();
                 return Ok(zig_string_to_external_u16(ptr, len, global));
             }
 
@@ -2994,7 +2994,7 @@ impl BlobExt for Blob {
                                 // (no clone, no into_raw leak) and field-copying the
                                 // rest, deep-owning `name`/`content_type`.
                                 let content_type = if blob.content_type_allocated {
-                                    bun_core::heap::leak(
+                                    bun_core::heap::into_raw(
                                         blob.content_type_slice().to_vec().into_boxed_slice(),
                                     ).cast_const()
                                 } else {
@@ -3753,7 +3753,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
     if !content_type.is_empty() {
         let leaked = content_type.into_boxed_slice();
-        blob.content_type = bun_core::heap::leak(leaked);
+        blob.content_type = bun_core::heap::into_raw(leaked);
         blob.content_type_allocated = true;
         blob.content_type_was_set = content_type_was_set;
         // Ownership handed to `blob`; disarm the implicit drop by replacing local.
@@ -4101,7 +4101,7 @@ fn write_file_with_empty_source_to_destination(
                 aws_options.storage_class,
                 aws_options.request_payer,
                 Wrapper::resolve,
-                bun_core::heap::leak(Box::new(Wrapper {
+                bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
                     store: destination_store.clone(),
                     global: ctx,
@@ -4143,7 +4143,7 @@ pub fn write_file_with_source_destination(
     let source_type = source_store.data.tag();
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
-        let write_file_promise = bun_core::heap::leak(Box::new(WriteFilePromise {
+        let write_file_promise = bun_core::heap::into_raw(Box::new(WriteFilePromise {
             promise: jsc::JSPromiseStrong::default(),
             global_this: ctx,
         }));
@@ -4234,7 +4234,7 @@ pub fn write_file_with_source_destination(
             // `ManualDeinit` → `destroy(*mut Self)`, so hand ownership over as a
             // raw pointer (paired with `heap::take` in `destroy()`).
             let promise_value = file_copier.promise.value();
-            let _ = bun_core::heap::leak(file_copier);
+            let _ = bun_core::heap::into_raw(file_copier);
             return Ok(promise_value);
         }
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
@@ -4355,7 +4355,7 @@ pub fn write_file_with_source_destination(
                         aws_options.storage_class,
                         aws_options.request_payer,
                         Wrapper::resolve,
-                        bun_core::heap::leak(Box::new(Wrapper {
+                        bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
                             promise,
                             global: ctx,
@@ -4609,7 +4609,7 @@ pub fn write_file_internal(
                         return Err(global_this
                             .throw_invalid_arguments(format_args!("ReadableStream has already been used")));
                     }
-                    let task = bun_core::heap::leak(Box::new(WriteFileWaitFromLockedValueTask {
+                    let task = bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                         global_this,
                         // Zig moves `destination_blob` by value into the task
                         // (single store ref transfers; outer local is dead after the
@@ -4995,14 +4995,14 @@ pub fn jsdom_file_construct_(
                                         ::std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                                         ::std::borrow::Cow::Owned(v) => {
                                             blob.content_type_allocated = true;
-                                            bun_core::heap::leak(v.into_boxed_slice())
+                                            bun_core::heap::into_raw(v.into_boxed_slice())
                                         }
                                     };
                             break 'inner;
                         }
                         let mut content_type_buf = vec![0u8; slice.len()];
                         strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type = bun_core::heap::leak(content_type_buf.into_boxed_slice());
+                        blob.content_type = bun_core::heap::into_raw(content_type_buf.into_boxed_slice());
                         blob.content_type_allocated = true;
                     }
                 }
@@ -5087,7 +5087,7 @@ pub fn construct_bun_file(
                         }
                         let mut content_type_buf = vec![0u8; slice.len()];
                         strings::copy_lowercase(slice, &mut content_type_buf);
-                        blob.content_type = bun_core::heap::leak(content_type_buf.into_boxed_slice());
+                        blob.content_type = bun_core::heap::into_raw(content_type_buf.into_boxed_slice());
                         blob.content_type_allocated = true;
                     }
                 }
@@ -5203,7 +5203,7 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let this = bun_core::heap::leak(Box::new(S3BlobDownloadTask {
+        let this = bun_core::heap::into_raw(Box::new(S3BlobDownloadTask {
             global_this: global_this,
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(global_this),
@@ -6104,7 +6104,7 @@ impl Internal {
             // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
             let out_len = out.len();
             // Ownership transfers to JSC's external-string finalizer.
-            let out_ptr = bun_core::heap::leak(out.into_boxed_slice()).cast::<u16>().cast_const();
+            let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice()).cast::<u16>().cast_const();
             let return_value = jsc::zig_string::to_external_u16(out_ptr, out_len, global_this);
             return_value.ensure_still_alive();
             self.bytes = Vec::new();
@@ -6119,7 +6119,7 @@ impl Internal {
             // All-ASCII fast path: hand the heap buffer to JSC's external-string
             // finalizer (mark_global → freed by mimalloc on GC). `to_owned_slice`
             // moves `self.bytes` out, so the allocation is no longer owned by us.
-            let owned: *mut [u8] = bun_core::heap::leak(self.to_owned_slice().into_boxed_slice());
+            let owned: *mut [u8] = bun_core::heap::into_raw(self.to_owned_slice().into_boxed_slice());
             // SAFETY: `owned` is a fresh heap allocation released via `into_raw`;
             // ZigString borrows ptr+len, then `to_external_value` adopts it.
             let mut str = ZigString::init(unsafe { &*owned });

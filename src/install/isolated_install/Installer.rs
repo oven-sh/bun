@@ -1595,7 +1595,7 @@ impl Task {
 
                         if let Some(list) = scripts_list {
                             let clone: *mut package::scripts::List =
-                                bun_core::heap::leak(Box::new(list));
+                                bun_core::heap::into_raw(Box::new(list));
                             // SAFETY: each Task is the sole writer for its own
                             // `entry_id`'s `scripts` slot; no other thread reads
                             // or writes it until this Task reaches

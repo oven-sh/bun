@@ -342,7 +342,7 @@ impl<T: Default + 'static> ThreadlocalBuffers<T> {
             node: ThreadlocalBuffersNode,
             data: T,
         }
-        let s = bun_core::heap::leak(Box::new(Storage::<T> {
+        let s = bun_core::heap::into_raw(Box::new(Storage::<T> {
             node: ThreadlocalBuffersNode {
                 next: THREADLOCAL_BUFFERS_HEAD.with(|h| h.get()),
                 free: Self::free,

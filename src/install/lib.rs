@@ -1102,7 +1102,7 @@ pub fn initialize_mini_store() {
             // Zig threads `heap.arena()` into the AST allocator; in Rust
             // the Bump (`Arena`) is passed by reference.
             let memory_store = js_ast::ASTMemoryAllocator::new(&heap);
-            let mini_store = bun_core::heap::leak(Box::new(MiniStore {
+            let mini_store = bun_core::heap::into_raw(Box::new(MiniStore {
                 heap,
                 memory_store,
             }));

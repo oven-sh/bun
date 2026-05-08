@@ -437,7 +437,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         return;
     }
 
-    let this: *mut Preconnect = bun_core::heap::leak(Box::new(Preconnect {
+    let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: MaybeUninit::uninit(),
         response_buffer: MutableString::default(),
         url,
@@ -739,7 +739,7 @@ impl<'a> AsyncHTTP<'a> {
         // PORT NOTE: Zig leaked `ctx` (never destroyed). `Box::leak` is forbidden
         // (PORTING.md §Forbidden); allocate via `heap::alloc` and reclaim once
         // the single sync callback has fired and we've read the result.
-        let ctx: *mut SingleHTTPChannel = bun_core::heap::leak(Box::new(SingleHTTPChannel::init()));
+        let ctx: *mut SingleHTTPChannel = bun_core::heap::into_raw(Box::new(SingleHTTPChannel::init()));
         self.result_callback =
             HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx, send_sync_callback);
 
@@ -974,7 +974,7 @@ impl HTTPChannelContext<'_> {
                 .sub(offset_of!(HTTPChannelContext, http))
                 .cast::<HTTPChannelContext>())
         };
-        let boxed = bun_core::heap::leak(Box::new(data));
+        let boxed = bun_core::heap::into_raw(Box::new(data));
         // SAFETY: channel is set by the owner before scheduling; Zig dereferenced unconditionally.
         unsafe { this.channel.unwrap().as_ref() }
             .write_item(boxed)

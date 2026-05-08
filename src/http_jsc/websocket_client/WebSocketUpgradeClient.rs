@@ -349,7 +349,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             subprotocols
         };
 
-        let client: *mut Self = bun_core::heap::leak(Box::new(HTTPClient::<SSL> {
+        let client: *mut Self = bun_core::heap::into_raw(Box::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
             outgoing_websocket: Some(websocket),
@@ -1518,7 +1518,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             v.extend_from_slice(remain_buf);
             // Leak across the FFI boundary; `InitialDataHandler` reconstructs
             // the `Box<[u8]>` and drops it after delivery.
-            bun_core::heap::leak(v.into_boxed_slice()).cast::<u8>()
+            bun_core::heap::into_raw(v.into_boxed_slice()).cast::<u8>()
         } else {
             core::ptr::null_mut()
         };

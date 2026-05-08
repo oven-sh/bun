@@ -46,7 +46,7 @@ impl PendingConnect {
         // SAFETY: caller passes a live intrusive-refcounted ClientSession; PendingConnect
         // holds one ref from construction until Drop.
         unsafe { (*session).ref_() };
-        let self_ = bun_core::heap::leak(Box::new(PendingConnect {
+        let self_ = bun_core::heap::into_raw(Box::new(PendingConnect {
             session,
             pc,
             loop_ptr: l,

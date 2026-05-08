@@ -212,7 +212,7 @@ pub(crate) mod sql_hooks {
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value) {
-            Ok(Some(cfg)) => bun_core::heap::leak(Box::new(cfg)).cast::<c_void>(),
+            Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
             Ok(None) => core::ptr::null_mut(),
             Err(bun_jsc::JsError::OutOfMemory) => {
                 let _ = global.throw_out_of_memory();

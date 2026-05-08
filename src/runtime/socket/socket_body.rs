@@ -385,7 +385,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -545,7 +545,46 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             None => unreachable!("do_connect requires self.connection to be set"),
         }
+        // Resolved-DNS path attaches the `SSL*` synchronously inside
+        // `group.connect*`, so a caller (H2FrameParser) can `SSL_write` before
+        // `on_open` runs and bake a ClientHello without SNI/ALPN. Set them now;
+        // `on_open` redoes this idempotently for the async-DNS path.
+        self.prime_tls_client_hello();
         Ok(())
+    }
+
+    /// Apply per-socket SNI/ALPN to a freshly-attached client `SSL*`. No-op for
+    /// `Connecting`/`Detached` (SSL not yet attached) and after handshake start.
+    fn prime_tls_client_hello(&mut self) {
+        if !SSL || self.is_server() {
+            return;
+        }
+        // `ssl()` on `Connecting` returns the C sentinel `(void*)-1`; only the
+        // `Connected` arm has a real `SSL*`.
+        let uws::InternalSocket::Connected(_) = self.socket.socket else { return };
+        let Some(ssl_ptr) = self.socket.ssl() else { return };
+        // SAFETY: BoringSSL FFI; `ssl_ptr` is a live `*mut SSL` (Connected).
+        if unsafe { boringssl_sys::SSL_is_init_finished(ssl_ptr) } != 0 {
+            return;
+        }
+        let host: &[u8] = if let Some(server_name) = &self.server_name {
+            server_name.as_ref()
+        } else if let Some(super::listener::UnixOrHost::Host { host, .. }) = &self.connection {
+            host.as_ref()
+        } else {
+            &[]
+        };
+        if !host.is_empty() {
+            let host_z = bun_core::ZBox::from_bytes(host);
+            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+            unsafe { boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
+        }
+        if let Some(protos) = &self.protos {
+            // SAFETY: BoringSSL FFI.
+            unsafe {
+                boringssl_sys::SSL_set_alpn_protos(ssl_ptr, protos.as_ptr(), protos.len());
+            }
+        }
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn shim
@@ -2709,7 +2748,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `Handlers::mark_inactive` later frees via `heap::take`.
         // SAFETY: `Box::new` never returns null.
         let handlers_ptr =
-            unsafe { NonNull::new_unchecked(bun_core::heap::leak(Box::new(handlers_taken))) };
+            unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(Box::new(handlers_taken))) };
 
         // Ownership of the +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx`
         // below; defuse the errdefer so a later `?` doesn't double-free.
@@ -3062,7 +3101,7 @@ macro_rules! impl_socket_js_class {
             fn to_js(self, global: &JSGlobalObject) -> JSValue {
                 // Ownership of the boxed `NewSocket` transfers to the C++
                 // wrapper (freed via `${typeName}Class__finalize`).
-                $gen::to_js(bun_core::heap::leak(Box::new(self)), global)
+                $gen::to_js(bun_core::heap::into_raw(Box::new(self)), global)
             }
             // `noConstructor: true` — no `${name}__getConstructor` export; trait default applies.
         }
@@ -3542,7 +3581,7 @@ pub fn js_upgrade_duplex_to_tls(
     // frees via `heap::take`.
     // SAFETY: `Box::new` never returns null.
     let handlers_ptr =
-        unsafe { NonNull::new_unchecked(bun_core::heap::leak(Box::new(handlers_taken))) };
+        unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(Box::new(handlers_taken))) };
     let tls = TLSSocket::new(TLSSocket {
         ref_count: bun_ptr::RefCount::init(),
         handlers: Some(handlers_ptr),
@@ -3585,7 +3624,7 @@ pub fn js_upgrade_duplex_to_tls(
     // Allocate uninit, leak to a raw pointer for the stable address, then
     // field-write everything in place — `upgrade` last, once the address is
     // known. Mirrors Zig `bun.new(...)` then `.upgrade = .from(...)`.
-    let duplex_context: *mut DuplexUpgradeContext = bun_core::heap::leak(Box::new(
+    let duplex_context: *mut DuplexUpgradeContext = bun_core::heap::into_raw(Box::new(
         core::mem::MaybeUninit::<DuplexUpgradeContext>::uninit(),
     ))
     .cast();

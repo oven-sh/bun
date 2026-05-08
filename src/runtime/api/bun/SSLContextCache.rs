@@ -187,7 +187,7 @@ impl SSLContextCache {
             return Some(ctx);
         }
 
-        let entry = bun_core::heap::leak(Box::new(Entry {
+        let entry = bun_core::heap::into_raw(Box::new(Entry {
             ctx,
             owner: owner_ptr,
         }));

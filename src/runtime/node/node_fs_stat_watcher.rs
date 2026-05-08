@@ -293,7 +293,7 @@ impl StatWatcherScheduler {
         // backing `ctx`; `update_timer` would then `heap::take` an out-of-provenance
         // pointer. With this ordering, `ctx` and `holder_ptr` share the same SRW tag and
         // `heap::take(ctx)` satisfies the "must originate from `heap::alloc`" contract.
-        let holder_ptr = bun_core::heap::leak(Box::new(Holder {
+        let holder_ptr = bun_core::heap::into_raw(Box::new(Holder {
             scheduler: this,
             task: AnyTask::default(),
         }));
@@ -841,7 +841,7 @@ impl StatWatcher {
             last_stat: Guarded::init(unsafe { core::mem::zeroed::<PosixStat>() }),
             scheduler: Self::lazy_scheduler(vm),
         });
-        let this_ptr = bun_core::heap::leak(this);
+        let this_ptr = bun_core::heap::into_raw(this);
         // errdefer this.deinit()
         let guard = scopeguard::guard(this_ptr, |p| {
             // SAFETY: `p` was heap-allocated above; on the error path we own the only reference.

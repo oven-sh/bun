@@ -279,7 +279,7 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
         })
     };
 
-    bun_core::heap::leak(this).cast::<c_void>()
+    bun_core::heap::into_raw(this).cast::<c_void>()
 }
 
 #[unsafe(no_mangle)]

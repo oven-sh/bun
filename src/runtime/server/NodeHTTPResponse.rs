@@ -1810,7 +1810,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
         uws::AnyResponse::TCP(response_ptr.cast())
     };
 
-    let response = bun_core::heap::leak(Box::new(NodeHTTPResponse {
+    let response = bun_core::heap::into_raw(Box::new(NodeHTTPResponse {
         // 1 - the HTTP response
         // 1 - the JS object
         // 1 - the Server handler.

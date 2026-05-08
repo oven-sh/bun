@@ -730,7 +730,7 @@ impl<C: SourceContext> NewSource<C> {
     /// the JS cell still points at it (UAF), so this mirrors Zig's `TrivialNew`
     /// exactly and returns `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
     // `bun.TrivialDeinit(@This())` → see `deinit()` below.
 

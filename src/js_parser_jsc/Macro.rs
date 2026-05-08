@@ -274,7 +274,7 @@ pub fn __bun_macro_context_init(
     // (process-lifetime) and `Transpiler` is bitwise-cloned per worker without
     // running `Drop` (see `ThreadPool::initialize_transpiler`).
     let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
-    let data = bun_core::heap::leak(Box::new(MacroContext::init(transpiler)));
+    let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
     js_ast::Macro::MacroContext {
         javascript_object: js_ast::Macro::MacroJSCtx::ZERO,
         data: data.cast::<core::ffi::c_void>(),

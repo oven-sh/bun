@@ -182,7 +182,7 @@ impl FileRoute {
 
     pub fn init_from_blob(blob: Blob, opts: InitOptions<'_>) -> *mut FileRoute {
         let headers = headers_from(opts.headers, &blob);
-        bun_core::heap::leak(Box::new(FileRoute {
+        bun_core::heap::into_raw(Box::new(FileRoute {
             ref_count: Cell::new(1),
             server: Cell::new(opts.server),
             has_last_modified_header: headers.get(b"last-modified").is_some(),
@@ -234,7 +234,7 @@ impl FileRoute {
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
 
-                return Ok(Some(bun_core::heap::leak(Box::new(FileRoute {
+                return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
                     ref_count: Cell::new(1),
                     server: Cell::new(None),
                     has_last_modified_header: headers.get(b"last-modified").is_some(),
@@ -255,7 +255,7 @@ impl FileRoute {
                 b.global_this = std::ptr::from_ref(global);
                 debug_assert!(!b.is_heap_allocated(), "expected blob not to be heap-allocated");
                 let headers = headers_from(None, &b);
-                return Ok(Some(bun_core::heap::leak(Box::new(FileRoute {
+                return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
                     ref_count: Cell::new(1),
                     server: Cell::new(None),
                     headers,

@@ -556,7 +556,7 @@ impl ReadFile {
         cb(
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {
-                buf: bun_core::heap::leak(buf.into_boxed_slice()),
+                buf: bun_core::heap::into_raw(buf.into_boxed_slice()),
                 total_size,
             }),
         );
@@ -988,7 +988,7 @@ impl<'a> ReadFileUV<'a> {
         });
         // Keep the event loop alive while the async operation is pending
         event_loop.ref_concurrently();
-        let this_ptr: *mut ReadFileUV = bun_core::heap::leak(this);
+        let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
         // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
         unsafe { (*this_ptr).get_fd(Self::on_file_open) };
         // ownership now lives with the libuv request chain until finalize().
@@ -1014,7 +1014,7 @@ impl<'a> ReadFileUV<'a> {
             // whose `cap > len` would be a layout-mismatched dealloc.
             let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
-                buf: bun_core::heap::leak(boxed),
+                buf: bun_core::heap::into_raw(boxed),
                 total_size: this_box.total_size,
             })
         };

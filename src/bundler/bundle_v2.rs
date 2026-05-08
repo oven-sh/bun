@@ -3460,7 +3460,7 @@ impl<'a> BundleV2<'a> {
         // PORT NOTE: `bun.new(ServerComponentParseTask, …)` — heap-owned by the
         // worker pool; freed via `bun.destroy` in `on_complete` after the
         // result posts back to the bundle thread.
-        let task = bun_core::heap::leak(Box::new(ServerComponentParseTask {
+        let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
             data,
             // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (matches Zig `*BundleV2`).
             ctx: std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
@@ -6996,7 +6996,7 @@ impl ExternalFreeFunctionAllocator {
         // PORT NOTE: Zig built a `std.mem.Allocator` whose `.ptr` was the boxed
         // `ExternalFreeFunctionAllocator` and whose vtable's `free` invoked the
         // plugin callback. `bun_alloc::StdAllocator` is the Rust equivalent.
-        let boxed = bun_core::heap::leak(Box::new(ExternalFreeFunctionAllocator { free_callback, context }));
+        let boxed = bun_core::heap::into_raw(Box::new(ExternalFreeFunctionAllocator { free_callback, context }));
         bun_alloc::StdAllocator {
             ptr: boxed.cast(),
             vtable: &EXTERNAL_FREE_VTABLE,

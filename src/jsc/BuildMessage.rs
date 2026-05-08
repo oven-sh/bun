@@ -62,7 +62,7 @@ impl BuildMessage {
         // Ownership transfers via `heap::alloc`; the external-string finalizer
         // calls `mi_free` on the block (global allocator is mimalloc).
         let len = text.len();
-        let ptr = bun_core::heap::leak(text.into_boxed_slice()).cast::<u8>();
+        let ptr = bun_core::heap::into_raw(text.into_boxed_slice()).cast::<u8>();
         // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
         // released by `heap::alloc`; it stays live until JSC frees it.
         let mut str = ZigString::init(unsafe { bun_core::ffi::slice(ptr, len) });

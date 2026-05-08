@@ -143,7 +143,7 @@ impl JSMySQLQuery {
             return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
         }
 
-        let this = bun_core::heap::leak(Box::new(Self {
+        let this = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsRef::empty(),
             ref_count: Cell::new(1),
             // SAFETY: `sql_vm_ptr()` is non-null (asserted in debug builds);

@@ -1709,7 +1709,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let tcp = input_socket.cast::<us_socket_t>();
         // outlives this call.
         let vm = global_this.bun_vm().as_mut();
-        let ws = bun_core::heap::leak(Box::new(WebSocket::<SSL> {
+        let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
             outgoing_websocket: NonNull::new(outgoing),
@@ -1805,7 +1805,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let buffered_slice: Box<[u8]> = unsafe {
                 bun_core::heap::take(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
             };
-            let initial_data = bun_core::heap::leak(Box::new(InitialDataHandler::<SSL> {
+            let initial_data = bun_core::heap::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
                 slice: buffered_slice,
                 // We need to ref the outgoing websocket so that it doesn't get
@@ -1862,7 +1862,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // paired with m_connectedWebSocket.
         // outlives this call.
         let vm = global_this.bun_vm().as_mut();
-        let ws = bun_core::heap::leak(Box::new(WebSocket::<SSL> {
+        let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(), // No direct socket - using tunnel
             outgoing_websocket: NonNull::new(outgoing),
@@ -1918,7 +1918,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let buffered_slice: Box<[u8]> = unsafe {
                 bun_core::heap::take(core::slice::from_raw_parts_mut(buffered_data, buffered_data_len))
             };
-            let initial_data = bun_core::heap::leak(Box::new(InitialDataHandler::<SSL> {
+            let initial_data = bun_core::heap::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
                 slice: buffered_slice,
                 // SAFETY: outgoing is a valid CppWebSocket* (extern-C contract);

@@ -260,7 +260,7 @@ impl ModuleInfoDeserialized {
     pub fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
         let duped: Box<[u8]> = Box::from(source);
         // Stabilize the address so the raw slice fields can borrow into it.
-        let duped_raw: *mut [u8] = bun_core::heap::leak(duped);
+        let duped_raw: *mut [u8] = bun_core::heap::into_raw(duped);
         // On error, reclaim the allocation.
         let guard = scopeguard::guard(duped_raw, |p| unsafe { drop(bun_core::heap::take(p)) });
 
@@ -445,7 +445,7 @@ impl ModuleInfoExt for ModuleInfo {
             buffer,
             record_kinds,
             flags,
-            owner: Owner::ModuleInfo(bun_core::heap::leak(self)),
+            owner: Owner::ModuleInfo(bun_core::heap::into_raw(self)),
         })
     }
 }

@@ -41,7 +41,7 @@ impl SecretsJob {
         promise: JSValue,
     ) -> *mut SecretsJob {
         let vm = global.bun_vm_ptr();
-        let job = bun_core::heap::leak(Box::new(SecretsJob {
+        let job = bun_core::heap::into_raw(Box::new(SecretsJob {
             vm,
             task: WorkPoolTask {
                 node: Default::default(),

@@ -366,7 +366,7 @@ where
             debug_assert!(!Self::full());
         }
 
-        let new_node = bun_core::heap::leak(Box::new(Node::<T> {
+        let new_node = bun_core::heap::into_raw(Box::new(Node::<T> {
             next: ptr::null_mut(),
             data: MaybeUninit::new(pooled),
         }));
@@ -433,7 +433,7 @@ where
             Some(init_) => MaybeUninit::new(init_().expect("unreachable")),
             None => MaybeUninit::uninit(),
         };
-        bun_core::heap::leak(Box::new(Node::<T> {
+        bun_core::heap::into_raw(Box::new(Node::<T> {
             next: ptr::null_mut(),
             data,
         }))

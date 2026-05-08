@@ -876,7 +876,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// Allocate a new object, returning a RefPtr to it.
     pub fn new(init_data: T) -> Self {
         // SAFETY: freshly boxed, ref_count == 1
-        unsafe { Self::adopt_ref(bun_core::heap::leak(Box::new(init_data))) }
+        unsafe { Self::adopt_ref(bun_core::heap::into_raw(Box::new(init_data))) }
     }
 
     /// Initialize a newly allocated pointer, returning a RefPtr to it.

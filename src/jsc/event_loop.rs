@@ -1260,7 +1260,7 @@ pub fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop)
     {
         let _ = uws_loop;
     }
-    bun_core::heap::leak(el).cast()
+    bun_core::heap::into_raw(el).cast()
 }
 
 #[unsafe(no_mangle)]

@@ -1198,7 +1198,7 @@ pub mod package_manifest {
 
             // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
             // the Registry.Scope outlives the threadpool task. Phase B: prove or change to owned.
-            let task = bun_core::heap::leak(SaveTask::new(SaveTask {
+            let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
                 manifest: this.clone(), // TODO(port): Zig copied PackageManifest by value
                 scope,
                 tmpdir,

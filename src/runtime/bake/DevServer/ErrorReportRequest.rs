@@ -64,7 +64,7 @@ impl BodyReaderHandler for ErrorReportRequest {
 
 impl ErrorReportRequest {
     pub fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
-        let ctx = bun_core::heap::leak(Box::new(ErrorReportRequest {
+        let ctx = bun_core::heap::into_raw(Box::new(ErrorReportRequest {
             dev: NonNull::from(dev),
             body: uws::BodyReaderMixin::init(),
         }));

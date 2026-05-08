@@ -330,7 +330,7 @@ impl SavedSourceMap {
         // reclaimed by `InternalSourceMap::free_owned` (see `put_value` /
         // `Drop`). On the error path the Box is reconstituted and dropped.
         let blob: Box<[u8]> = Box::<[u8]>::from(mappings.list.as_slice());
-        let blob_ptr: *mut [u8] = bun_core::heap::leak(blob);
+        let blob_ptr: *mut [u8] = bun_core::heap::into_raw(blob);
         // errdefer: on error, reconstitute and drop the Box.
         match self.put_value(
             source.path.text,

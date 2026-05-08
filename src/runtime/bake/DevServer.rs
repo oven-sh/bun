@@ -1388,7 +1388,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
         let res = unsafe { &mut *res };
-        let dw = bun_core::heap::leak(HmrSocket::new(self, res));
+        let dw = bun_core::heap::into_raw(HmrSocket::new(self, res));
         let _ = self.active_websocket_connections.insert(dw, ());
         let _ = res.upgrade(
             dw,
@@ -1433,7 +1433,7 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
         sec_web_socket_extensions: &[u8],
         ctx: &mut bun_uws::WebSocketUpgradeContext,
     ) {
-        let boxed = bun_core::heap::leak(Box::new(data));
+        let boxed = bun_core::heap::into_raw(Box::new(data));
         let _ = bun_uws_sys::response::Response::<SSL>::upgrade(
             self,
             boxed,
@@ -5455,7 +5455,7 @@ impl DevServer {
         debug_assert!(id == 0);
 
         let dw: Box<HmrSocket> = HmrSocket::new(self, res);
-        let dw_ptr: *mut HmrSocket = bun_core::heap::leak(dw);
+        let dw_ptr: *mut HmrSocket = bun_core::heap::into_raw(dw);
         self.active_websocket_connections.put_no_clobber(dw_ptr, ()).expect("oom");
         res.upgrade::<*mut HmrSocket>(
             dw_ptr,
@@ -6155,7 +6155,7 @@ impl UnrefSourceMapRequest {
         });
         // SAFETY: dev outlives the request
         unsafe { (*ctx.dev).server.as_mut().unwrap().on_pending_request() };
-        let raw = bun_core::heap::leak(ctx);
+        let raw = bun_core::heap::into_raw(ctx);
         uws::BodyReaderMixin::<Self>::read_body(raw, resp);
     }
 

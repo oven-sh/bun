@@ -358,7 +358,7 @@ impl SpawnSyncEventLoop {
             None => 'brk: {
                 // SAFETY: all-zero is a valid `libuv::Timer` (C POD, matches `std.mem.zeroes`).
                 let uv_timer: Box<libuv::Timer> = Box::new(unsafe { core::mem::zeroed() });
-                let uv_timer = bun_core::heap::leak(uv_timer);
+                let uv_timer = bun_core::heap::into_raw(uv_timer);
                 // SAFETY: uv_timer just allocated; `uv_loop` is set by C `us_create_loop`.
                 unsafe { (*uv_timer).init(self.uws_loop().uv_loop) };
                 // SAFETY: heap::alloc never returns null.

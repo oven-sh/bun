@@ -105,7 +105,7 @@ impl TimeoutObject {
         // `bun.new(Self, .{...})` ⇒ heap-allocate; `*mut Self` is the `m_ctx`
         // payload of the codegen'd JSCell wrapper. Ownership transfers to the
         // wrapper via `to_js_ptr`; freed by `deref → deinit → heap::take`.
-        let timeout: *mut Self = bun_core::heap::leak(Box::new(Self::default()));
+        let timeout: *mut Self = bun_core::heap::into_raw(Box::new(Self::default()));
         // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `Timeout__create`
         // shim; `timeout` is a fresh heap payload whose ownership transfers to
         // the GC wrapper.

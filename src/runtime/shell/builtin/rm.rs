@@ -692,7 +692,7 @@ impl ShellRmTask {
         let root_path_z = ZBox::from_bytes(root_path);
         let join_style = JoinStyle::from_path(root_path);
         // Separate allocation — see PORT NOTE on `root_task`.
-        let root_task = bun_core::heap::leak(Box::new(DirTask {
+        let root_task = bun_core::heap::into_raw(Box::new(DirTask {
             // task_manager is fixed up below once we have the ShellRmTask address.
             task_manager: core::ptr::null_mut(),
             parent_task: core::ptr::null_mut(),
@@ -727,7 +727,7 @@ impl ShellRmTask {
             task: ShellTask::new(evtloop),
         });
         boxed.task.interp = interp;
-        let raw = bun_core::heap::leak(boxed);
+        let raw = bun_core::heap::into_raw(boxed);
         // SAFETY: both freshly leaked; exclusive.
         unsafe { (*root_task).task_manager = raw };
         raw
@@ -830,7 +830,7 @@ impl ShellRmTask {
         // original `*mut` provenance from `heap::alloc` rather than deriving
         // a writeable pointer from `&self`).
         let task_manager = unsafe { (*parent).task_manager };
-        let subtask = bun_core::heap::leak(Box::new(DirTask {
+        let subtask = bun_core::heap::into_raw(Box::new(DirTask {
             task_manager,
             parent_task: parent,
             path,

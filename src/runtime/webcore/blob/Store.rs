@@ -403,7 +403,7 @@ impl S3Ext for S3 {
             &aws_options.credentials,
             self.path(),
             Wrapper::resolve,
-            bun_core::heap::leak(Wrapper::new(Wrapper {
+            bun_core::heap::into_raw(Wrapper::new(Wrapper {
                 promise,
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
                 // intrusive refcount (Zig: `store.ref()`).
@@ -503,7 +503,7 @@ impl S3Ext for S3 {
         // borrow to `list_objects` (which only reads them synchronously to
         // build the search-params string). The wrapper retains ownership for
         // `Drop` after the async callback — matching Zig's `deinit()`.
-        let wrapper = bun_core::heap::leak(Box::new(Wrapper {
+        let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
             promise,
             // SAFETY: `store` is a live heap `Store`; `retained` bumps the
             // intrusive refcount (Zig: `store.ref()`).

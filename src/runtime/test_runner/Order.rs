@@ -146,7 +146,7 @@ impl Order {
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
                     let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
-                    let cloned = bun_core::heap::leak(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
                 }
@@ -167,7 +167,7 @@ impl Order {
                     // PERF(port): was arena bulk-free — see note above.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     let src: *const ExecutionEntry = &raw const **entry;
-                    let cloned = bun_core::heap::leak(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.append(cloned);
                 }
                 parent = p.base.parent;

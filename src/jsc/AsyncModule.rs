@@ -700,7 +700,7 @@ impl AsyncModule {
         // (`Queue::poll_modules`) removes the element by value and passes it
         // here, so `Box::new(self)` is the same single transfer with no
         // `ptr::read` and no double-Drop.
-        let clone = bun_core::heap::leak(Box::new(self));
+        let clone = bun_core::heap::into_raw(Box::new(self));
         jsc_vm.modules.scheduled += 1;
         // SAFETY: clone is a valid heap::alloc allocation owned by the
         // task queue until on_done reclaims it via heap::take; we hold

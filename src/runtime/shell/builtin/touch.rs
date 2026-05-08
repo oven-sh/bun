@@ -302,7 +302,7 @@ impl ShellTouchTask {
             task: ShellTask::new(evtloop),
         });
         task.task.interp = interp;
-        bun_core::heap::leak(task)
+        bun_core::heap::into_raw(task)
     }
 
     /// Spec: touch.zig `runFromThreadPool`. utimes() the path; on ENOENT

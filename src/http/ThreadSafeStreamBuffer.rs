@@ -57,7 +57,7 @@ impl ThreadSafeStreamBuffer {
     /// Callers on both threads hold raw `*mut ThreadSafeStreamBuffer` and
     /// release via `deref()`, so return a raw pointer (heap::alloc).
     pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     pub fn ref_(this: *mut Self) {

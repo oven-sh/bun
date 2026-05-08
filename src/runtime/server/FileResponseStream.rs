@@ -110,7 +110,7 @@ impl FileResponseStream {
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
         // via `heap::take` in `deref()` when the intrusive refcount hits 0.
-        let this: *mut FileResponseStream = bun_core::heap::leak(Box::new(FileResponseStream {
+        let this: *mut FileResponseStream = bun_core::heap::into_raw(Box::new(FileResponseStream {
             ref_count: Cell::new(1),
             resp: opts.resp,
             vm: opts.vm,

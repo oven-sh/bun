@@ -288,7 +288,7 @@ impl WindowsNamedPipeContext {
         // allocate uninit, derive the stable pointer, build the fields, then ptr::write the whole
         // struct. Avoids `mem::zeroed()` on non-POD AnyTask/WindowsNamedPipe.
         let this: *mut WindowsNamedPipeContext =
-            bun_core::heap::leak(Box::<core::mem::MaybeUninit<WindowsNamedPipeContext>>::new_uninit()).cast();
+            bun_core::heap::into_raw(Box::<core::mem::MaybeUninit<WindowsNamedPipeContext>>::new_uninit()).cast();
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
         // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the

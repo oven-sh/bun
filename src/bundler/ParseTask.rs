@@ -2649,7 +2649,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
             ContentsOrFd::Contents(_) => WatcherData::NONE,
         },
     });
-    let result = bun_core::heap::leak(result);
+    let result = bun_core::heap::into_raw(result);
 
     // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
     // SAFETY: worker.ctx backref valid; `linker.r#loop` is a live AnyEventLoop

@@ -93,7 +93,7 @@ impl<T> StoreRef<T> {
         // never reconstitutes the `Box`). No `&'static mut` is forged, so no
         // aliasing hazard at use sites — deref goes through `as_ptr()`.
         // SAFETY: `heap::alloc` never returns null.
-        StoreRef(unsafe { NonNull::new_unchecked(bun_core::heap::leak(b)) })
+        StoreRef(unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(b)) })
     }
     #[inline]
     pub const fn as_ptr(self) -> *mut T {

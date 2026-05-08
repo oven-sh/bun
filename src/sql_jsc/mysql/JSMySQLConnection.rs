@@ -104,7 +104,7 @@ impl JSMySQLConnection {
 
 impl crate::jsc::JsClass for JSMySQLConnection {
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        js::to_js(bun_core::heap::leak(Box::new(self)), global)
+        js::to_js(bun_core::heap::into_raw(Box::new(self)), global)
     }
     fn from_js(value: JSValue) -> Option<*mut Self> {
         js::from_js(value)
@@ -602,7 +602,7 @@ impl JSMySQLConnection {
         // connect-fail `ptr.deref()` is the sole cleanup path from here on.
         let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(tls_guard);
 
-        let ptr: *mut JSMySQLConnection = bun_core::heap::leak(Box::new(JSMySQLConnection {
+        let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
             js_value: JsRef::empty(),
             global_object: GlobalRef::from(global_object),

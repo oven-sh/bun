@@ -91,7 +91,7 @@ impl crate::jsc::JsClass for JSValkeyClient {
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         // Ownership transfers to the C++ wrapper (freed via finalize).
-        let ptr = bun_core::heap::leak(Box::new(self));
+        let ptr = bun_core::heap::into_raw(Box::new(self));
         js_RedisClient::to_js(ptr, global)
     }
     fn get_constructor(global: &JSGlobalObject) -> JSValue {

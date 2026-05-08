@@ -361,7 +361,7 @@ impl Editor {
         // spawned a detached std.Thread to run it. Phase B should replace with
         // crate::process::spawn (async) or a bun_threading worker that owns
         // SpawnedEditorContext and calls bun.spawnSync.
-        let spawned_ptr = bun_core::heap::leak(spawned);
+        let spawned_ptr = bun_core::heap::into_raw(spawned);
         // PORT NOTE: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
         // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
         // (the JoinHandle is dropped, detaching the thread).

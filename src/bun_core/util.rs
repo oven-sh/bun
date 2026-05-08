@@ -399,7 +399,7 @@ impl ZStr {
         let b: Box<[u8]> = v.into_boxed_slice();
         // SAFETY: `ZStr` is a transparent newtype over `[u8]`; the fat-pointer
         // metadata (len = bytes.len()+1) is preserved by the `as *mut ZStr` cast.
-        unsafe { crate::heap::take(crate::heap::leak(b) as *mut ZStr) }
+        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
     }
 }
 

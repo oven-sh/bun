@@ -228,12 +228,12 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
         std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
         std::borrow::Cow::Owned(v) => {
             blob.content_type_allocated = true;
-            bun_core::heap::leak(v.into_boxed_slice()).cast_const()
+            bun_core::heap::into_raw(v.into_boxed_slice()).cast_const()
         }
     };
     debug_assert_eq!(allocated, blob.content_type_allocated);
 
-    let response = bun_core::heap::leak(Box::new(Response::init(
+    let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK").into(),
@@ -292,7 +292,7 @@ pub fn bun_fetch_preconnect(
     // assumes ownership when `is_url_owned == true` (it reconstructs the Box
     // to free it). Hand the allocation off via `heap::alloc`.
     let href_box: Box<[u8]> = url_str.to_owned_slice().into_boxed_slice();
-    let href_raw: *mut [u8] = bun_core::heap::leak(href_box);
+    let href_raw: *mut [u8] = bun_core::heap::into_raw(href_box);
     // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
     // to `preconnect` (which frees it) or reclaim it on the early-return paths.
     let href: &'static [u8] = unsafe { &*href_raw };
@@ -1508,7 +1508,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };
 
-        let response = bun_core::heap::leak(Box::new(Response::init(
+        let response = bun_core::heap::into_raw(Box::new(Response::init(
             response::Init {
                 status_code: 200,
                 ..Default::default()
@@ -1859,7 +1859,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 proxy_url,
                 credentials_with_options.request_payer,
                 Some(s3_stream_wrapper_resolve),
-                bun_core::heap::leak(s3_stream).cast::<libc::c_void>(),
+                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
             // PORT NOTE: url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
@@ -2059,7 +2059,7 @@ impl<'a> S3StreamWrapper<'a> {
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
                 ));
-                let response_js = Response::make_maybe_pooled(global, bun_core::heap::leak(response));
+                let response_js = Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }
@@ -2081,7 +2081,7 @@ impl<'a> S3StreamWrapper<'a> {
                     false,
                 ));
 
-                let response_js = Response::make_maybe_pooled(global, bun_core::heap::leak(response));
+                let response_js = Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }

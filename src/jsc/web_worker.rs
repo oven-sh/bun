@@ -503,7 +503,7 @@ impl WebWorker {
 
         let store_fd = parent_ref.transpiler.resolver.store_fd;
 
-        let worker = bun_core::heap::leak(Box::new(WebWorker {
+        let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             cpp_worker,
             parent,
             parent_context_id,
@@ -839,11 +839,11 @@ impl WebWorker {
         // and stashed on `self` so `shutdown()` step 5 reclaims them on every
         // path — including the early-terminate checkpoint below, which calls
         // `shutdown()` before the VM exists.
-        let map_ptr: *mut bun_dotenv::Map = bun_core::heap::leak(map);
+        let map_ptr: *mut bun_dotenv::Map = bun_core::heap::into_raw(map);
         // SAFETY: `map_ptr` heap-allocated above; `'static` is the lifetime
         // erasure for the worker-VM-lifetime borrow (Zig: arena-backed).
         let loader = Box::new(bun_dotenv::Loader::init(unsafe { &mut *map_ptr }));
-        let loader_ptr: *mut bun_dotenv::Loader<'static> = bun_core::heap::leak(loader);
+        let loader_ptr: *mut bun_dotenv::Loader<'static> = bun_core::heap::into_raw(loader);
         self.worker_env_map.set(map_ptr);
         self.worker_env_loader.set(loader_ptr);
 

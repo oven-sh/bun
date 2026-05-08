@@ -102,7 +102,7 @@ impl BlockList {
     // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
     // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        let ptr = bun_core::heap::leak(Box::new(Self {
+        let ptr = bun_core::heap::into_raw(Box::new(Self {
             ref_count: AtomicU32::new(1),
             global_this: std::ptr::from_ref(global),
             da_rules: Vec::new(),

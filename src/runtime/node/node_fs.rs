@@ -1908,7 +1908,7 @@ impl ReaddirSubtask {
             let z = basename.slice_assume_z();
             let len_with_nul = z.len() + 1;
             let ptr = z.as_bytes().as_ptr().cast_mut();
-            // SAFETY: paired with the `heap::leak(owned.into_boxed_slice())`
+            // SAFETY: paired with the `heap::into_raw(owned.into_boxed_slice())`
             // in `AsyncReaddirRecursiveTask::enqueue`.
             unsafe {
                 drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(ptr, len_with_nul)));
@@ -1962,7 +1962,7 @@ impl AsyncReaddirRecursiveTask {
         owned.push(0);
         let owned: Box<[u8]> = owned.into_boxed_slice();
         let len = owned.len() - 1; // exclude NUL
-        let ptr = bun_core::heap::leak(owned).cast::<u8>();
+        let ptr = bun_core::heap::into_raw(owned).cast::<u8>();
         // SAFETY: `ptr[..len]` is the duped bytes; `ptr[len] == 0`. The Box<[u8]>
         // backing is reconstructed and freed in `ReaddirSubtask::run_owned`.
         let basename_ps = PathString::init(unsafe { core::slice::from_raw_parts(ptr, len) });
@@ -1994,7 +1994,7 @@ impl AsyncReaddirRecursiveTask {
             let mut owned = Vec::with_capacity(src.len() + 1);
             owned.extend_from_slice(src);
             owned.push(0);
-            let raw = bun_core::heap::leak(owned.into_boxed_slice()).cast::<u8>();
+            let raw = bun_core::heap::into_raw(owned.into_boxed_slice()).cast::<u8>();
             // SAFETY: `raw[..src.len()]` is the duped bytes; `raw[src.len()] == 0`.
             PathString::init(unsafe { core::slice::from_raw_parts(raw, src.len()) })
         };
@@ -2089,7 +2089,7 @@ impl AsyncReaddirRecursiveTask {
                 next: core::ptr::null_mut(),
                 value: ResultListEntryValue::from_vec(clone),
             });
-            self.result_list_queue.push(bun_core::heap::leak(list));
+            self.result_list_queue.push(bun_core::heap::into_raw(list));
         }
 
         if self.subtask_count.fetch_sub(1, Ordering::Relaxed) == 1 {
@@ -5468,7 +5468,7 @@ impl NodeFS {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
                             // `into_boxed_slice()` so the allocation layout JSC frees with
                             // matches what we hand it (capacity == len).
-                            let raw = bun_core::heap::leak(contents.to_vec().into_boxed_slice());
+                            let raw = bun_core::heap::into_raw(contents.to_vec().into_boxed_slice());
                             // SAFETY: ownership of the allocation is transferred to JSC; the
                             // ArrayBuffer finalizer reconstructs the Box and frees it
                             // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
@@ -5582,7 +5582,7 @@ impl NodeFS {
                             };
                         }
                     }
-                    let raw = bun_core::heap::leak(
+                    let raw = bun_core::heap::into_raw(
                         temporary_read_buffer_before_stat_call.to_vec().into_boxed_slice(),
                     );
                     // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
@@ -5718,7 +5718,7 @@ impl NodeFS {
         match args.encoding {
             Encoding::Buffer => {
                 buf.truncate(final_len);
-                let raw = bun_core::heap::leak(buf.into_boxed_slice());
+                let raw = bun_core::heap::into_raw(buf.into_boxed_slice());
                 // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
                 // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
                 Ok(ret::ReadFileWithOptions::Buffer(

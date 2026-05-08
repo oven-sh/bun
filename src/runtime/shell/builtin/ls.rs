@@ -419,7 +419,7 @@ impl ShellLsTask {
             task: ShellTask::new(event_loop),
         });
         task.task.interp = interp;
-        bun_core::heap::leak(task)
+        bun_core::heap::into_raw(task)
     }
 
     /// Spec: ls.zig `ShellLsTask.enqueue`. Spawns a subtask for a recursively

@@ -104,7 +104,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // PORT NOTE: Zig asserted ownership at runtime via a debug allocator
         // wrapper. In Rust the `Box<[T]>` type already proves unique ownership.
         let len = data.len();
-        let ptr = bun_core::heap::leak(data).cast::<T>();
+        let ptr = bun_core::heap::into_raw(data).cast::<T>();
         Self {
             ptr,
             flags: Flags::new(len, true),
@@ -284,7 +284,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // TODO(port): `allocator.dupeZ` for `Z = true` — see `init_dupe`.
         // Sentinel is NOT preserved in this stub.
         let bytes: Box<[T]> = Box::<[T]>::from(self.slice());
-        self.ptr = bun_core::heap::leak(bytes).cast::<T>();
+        self.ptr = bun_core::heap::into_raw(bytes).cast::<T>();
         // flags.len already correct (unchanged)
         self.flags.set_is_owned(true);
 
@@ -384,7 +384,7 @@ impl DebugData {
             mutex: parking_lot::Mutex::new(0),
         });
         // SAFETY: `heap::alloc` never returns null.
-        unsafe { NonNull::new_unchecked(bun_core::heap::leak(b)) }
+        unsafe { NonNull::new_unchecked(bun_core::heap::into_raw(b)) }
     }
 }
 

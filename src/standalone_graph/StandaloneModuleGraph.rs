@@ -488,7 +488,7 @@ impl LazySourceMap {
                 // (kind = .zig, load_hint = .none implicit). `from_provider` packs the
                 // same triple into the `SourceContentPtr` bitfield.
                 stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
-                    bun_core::heap::leak(data).cast::<SourceMap::SourceProviderMap>(),
+                    bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
                 );
                 stored.is_standalone_module_graph = true;
 

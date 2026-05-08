@@ -363,7 +363,7 @@ impl DeferredFailure {
             DeferredFailure::run(this).map_err(Into::into)
         }
         let managed_task =
-            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::leak(self), run_raw);
+            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
         VirtualMachine::get().event_loop_mut().enqueue_task(managed_task);
     }
 }

@@ -1469,7 +1469,7 @@ impl SendQueue {
             write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
             // Hand ownership to libuv; reclaimed exactly once by
             // `_windows_on_write_complete` via `WindowsWrite::destroy`.
-            let write_req: *mut WindowsWrite = bun_core::heap::leak(write_req);
+            let write_req: *mut WindowsWrite = bun_core::heap::into_raw(write_req);
             debug_assert!(self.windows.windows_write.is_none());
             self.windows.windows_write = Some(write_req);
 
@@ -1626,7 +1626,7 @@ impl SendQueue {
         log!("configureClient");
         // SAFETY: all-zero is a valid uv::Pipe (C struct, initialized by uv_pipe_init).
         let ipc_pipe: *mut uv::Pipe =
-            bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+            bun_core::heap::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
         // SAFETY: ipc_pipe just allocated above.
         if let Some(err) =
             unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)

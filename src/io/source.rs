@@ -301,7 +301,7 @@ impl Source {
         if let Some(err) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
             // close_and_destroy() schedules a libuv close whose callback frees
             // the allocation. Hand the Box to libuv via into_raw so Drop does not double-free.
-            let raw = bun_core::heap::leak(pipe);
+            let raw = bun_core::heap::into_raw(pipe);
             // SAFETY: raw is a valid initialized uv::Pipe; ownership passes to libuv.
             unsafe { uv::Pipe::close_and_destroy(raw) };
             return bun_sys::Result::Err(err);
@@ -327,7 +327,7 @@ impl Source {
         }
 
         // SAFETY: heap::alloc never returns null.
-        bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(bun_core::heap::leak(tty)) })
+        bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(bun_core::heap::into_raw(tty)) })
     }
 
     pub fn open_file(fd: Fd) -> Box<File> {

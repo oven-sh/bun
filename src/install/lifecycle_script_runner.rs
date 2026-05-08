@@ -296,7 +296,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// `bun.TrivialNew(@This())` — heap-allocate and return a raw pointer; this type is
     /// intrusive (heap field, OutputReader parent backrefs), so it lives behind `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     /// SAFETY: `manager` is a live `*mut PackageManager` set at construction.

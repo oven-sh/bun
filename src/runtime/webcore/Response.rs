@@ -170,7 +170,7 @@ impl bun_jsc::JsClass for Response {
     fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
         // Ownership of the boxed payload transfers to the C++ wrapper
         // (freed via `ResponseClass__finalize`).
-        let ptr = bun_core::heap::leak(Box::new(self));
+        let ptr = bun_core::heap::into_raw(Box::new(self));
         bun_jsc::generated::JSResponse::to_js(ptr.cast::<()>(), global)
     }
     #[inline]
@@ -873,7 +873,7 @@ impl Response {
     }
 
     pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<*mut Response> {
-        Ok(bun_core::heap::leak(Box::new(self.clone_value(global_this)?)))
+        Ok(bun_core::heap::into_raw(Box::new(self.clone_value(global_this)?)))
     }
 
     fn destroy(this: *mut Response) {
@@ -1038,7 +1038,7 @@ impl Response {
         // Disarm the body-reset guard: all fallible ops have succeeded.
         let response = scopeguard::ScopeGuard::into_inner(response);
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
-        let ptr = bun_core::heap::leak(Box::new(response));
+        let ptr = bun_core::heap::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed and uniquely owned here.
         Ok(unsafe { (*ptr).to_js(global_this) })
     }
@@ -1059,7 +1059,7 @@ impl Response {
     pub fn construct_redirect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let response = Self::construct_redirect_impl(global_this, callframe)?;
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
-        let ptr = bun_core::heap::leak(Box::new(response));
+        let ptr = bun_core::heap::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed and uniquely owned here.
         Ok(unsafe { (*ptr).to_js(global_this) })
     }
@@ -1122,7 +1122,7 @@ impl Response {
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_error(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
-        let response = bun_core::heap::leak(Box::new(Response {
+        let response = bun_core::heap::into_raw(Box::new(Response {
             init: Init { status_code: 0, ..Default::default() },
             body: Body { value: BodyValue::Empty },
             ..Default::default()
@@ -1189,7 +1189,7 @@ impl Response {
                     response.redirected = true;
                     let headers = response.get_or_create_headers(global_this)?;
                     headers.put(HTTPHeaderName::Location, &result.url, global_this)?;
-                    return Ok(bun_core::heap::leak(Box::new(response)));
+                    return Ok(bun_core::heap::into_raw(Box::new(response)));
                 }
             }
         }
@@ -1253,7 +1253,7 @@ impl Response {
         // Ownership transfers to the JSC wrapper (freed via `finalize`). The
         // codegen constructor thunk receives this `*mut Response` and binds it
         // to `js_this`.
-        let response = bun_core::heap::leak(Box::new(Response {
+        let response = bun_core::heap::into_raw(Box::new(Response {
             body,
             init,
             js_ref: JsRef::init_weak(js_this),
@@ -1424,7 +1424,7 @@ pub fn status_200(global_this: &JSGlobalObject) -> *mut Response {
 fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
     // TODO(port): Zig signature says `Response` but body calls bun.new(Response, ...) —
     // it actually returns *Response. Preserving the heap-alloc behavior.
-    bun_core::heap::leak(Box::new(Response {
+    bun_core::heap::into_raw(Box::new(Response {
         body: Body { value: BodyValue::Null },
         init: Init { status_code: status, ..Default::default() },
         ..Default::default()

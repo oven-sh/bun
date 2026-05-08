@@ -121,7 +121,7 @@ macro_rules! extern_crypto_job {
                         callback: JSValue,
                     ) -> *mut Job {
                         let vm = global.bun_vm_ptr();
-                        let job = bun_core::heap::leak(Box::new(Job {
+                        let job = bun_core::heap::into_raw(Box::new(Job {
                             vm,
                             task: WorkPoolTask {
                                 node: Default::default(),
@@ -303,7 +303,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         // PORT NOTE: Zig copies `ctx.*` by value into the heap allocation; Rust takes
         // `Ctx` by value (move) — `Scrypt` is not `Clone` (owns `StringOrBuffer`/Strong).
         let vm = global.bun_vm_ptr();
-        let job = bun_core::heap::leak(Box::new(CryptoJob {
+        let job = bun_core::heap::into_raw(Box::new(CryptoJob {
             vm,
             task: WorkPoolTask {
                 node: Default::default(),

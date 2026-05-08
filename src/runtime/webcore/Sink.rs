@@ -716,7 +716,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         // SAFETY: FFI call into generated C++ sink glue. `JSGlobalObject` is an
         // opaque handle; `.as_ptr()` is the sanctioned & → *mut for FFI.
         let value = unsafe {
-            T::create_object_extern(global.as_ptr(), bun_core::heap::leak(this).cast(), 0)
+            T::create_object_extern(global.as_ptr(), bun_core::heap::into_raw(this).cast(), 0)
         };
         Ok(value)
     }
@@ -1181,7 +1181,7 @@ macro_rules! js_sink {
                 <$SinkType as JsSinkType>::construct(&mut *this);
                 // SAFETY: JsSinkType::construct fully initializes `*this`.
                 let this: Box<$SinkType> = unsafe { this.assume_init() };
-                Ok(create_object(global, bun_core::heap::leak(this).cast(), 0))
+                Ok(create_object(global, bun_core::heap::into_raw(this).cast(), 0))
             }
 
             // Symbol owned by generated_jssink.rs (`${abi_name}__finalize`).

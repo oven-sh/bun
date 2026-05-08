@@ -115,7 +115,7 @@ impl PathString {
         // capacity separately. `heap::alloc` (not `leak`) is the explicit
         // ownership-transfer-to-raw API; the matching `heap::take` lives
         // in `deinit_owned`.
-        let raw: *mut [u8] = bun_core::heap::leak(bytes.into_boxed_slice());
+        let raw: *mut [u8] = bun_core::heap::into_raw(bytes.into_boxed_slice());
         // SAFETY: `raw` is a fresh non-null allocation; reborrow only to pack
         // ptr+len into the backing int.
         Self::init(unsafe { &*raw })

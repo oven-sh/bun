@@ -235,7 +235,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         result: StdioResult,
         source: Source,
     ) -> IntrusiveRc<Self> {
-        let this = bun_core::heap::leak(Box::new(Self {
+        let this = bun_core::heap::into_raw(Box::new(Self {
             ref_count: RefCount::init(),
             writer: IOWriter::<P>::default(),
             stdio_result: result,

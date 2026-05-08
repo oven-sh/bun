@@ -736,7 +736,7 @@ impl ErrorDeferred {
             }
         }
 
-        let context = bun_core::heap::leak(Box::new(Context {
+        let context = bun_core::heap::into_raw(Box::new(Context {
             deferred: self,
             global_this: std::ptr::from_ref(global_this),
         }));

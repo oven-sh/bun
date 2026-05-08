@@ -164,7 +164,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     ) -> *mut Self {
         // `bun.TrivialNew(@This())` — heap-allocate via the global mimalloc;
         // `Self::deref_` reclaims via `heap::take` when the count hits 0.
-        let this: *mut Self = bun_core::heap::leak(Box::new(Self {
+        let this: *mut Self = bun_core::heap::into_raw(Box::new(Self {
             ref_count: Cell::new(ref_count),
             js_this: JsRef::empty(),
             stream: crate::webcore::readable_stream::Strong::default(),

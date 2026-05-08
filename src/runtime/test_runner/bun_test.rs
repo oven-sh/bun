@@ -333,7 +333,7 @@ pub mod js_fns {
                         BaseScopeCfg::default(),
                         AddedInPhase::Execution,
                     );
-                    let new_item_ptr = bun_core::heap::leak(new_item);
+                    let new_item_ptr = bun_core::heap::into_raw(new_item);
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
                     unsafe {
                         (*new_item_ptr).next = (*append_point).next;
@@ -879,7 +879,7 @@ impl BunTest {
     }
 
     pub fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
-        let done_callback_test = bun_core::heap::leak(Box::new(RunTestsTask {
+        let done_callback_test = bun_core::heap::into_raw(Box::new(RunTestsTask {
             weak: weak.clone(),
             global_this: GlobalRef::from(global_this),
             phase,

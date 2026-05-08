@@ -522,7 +522,7 @@ impl FileSink {
     ) -> *mut FileSink {
         let evtloop: EventLoopHandle = event_loop_.into();
 
-        let this = bun_core::heap::leak(Box::new(FileSink {
+        let this = bun_core::heap::into_raw(Box::new(FileSink {
             ref_count: Cell::new(1),
             event_loop_handle: evtloop,
             // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
@@ -544,7 +544,7 @@ impl FileSink {
 
     pub fn create(event_loop_: impl Into<EventLoopHandle>, fd: Fd) -> *mut FileSink {
         let evtloop: EventLoopHandle = event_loop_.into();
-        let this = bun_core::heap::leak(Box::new(FileSink {
+        let this = bun_core::heap::into_raw(Box::new(FileSink {
             ref_count: Cell::new(1),
             event_loop_handle: evtloop,
             fd,
@@ -868,7 +868,7 @@ impl FileSink {
     }
 
     pub fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> *mut FileSink {
-        let this = bun_core::heap::leak(Box::new(FileSink {
+        let this = bun_core::heap::into_raw(Box::new(FileSink {
             ref_count: Cell::new(1),
             writer: IOWriter::default(),
             fd,

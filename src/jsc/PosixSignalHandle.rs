@@ -163,7 +163,7 @@ pub extern "C" fn Bun__ensureSignalHandler() {
             let this = unsafe { &mut *(*vm).event_loop() };
             if this.signal_handler.is_none() {
                 let boxed = PosixSignalHandle::new(PosixSignalHandle::default());
-                this.signal_handler = NonNull::new(bun_core::heap::leak(boxed));
+                this.signal_handler = NonNull::new(bun_core::heap::into_raw(boxed));
             }
         }
     }

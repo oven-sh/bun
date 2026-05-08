@@ -1630,7 +1630,7 @@ pub extern "C" fn Bun__escapeHTML8(
             // Ownership of the buffer transfers to JSC's external-string
             // finalizer (mimalloc-backed) via `to_external_value`; release
             // the Box without dropping so JSC frees it on GC.
-            let raw: *mut [u8] = bun_core::heap::leak(escaped_html);
+            let raw: *mut [u8] = bun_core::heap::into_raw(escaped_html);
             // SAFETY: `raw` is a freshly-leaked Box<[u8]> allocation, valid for
             // the duration of this call; the resulting JSC external string
             // adopts and later frees it.
@@ -2887,7 +2887,7 @@ pub mod JSZstd {
     impl ZstdJob {
         // bun.TrivialNew(@This())
         pub fn new(init: ZstdJob) -> *mut ZstdJob {
-            bun_core::heap::leak(Box::new(init))
+            bun_core::heap::into_raw(Box::new(init))
         }
 
         /// SAFETY: `task` must point to the `task` field of a live `ZstdJob`

@@ -227,7 +227,7 @@ pub type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 impl PathWatcher {
     /// `bun.TrivialNew(PathWatcher)` — heap-allocate and return raw pointer.
     pub fn new(init: PathWatcher) -> *mut PathWatcher {
-        bun_core::heap::leak(Box::new(init))
+        bun_core::heap::into_raw(Box::new(init))
     }
 
     /// Called from the platform reader thread with `manager.mutex` held.
@@ -1042,7 +1042,7 @@ impl Darwin {
             ctx,
         ) {
             Ok(fse) => {
-                watcher.platform.fsevents = Some(bun_core::heap::leak(fse));
+                watcher.platform.fsevents = Some(bun_core::heap::into_raw(fse));
                 Ok(())
             }
             Err(e) => Err(sys::Error::from_code(

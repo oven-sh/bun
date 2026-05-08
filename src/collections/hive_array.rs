@@ -120,7 +120,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         }
 
         // `allocator.create(T)` returns uninitialized `*T`.
-        bun_core::heap::leak(Box::<T>::new_uninit()).cast::<T>()
+        bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>()
     }
 
     pub fn get_and_see_if_new(&mut self, new: &mut bool) -> *mut T {
@@ -131,7 +131,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
             }
         }
 
-        bun_core::heap::leak(Box::<T>::new_uninit()).cast::<T>()
+        bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>()
     }
 
     pub fn try_get(&mut self) -> Result<*mut T, AllocError> {
@@ -143,7 +143,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
 
         // TODO(port): Box::try_new_uninit is nightly-only; Phase B may need a
         // fallible alloc helper in bun_alloc to mirror `try allocator.create(T)`.
-        Ok(bun_core::heap::leak(Box::<T>::new_uninit()).cast::<T>())
+        Ok(bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>())
     }
 
     pub fn r#in(&self, value: *const T) -> bool {
@@ -163,7 +163,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
             }
         }
 
-        // SAFETY: `value` was produced by `heap::leak(Box::<T>::new_uninit())`
+        // SAFETY: `value` was produced by `heap::into_raw(Box::<T>::new_uninit())`
         // in `get_impl`/`get_and_see_if_new`/`try_get` above, since it is not in the hive.
         // The slot is treated as uninitialized (Zig's `allocator.destroy` does not drop).
         unsafe { bun_core::heap::destroy(value.cast::<MaybeUninit<T>>()) };

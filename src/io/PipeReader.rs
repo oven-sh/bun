@@ -1726,7 +1726,7 @@ impl WindowsBufferedReader {
                 #[cfg(windows)]
                 Source::Pipe(pipe) => {
                     // Hand the Box off to libuv; the close cb reclaims it.
-                    let raw = bun_core::heap::leak(pipe);
+                    let raw = bun_core::heap::into_raw(pipe);
                     // SAFETY: raw is a live uv::Pipe*; on_pipe_close frees it.
                     unsafe {
                         (*raw).data = raw.cast::<c_void>();

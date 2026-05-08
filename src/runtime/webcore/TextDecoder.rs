@@ -286,7 +286,7 @@ impl TextDecoder {
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
                 // PERF(port): heap::alloc transfers a tight allocation (no excess capacity).
                 Ok(ZigString::to_external_u16(
-                    bun_core::heap::leak(bytes).cast::<u16>(),
+                    bun_core::heap::into_raw(bytes).cast::<u16>(),
                     out.written as usize,
                     global_this,
                 ))
@@ -513,7 +513,7 @@ impl TextDecoder {
             }
         }
 
-        Ok(bun_core::heap::leak(TextDecoder::new(decoder)))
+        Ok(bun_core::heap::into_raw(TextDecoder::new(decoder)))
     }
 }
 

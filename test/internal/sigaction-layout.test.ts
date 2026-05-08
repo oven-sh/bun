@@ -10,12 +10,16 @@
 // reads the disposition back via sigaction(sig, NULL, &old), and checks the
 // handler pointer and flags round-trip. That property holds iff the Zig
 // struct agrees with libc's on this platform.
-import { sigactionLayout } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { isPosix } from "harness";
 
 test.skipIf(!isPosix)("bun.sys.Sigaction matches the host libc's struct sigaction", () => {
+  // Resolve lazily so a build without the binding fails this test rather
+  // than erroring at module load (which the junit reporter counts as 0
+  // failures).
+  const { sigactionLayout } = require("bun:internal-for-testing") as typeof import("bun:internal-for-testing");
   expect(sigactionLayout).toBeFunction();
+
   const result = sigactionLayout();
   expect(result).toBeDefined();
   // Handler pointer and SA_RESTART must survive the trip through libc.

@@ -2948,7 +2948,9 @@ impl Timespec {
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
-            if let Some(hook) = NOW_HOOK.load() { return hook(); }
+            if let Some(hook) = NOW_HOOK.load() {
+                if let Some(ts) = hook() { return ts; }
+            }
         }
         Self::now_real()
     }
@@ -2985,17 +2987,18 @@ pub mod timespec_mode {
     pub type Mode = super::TimespecMockMode;
 }
 
-/// Mocked-time injection hook (set by bun_jsc when `useFakeTimers` is active).
+/// Mocked-time injection hook (set by bun_runtime when `useFakeTimers` is active).
+/// Returns `None` when no fake time is set so callers fall through to the real clock.
 struct NowHookSlot(core::sync::atomic::AtomicPtr<()>);
 impl NowHookSlot {
     const fn new() -> Self { Self(core::sync::atomic::AtomicPtr::new(core::ptr::null_mut())) }
-    fn load(&self) -> Option<fn() -> Timespec> {
+    fn load(&self) -> Option<fn() -> Option<Timespec>> {
         let p = self.0.load(AOrdering::Relaxed);
-        if p.is_null() { None } else { Some(unsafe { core::mem::transmute::<*mut (), fn() -> Timespec>(p) }) }
+        if p.is_null() { None } else { Some(unsafe { core::mem::transmute::<*mut (), fn() -> Option<Timespec>>(p) }) }
     }
 }
 static NOW_HOOK: NowHookSlot = NowHookSlot::new();
-pub fn set_timespec_now_hook(hook: Option<fn() -> Timespec>) {
+pub fn set_timespec_now_hook(hook: Option<fn() -> Option<Timespec>>) {
     NOW_HOOK.0.store(
         hook.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
         AOrdering::Relaxed,

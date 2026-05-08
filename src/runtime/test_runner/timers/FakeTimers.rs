@@ -49,6 +49,14 @@ pub static CURRENT_TIME: CurrentTime = CurrentTime {
     date_now_offset: AtomicU64::new(0f64.to_bits()),
 };
 
+/// Installed into [`bun_core::set_timespec_now_hook`] so that
+/// `Timespec::now(.allow_mocked_time)` sees the fake clock while
+/// `useFakeTimers()` is active. Returns `None` to fall through to the real
+/// monotonic clock when fake timers are not enabled.
+pub fn mocked_timespec_now() -> Option<Timespec> {
+    CURRENT_TIME.get_timespec_now()
+}
+
 impl CurrentTime {
     pub fn get_timespec_now(&self) -> Option<Timespec> {
         let value = *self.offset_raw.read().unwrap();

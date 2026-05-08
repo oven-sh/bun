@@ -238,6 +238,13 @@ unsafe fn init_runtime_state(
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
+    // Wire `Timespec::now(.allow_mocked_time)` to the fake-timer clock so
+    // timers scheduled under `jest.useFakeTimers()` use the mocked epoch
+    // (spec bun.zig:3223 — `getRoughTickCount` consults `FakeTimers.current_time`).
+    bun_core::set_timespec_now_hook(Some(
+        crate::test_runner::timers::fake_timers::mocked_timespec_now,
+    ));
+
     // ── vm.transpiler — spec VirtualMachine.zig:1241-1246:
     //   `Transpiler.init(allocator, log, configureTransformOptionsForBunVM(opts.args), opts.env_loader)`
     // The low-tier `VirtualMachine::init` left this field as zeroed bytes

@@ -27,16 +27,20 @@ pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: core::ffi::c_int = 32;
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
 
 /// `struct us_bun_verify_error_t` — TLS handshake verification result.
+///
+/// Field is named `error_no` (mirrors the Zig `error_no`) so the Node-compat
+/// `verifyError`/`authorizationError` paths read naturally; the C struct's
+/// first member is `int error` and the layout is identical.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct us_bun_verify_error_t {
-    pub error: core::ffi::c_int,
+    pub error_no: core::ffi::c_int,
     pub code: *const core::ffi::c_char,
     pub reason: *const core::ffi::c_char,
 }
 impl Default for us_bun_verify_error_t {
     fn default() -> Self {
-        Self { error: 0, code: core::ptr::null(), reason: core::ptr::null() }
+        Self { error_no: 0, code: core::ptr::null(), reason: core::ptr::null() }
     }
 }
 
@@ -80,6 +84,15 @@ impl Opcode {
     pub const Close: Opcode = Opcode(8);
     pub const Ping: Opcode = Opcode(9);
     pub const Pong: Opcode = Opcode(10);
+    // Upper-case aliases for callers that ported the Zig screaming-snake names
+    // (`uWS::OpCode::TEXT` etc.). Same bit values; both spellings are accepted
+    // so the merge of `bun_uws::Opcode` into this type doesn't ripple.
+    pub const CONTINUATION: Opcode = Opcode(0);
+    pub const TEXT: Opcode = Opcode(1);
+    pub const BINARY: Opcode = Opcode(2);
+    pub const CLOSE: Opcode = Opcode(8);
+    pub const PING: Opcode = Opcode(9);
+    pub const PONG: Opcode = Opcode(10);
 }
 
 /// `uWS::WebSocket::SendStatus`.

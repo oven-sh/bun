@@ -29,8 +29,26 @@ pub mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
-#[path = "ssl_wrapper.rs"]
-pub mod ssl_wrapper;
+/// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
+/// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
+/// need to name `crate::server::server_config::SSLConfig`). The body is the
+/// same `as_usockets() → init_from_options()` round-trip the old local copy
+/// did; the duplicate module file is gone.
+pub mod ssl_wrapper {
+    pub use bun_uws::ssl_wrapper::*;
+
+    /// Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
+    /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
+    /// tier can keep passing `&SSLConfig` directly.
+    pub fn init<T: Copy>(
+        ssl_options: &crate::server::server_config::SSLConfig,
+        is_client: bool,
+        handlers: Handlers<T>,
+    ) -> Result<SSLWrapper<T>, bun_core::Error> {
+        SSLWrapper::<T>::init_from_options(ssl_options.as_usockets(), is_client, handlers)
+            .map_err(bun_core::Error::from)
+    }
+}
 
 #[path = "tls_socket_functions.rs"]
 mod tls_socket_functions;
@@ -147,9 +165,6 @@ impl<const SSL: bool> uws_handlers::SocketEvents<SSL> for NewSocket<SSL> {
         ok: i32,
         err: bun_uws_sys::us_bun_verify_error_t,
     ) -> bun_jsc::JsResult<()> {
-        // Bridge the C-ABI `bun_uws_sys` struct to the `bun_uws` mirror the
-        // inherent method takes (identical layout, first field renamed).
-        let err = bun_uws::us_bun_verify_error_t { error_no: err.error, code: err.code, reason: err.reason };
         NewSocket::on_handshake(self, s, ok, err)
     }
 }

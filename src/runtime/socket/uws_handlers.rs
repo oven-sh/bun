@@ -89,15 +89,6 @@ fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
     NewSocketHandler::<SSL>::from(s)
 }
 
-/// Bridge the C-ABI verify-error struct from `bun_uws_sys` (delivered by the
-/// vtable trampoline) to the `bun_uws` mirror that consumer crates still take.
-/// Both are `#[repr(C)]` with identical layout; this just renames the first
-/// field. Drop once `bun_uws` re-exports the sys type directly.
-#[inline(always)]
-fn to_uws_verify_err(e: us_bun_verify_error_t) -> bun_uws::us_bun_verify_error_t {
-    bun_uws::us_bun_verify_error_t { error_no: e.error, code: e.code, reason: e.reason }
-}
-
 impl<T, const SSL: bool> VHandler for PtrHandler<T, SSL>
 where
     T: SocketEvents<SSL> + 'static,
@@ -292,7 +283,7 @@ where
     fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         let Some(this) = *ext else { return };
         // SAFETY: see `on_open`.
-        unsafe { T::on_handshake(this.as_ptr(), wrap::<SSL>(s), ok as i32, to_uws_verify_err(err)) };
+        unsafe { T::on_handshake(this.as_ptr(), wrap::<SSL>(s), ok as i32, err) };
     }
 }
 
@@ -417,7 +408,7 @@ impl<const SSL: bool> NsSocketEvents<js_valkey::JSValkeyClient, SSL>
         // `null` arm meant "leave the slot unbound" so the dispatcher's no-op
         // default fires for plain TCP.
         match Self::ON_HANDSHAKE {
-            Some(f) => Ok(f(this, s, ok, to_uws_verify_err(err))?),
+            Some(f) => Ok(f(this, s, ok, err)?),
             None => Ok(()),
         }
     }
@@ -496,10 +487,7 @@ where
     }
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
-            // Inherent `NewSocket::on_handshake` (socket_body.rs) takes the
-            // `bun_uws` mirror of the verify-error struct; convert from the
-            // `bun_uws_sys` C-ABI type the trampoline delivered.
-            swallow(unsafe { ns.as_mut() }.on_handshake(wrap::<SSL>(s), ok as i32, to_uws_verify_err(err)));
+            swallow(unsafe { ns.as_mut() }.on_handshake(wrap::<SSL>(s), ok as i32, err));
         }
     }
 }
@@ -680,7 +668,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     }
     fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         let Some(owner) = *ext else { return };
-        swallow(HttpH::<SSL>::on_handshake(owner.as_ptr(), wrap::<SSL>(s), ok as i32, to_uws_verify_err(err)));
+        swallow(HttpH::<SSL>::on_handshake(owner.as_ptr(), wrap::<SSL>(s), ok as i32, err));
     }
 }
 

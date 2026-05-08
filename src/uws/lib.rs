@@ -9,16 +9,18 @@ use bun_string::ZStr;
 // ──────────────────────────────────────────────────────────────────────────
 // Thin re-exports from uws_sys / runtime
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_uws_sys` is now un-gated; pull the opaque FFI handles and module
-// namespaces straight through. Items that this crate *defines* itself
-// (SocketKind, SocketGroup, SocketContext, NewSocketHandler/SocketTCP/SocketTLS,
-// InternalSocket, AnySocket, AnyRequest, SocketAddress,
-// WebSocketUpgradeContext) are NOT re-exported here — the local definitions
-// below remain the canonical `bun_uws::*` types until the sys-crate versions
-// are reconciled in a follow-up pass.
+// FFI types (`us_bun_verify_error_t`, `Opcode`, `SendStatus`, `SocketKind`,
+// `SocketGroup`, `ConnectResult`, listen-flag constants) are re-exported from
+// `bun_uws_sys` so this crate and `_sys` name the SAME `#[repr(C)]` types —
+// callers no longer shim-convert between two layout-identical structs.
 //
-// `bun_runtime::*` items (dispatch, WindowsNamedPipe, UpgradedDuplex) are upward
-// refs into a higher tier and intentionally remain local stub modules.
+// Safe raw-pointer wrappers (`NewSocketHandler`/`SocketTCP`/`SocketTLS`,
+// `InternalSocket`, `AnySocket`, `ConnectError`, `CloseKind`, owned
+// `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
+// bearing variants of the same names that are not yet reconciled.
+//
+// `bun_runtime::*` items (dispatch, WindowsNamedPipe, UpgradedDuplex) are
+// upward refs into a higher tier and intentionally remain local stub modules.
 
 pub use bun_uws_sys::{
     us_socket_t, us_socket_stream_buffer_t, ConnectingSocket, ListenSocket, Request, Timer,
@@ -104,76 +106,25 @@ pub const DEDICATED_COMPRESSOR_128KB: i32 = 231;
 pub const DEDICATED_COMPRESSOR_256KB: i32 = 248;
 pub const DEDICATED_COMPRESSOR: i32 = 248;
 
-pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
-pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
-pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: i32 = 2;
-pub const LIBUS_LISTEN_REUSE_PORT: i32 = 4;
-pub const LIBUS_SOCKET_IPV6_ONLY: i32 = 8;
-pub const LIBUS_LISTEN_REUSE_ADDR: i32 = 16;
-pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: i32 = 32;
+pub use bun_uws_sys::{
+    LIBUS_LISTEN_DEFAULT, LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE, LIBUS_LISTEN_EXCLUSIVE_PORT,
+    LIBUS_LISTEN_REUSE_ADDR, LIBUS_LISTEN_REUSE_PORT, LIBUS_SOCKET_ALLOW_HALF_OPEN,
+    LIBUS_SOCKET_IPV6_ONLY,
+};
 
-// Re-export the `_sys` definition so higher tiers see one type. `to_js`
-// (Zig: `@import("../runtime/socket/uws_jsc.zig").createBunSocketErrorToJS`)
-// lives as an extension trait in the *_jsc crate per PORTING.md.
-pub use bun_uws_sys::create_bun_socket_error_t;
+// Re-export the `_sys` definitions so higher tiers see one type. `to_js`
+// (Zig: `@import("../runtime/socket/uws_jsc.zig").createBunSocketErrorToJS` and
+// `verifyErrorToJS`) live as extension traits in the *_jsc crate per PORTING.md.
+pub use bun_uws_sys::{create_bun_socket_error_t, us_bun_verify_error_t, Opcode, SendStatus};
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct us_bun_verify_error_t {
-    pub error_no: i32,
-    pub code: *const c_char,
-    pub reason: *const c_char,
-}
-
-impl Default for us_bun_verify_error_t {
-    fn default() -> Self {
-        Self {
-            error_no: 0,
-            code: core::ptr::null(),
-            reason: core::ptr::null(),
-        }
-    }
-}
-
-impl From<bun_uws_sys::us_bun_verify_error_t> for us_bun_verify_error_t {
-    #[inline]
-    fn from(e: bun_uws_sys::us_bun_verify_error_t) -> Self {
-        Self { error_no: e.error, code: e.code, reason: e.reason }
-    }
-}
-
-// Zig: `pub const toJS = @import("../runtime/socket/uws_jsc.zig").verifyErrorToJS;`
-// Deleted per PORTING.md — `to_js` lives as an extension trait in the *_jsc crate.
-
+/// Owned socket-address shape (boxed IP) used where the borrowed
+/// `bun_uws_sys::SocketAddress<'a>` would tie a lifetime to a transient
+/// `uws_res` buffer. Distinct from the sys type by design — that one is the
+/// zero-copy borrow returned from `Response::get_remote_socket_info`.
 pub struct SocketAddress {
-    // TODO(port): lifetime — Zig `[]const u8` field with no deinit; likely borrows a socket buffer.
     pub ip: Box<[u8]>,
     pub port: i32,
     pub is_ipv6: bool,
-}
-
-/// WebSocket frame opcode. Zig uses an open `enum(i32)` (`_` catch-all), so any
-/// i32 is a valid bit pattern — modeled here as a transparent newtype.
-// TODO(port): open enum — verify callers don't need exhaustive `match`.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct Opcode(pub i32);
-
-impl Opcode {
-    pub const CONTINUATION: Opcode = Opcode(0);
-    pub const TEXT: Opcode = Opcode(1);
-    pub const BINARY: Opcode = Opcode(2);
-    pub const CLOSE: Opcode = Opcode(8);
-    pub const PING: Opcode = Opcode(9);
-    pub const PONG: Opcode = Opcode(10);
-}
-
-#[repr(C)] // c_uint
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum SendStatus {
-    Backpressure = 0,
-    Success = 1,
-    Dropped = 2,
 }
 
 // TODO(port): move to uws_sys
@@ -198,10 +149,7 @@ pub extern "C" fn BUN__warn__extra_ca_load_failed(filename: *const c_char, error
     ));
 }
 
-#[cfg(windows)]
-pub type LIBUS_SOCKET_DESCRIPTOR = *mut c_void;
-#[cfg(not(windows))]
-pub type LIBUS_SOCKET_DESCRIPTOR = i32;
+pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;
 
 mod c {
     // TODO(port): move to uws_sys
@@ -432,17 +380,27 @@ pub mod ssl_wrapper {
         pub on_close: fn(T),
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum InitError {
         OutOfMemory,
         InvalidOptions,
     }
+    impl From<InitError> for bun_core::Error {
+        fn from(e: InitError) -> Self {
+            bun_core::Error::from_name(<&'static str>::from(e))
+        }
+    }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum WriteDataError {
         ConnectionClosed,
         WantRead,
         WantWrite,
+    }
+    impl From<WriteDataError> for bun_core::Error {
+        fn from(e: WriteDataError) -> Self {
+            bun_core::Error::from_name(<&'static str>::from(e))
+        }
     }
 
     impl<T: Copy> SSLWrapper<T> {
@@ -788,6 +746,9 @@ pub mod ssl_wrapper {
             Ok(usize::try_from(written).expect("int cast"))
         }
 
+        /// Explicit teardown. Idempotent (`.take()`); also runs from `Drop` so
+        /// `Option<SSLWrapper>` owners (UpgradedDuplex / WindowsNamedPipe) free
+        /// the BoringSSL handles by setting the field to `None`.
         pub fn deinit(&mut self) {
             self.flags.set_closed_notified(true);
             if let Some(ssl) = self.ssl.take() {
@@ -1074,6 +1035,14 @@ pub mod ssl_wrapper {
         }
     }
 
+    impl<T: Copy> Drop for SSLWrapper<T> {
+        fn drop(&mut self) {
+            // `deinit()` is idempotent (Option::take on both NonNull fields), so
+            // an explicit `deinit()` followed by drop is a no-op the second time.
+            self.deinit();
+        }
+    }
+
     /// `us_verify_callback` equivalent — let the handshake complete regardless of
     /// verify result so JS reads `authorizationError` and `rejectUnauthorized`
     /// decides, instead of BoringSSL aborting mid-flight.
@@ -1167,268 +1136,14 @@ impl InternalLoopDataExt for InternalLoopData {
 // ═══════════════════════════════════════════════════════════════════════════
 // SocketGroup
 // ═══════════════════════════════════════════════════════════════════════════
-// `#[repr(C)]` mirror of `struct us_socket_group_t`. Embedded by value in its
-// owner; the loop links it lazily on first socket and unlinks on last.
+// Re-exported from `bun_uws_sys` so this crate and `_sys` name the SAME
+// `#[repr(C)]` mirror of `struct us_socket_group_t`. The previous duplicate
+// definition forced callers (e.g. `socket_body.rs` start_tls) to
+// `.cast::<bun_uws_sys::SocketGroup>()` between two layout-identical types.
 
-#[repr(C)]
-pub struct SocketGroupVTable {
-    pub on_open: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut u8, c_int) -> *mut us_socket_t>,
-    pub on_data: Option<unsafe extern "C" fn(*mut us_socket_t, *mut u8, c_int) -> *mut us_socket_t>,
-    pub on_fd: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
-    pub on_writable: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
-    pub on_close: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, *mut c_void) -> *mut us_socket_t>,
-    pub on_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
-    pub on_long_timeout: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
-    pub on_end: Option<unsafe extern "C" fn(*mut us_socket_t) -> *mut us_socket_t>,
-    pub on_connect_error: Option<unsafe extern "C" fn(*mut us_socket_t, c_int) -> *mut us_socket_t>,
-    pub on_connecting_error: Option<unsafe extern "C" fn(*mut ConnectingSocket, c_int) -> *mut ConnectingSocket>,
-    pub on_handshake: Option<unsafe extern "C" fn(*mut us_socket_t, c_int, us_bun_verify_error_t, *mut c_void)>,
-}
-
-#[repr(C)]
-pub struct SocketGroup {
-    pub loop_: *mut Loop,
-    pub vtable: Option<&'static SocketGroupVTable>,
-    /// Embedding owner — heterogenous (`Listener` / uWS App / RareData / null).
-    /// Typed access via `owner<T>()` in bun_uws_sys when un-gated.
-    pub ext: *mut c_void,
-    pub head_sockets: *mut us_socket_t,
-    pub head_connecting_sockets: *mut ConnectingSocket,
-    pub head_listen_sockets: *mut ListenSocket,
-    pub iterator: *mut us_socket_t,
-    pub prev: *mut SocketGroup,
-    pub next: *mut SocketGroup,
-    pub global_tick: u32,
-    pub low_prio_count: u16,
-    pub timestamp: u8,
-    pub long_timestamp: u8,
-    pub linked: u8,
-}
-
-impl Default for SocketGroup {
-    fn default() -> Self {
-        // SAFETY: all-zero is a valid SocketGroup — every field is a raw
-        // pointer (null), `Option<&'static _>` (None via NPO), or an integer (0).
-        unsafe { core::mem::zeroed() }
-    }
-}
-
-/// Discriminated return of `SocketGroup::connect` — context.c writes
-/// `*is_connecting` to tell which pointer shape came back.
-pub enum ConnectResult {
-    Socket(*mut us_socket_t),
-    Connecting(*mut ConnectingSocket),
-    Failed,
-}
-
-mod group_c {
-    use super::{us_socket_t, ConnectingSocket, ListenSocket, Loop, SocketGroup, SocketGroupVTable, SslCtx, LIBUS_SOCKET_DESCRIPTOR};
-    use core::ffi::{c_char, c_int, c_void};
-    unsafe extern "C" {
-        pub(crate) fn us_socket_group_init(group: *mut SocketGroup, loop_: *mut Loop, vt: *const SocketGroupVTable, ext: *mut c_void);
-        pub(crate) fn us_socket_group_deinit(group: *mut SocketGroup);
-        pub(crate) fn us_socket_group_close_all(group: *mut SocketGroup);
-        pub(crate) fn us_socket_group_listen(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, host: *const c_char, port: c_int, options: c_int, socket_ext_size: c_int, err: *mut c_int) -> *mut ListenSocket;
-        pub(crate) fn us_socket_group_listen_unix(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, path: *const u8, pathlen: usize, options: c_int, socket_ext_size: c_int, err: *mut c_int) -> *mut ListenSocket;
-        /// Returns `us_socket_t*` (fast path) OR `us_connecting_socket_t*` (slow
-        /// path), discriminated by `*is_connecting`. Call `SocketGroup::connect`.
-        pub(crate) fn us_socket_group_connect(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, host: *const c_char, port: c_int, options: c_int, socket_ext_size: c_int, is_connecting: *mut c_int) -> *mut c_void;
-        pub(crate) fn us_socket_group_connect_unix(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, path: *const u8, pathlen: usize, options: c_int, socket_ext_size: c_int) -> *mut us_socket_t;
-        pub(crate) fn us_socket_from_fd(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, socket_ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR, ipc: c_int) -> *mut us_socket_t;
-    }
-}
-
-impl SocketGroup {
-    /// Initialise an embedded group. `owner_ptr` is what `owner::<T>()` recovers
-    /// inside handlers — pass the embedding struct so dispatch can find it from
-    /// a raw `*us_socket_t`.
-    pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static SocketGroupVTable>, owner_ptr: *mut c_void) {
-        // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
-        // `#[repr(C)]` slot embedded in the caller.
-        unsafe {
-            group_c::us_socket_group_init(
-                self,
-                loop_,
-                match vt {
-                    Some(v) => std::ptr::from_ref::<SocketGroupVTable>(v),
-                    None => core::ptr::null(),
-                },
-                owner_ptr,
-            );
-        }
-    }
-
-    // PORT NOTE: not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded by-value
-    // in its owner, and its lifecycle is FFI-managed (C unlinks it from the
-    // loop). Expose explicit teardown that the owner calls.
-    ///
-    /// # Safety
-    /// `this` must point to a group previously passed to `init`; not called
-    /// concurrently with the loop walking this group.
-    pub unsafe fn destroy(this: *mut Self) {
-        unsafe { group_c::us_socket_group_deinit(this) }
-    }
-
-    pub fn close_all(&mut self) {
-        // SAFETY: `self` was previously passed to `init`.
-        unsafe { group_c::us_socket_group_close_all(self) }
-    }
-
-    /// Non-null after `init`.
-    #[inline]
-    pub fn get_loop(&self) -> *mut Loop {
-        debug_assert!(!self.loop_.is_null());
-        self.loop_
-    }
-
-    /// Recover the embedding owner. Only valid for groups whose `init` passed a
-    /// non-null owner.
-    ///
-    /// # Safety
-    /// `T` must be the exact type whose pointer was passed to `init`, and that
-    /// object must still be alive (it embeds this group by value, so it is).
-    #[inline]
-    pub unsafe fn owner<T>(&self) -> *mut T {
-        debug_assert!(!self.ext.is_null());
-        self.ext.cast::<T>()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.head_sockets.is_null()
-            && self.head_connecting_sockets.is_null()
-            && self.head_listen_sockets.is_null()
-            && self.low_prio_count == 0
-    }
-
-    pub fn listen(
-        &mut self,
-        kind: SocketKind,
-        ssl_ctx: Option<*mut SslCtx>,
-        host: Option<&core::ffi::CStr>,
-        port: c_int,
-        options: c_int,
-        socket_ext_size: c_int,
-        err: &mut c_int,
-    ) -> *mut ListenSocket {
-        // SAFETY: forwarding to C; all pointers valid or null as documented.
-        unsafe {
-            group_c::us_socket_group_listen(
-                self,
-                kind as u8,
-                ssl_ctx.unwrap_or(core::ptr::null_mut()),
-                host.map_or(core::ptr::null(), |h| h.as_ptr()),
-                port,
-                options,
-                socket_ext_size,
-                err,
-            )
-        }
-    }
-
-    pub fn listen_unix(
-        &mut self,
-        kind: SocketKind,
-        ssl_ctx: Option<*mut SslCtx>,
-        path: &[u8],
-        options: c_int,
-        socket_ext_size: c_int,
-        err: &mut c_int,
-    ) -> *mut ListenSocket {
-        // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
-        unsafe {
-            group_c::us_socket_group_listen_unix(
-                self,
-                kind as u8,
-                ssl_ctx.unwrap_or(core::ptr::null_mut()),
-                path.as_ptr(),
-                path.len(),
-                options,
-                socket_ext_size,
-                err,
-            )
-        }
-    }
-
-    pub fn connect(
-        &mut self,
-        kind: SocketKind,
-        ssl_ctx: Option<*mut SslCtx>,
-        host: &core::ffi::CStr,
-        port: c_int,
-        options: c_int,
-        socket_ext_size: c_int,
-    ) -> ConnectResult {
-        // context.c writes 1 here on the synchronous path (DNS already resolved
-        // → real `us_socket_t*` returned), 0 when it hands back a
-        // `us_connecting_socket_t*` placeholder.
-        let mut has_dns_resolved: c_int = 0;
-        // SAFETY: forwarding to C; `host` is a valid NUL-terminated C string.
-        let ptr = unsafe {
-            group_c::us_socket_group_connect(
-                self,
-                kind as u8,
-                ssl_ctx.unwrap_or(core::ptr::null_mut()),
-                host.as_ptr(),
-                port,
-                options,
-                socket_ext_size,
-                &raw mut has_dns_resolved,
-            )
-        };
-        if ptr.is_null() {
-            return ConnectResult::Failed;
-        }
-        if has_dns_resolved != 0 {
-            ConnectResult::Socket(ptr.cast::<us_socket_t>())
-        } else {
-            ConnectResult::Connecting(ptr.cast::<ConnectingSocket>())
-        }
-    }
-
-    pub fn connect_unix(
-        &mut self,
-        kind: SocketKind,
-        ssl_ctx: Option<*mut SslCtx>,
-        path: &[u8],
-        options: c_int,
-        socket_ext_size: c_int,
-    ) -> *mut us_socket_t {
-        // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
-        unsafe {
-            group_c::us_socket_group_connect_unix(
-                self,
-                kind as u8,
-                ssl_ctx.unwrap_or(core::ptr::null_mut()),
-                path.as_ptr(),
-                path.len(),
-                options,
-                socket_ext_size,
-            )
-        }
-    }
-
-    pub fn from_fd(
-        &mut self,
-        kind: SocketKind,
-        ssl_ctx: Option<*mut SslCtx>,
-        socket_ext_size: c_int,
-        fd: LIBUS_SOCKET_DESCRIPTOR,
-        ipc: bool,
-    ) -> *mut us_socket_t {
-        // SAFETY: forwarding to C.
-        unsafe {
-            group_c::us_socket_from_fd(
-                self,
-                kind as u8,
-                ssl_ctx.unwrap_or(core::ptr::null_mut()),
-                socket_ext_size,
-                fd,
-                ipc as c_int,
-            )
-        }
-    }
-}
+pub use bun_uws_sys::{ConnectResult, SocketGroup};
+/// Alias for the per-group C vtable struct under its pre-merge name.
+pub use bun_uws_sys::socket_group::VTable as SocketGroupVTable;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SocketContext::BunSocketContextOptions
@@ -1453,68 +1168,9 @@ pub type us_bun_socket_context_options_t = SocketContext::BunSocketContextOption
 // SocketKind (a.k.a. DispatchKind) / CloseKind
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Closed-world enum of every `us_socket_t` consumer in Bun. Stamped on the
-/// socket at creation (`s->kind`) and switched on in `dispatch.rs` so the
-/// event loop calls straight into the right handler with the ext already
-/// typed — no per-context vtable, no runtime SSL flag.
-///
-/// Source of truth: `src/uws_sys/SocketKind.zig`.
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum SocketKind {
-    /// Reserved. `loop.c` callocs sockets, so 0 must be a value that crashes
-    /// loudly if dispatch ever sees it instead of silently routing somewhere.
-    Invalid = 0,
-    /// Dispatch reads `group->vtable->on_*`. For sockets whose handler set is
-    /// only known at runtime (uWS C++ via per-App vtable, tests).
-    Dynamic,
-    // ── Bun.connect / Bun.listen ──────────────────────────────────────────
-    BunSocketTcp,
-    BunSocketTls,
-    BunListenerTcp,
-    BunListenerTls,
-    // ── HTTP client thread ────────────────────────────────────────────────
-    HttpClient,
-    HttpClientTls,
-    // ── new WebSocket(...) client ─────────────────────────────────────────
-    WsClientUpgrade,
-    WsClientUpgradeTls,
-    WsClient,
-    WsClientTls,
-    // ── Database drivers ──────────────────────────────────────────────────
-    Postgres,
-    PostgresTls,
-    Mysql,
-    MysqlTls,
-    Valkey,
-    ValkeyTls,
-    // ── Bun.spawn IPC over socketpair ─────────────────────────────────────
-    SpawnIpc,
-    // ── Bun.serve / uWS — handlers live in C++ ───────────────────────────
-    UwsHttp,
-    UwsHttpTls,
-    UwsWs,
-    UwsWsTls,
-}
-
-impl SocketKind {
-    #[inline]
-    pub const fn is_tls(self) -> bool {
-        matches!(
-            self,
-            SocketKind::BunSocketTls
-                | SocketKind::BunListenerTls
-                | SocketKind::HttpClientTls
-                | SocketKind::WsClientUpgradeTls
-                | SocketKind::WsClientTls
-                | SocketKind::PostgresTls
-                | SocketKind::MysqlTls
-                | SocketKind::ValkeyTls
-                | SocketKind::UwsHttpTls
-                | SocketKind::UwsWsTls
-        )
-    }
-}
+/// Re-exported from `bun_uws_sys` so dispatch tables in both crates agree on
+/// one `#[repr(u8)]` enum. Source of truth: `src/uws_sys/SocketKind.zig`.
+pub use bun_uws_sys::SocketKind;
 
 /// Alias used by some Phase-A ports (`websocket_client`, `sql_jsc`) that named
 /// the dispatch tag `DispatchKind`. Same enum.
@@ -1912,9 +1568,9 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         match self.socket {
             // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_verify_error(s) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.ssl_error().into(),
+            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.ssl_error(),
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &*s }.ssl_error().into(),
+            InternalSocket::Pipe(s) => unsafe { &*s }.ssl_error(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => us_bun_verify_error_t::default(),
             InternalSocket::Connecting(_) | InternalSocket::Detached => us_bun_verify_error_t::default(),
@@ -1926,9 +1582,9 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
             InternalSocket::Connected(s) => unsafe { sock_c::us_socket_get_error(s) },
             InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_get_error(s) },
-            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.ssl_error().error,
+            InternalSocket::UpgradedDuplex(s) => unsafe { &*s }.ssl_error().error_no,
             #[cfg(windows)]
-            InternalSocket::Pipe(s) => unsafe { &*s }.ssl_error().error,
+            InternalSocket::Pipe(s) => unsafe { &*s }.ssl_error().error_no,
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
             InternalSocket::Detached => 0,

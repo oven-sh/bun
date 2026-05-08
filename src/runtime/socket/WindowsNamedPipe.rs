@@ -703,7 +703,7 @@ impl WindowsNamedPipe {
         }
         if let Some(tls) = ssl_options {
             self.flags.set_is_ssl(true);
-            self.wrapper = match WrapperType::init(&tls, true, handlers) {
+            self.wrapper = match ssl_wrapper::init(&tls, true, handlers) {
                 Ok(w) => Some(w),
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
@@ -726,7 +726,7 @@ impl WindowsNamedPipe {
         // TODO(port): narrow error set
         self.flags.set_is_ssl(true);
         if self.start(is_client) {
-            self.wrapper = Some(WrapperType::init(
+            self.wrapper = Some(ssl_wrapper::init(
                 &ssl_options,
                 is_client,
                 ssl_wrapper::Handlers {

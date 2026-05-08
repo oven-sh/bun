@@ -45,6 +45,13 @@ macro_rules! debug {
 ///    a <link rel="modulepreload" href="..." crossorigin> tag that
 ///    points to the module or chunk's unique key so that we tell the
 ///    browser to preload the user's code.
+// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
+// HTML `PendingPartRange` (exactly one per HTML chunk). Writes:
+// `chunk.compile_results_for_chunk[0]` (per-chunk disjoint). Reads
+// `c.parse_graph.input_files` / `c.graph` / `ctx.chunks` shared. Never forms
+// `&mut LinkerContext` — `c_ptr` stays raw; the HTML rewriter takes
+// `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
+// `PendingPartRange: Send` justification.
 pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `task` is the `task` field of a `PendingPartRange` scheduled by
     // `generate_chunks_in_parallel`; recover the parent via offset_of. We keep

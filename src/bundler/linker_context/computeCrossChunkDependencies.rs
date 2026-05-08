@@ -140,6 +140,18 @@ pub struct CrossChunkDependencies<'a> {
 unsafe impl Sync for CrossChunkDependencies<'_> {}
 
 impl<'a> CrossChunkDependencies<'a> {
+    // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
+    // `chunk_index`. Writes: `self.chunk_meta[chunk_index]` (per-chunk
+    // disjoint), `self.import_records[source_index][rec].{path,source_index}`
+    // (per-chunk disjoint via `chunk.files_with_parts_in_chunk`),
+    // `symbols.assign_chunk_index(ref)` (per-symbol-ref disjoint by chunk
+    // membership; raw `*mut Symbol` write through `Map::assign_chunk_index`).
+    // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
+    // LinkerContext` (`ctx` is `*const`, deref'd to `&`); `&mut self` is
+    // recovered from a raw pointer per task, so no two tasks hold a live
+    // `&mut CrossChunkDependencies` over the same field at once — but the
+    // `&mut [ChunkMeta]` / `&mut [Vec<ImportRecord>]` whole-slice borrows are
+    // partitioned by index only (Zig invariant), not by Rust type.
     pub fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
         let deps = self;
         // SAFETY: `ctx` / `symbols` are backrefs into `LinkerContext` valid for the link

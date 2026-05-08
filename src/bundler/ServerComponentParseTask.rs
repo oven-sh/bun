@@ -65,6 +65,13 @@ pub struct ClientEntryWrapper {
 /// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the
 /// intrusive `task` field and dispatches the parse, then posts the result back
 /// to the owning event loop.
+// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
+// `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
+// own fields + `Log` (local) + result is posted via
+// `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
+// `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
+// backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
+// slices.
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
     // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.

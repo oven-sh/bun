@@ -441,22 +441,30 @@ impl ThreadPool {
     /// **Blocks the calling thread** until all tasks are completed.
     ///
     /// This function does not shut down or deinit the thread pool.
+    ///
+    /// `V: Send` is required because each `values[i]` is handed (by copy or by
+    /// `*mut V`) to an arbitrary worker thread; the raw-pointer round-trip
+    /// through the intrusive `Task` callback would otherwise smuggle `!Send`
+    /// data across threads with no compiler check (Zig's `anytype` had none).
     pub fn each<Ctx, V: Copy, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
         // TODO(port): narrow bounds — Zig used `anytype` + comptime fn
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync,
+        V: core::marker::Sync + core::marker::Send,
     {
         self.each_impl(ctx, ByValue(run_fn), values);
     }
 
     /// Like `each`, but calls `run_fn` with a pointer to the value.
+    ///
+    /// `V: Send` — see [`each`](Self::each); the `*mut V` is dereferenced on a
+    /// worker thread, which is a cross-thread move of the pointee.
     pub fn each_ptr<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
         F: Fn(&Ctx, *mut V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync,
+        V: core::marker::Sync + core::marker::Send,
     {
         self.each_impl(ctx, ByPtr(run_fn), values);
     }
@@ -465,7 +473,7 @@ impl ThreadPool {
     where
         F: EachCall<Ctx, V>,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync,
+        V: core::marker::Sync + core::marker::Send,
     {
         if values.is_empty() {
             return;

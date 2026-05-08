@@ -28,6 +28,12 @@ use crate::linker_context_mod::{LinkerContext, PendingPartRange};
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index};
 
+// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
+// `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
+// by per-task `i`). Reads `c.graph.ast.css` / `c.options` shared. Never forms
+// `&mut LinkerContext` — `c_ptr` stays raw; the CSS printer takes
+// `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
+// `PendingPartRange: Send` justification.
 pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task is the `task` field embedded in a PendingPartRange (intrusive task node).
     let part_range: &PendingPartRange = unsafe {

@@ -11,31 +11,24 @@ use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
 /// Codegen `${ServerType}__create(global, ptr)` shim — one extern per
-/// `(SSL, DEBUG)` monomorphization. Hand-dispatched until `.classes.ts`
-/// Rust output lands. Argument order matches the C++ definition emitted by
-/// `generate-classes.ts` (`Zig::GlobalObject*, void*`) and the canonical Zig
-/// extern in `ZigGeneratedClasses.zig`.
+/// `(SSL, DEBUG)` monomorphization. Routes through the
+/// `crate::generated_classes::js_*Server::to_js` wrappers (which own the
+/// canonical extern decl) instead of redeclaring the symbols here.
 pub(crate) fn server_js_create(
     ptr: *mut c_void,
     global: &jsc::JSGlobalObject,
     ssl: bool,
     debug: bool,
 ) -> jsc::JSValue {
-    unsafe extern "C" {
-        fn HTTPServer__create(global: *const jsc::JSGlobalObject, ptr: *mut c_void) -> jsc::JSValue;
-        fn HTTPSServer__create(global: *const jsc::JSGlobalObject, ptr: *mut c_void) -> jsc::JSValue;
-        fn DebugHTTPServer__create(global: *const jsc::JSGlobalObject, ptr: *mut c_void) -> jsc::JSValue;
-        fn DebugHTTPSServer__create(global: *const jsc::JSGlobalObject, ptr: *mut c_void) -> jsc::JSValue;
-    }
-    // SAFETY: `ptr` is a fresh `NewServer<SSL,DEBUG>` heap allocation; the C++
-    // wrapper takes ownership.
-    unsafe {
-        match (ssl, debug) {
-            (false, false) => HTTPServer__create(global, ptr),
-            (true, false) => HTTPSServer__create(global, ptr),
-            (false, true) => DebugHTTPServer__create(global, ptr),
-            (true, true) => DebugHTTPSServer__create(global, ptr),
-        }
+    use crate::generated_classes as gc;
+    // `ptr` is a fresh `NewServer<SSL,DEBUG>` heap allocation; the C++
+    // wrapper takes ownership. Cast through the concrete monomorphization
+    // each codegen module is typed against.
+    match (ssl, debug) {
+        (false, false) => gc::js_HTTPServer::to_js(ptr.cast(), global),
+        (true, false) => gc::js_HTTPSServer::to_js(ptr.cast(), global),
+        (false, true) => gc::js_DebugHTTPServer::to_js(ptr.cast(), global),
+        (true, true) => gc::js_DebugHTTPSServer::to_js(ptr.cast(), global),
     }
 }
 
@@ -1050,7 +1043,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         server_js,
                         server_request_list,
                         &raw mut prepared.js_request,
-                        req,
+                        core::ptr::from_mut(req).cast::<c_void>(),
                     )
                 }
             },
@@ -2537,36 +2530,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 }
 
 // ─── route-list codegen externs ──────────────────────────────────────────────
-// `*mut Request` is opaque on the C++ side (stored as `void* m_ctx`, never
-// dereferenced); see the matching note on the JsClass extern block in
-// `webcore/Request.rs`. The ctypes lint flags it because `Request` transitively
-// contains non-repr(C) fields (HiveArrayFallback) — irrelevant for an opaque
-// pointer round-trip.
-#[allow(improper_ctypes)]
-unsafe extern "C" {
-    /// Generated C++ dispatcher (RouteList.cpp): wraps the JS Request object,
-    /// resolves URL params for `:id`-style segments, and invokes the route
-    /// callback at `index`.
-    fn Bun__ServerRouteList__callRoute(
-        global_object: *const jsc::JSGlobalObject,
-        index: u32,
-        request_ptr: *mut crate::webcore::Request,
-        server_object: jsc::JSValue,
-        route_list_object: jsc::JSValue,
-        request_object: *mut jsc::JSValue,
-        req: *mut uws_sys::Request,
-    ) -> jsc::JSValue;
-
-    /// Generated C++ factory (ServerRouteList.cpp): builds the per-server
-    /// `RouteList` JS object holding `{ path, callback }` pairs so the
-    /// `:param` parser and `callRoute` dispatcher have a stable index space.
-    fn Bun__ServerRouteList__create(
-        global_object: *const jsc::JSGlobalObject,
-        callbacks: *mut jsc::JSValue,
-        paths: *mut bun_string::ZigString,
-        paths_length: usize,
-    ) -> jsc::JSValue;
-}
+// Canonical decls live in `server_body.rs` (shared with the H3 path); reuse
+// them here instead of redeclaring with a divergent `req` pointer type.
+use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create};
 
 /// Per-type cached-accessor shims for the `routeList` `WriteBarrier` slot.
 /// `codegen_cached_accessors!` emits `route_list_{get,set}_cached` wrapping

@@ -3461,7 +3461,7 @@ unsafe extern "C" {
         global: *const JSGlobalObject,
     ) -> JSValue;
 
-    fn Bun__ServerRouteList__callRoute(
+    pub(super) fn Bun__ServerRouteList__callRoute(
         global: *const JSGlobalObject,
         index: u32,
         request_ptr: *mut Request,
@@ -3481,7 +3481,7 @@ unsafe extern "C" {
         req: *mut c_void,
     ) -> JSValue;
 
-    fn Bun__ServerRouteList__create(
+    pub(super) fn Bun__ServerRouteList__create(
         global: *const JSGlobalObject,
         callbacks: *mut JSValue,
         paths: *mut ZigString,

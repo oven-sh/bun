@@ -341,60 +341,47 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     // ── codegen accessors (Zig: `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`) ──
     // `#[bun_jsc::JsClass]` can't express the per-monomorphisation symbol
-    // dispatch, so these hand-roll the `if (ssl) TLSSocket__* else TCPSocket__*`
-    // split and call the C++ externs directly.
+    // dispatch, so these hand-roll the `if (ssl) js_TLSSocket else js_TCPSocket`
+    // split and route through the codegen'd safe wrappers.
     pub fn to_js(&mut self, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
-        let ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        // SAFETY: `self` is a heap-allocated `NewSocket` (every caller goes
-        // through `NewSocket::new` → `Box::into_raw`); ownership of `ptr` is
-        // adopted by the C++ JSCell wrapper, which calls `finalize` on GC.
-        // `global.as_ptr()` yields the opaque FFI handle (never written
-        // through on the Rust side).
-        let value = unsafe {
-            if SSL {
-                socket_js::TLSSocket__create(global.as_ptr(), ptr)
-            } else {
-                socket_js::TCPSocket__create(global.as_ptr(), ptr)
-            }
+        // `self` is a heap-allocated `NewSocket` (every caller goes through
+        // `NewSocket::new` → `Box::into_raw`); ownership is adopted by the C++
+        // JSCell wrapper, which calls `finalize` on GC. The codegen wrappers are
+        // monomorphic in `TCPSocket`/`TLSSocket`, so cast through the concrete
+        // alias each branch is typed against.
+        let ptr = std::ptr::from_mut::<Self>(self);
+        let value = if SSL {
+            js_TLSSocket::to_js(ptr.cast(), global)
+        } else {
+            js_TCPSocket::to_js(ptr.cast(), global)
         };
         debug_assert!(
-            // SAFETY: pure FFI downcast; null on type mismatch.
-            ptr == unsafe {
-                if SSL {
-                    socket_js::TLSSocket__fromJS(value)
+            Some(ptr.cast::<c_void>())
+                == if SSL {
+                    js_TLSSocket::from_js(value).map(|p| p.as_ptr().cast())
                 } else {
-                    socket_js::TCPSocket__fromJS(value)
-                }
-            },
+                    js_TCPSocket::from_js(value).map(|p| p.as_ptr().cast())
+                },
             "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
         );
         value
     }
     pub fn data_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         jsc::mark_binding!();
-        // SAFETY: `this` is the codegen'd `JS{TCP,TLS}Socket` JSCell; the C++
-        // side performs `m_data.set(vm, this, value)` (a `WriteBarrier` write).
-        unsafe {
-            if SSL {
-                socket_js::TLSSocketPrototype__dataSetCachedValue(this, global.as_ptr(), value);
-            } else {
-                socket_js::TCPSocketPrototype__dataSetCachedValue(this, global.as_ptr(), value);
-            }
+        if SSL {
+            js_TLSSocket::data_set_cached(this, global, value);
+        } else {
+            js_TCPSocket::data_set_cached(this, global, value);
         }
     }
     pub fn data_get_cached(this: JSValue) -> Option<JSValue> {
         jsc::mark_binding!();
-        // SAFETY: pure FFI read of the `WriteBarrier<Unknown>` slot on the
-        // C++ wrapper; `this` must be the codegen'd JSCell (caller invariant).
-        let result = unsafe {
-            if SSL {
-                socket_js::TLSSocketPrototype__dataGetCachedValue(this)
-            } else {
-                socket_js::TCPSocketPrototype__dataGetCachedValue(this)
-            }
-        };
-        if result == JSValue::ZERO { None } else { Some(result) }
+        if SSL {
+            js_TLSSocket::data_get_cached(this)
+        } else {
+            js_TCPSocket::data_get_cached(this)
+        }
     }
 
     pub fn new(init: Self) -> *mut Self {
@@ -3053,93 +3040,36 @@ impl<const SSL: bool> NewSocket<SSL> {
 pub type TCPSocket = NewSocket<false>;
 pub type TLSSocket = NewSocket<true>;
 
-/// C++ codegen externs for `JSTCPSocket` / `JSTLSSocket` (emitted by
+/// Codegen accessors for `JSTCPSocket` / `JSTLSSocket` (emitted by
 /// `src/codegen/generate-classes.ts`). The const-generic `NewSocket<SSL>`
-/// dispatches between the two symbol sets at monomorphization time; see
+/// dispatches between the two modules at monomorphization time; see
 /// `to_js` / `data_{get,set}_cached` above.
-#[allow(non_snake_case)]
-mod socket_js {
-    use super::{c_void, JSGlobalObject, JSValue};
-    // PORT NOTE: signatures take `*mut c_void` (not `*mut NewSocket<SSL>`)
-    // because `NewSocket` embeds non-`#[repr(C)]` fields and would trip the
-    // `improper_ctypes` lint. The C++ side treats `m_ctx` as opaque.
-    // `JSC_CALLCONV` ⇒ sysv64 on win-x64, C elsewhere.
-    macro_rules! extern_block {
-        ($abi:literal) => {
-            unsafe extern $abi {
-                pub(super) fn TCPSocket__create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-                pub(super) fn TLSSocket__create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-                pub(super) fn TCPSocket__fromJS(value: JSValue) -> *mut c_void;
-                pub(super) fn TLSSocket__fromJS(value: JSValue) -> *mut c_void;
-                pub(super) fn TCPSocketPrototype__dataSetCachedValue(this: JSValue, global: *mut JSGlobalObject, value: JSValue);
-                pub(super) fn TLSSocketPrototype__dataSetCachedValue(this: JSValue, global: *mut JSGlobalObject, value: JSValue);
-                pub(super) fn TCPSocketPrototype__dataGetCachedValue(this: JSValue) -> JSValue;
-                pub(super) fn TLSSocketPrototype__dataGetCachedValue(this: JSValue) -> JSValue;
-            }
-        };
-    }
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    extern_block!("sysv64");
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    extern_block!("C");
-}
+use crate::generated_classes::{js_TCPSocket, js_TLSSocket};
 
 // ── JsClass impls (manual — `#[bun_jsc::JsClass]` derive can't handle the
 // const-generic split into two codegen classes `JSTCPSocket` / `JSTLSSocket`).
-// Mirrors `impl_js_class_codegen!` in `src/runtime/api.rs`.
+// Routes through the codegen'd `js_$name` safe wrappers so the
+// `${name}__create`/`__fromJS` extern symbols are declared exactly once.
 macro_rules! impl_socket_js_class {
-    ($ty:ty, $name:ident) => {
-        const _: () = {
-            // Extern signatures use `*mut c_void` and are cast at the call site:
-            // `$ty` = `NewSocket<SSL>` embeds `bun_uws::NewSocketHandler<SSL>`,
-            // which is not `#[repr(C)]` and trips the `improper_ctypes` lint.
-            // The C++ side treats these as opaque pointers anyway.
-            //
-            // C++ codegen emits these with `JSC_CALLCONV` (= sysv64 on win-x64),
-            // so the ABI must be cfg-selected to match — same scheme as the
-            // `mod socket_js` extern block above.
-            #[cfg(all(windows, target_arch = "x86_64"))]
-            unsafe extern "sysv64" {
-                #[link_name = concat!(stringify!($name), "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut c_void;
-                #[link_name = concat!(stringify!($name), "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut c_void;
-                #[link_name = concat!(stringify!($name), "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+    ($ty:ty, $gen:ident) => {
+        impl bun_jsc::JsClass for $ty {
+            fn from_js(value: JSValue) -> Option<*mut Self> {
+                $gen::from_js(value).map(|p| p.as_ptr())
             }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
-            unsafe extern "C" {
-                #[link_name = concat!(stringify!($name), "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut c_void;
-                #[link_name = concat!(stringify!($name), "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut c_void;
-                #[link_name = concat!(stringify!($name), "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+            fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+                $gen::from_js_direct(value).map(|p| p.as_ptr())
             }
-            impl bun_jsc::JsClass for $ty {
-                fn from_js(value: JSValue) -> Option<*mut Self> {
-                    // SAFETY: pure FFI downcast; null on type mismatch.
-                    let p = unsafe { __from_js(value) }.cast::<Self>();
-                    if p.is_null() { None } else { Some(p) }
-                }
-                fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-                    // SAFETY: exact-structure FFI downcast; null on miss.
-                    let p = unsafe { __from_js_direct(value) }.cast::<Self>();
-                    if p.is_null() { None } else { Some(p) }
-                }
-                fn to_js(self, global: &JSGlobalObject) -> JSValue {
-                    let ptr = Box::into_raw(Box::new(self)).cast::<c_void>();
-                    // SAFETY: ownership of `ptr` transfers to the C++ wrapper
-                    // (freed via `${typeName}Class__finalize`).
-                    unsafe { __create(global.as_ptr(), ptr) }
-                }
-                // `noConstructor: true` — no `${name}__getConstructor` export; trait default applies.
+            fn to_js(self, global: &JSGlobalObject) -> JSValue {
+                // Ownership of the boxed `NewSocket` transfers to the C++
+                // wrapper (freed via `${typeName}Class__finalize`).
+                $gen::to_js(Box::into_raw(Box::new(self)), global)
             }
-        };
+            // `noConstructor: true` — no `${name}__getConstructor` export; trait default applies.
+        }
     };
 }
-impl_socket_js_class!(TCPSocket, TCPSocket);
-impl_socket_js_class!(TLSSocket, TLSSocket);
+impl_socket_js_class!(TCPSocket, js_TCPSocket);
+impl_socket_js_class!(TLSSocket, js_TLSSocket);
 
 // ──────────────────────────────────────────────────────────────────────────
 // NativeCallbacks — direct callbacks on HTTP2 when available

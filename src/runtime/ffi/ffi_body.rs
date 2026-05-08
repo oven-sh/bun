@@ -226,28 +226,6 @@ unsafe extern "C" {
 }
 
 // ─── Local extern thin-wrappers (codegen / `bun_jsc` surface not yet wired) ──
-// PORT NOTE: see host_fns.rs for the canonical declarations; these are
-// duplicated here so this translation unit links without depending on a
-// `bun_jsc::codegen::JSFFI` / `bun_jsc::host_fn::new_runtime_function`
-// re-export that the gated `_gated` module would otherwise provide.
-#[cfg(all(windows, target_arch = "x86_64"))]
-unsafe extern "sysv64" {
-    #[link_name = "FFIPrototype__symbolsValueSetCachedValue"]
-    fn FFIPrototype__symbolsValueSetCachedValue(
-        this_value: JSValue,
-        global: *const JSGlobalObject,
-        value: JSValue,
-    );
-}
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-unsafe extern "C" {
-    #[link_name = "FFIPrototype__symbolsValueSetCachedValue"]
-    fn FFIPrototype__symbolsValueSetCachedValue(
-        this_value: JSValue,
-        global: *const JSGlobalObject,
-        value: JSValue,
-    );
-}
 unsafe extern "C" {
     /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
     fn Bun__CreateFFIFunctionValue(
@@ -313,8 +291,7 @@ fn new_runtime_function(
 /// `jsc::codegen::JSFFI::symbols_value_set_cached` thin wrapper.
 #[inline]
 fn symbols_value_set_cached(js_object: JSValue, global: &JSGlobalObject, obj: JSValue) {
-    // SAFETY: `js_object` is the freshly-created wrapper; `global` is live.
-    unsafe { FFIPrototype__symbolsValueSetCachedValue(js_object, global, obj) }
+    crate::generated_classes::js_FFI::symbols_value_set_cached(js_object, global, obj)
 }
 
 impl Offsets {

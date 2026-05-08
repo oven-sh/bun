@@ -54,23 +54,12 @@ fn vm_ssl_ctx_cache() -> *mut crate::api::SSLContextCache::SSLContextCache {
     unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache) }
 }
 
-// `jsc.Codegen.JSListener.toJS` — direct extern so we can hand the C++ side an
-// already-heap-allocated `*mut Listener` (the embedded `group` is linked into
-// the loop's intrusive list at its final address before this call, so the
-// `Box::new`-then-move that the `#[JsClass]` `to_js(self)` impl does would
-// invalidate that link).
-#[allow(improper_ctypes)]
-#[cfg(all(windows, target_arch = "x86_64"))]
-unsafe extern "sysv64" {
-    #[link_name = "Listener__create"]
-    fn Listener__create(global: *mut JSGlobalObject, ptr: *mut Listener) -> JSValue;
-}
-#[allow(improper_ctypes)]
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-unsafe extern "C" {
-    #[link_name = "Listener__create"]
-    fn Listener__create(global: *mut JSGlobalObject, ptr: *mut Listener) -> JSValue;
-}
+// `jsc.Codegen.JSListener.toJS` — route through the codegen'd wrapper so we
+// can hand the C++ side an already-heap-allocated `*mut Listener` (the
+// embedded `group` is linked into the loop's intrusive list at its final
+// address before this call, so the `Box::new`-then-move that the `#[JsClass]`
+// `to_js(self)` impl does would invalidate that link).
+use crate::generated_classes::js_Listener;
 
 #[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
@@ -292,7 +281,7 @@ impl Listener {
 
                 // SAFETY: `global` is live; ownership of `this` (Box::into_raw'd above)
                 // transfers to the C++ wrapper.
-                let this_value = unsafe { Listener__create(global.as_mut_ptr(), this) };
+                let this_value = js_Listener::to_js(this, global);
                 this_ref.strong_self.set(global, this_value);
                 this_ref.poll_ref.ref_(vm_event_loop_ctx());
                 return Ok(this_value);
@@ -504,7 +493,7 @@ impl Listener {
         // SAFETY: `global` is live; ownership of `this` (Box::into_raw'd above)
         // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
         // `Listener::finalize` → `deinit`).
-        let this_value = unsafe { Listener__create(global.as_mut_ptr(), this) };
+        let this_value = js_Listener::to_js(this, global);
         this_ref.strong_self.set(global, this_value);
         this_ref.poll_ref.ref_(vm_event_loop_ctx());
 

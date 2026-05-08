@@ -41,30 +41,17 @@ impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
 pub type WeakRef = bun_ptr::WeakPtr<Request>;
 
 // PORT NOTE: hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
-// not yet wired for Request). Mirrors the Blob.rs pattern — bind the
-// generated C++ shims by link-name and wrap.
+// not yet wired for Request). Routes through the codegen'd
+// `crate::generated_classes::js_Request` wrappers — no local extern decls.
 const _: () = {
-    // Request is #[repr(C)] but holds Box/BunString/Option<NonNull> fields the
-    // ctypes lint flags as improper. C++ only ever sees *mut Request as an
-    // opaque pointer (never dereferenced on the C++ side), so suppress here.
-    #[allow(improper_ctypes)]
-    unsafe extern "C" {
-        #[link_name = "Request__fromJS"]
-        fn __from_js(value: bun_jsc::JSValue) -> Option<core::ptr::NonNull<Request>>;
-        #[link_name = "Request__fromJSDirect"]
-        fn __from_js_direct(value: bun_jsc::JSValue) -> Option<core::ptr::NonNull<Request>>;
-        #[link_name = "Request__getConstructor"]
-        fn __get_constructor(global: *const bun_jsc::JSGlobalObject) -> bun_jsc::JSValue;
-    }
+    use crate::generated_classes::js_Request as js;
 
     impl bun_jsc::JsClass for Request {
         fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast; returns null on type mismatch.
-            unsafe { __from_js(value) }.map(|p| p.as_ptr())
+            js::from_js(value).map(|p| p.as_ptr())
         }
         fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
-            unsafe { __from_js_direct(value) }.map(|p| p.as_ptr())
+            js::from_js_direct(value).map(|p| p.as_ptr())
         }
         fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             // Route through the inherent `Request::to_js` so the Zig override
@@ -80,9 +67,7 @@ const _: () = {
             unsafe { Request::to_js(&mut *ptr, global) }
         }
         fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
-            // SAFETY: `global` is a live JSC global; C++ reads its cached
-            // structure/constructor table.
-            unsafe { __get_constructor(global) }
+            js::get_constructor(global)
         }
     }
 };

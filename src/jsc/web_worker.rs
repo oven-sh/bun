@@ -763,7 +763,7 @@ impl WebWorker {
         }
 
         // SAFETY: start_vm published vm under vm_lock; non-null here.
-        let global = unsafe { (*self.vm_ptr()).global };
+        let global = unsafe { &*self.vm_ptr() }.global;
         // PORT NOTE: Zig calls `holdAPILock(this, OpaqueWrap(spin))`; the
         // callback ends in `bun.exitThread()` (`pthread_exit`), whose forced
         // unwind cannot walk Zig frames (no unwind tables), so glibc falls
@@ -787,7 +787,7 @@ impl WebWorker {
         // dereferenced. The raw FFI call has no such reference to leak.
         // SAFETY: `global` is the live worker global published in start_vm;
         // `vm()` returns the valid `JSC::VM` it was created with.
-        JSC__VM__getAPILock(unsafe { (*global).vm() });
+        JSC__VM__getAPILock(unsafe { &*global }.vm());
         self.spin();
     }
 
@@ -899,7 +899,7 @@ impl WebWorker {
             let vm_ref = unsafe { &mut *vm };
             // SAFETY: arena initialised above; worker-thread only field.
             vm_ref.arena =
-                NonNull::new(std::ptr::from_mut(unsafe { (*self.arena.get()).as_mut().unwrap() }));
+                NonNull::new(std::ptr::from_mut(unsafe { &mut *self.arena.get() }.as_mut().unwrap()));
 
             // Move the pre-cloned proxy storage into the worker VM.
             *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
@@ -1167,7 +1167,7 @@ impl WebWorker {
         // Snapshot everything we'll need after `this` may be freed (step 4).
         let cpp_worker = self.cpp_worker;
         // SAFETY: worker-thread only field; no other thread reads `arena`.
-        let mut arena = unsafe { (*self.arena.get()).take() };
+        let mut arena = unsafe { &mut *self.arena.get() }.take();
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
         let env_map = self.worker_env_map.replace(core::ptr::null_mut());
 
@@ -1179,7 +1179,7 @@ impl WebWorker {
         let mut loop_: Option<*mut bun_uws::Loop> = None;
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr was published under vm_lock; sole owner now.
-            loop_ = Some(unsafe { (*vm_ptr).uws_loop() });
+            loop_ = Some(unsafe { &*vm_ptr }.uws_loop());
         }
 
         // ---- 2. User exit handlers -----------------------------------------

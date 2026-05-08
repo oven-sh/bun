@@ -1,7 +1,6 @@
 //! Port of src/cli/init_command.zig
 
 use core::ffi::c_char;
-use std::io::Write as _;
 
 use bun_collections::IntegerBitSet;
 use bun_collections::bit_set::Range as BitRange;
@@ -870,7 +869,7 @@ impl InitCommand {
         }
 
         if steps.write_gitignore {
-            let _ = Assets::create(b".gitignore", Assets::GITIGNORE, None);
+            let _ = Assets::create(b".gitignore", Assets::GITIGNORE, &[]);
             // suppressed
         }
 
@@ -918,7 +917,7 @@ impl InitCommand {
                             Assets::TSCONFIG_JSON,
                             filename,
                             " (for editor autocomplete)",
-                            None,
+                            &[],
                         )
                         .is_err()
                         {
@@ -931,15 +930,11 @@ impl InitCommand {
                     let _ = Assets::create(
                         b"README.md",
                         Assets::README_MD,
-                        Some(format_args!(
-                            // TODO(port): Zig passed a struct {.name, .bunVersion, .entryPoint};
-                            // the README template uses named fields. Phase B should port the
-                            // template substitution to match.
-                            "{name} {bunVersion} {entryPoint}",
-                            name = bstr::BStr::new(&fields.name),
-                            bunVersion = Environment::VERSION_STRING,
-                            entryPoint = bstr::BStr::new(&fields.entry_point),
-                        )),
+                        &[
+                            (b"name", fields.name.as_slice()),
+                            (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
+                            (b"entryPoint", fields.entry_point.as_slice()),
+                        ],
                     );
                     // suppressed
                 }
@@ -997,19 +992,45 @@ impl Assets {
     fn create(
         asset_name: &[u8],
         asset: &'static [u8],
-        args: Option<core::fmt::Arguments<'_>>,
+        args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
-        let is_template = args.is_some();
+        let is_template = !args.is_empty();
         Self::create_full_inner(asset, asset_name, "", is_template, args)
     }
 
     pub fn create_with_contents(
         asset_name: &[u8],
         contents: &'static [u8],
-        args: Option<core::fmt::Arguments<'_>>,
+        args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
-        let is_template = args.is_some();
+        let is_template = !args.is_empty();
         Self::create_full_with_contents(asset_name, contents, "", is_template, args)
+    }
+
+    /// Substitutes Zig-style named placeholders `{[key]s}` in `template` with the
+    /// corresponding value from `args`.
+    fn substitute(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(template.len());
+        let mut i = 0;
+        'outer: while i < template.len() {
+            if template[i] == b'{' && template.get(i + 1) == Some(&b'[') {
+                for &(key, value) in args {
+                    // "{[" + key + "]s}"
+                    let placeholder_len = 2 + key.len() + 3;
+                    if i + placeholder_len <= template.len()
+                        && &template[i + 2..i + 2 + key.len()] == key
+                        && &template[i + 2 + key.len()..i + placeholder_len] == b"]s}"
+                    {
+                        out.extend_from_slice(value);
+                        i += placeholder_len;
+                        continue 'outer;
+                    }
+                }
+            }
+            out.push(template[i]);
+            i += 1;
+        }
+        out
     }
 
     fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
@@ -1046,9 +1067,9 @@ impl Assets {
         filename: &[u8],
         // optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
         message_suffix: &'static str,
-        args: Option<core::fmt::Arguments<'_>>,
+        args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
-        let is_template = args.is_some();
+        let is_template = !args.is_empty();
         Self::create_full_inner(asset, filename, message_suffix, is_template, args)
     }
 
@@ -1057,9 +1078,8 @@ impl Assets {
         filename: &[u8],
         message_suffix: &'static str,
         is_template: bool,
-        args: Option<core::fmt::Arguments<'_>>,
+        args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
-        // TODO(port): std.fs.cwd().createFile(filename, .{ .truncate = true })
         let file = bun_sys::File::openat(
             Fd::cwd(),
             filename,
@@ -1072,14 +1092,7 @@ impl Assets {
 
         // Write contents of known assets to the new file. Template assets get formatted.
         if is_template {
-            // TODO(port): Zig used `file.print(asset, args)` where `asset` is the
-            // format string and `args` is an anonymous struct. Rust `format_args!`
-            // can't take a runtime format string; Phase B needs a small templating
-            // helper that substitutes `{name}` etc. in `asset` from `args`.
-            let mut buf: Vec<u8> = Vec::new();
-            if let Some(a) = args {
-                let _ = write!(&mut buf, "{}", a);
-            }
+            let buf = Self::substitute(asset, args);
             file.write_all(&buf)?;
         } else {
             file.write_all(asset)?;
@@ -1102,9 +1115,8 @@ impl Assets {
         // Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
         is_template: bool,
         // Format arguments
-        args: Option<core::fmt::Arguments<'_>>,
+        args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
-        // TODO(port): std.fs.cwd().createFile(filename, .{ .truncate = true })
         let file = bun_sys::File::openat(
             Fd::cwd(),
             filename,
@@ -1116,11 +1128,7 @@ impl Assets {
         });
 
         if is_template {
-            // TODO(port): same templating limitation as create_full_inner
-            let mut buf: Vec<u8> = Vec::new();
-            if let Some(a) = args {
-                let _ = write!(&mut buf, "{}", a);
-            }
+            let buf = Self::substitute(contents, args);
             file.write_all(&buf)?;
         } else {
             file.write_all(contents)?;
@@ -1622,12 +1630,10 @@ impl Template {
                 Assets::create_with_contents(
                     b"README.md",
                     contents,
-                    Some(format_args!(
-                        // TODO(port): named-field templating (.name, .bunVersion)
-                        "{name} {bunVersion}",
-                        name = bstr::BStr::new(self.name()),
-                        bunVersion = Environment::VERSION_STRING,
-                    )),
+                    &[
+                        (b"name", self.name()),
+                        (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
+                    ],
                 )
             } else {
                 // TODO(port): path needs NUL termination for create_new

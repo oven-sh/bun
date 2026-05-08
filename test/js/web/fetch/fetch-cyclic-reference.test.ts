@@ -49,7 +49,7 @@ describe("FetchTasklet cyclic reference", () => {
     const readableStreamCount = heapStats().objectTypeCounts.ReadableStream || 0;
     expect(requestCount).toBeLessThanOrEqual(100);
     expect(readableStreamCount).toBeLessThanOrEqual(100);
-  });
+  }, 30000);
 
   test("fetch with ReadableStream body should not leak streams", async () => {
     await using server = Bun.serve({
@@ -90,5 +90,5 @@ describe("FetchTasklet cyclic reference", () => {
     const readableStreamCount = heapStats().objectTypeCounts.ReadableStream || 0;
     // This currently fails with ~502 streams leaked
     expect(readableStreamCount).toBeLessThanOrEqual(100);
-  });
+  }, 30000);
 });

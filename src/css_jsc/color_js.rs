@@ -202,9 +202,6 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         ));
     }
 
-    // PERF(port): was ArenaAllocator + stackFallback(4096) — profile in Phase B
-    let arena = Arena::new();
-
     let mut log = Log::init();
 
     let unresolved_format: OutputColorFormat = 'brk: {
@@ -311,6 +308,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
             input = args[0].to_slice(global)?;
 
+            // Zig used ArenaAllocator + stackFallback(4096) (free init); MimallocArena::new()
+            // calls mi_heap_new(), so defer creation to the paths that actually allocate.
+            let arena = Arena::new();
             let mut parser_input = css::ParserInput::new(input.slice(), &arena);
             let mut parser = css::Parser::new(
                 &mut parser_input,
@@ -539,6 +539,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 }
 
                 // Fallback to CSS string output
+                let arena = Arena::new();
                 let mut dest: Vec<u8> = Vec::new();
 
                 let symbols = SymbolMap::init_list(Default::default());

@@ -150,20 +150,17 @@ static FIT_MAP: phf::Map<&'static [u8], Fit> = phf::phf_map! {
 };
 impl jsc::FromJsEnum for Fit {
     fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
-        use jsc::ComptimeStringMapExt as _;
-        match FIT_MAP.from_js(global, v)? {
-            Some(e) => Ok(e),
-            None => Err(global.throw_invalid_argument_type(prop, prop, "\"fill\" | \"inside\"")),
-        }
+        v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")
     }
 }
 impl jsc::FromJsEnum for codecs::Filter {
     fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
-        use jsc::ComptimeStringMapExt as _;
-        match codecs::FILTER_MAP.from_js(global, v)? {
-            Some(e) => Ok(e),
-            None => Err(global.throw_invalid_argument_type(prop, prop, "Filter name")),
-        }
+        v.to_enum_from_map(
+            global,
+            prop,
+            &codecs::FILTER_MAP,
+            "'box', 'bilinear', 'linear', 'lanczos3', 'mitchell', 'nearest', 'cubic', 'lanczos2', 'mks2013' or 'mks2021'",
+        )
     }
 }
 

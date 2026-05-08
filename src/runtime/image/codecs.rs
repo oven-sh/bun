@@ -68,15 +68,7 @@ impl bun_jsc::FromJsEnum for Backend {
         global: &bun_jsc::JSGlobalObject,
         property_name: &'static str,
     ) -> bun_jsc::JsResult<Self> {
-        use bun_jsc::ComptimeStringMapExt as _;
-        match BACKEND_MAP.from_js(global, v)? {
-            Some(e) => Ok(e),
-            None => Err(global.throw_invalid_argument_type(
-                property_name,
-                "value",
-                "\"system\" | \"bun\"",
-            )),
-        }
+        v.to_enum_from_map(global, property_name, &BACKEND_MAP, "'system' or 'bun'")
     }
 }
 

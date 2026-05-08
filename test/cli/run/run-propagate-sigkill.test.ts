@@ -3,7 +3,7 @@
 // disposition with `bun.sys.sigaction(sig, …)`. `SIGKILL`/`SIGSTOP` can't
 // have their disposition changed, so libc returns `EINVAL` there — that
 // must not reach `std.posix.sigaction`'s `else => unreachable`.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 
 test.skipIf(!isPosix)("bun run propagates SIGKILL from a child without hitting unreachable", async () => {

@@ -1137,13 +1137,6 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
     { let _ = (fd, buf, cap); 0 }
 }
 
-#[doc(hidden)]
-#[deprecated(note = "renamed to fd_path_raw")]
-pub use fd_path_raw as __bun_fd_path;
-#[doc(hidden)]
-#[deprecated(note = "renamed to fd_path_raw_w")]
-pub use fd_path_raw_w as __bun_fd_path_w;
-
 impl core::fmt::Display for Fd {
     fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let fd = *self;

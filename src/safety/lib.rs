@@ -46,18 +46,18 @@ static KNOWN_ALLOC_LEN: AtomicUsize = AtomicUsize::new(0);
 /// other crate that owns a `StdAllocator` vtable above this tier).
 ///
 /// **Registration is single-threaded at startup** (`bun_bin::main` step 6,
-/// before reader threads spawn). Slot is written first, then `len` published
-/// (Release/Acquire) so a concurrent `known_alloc_vtable` reader never observes
-/// `len=N` with `slot[N-1]` still null — matching the "len written last / read
-/// first" pattern. Not safe for concurrent *registration* (would clobber a
-/// slot); the single-threaded-init contract makes that a non-issue.
+/// before reader threads spawn), so ordering is moot in practice. The slot
+/// index is claimed via `fetch_add` anyway so accidental concurrent
+/// registration is at least slot-safe (no clobber); a reader racing the
+/// `fetch_add → slot.store` window would see a null slot, which is a harmless
+/// no-match (`needle` is always a non-null vtable address). `len` is published
+/// Release / read Acquire; slot stores are Relaxed.
 pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
     let p = vtable as *const _ as *mut ();
-    let i = KNOWN_ALLOC_LEN.load(Ordering::Relaxed);
+    let i = KNOWN_ALLOC_LEN.fetch_add(1, Ordering::Release);
     debug_assert!(i < KNOWN_ALLOC_CAP, "KNOWN_ALLOC_VTABLES overflow; bump KNOWN_ALLOC_CAP");
     if i < KNOWN_ALLOC_CAP {
-        KNOWN_ALLOC_VTABLES[i].store(p, Ordering::Release);
-        KNOWN_ALLOC_LEN.store(i + 1, Ordering::Release);
+        KNOWN_ALLOC_VTABLES[i].store(p, Ordering::Relaxed);
     }
 }
 

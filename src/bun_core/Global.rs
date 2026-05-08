@@ -176,25 +176,15 @@ pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackT
     // signature matches `bun_crash_handler::dump_current_stack_trace` (which
     // *does* honour it via `StoredTrace::capture`).
     let _ = first_address;
+    // `frame_count` truncation is dropped to avoid the intermediate
+    // `format!` heap allocation on a path that may run during panic/OOM
+    // (`force_capture` already allocates internally, so this only removes the
+    // *extra* alloc — debug-only output, the few extra trailing frames are
+    // acceptable noise).
+    let _ = limits;
     crate::output::flush();
     let bt = std::backtrace::Backtrace::force_capture();
-    let s = format!("{bt}");
-    // std backtraces render one frame per line (continuation lines like
-    // `             at file:line` are kept with their frame by counting only
-    // lines that look like a new frame index).
-    let mut frames = 0usize;
-    for line in s.lines() {
-        let starts_frame = line
-            .trim_start()
-            .as_bytes()
-            .first()
-            .is_some_and(|b| b.is_ascii_digit());
-        if starts_frame {
-            if frames >= limits.frame_count { break; }
-            frames += 1;
-        }
-        eprintln!("{line}");
-    }
+    eprintln!("{bt}");
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────

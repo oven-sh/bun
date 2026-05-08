@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
 import { ucontextLayout } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { isLinux } from "harness";
 
 // `bun.sys.ucontext_t` is the type the crash handler's SA_SIGINFO third

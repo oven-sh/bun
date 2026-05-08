@@ -322,8 +322,7 @@ pub mod lib_info {
         // `FilePoll::deinit` in `get_addr_info_async_callback`.
         unsafe { (*request).backend.as_libinfo_mut().file_poll = NonNull::new(poll_ptr) };
         let vm = this.vm;
-        // SAFETY: `vm` is the live BACKREF held by Resolver for its lifetime.
-        this.request_sent(unsafe { &*vm });
+        this.request_sent(vm.get());
 
         promise_value
     }
@@ -367,8 +366,7 @@ pub mod lib_c {
         // PORT NOTE: reshaped for borrowck — `vm()` derives from a raw-pointer
         // backref, so split the immutable borrow out before the `&mut self` call.
         let vm = this.vm;
-        // SAFETY: `vm` is the live BACKREF held by Resolver for its lifetime.
-        this.request_sent(unsafe { &*vm });
+        this.request_sent(vm.get());
 
         promise_value
     }
@@ -641,7 +639,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             head: CAresLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-                global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+                global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -779,7 +777,7 @@ impl GetHostByAddrInfoRequest {
             head: CAresReverse {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-                global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+                global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -853,7 +851,7 @@ impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct CAresNameInfo {
-    pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -868,14 +866,14 @@ impl CAresNameInfo {
     /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
-        unsafe { &*self.global_this }
+        self.global_this.get()
     }
 
     pub fn init(global_this: &JSGlobalObject, name: Box<[u8]>) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
-            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+            global_this: bun_ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1017,7 +1015,7 @@ impl GetNameInfoRequest {
             hash,
             cache: CacheConfig::default(),
             head: CAresNameInfo {
-                global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+                global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -1308,7 +1306,7 @@ impl GetAddrInfoRequest {
             head: DNSLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-                global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+                global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
                 allocated: false,
@@ -1538,7 +1536,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
 
 pub struct CAresReverse {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -1556,7 +1554,7 @@ impl CAresReverse {
     /// and valid for the lifetime of `self`.
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
-        unsafe { &*self.global_this }
+        self.global_this.get()
     }
 
     pub fn init(resolver: Option<*mut Resolver>, global_this: &JSGlobalObject, name: &[u8]) -> *mut Self {
@@ -1565,7 +1563,7 @@ impl CAresReverse {
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+            global_this: bun_ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1646,7 +1644,7 @@ impl Drop for CAresReverse {
 
 pub struct CAresLookup<T: CAresRecordType> {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
     pub allocated: bool,
@@ -1667,7 +1665,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         Self::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
-            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+            global_this: bun_ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
             allocated: true,
@@ -1685,7 +1683,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
     /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
-        unsafe { &*self.global_this }
+        self.global_this.get()
     }
 
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
@@ -1769,7 +1767,7 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 
 pub struct DNSLookup {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
-    pub global_this: *const JSGlobalObject, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
@@ -1787,8 +1785,7 @@ impl DNSLookup {
     /// rely on this when caching the ref across `heap::take`).
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
-        // SAFETY: see doc comment — non-null backref that outlives `self`.
-        unsafe { &*self.global_this }
+        self.global_this.get()
     }
 
     pub fn init(resolver: *mut Resolver, global_this: &JSGlobalObject) -> *mut Self {
@@ -1800,7 +1797,7 @@ impl DNSLookup {
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver: Some(unsafe { bun_ptr::IntrusiveRc::init_ref(resolver) }),
-            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
+            global_this: bun_ptr::BackRef::new(global_this),
             poll_ref,
             promise: JSPromiseStrong::init(global_this),
             allocated: true,
@@ -3152,7 +3149,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 pub struct Resolver {
     pub ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     pub channel: Option<*mut c_ares::Channel>, // FFI
-    pub vm: *const VirtualMachine, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver)
+    pub vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver)
     pub polls: PollsMap,
     pub options: c_ares::ChannelOptions,
 
@@ -3443,7 +3440,7 @@ impl Resolver {
         Ok(Self::init(vm))
     }
 
-    pub fn vm(&self) -> &VirtualMachine { unsafe { &*self.vm } }
+    pub fn vm(&self) -> &VirtualMachine { self.vm.get() }
 
     // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).
     pub fn ref_(&self) {
@@ -3491,7 +3488,7 @@ impl Resolver {
         Self {
             ref_count: bun_ptr::RefCount::init(),
             channel: None,
-            vm: std::ptr::from_ref::<VirtualMachine>(vm),
+            vm: bun_ptr::BackRef::new(vm),
             polls: PollsMap::new(),
             options: c_ares::ChannelOptions::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DNSResolver),
@@ -4138,7 +4135,7 @@ impl Resolver {
         // must have been initialized for this poll callback to fire.
         unsafe {
             let parent: *mut Resolver = (*poll).parent;
-            let vm = &*(*parent).vm;
+            let vm = (*parent).vm.get();
             let _exit = EventLoop::enter_scope(vm.event_loop());
             // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
             let _deref = Self::ref_scope(parent);
@@ -4170,9 +4167,11 @@ impl Resolver {
         // Resolver via fresh `&mut` (e.g. `request_completed`, `drain_pending_*`).
         // Holding `&mut self` across that call would alias `&mut Resolver` (UB).
         let this: *mut Self = self;
-        // SAFETY: VirtualMachine outlives the Resolver (BACKREF). Read the raw
-        // back-ptr directly so the borrow isn't tied to `&self`'s lifetime.
-        let vm = unsafe { &*(*this).vm };
+        // VirtualMachine outlives the Resolver (BACKREF). Copy the BackRef out so
+        // the borrow isn't tied to `&self`'s lifetime.
+        // SAFETY: `this` is live for the duration of this callback.
+        let vm = unsafe { (*this).vm };
+        let vm = vm.get();
         let _exit = vm.enter_event_loop_scope();
         // SAFETY: `this` is live for the duration of this callback (caller holds it).
         let Some(channel) = (unsafe { (*this).channel }) else {

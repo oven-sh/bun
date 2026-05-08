@@ -4066,14 +4066,12 @@ unsafe fn transpile_file(
                 return ptr::null_mut();
             }
             if err == bun_core::err!("JSError") {
-                // PORT NOTE: spec calls `globalObject.takeError(error.JSError)`;
-                // the Rust `take_error` wants a `JsError` proof token. The
-                // `transpile_source_code_inner` paths that return `"JSError"`
-                // have already left an exception pending on `global`, so
-                // surface it via `tryTakeException` (same C++ slot).
-                let exc = global_ref
-                    .try_take_exception()
-                    .unwrap_or(JSValue::UNDEFINED);
+                // Spec :1108 — `globalObject.takeError(error.JSError)` unwraps
+                // the JSC::Exception to its inner value; the C++ caller
+                // re-wraps via `JSC::Exception::create`, so storing the raw
+                // Exception here would double-wrap and trip
+                // `ASSERT(!value.inherits<Exception>())` in JSPromise::reject.
+                let exc = global_ref.take_error(bun_jsc::JsError::Thrown);
                 // SAFETY: per fn contract.
                 unsafe {
                     *ret = ErrorableResolvedSource::err(
@@ -4238,12 +4236,10 @@ unsafe fn transpile_virtual_module(
                 return true;
             }
             if err == bun_core::err!("JSError") {
-                // PORT NOTE: spec calls `globalObject.takeError(error.JSError)`;
-                // surface the pending exception via `tryTakeException` (same
-                // C++ slot as `transpile_file` above).
-                let exc = global_ref
-                    .try_take_exception()
-                    .unwrap_or(JSValue::UNDEFINED);
+                // Spec :1292 — `globalObject.takeError(error.JSError)` unwraps
+                // the JSC::Exception to its inner value (see same note in
+                // `transpile_file` above).
+                let exc = global_ref.take_error(bun_jsc::JsError::Thrown);
                 // SAFETY: per fn contract.
                 unsafe {
                     *ret = ErrorableResolvedSource::err(bun_core::err!("JSError"), exc);

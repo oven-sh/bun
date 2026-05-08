@@ -1432,6 +1432,14 @@ pub const PackCommand = struct {
         };
         defer root_dir.close();
 
+        // Scan for a README file so the registry receives the same
+        // `readme` / `readmeFilename` metadata that `npm publish` sends.
+        // `findWorkspaceReadme` opens its own directory handle because
+        // `root_dir` is iterated below and its kernel readdir offset gets
+        // exhausted.
+        const workspace_readme: if (for_publish) ?Publish.ReadmeInfo else void =
+            if (comptime for_publish) try Publish.findWorkspaceReadme(ctx.allocator, abs_workspace_path);
+
         ctx.bundled_deps = try getBundledDeps(ctx.allocator, json.root, "bundledDependencies") orelse
             try getBundledDeps(ctx.allocator, json.root, "bundleDependencies") orelse
             .{};
@@ -1863,6 +1871,7 @@ pub const PackCommand = struct {
                 &json.source,
                 shasum,
                 integrity,
+                workspace_readme,
             );
 
         printArchivedFilesAndPackages(

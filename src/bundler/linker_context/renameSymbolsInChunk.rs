@@ -4,9 +4,8 @@ use core::cmp::Ordering;
 
 use bun_js_parser::ast::bundled_ast::{Flags as AstFlags};
 use bun_js_parser::ast::symbol;
-use bun_js_parser::ast::{CharFreq, Scope, StmtData};
-use bun_js_parser::{Part, PartList, Ref, SlotCounts};
-use bun_options_types::import_record;
+use bun_js_parser::ast::StmtData;
+use bun_js_parser::{Part, SlotCounts};
 
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
@@ -27,44 +26,19 @@ pub fn rename_symbols_in_chunk(
 ) -> Result<ChunkRenamer, bun_core::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
-    // ── cache SoA column base pointers ────────────────────────────────────
+    // ── split-borrow SoA columns ─────────────────────────────────────────
     // `MultiArrayList` never reallocates inside this function (read-only over
-    // graph.ast/graph.meta). Distinct columns are disjoint by construction, so
-    // raw column pointers are valid for the whole body and may be dereferenced
-    // alongside other `&c.graph.*` borrows.
-    macro_rules! col_ptr {
-        ($slice:ident, $field:ident, $ty:ty) => {{
-            let len = $slice.len();
-            // SAFETY: `$ty` is exactly the column type for `$field`; the derive
-            // guarantees the field-enum ↔ type pairing.
-            let p: *mut $ty = unsafe { $slice.items_raw::<{ ::core::stringify!($field) }, $ty>() };
-            core::ptr::slice_from_raw_parts_mut(p, len)
-        }};
-    }
-    macro_rules! col {
-        ($p:expr) => {
-            // SAFETY: see `col_ptr!`. No aliasing `&mut` to the same column is
-            // live across this deref.
-            unsafe { &*$p }
-        };
-    }
-    macro_rules! col_mut {
-        ($p:expr) => {
-            // SAFETY: see `col_ptr!`. No aliasing borrow of the same column is
-            // live across this deref.
-            unsafe { &mut *$p }
-        };
-    }
+    // graph.ast/graph.meta), so one `split_mut` per list gives `&mut [T]` to
+    // every column for the whole body. `c.graph.symbols` / `c.options` /
+    // `c.graph.stable_source_indices` are sibling fields and stay accessible.
+    let ast = c.graph.ast.split_mut();
+    let meta = c.graph.meta.split_mut();
 
-    let ast = c.graph.ast.slice();
-    let meta = c.graph.meta.slice();
-
-    let all_module_scopes: *mut [Scope] = col_ptr!(ast, module_scope, Scope);
-    let all_flags: *mut [js_meta::Flags] = col_ptr!(meta, flags, js_meta::Flags);
-    let all_parts: *mut [PartList] = col_ptr!(ast, parts, PartList);
-    let all_wrapper_refs: *mut [Ref] = col_ptr!(ast, wrapper_ref, Ref);
-    let all_import_records: *mut [import_record::List] =
-        col_ptr!(ast, import_records, import_record::List);
+    let all_module_scopes = ast.module_scope;
+    let all_flags: &[js_meta::Flags] = meta.flags;
+    let all_parts = ast.parts;
+    let all_wrapper_refs = ast.wrapper_ref;
+    let all_import_records = ast.import_records;
 
     // PORT NOTE: `symbol::Map` is not `Clone`/`Copy`; Zig passed the struct
     // (slice header) by value. Build a non-owning shallow view via
@@ -72,20 +46,21 @@ pub fn rename_symbols_in_chunk(
     // drop.
     // SAFETY: `c.graph.symbols` outlives the returned `ChunkRenamer` (both are
     // owned by the link step). No growth is performed on the view.
-    let symbols_ptr: *mut symbol::Map = core::ptr::addr_of_mut!(c.graph.symbols);
-    let make_symbols_view = || -> symbol::Map {
-        unsafe {
-            let inner = (*symbols_ptr).symbols_for_source.slice_mut();
-            symbol::Map { symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe { <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(inner) }) }
+    let symbols = &mut c.graph.symbols;
+    let make_symbols_view = |symbols: &mut symbol::Map| -> symbol::Map {
+        let inner = symbols.symbols_for_source.slice_mut();
+        symbol::Map {
+            symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe {
+                <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(inner)
+            }),
         }
     };
 
     let mut reserved_names = renamer::compute_initial_reserved_names(c.options.output_format)?;
     for &source_index in files_in_order {
         renamer::compute_reserved_names_for_scope(
-            &col!(all_module_scopes)[source_index as usize],
-            // SAFETY: disjoint from the column borrows above.
-            unsafe { &*symbols_ptr },
+            &all_module_scopes[source_index as usize],
+            symbols,
             &mut reserved_names,
         );
     }
@@ -128,46 +103,35 @@ pub fn rename_symbols_in_chunk(
     if c.options.minify_identifiers {
         let first_top_level_slots: SlotCounts = {
             let mut slots = SlotCounts::default();
-            let nested_scope_slot_counts: *mut [SlotCounts] =
-                col_ptr!(ast, nested_scope_slot_counts, SlotCounts);
             for &i in files_in_order {
-                slots.union_max(col!(nested_scope_slot_counts)[i as usize].clone());
+                slots.union_max(ast.nested_scope_slot_counts[i as usize].clone());
             }
             slots
         };
 
         let mut minify_renamer =
-            MinifyRenamer::init(make_symbols_view(), first_top_level_slots, reserved_names)?;
+            MinifyRenamer::init(make_symbols_view(symbols), first_top_level_slots, reserved_names)?;
 
         let mut top_level_symbols: Vec<StableSymbolCount> = Vec::new();
         let mut top_level_symbols_all: Vec<StableSymbolCount> = Vec::new();
 
         let stable_source_indices = c.graph.stable_source_indices.slice();
-        let mut freq = CharFreq { freqs: [0i32; 64] };
-        let ast_flags_list: *mut [AstFlags] = col_ptr!(ast, flags, AstFlags);
+        let mut freq = bun_js_parser::ast::CharFreq { freqs: [0i32; 64] };
 
         let mut capacity = sorted_imports_from_other_chunks.len();
-        {
-            let char_freqs: *mut [CharFreq] = col_ptr!(ast, char_freq, CharFreq);
-
-            for &source_index in files_in_order {
-                if col!(ast_flags_list)[source_index as usize].contains(AstFlags::HAS_CHAR_FREQ) {
-                    freq.include(&col!(char_freqs)[source_index as usize]);
-                }
+        for &source_index in files_in_order {
+            if ast.flags[source_index as usize].contains(AstFlags::HAS_CHAR_FREQ) {
+                freq.include(&ast.char_freq[source_index as usize]);
             }
         }
 
-        let exports_ref_list: *mut [Ref] = col_ptr!(ast, exports_ref, Ref);
-        let module_ref_list: *mut [Ref] = col_ptr!(ast, module_ref, Ref);
-        let parts_list: *mut [PartList] = col_ptr!(ast, parts, PartList);
-
         for &source_index in files_in_order {
-            let ast_flags = col!(ast_flags_list)[source_index as usize];
+            let ast_flags = ast.flags[source_index as usize];
             let uses_exports_ref = ast_flags.contains(AstFlags::USES_EXPORTS_REF);
             let uses_module_ref = ast_flags.contains(AstFlags::USES_MODULE_REF);
-            let exports_ref = col!(exports_ref_list)[source_index as usize];
-            let module_ref = col!(module_ref_list)[source_index as usize];
-            let parts = &col!(parts_list)[source_index as usize];
+            let exports_ref = ast.exports_ref[source_index as usize];
+            let module_ref = ast.module_ref[source_index as usize];
+            let parts = &all_parts[source_index as usize];
 
             top_level_symbols.clear();
 
@@ -235,7 +199,7 @@ pub fn rename_symbols_in_chunk(
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
-    let mut r = NumberRenamer::init(make_symbols_view(), reserved_names)?;
+    let mut r = NumberRenamer::init(make_symbols_view(symbols), reserved_names)?;
     for stable_ref in &sorted_imports_from_other_chunks {
         // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
         r.add_top_level_symbol({ stable_ref.r#ref });
@@ -245,9 +209,9 @@ pub fn rename_symbols_in_chunk(
     let mut sorted: Vec<u32> = Vec::new();
 
     for &source_index in files_in_order {
-        let wrap = col!(all_flags)[source_index as usize].wrap;
+        let wrap = all_flags[source_index as usize].wrap;
         // PORT NOTE: need `&mut [Part]` for `add_top_level_declared_symbols`.
-        let parts: &mut [Part] = col_mut!(all_parts)[source_index as usize].slice_mut();
+        let parts: &mut [Part] = all_parts[source_index as usize].slice_mut();
 
         match wrap {
             // Modules wrapped in a CommonJS closure look like this:
@@ -265,14 +229,14 @@ pub fn rename_symbols_in_chunk(
             // scope to this new top-level scope) but it's good enough for the
             // renaming code.
             WrapKind::Cjs => {
-                r.add_top_level_symbol(col!(all_wrapper_refs)[source_index as usize]);
+                r.add_top_level_symbol(all_wrapper_refs[source_index as usize]);
 
                 // External import statements will be hoisted outside of the CommonJS
                 // wrapper if the output format supports import statements. We need to
                 // add those symbols to the top-level scope to avoid causing name
                 // collisions. This code special-cases only those symbols.
                 if c.options.output_format.keep_es6_import_export_syntax() {
-                    let import_records = col!(all_import_records)[source_index as usize].slice();
+                    let import_records = all_import_records[source_index as usize].slice();
                     for part in parts.iter() {
                         // SAFETY: `Part.stmts` is an arena-owned slice valid for the AST lifetime.
                         for stmt in unsafe { &*part.stmts } {
@@ -331,7 +295,7 @@ pub fn rename_symbols_in_chunk(
                 let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
                 r.assign_names_recursive_with_number_scope(
                     root,
-                    &mut col_mut!(all_module_scopes)[source_index as usize],
+                    &mut all_module_scopes[source_index as usize],
                     source_index,
                     &mut sorted,
                 );
@@ -353,7 +317,7 @@ pub fn rename_symbols_in_chunk(
             // minify everything inside the closure without introducing a new scope
             // since all top-level variables will be hoisted outside of the closure.
             WrapKind::Esm => {
-                r.add_top_level_symbol(col!(all_wrapper_refs)[source_index as usize]);
+                r.add_top_level_symbol(all_wrapper_refs[source_index as usize]);
             }
 
             WrapKind::None => {}

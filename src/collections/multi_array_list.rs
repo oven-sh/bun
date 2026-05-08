@@ -84,17 +84,64 @@ macro_rules! multi_array_columns {
     (@emit $vis:vis $trait:ident [$($decl:tt)*] [$($use:tt)*] $elem:ty {
         $( $field:ident : $ty:ty, )*
     }) => {
-        #[allow(dead_code, non_snake_case)]
-        $vis trait $trait <$($decl)*> {
-            $( $crate::__mal_column_sig!($field : $ty); )*
-        }
-        #[allow(dead_code, non_snake_case)]
-        impl <$($decl)*> $trait <$($use)*> for $crate::MultiArrayList<$elem> {
-            $( $crate::__mal_column_impl!($field : $ty); )*
-        }
-        #[allow(dead_code, non_snake_case)]
-        impl <$($decl)*> $trait <$($use)*> for $crate::multi_array_list::Slice<$elem> {
-            $( $crate::__mal_column_impl!($field : $ty); )*
+        $crate::__mal_paste! {
+            /// Simultaneous `&mut` view of every column. Returned by
+            /// [`split_mut`]($trait::split_mut); columns are physically
+            /// disjoint (SoA layout — each occupies a distinct
+            /// `[COLUMN_OFFSET_PER_CAP[i]*cap ..)` byte range in the single
+            /// backing allocation), so holding all of them mutably at once is
+            /// sound. This is the safe replacement for the `items_raw` +
+            /// per-site `unsafe { &mut * }` pattern.
+            #[allow(dead_code, non_snake_case)]
+            $vis struct [<$trait Mut>] <'__mal, $($decl)*> {
+                $( pub $field: &'__mal mut [$ty], )*
+                #[doc(hidden)]
+                pub __mal: ::core::marker::PhantomData<&'__mal mut $elem>,
+            }
+
+            /// Raw `*mut [T]` view of every column. Returned by
+            /// [`split_raw`]($trait::split_raw). Unlike [`split_mut`], the
+            /// pointers are derived directly from the SoA buffer's raw `bytes`
+            /// base (root/SharedRW provenance) with **no `&mut` intermediate**,
+            /// so they remain valid under Stacked Borrows even when interleaved
+            /// with other column accessors on the same list — the use case
+            /// `split_mut` cannot serve. Dereferencing is the caller's
+            /// responsibility (per-site `unsafe`); columns are physically
+            /// disjoint by `COLUMN_OFFSET_PER_CAP`, so distinct-column derefs
+            /// never alias. Invalidated by any reallocation of the list.
+            #[allow(dead_code, non_snake_case)]
+            $vis struct [<$trait Raw>] <$($decl)*> {
+                $( pub $field: *mut [$ty], )*
+                #[doc(hidden)]
+                pub __mal: ::core::marker::PhantomData<*mut $elem>,
+            }
+            #[allow(dead_code, non_snake_case)]
+            impl <$($decl)*> ::core::marker::Copy for [<$trait Raw>] <$($use)*> {}
+            #[allow(dead_code, non_snake_case)]
+            impl <$($decl)*> ::core::clone::Clone for [<$trait Raw>] <$($use)*> {
+                #[inline] fn clone(&self) -> Self { *self }
+            }
+
+            #[allow(dead_code, non_snake_case)]
+            $vis trait $trait <$($decl)*> {
+                $( $crate::__mal_column_sig!($field : $ty); )*
+                /// Split-borrow every column at once.
+                fn split_mut(&mut self) -> [<$trait Mut>]<'_, $($use)*>;
+                /// Raw column pointers (root provenance, no `&mut` intermediate).
+                fn split_raw(&self) -> [<$trait Raw>]<$($use)*>;
+            }
+            #[allow(dead_code, non_snake_case)]
+            impl <$($decl)*> $trait <$($use)*> for $crate::MultiArrayList<$elem> {
+                $( $crate::__mal_column_impl!($field : $ty); )*
+                $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
+                $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
+            }
+            #[allow(dead_code, non_snake_case)]
+            impl <$($decl)*> $trait <$($use)*> for $crate::multi_array_list::Slice<$elem> {
+                $( $crate::__mal_column_impl!($field : $ty); )*
+                $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
+                $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
+            }
         }
     };
 }
@@ -106,6 +153,54 @@ macro_rules! __mal_column_sig {
         $crate::__mal_paste! {
             fn [<items_ $field>](&self) -> &[$ty];
             fn [<items_ $field _mut>](&mut self) -> &mut [$ty];
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __mal_split_mut_impl {
+    ($struct:ident [$($use:tt)*] { $( $field:ident : $ty:ty, )* }) => {
+        #[inline]
+        fn split_mut(&mut self) -> $struct<'_, $($use)*> {
+            let __len = self.len();
+            // SAFETY: distinct columns of a `MultiArrayList` occupy
+            // non-overlapping byte ranges within one allocation
+            // (`Reflected::<T>::COLUMN_OFFSET_PER_CAP`); `&mut self` guarantees
+            // exclusive access to the whole buffer for `'_`, so materializing
+            // one `&mut [F]` per column simultaneously cannot alias.
+            unsafe {
+                $struct {
+                    $( $field: ::core::slice::from_raw_parts_mut(
+                        self.items_raw::<{ ::core::stringify!($field) }, $ty>(),
+                        __len,
+                    ), )*
+                    __mal: ::core::marker::PhantomData,
+                }
+            }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __mal_split_raw_impl {
+    ($struct:ident [$($use:tt)*] { $( $field:ident : $ty:ty, )* }) => {
+        #[inline]
+        fn split_raw(&self) -> $struct<$($use)*> {
+            let __len = self.len();
+            $struct {
+                $( $field: ::core::ptr::slice_from_raw_parts_mut(
+                    // SAFETY: `items_raw` is `unsafe` only as a lint on the
+                    // returned pointer's read/write contract; merely obtaining
+                    // it is always sound. The pointer is computed by raw `add`
+                    // on the heap buffer base — no `&`/`&mut` intermediate —
+                    // so it carries the allocation's root provenance.
+                    unsafe { self.items_raw::<{ ::core::stringify!($field) }, $ty>() },
+                    __len,
+                ), )*
+                __mal: ::core::marker::PhantomData,
+            }
         }
     };
 }

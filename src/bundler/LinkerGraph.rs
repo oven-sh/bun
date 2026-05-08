@@ -130,18 +130,216 @@ impl Default for LinkerGraph {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gate: symbol/part graph mutation surface needed by
+// Symbol/part graph mutation surface needed by
 // `linker_context/scanImportsAndExports.rs` and `LinkerContext::do_step5`.
-// Rewritten from the Phase-A `.items().field` draft to the
-// `items_<field>()` `*ListExt` spelling and reshaped for borrowck (no
-// overlapping `&mut` into the same `MultiArrayList`).
+//
+// Expressed as free fns over individual SoA column slices so callers that
+// already hold a `BundledAstColumnsMut` / `JSMetaColumnsMut` split-borrow
+// can hand in just the columns these touch without re-borrowing
+// `&mut LinkerGraph` (RUST_IDIOMS_AUDIT.md §3). The `&mut self` methods are
+// thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
+
+pub fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
+    named_exports[Index::RUNTIME.get() as usize]
+        .get(name)
+        .expect("runtime function must be a named export of the runtime module")
+        .ref_
+}
+
+pub fn generate_new_symbol(
+    symbols: &mut symbol::Map,
+    module_scopes: &mut [js_ast::ast::Scope],
+    source_index: u32,
+    kind: symbol::Kind,
+    original_name: &[u8],
+) -> Ref {
+    let source_symbols = &mut symbols.symbols_for_source.slice_mut()[source_index as usize];
+
+    // PORT NOTE: Zig built `Ref.init(..)` then assigned `ref.tag = .symbol`.
+    // The Rust `Ref` is a packed `u64` with no public `tag` field, so use
+    // the `Ref::new` constructor that takes the tag explicitly.
+    let ref_ = Ref::new(
+        source_symbols.len() as u32, // @truncate (u32 → u31 in pack())
+        source_index,                // @truncate
+        RefTag::Symbol,
+    );
+
+    // TODO: will this crash on resize due to using threadlocal mimalloc heap?
+    source_symbols.push(Symbol {
+        kind,
+        // PORT NOTE: `Symbol.original_name` is a raw `*const [u8]` —
+        // arena-owned slice whose lifetime is erased (matches the Zig
+        // `[]const u8`); caller guarantees it outlives the symbol table.
+        original_name: std::ptr::from_ref::<[u8]>(original_name),
+        ..Default::default()
+    });
+
+    module_scopes[source_index as usize].generated.push(ref_);
+    ref_
+}
+
+pub fn top_level_symbol_to_parts<'a>(
+    top_level_symbol_to_parts_overlay: &'a [TopLevelSymbolToParts],
+    top_level_symbols_to_parts: &'a [bundled_ast::TopLevelSymbolToParts],
+    id: u32,
+    ref_: Ref,
+) -> &'a [u32] {
+    if let Some(overlay) = top_level_symbol_to_parts_overlay[id as usize].get(&ref_) {
+        return overlay.slice();
+    }
+    if let Some(list) = top_level_symbols_to_parts[id as usize].get(&ref_) {
+        return list.slice();
+    }
+    &[]
+}
+
+pub fn add_part_to_file(
+    parts: &mut [part::List],
+    top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
+    top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
+    id: u32,
+    part: Part,
+) -> Result<u32, bun_alloc::AllocError> {
+    let part_id = parts[id as usize].len() as u32; // @truncate (u32)
+    parts[id as usize].push(part);
+
+    // PORT NOTE: borrowck reshape. The Zig closure simultaneously holds
+    //   * `&mut parts[part_id].declared_symbols`   (column `parts` of `ast`)
+    //   * `&meta.top_level_symbol_to_parts_overlay[id]` (`meta`)
+    //   * `&ast.top_level_symbols_to_parts[id]`    (another `ast` column)
+    // and additionally caches `*?*TopLevelSymbolToParts` across calls.
+    // The two `ast` columns now arrive pre-split, so no detach/reattach is
+    // needed. The overlay-pointer cache is dropped — re-index `meta` each
+    // call (O(1); the cache was a Zig micro-opt that does not survive
+    // Stacked Borrows).
+    let declared_symbols: &mut DeclaredSymbolList =
+        &mut parts[id as usize].mut_(part_id as usize).declared_symbols;
+
+    struct Ctx<'a> {
+        overlay: &'a mut [TopLevelSymbolToParts],
+        ast_tlsp: &'a [bundled_ast::TopLevelSymbolToParts],
+        id: u32,
+        part_id: u32,
+    }
+    let mut ctx = Ctx {
+        overlay: top_level_symbol_to_parts_overlay,
+        ast_tlsp: top_level_symbols_to_parts,
+        id,
+        part_id,
+    };
+
+    DeclaredSymbol::for_each_top_level_symbol(declared_symbols, &mut ctx, |ctx, ref_| {
+        let id = ctx.id;
+        let part_id = ctx.part_id;
+        let entry = ctx.overlay[id as usize]
+            .get_or_put(ref_)
+            .unwrap_or_else(|_| bun_core::out_of_memory());
+        if !entry.found_existing {
+            if let Some(original_parts) = ctx.ast_tlsp[id as usize].get(&ref_) {
+                let mut list = original_parts.clone();
+                list.push(part_id);
+                *entry.value_ptr = list;
+            } else {
+                *entry.value_ptr = vec![part_id];
+            }
+        } else {
+            entry.value_ptr.push(part_id);
+        }
+    });
+
+    Ok(part_id)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn generate_symbol_import_and_use(
+    parts: &mut [part::List],
+    ast_flags: &mut [bundled_ast::Flags],
+    exports_ref: &[Ref],
+    module_ref: &[Ref],
+    top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
+    imports_to_bind: &mut [js_meta::RefImportData],
+    top_level_symbol_to_parts_overlay: &[TopLevelSymbolToParts],
+    source_index: u32,
+    part_index: u32,
+    ref_: Ref,
+    use_count: u32,
+    // PORT NOTE: callers are split between `crate::Index` (options_types)
+    // and the structurally identical `js_ast::Index` until the two newtypes
+    // unify (Phase B-3). Accept either via `Into` and normalize once.
+    source_index_to_import_from: impl Into<Index>,
+) -> Result<(), bun_alloc::AllocError> {
+    let source_index_to_import_from: Index = source_index_to_import_from.into();
+    if use_count == 0 {
+        return Ok(());
+    }
+
+    let exports_ref_v = exports_ref[source_index as usize];
+    let module_ref_v = module_ref[source_index as usize];
+
+    // Mark this symbol as used by this part
+    {
+        let part: &mut Part =
+            &mut parts[source_index as usize].slice_mut()[part_index as usize];
+        let uses_entry = part.symbol_uses.get_or_put(ref_)?;
+        if !uses_entry.found_existing {
+            *uses_entry.value_ptr = symbol::Use { count_estimate: use_count };
+        } else {
+            uses_entry.value_ptr.count_estimate += use_count;
+        }
+    }
+
+    if !exports_ref_v.is_empty() && ref_.eql(exports_ref_v) {
+        ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_EXPORTS_REF);
+    }
+
+    if !module_ref_v.is_empty() && ref_.eql(module_ref_v) {
+        ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_MODULE_REF);
+    }
+
+    // null ref shouldn't be there.
+    debug_assert!(!ref_.is_empty());
+
+    // Track that this specific symbol was imported
+    if source_index_to_import_from.get() != source_index {
+        imports_to_bind[source_index as usize].put(
+            ref_,
+            js_meta::ImportToBind {
+                data: ImportTracker {
+                    source_index: source_index_to_import_from,
+                    import_ref: ref_,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )?;
+    }
+
+    // Pull in all parts that declare this symbol
+    let part_ids = top_level_symbol_to_parts(
+        top_level_symbol_to_parts_overlay,
+        top_level_symbols_to_parts,
+        source_index_to_import_from.get(),
+        ref_,
+    );
+    let dependencies = &mut parts[source_index as usize].slice_mut()[part_index as usize].dependencies;
+    let new_dependencies = dependencies.writable_slice(part_ids.len())?;
+    debug_assert_eq!(part_ids.len(), new_dependencies.len());
+    for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
+        *dependency = Dependency {
+            // PORT NOTE: `Dependency.source_index` is the structurally
+            // identical `bun_js_parser::Index`; convert by value until the
+            // two `Index` newtypes unify (Phase B-3).
+            source_index: js_ast::Index::init(source_index_to_import_from.get()),
+            part_index: *part_id, // @truncate (already u32)
+        };
+    }
+    Ok(())
+}
+
 impl LinkerGraph {
     pub fn runtime_function(&self, name: &[u8]) -> Ref {
-        self.ast.items_named_exports()[Index::RUNTIME.get() as usize]
-            .get(name)
-            .expect("runtime function must be a named export of the runtime module")
-            .ref_
+        runtime_function(self.ast.items_named_exports(), name)
     }
 
     pub fn generate_new_symbol(
@@ -150,33 +348,13 @@ impl LinkerGraph {
         kind: symbol::Kind,
         original_name: &[u8],
     ) -> Ref {
-        let source_symbols =
-            &mut self.symbols.symbols_for_source.slice_mut()[source_index as usize];
-
-        // PORT NOTE: Zig built `Ref.init(..)` then assigned `ref.tag = .symbol`.
-        // The Rust `Ref` is a packed `u64` with no public `tag` field, so use
-        // the `Ref::new` constructor that takes the tag explicitly.
-        let ref_ = Ref::new(
-            source_symbols.len() as u32, // @truncate (u32 → u31 in pack())
-            source_index,       // @truncate
-            RefTag::Symbol,
-        );
-
-        // TODO: will this crash on resize due to using threadlocal mimalloc heap?
-        source_symbols
-            .push(Symbol {
-                kind,
-                // PORT NOTE: `Symbol.original_name` is a raw `*const [u8]` —
-                // arena-owned slice whose lifetime is erased (matches the Zig
-                // `[]const u8`); caller guarantees it outlives the symbol table.
-                original_name: std::ptr::from_ref::<[u8]>(original_name),
-                ..Default::default()
-            });
-
-        self.ast.items_module_scope_mut()[source_index as usize]
-            .generated
-            .push(ref_);
-        ref_
+        generate_new_symbol(
+            &mut self.symbols,
+            self.ast.items_module_scope_mut(),
+            source_index,
+            kind,
+            original_name,
+        )
     }
 
     pub fn generate_runtime_symbol_import_and_use(
@@ -207,63 +385,14 @@ impl LinkerGraph {
     }
 
     pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
-        let parts: &mut part::List = &mut self.ast.items_parts_mut()[id as usize];
-        let part_id = parts.len() as u32; // @truncate (u32)
-        parts.push(part);
-
-        // PORT NOTE: borrowck reshape. The Zig closure simultaneously holds
-        //   * `&mut parts[part_id].declared_symbols`   (column `parts` of `ast`)
-        //   * `&meta.top_level_symbol_to_parts_overlay[id]` (`meta`)
-        //   * `&ast.top_level_symbols_to_parts[id]`    (another `ast` column)
-        // and additionally caches `*?*TopLevelSymbolToParts` across calls.
-        // In Rust the two `ast` borrows alias `&mut self.ast`. The columns are
-        // physically disjoint and the closure never reallocs `ast`, so we
-        // detach `declared_symbols` by `mem::take` (it is read-only inside
-        // `for_each_top_level_symbol`), iterate, then move it back. The
-        // overlay-pointer cache is dropped — re-index `meta` each call (O(1)
-        // pointer arithmetic; the cache was a Zig micro-opt that does not
-        // survive Stacked Borrows).
-        let mut declared_symbols: DeclaredSymbolList = core::mem::take(
-            &mut parts.mut_(part_id as usize).declared_symbols,
-        );
-
-        struct Ctx<'a> {
-            graph: &'a mut LinkerGraph,
-            id: u32,
-            part_id: u32,
-        }
-        let mut ctx = Ctx { graph: self, id, part_id };
-
-        DeclaredSymbol::for_each_top_level_symbol(&mut declared_symbols, &mut ctx, |ctx, ref_| {
-            let id = ctx.id;
-            let part_id = ctx.part_id;
-            let overlay =
-                &mut ctx.graph.meta.items_top_level_symbol_to_parts_overlay_mut()[id as usize];
-
-            let entry = overlay
-                .get_or_put(ref_)
-                .unwrap_or_else(|_| bun_core::out_of_memory());
-            if !entry.found_existing {
-                if let Some(original_parts) =
-                    ctx.graph.ast.items_top_level_symbols_to_parts()[id as usize].get(&ref_)
-                {
-                    let mut list = original_parts.clone();
-                    list.push(part_id);
-                    *entry.value_ptr = list;
-                } else {
-                    *entry.value_ptr = vec![part_id];
-                }
-            } else {
-                entry.value_ptr.push(part_id);
-            }
-        });
-
-        // Restore the temporarily-detached list.
-        self.ast.items_parts_mut()[id as usize]
-            .mut_(part_id as usize)
-            .declared_symbols = declared_symbols;
-
-        Ok(part_id)
+        let ast = self.ast.split_mut();
+        add_part_to_file(
+            ast.parts,
+            self.meta.items_top_level_symbol_to_parts_overlay_mut(),
+            ast.top_level_symbols_to_parts,
+            id,
+            part,
+        )
     }
 
     pub fn generate_symbol_import_and_use(
@@ -272,104 +401,33 @@ impl LinkerGraph {
         part_index: u32,
         ref_: Ref,
         use_count: u32,
-        // PORT NOTE: callers are split between `crate::Index` (options_types)
-        // and the structurally identical `js_ast::Index` until the two newtypes
-        // unify (Phase B-3). Accept either via `Into` and normalize once.
         source_index_to_import_from: impl Into<Index>,
     ) -> Result<(), bun_alloc::AllocError> {
-        let source_index_to_import_from: Index = source_index_to_import_from.into();
-        if use_count == 0 {
-            return Ok(());
-        }
-
-        // PORT NOTE: hoisted above the `&mut parts` borrow — Zig interleaved
-        // these reads with the live `*Part` pointer; in Rust both touch
-        // `self.ast` so read the `Copy` refs first.
-        let exports_ref = self.ast.items_exports_ref()[source_index as usize];
-        let module_ref = self.ast.items_module_ref()[source_index as usize];
-
-        // Mark this symbol as used by this part
-        {
-            let part: &mut Part =
-                &mut self.ast.items_parts_mut()[source_index as usize].slice_mut()
-                    [part_index as usize];
-            let uses_entry = part.symbol_uses.get_or_put(ref_)?;
-            if !uses_entry.found_existing {
-                *uses_entry.value_ptr = symbol::Use { count_estimate: use_count };
-            } else {
-                uses_entry.value_ptr.count_estimate += use_count;
-            }
-        }
-
-        if !exports_ref.is_empty() && ref_.eql(exports_ref) {
-            self.ast.items_flags_mut()[source_index as usize]
-                .insert(bundled_ast::Flags::USES_EXPORTS_REF);
-        }
-
-        if !module_ref.is_empty() && ref_.eql(module_ref) {
-            self.ast.items_flags_mut()[source_index as usize]
-                .insert(bundled_ast::Flags::USES_MODULE_REF);
-        }
-
-        // null ref shouldn't be there.
-        debug_assert!(!ref_.is_empty());
-
-        // Track that this specific symbol was imported
-        if source_index_to_import_from.get() != source_index {
-            let imports_to_bind =
-                &mut self.meta.items_imports_to_bind_mut()[source_index as usize];
-            imports_to_bind.put(
-                ref_,
-                js_meta::ImportToBind {
-                    data: ImportTracker {
-                        source_index: source_index_to_import_from,
-                        import_ref: ref_,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-            )?;
-        }
-
-        // Pull in all parts that declare this symbol
-        // PORT NOTE: reshaped for borrowck — `top_level_symbol_to_parts`
-        // borrows `&self` (both `ast` and `meta`), which conflicts with the
-        // `&mut part.dependencies` re-borrow. Copy the (small) part-id slice
-        // out first.
-        // PERF(port): was zero-copy slice borrow into ast/meta — revisit with
-        // `Slice::items_raw` if this shows up in profiles.
-        let part_ids: Vec<u32> = self
-            .top_level_symbol_to_parts(source_index_to_import_from.get(), ref_)
-            .to_vec();
-        let dependencies = &mut self.ast.items_parts_mut()[source_index as usize].slice_mut()
-            [part_index as usize]
-            .dependencies;
-        let new_dependencies = dependencies.writable_slice(part_ids.len())?;
-        debug_assert_eq!(part_ids.len(), new_dependencies.len());
-        for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
-            *dependency = Dependency {
-                // PORT NOTE: `Dependency.source_index` is the structurally
-                // identical `bun_js_parser::Index`; convert by value until the
-                // two `Index` newtypes unify (Phase B-3).
-                source_index: js_ast::Index::init(source_index_to_import_from.get()),
-                part_index: *part_id, // @truncate (already u32)
-            };
-        }
-        Ok(())
+        let ast = self.ast.split_mut();
+        let meta = self.meta.split_mut();
+        generate_symbol_import_and_use(
+            ast.parts,
+            ast.flags,
+            ast.exports_ref,
+            ast.module_ref,
+            ast.top_level_symbols_to_parts,
+            meta.imports_to_bind,
+            meta.top_level_symbol_to_parts_overlay,
+            source_index,
+            part_index,
+            ref_,
+            use_count,
+            source_index_to_import_from,
+        )
     }
 
     pub fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
-        if let Some(overlay) =
-            self.meta.items_top_level_symbol_to_parts_overlay()[id as usize].get(&ref_)
-        {
-            return overlay.slice();
-        }
-
-        if let Some(list) = self.ast.items_top_level_symbols_to_parts()[id as usize].get(&ref_) {
-            return list.slice();
-        }
-
-        &[]
+        top_level_symbol_to_parts(
+            self.meta.items_top_level_symbol_to_parts_overlay(),
+            self.ast.items_top_level_symbols_to_parts(),
+            id,
+            ref_,
+        )
     }
 }
 

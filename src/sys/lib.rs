@@ -1268,10 +1268,19 @@ pub const MAX_COUNT: usize = u32::MAX as usize;
 mod nocancel {
     use core::ffi::c_int;
     unsafe extern "C" {
+        // `open$NOCANCEL` / `openat$NOCANCEL` are VARIADIC in libc — the
+        // trailing `mode_t` is read (via `va_arg`) only when `O_CREAT`/
+        // `O_TMPFILE` is set. On arm64-apple, variadic args are passed on the
+        // STACK, not in registers; a non-variadic 4-arg decl would pass `mode`
+        // in a register libc never reads → freshly-created files get a garbage
+        // mode (every `Bun.write` / `fs.writeFileSync` / extracted-archive file
+        // came out unreadable). Must be `...` (matches Zig's `std.c.open`).
+        // x86-64-macOS and the Linux syscall path tolerate the non-variadic
+        // form; arm64-macOS does not.
         #[link_name = "open$NOCANCEL"]
-        pub fn open(path: *const libc::c_char, flags: c_int, mode: libc::c_uint) -> c_int;
+        pub fn open(path: *const libc::c_char, flags: c_int, ...) -> c_int;
         #[link_name = "openat$NOCANCEL"]
-        pub fn openat(dirfd: c_int, path: *const libc::c_char, flags: c_int, mode: libc::c_uint) -> c_int;
+        pub fn openat(dirfd: c_int, path: *const libc::c_char, flags: c_int, ...) -> c_int;
         #[link_name = "read$NOCANCEL"]
         pub fn read(fd: c_int, buf: *mut libc::c_void, count: usize) -> isize;
         #[link_name = "write$NOCANCEL"]

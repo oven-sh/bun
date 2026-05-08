@@ -2215,16 +2215,17 @@ pub fn cloneMetadata(this: *HTTPClient) void {
 
 pub fn setTimeout(this: *HTTPClient, socket: anytype) void {
     // Duration comes from `idle_timeout_seconds` (tunable via
-    // `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, set low in tests). `socket.setTimeout`
-    // picks the short-tick timer for values ≤ 240s and the minute-granularity
-    // long timer above that (rounded up), so the default — 300s → 5-minute
-    // long timer — matches the previous hard-coded behaviour exactly.
+    // `BUN_CONFIG_HTTP_IDLE_TIMEOUT`, set low in tests) and is normalised once
+    // in `HTTPThread.onStart` — clamped to the uSockets long-timer bound and
+    // rounded up to a whole minute above 240s — so this is a plain
+    // pass-through. `socket.setTimeout` picks the short-tick timer for values
+    // ≤ 240s and the minute-granularity long timer above that, so the default
+    // 300s maps to the same 5-minute long timer as before.
     if (this.flags.disable_timeout or idle_timeout_seconds == 0) {
         socket.setTimeout(0);
         return;
     }
-    const secs = idle_timeout_seconds;
-    socket.setTimeout(if (secs > 240) ((secs + 59) / 60) * 60 else secs);
+    socket.setTimeout(idle_timeout_seconds);
 }
 
 pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {

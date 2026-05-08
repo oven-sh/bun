@@ -2967,6 +2967,103 @@ pub mod formatter {
             Ok(())
         }
 
+        /// Prints `key:` (with quoting/symbol decoration) and the optional
+        /// string-value colour prefix. Hoisted out of `for_each` so its
+        /// `format_args!` temporaries are popped before the recursive
+        /// `format()` call — keeps the per-level frame small enough for the
+        /// 512-deep `Bun.inspect` test under debug/ASAN.
+        #[inline(never)]
+        fn write_property_key(
+            writer: &mut WrappedWriter<'_>,
+            key: &ZigString,
+            is_symbol: bool,
+            is_private_symbol: bool,
+            quote_keys: bool,
+            value_is_string_like: bool,
+        ) {
+            if !is_symbol {
+                // TODO: make this one pass?
+                if !key.is_16_bit()
+                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice()))
+                {
+                    writer.add_for_new_line(key.len + 1);
+                    writer.print(format_args!(
+                        concat!("{}", "{}", "{}"),
+                        pfmt!("<r>", C),
+                        key,
+                        pfmt!("<d>:<r> ", C),
+                    ));
+                } else if key.is_16_bit()
+                    && (!quote_keys
+                        && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned()))
+                {
+                    writer.add_for_new_line(key.len + 1);
+                    writer.print(format_args!(
+                        concat!("{}", "{}", "{}"),
+                        pfmt!("<r>", C),
+                        key,
+                        pfmt!("<d>:<r> ", C),
+                    ));
+                } else if key.is_16_bit() {
+                    let mut utf16_slice = key.utf16_slice_aligned();
+
+                    writer.add_for_new_line(utf16_slice.len() + 2);
+
+                    if C {
+                        writer.write_all(pfmt!("<r><green>", true).as_bytes());
+                    }
+
+                    writer.write_all(b"\"");
+
+                    const QUOTE_U16: &[u16] = &[b'"' as u16];
+                    while let Some(j) = strings::immutable::index_of_any16(utf16_slice, QUOTE_U16) {
+                        writer.write_16_bit(&utf16_slice[0..j as usize]);
+                        writer.write_all(b"\"");
+                        utf16_slice = &utf16_slice[j as usize + 1..];
+                    }
+
+                    writer.write_16_bit(utf16_slice);
+
+                    writer.print(format_args!(
+                        "{}",
+                        pfmt!("\"<r><d>:<r> ", C)
+                    ));
+                } else {
+                    writer.add_for_new_line(key.len + 2);
+
+                    writer.print(format_args!(
+                        "{}{}{}",
+                        pfmt!("<r><green>", C),
+                        bun_core::fmt::format_json_string_latin1(key.slice()),
+                        pfmt!("<r><d>:<r> ", C),
+                    ));
+                }
+            } else if cfg!(debug_assertions) && is_private_symbol {
+                writer.add_for_new_line(1 + "$:".len() + key.len);
+                writer.print(format_args!(
+                    "{}{}{}{}",
+                    pfmt!("<r><magenta>", C),
+                    if key.len > 0 && key.char_at(0) == u16::from(b'#') { "" } else { "$" },
+                    key,
+                    pfmt!("<r><d>:<r> ", C),
+                ));
+            } else {
+                writer.add_for_new_line(1 + "[Symbol()]:".len() + key.len);
+                writer.print(format_args!(
+                    "{}Symbol({}){}",
+                    pfmt!("<r><d>[<r><blue>", C),
+                    key,
+                    pfmt!("<r><d>]:<r> ", C),
+                ));
+            }
+
+            if value_is_string_like {
+                if C {
+                    writer.write_all(pfmt!("<r><green>", true).as_bytes());
+                }
+            }
+        }
+
         pub extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
@@ -3049,87 +3146,14 @@ pub mod formatter {
                 }
             }
 
-            if !is_symbol {
-                // TODO: make this one pass?
-                if !key.is_16_bit()
-                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice()))
-                {
-                    writer.add_for_new_line(key.len + 1);
-                    writer.print(format_args!(
-                        concat!("{}", "{}", "{}"),
-                        pfmt!("<r>", C),
-                        key,
-                        pfmt!("<d>:<r> ", C),
-                    ));
-                } else if key.is_16_bit()
-                    && (!quote_keys
-                        && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned()))
-                {
-                    writer.add_for_new_line(key.len + 1);
-                    writer.print(format_args!(
-                        concat!("{}", "{}", "{}"),
-                        pfmt!("<r>", C),
-                        key,
-                        pfmt!("<d>:<r> ", C),
-                    ));
-                } else if key.is_16_bit() {
-                    let mut utf16_slice = key.utf16_slice_aligned();
-
-                    writer.add_for_new_line(utf16_slice.len() + 2);
-
-                    if C {
-                        writer.write_all(pfmt!("<r><green>", true).as_bytes());
-                    }
-
-                    writer.write_all(b"\"");
-
-                    const QUOTE_U16: &[u16] = &[b'"' as u16];
-                    while let Some(j) = strings::immutable::index_of_any16(utf16_slice, QUOTE_U16) {
-                        writer.write_16_bit(&utf16_slice[0..j as usize]);
-                        writer.write_all(b"\"");
-                        utf16_slice = &utf16_slice[j as usize + 1..];
-                    }
-
-                    writer.write_16_bit(utf16_slice);
-
-                    writer.print(format_args!(
-                        "{}",
-                        pfmt!("\"<r><d>:<r> ", C)
-                    ));
-                } else {
-                    writer.add_for_new_line(key.len + 2);
-
-                    writer.print(format_args!(
-                        "{}{}{}",
-                        pfmt!("<r><green>", C),
-                        bun_core::fmt::format_json_string_latin1(key.slice()),
-                        pfmt!("<r><d>:<r> ", C),
-                    ));
-                }
-            } else if cfg!(debug_assertions) && is_private_symbol {
-                writer.add_for_new_line(1 + "$:".len() + key.len);
-                writer.print(format_args!(
-                    "{}{}{}{}",
-                    pfmt!("<r><magenta>", C),
-                    if key.len > 0 && key.char_at(0) == u16::from(b'#') { "" } else { "$" },
-                    key,
-                    pfmt!("<r><d>:<r> ", C),
-                ));
-            } else {
-                writer.add_for_new_line(1 + "[Symbol()]:".len() + key.len);
-                writer.print(format_args!(
-                    "{}Symbol({}){}",
-                    pfmt!("<r><d>[<r><blue>", C),
-                    key,
-                    pfmt!("<r><d>]:<r> ", C),
-                ));
-            }
-
-            if tag.cell.is_string_like() {
-                if C {
-                    writer.write_all(pfmt!("<r><green>", true).as_bytes());
-                }
-            }
+            Self::write_property_key(
+                &mut writer,
+                key,
+                is_symbol,
+                is_private_symbol,
+                quote_keys,
+                tag.cell.is_string_like(),
+            );
 
             // Reseat: `format` needs `&mut Formatter` + `&mut dyn Write`, both
             // currently held by `writer`.
@@ -3280,13 +3304,6 @@ pub mod formatter {
                 }
             }
 
-            // Helper macro: `pfmt!(fmt, ENABLE_ANSI_COLORS)`.
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, ENABLE_ANSI_COLORS)
-                };
-            }
-
             // Each arm is hoisted to its own `#[inline(never)]` helper so the
             // `print_as` frame stays small. Zig's `comptime Format` switch
             // compiles to a single arm per instantiation; Rust's debug builds
@@ -3315,14 +3332,8 @@ pub mod formatter {
                     drop(writer);
                     return self.print_double::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
-                Tag::Undefined => {
-                    writer.add_for_new_line(9);
-                    writer.print(format_args!("{}undefined{}", pf!("<r><d>"), pf!("<r>")));
-                }
-                Tag::Null => {
-                    writer.add_for_new_line(4);
-                    writer.print(format_args!("{}null{}", pf!("<r><yellow>"), pf!("<r>")));
-                }
+                Tag::Undefined => Self::print_undefined::<ENABLE_ANSI_COLORS>(&mut writer),
+                Tag::Null => Self::print_null::<ENABLE_ANSI_COLORS>(&mut writer),
                 Tag::CustomFormattedObject => {
                     drop(writer);
                     return self.print_custom_formatted_object::<ENABLE_ANSI_COLORS>(writer_);
@@ -3364,17 +3375,7 @@ pub mod formatter {
                         &mut remove_before_recurse,
                     );
                 }
-                Tag::NativeCode => {
-                    if let Some(class_name) = value.get_class_info_name() {
-                        writer.add_for_new_line("[native code: ]".len() + class_name.len());
-                        writer.write_all(b"[native code: ");
-                        writer.write_all(class_name);
-                        writer.write_all(b"]");
-                    } else {
-                        writer.add_for_new_line("[native code]".len());
-                        writer.write_all(b"[native code]");
-                    }
-                }
+                Tag::NativeCode => Self::print_native_code(&mut writer, value),
                 Tag::Promise => {
                     drop(writer);
                     return self.print_promise::<ENABLE_ANSI_COLORS>(writer_, value);
@@ -3383,14 +3384,7 @@ pub mod formatter {
                     drop(writer);
                     return self.print_boolean::<ENABLE_ANSI_COLORS>(writer_, value);
                 }
-                Tag::GlobalObject => {
-                    const FMT: &str = "[Global Object]";
-                    writer.add_for_new_line(FMT.len());
-                    writer.write_all(
-                        pfmt!(concat!("<cyan>", "[Global Object]", "<r>"), ENABLE_ANSI_COLORS)
-                            .as_bytes(),
-                    );
-                }
+                Tag::GlobalObject => Self::print_global_object::<ENABLE_ANSI_COLORS>(&mut writer),
                 Tag::Map => {
                     drop(writer);
                     return self.print_map_like::<ENABLE_ANSI_COLORS, false>(writer_, value);
@@ -3435,14 +3429,7 @@ pub mod formatter {
                     drop(writer);
                     return self.print_typed_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type);
                 }
-                Tag::RevokedProxy => {
-                    writer.add_for_new_line("<Revoked Proxy>".len());
-                    writer.print(format_args!(
-                        "{}<Revoked Proxy>{}",
-                        pf!("<r><cyan>"),
-                        pf!("<r>")
-                    ));
-                }
+                Tag::RevokedProxy => Self::print_revoked_proxy::<ENABLE_ANSI_COLORS>(&mut writer),
                 Tag::Proxy => {
                     let target = value.get_proxy_internal_field(jsc::ProxyField::Target);
                     // Proxy does not allow non-objects here.
@@ -3486,6 +3473,50 @@ pub mod formatter {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
             }
             opts
+        }
+
+        #[inline(never)]
+        fn print_undefined<const C: bool>(writer: &mut WrappedWriter<'_>) {
+            writer.add_for_new_line(9);
+            writer.print(format_args!("{}undefined{}", pfmt!("<r><d>", C), pfmt!("<r>", C)));
+        }
+
+        #[inline(never)]
+        fn print_null<const C: bool>(writer: &mut WrappedWriter<'_>) {
+            writer.add_for_new_line(4);
+            writer.print(format_args!("{}null{}", pfmt!("<r><yellow>", C), pfmt!("<r>", C)));
+        }
+
+        #[inline(never)]
+        fn print_native_code(writer: &mut WrappedWriter<'_>, value: JSValue) {
+            if let Some(class_name) = value.get_class_info_name() {
+                writer.add_for_new_line("[native code: ]".len() + class_name.len());
+                writer.write_all(b"[native code: ");
+                writer.write_all(class_name);
+                writer.write_all(b"]");
+            } else {
+                writer.add_for_new_line("[native code]".len());
+                writer.write_all(b"[native code]");
+            }
+        }
+
+        #[inline(never)]
+        fn print_global_object<const C: bool>(writer: &mut WrappedWriter<'_>) {
+            const FMT: &str = "[Global Object]";
+            writer.add_for_new_line(FMT.len());
+            writer.write_all(
+                pfmt!(concat!("<cyan>", "[Global Object]", "<r>"), C).as_bytes(),
+            );
+        }
+
+        #[inline(never)]
+        fn print_revoked_proxy<const C: bool>(writer: &mut WrappedWriter<'_>) {
+            writer.add_for_new_line("<Revoked Proxy>".len());
+            writer.print(format_args!(
+                "{}<Revoked Proxy>{}",
+                pfmt!("<r><cyan>", C),
+                pfmt!("<r>", C)
+            ));
         }
 
         #[inline(never)]

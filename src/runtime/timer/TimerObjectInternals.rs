@@ -90,12 +90,14 @@ impl Flags {
     #[inline]
     pub fn kind(self) -> Kind {
         // Kind is `#[repr(u2)]` with 3 variants; stored value always written
-        // via `set_kind`. Exhaustive match (the unreachable 4th bit-state
-        // folds into the default arm — `set_kind` never writes it).
+        // via `set_kind`. Exhaustive match — the unreachable 4th bit-state
+        // traps (matches Zig's safety-checked `@enumFromInt`) instead of
+        // silently folding bitfield corruption to a valid variant.
         match ((self.0 & Self::KIND_MASK) >> Self::KIND_SHIFT) as u8 {
+            0 => Kind::SetTimeout,
             1 => Kind::SetInterval,
             2 => Kind::SetImmediate,
-            _ => Kind::SetTimeout,
+            n => unreachable!("invalid timer Kind {n}"),
         }
     }
     #[inline]

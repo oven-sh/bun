@@ -341,11 +341,14 @@ pub mod ssl_wrapper {
         #[inline]
         pub fn handshake_state(&self) -> HandshakeState {
             // bits 0-1 are always written via set_handshake_state with a valid
-            // discriminant in range 0..=2; 3-variant exhaustive match.
+            // discriminant in range 0..=2; the 4th bit-state traps (matches
+            // Zig's safety-checked `@enumFromInt`) rather than silently
+            // folding bitfield corruption to a valid variant.
             match self.0 & Self::HANDSHAKE_MASK {
+                0 => HandshakeState::HandshakePending,
                 1 => HandshakeState::HandshakeCompleted,
                 2 => HandshakeState::HandshakeRenegotiationPending,
-                _ => HandshakeState::HandshakePending,
+                n => unreachable!("invalid HandshakeState {n}"),
             }
         }
         #[inline]

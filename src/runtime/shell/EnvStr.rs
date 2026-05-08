@@ -56,12 +56,14 @@ impl EnvStr {
 
     #[inline]
     fn tag(self) -> Tag {
-        // Only constructed via `pack` with a valid `Tag` discriminant
-        // (`TAG_MASK` is 2 bits, value 3 unreachable); 3-variant match.
+        // Only constructed via `pack` with a valid `Tag` discriminant (0..=2);
+        // any other value is corruption — trap (matches Zig's safety-checked
+        // `@enumFromInt`) rather than silently folding to `Empty`.
         match ((self.0 >> TAG_SHIFT) & TAG_MASK) as u16 {
+            0 => Tag::Empty,
             1 => Tag::Refcounted,
             2 => Tag::Slice,
-            _ => Tag::Empty,
+            n => unreachable!("invalid EnvStr tag {n}"),
         }
     }
 

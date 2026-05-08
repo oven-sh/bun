@@ -36,6 +36,7 @@ impl Opcode {
     /// to repeat the `unsafe` block.
     #[inline]
     pub const fn from_raw(n: u8) -> Opcode {
+        debug_assert!(n <= 0xF);
         // Opcode exhaustively covers 0x0..=0xF; mask the low nibble (the
         // header packs `opcode: u4`, so callers always pass a 4-bit value —
         // the `& 0xF` is a no-op there but keeps the match total without an

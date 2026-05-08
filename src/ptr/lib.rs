@@ -308,8 +308,11 @@ pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
 /// difference is the pointee type of a `*mut T` parameter, so the Zig
 /// `@ptrCast` of a comptime fn item has no direct safe spelling. This is the
 /// single audited bit-cast for that pattern; callers state the source and
-/// destination signatures explicitly so a width or arity drift is a compile
-/// error at the call site, not silent UB.
+/// destination signatures explicitly. The const-assert below catches a
+/// non-pointer-sized `F`/`G` at compile time — it does **not** verify that
+/// `F`/`G` are fn-pointer types or that their arity/ABI match (all fn
+/// pointers are pointer-sized regardless of arity); those remain caller
+/// contract.
 ///
 /// # Safety
 /// `F` and `G` must be fn-pointer types with the **same calling convention,

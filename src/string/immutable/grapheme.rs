@@ -69,13 +69,16 @@ pub enum BreakState {
 impl BreakState {
     #[inline]
     pub const fn from_raw(n: u8) -> Self {
-        // #[repr(u8)] enum with variants 0..=4; caller guarantees range.
+        // #[repr(u8)] enum with variants 0..=4; caller guarantees range
+        // (round-tripped through `state as u8`). Out-of-range traps —
+        // matches Zig's safety-checked `@enumFromInt`.
         match n {
+            0 => Self::Default,
             1 => Self::RegionalIndicator,
             2 => Self::ExtendedPictographic,
             3 => Self::IndicConjunctBreakConsonant,
             4 => Self::IndicConjunctBreakLinker,
-            _ => Self::Default,
+            _ => panic!("invalid BreakState"),
         }
     }
 }

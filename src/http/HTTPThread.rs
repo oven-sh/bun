@@ -745,14 +745,7 @@ impl HttpThread {
         self.drain_queued_http_response_body_drains();
         self.drain_queued_writes();
         self.drain_queued_shutdowns();
-        // TODO(b2-blocked): h3::PendingConnect::drain_resolved is ``-
-        // gated in h3_client/PendingConnect.rs (the RESOLVED_HEAD list and
-        // on_dns_resolved are in the same gated impl). Spec HTTPThread.zig
-        // calls `bun.http.H3.PendingConnect.drainResolved()` here so DNS-
-        // resolved h3 connect leaders dispatch their coalesced waiters; without
-        // it HTTP/3 requests stall. Un-gate that impl and flip this to a real
-        // call — kept as the exact path below so it is a one-character change.
-        // h3::PendingConnect::drain_resolved();
+        h3::PendingConnect::drain_resolved();
 
         for http in self.queued_threadlocal_proxy_derefs.drain(..) {
             // SAFETY: pointer was queued by schedule_proxy_deref on this thread; still live.

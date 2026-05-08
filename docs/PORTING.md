@@ -720,7 +720,7 @@ happens any time a method on the singleton calls another function that also
 | Process-global, mutated post-init (`Output` color flags, env cache) | `static X: OnceLock<T>` where `T`'s mutable fields are `Atomic*` / `Mutex<_>` | Safe shared `&'static T`; mutation through interior types. |
 | Process-global, init-once-then-read-only (mime table, builtin module list) | `static X: LazyLock<T>` (or `OnceLock`), `fn get() -> &'static T` | No mutation = no aliasing problem. |
 | Arena-scoped (`Expr.Data.Store`, parser scratch) | Owned by the parse session, **not** a `static`. The arena handle is passed/owned; never `reset()` while a `StoreRef` into it is live. | The store is logically per-session, not global. |
-| "High tier registers a hook in low tier" (event-loop callbacks, blob ctor) | **Not a runtime registration.** Low crate declares `unsafe extern "Rust" { fn __bun_X(...) }`; high crate defines `#[no_mangle] pub fn __bun_X(...) { real body }`. Linker resolves. | Exactly one impl exists, so the linker is the registry. Zero runtime state. |
+| Low crate "needs to call" high crate | **You have a layering bug. Fix it.** One of: (a) the call site is in the wrong crate — move it up to where both deps are available; (b) the data the call produces should live in the low crate, written by the high crate at init; (c) pass it as a parameter on the call path that already exists. | There is no fourth option. `extern "Rust"` link-time hooks, runtime `AtomicPtr<fn>`, and `*mut c_void` round-trips are all the same shape of "I didn't fix the layering." |
 
 **`*mut T` is the alias-allowed pointer.** Raw pointers carry no aliasing
 assertion — `unsafe { (*vm).field = x }` is fine even with other `*mut` live.
@@ -736,5 +736,7 @@ is the primitive. Callers stay in raw-ptr land.
 **Banned patterns** (verify-stage rejects):
 - `static mut X: T` + `unsafe { &mut X }` — use `SyncUnsafeCell` or restructure.
 - `&'static mut T` stored in a struct field — that asserts exclusive forever.
-- Runtime-registered vtable/hook with one consumer — use `extern "Rust"`.
+- `unsafe extern "Rust" { fn __bun_* }` / `#[no_mangle] pub fn __bun_*` between Rust crates — fix the layering.
+- Runtime-registered `AtomicPtr<fn>` / `OnceLock<fn>` hook with one consumer — fix the layering.
+- `*mut c_void` field that's downcast to one concrete type at every read site — fix the layering.
 - `let x = unsafe { &mut *Singleton::get() }; ...calls something...; x.use()` — re-get after the call or pass `*mut`.

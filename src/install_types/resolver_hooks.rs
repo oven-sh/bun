@@ -81,21 +81,22 @@ impl<T> ExternalSlice<T> {
 
     #[inline]
     pub fn contains(self, id: u32) -> bool {
-        id >= self.off && id < (self.len + self.off)
+        id >= self.off && (id as u64) < self.len as u64 + self.off as u64
     }
 
     #[inline]
     pub fn get(self, in_: &[T]) -> &[T] {
-        debug_assert!((self.off + self.len) as usize <= in_.len());
-        // it should be impossible to address this out of bounds due to the minimum here
-        // (Zig: `@min(in.len, this.off + this.len)` — release-mode clamp).
-        &in_[self.off as usize..in_.len().min((self.off + self.len) as usize)]
+        // Zig: `@min(in.len, this.off + this.len)` — compute the sum in usize so
+        // the release-mode clamp applies instead of a debug u32-overflow panic.
+        let end = in_.len().min(self.off as usize + self.len as usize);
+        debug_assert!(self.off as usize + self.len as usize <= in_.len());
+        &in_[self.off as usize..end]
     }
 
     #[inline]
     pub fn mut_(self, in_: &mut [T]) -> &mut [T] {
-        debug_assert!((self.off + self.len) as usize <= in_.len());
-        let end = in_.len().min((self.off + self.len) as usize);
+        let end = in_.len().min(self.off as usize + self.len as usize);
+        debug_assert!(self.off as usize + self.len as usize <= in_.len());
         &mut in_[self.off as usize..end]
     }
 

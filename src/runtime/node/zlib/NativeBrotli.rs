@@ -290,7 +290,7 @@ impl Context {
         match self.mode {
             bun_zlib::NodeMode::BROTLI_ENCODE => {
                 // SAFETY: state was created by BrotliEncoderCreateInstance.
-                if unsafe { c::BrotliEncoderSetParameter(self.state_ptr().cast(), key, value) } == 0
+                if c::BrotliEncoderSetParameter(unsafe { &mut *self.state_ptr().cast() }, key, value) == 0
                 {
                     return Error::init(
                         c"Setting parameter failed".as_ptr(),
@@ -302,7 +302,7 @@ impl Context {
             }
             bun_zlib::NodeMode::BROTLI_DECODE => {
                 // SAFETY: state was created by BrotliDecoderCreateInstance.
-                if unsafe { c::BrotliDecoderSetParameter(self.state_ptr().cast(), key, value) } == 0
+                if c::BrotliDecoderSetParameter(unsafe { &mut *self.state_ptr().cast() }, key, value) == 0
                 {
                     return Error::init(
                         c"Setting parameter failed".as_ptr(),

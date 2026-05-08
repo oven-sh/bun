@@ -28,7 +28,8 @@ pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 // pub extern fn BrotliSharedDictionaryAttach(dict: ?*BrotliSharedDictionary, type: BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) c_int;
 
 unsafe extern "C" {
-    pub fn BrotliDecoderSetParameter(state: *mut BrotliDecoder, param: c_uint, value: u32) -> c_int;
+    // Opaque handle by reference + scalars only.
+    pub safe fn BrotliDecoderSetParameter(state: &mut BrotliDecoder, param: c_uint, value: u32) -> c_int;
     pub fn BrotliDecoderAttachDictionary(state: *mut BrotliDecoder, type_: BrotliSharedDictionaryType, data_size: usize, data: *const u8) -> c_int;
     pub fn BrotliDecoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: *mut c_void) -> *mut BrotliDecoder;
     pub fn BrotliDecoderDestroyInstance(state: *mut BrotliDecoder);
@@ -62,8 +63,7 @@ type brotli_decoder_metadata_chunk_func = Option<unsafe extern "C" fn(opaque: *m
 
 impl BrotliDecoder {
     pub fn set_parameter(state: &mut BrotliDecoder, param: BrotliDecoderParameter, value: u32) -> bool {
-        // SAFETY: state is a valid &mut BrotliDecoder
-        unsafe { BrotliDecoderSetParameter(state, param as c_uint, value) > 0 }
+        BrotliDecoderSetParameter(state, param as c_uint, value) > 0
     }
 
     pub fn attach_dictionary(state: &mut BrotliDecoder, type_: BrotliSharedDictionaryType, data: &[u8]) -> c_int {
@@ -331,7 +331,8 @@ pub enum BrotliEncoderParameter {
 }
 
 unsafe extern "C" {
-    pub fn BrotliEncoderSetParameter(state: *mut BrotliEncoder, param: c_uint, value: u32) -> c_int;
+    // Opaque handle by reference + scalars only.
+    pub safe fn BrotliEncoderSetParameter(state: &mut BrotliEncoder, param: c_uint, value: u32) -> c_int;
     pub fn BrotliEncoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: *mut c_void) -> *mut BrotliEncoder;
     pub fn BrotliEncoderDestroyInstance(state: *mut BrotliEncoder);
     pub fn BrotliEncoderPrepareDictionary(type_: BrotliSharedDictionaryType, data_size: usize, data: *const u8, quality: c_int, alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: *mut c_void) -> *mut BrotliEncoderPreparedDictionary;
@@ -441,8 +442,7 @@ impl BrotliEncoder {
     }
 
     pub fn set_parameter(state: &mut BrotliEncoder, param: BrotliEncoderParameter, value: u32) -> bool {
-        // SAFETY: state is a valid &mut BrotliEncoder
-        unsafe { BrotliEncoderSetParameter(state, param as c_uint, value) > 0 }
+        BrotliEncoderSetParameter(state, param as c_uint, value) > 0
     }
 }
 

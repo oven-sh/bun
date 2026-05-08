@@ -166,11 +166,10 @@ impl EVP {
 
         // SAFETY: ctx is fully initialized by EVP_MD_CTX_init before any read.
         let mut ctx: boringssl::EVP_MD_CTX = unsafe { bun_core::ffi::zeroed() };
-        // SAFETY: FFI into BoringSSL; ctx is zeroed above and EVP_MD_CTX_init has no
-        // preconditions on a zeroed ctx. md/engine are caller-validated (md is a static
-        // singleton, engine may be null).
+        boringssl::EVP_MD_CTX_init(&mut ctx);
+        // SAFETY: FFI into BoringSSL; ctx is initialised above. md/engine are
+        // caller-validated (md is a static singleton, engine may be null).
         unsafe {
-            boringssl::EVP_MD_CTX_init(&raw mut ctx);
             let _ = boringssl::EVP_DigestInit_ex(&raw mut ctx, md, engine);
         }
         EVP { ctx, md, algorithm }

@@ -951,14 +951,11 @@ impl Channel {
 
     #[inline]
     pub fn process(&mut self, fd: ares_socket_t, readable: bool, writable: bool) {
-        // SAFETY: c-ares FFI; self is a live channel handle.
-        unsafe {
-            ares_process_fd(
-                self,
-                if readable { fd } else { ARES_SOCKET_BAD },
-                if writable { fd } else { ARES_SOCKET_BAD },
-            );
-        }
+        ares_process_fd(
+            self,
+            if readable { fd } else { ARES_SOCKET_BAD },
+            if writable { fd } else { ARES_SOCKET_BAD },
+        );
     }
 }
 
@@ -1016,8 +1013,11 @@ unsafe extern "C" {
     pub fn ares_destroy_options(options: *mut Options);
     pub fn ares_dup(dest: *mut Channel, src: *mut Channel) -> c_int;
     pub fn ares_destroy(channel: *mut Channel);
-    pub fn ares_cancel(channel: *mut Channel);
-    pub fn ares_set_local_ip4(channel: *mut Channel, local_ip: c_uint);
+    // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
+    // (UnsafeCell + PhantomData<*mut u8>), so c-ares' internal mutation and any
+    // stored-callback re-entry is gated by the borrow checker, not the FFI call.
+    pub safe fn ares_cancel(channel: &mut Channel);
+    pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
     pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
     pub fn ares_set_local_dev(channel: *mut Channel, local_dev_name: *const u8);
     pub fn ares_set_socket_callback(channel: *mut Channel, callback: ares_sock_create_callback, user_data: *mut c_void);
@@ -1056,12 +1056,14 @@ unsafe extern "C" {
     pub fn ares_getsock(channel: *mut Channel, socks: *mut ares_socket_t, numsocks: c_int) -> c_int;
     pub fn ares_timeout(channel: *mut Channel, maxtv: *mut struct_timeval, tv: *mut struct_timeval) -> *mut struct_timeval;
     // pub fn ares_process(channel: *mut Channel, read_fds: *mut fd_set, write_fds: *mut fd_set);
-    pub fn ares_process_fd(channel: *mut Channel, read_fd: ares_socket_t, write_fd: ares_socket_t);
+    // Opaque handle by exclusive reference + scalars only.
+    pub safe fn ares_process_fd(channel: &mut Channel, read_fd: ares_socket_t, write_fd: ares_socket_t);
     pub fn ares_create_query(name: *const c_char, dnsclass: c_int, type_: c_int, id: c_ushort, rd: c_int, buf: *mut *mut u8, buflen: *mut c_int, max_udp_size: c_int) -> c_int;
     pub fn ares_mkquery(name: *const c_char, dnsclass: c_int, type_: c_int, id: c_ushort, rd: c_int, buf: *mut *mut u8, buflen: *mut c_int) -> c_int;
     pub fn ares_expand_name(encoded: *const u8, abuf: *const u8, alen: c_int, s: *mut *mut u8, enclen: *mut c_long) -> c_int;
     pub fn ares_expand_string(encoded: *const u8, abuf: *const u8, alen: c_int, s: *mut *mut u8, enclen: *mut c_long) -> c_int;
-    pub fn ares_queue_active_queries(channel: *const Channel) -> usize;
+    // Pure read of opaque `!Sync` handle.
+    pub safe fn ares_queue_active_queries(channel: &Channel) -> usize;
 }
 
 #[repr(C)]

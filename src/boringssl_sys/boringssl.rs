@@ -341,7 +341,9 @@ unsafe extern "C" {
     pub safe fn EVP_blake2b512() -> *const EVP_MD;
 
     // ── EVP digest ctx ───────────────────────────────────────────────────
-    pub fn EVP_MD_CTX_init(ctx: *mut EVP_MD_CTX);
+    // POD context by exclusive reference: BoringSSL only zero-initialises the
+    // struct (no deref of its raw-ptr fields), so any `&mut EVP_MD_CTX` is sound.
+    pub safe fn EVP_MD_CTX_init(ctx: &mut EVP_MD_CTX);
     pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_size(ctx: *const EVP_MD_CTX) -> usize;
@@ -376,6 +378,9 @@ unsafe extern "C" {
     ) -> *mut u8;
 
     // ── SHA-1 ────────────────────────────────────────────────────────────
+    // `*_Init` are write-only initialisers but stay `*mut`: callers feed
+    // `MaybeUninit::as_mut_ptr()`, and forcing `&mut CTX` would require a
+    // valid (initialised) `CTX` first — defeating the point.
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;

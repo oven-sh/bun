@@ -3568,7 +3568,7 @@ impl Resolver {
 
             if let Ok(channel) = (*this).get_channel_or_error(vm.global()) {
                 if (*this).any_requests_pending() {
-                    c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
+                    c_ares::ares_process_fd(&mut *channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
                     let _ = (*this).add_timer(Some(&now));
                 }
             }
@@ -4806,7 +4806,8 @@ impl Resolver {
 
         if unsafe { c_ares::ares_inet_pton(c_ares::AF::INET, slice.as_ptr().cast::<c_char>(), addr.as_mut_ptr().cast()) } == 1 {
             let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
-            unsafe { c_ares::ares_set_local_ip4(channel, ip) };
+            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
+            c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip);
             return Ok(c_ares::AF::INET);
         }
 
@@ -4828,7 +4829,8 @@ impl Resolver {
     ) -> JsResult<JSValue> {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
         if channel != Self::get_channel_from_vm(global_this)?
-            && unsafe { c_ares::ares_queue_active_queries(channel) } != 0
+            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
+            && c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0
         {
             return Err(global_this
                 .err(jsc::Error::DNS_SET_SERVERS_FAILED, format_args!("Failed to set servers: there are pending queries"))
@@ -4959,7 +4961,8 @@ impl Resolver {
     #[host_fn(method)]
     pub fn cancel(this: &mut Self, global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         let channel = this.get_channel_or_error(global_this)?;
-        unsafe { c_ares::ares_cancel(channel) };
+        // SAFETY: `channel` is a live handle returned by `ares_init_options`.
+        c_ares::ares_cancel(unsafe { &mut *channel });
         Ok(JSValue::UNDEFINED)
     }
 

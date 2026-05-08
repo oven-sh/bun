@@ -88,6 +88,10 @@ impl EnvMap {
         self.map.iterator()
     }
 
+    pub fn iter(&self) -> impl core::iter::Iterator<Item = (&EnvStr, &EnvStr)> {
+        self.map.keys().iter().zip(self.map.values())
+    }
+
     pub fn clear_retaining_capacity(&mut self) {
         self.deref_strings();
         self.map.clear_retaining_capacity();

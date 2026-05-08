@@ -230,6 +230,21 @@ impl IOWriter {
         unsafe { &mut *self.state.get() }
     }
 
+    /// Bump our own Arc strong count. Every `IOWriter` lives inside an `Arc`
+    /// (`init` is the sole constructor), so `self` is always a valid Arc data
+    /// pointer. Held across re-entrant `run_yield` calls whose child callback
+    /// may drop the last external ref and free us mid-method.
+    #[inline]
+    fn keepalive(&self) -> std::sync::Arc<IOWriter> {
+        let ptr = self as *const IOWriter;
+        // SAFETY: see doc comment — `init()` is the only constructor and
+        // returns `Arc<IOWriter>`.
+        unsafe {
+            std::sync::Arc::increment_strong_count(ptr);
+            std::sync::Arc::from_raw(ptr)
+        }
+    }
+
     /// Read-only accessor for the `is_socket` flag (used by
     /// `ShellSubprocess::spawn` to decide `no_sigpipe`).
     #[inline]
@@ -642,6 +657,10 @@ impl IOWriter {
     /// Spec: IOWriter.zig `doFileWrite`. POSIX-only.
     #[cfg(not(windows))]
     fn do_file_write(&self) -> Yield {
+        // `drain_buffered_data`/`on_error` below re-enter the interpreter and
+        // may drop the last external Arc; hold one across the whole body so the
+        // trailing `set_writing(false)` defer runs on a live `self`.
+        let _keepalive = self.keepalive();
         {
             let s = self.state();
             debug_assert!(!s.flags.pollable);
@@ -800,6 +819,7 @@ impl IOWriter {
 
     /// Spec: IOWriter.zig `onError`.
     fn on_error(&self, err: sys::Error) {
+        let _keepalive = self.keepalive();
         self.set_writing(false);
         let s = self.state();
         if err.get_errno() == E::EPIPE {

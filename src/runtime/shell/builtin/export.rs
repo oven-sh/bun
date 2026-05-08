@@ -2,6 +2,7 @@ use core::ffi::CStr;
 
 use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::EnvStr;
 
@@ -45,13 +46,29 @@ impl Export {
     }
 
     fn print_all(interp: &mut Interpreter, cmd: NodeId) -> Yield {
-        // TODO(b2-blocked): iterate export_env and format `declare -x K="V"\n`
-        // — depends on EnvMap iterator + IOWriter::enqueue.
-        if Builtin::of(interp, cmd).stdout.needs_io().is_some() {
-            Self::state_mut(interp, cmd).state = State::WaitingIo;
-            return Yield::suspended();
+        let mut entries: Vec<(EnvStr, EnvStr)> = Builtin::shell(interp, cmd)
+            .export_env
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        entries.sort_by(|a, b| a.0.slice().cmp(b.0.slice()));
+
+        let mut buf = Vec::new();
+        for (k, v) in &entries {
+            buf.extend_from_slice(k.slice());
+            buf.push(b'=');
+            buf.extend_from_slice(v.slice());
+            buf.push(b'\n');
         }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, b"");
+
+        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            Self::state_mut(interp, cmd).state = State::WaitingIo;
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::of_mut(interp, cmd)
+                .stdout
+                .enqueue(child, &buf, safeguard);
+        }
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         Builtin::done(interp, cmd, 0)
     }
 

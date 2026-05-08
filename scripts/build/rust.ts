@@ -181,39 +181,35 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
-  // Variant that ensures `rust-std` for `$rust_target` is installed before
+  // Variant that ensures the pinned toolchain (and `rust-std` for
+  // `$rust_target` when it has a prebuilt one) is fully installed before
   // building. CI agents pin the toolchain via `RUSTUP_TOOLCHAIN`, which
-  // bypasses `rust-toolchain.toml`'s `targets`/`components` install list — so
-  // a freshly bumped `channel` can have rustc/cargo present (rustup proxies
-  // auto-install those) but no `rust-std-<triple>`, which surfaces as
-  // `error[E0463]: can't find crate for core`. `rustup target add` is
-  // idempotent and a fast no-op when the component is already there. Same
-  // shape as `dep_cargo_cross` in source.ts — see the comment there.
+  // bypasses `rust-toolchain.toml`'s `targets`/`components` install list, and
+  // rustup-proxy auto-install can leave a *partial* toolchain dir (rustc/cargo
+  // present, no `rust-std`, no `lib/rustlib/multirust-channel-manifest.toml`).
+  // That surfaces as either `error[E0463]: can't find crate for core` (cargo
+  // ran, no std) or `error: Missing manifest in toolchain '<channel>-<host>'`
+  // (rustup-proxy refused to even resolve cargo). `rustup toolchain install
+  // --force` repairs both — `--force` reinstalls missing components rather
+  // than trusting "the dir exists, I'm done", and it's a ~70ms no-op when the
+  // toolchain is already complete (verified locally), so it's cheap to run
+  // unconditionally.
   //
-  // The `||` fallback handles the worse case: a stale agent has a *partial*
-  // pinned-toolchain dir (rustc/cargo present, no `rust-std`, and no
-  // `lib/rustlib/multirust-channel-manifest.toml`), so `rustup target add`
-  // fails with `Missing manifest in toolchain '<channel>-<host>'`.
-  // `rustup toolchain install --force` re-fetches everything (manifest
-  // included) — a proper repair. It's only reached when `target add` errors,
-  // so the happy path stays the ~50ms no-op. Shell precedence makes
-  // `A || B && C` parse as `(A || B) && C` in both `sh` and `cmd.exe`.
+  // `$rust_target_arg` is `--target <triple>` for Tier 1/2 (also installs the
+  // prebuilt `rust-std-<triple>`), and empty for Tier 3 (no prebuilt; cargo
+  // gets `-Zbuild-std` instead — see emitRust). Both still get `rust-src`
+  // (needed for `-Zbuild-std`).
   //
-  // Only registered when `cfg.cargo` is a rustup proxy (otherwise there's no
-  // `rustup` to call and target install is the user's problem). Tier 3 targets
-  // (no prebuilt std) also skip this rule; emitRust() routes both through
-  // `rust_build`, with `-Zbuild-std` for Tier 3.
+  // Only registered when `cfg.rustToolchain` is pinned and `cfg.cargo` is a
+  // rustup proxy — otherwise there's no channel to install / no `rustup` to
+  // call, and toolchain management is the user's problem.
   const rustup = findRustup(cfg);
-  if (rustup !== undefined) {
-    const repair =
-      cfg.rustToolchain !== undefined
-        ? ` || ${stream} $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --profile minimal --component rust-src --target $rust_target`
-        : "";
+  if (rustup !== undefined && cfg.rustToolchain !== undefined) {
     n.rule("rust_build_cross", {
       command:
-        `${stream} $env ${q(rustup)} target add $rust_target${repair} && ` +
+        `${stream} $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --profile minimal --component rust-src $rust_target_arg && ` +
         `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
-      description: "cargo bun_bin → $label ($rust_target)",
+      description: "cargo bun_bin → $label ($rust_target_arg)",
       pool: "console",
       restat: true,
     });
@@ -450,14 +446,17 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   // ─── Emit build node ───
-  // Tier 1/2 targets go through `rust_build_cross` (when rustup is present),
-  // which does `rustup target add $rust_target` before cargo. That makes the
-  // first build after a `rust-toolchain.toml` channel bump self-heal: rustup
-  // proxies auto-install rustc/cargo for a new pinned channel, but NOT
-  // `rust-std`, and `RUSTUP_TOOLCHAIN` (set above) bypasses the toolchain.toml's
-  // `targets`/`components` install list entirely. Tier 3 (no prebuilt std)
-  // would fail `target add`, so they use plain `rust_build` + `-Zbuild-std`.
-  const useCrossRule = !tier3 && findRustup(cfg) !== undefined;
+  // When the toolchain is rustup-managed and pinned, route through
+  // `rust_build_cross`, which does `rustup toolchain install --force ...`
+  // before cargo. That makes the first build after a `rust-toolchain.toml`
+  // channel bump (and a partially auto-installed toolchain) self-heal —
+  // see the rule comment above. Tier 1/2 also pass `--target <triple>` so
+  // the prebuilt `rust-std` for the cross triple is installed; Tier 3 omits
+  // it (no prebuilt — cargo gets `-Zbuild-std` instead) and just gets
+  // `rust-src`. Local builds without rustup, or without a pinned channel,
+  // fall back to plain `rust_build` and trust whatever toolchain `cfg.cargo`
+  // resolves to.
+  const useCrossRule = findRustup(cfg) !== undefined && cfg.rustToolchain !== undefined;
   n.build({
     outputs: [lib],
     rule: useCrossRule ? "rust_build_cross" : "rust_build",
@@ -473,7 +472,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     vars: {
       cwd: cfg.cwd,
       args: quoteArgs(args, hostWin),
-      rust_target: triple,
+      ...(useCrossRule ? { rust_target_arg: tier3 ? "" : `--target ${triple}` } : {}),
       label: `${cfg.libPrefix}bun_rust${cfg.libSuffix}`,
       env: Object.entries(env)
         .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)

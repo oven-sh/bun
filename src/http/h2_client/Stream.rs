@@ -123,13 +123,6 @@ impl Stream {
         })
     }
 
-    #[inline]
-    pub fn pending_body(&self) -> &[u8] {
-        // `pending_body` is a `RawSlice` into `client.state.request_body`,
-        // which outlives the stream (RawSlice invariant).
-        self.pending_body.slice()
-    }
-
     // PORT NOTE: Stream.zig:rst() re-entered the session via the `session`
     // backref. In Rust that autorefs a second `&mut ClientSession` while
     // `parse_frames`' `&mut ClientSession` is still live (Stacked-Borrows UB),

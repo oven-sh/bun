@@ -362,11 +362,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // pointer (`StringOrTinyString` is self-referential and not
                 // `Clone`) so the loop body can read `name` after the
                 // `&mut task.callback` borrow ends.
-                // `name` lives in `task.callback` which outlives this match arm
-                // (the task is only `put` back to the pool by a later
+                // SAFETY: `name` lives in `task.callback` which outlives this
+                // match arm (the task is only `put` back to the pool by a later
                 // resolve-task pass, never inside this loop iteration).
-                let name = bun_ptr::RawSlice::new(name.slice());
-                let name = name.slice();
+                let name = unsafe { bun_ptr::detach_lifetime(name.slice()) };
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
@@ -1056,12 +1055,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let dependency_id = tarball.dependency_id;
                 let mut package_id =
                     manager.lockfile.buffers.resolutions[dependency_id as usize];
-                // PORT NOTE: capture as raw slice ptr — `tarball` borrows
-                // `task.request` which is reborrowed `&mut` below. The backing
-                // `StringOrTinyString` lives in the pooled `Task` for the whole
-                // iteration.
-                let alias = bun_ptr::RawSlice::new(tarball.name.slice());
-                let alias: &[u8] = alias.slice();
+                // SAFETY: `tarball` borrows `task.request` which is reborrowed
+                // `&mut` below; the backing `StringOrTinyString` lives in the
+                // pooled `Task` for the whole iteration and is not mutated.
+                let alias = unsafe { bun_ptr::detach_lifetime(tarball.name.slice()) };
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
@@ -1375,12 +1372,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
                     // enqueued for git resolutions; `value.git` is the active arm.
                     let git = *clone.res.git();
-                    // `string_bytes` lives as long as `manager.lockfile` and is
-                    // not reallocated while resolve tasks are draining (Zig:
-                    // same buffer is read after `enqueueGitCheckout`).
-                    let string_buf =
-                        bun_ptr::RawSlice::new(manager.lockfile.buffers.string_bytes.as_slice());
-                    let string_buf = string_buf.slice();
+                    // SAFETY: `string_bytes` lives as long as `manager.lockfile`
+                    // and is not reallocated while resolve tasks are draining
+                    // (Zig: same buffer is read after `enqueueGitCheckout`).
+                    let string_buf = unsafe {
+                        bun_ptr::detach_lifetime(manager.lockfile.buffers.string_bytes.as_slice())
+                    };
                     let dep_name = dep_name_handle.slice(string_buf);
                     let committish = git.committish.slice(string_buf);
                     let repo = git.repo.slice(string_buf);

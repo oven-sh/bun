@@ -349,11 +349,11 @@ pub fn parse_override_value(
     }
 
     let literal_string = builder.append::<SemverString>(value);
-    // PORT NOTE: `string_bytes` was pre-reserved by `allocate()`; subsequent
-    // `append` calls don't realloc, so a raw view is sound here while we still
-    // need `&mut builder` for the next `append`.
-    let string_bytes_ptr = bun_ptr::RawSlice::new(builder.string_bytes.as_slice());
-    let literal_sliced = literal_string.sliced(string_bytes_ptr.slice());
+    // SAFETY: `string_bytes` was pre-reserved by `allocate()`; subsequent
+    // `append` calls don't realloc, so a detached view is sound here while we
+    // still need `&mut builder` for the next `append`.
+    let string_bytes = unsafe { bun_ptr::detach_lifetime(builder.string_bytes.as_slice()) };
+    let literal_sliced = literal_string.sliced(string_bytes);
 
     let name_hash = SemverBuilder::string_hash(key);
     let name = builder.append_with_hash::<SemverString>(key, name_hash);

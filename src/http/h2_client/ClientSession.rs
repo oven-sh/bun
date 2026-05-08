@@ -813,9 +813,9 @@ impl ClientSession {
         for &e in self.streams.values() {
             // SAFETY: owned live Stream pointer.
             let stream = unsafe { &*e };
-            let Some(mut client) = stream.client else { continue };
+            let Some(client) = stream.client else { continue };
             // SAFETY: live back-ref.
-            if unsafe { (*client.as_ptr()).async_http_id } == async_http_id {
+            if unsafe { client.as_ref() }.async_http_id == async_http_id {
                 target = Some(e);
                 break;
             }
@@ -833,12 +833,12 @@ impl ClientSession {
             let stream = self.streams.values()[i];
             // SAFETY: owned live Stream pointer.
             let s = unsafe { &*stream };
-            let Some(mut client) = s.client else {
+            let Some(client) = s.client else {
                 i += 1;
                 continue;
             };
             // SAFETY: live back-ref.
-            if unsafe { (*client.as_ptr()).signals.get(signals::Field::Aborted) } {
+            if unsafe { client.as_ref() }.signals.get(signals::Field::Aborted) {
                 self.detach_with_failure(stream, err!(Aborted));
             } else {
                 i += 1;

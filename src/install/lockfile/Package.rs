@@ -1583,13 +1583,11 @@ impl Package<u64> {
             string_builder.append::<String>(version)
         };
 
-        // PORT NOTE: `buf` aliases `string_builder.string_bytes` while later
+        // SAFETY: `buf` aliases `string_builder.string_bytes` while later
         // `string_builder.append()` calls write into the *pre-reserved* tail
-        // (`allocate()` ran before this fn). No realloc occurs, so the raw
-        // pointer stays valid; a `&[u8]` would needlessly lock the builder.
-        let buf_ptr = bun_ptr::RawSlice::new(string_builder.string_bytes.as_slice());
-        // Capacity was reserved by `allocate()`; see note above.
-        let buf: &[u8] = buf_ptr.slice();
+        // (`allocate()` ran before this fn). No realloc occurs, so the detached
+        // borrow stays valid; a tracked `&[u8]` would needlessly lock the builder.
+        let buf: &[u8] = unsafe { bun_ptr::detach_lifetime(string_builder.string_bytes.as_slice()) };
         let sliced = external_version.sliced(buf);
 
         let mut dependency_version = Dependency::parse_with_optional_tag(

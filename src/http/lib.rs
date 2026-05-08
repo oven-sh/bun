@@ -550,7 +550,7 @@ impl Drop for HTTPClient<'_> {
         // redirect / prev_redirect are Vec<u8> — dropped automatically.
         // proxy_authorization: Option<Vec<u8>> — dropped automatically.
         // proxy_headers: Option<Headers> — dropped automatically.
-        if let Some(mut tunnel) = self.proxy_tunnel.take() {
+        if let Some(tunnel) = self.proxy_tunnel.take() {
             // SAFETY: tunnel was created by ProxyTunnel::new (heap::alloc) and
             // refcounted; detach_and_deref releases this client's strong ref.
             unsafe { (*tunnel.as_ptr()).detach_and_deref() };
@@ -2085,7 +2085,7 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "doRedirect state reset");
         // also reset proxy to redirect
         self.flags.proxy_tunneling = false;
-        if let Some(mut tunnel) = self.proxy_tunnel.take() {
+        if let Some(tunnel) = self.proxy_tunnel.take() {
             // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel
             unsafe { (*tunnel.as_ptr()).detach_and_deref() };
         }

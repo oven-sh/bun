@@ -192,6 +192,28 @@ impl<T: ?Sized> PartialEq for BackRef<T> {
 }
 impl<T: ?Sized> Eq for BackRef<T> {}
 
+/// Detach a slice borrow from its borrowck lifetime.
+///
+/// This is the **local-variable** counterpart to [`RawSlice`]. Use it when you
+/// need to read through a slice while a sibling field is reborrowed `&mut`
+/// (the classic Zig `var buf = lockfile.buffers.string_bytes; … &mut lockfile`
+/// pattern), and the backing storage is known not to move/realloc for the
+/// scope of the returned reference. Unlike `RawSlice`, this is *not* meant for
+/// struct fields — it exists so the borrowck-dodge stays a one-liner with the
+/// `unsafe` centralised here, rather than laundering the slice through a
+/// `RawSlice::new(..).slice()` round-trip that obscures intent.
+///
+/// # Safety
+/// Caller guarantees the slice's backing allocation is not freed, moved, or
+/// reallocated, and no exclusive `&mut` to the same elements is formed, for
+/// the full lifetime `'a` chosen by the caller.
+#[inline(always)]
+pub unsafe fn detach_lifetime<'a, T>(s: &[T]) -> &'a [T] {
+    // SAFETY: caller contract — `s` points to `len` initialized `T` that remain
+    // live and un-aliased-exclusively for `'a`.
+    unsafe { &*core::ptr::from_ref::<[T]>(s) }
+}
+
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
 /// Runtime sibling of `bun_js_parser::StoreSlice<T>` for `*const [T]` struct

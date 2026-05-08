@@ -2225,10 +2225,13 @@ impl AttributeIterator {
         }
     }
 
-    pub fn finalize(mut self: Box<Self>) {
-        self.detach();
-        // Refcounted: release the JS wrapper's +1.
-        Self::deref(Box::into_raw(self));
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1. Hand ownership back to the
+        // raw refcount FIRST so a panic in detach() leaks instead of UAF-ing
+        // siblings.
+        let this = Box::leak(self);
+        this.detach();
+        Self::deref(this);
     }
 
     #[bun_jsc::host_fn(method)]

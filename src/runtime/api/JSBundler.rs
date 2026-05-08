@@ -1944,7 +1944,7 @@ impl BuildArtifact {
 
     pub fn finalize(self: Box<Self>) {
         drop(self);
-        }
+    }
 
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &mut self,

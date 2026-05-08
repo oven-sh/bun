@@ -659,14 +659,16 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
     }
 
-    pub fn finalize(mut self: Box<Self>) {
+    pub fn finalize(self: Box<Self>) {
         debug!("PostgresSQLConnection finalize");
-        self.stop_timers();
-        self.js_value.finalize();
         // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `self` is a live Box-allocated connection; `deref` frees on count==0.
-        unsafe { Self::deref(Box::into_raw(self)) };
+        // call if other refs remain, so hand ownership back to the raw refcount
+        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
+        let this = Box::leak(self);
+        this.stop_timers();
+        this.js_value.finalize();
+        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
+        unsafe { Self::deref(this) };
     }
 
     pub fn flush_data_and_reset_timeout(&mut self) {

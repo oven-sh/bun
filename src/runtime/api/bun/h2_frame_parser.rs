@@ -5874,13 +5874,15 @@ impl H2FrameParser {
         }
     }
 
-    pub fn finalize(mut self: Box<Self>) {
+    pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
-        // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
-        self.strong_this = JsRef::empty();
         // Refcounted: release the JS wrapper's +1; the allocation outlives this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        Box::leak(self).deref();
+        // call if other refs remain, so hand ownership back to the raw refcount
+        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
+        let this = Box::leak(self);
+        // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
+        this.strong_this = JsRef::empty();
+        this.deref();
     }
 }
 

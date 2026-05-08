@@ -439,13 +439,15 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn finalize(mut self: Box<Self>) {
+    pub fn finalize(self: Box<Self>) {
         bun_core::scoped_log!(MySQLConnection, "finalize");
-        self.js_value.finalize();
         // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `self` is the live m_ctx allocation; `deref` frees on count==0.
-        unsafe { Self::deref(Box::into_raw(self)) };
+        // call if other refs remain, so hand ownership back to the raw refcount
+        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
+        let this = Box::leak(self);
+        this.js_value.finalize();
+        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
+        unsafe { Self::deref(this) };
     }
 
     fn update_reference_type(&mut self) {

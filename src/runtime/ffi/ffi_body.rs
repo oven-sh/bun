@@ -328,7 +328,12 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        drop(self);
+        // Zig spec (ffi.zig:69): `pub fn finalize(_: *FFI) callconv(.c) void {}` —
+        // INTENTIONAL no-op. Compiled trampolines / dlopen'd symbols may still be
+        // reachable from JS after the wrapper is GC'd; teardown is owned by
+        // `close()`. Under the `Box<Self>` finalize contract an empty body would
+        // drop, so leak the allocation back to preserve the spec'd no-op.
+        let _ = Box::leak(self);
     }
 
     /// `.classes.ts` declares `noConstructor: true`; the `JsClass` macro still

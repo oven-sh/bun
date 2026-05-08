@@ -1516,7 +1516,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
     pub fn finalize(self: Box<Self>) {
         drop(self);
-        }
+    }
 }
 
 pub type MD4 = StaticCryptoHasher<hashers::MD4>;

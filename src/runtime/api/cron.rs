@@ -1481,12 +1481,14 @@ impl CronJob {
         }
     }
 
-    pub fn finalize(mut self: Box<Self>) {
-        self.this_value.finalize();
+    pub fn finalize(self: Box<Self>) {
         // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `self` is a live Box-allocated CronJob; `deref` frees on count==0.
-        unsafe { Self::deref(Box::into_raw(self)) };
+        // call if other refs remain, so hand ownership back to the raw refcount
+        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
+        let this = Box::leak(self);
+        this.this_value.finalize();
+        // SAFETY: `this` is a live Box-allocated CronJob; `deref` frees on count==0.
+        unsafe { Self::deref(this) };
     }
 
     fn compute_next_timespec(&mut self) -> Option<bun_core::Timespec> {

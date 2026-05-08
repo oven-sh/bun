@@ -610,14 +610,16 @@ impl StatWatcher {
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
-    pub fn finalize(mut self: Box<Self>) {
+    pub fn finalize(self: Box<Self>) {
         log!("Finalize\n");
-        self.this_value.finalize();
-        self.closed = true;
-        self.scheduler.deref();
-        // but don't deinit until the scheduler drops its reference —
-        // refcounted: hand ownership back to the raw refcount.
-        Self::deref(Box::into_raw(self));
+        // Refcounted: hand ownership back to the raw refcount FIRST so a panic
+        // in the work below leaks instead of UAF-ing the scheduler's alias.
+        let this = Box::leak(self);
+        this.this_value.finalize();
+        this.closed = true;
+        this.scheduler.deref();
+        // but don't deinit until the scheduler drops its reference.
+        Self::deref(this);
     }
 
     pub fn initial_stat_success_on_main_thread(

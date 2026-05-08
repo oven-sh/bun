@@ -94,32 +94,32 @@ unsafe extern "C" {
         possible_readable_stream: *mut JSValue,
         ptr: *mut *mut c_void,
     ) -> Tag;
-    fn ReadableStream__isDisturbed(
+    safe fn ReadableStream__isDisturbed(
         possible_readable_stream: JSValue,
-        global_object: *const JSGlobalObject,
+        global_object: &JSGlobalObject,
     ) -> bool;
-    fn ReadableStream__isLocked(
+    safe fn ReadableStream__isLocked(
         possible_readable_stream: JSValue,
-        global_object: *const JSGlobalObject,
+        global_object: &JSGlobalObject,
     ) -> bool;
-    fn ReadableStream__empty(global: *const JSGlobalObject) -> JSValue;
-    fn ReadableStream__used(global: *const JSGlobalObject) -> JSValue;
-    fn ReadableStream__cancel(stream: JSValue, global: *const JSGlobalObject);
-    fn ReadableStream__cancelWithReason(
+    safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
+    safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
+    safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__cancelWithReason(
         stream: JSValue,
-        global: *const JSGlobalObject,
+        global: &JSGlobalObject,
         reason: JSValue,
     );
-    fn ReadableStream__abort(stream: JSValue, global: *const JSGlobalObject);
-    fn ReadableStream__detach(stream: JSValue, global: *const JSGlobalObject);
+    safe fn ReadableStream__abort(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
     fn ReadableStream__fromBlob(
         global: *const JSGlobalObject,
         store: *mut c_void,
         offset: usize,
         length: usize,
     ) -> JSValue;
-    fn ZigGlobalObject__createNativeReadableStream(
-        global: *const JSGlobalObject,
+    safe fn ZigGlobalObject__createNativeReadableStream(
+        global: &JSGlobalObject,
         native_ptr: JSValue,
     ) -> JSValue;
 }
@@ -222,7 +222,7 @@ impl ReadableStream {
     pub fn cancel(&self, global_this: &JSGlobalObject) {
         // cancel the stream
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        unsafe { ReadableStream__cancel(self.value, global_this) };
+        ReadableStream__cancel(self.value, global_this);
         // mark the stream source as done
         self.done(global_this);
     }
@@ -233,7 +233,7 @@ impl ReadableStream {
     /// `AbortSignal.reason` to the request body's cancel callback.
     pub fn cancel_with_reason(&self, global_this: &JSGlobalObject, reason: JSValue) {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        unsafe { ReadableStream__cancelWithReason(self.value, global_this, reason) };
+        ReadableStream__cancelWithReason(self.value, global_this, reason);
         self.done(global_this);
     }
 
@@ -244,7 +244,7 @@ impl ReadableStream {
 
     pub fn force_detach(&self, global_object: &JSGlobalObject) {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        unsafe { ReadableStream__detach(self.value, global_object) };
+        ReadableStream__detach(self.value, global_object);
     }
 
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
@@ -260,7 +260,7 @@ impl ReadableStream {
 
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        unsafe { ReadableStream__isLocked(self.value, global_object) }
+        ReadableStream__isLocked(self.value, global_object)
     }
 
     pub fn from_js(value: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
@@ -299,8 +299,7 @@ impl ReadableStream {
     }
 
     pub fn from_native(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {
-        bun_jsc::from_js_host_call(global_this, || unsafe {
-            // SAFETY: FFI call into JSC bindings.
+        bun_jsc::from_js_host_call(global_this, || {
             ZigGlobalObject__createNativeReadableStream(global_this, native)
         })
     }
@@ -457,7 +456,7 @@ impl ReadableStream {
         // TODO(port): bun.cpp.ReadableStream__empty wraps the extern with exception check
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
-            unsafe { ReadableStream__empty(global_this) }
+            ReadableStream__empty(global_this)
         })
     }
 
@@ -465,14 +464,14 @@ impl ReadableStream {
         // TODO(port): bun.cpp.ReadableStream__used wraps the extern with exception check
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
-            unsafe { ReadableStream__used(global_this) }
+            ReadableStream__used(global_this)
         })
     }
 }
 
 pub fn is_disturbed_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
     // SAFETY: FFI call; value may be any JSValue (C++ side checks).
-    unsafe { ReadableStream__isDisturbed(value, global_object) }
+    ReadableStream__isDisturbed(value, global_object)
 }
 
 // ─── Tag / Source ────────────────────────────────────────────────────────────

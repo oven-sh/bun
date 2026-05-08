@@ -9,8 +9,8 @@ use crate::timer::{self, ElTimespec, EventLoopTimer, EventLoopTimerState, InHeap
 
 // TODO(port): move to test_runner_sys / jsc_sys
 unsafe extern "C" {
-    fn JSMock__setOverridenDateNow(global: *const JSGlobalObject, value: f64);
-    fn JSMock__getCurrentUnixTimeMs() -> f64;
+    safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
+    safe fn JSMock__getCurrentUnixTimeMs() -> f64;
 }
 
 pub struct FakeTimers {
@@ -70,7 +70,7 @@ impl CurrentTime {
             self.date_now_offset.store(date_now_offset.to_bits(), Ordering::Relaxed);
         }
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
-        unsafe { JSMock__setOverridenDateNow(global, date_now_offset + timespec_ms) };
+        JSMock__setOverridenDateNow(global, date_now_offset + timespec_ms);
 
         // PORT NOTE: Zig stored `@bitCast(v.offset.ns())` (i128 → u128). The Rust
         // `VirtualMachine.overridden_performance_now` is `Option<u64>` and
@@ -86,7 +86,7 @@ impl CurrentTime {
         }
         bun_core::mock_time::clear();
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
-        unsafe { JSMock__setOverridenDateNow(global, -1.0) };
+        JSMock__setOverridenDateNow(global, -1.0);
         // SAFETY: `vm` is the live per-thread VirtualMachine (never null).
         unsafe { (*vm).overridden_performance_now = None };
     }
@@ -338,7 +338,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let this = unsafe { &mut (*timers).fake_timers };
 
     // SAFETY: FFI call into C++ JSMock
-    let mut js_now = unsafe { JSMock__getCurrentUnixTimeMs() };
+    let mut js_now = JSMock__getCurrentUnixTimeMs();
 
     // Check if options object was provided
     let args = frame.arguments_as_array::<1>();

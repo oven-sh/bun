@@ -7,7 +7,7 @@ use bun_core;
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
+    safe fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
 }
 
 #[derive(Default, Clone, Copy)]
@@ -23,10 +23,9 @@ pub fn freemem() -> u64 {
     // OsBinding.cpp
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        fn Bun__Os__getFreeMemory() -> u64;
+        safe fn Bun__Os__getFreeMemory() -> u64;
     }
-    // SAFETY: pure FFI getter
-    unsafe { Bun__Os__getFreeMemory() }
+    Bun__Os__getFreeMemory()
 }
 
 // ─── gated: JSC bindings + platform syscall bodies ────────────────────────
@@ -233,7 +232,7 @@ pub fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
     // TODO(port): JSObject::create struct-literal API — Phase B defines a builder/macro
     let obj = JSValue::create_empty_object(global, 14);
     // SAFETY: pure FFI getter
-    obj.put(global, b"hostCpuCount", JSValue::js_number(1i32.max(unsafe { bun_sysconf__SC_NPROCESSORS_ONLN() }) as f64));
+    obj.put(global, b"hostCpuCount", JSValue::js_number(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN()) as f64));
     obj.put(global, b"cpus", gen_::create_cpus_callback(global));
     obj.put(global, b"freemem", gen_::create_freemem_callback(global));
     obj.put(global, b"getPriority", gen_::create_get_priority_callback(global));
@@ -305,7 +304,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
                 // pre-creates hostCpuCount lazy proxies, so return that many stub
                 // entries (zeroed times / unknown model / speed 0) — matches Node.
                 // SAFETY: pure FFI getter
-                let count: u32 = u32::try_from(1i32.max(unsafe { bun_sysconf__SC_NPROCESSORS_ONLN() })).unwrap();
+                let count: u32 = u32::try_from(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN())).unwrap();
                 let stubs = JSValue::create_empty_array(global_this, count as usize)?;
                 let mut i: u32 = 0;
                 while i < count {
@@ -472,7 +471,7 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
         .map_err(|_| OsError::Any)?;
 
     // SAFETY: pure FFI getter
-    let ticks: i64 = unsafe { bun_sysconf__SC_CLK_TCK() } as i64;
+    let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
     let mult: u64 = if ticks > 0 { 1000 / u64::try_from(ticks).expect("int cast") } else { 1 };
 
     let values = JSValue::create_empty_array(global_this, ncpu as usize)?;
@@ -498,7 +497,7 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn bun_sysconf__SC_CLK_TCK() -> isize;
+    safe fn bun_sysconf__SC_CLK_TCK() -> isize;
 }
 
 #[cfg(target_os = "macos")]
@@ -559,7 +558,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
     // Get the multiplier; this is the number of ms/tick
     // SAFETY: pure FFI getter
-    let ticks: i64 = unsafe { bun_sysconf__SC_CLK_TCK() } as i64;
+    let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
     let multiplier: u64 = 1000 / u64::try_from(ticks).expect("int cast");
 
     // Set up each CPU value in the return

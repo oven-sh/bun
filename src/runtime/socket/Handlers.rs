@@ -15,8 +15,8 @@ use super::SocketMode;
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
 unsafe extern "C" {
-    fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: *const JSGlobalObject,
+    safe fn AsyncContextFrame__withAsyncContextIfNeeded(
+        global: &JSGlobalObject,
         callback: JSValue,
     ) -> JSValue;
 }
@@ -303,7 +303,7 @@ impl Handlers {
             if !f.is_empty() {
                 // SAFETY: FFI — `global_object` is a live JSGlobalObject*, `*f` is a
                 // protect()-rooted callable JSValue; returns the (possibly wrapped) value.
-                *f = unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global_object, *f) };
+                *f = AsyncContextFrame__withAsyncContextIfNeeded(global_object, *f);
             }
         });
     }

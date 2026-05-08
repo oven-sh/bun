@@ -7,4 +7,4 @@
 extern crate lolhtml as _;
 pub mod lol_html;
 pub use lol_html::*;
-#[repr(C)] pub struct Opaque { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+#[repr(C)] pub struct Opaque { _p: core::cell::UnsafeCell<[u8; 0]>, _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }

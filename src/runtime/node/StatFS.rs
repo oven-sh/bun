@@ -47,12 +47,9 @@ macro_rules! define_statfs_type {
                 if $big {
                     // TODO(port): bun.jsc.fromJSHostCall wraps an extern call with
                     // JSC exception-scope checking; map to the Rust equivalent.
-                    // SAFETY: FFI call into C++ binding; `global.as_ptr()` yields a
-                    // sound `*mut` via JSGlobalObject's UnsafeCell interior (no
-                    // &-to-&mut cast — Zig spec passes `*JSGlobalObject` mutably).
-                    return bun_jsc::from_js_host_call(global, || unsafe {
+                    return bun_jsc::from_js_host_call(global, || {
                         Bun__createJSBigIntStatFSObject(
-                            global.as_ptr(),
+                            global,
                             self._fstype as i64,
                             self._bsize as i64,
                             self._blocks as i64,
@@ -64,20 +61,16 @@ macro_rules! define_statfs_type {
                     });
                 }
 
-                // SAFETY: FFI call into C++ binding; `global.as_ptr()` yields a
-                // sound `*mut` via JSGlobalObject's UnsafeCell interior.
-                Ok(unsafe {
-                    Bun__createJSStatFSObject(
-                        global.as_ptr(),
-                        self._fstype as i64,
-                        self._bsize as i64,
-                        self._blocks as i64,
-                        self._bfree as i64,
-                        self._bavail as i64,
-                        self._files as i64,
-                        self._ffree as i64,
-                    )
-                })
+                Ok(Bun__createJSStatFSObject(
+                    global,
+                    self._fstype as i64,
+                    self._bsize as i64,
+                    self._blocks as i64,
+                    self._bfree as i64,
+                    self._bavail as i64,
+                    self._files as i64,
+                    self._ffree as i64,
+                ))
             }
 
             pub fn init(statfs_: &RawStatFS) -> Self {
@@ -119,11 +112,11 @@ macro_rules! define_statfs_type {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub fn Bun__JSBigIntStatFSObjectConstructor(global: *mut JSGlobalObject) -> JSValue;
-    pub fn Bun__JSStatFSObjectConstructor(global: *mut JSGlobalObject) -> JSValue;
+    pub safe fn Bun__JSBigIntStatFSObjectConstructor(global: &JSGlobalObject) -> JSValue;
+    pub safe fn Bun__JSStatFSObjectConstructor(global: &JSGlobalObject) -> JSValue;
 
-    pub fn Bun__createJSStatFSObject(
-        global: *mut JSGlobalObject,
+    pub safe fn Bun__createJSStatFSObject(
+        global: &JSGlobalObject,
         fstype: i64,
         bsize: i64,
         blocks: i64,
@@ -133,8 +126,8 @@ unsafe extern "C" {
         ffree: i64,
     ) -> JSValue;
 
-    pub fn Bun__createJSBigIntStatFSObject(
-        global: *mut JSGlobalObject,
+    pub safe fn Bun__createJSBigIntStatFSObject(
+        global: &JSGlobalObject,
         fstype: i64,
         bsize: i64,
         blocks: i64,

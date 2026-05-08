@@ -80,36 +80,34 @@ const _: () = {
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "Archive__fromJS"]
-        fn __from_js(value: JSValue) -> *mut Archive;
+        safe fn __from_js(value: JSValue) -> *mut Archive;
         #[link_name = "Archive__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut Archive;
+        safe fn __from_js_direct(value: JSValue) -> *mut Archive;
         #[link_name = "Archive__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
         #[link_name = "Archive__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
     }
     #[allow(improper_ctypes)]
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "Archive__fromJS"]
-        fn __from_js(value: JSValue) -> *mut Archive;
+        safe fn __from_js(value: JSValue) -> *mut Archive;
         #[link_name = "Archive__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut Archive;
+        safe fn __from_js_direct(value: JSValue) -> *mut Archive;
         #[link_name = "Archive__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut Archive) -> JSValue;
         #[link_name = "Archive__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
     }
 
     impl bun_jsc::JsClass for Archive {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast; returns null on type mismatch.
-            let p = unsafe { __from_js(value) };
+            let p = __from_js(value);
             if p.is_null() { None } else { Some(p) }
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
-            let p = unsafe { __from_js_direct(value) };
+            let p = __from_js_direct(value);
             if p.is_null() { None } else { Some(p) }
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
@@ -121,9 +119,7 @@ const _: () = {
             unsafe { __create(global.as_ptr(), ptr) }
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            // SAFETY: `global` is live; codegen extern returns the cached ctor.
-            // `as_ptr()` yields the opaque `*mut` FFI handle (UnsafeCell-backed).
-            unsafe { __get_constructor(global.as_ptr()) }
+            __get_constructor(global)
         }
     }
 };

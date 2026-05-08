@@ -9,7 +9,7 @@ use super::{Header, Socket};
 /// Opaque FFI handle for `us_quic_stream_t`.
 #[repr(C)]
 pub struct Stream {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

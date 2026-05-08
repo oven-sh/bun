@@ -18,7 +18,7 @@ const MAX_I32: usize = i32::MAX as usize;
 /// upgraded duplexes, and async DNS.
 #[repr(C)]
 pub struct us_socket_t {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
@@ -60,14 +60,12 @@ impl us_socket_t {
 
     pub fn pause(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_pause({:p})", self);
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_pause(self) };
+        c::us_socket_pause(self);
     }
 
     pub fn resume(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_resume({:p})", self);
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_resume(self) };
+        c::us_socket_resume(self);
     }
 
     pub fn close(&mut self, code: CloseCode) {
@@ -80,38 +78,31 @@ impl us_socket_t {
 
     pub fn shutdown(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_shutdown({:p})", self);
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_shutdown(self) };
+        c::us_socket_shutdown(self);
     }
 
     pub fn shutdown_read(&mut self) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_shutdown_read(self) };
+        c::us_socket_shutdown_read(self);
     }
 
     pub fn is_closed(&self) -> bool {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_is_closed(self) > 0 }
+        c::us_socket_is_closed(self) > 0
     }
 
     pub fn is_shutdown(&self) -> bool {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_is_shut_down(self) > 0 }
+        c::us_socket_is_shut_down(self) > 0
     }
 
     pub fn is_tls(&self) -> bool {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_is_tls(self) > 0 }
+        c::us_socket_is_tls(self) > 0
     }
 
     pub fn local_port(&self) -> i32 {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_local_port(self) }
+        c::us_socket_local_port(self)
     }
 
     pub fn remote_port(&self) -> i32 {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_remote_port(self) }
+        c::us_socket_remote_port(self)
     }
 
     /// Returned slice is a view into `buf`.
@@ -151,23 +142,19 @@ impl us_socket_t {
     }
 
     pub fn set_timeout(&mut self, seconds: u32) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_timeout(self, seconds) };
+        c::us_socket_timeout(self, seconds);
     }
 
     pub fn set_long_timeout(&mut self, minutes: u32) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_long_timeout(self, minutes) };
+        c::us_socket_long_timeout(self, minutes);
     }
 
     pub fn set_nodelay(&mut self, enabled: bool) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_nodelay(self, enabled as c_int) };
+        c::us_socket_nodelay(self, enabled as c_int);
     }
 
     pub fn set_keepalive(&mut self, enabled: bool, delay: u32) -> i32 {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_keepalive(self, enabled as c_int, delay) }
+        c::us_socket_keepalive(self, enabled as c_int, delay)
     }
 
     /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
@@ -185,8 +172,7 @@ impl us_socket_t {
     /// plain TCP. Consumers that want one or the other should call `ssl()` /
     /// `get_fd()` directly; this is the round-trip-to-JS form.
     pub fn get_native_handle(&mut self) -> Option<*mut c_void> {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        let p = unsafe { c::us_socket_get_native_handle(self) };
+        let p = c::us_socket_get_native_handle(self);
         if p.is_null() { None } else { Some(p) }
     }
 
@@ -202,8 +188,7 @@ impl us_socket_t {
     /// immediately after the C struct. Prefer `ext<T>()`.
     pub fn ext_ptr(&mut self) -> *mut u8 {
         // TODO(port): Rust pointer types do not carry alignment; LIBUS_EXT_ALIGNMENT == 16
-        // SAFETY: self is a live us_socket_t; us_socket_ext returns aligned ext storage
-        unsafe { c::us_socket_ext(self).cast::<u8>() }
+        c::us_socket_ext(self).cast::<u8>()
     }
 
     pub fn group(&mut self) -> &mut SocketGroup {
@@ -219,16 +204,14 @@ impl us_socket_t {
     }
 
     pub fn kind(&self) -> SocketKind {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        SocketKind::from_u8(unsafe { c::us_socket_kind(self) })
+        SocketKind::from_u8(c::us_socket_kind(self))
     }
 
     /// Re-stamp the dispatch kind in place. Used after `Listener.onCreate`
     /// stashes the `NewSocket*` in ext so subsequent events skip the listener
     /// arm and route straight to `BunSocket`.
     pub fn set_kind(&mut self, k: SocketKind) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_set_kind(self, k as u8) };
+        c::us_socket_set_kind(self, k as u8);
     }
 
     /// Move this socket to a new group/kind, optionally resizing its ext.
@@ -278,16 +261,14 @@ impl us_socket_t {
     /// Send ClientHello. Separate from `adopt_tls` so the ext slot can be
     /// repointed before any handshake/close dispatch can fire.
     pub fn start_tls_handshake(&mut self) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_start_tls_handshake(self) };
+        c::us_socket_start_tls_handshake(self);
     }
 
     /// Tee inbound ciphertext to `us_dispatch_ssl_raw_tap` before `SSL_read`
     /// consumes it, so the `[raw, tls]` pair from `upgradeTLS` can surface
     /// encrypted bytes to the original net.Socket `data` listener.
     pub fn set_ssl_raw_tap(&mut self, enabled: bool) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_set_ssl_raw_tap(self, enabled as c_int) };
+        c::us_socket_set_ssl_raw_tap(self, enabled as c_int);
     }
 
     pub fn write(&mut self, data: &[u8]) -> i32 {
@@ -348,18 +329,15 @@ impl us_socket_t {
     }
 
     pub fn flush(&mut self) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_flush(self) };
+        c::us_socket_flush(self);
     }
 
     pub fn send_file_needs_more(&mut self) {
-        // SAFETY: self is a live us_socket_t (us_socket_r is nonnull_arg)
-        unsafe { c::us_socket_sendfile_needs_more(self) };
+        c::us_socket_sendfile_needs_more(self);
     }
 
     pub fn get_fd(&self) -> Fd {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        let raw = unsafe { c::us_socket_get_fd(self) };
+        let raw = c::us_socket_get_fd(self);
         // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
         // Windows. Tag kind=system explicitly — `from_native` would store raw
         // bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
@@ -368,18 +346,15 @@ impl us_socket_t {
     }
 
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_verify_error(self) }
+        c::us_socket_verify_error(self)
     }
 
     pub fn get_error(&self) -> i32 {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_get_error(self) }
+        c::us_socket_get_error(self)
     }
 
     pub fn is_established(&self) -> bool {
-        // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_is_established(self) > 0 }
+        c::us_socket_is_established(self) > 0
     }
 }
 
@@ -389,52 +364,56 @@ mod c {
 
     // Every C-side decl takes `us_socket_r` (= `us_socket_t* nonnull_arg`), so
     // mirror that here — passing null is UB and the typed methods above never do.
-    // Read-only getters take `*const us_socket_t` so `&self` callers don't need
-    // a const-to-mut cast (which would launder shared-ref provenance into a mut
-    // pointer); C ABI does not distinguish const/mut.
+    // `us_socket_t` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&us_socket_t`
+    // / `&mut us_socket_t` are ABI-identical to a non-null pointer with no
+    // `readonly`/`noalias` attribute. Shims whose only pointer argument is the
+    // socket itself (plus value types) are declared `safe fn` so the validity
+    // proof lives in the type signature instead of per-call-site `unsafe { }`.
+    // Shims that take a (ptr,len) pair, nullable raw, or transfer ownership
+    // stay unsafe.
     unsafe extern "C" {
-        pub fn us_socket_get_native_handle(s: *mut us_socket_t) -> *mut c_void;
+        pub safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
 
-        pub fn us_socket_local_port(s: *const us_socket_t) -> i32;
-        pub fn us_socket_remote_port(s: *const us_socket_t) -> i32;
+        pub safe fn us_socket_local_port(s: &us_socket_t) -> i32;
+        pub safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
         pub fn us_socket_remote_address(s: *const us_socket_t, buf: *mut u8, length: *mut i32);
         pub fn us_socket_local_address(s: *const us_socket_t, buf: *mut u8, length: *mut i32);
-        pub fn us_socket_timeout(s: *mut us_socket_t, seconds: c_uint);
-        pub fn us_socket_long_timeout(s: *mut us_socket_t, minutes: c_uint);
-        pub fn us_socket_nodelay(s: *mut us_socket_t, enable: c_int);
-        pub fn us_socket_keepalive(s: *mut us_socket_t, enable: c_int, delay: c_uint) -> c_int;
+        pub safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
+        pub safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
+        pub safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
+        pub safe fn us_socket_keepalive(s: &mut us_socket_t, enable: c_int, delay: c_uint) -> c_int;
 
-        pub fn us_socket_ext(s: *mut us_socket_t) -> *mut c_void;
-        pub fn us_socket_group(s: *mut us_socket_t) -> *mut SocketGroup;
-        pub fn us_socket_kind(s: *const us_socket_t) -> u8;
-        pub fn us_socket_set_kind(s: *mut us_socket_t, kind: u8);
-        pub fn us_socket_set_ssl_raw_tap(s: *mut us_socket_t, enabled: c_int);
-        pub fn us_socket_is_tls(s: *const us_socket_t) -> i32;
+        pub safe fn us_socket_ext(s: &mut us_socket_t) -> *mut c_void;
+        pub safe fn us_socket_group(s: &mut us_socket_t) -> *mut SocketGroup;
+        pub safe fn us_socket_kind(s: &us_socket_t) -> u8;
+        pub safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
+        pub safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
+        pub safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
 
         pub fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         pub fn us_socket_ipc_write_fd(s: *mut us_socket_t, data: *const u8, length: i32, fd: i32) -> i32;
         pub fn us_socket_write2(s: *mut us_socket_t, header: *const u8, len: usize, payload: *const u8, len2: usize) -> i32;
         pub fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
-        pub fn us_socket_flush(s: *mut us_socket_t);
+        pub safe fn us_socket_flush(s: &mut us_socket_t);
 
         pub fn us_socket_open(s: *mut us_socket_t, is_client: i32, ip: *const u8, ip_length: i32) -> *mut us_socket_t;
-        pub fn us_socket_pause(s: *mut us_socket_t);
-        pub fn us_socket_resume(s: *mut us_socket_t);
+        pub safe fn us_socket_pause(s: &mut us_socket_t);
+        pub safe fn us_socket_resume(s: &mut us_socket_t);
         pub fn us_socket_close(s: *mut us_socket_t, code: CloseCode, reason: *mut c_void) -> *mut us_socket_t;
-        pub fn us_socket_shutdown(s: *mut us_socket_t);
-        pub fn us_socket_is_closed(s: *const us_socket_t) -> i32;
-        pub fn us_socket_shutdown_read(s: *mut us_socket_t);
-        pub fn us_socket_is_shut_down(s: *const us_socket_t) -> i32;
-        pub fn us_socket_sendfile_needs_more(socket: *mut us_socket_t);
-        pub fn us_socket_get_fd(s: *const us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
-        pub fn us_socket_verify_error(s: *const us_socket_t) -> us_bun_verify_error_t;
-        pub fn us_socket_get_error(s: *const us_socket_t) -> c_int;
-        pub fn us_socket_is_established(s: *const us_socket_t) -> i32;
+        pub safe fn us_socket_shutdown(s: &mut us_socket_t);
+        pub safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
+        pub safe fn us_socket_shutdown_read(s: &mut us_socket_t);
+        pub safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
+        pub safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
+        pub safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
+        pub safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
+        pub safe fn us_socket_is_established(s: &us_socket_t) -> i32;
 
         pub fn us_socket_adopt(s: *mut us_socket_t, group: *mut SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) -> *mut us_socket_t;
         /// ssl_ctx is required (the whole point); sni may be null.
         pub fn us_socket_adopt_tls(s: *mut us_socket_t, group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, sni: *const c_char, old_ext_size: i32, ext_size: i32) -> *mut us_socket_t;
-        pub fn us_socket_start_tls_handshake(s: *mut us_socket_t);
+        pub safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
     }
 }
 

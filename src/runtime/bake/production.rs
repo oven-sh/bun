@@ -377,13 +377,10 @@ pub fn build_with_vm(
     let mut options = match unsafe { (*config_promise_ptr).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
-            // SAFETY: FFI; global is live, key is a stack-held JSValue.
-            let default = unsafe {
-                BakeGetDefaultExportFromModule(
-                    vm.global,
-                    config_entry_point_string.to_js(global).map_err(js_err)?,
-                )
-            };
+            let default = BakeGetDefaultExportFromModule(
+                global,
+                config_entry_point_string.to_js(global).map_err(js_err)?,
+            );
 
             if !default.is_object() {
                 return Err(js_err(global
@@ -1201,9 +1198,7 @@ fn load_module(
     global: &JSGlobalObject,
     key: JSValue,
 ) -> Result<JSValue, bun_core::Error> {
-    // SAFETY: FFI call; `global` is a live &JSGlobalObject and `key` is a JSValue
-    // held on the stack for the duration of the call.
-    let promise_value = unsafe { BakeLoadModuleByKey(global, key) };
+    let promise_value = BakeLoadModuleByKey(global, key);
     let promise: *mut jsc::JSInternalPromise = match promise_value.as_any_promise().unwrap() {
         AnyPromise::Internal(p) => p,
         AnyPromise::Normal(_) => unreachable!(),
@@ -1230,10 +1225,7 @@ fn load_module(
     // SAFETY: see above; promise cell is still live (rooted via the module loader).
     match unsafe { (*promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
         Unwrapped::Pending => unreachable!(),
-        Unwrapped::Fulfilled(_) => {
-            // SAFETY: FFI; global live, key stack-held.
-            Ok(unsafe { BakeGetModuleNamespace(global, key) })
-        }
+        Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
         Unwrapped::Rejected(err) => {
             // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
             Err(js_err(unsafe { &*(*vm).global }.throw_value(err)))
@@ -1246,9 +1238,9 @@ fn load_module(
 // TODO: Dedupe
 // TODO(port): move to bake_sys
 unsafe extern "C" {
-    fn BakeGetDefaultExportFromModule(global: *const JSGlobalObject, key: JSValue) -> JSValue;
-    fn BakeGetModuleNamespace(global: *const JSGlobalObject, key: JSValue) -> JSValue;
-    fn BakeLoadModuleByKey(global: *const JSGlobalObject, key: JSValue) -> JSValue;
+    safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
+    safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
+    safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
 }
 
 fn bake_get_on_module_namespace(
@@ -1306,11 +1298,9 @@ pub fn bake_register_production_chunk(
 ) -> JsResult<JSValue> {
     unsafe extern "C" {
         #[link_name = "BakeRegisterProductionChunk"]
-        fn f(global: *const JSGlobalObject, key: BunString, source_code: BunString) -> JSValue;
+        safe fn f(global: &JSGlobalObject, key: BunString, source_code: BunString) -> JSValue;
     }
-    // SAFETY: FFI call; `global` is a live &JSGlobalObject; `key` and `source_code`
-    // are passed by value and remain valid for the call.
-    let result: JSValue = unsafe { f(global, key, source_code) };
+    let result: JSValue = f(global, key, source_code);
     if result.is_empty() {
         return Err(jsc::JsError::Thrown);
     }

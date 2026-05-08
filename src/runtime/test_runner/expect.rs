@@ -99,16 +99,15 @@ pub enum AsymmetricMatcherConstructorType {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn AsymmetricMatcherConstructorType__fromJS(
-        global_object: *const JSGlobalObject,
+    safe fn AsymmetricMatcherConstructorType__fromJS(
+        global_object: &JSGlobalObject,
         value: JSValue,
     ) -> i8;
 }
 
 impl AsymmetricMatcherConstructorType {
     pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
-        // SAFETY: FFI call with valid &JSGlobalObject; JSValue is Copy/repr(transparent)
-        let result = unsafe { AsymmetricMatcherConstructorType__fromJS(global_object, value) };
+        let result = AsymmetricMatcherConstructorType__fromJS(global_object, value);
         if result == -1 {
             return Err(JsError::Thrown);
         }
@@ -1330,10 +1329,10 @@ impl Expect {
         }
 
         // SAFETY: FFI call with valid &JSGlobalObject
-        let expect_proto = unsafe { Expect__getPrototype(global_this) };
+        let expect_proto = Expect__getPrototype(global_this);
         let expect_constructor = <Self as bun_jsc::JsClass>::get_constructor(global_this);
         // SAFETY: FFI call with valid &JSGlobalObject
-        let expect_static_proto = unsafe { ExpectStatic__getPrototype(global_this) };
+        let expect_static_proto = ExpectStatic__getPrototype(global_this);
 
         // SAFETY: already checked that args[0] is an object
         let matchers_to_register = args[0].get_object().expect("unreachable");
@@ -2563,7 +2562,7 @@ impl ExpectMatcherContext {
     #[bun_jsc::host_fn(getter)]
     pub fn get_utils(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
         // SAFETY: FFI call with valid &JSGlobalObject
-        unsafe { ExpectMatcherUtils__getSingleton(global_this) }
+        ExpectMatcherUtils__getSingleton(global_this)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2814,9 +2813,9 @@ pub mod mock {
     // (UBSan: null `VM&` bind in JSGlobalObject.h).
     unsafe extern "C" {
         #[link_name = "JSMockFunction__getCalls"]
-        fn JSMockFunction__getCalls_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
+        safe fn JSMockFunction__getCalls_raw(global: &JSGlobalObject, value: JSValue) -> JSValue;
         #[link_name = "JSMockFunction__getReturns"]
-        fn JSMockFunction__getReturns_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
+        safe fn JSMockFunction__getReturns_raw(global: &JSGlobalObject, value: JSValue) -> JSValue;
     }
 
     /// `bun.cpp.JSMockFunction__getCalls` — returns the `mock.calls` array for a
@@ -2826,8 +2825,7 @@ pub mod mock {
     #[allow(non_snake_case)]
     #[inline]
     pub fn JSMockFunction__getCalls(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; JSValue is repr(transparent) i64.
-        let ret = unsafe { JSMockFunction__getCalls_raw(global.as_ptr(), value) };
+        let ret = JSMockFunction__getCalls_raw(global, value);
         if ret == JSValue::ZERO { Err(bun_jsc::JsError::Thrown) } else { Ok(ret) }
     }
 
@@ -2835,8 +2833,7 @@ pub mod mock {
     #[allow(non_snake_case)]
     #[inline]
     pub fn JSMockFunction__getReturns(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
-        // SAFETY: `global` is live; JSValue is repr(transparent) i64.
-        let ret = unsafe { JSMockFunction__getReturns_raw(global.as_ptr(), value) };
+        let ret = JSMockFunction__getReturns_raw(global, value);
         if ret == JSValue::ZERO { Err(bun_jsc::JsError::Thrown) } else { Ok(ret) }
     }
 
@@ -3022,7 +3019,7 @@ pub mod mock {
 #[inline]
 fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> Option<JSValue> {
     // SAFETY: FFI call with valid JSValue and &JSGlobalObject
-    let matcher_fn = unsafe { Bun__JSWrappingFunction__getWrappedFunction(this_value, global_this) };
+    let matcher_fn = Bun__JSWrappingFunction__getWrappedFunction(this_value, global_this);
     if matcher_fn.is_empty() { None } else { Some(matcher_fn) }
 }
 
@@ -3038,12 +3035,12 @@ unsafe extern "C" {
         wrapped_fn: JSValue,
         strong: bool,
     ) -> JSValue;
-    fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
+    safe fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: &JSGlobalObject) -> JSValue;
 
-    fn ExpectMatcherUtils__getSingleton(global_this: *const JSGlobalObject) -> JSValue;
+    safe fn ExpectMatcherUtils__getSingleton(global_this: &JSGlobalObject) -> JSValue;
 
-    fn Expect__getPrototype(global_this: *const JSGlobalObject) -> JSValue;
-    fn ExpectStatic__getPrototype(global_this: *const JSGlobalObject) -> JSValue;
+    safe fn Expect__getPrototype(global_this: &JSGlobalObject) -> JSValue;
+    safe fn ExpectStatic__getPrototype(global_this: &JSGlobalObject) -> JSValue;
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:

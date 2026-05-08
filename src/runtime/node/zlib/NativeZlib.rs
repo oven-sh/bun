@@ -29,13 +29,12 @@ trait JSValueZlibExt {
 impl JSValueZlibExt for JSValue {
     fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {
-            fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: *const JSGlobalObject,
+            safe fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: &JSGlobalObject,
                 callback: JSValue,
             ) -> JSValue;
         }
-        // SAFETY: FFI into JSC; `global` is live for the call. `*mut` → `*const` coercion.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), self) }
+        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 }
 

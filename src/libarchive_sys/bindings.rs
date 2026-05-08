@@ -381,97 +381,102 @@ pub enum ArchiveResult {
     Fatal = ARCHIVE_FATAL,
 }
 
+// `Archive`/`ArchiveEntry` are `#[repr(C)]` opaque ZSTs with `UnsafeCell<[u8; 0]>`,
+// so `&Archive` is ABI-identical to a non-null `*mut Archive` and carries no
+// `readonly`/`noalias` attrs. Decls whose only pointer params are these handles
+// (plus value-typed scalars) are marked `safe fn`; decls taking nullable raw
+// pointers, (ptr, len) pairs, or out-params stay `unsafe`.
 unsafe extern "C" {
-    fn archive_version_number() -> c_int;
-    fn archive_version_string() -> *const c_char;
-    fn archive_version_details() -> *const c_char;
-    fn archive_zlib_version() -> *const c_char;
-    fn archive_liblzma_version() -> *const c_char;
-    fn archive_bzlib_version() -> *const c_char;
-    fn archive_liblz4_version() -> *const c_char;
-    fn archive_libzstd_version() -> *const c_char;
-    fn archive_error_string(a: *mut Archive) -> *const c_char;
-    fn archive_write_new() -> *mut Archive;
-    fn archive_write_close(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_finish(a: *mut Archive) -> ArchiveResult;
-    fn archive_free(a: *mut Archive) -> ArchiveResult;
+    safe fn archive_version_number() -> c_int;
+    safe fn archive_version_string() -> *const c_char;
+    safe fn archive_version_details() -> *const c_char;
+    safe fn archive_zlib_version() -> *const c_char;
+    safe fn archive_liblzma_version() -> *const c_char;
+    safe fn archive_bzlib_version() -> *const c_char;
+    safe fn archive_liblz4_version() -> *const c_char;
+    safe fn archive_libzstd_version() -> *const c_char;
+    safe fn archive_error_string(a: &Archive) -> *const c_char;
+    safe fn archive_write_new() -> *mut Archive;
+    safe fn archive_write_close(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_finish(a: &Archive) -> ArchiveResult;
+    safe fn archive_free(a: &Archive) -> ArchiveResult;
     fn archive_write_set_options(a: *mut Archive, opts: *const c_char) -> ArchiveResult;
-    fn archive_write_set_format_pax_restricted(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_set_format_gnutar(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_set_format_7zip(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_set_format_pax(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_set_format_ustar(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_set_format_zip(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_set_format_shar(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_set_format(a: *mut Archive, format_code: i32) -> ArchiveResult;
-    fn archive_write_add_filter_gzip(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter(a: *mut Archive, filter_code: i32) -> ArchiveResult;
+    safe fn archive_write_set_format_pax_restricted(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_set_format_gnutar(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_set_format_7zip(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_set_format_pax(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_set_format_ustar(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_set_format_zip(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_set_format_shar(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_set_format(a: &Archive, format_code: i32) -> ArchiveResult;
+    safe fn archive_write_add_filter_gzip(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter(a: &Archive, filter_code: i32) -> ArchiveResult;
     fn archive_write_add_filter_by_name(a: *mut Archive, name: *const c_char) -> ArchiveResult;
-    fn archive_write_add_filter_b64encode(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_compress(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_grzip(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_lrzip(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_lz4(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_lzip(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_lzma(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_lzop(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_none(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_uuencode(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_xz(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_add_filter_zstd(a: *mut Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_b64encode(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_compress(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_grzip(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_lrzip(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_lz4(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_lzip(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_lzma(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_lzop(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_none(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_uuencode(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_xz(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_add_filter_zstd(a: &Archive) -> ArchiveResult;
     fn archive_write_set_filter_option(a: *mut Archive, m: *const c_char, o: *const c_char, v: *const c_char) -> ArchiveResult;
     fn archive_write_open_filename(a: *mut Archive, filename: *const c_char) -> ArchiveResult;
-    fn archive_write_open_fd(a: *mut Archive, fd: c_int) -> ArchiveResult;
+    safe fn archive_write_open_fd(a: &Archive, fd: c_int) -> ArchiveResult;
     fn archive_write_open_memory(a: *mut Archive, buffer: *mut c_void, buff_size: usize, used: *mut usize) -> ArchiveResult;
-    fn archive_write_header(a: *mut Archive, e: *mut ArchiveEntry) -> ArchiveResult;
+    safe fn archive_write_header(a: &Archive, e: &ArchiveEntry) -> ArchiveResult;
     fn archive_write_data(a: *mut Archive, data: *const c_void, len: usize) -> isize;
-    fn archive_write_finish_entry(a: *mut Archive) -> ArchiveResult;
-    fn archive_write_free(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_new() -> *mut Archive;
-    fn archive_read_close(a: *mut Archive) -> ArchiveResult;
-    pub fn archive_read_free(a: *mut Archive) -> ArchiveResult;
-    pub fn archive_read_finish(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_7zip(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_all(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_ar(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_by_code(a: *mut Archive, code: c_int) -> ArchiveResult;
-    fn archive_read_support_format_cab(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_cpio(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_empty(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_gnutar(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_iso9660(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_lha(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_mtree(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_rar(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_rar5(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_raw(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_tar(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_warc(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_xar(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_zip(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_zip_streamable(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_format_zip_seekable(a: *mut Archive) -> ArchiveResult;
+    safe fn archive_write_finish_entry(a: &Archive) -> ArchiveResult;
+    safe fn archive_write_free(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_new() -> *mut Archive;
+    safe fn archive_read_close(a: &Archive) -> ArchiveResult;
+    pub safe fn archive_read_free(a: &Archive) -> ArchiveResult;
+    pub safe fn archive_read_finish(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_7zip(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_all(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_ar(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_by_code(a: &Archive, code: c_int) -> ArchiveResult;
+    safe fn archive_read_support_format_cab(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_cpio(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_empty(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_gnutar(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_iso9660(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_lha(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_mtree(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_rar(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_rar5(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_raw(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_tar(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_warc(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_xar(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_zip(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_zip_streamable(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_format_zip_seekable(a: &Archive) -> ArchiveResult;
     fn archive_read_set_options(a: *mut Archive, opts: *const c_char) -> ArchiveResult;
     fn archive_read_open_memory(a: *mut Archive, buf: *const c_void, size: usize) -> ArchiveResult;
     fn archive_read_next_header(a: *mut Archive, entry: *mut *mut ArchiveEntry) -> ArchiveResult;
-    fn archive_read_next_header2(a: *mut Archive, entry: *mut ArchiveEntry) -> ArchiveResult;
+    safe fn archive_read_next_header2(a: &Archive, entry: &ArchiveEntry) -> ArchiveResult;
     fn archive_read_data(a: *mut Archive, buf: *mut c_void, len: usize) -> isize;
-    fn archive_read_data_into_fd(a: *mut Archive, fd: c_int) -> ArchiveResult;
-    fn archive_read_support_filter_all(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_by_code(a: *mut Archive, code: c_int) -> ArchiveResult;
-    fn archive_read_support_filter_compress(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_gzip(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_grzip(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_lrzip(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_lz4(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_lzip(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_lzma(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_lzop(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_none(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_rpm(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_uu(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_xz(a: *mut Archive) -> ArchiveResult;
-    fn archive_read_support_filter_zstd(a: *mut Archive) -> ArchiveResult;
+    safe fn archive_read_data_into_fd(a: &Archive, fd: c_int) -> ArchiveResult;
+    safe fn archive_read_support_filter_all(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_by_code(a: &Archive, code: c_int) -> ArchiveResult;
+    safe fn archive_read_support_filter_compress(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_gzip(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_grzip(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_lrzip(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_lz4(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_lzip(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_lzma(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_lzop(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_none(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_rpm(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_uu(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_xz(a: &Archive) -> ArchiveResult;
+    safe fn archive_read_support_filter_zstd(a: &Archive) -> ArchiveResult;
 }
 
 #[inline(always)]
@@ -484,8 +489,7 @@ fn p(a: &Archive) -> *mut Archive {
 
 impl Archive {
     pub fn version_number() -> i32 {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_version_number() }
+        archive_version_number()
     }
     pub fn version_string() -> &'static [u8] {
         // SAFETY: archive_version_string returns a static NUL-terminated C string.
@@ -517,8 +521,7 @@ impl Archive {
     }
 
     pub fn error_string(&self) -> &[u8] {
-        // SAFETY: returns NUL-terminated string owned by libarchive, valid until next call.
-        let err_str = unsafe { archive_error_string(p(self)) };
+        let err_str = archive_error_string(self);
         if err_str.is_null() {
             return b"";
         }
@@ -527,23 +530,19 @@ impl Archive {
     }
 
     pub fn write_new() -> *mut Archive {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_new() }
+        archive_write_new()
     }
 
     pub fn write_close(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_close(p(self)) }
+        archive_write_close(self)
     }
 
     pub fn write_finish(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_finish(p(self)) }
+        archive_write_finish(self)
     }
 
     pub fn free(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_free(p(self)) }
+        archive_free(self)
     }
 
     pub fn write_set_options(&self, opts: &ZStr) -> ArchiveResult {
@@ -552,108 +551,86 @@ impl Archive {
     }
 
     pub fn write_set_format_pax_restricted(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_format_pax_restricted(p(self)) }
+        archive_write_set_format_pax_restricted(self)
     }
 
     pub fn write_set_format_gnutar(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_format_gnutar(p(self)) }
+        archive_write_set_format_gnutar(self)
     }
 
     pub fn write_set_format_7zip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_format_7zip(p(self)) }
+        archive_write_set_format_7zip(self)
     }
 
     pub fn write_set_format_pax(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_format_pax(p(self)) }
+        archive_write_set_format_pax(self)
     }
 
     pub fn write_set_format_ustar(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_format_ustar(p(self)) }
+        archive_write_set_format_ustar(self)
     }
 
     pub fn write_set_format_zip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_format_zip(p(self)) }
+        archive_write_set_format_zip(self)
     }
 
     pub fn write_set_format_shar(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_format_shar(p(self)) }
+        archive_write_set_format_shar(self)
     }
 
     pub fn write_set_format(&self, format: flags::Format) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_set_format(p(self), format as i32) }
+        archive_write_set_format(self, format as i32)
     }
 
     // deprecated: archive_write_set_compression_gzip
 
     pub fn write_add_filter_gzip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_gzip(p(self)) }
+        archive_write_add_filter_gzip(self)
     }
 
     pub fn write_add_filter(&self, filter: flags::Filter) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter(p(self), filter as i32) }
+        archive_write_add_filter(self, filter as i32)
     }
     pub fn write_add_filter_by_name(&self, name: &ZStr) -> ArchiveResult {
         // SAFETY: FFI call on valid opaque libarchive handle.
         unsafe { archive_write_add_filter_by_name(p(self), name.as_ptr().cast()) }
     }
     pub fn write_add_filter_b64encode(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_b64encode(p(self)) }
+        archive_write_add_filter_b64encode(self)
     }
     // pub fn write_add_filter_bzip2 — disabled in Zig
     pub fn write_add_filter_compress(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_compress(p(self)) }
+        archive_write_add_filter_compress(self)
     }
     pub fn write_add_filter_grzip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_grzip(p(self)) }
+        archive_write_add_filter_grzip(self)
     }
     pub fn write_add_filter_lrzip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_lrzip(p(self)) }
+        archive_write_add_filter_lrzip(self)
     }
     pub fn write_add_filter_lz4(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_lz4(p(self)) }
+        archive_write_add_filter_lz4(self)
     }
     pub fn write_add_filter_lzip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_lzip(p(self)) }
+        archive_write_add_filter_lzip(self)
     }
     pub fn write_add_filter_lzma(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_lzma(p(self)) }
+        archive_write_add_filter_lzma(self)
     }
     pub fn write_add_filter_lzop(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_lzop(p(self)) }
+        archive_write_add_filter_lzop(self)
     }
     pub fn write_add_filter_none(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_none(p(self)) }
+        archive_write_add_filter_none(self)
     }
     pub fn write_add_filter_uuencode(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_uuencode(p(self)) }
+        archive_write_add_filter_uuencode(self)
     }
     pub fn write_add_filter_xz(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_xz(p(self)) }
+        archive_write_add_filter_xz(self)
     }
     pub fn write_add_filter_zstd(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_add_filter_zstd(p(self)) }
+        archive_write_add_filter_zstd(self)
     }
 
     pub fn write_set_filter_option(&self, m: Option<&ZStr>, o: &ZStr, v: &ZStr) -> ArchiveResult {
@@ -674,10 +651,9 @@ impl Archive {
     }
 
     pub fn write_open_fd(&self, fd: Fd) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle. libarchive's
-        // `archive_write_open_fd` takes a CRT `int` fd on every platform; on
-        // Windows that is the libuv/CRT fd (`Fd::uv()`), not the `HANDLE`.
-        unsafe { archive_write_open_fd(p(self), fd.uv()) }
+        // libarchive's `archive_write_open_fd` takes a CRT `int` fd on every
+        // platform; on Windows that is the libuv/CRT fd (`Fd::uv()`), not the `HANDLE`.
+        archive_write_open_fd(self, fd.uv())
     }
 
     pub fn write_open_memory(&self, buf: *mut c_void, buf_size: usize, used: &mut usize) -> ArchiveResult {
@@ -686,8 +662,7 @@ impl Archive {
     }
 
     pub fn write_header(&self, entry: &ArchiveEntry) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_header(p(self), ep(entry)) }
+        archive_write_header(self, entry)
     }
 
     pub fn write_data(&self, data: &[u8]) -> isize {
@@ -696,116 +671,90 @@ impl Archive {
     }
 
     pub fn write_finish_entry(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_finish_entry(p(self)) }
+        archive_write_finish_entry(self)
     }
 
     pub fn write_free(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_free(p(self)) }
+        archive_write_free(self)
     }
 
     pub fn read_new() -> *mut Archive {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_new() }
+        archive_read_new()
     }
 
     pub fn read_close(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_close(p(self)) }
+        archive_read_close(self)
     }
 
     pub fn read_free(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_free(p(self)) }
+        archive_read_free(self)
     }
 
     pub fn read_finish(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_finish(p(self)) }
+        archive_read_finish(self)
     }
 
     // deprecated: archive_read_support_compression_* (see Zig source)
 
     pub fn read_support_format_7zip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_7zip(p(self)) }
+        archive_read_support_format_7zip(self)
     }
     pub fn read_support_format_all(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_all(p(self)) }
+        archive_read_support_format_all(self)
     }
     pub fn read_support_format_ar(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_ar(p(self)) }
+        archive_read_support_format_ar(self)
     }
     pub fn read_support_format_by_code(&self, code: i32) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_by_code(p(self), code) }
+        archive_read_support_format_by_code(self, code)
     }
     pub fn read_support_format_cab(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_cab(p(self)) }
+        archive_read_support_format_cab(self)
     }
     pub fn read_support_format_cpio(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_cpio(p(self)) }
+        archive_read_support_format_cpio(self)
     }
     pub fn read_support_format_empty(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_empty(p(self)) }
+        archive_read_support_format_empty(self)
     }
     pub fn read_support_format_gnutar(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_gnutar(p(self)) }
+        archive_read_support_format_gnutar(self)
     }
     pub fn read_support_format_iso9660(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_iso9660(p(self)) }
+        archive_read_support_format_iso9660(self)
     }
     pub fn read_support_format_lha(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_lha(p(self)) }
+        archive_read_support_format_lha(self)
     }
     pub fn read_support_format_mtree(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_mtree(p(self)) }
+        archive_read_support_format_mtree(self)
     }
     pub fn read_support_format_rar(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_rar(p(self)) }
+        archive_read_support_format_rar(self)
     }
     pub fn read_support_format_rar5(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_rar5(p(self)) }
+        archive_read_support_format_rar5(self)
     }
     pub fn read_support_format_raw(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_raw(p(self)) }
+        archive_read_support_format_raw(self)
     }
     pub fn read_support_format_tar(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_tar(p(self)) }
+        archive_read_support_format_tar(self)
     }
     pub fn read_support_format_warc(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_warc(p(self)) }
+        archive_read_support_format_warc(self)
     }
     pub fn read_support_format_xar(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_xar(p(self)) }
+        archive_read_support_format_xar(self)
     }
     pub fn read_support_format_zip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_zip(p(self)) }
+        archive_read_support_format_zip(self)
     }
     pub fn read_support_format_zip_streamable(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_zip_streamable(p(self)) }
+        archive_read_support_format_zip_streamable(self)
     }
     pub fn read_support_format_zip_seekable(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_format_zip_seekable(p(self)) }
+        archive_read_support_format_zip_seekable(self)
     }
 
     pub fn read_set_options(&self, opts: &ZStr) -> ArchiveResult {
@@ -823,8 +772,7 @@ impl Archive {
         unsafe { archive_read_next_header(p(self), entry) }
     }
     pub fn read_next_header2(&self, entry: &ArchiveEntry) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_next_header2(p(self), ep(entry)) }
+        archive_read_next_header2(self, entry)
     }
 
     pub fn next(&self, offset: &mut i64) -> Option<Block> {
@@ -962,65 +910,50 @@ impl Archive {
     }
 
     pub fn read_support_filter_all(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_all(p(self)) }
+        archive_read_support_filter_all(self)
     }
     pub fn read_support_filter_by_code(&self, code: i32) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_by_code(p(self), code) }
+        archive_read_support_filter_by_code(self, code)
     }
     // pub fn read_support_filter_bzip2 — disabled in Zig
     pub fn read_support_filter_compress(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_compress(p(self)) }
+        archive_read_support_filter_compress(self)
     }
     pub fn read_support_filter_gzip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_gzip(p(self)) }
+        archive_read_support_filter_gzip(self)
     }
     pub fn read_support_filter_grzip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_grzip(p(self)) }
+        archive_read_support_filter_grzip(self)
     }
     pub fn read_support_filter_lrzip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_lrzip(p(self)) }
+        archive_read_support_filter_lrzip(self)
     }
     pub fn read_support_filter_lz4(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_lz4(p(self)) }
+        archive_read_support_filter_lz4(self)
     }
     pub fn read_support_filter_lzip(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_lzip(p(self)) }
+        archive_read_support_filter_lzip(self)
     }
     pub fn read_support_filter_lzma(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_lzma(p(self)) }
+        archive_read_support_filter_lzma(self)
     }
     pub fn read_support_filter_lzop(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_lzop(p(self)) }
+        archive_read_support_filter_lzop(self)
     }
     pub fn read_support_filter_none(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_none(p(self)) }
+        archive_read_support_filter_none(self)
     }
     pub fn read_support_filter_rpm(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_rpm(p(self)) }
+        archive_read_support_filter_rpm(self)
     }
     pub fn read_support_filter_uu(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_uu(p(self)) }
+        archive_read_support_filter_uu(self)
     }
     pub fn read_support_filter_xz(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_xz(p(self)) }
+        archive_read_support_filter_xz(self)
     }
     pub fn read_support_filter_zstd(&self) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_read_support_filter_zstd(p(self)) }
+        archive_read_support_filter_zstd(self)
     }
 }
 
@@ -1049,29 +982,29 @@ pub struct ArchiveEntry {
 }
 
 unsafe extern "C" {
-    fn archive_entry_new() -> *mut ArchiveEntry;
-    fn archive_entry_new2(a: *mut Archive) -> *mut ArchiveEntry;
-    fn archive_entry_free(e: *mut ArchiveEntry);
+    safe fn archive_entry_new() -> *mut ArchiveEntry;
+    safe fn archive_entry_new2(a: &Archive) -> *mut ArchiveEntry;
+    safe fn archive_entry_free(e: &ArchiveEntry);
     fn archive_entry_set_pathname(e: *mut ArchiveEntry, name: *const c_char);
     fn archive_entry_set_pathname_utf8(e: *mut ArchiveEntry, name: *const c_char);
     fn archive_entry_copy_pathname(e: *mut ArchiveEntry, name: *const c_char);
     fn archive_entry_copy_pathname_w(e: *mut ArchiveEntry, name: *const u16);
-    fn archive_entry_set_size(e: *mut ArchiveEntry, s: i64);
-    fn archive_entry_set_filetype(e: *mut ArchiveEntry, t: c_uint);
-    fn archive_entry_set_perm(e: *mut ArchiveEntry, p: Mode);
-    fn archive_entry_set_mode(e: *mut ArchiveEntry, m: Mode);
-    fn archive_entry_set_mtime(e: *mut ArchiveEntry, secs: isize, nsecs: c_long);
-    fn archive_entry_clear(e: *mut ArchiveEntry) -> *mut ArchiveEntry;
-    fn archive_entry_pathname(e: *mut ArchiveEntry) -> *const c_char;
-    fn archive_entry_pathname_utf8(e: *mut ArchiveEntry) -> *const c_char;
-    fn archive_entry_pathname_w(e: *mut ArchiveEntry) -> *const u16;
-    fn archive_entry_filetype(e: *mut ArchiveEntry) -> Mode;
-    fn archive_entry_perm(e: *mut ArchiveEntry) -> Mode;
-    fn archive_entry_size(e: *mut ArchiveEntry) -> i64;
-    fn archive_entry_symlink(e: *mut ArchiveEntry) -> *const c_char;
-    pub fn archive_entry_symlink_utf8(e: *mut ArchiveEntry) -> *const c_char;
-    pub fn archive_entry_symlink_type(e: *mut ArchiveEntry) -> SymlinkType;
-    pub fn archive_entry_symlink_w(e: *mut ArchiveEntry) -> *const u16;
+    safe fn archive_entry_set_size(e: &ArchiveEntry, s: i64);
+    safe fn archive_entry_set_filetype(e: &ArchiveEntry, t: c_uint);
+    safe fn archive_entry_set_perm(e: &ArchiveEntry, p: Mode);
+    safe fn archive_entry_set_mode(e: &ArchiveEntry, m: Mode);
+    safe fn archive_entry_set_mtime(e: &ArchiveEntry, secs: isize, nsecs: c_long);
+    safe fn archive_entry_clear(e: &ArchiveEntry) -> *mut ArchiveEntry;
+    safe fn archive_entry_pathname(e: &ArchiveEntry) -> *const c_char;
+    safe fn archive_entry_pathname_utf8(e: &ArchiveEntry) -> *const c_char;
+    safe fn archive_entry_pathname_w(e: &ArchiveEntry) -> *const u16;
+    safe fn archive_entry_filetype(e: &ArchiveEntry) -> Mode;
+    safe fn archive_entry_perm(e: &ArchiveEntry) -> Mode;
+    safe fn archive_entry_size(e: &ArchiveEntry) -> i64;
+    safe fn archive_entry_symlink(e: &ArchiveEntry) -> *const c_char;
+    pub safe fn archive_entry_symlink_utf8(e: &ArchiveEntry) -> *const c_char;
+    pub safe fn archive_entry_symlink_type(e: &ArchiveEntry) -> SymlinkType;
+    pub safe fn archive_entry_symlink_w(e: &ArchiveEntry) -> *const u16;
 }
 
 #[inline(always)]
@@ -1084,18 +1017,15 @@ fn ep(e: &ArchiveEntry) -> *mut ArchiveEntry {
 
 impl ArchiveEntry {
     pub fn new() -> *mut ArchiveEntry {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_new() }
+        archive_entry_new()
     }
 
     pub fn new2(archive: &Archive) -> *mut ArchiveEntry {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_new2(p(archive)) }
+        archive_entry_new2(archive)
     }
 
     pub fn free(&self) {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_free(ep(self)) }
+        archive_entry_free(self)
     }
 
     pub fn set_pathname(&self, name: &ZStr) {
@@ -1119,58 +1049,49 @@ impl ArchiveEntry {
     }
 
     pub fn set_size(&self, s: i64) {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_size(ep(self), s) }
+        archive_entry_set_size(self, s)
     }
 
     pub fn set_filetype(&self, type_: u32) {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_filetype(ep(self), type_) }
+        archive_entry_set_filetype(self, type_)
     }
 
     pub fn set_perm(&self, perm: Mode) {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_perm(ep(self), perm) }
+        archive_entry_set_perm(self, perm)
     }
 
     pub fn set_mode(&self, mode: Mode) {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_mode(ep(self), mode) }
+        archive_entry_set_mode(self, mode)
     }
 
     pub fn set_mtime(&self, secs: isize, nsecs: c_long) {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_set_mtime(ep(self), secs, nsecs) }
+        archive_entry_set_mtime(self, secs, nsecs)
     }
 
     pub fn clear(&self) -> *mut ArchiveEntry {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_clear(ep(self)) }
+        archive_entry_clear(self)
     }
 
     pub fn pathname(&self) -> &ZStr {
         // SAFETY: returns NUL-terminated string owned by the entry.
-        unsafe { zstr_from_ptr(archive_entry_pathname(ep(self)).cast()) }
+        unsafe { zstr_from_ptr(archive_entry_pathname(self).cast()) }
     }
     pub fn pathname_utf8(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { zstr_from_ptr(archive_entry_pathname_utf8(ep(self)).cast()) }
+        unsafe { zstr_from_ptr(archive_entry_pathname_utf8(self).cast()) }
     }
     pub fn pathname_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { wstr_from_ptr(archive_entry_pathname_w(ep(self))) }
+        unsafe { wstr_from_ptr(archive_entry_pathname_w(self)) }
     }
     pub fn filetype(&self) -> Mode {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_filetype(ep(self)) }
+        archive_entry_filetype(self)
     }
     pub fn perm(&self) -> Mode {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_perm(ep(self)) }
+        archive_entry_perm(self)
     }
     pub fn size(&self) -> i64 {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_size(ep(self)) }
+        archive_entry_size(self)
     }
     pub fn mtime(&self) -> i64 {
         // SAFETY: FFI call on valid opaque libarchive handle.
@@ -1178,19 +1099,18 @@ impl ArchiveEntry {
     }
     pub fn symlink(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { zstr_from_ptr(archive_entry_symlink(ep(self)).cast()) }
+        unsafe { zstr_from_ptr(archive_entry_symlink(self).cast()) }
     }
     pub fn symlink_utf8(&self) -> &ZStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { zstr_from_ptr(archive_entry_symlink_utf8(ep(self)).cast()) }
+        unsafe { zstr_from_ptr(archive_entry_symlink_utf8(self).cast()) }
     }
     pub fn symlink_type(&self) -> SymlinkType {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_entry_symlink_type(ep(self)) }
+        archive_entry_symlink_type(self)
     }
     pub fn symlink_w(&self) -> &WStr {
         // SAFETY: libarchive returns a NUL-terminated string owned by the handle.
-        unsafe { wstr_from_ptr(archive_entry_symlink_w(ep(self))) }
+        unsafe { wstr_from_ptr(archive_entry_symlink_w(self)) }
     }
 }
 
@@ -1674,19 +1594,19 @@ unsafe extern "C" {
 
 #[repr(C)]
 pub struct struct_stat {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 #[repr(C)]
 pub struct struct_archive_acl {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 #[repr(C)]
 pub struct struct_archive_entry_linkresolver {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -1848,7 +1768,7 @@ type dev_t = u64;
 /// Opaque libc `FILE` (only used as `*mut FILE` across FFI).
 #[repr(C)]
 pub struct FILE {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

@@ -69,12 +69,12 @@ struct WebPChunkIterator {
 
 #[repr(C)]
 pub struct WebPDemuxer {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 #[repr(C)]
 pub struct WebPMux {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

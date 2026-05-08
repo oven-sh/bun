@@ -14,7 +14,7 @@ use crate::app::uws_app_t;
 /// shims. In Zig this is `NewWebSocket(ssl_flag)` returning `opaque {}`.
 #[repr(C)]
 pub struct NewWebSocket<const SSL_FLAG: i32> {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -197,7 +197,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
 #[repr(C)]
 pub struct RawWebSocket {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

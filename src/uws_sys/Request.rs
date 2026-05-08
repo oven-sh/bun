@@ -54,22 +54,19 @@ impl AnyRequest {
 /// uWS::Request C++ -> Rust bindings.
 #[repr(C)]
 pub struct Request {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 impl Request {
     pub fn is_ancient(&self) -> bool {
-        // SAFETY: &self is a valid uWS::Request handle
-        unsafe { c::uws_req_is_ancient(self) }
+        c::uws_req_is_ancient(self)
     }
     pub fn get_yield(&self) -> bool {
-        // SAFETY: &self is a valid uWS::Request handle
-        unsafe { c::uws_req_get_yield(self) }
+        c::uws_req_get_yield(self)
     }
     pub fn set_yield(&mut self, yield_: bool) {
-        // SAFETY: &mut self is a valid uWS::Request handle
-        unsafe { c::uws_req_set_yield(self, yield_) }
+        c::uws_req_set_yield(self, yield_)
     }
     pub fn url(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
@@ -131,9 +128,9 @@ mod c {
     use core::ffi::c_ushort;
 
     unsafe extern "C" {
-        pub fn uws_req_is_ancient(res: *const Request) -> bool;
-        pub fn uws_req_get_yield(res: *const Request) -> bool;
-        pub fn uws_req_set_yield(res: *mut Request, yield_: bool);
+        pub safe fn uws_req_is_ancient(res: &Request) -> bool;
+        pub safe fn uws_req_get_yield(res: &Request) -> bool;
+        pub safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
         pub fn uws_req_get_url(res: *const Request, dest: *mut *const u8) -> usize;
         pub fn uws_req_get_method(res: *const Request, dest: *mut *const u8) -> usize;
         pub fn uws_req_get_header(

@@ -634,13 +634,12 @@ unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
 /// Wraps a callback so it restores the current AsyncLocalStorage context when invoked.
 fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
     unsafe extern "C" {
-        fn AsyncContextFrame__withAsyncContextIfNeeded(
-            global: *const JSGlobalObject,
+        safe fn AsyncContextFrame__withAsyncContextIfNeeded(
+            global: &JSGlobalObject,
             callback: JSValue,
         ) -> JSValue;
     }
-    // SAFETY: FFI to JSC binding; global is a valid live JSGlobalObject.
-    unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr().cast_const(), callback) }
+    AsyncContextFrame__withAsyncContextIfNeeded(global, callback)
 }
 
 // Codegen accessor namespace (JSNativeBrotli generated bindings).

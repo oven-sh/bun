@@ -17,7 +17,7 @@ bun_core::declare_scope!(uws, visible);
 /// it's several system calls.
 #[repr(C)]
 pub struct Timer {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -26,7 +26,7 @@ impl Timer {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        // SAFETY: loop_ is a valid live Loop handle; us_create_timer is sound for any ext_size.
+        // SAFETY: `loop_` is a valid loop pointer.
         let t = unsafe { us_create_timer(loop_, 0, c_uint::try_from(size_of::<T>()).expect("int cast")) };
         NonNull::new(t).unwrap_or_else(|| {
             // TODO(port): use bun_sys errno accessor instead of std::io
@@ -41,7 +41,7 @@ impl Timer {
         // never fallthrough poll
         // the problem is uSockets hardcodes it on the other end
         // so we can never free non-fallthrough polls
-        // SAFETY: loop_ is a valid live Loop handle; us_create_timer is sound for any ext_size.
+        // SAFETY: `loop_` is a valid loop pointer.
         let t = unsafe { us_create_timer(loop_, 1, c_uint::try_from(size_of::<T>()).expect("int cast")) };
         NonNull::new(t).unwrap_or_else(|| {
             // TODO(port): use bun_sys errno accessor instead of std::io
@@ -106,16 +106,18 @@ impl Timer {
 }
 
 unsafe extern "C" {
+    // `Loop` is a sized `#[repr(C)]` mirror (not an opaque ZST) — keep raw `*mut`
+    // so the FFI boundary does not annotate `noalias` over real loop fields.
     pub fn us_create_timer(loop_: *mut Loop, fallthrough: i32, ext_size: c_uint) -> *mut Timer;
-    pub fn us_timer_ext(timer: *mut Timer) -> *mut *mut c_void;
+    pub safe fn us_timer_ext(timer: &mut Timer) -> *mut *mut c_void;
     pub fn us_timer_close(timer: *mut Timer, fallthrough: i32);
-    pub fn us_timer_set(
-        timer: *mut Timer,
+    pub safe fn us_timer_set(
+        timer: &mut Timer,
         cb: Option<extern "C" fn(*mut Timer)>,
         ms: i32,
         repeat_ms: i32,
     );
-    pub fn us_timer_loop(t: *mut Timer) -> *mut Loop;
+    pub safe fn us_timer_loop(t: &mut Timer) -> *mut Loop;
 }
 
 // ported from: src/uws_sys/Timer.zig

@@ -9,7 +9,7 @@ use core::ptr::NonNull;
 /// Opaque FFI handle (`us_quic_socket_t`). `!Send + !Sync + !Unpin`.
 #[repr(C)]
 pub struct Socket {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

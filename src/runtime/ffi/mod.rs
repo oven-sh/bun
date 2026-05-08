@@ -116,7 +116,7 @@ mod TCC {
     /// `TCCState*` — Nomicon opaque-FFI pattern.
     #[repr(C)]
     pub struct State {
-        _p: [u8; 0],
+        _p: core::cell::UnsafeCell<[u8; 0]>,
         _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
     }
     // Raw extern so the handle can be freed even while the method-ful

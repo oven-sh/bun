@@ -28,7 +28,7 @@ macro_rules! log {
 // (`BunProcess.cpp`); declared here per the same convention as
 // `node_cluster_binding.rs`.
 unsafe extern "C" {
-    fn Process__emitErrorEvent(global: *const JSGlobalObject, value: JSValue);
+    safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -44,9 +44,7 @@ fn emit_process_error_event(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let [ex] = callframe.arguments_as_array::<1>();
-    // SAFETY: FFI — `global_this` is a valid JSGlobalObject*; `ex` is rooted on
-    // the caller's stack.
-    unsafe { Process__emitErrorEvent(global_this, ex) };
+    Process__emitErrorEvent(global_this, ex);
     Ok(JSValue::UNDEFINED)
 }
 

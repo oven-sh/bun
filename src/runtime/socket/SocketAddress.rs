@@ -472,8 +472,7 @@ impl SocketAddress {
         // `defer this._presentation = .dead;`
         let guard = scopeguard::guard(&mut self._presentation, |p| *p = BunString::dead());
         let _ = &*guard;
-        // SAFETY: FFI call into C++ JSSocketAddressDTO__create
-        Ok(unsafe { JSSocketAddressDTO__create(global, addr_str.transfer_to_js(global)?, port, is_v6) })
+        Ok(JSSocketAddressDTO__create(global, addr_str.transfer_to_js(global)?, port, is_v6))
     }
 
     /// Directly create a socket address DTO. This is a POJO with address, port, and family properties.
@@ -487,14 +486,13 @@ impl SocketAddress {
             debug_assert!(!addr_.is_empty());
         }
 
-        // SAFETY: FFI call into C++ JSSocketAddressDTO__create
-        Ok(unsafe { JSSocketAddressDTO__create(global_object, bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?, port_, is_ipv6) })
+        Ok(JSSocketAddressDTO__create(global_object, bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?, port_, is_ipv6))
     }
 }
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn JSSocketAddressDTO__create(global_object: *const JSGlobalObject, address_: JSValue, port_: u16, is_ipv6: bool) -> JSValue;
+    safe fn JSSocketAddressDTO__create(global_object: &JSGlobalObject, address_: JSValue, port_: u16, is_ipv6: bool) -> JSValue;
 }
 
 // =============================================================================

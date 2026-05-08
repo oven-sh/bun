@@ -860,13 +860,12 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
 // TODO(port): land as inherent `JSValue::with_async_context_if_needed` in bun_jsc.
 fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
     unsafe extern "C" {
-        fn AsyncContextFrame__withAsyncContextIfNeeded(
-            global: *const JSGlobalObject,
+        safe fn AsyncContextFrame__withAsyncContextIfNeeded(
+            global: &JSGlobalObject,
             callback: JSValue,
         ) -> JSValue;
     }
-    // SAFETY: FFI into JSC; `global` is live for the call.
-    unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, callback) }
+    AsyncContextFrame__withAsyncContextIfNeeded(global, callback)
 }
 
 pub fn create_bound(

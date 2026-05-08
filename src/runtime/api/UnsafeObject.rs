@@ -75,7 +75,7 @@ pub fn array_buffer_to_string(
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn dump_zone_malloc_stats();
+    safe fn dump_zone_malloc_stats();
 }
 
 #[bun_jsc::host_fn]
@@ -86,8 +86,7 @@ fn dump_mimalloc(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValu
     // `Option<NonNull<bumpalo::Bump>>` and bumpalo has no `dump_stats()`; the original
     // mimalloc-arena stat dump needs a dedicated shim once the arena type lands.
     if bun_alloc::heap_breakdown::ENABLED {
-        // SAFETY: FFI call with no arguments; safe to invoke when heap_breakdown is enabled.
-        unsafe { dump_zone_malloc_stats() };
+        dump_zone_malloc_stats();
     }
     Ok(JSValue::UNDEFINED)
 }

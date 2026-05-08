@@ -48,17 +48,15 @@ pub mod js_bindings {
         #[cfg(target_os = "macos")]
         {
             unsafe extern "C" {
-                fn _dyld_get_image_header(image_index: u32) -> *const core::ffi::c_void;
-                fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
+                safe fn _dyld_get_image_header(image_index: u32) -> *const core::ffi::c_void;
+                safe fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
             }
-            // SAFETY: dyld APIs are safe to call with index 0 (the main executable).
-            let header = unsafe { _dyld_get_image_header(0) };
+            let header = _dyld_get_image_header(0);
             if header.is_null() {
                 return Ok(JSValue::UNDEFINED);
             }
             let base_address = header as usize;
-            // SAFETY: same as above.
-            let vmaddr_slide = unsafe { _dyld_get_image_vmaddr_slide(0) } as usize;
+            let vmaddr_slide = _dyld_get_image_vmaddr_slide(0) as usize;
 
             Ok(JSValue::js_number((base_address - vmaddr_slide) as f64))
         }

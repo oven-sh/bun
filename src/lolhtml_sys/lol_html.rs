@@ -49,7 +49,7 @@ fn ptr_without_panic(buf: &[u8]) -> *const u8 {
 
 #[repr(C)]
 pub struct HTMLRewriter {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -106,7 +106,7 @@ impl HTMLRewriter {
 
 #[repr(C)]
 pub struct HTMLRewriterBuilder {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -351,7 +351,7 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(ptr: *const u8, len: us
 
 #[repr(C)]
 pub struct HTMLSelector {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -395,7 +395,7 @@ impl HTMLSelector {
 
 #[repr(C)]
 pub struct TextChunk {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -536,7 +536,7 @@ impl TextChunk {
 
 #[repr(C)]
 pub struct Element {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -854,7 +854,7 @@ impl HTMLString {
 
 #[repr(C)]
 pub struct EndTag {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -945,31 +945,29 @@ impl EndTag {
 
 #[repr(C)]
 pub struct Attribute {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 unsafe extern "C" {
-    fn lol_html_attribute_name_get(attribute: *const Attribute) -> HTMLString;
-    fn lol_html_attribute_value_get(attribute: *const Attribute) -> HTMLString;
+    safe fn lol_html_attribute_name_get(attribute: &Attribute) -> HTMLString;
+    safe fn lol_html_attribute_value_get(attribute: &Attribute) -> HTMLString;
 }
 
 impl Attribute {
     pub fn name(&self) -> HTMLString {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_attribute_name_get(self) }
+        lol_html_attribute_name_get(self)
     }
     pub fn value(&self) -> HTMLString {
         auto_disable();
-        // SAFETY: self valid
-        unsafe { lol_html_attribute_value_get(self) }
+        lol_html_attribute_value_get(self)
     }
 }
 
 #[repr(C)]
 pub struct AttributeIterator {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -1001,7 +999,7 @@ impl AttributeIterator {
 
 #[repr(C)]
 pub struct Comment {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -1122,7 +1120,7 @@ pub type lol_html_end_tag_handler_t = unsafe extern "C" fn(*mut EndTag, *mut c_v
 
 #[repr(C)]
 pub struct DocEnd {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -1179,7 +1177,7 @@ pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Conta
 
 #[repr(C)]
 pub struct DocType {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

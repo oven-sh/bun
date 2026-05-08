@@ -125,7 +125,7 @@ impl SocketGroup {
     }
 
     pub fn close_all(&mut self) {
-        // SAFETY: `self` was previously passed to `init`.
+        // SAFETY: forwarding to C; `self` is a valid initialized group.
         unsafe { us_socket_group_close_all(self) }
     }
 
@@ -289,7 +289,7 @@ impl SocketGroup {
     }
 
     pub fn next_in_loop(&mut self) -> *mut SocketGroup {
-        // SAFETY: forwarding to C.
+        // SAFETY: forwarding to C; `self` is a valid initialized group.
         unsafe { us_socket_group_next(self) }
     }
 }
@@ -302,6 +302,10 @@ unsafe extern "C" {
         ext: *mut c_void,
     );
     fn us_socket_group_deinit(group: *mut SocketGroup);
+    // `SocketGroup` is a sized `#[repr(C)]` mirror (not an opaque ZST) — keep
+    // raw `*mut` so the FFI boundary does not emit `noalias` over real fields;
+    // `close_all` reenters Rust callbacks that touch this group via aliasing
+    // pointers (`us_socket_group(s)`).
     fn us_socket_group_close_all(group: *mut SocketGroup);
     #[allow(dead_code)]
     fn us_socket_group_timestamp(group: *mut SocketGroup) -> c_ushort;

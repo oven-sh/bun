@@ -39,11 +39,11 @@ pub mod ffi {
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     // Opaque handles missing from boringssl_sys.
-    #[repr(C)] pub struct SSL_SESSION { _p: [u8; 0] }
-    #[repr(C)] pub struct SSL_CIPHER { _p: [u8; 0] }
-    #[repr(C)] pub struct EVP_PKEY { _p: [u8; 0] }
-    #[repr(C)] pub struct EC_KEY { _p: [u8; 0] }
-    #[repr(C)] pub struct EC_GROUP { _p: [u8; 0] }
+    #[repr(C)] pub struct SSL_SESSION { _p: core::cell::UnsafeCell<[u8; 0]> }
+    #[repr(C)] pub struct SSL_CIPHER { _p: core::cell::UnsafeCell<[u8; 0]> }
+    #[repr(C)] pub struct EVP_PKEY { _p: core::cell::UnsafeCell<[u8; 0]> }
+    #[repr(C)] pub struct EC_KEY { _p: core::cell::UnsafeCell<[u8; 0]> }
+    #[repr(C)] pub struct EC_GROUP { _p: core::cell::UnsafeCell<[u8; 0]> }
 
     pub type ssl_renegotiate_mode_t = c_int;
 

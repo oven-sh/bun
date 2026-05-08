@@ -154,9 +154,8 @@ impl PosixLoop {
     }
 
     pub fn get() -> *mut Loop {
-        // SAFETY: uws_get_loop returns the process-lifetime singleton
         // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
-        unsafe { c::uws_get_loop() }
+        c::uws_get_loop()
     }
 
     /// Packetize HTTP/3 stream writes that happened since the last
@@ -543,6 +542,12 @@ pub type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 mod c {
     use super::*;
 
+    // `Loop` (= `PosixLoop`/`WindowsLoop`) is a sized `#[repr(C)]` mirror of the
+    // C struct (NOT an opaque ZST with `UnsafeCell`), so the safe-fn-with-`&mut`
+    // pattern does not apply: `&mut Loop` at the FFI boundary would emit LLVM
+    // `noalias` over real fields, and the reentrant callees (`us_loop_run`,
+    // `us_loop_close_all_groups`, …) dispatch Rust callbacks that touch the same
+    // loop via `Loop::get()`. Keep all loop-taking decls as raw `*mut Loop`.
     unsafe extern "C" {
         pub fn us_create_loop(
             hint: *mut c_void,
@@ -566,7 +571,7 @@ mod c {
         pub fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
         pub fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
-        pub fn uws_get_loop() -> *mut Loop;
+        pub safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
         pub fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);

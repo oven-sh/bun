@@ -146,22 +146,19 @@ pub mod JSH2FrameParser {
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "H2FrameParser__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "H2FrameParser__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
     }
 
     /// Lazily fetch the JS constructor from `globalObject` (Zig:
     /// `JSH2FrameParser.getConstructor`).
     #[inline]
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is an opaque ZST FFI handle (see
-        // `JSGlobalObject::as_ptr`); the C++ side reads the cached
-        // structure/constructor from `Zig::GlobalObject`.
-        unsafe { __get_constructor(global.as_ptr()) }
+        __get_constructor(global)
     }
 }
 // ──────────────────────────────────────────────────────────────────────────
@@ -193,11 +190,11 @@ enum BunSocket {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn JSC__JSGlobalObject__getHTTP2CommonString(
-        global_object: *const JSGlobalObject,
+    safe fn JSC__JSGlobalObject__getHTTP2CommonString(
+        global_object: &JSGlobalObject,
         hpack_index: u32,
     ) -> JSValue;
-    fn Bun__wrapAbortError(global_object: *const JSGlobalObject, cause: JSValue) -> JSValue;
+    safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -245,8 +242,7 @@ pub fn get_http2_common_string(global_object: &JSGlobalObject, hpack_index: u32)
     if hpack_index == 255 {
         return None;
     }
-    // SAFETY: FFI to C++ with valid global object pointer
-    let value = unsafe { JSC__JSGlobalObject__getHTTP2CommonString(global_object, hpack_index) };
+    let value = JSC__JSGlobalObject__getHTTP2CommonString(global_object, hpack_index);
     if value.is_empty_or_undefined_or_null() {
         return None;
     }
@@ -1359,8 +1355,7 @@ impl SignalRef {
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
         if stream.state != StreamState::CLOSED {
-            // SAFETY: FFI call with valid global object
-            let wrapped = unsafe { Bun__wrapAbortError(parser.global_this.as_ptr(), reason) };
+            let wrapped = Bun__wrapAbortError(&parser.global_this, reason);
             parser.abort_stream(stream, wrapped);
         }
     }
@@ -5327,8 +5322,7 @@ impl H2FrameParser {
                     let signal_ = unsafe { &mut *signal_ptr };
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
-                        // SAFETY: FFI call; global_object is a valid &JSGlobalObject and reason/abort_reason() is rooted on the stack
-                        let wrapped = unsafe { Bun__wrapAbortError(global_object, signal_.abort_reason()) };
+                        let wrapped = Bun__wrapAbortError(global_object, signal_.abort_reason());
                         this.abort_stream(stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }

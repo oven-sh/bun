@@ -374,7 +374,20 @@ export function resolveLlvmToolchain(
   arch: Arch,
 ): Pick<
   Toolchain,
-  "cc" | "cxx" | "ar" | "ranlib" | "ld" | "strip" | "dsymutil" | "ccache" | "rc" | "mt" | "nasm" | "clangVersion"
+  | "cc"
+  | "cxx"
+  | "ar"
+  | "ranlib"
+  | "ld"
+  | "rustLld"
+  | "rustLlvmVersion"
+  | "strip"
+  | "dsymutil"
+  | "ccache"
+  | "rc"
+  | "mt"
+  | "nasm"
+  | "clangVersion"
 > {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
@@ -469,6 +482,10 @@ export function resolveLlvmToolchain(
     })?.path;
   }
 
+  // rust-lld: optional alternative linker for cross-language LTO when
+  // rustc's bundled LLVM is newer than clang's. See findRustLld().
+  const { rustLld, rustLlvmVersion } = findRustLld(os);
+
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
 
@@ -488,6 +505,8 @@ export function resolveLlvmToolchain(
     ar,
     ranlib,
     ld,
+    rustLld,
+    rustLlvmVersion,
     strip,
     dsymutil,
     ccache,
@@ -518,6 +537,61 @@ export interface CargoToolchain {
   cargo: string;
   cargoHome: string;
   rustupHome: string;
+}
+
+/**
+ * Locate rustc's bundled lld and its LLVM version.
+ *
+ * rustc ships its own copy of lld (built against the same LLVM rustc emits
+ * bitcode with). When `-Clinker-plugin-lto` is on and rustc's LLVM is newer
+ * than clang's, clang's `ld.lld` can't read the rust bitcode ("Unknown
+ * attribute kind"). LLVM bitcode is forward-compatible only — a newer lld
+ * reads older bitcode, never the reverse — so the fix is to link with
+ * rust-lld instead, which reads both clang's (older) and rustc's (same)
+ * bitcode.
+ *
+ * The path under `gcc-ld/` is a wrapper that invokes the sibling
+ * `rust-lld` binary in the right "flavor" (ld.lld / ld64.lld / lld-link),
+ * matching what `--ld-path=` expects on each platform. On Windows we use
+ * `rust-lld.exe` directly since lld-link mode is selected by argv[0] there.
+ *
+ * Returns undefined for both fields if rustc isn't installed or its sysroot
+ * doesn't have the expected layout (e.g. distro-packaged rustc without the
+ * `rust-lld` component).
+ */
+export function findRustLld(os: OS): { rustLld: string | undefined; rustLlvmVersion: string | undefined } {
+  // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
+  const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
+  const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  if (rustc === undefined) return { rustLld: undefined, rustLlvmVersion: undefined };
+
+  // One spawn for both sysroot and host triple / LLVM version. `-vV` prints
+  // `host: <triple>` and `LLVM version: X.Y.Z`; sysroot needs its own query.
+  const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
+    encoding: "utf8",
+    timeout: 30_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).stdout?.trim();
+  const vv = spawnSync(rustc, ["-vV"], {
+    encoding: "utf8",
+    timeout: 30_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).stdout;
+  if (!sysroot || !vv) return { rustLld: undefined, rustLlvmVersion: undefined };
+
+  const hostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
+  const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
+  if (hostTriple === undefined) return { rustLld: undefined, rustLlvmVersion };
+
+  const bin = join(sysroot, "lib", "rustlib", hostTriple, "bin");
+  const candidate =
+    os === "windows"
+      ? join(bin, "rust-lld.exe")
+      : os === "darwin"
+        ? join(bin, "gcc-ld", "ld64.lld")
+        : join(bin, "gcc-ld", "ld.lld");
+  const rustLld = isExecutable(candidate) ? candidate : undefined;
+  return { rustLld, rustLlvmVersion };
 }
 
 /**

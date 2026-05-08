@@ -2027,10 +2027,16 @@ impl TestCommand {
             }
         } else {
             // Treat arguments as filters and scan the codebase
-            let filter_names_owned: Vec<&[u8]> = if ctx.positionals.is_empty() {
+            // SAFETY: bytes live in `ctx` (process-lifetime) and this frame
+            // never returns; detach the inner lifetime once at construction so
+            // POSIX can borrow this Vec directly without a second allocation.
+            let filter_names_owned: Vec<&'static [u8]> = if ctx.positionals.is_empty() {
                 Vec::new()
             } else {
-                ctx.positionals[1..].iter().map(|b| &**b).collect()
+                ctx.positionals[1..]
+                    .iter()
+                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(&**b) })
+                    .collect()
             };
             let filter_names: &[&[u8]] = &filter_names_owned;
 
@@ -2056,15 +2062,12 @@ impl TestCommand {
                 .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
                 .collect();
             #[cfg(not(windows))]
-            let filter_names_normalized: Vec<&'static [u8]> = filter_names
-                .iter()
-                .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
-                .collect();
+            let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
             // PORT NOTE: defer free on Windows handled by Drop of Vec<Box<[u8]>>.
-            // SAFETY: lifetime-erase; the view vec and (on Windows) its
-            // backing storage live in this never-returning frame, and the
-            // underlying bytes are either in `ctx` (process-lifetime) or in
-            // `filter_names_normalized_storage` above.
+            // SAFETY: lifetime-erase the outer borrow; the view vec and (on
+            // Windows) its backing storage live in this never-returning frame,
+            // and the underlying bytes are either in `ctx` (process-lifetime)
+            // or in `filter_names_normalized_storage` above.
             scanner.filter_names =
                 unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
 

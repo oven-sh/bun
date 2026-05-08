@@ -277,7 +277,15 @@ pub fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
     // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
     // element is a valid non-null `(ptr, len)` pair, which is exactly the
     // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
-    unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) }
+    let view: &[&[T]] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
+    // Fat-pointer field order (ptr-then-len) is de-facto stable but not
+    // language-guaranteed; spot-check one element so an ABI change would trip
+    // here in debug rather than silently misbehaving downstream.
+    #[cfg(debug_assertions)]
+    if let Some(first) = s.first() {
+        debug_assert!(first.as_ptr() == view[0].as_ptr() && first.len() == view[0].len());
+    }
+    view
 }
 
 /// Non-owning borrowed slice whose backing storage outlives the holder.

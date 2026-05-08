@@ -446,11 +446,12 @@ impl Interpreter {
         // SAFETY: `bun_jsc::JSValue` and `bun_shell_parser::JSValueRaw` are both
         // `#[repr(transparent)]` over `usize` — see the `JSValueRaw` doc in
         // `shell_parser/parse.rs`. Reinterpret in place via a typed pointer cast.
-        let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = unsafe {
-            core::slice::from_raw_parts_mut(
-                jsobjs.as_mut_ptr().cast::<bun_shell_parser::JSValueRaw>(),
-                jsobjs.len(),
-            )
+        // Compute `len` before deriving the raw mut pointer so the shared
+        // reborrow inside `len()` does not stack on top of the Unique tag.
+        let jsobjs_raw: &'a mut [bun_shell_parser::JSValueRaw] = {
+            let len = jsobjs.len();
+            let ptr = jsobjs.as_mut_ptr().cast::<bun_shell_parser::JSValueRaw>();
+            unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         };
         *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
         out_parser.as_mut().unwrap().parse()

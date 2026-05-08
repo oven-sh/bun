@@ -810,17 +810,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else {
-                                        this.log_mut()
-                    .add_error_fmt(
-                                                None,
-                                                logger::Loc::EMPTY,
-                                                format_args!(
-                                                    "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
-                                                    bstr::BStr::new(this.lockfile.str(&version.literal)),
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
-                                                ),
-                                            )
-                                            .expect("unreachable");
+                                        logger::add_error_pretty!(
+                                            this.log_mut(),
+                                            None,
+                                            logger::Loc::EMPTY,
+                                            "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
+                                            bstr::BStr::new(this.lockfile.str(&version.literal)),
+                                            bstr::BStr::new(this.lockfile.str(&name)),
+                                        )
+                                        .expect("unreachable");
                                     }
                                 }
                                 return Ok(());
@@ -832,31 +830,27 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         let age_gate_ms =
                                             this.options.minimum_release_age_ms.unwrap_or(0.0);
                                         if version.tag == dependency::version::Tag::DistTag {
-                                            this.log_mut()
-                    .add_error_fmt(
-                                                    None,
-                                                    logger::Loc::EMPTY,
-                                                    format_args!(
-                                                        "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
-                                                        bstr::BStr::new(this.lockfile.str(&name)),
-                                                        bstr::BStr::new(this.lockfile.str(&version.dist_tag().tag)),
-                                                        age_gate_ms / MS_PER_S,
-                                                    ),
-                                                )
-                                                .expect("unreachable");
+                                            logger::add_error_pretty!(
+                                                this.log_mut(),
+                                                None,
+                                                logger::Loc::EMPTY,
+                                                "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
+                                                bstr::BStr::new(this.lockfile.str(&name)),
+                                                bstr::BStr::new(this.lockfile.str(&version.dist_tag().tag)),
+                                                age_gate_ms / MS_PER_S,
+                                            )
+                                            .expect("unreachable");
                                         } else {
-                                            this.log_mut()
-                    .add_error_fmt(
-                                                    None,
-                                                    logger::Loc::EMPTY,
-                                                    format_args!(
-                                                        "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
-                                                        bstr::BStr::new(this.lockfile.str(&name)),
-                                                        bstr::BStr::new(this.lockfile.str(&version.literal)),
-                                                        age_gate_ms / MS_PER_S,
-                                                    ),
-                                                )
-                                                .expect("unreachable");
+                                            logger::add_error_pretty!(
+                                                this.log_mut(),
+                                                None,
+                                                logger::Loc::EMPTY,
+                                                "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
+                                                bstr::BStr::new(this.lockfile.str(&name)),
+                                                bstr::BStr::new(this.lockfile.str(&version.literal)),
+                                                age_gate_ms / MS_PER_S,
+                                            )
+                                            .expect("unreachable");
                                         }
                                     }
                                 }

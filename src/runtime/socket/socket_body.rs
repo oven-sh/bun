@@ -545,7 +545,45 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             None => unreachable!("do_connect requires self.connection to be set"),
         }
+        // SSL is attached synchronously inside `group.connect*` for resolved
+        // addresses; set SNI/ALPN now so a deferred-task write that lands
+        // before `on_open` cannot generate a ClientHello without them.
+        self.prime_tls_client_hello();
         Ok(())
+    }
+
+    /// Apply per-socket SNI/ALPN to a freshly-attached client `SSL*` before
+    /// any handshake bytes are produced. Idempotent — `on_open` re-runs this.
+    fn prime_tls_client_hello(&mut self) {
+        if !SSL || self.is_server() {
+            return;
+        }
+        let Some(ssl_ptr) = self.socket.ssl() else { return };
+        // SAFETY: BoringSSL FFI; `ssl_ptr` is a live `*mut SSL`.
+        if unsafe { boringssl_sys::SSL_is_init_finished(ssl_ptr) } != 0 {
+            return;
+        }
+        if let Some(server_name) = &self.server_name {
+            let host: &[u8] = server_name.as_ref();
+            if !host.is_empty() {
+                let host_z = bun_core::ZBox::from_bytes(host);
+                // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+                unsafe { boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
+            }
+        } else if let Some(super::listener::UnixOrHost::Host { host, .. }) = &self.connection {
+            let host: &[u8] = host.as_ref();
+            if !host.is_empty() {
+                let host_z = bun_core::ZBox::from_bytes(host);
+                // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+                unsafe { boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
+            }
+        }
+        if let Some(protos) = &self.protos {
+            // SAFETY: BoringSSL FFI.
+            unsafe {
+                boringssl_sys::SSL_set_alpn_protos(ssl_ptr, protos.as_ptr(), protos.len());
+            }
+        }
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn shim

@@ -2409,14 +2409,9 @@ fn argv_storage() -> &'static [ZBox] {
 #[inline]
 fn argv_view() -> &'static [&'static ZStr] {
     ARGV_INIT.call_once(|| {
-        let storage = argv_storage();
-        let mut view: Vec<&'static ZStr> = storage
-            .iter()
-            .map(|z| {
-                // SAFETY: ARGV_STORAGE is process-static via OnceLock.
-                unsafe { core::mem::transmute::<&ZStr, &'static ZStr>(z.as_zstr()) }
-            })
-            .collect();
+        let storage: &'static [ZBox] = argv_storage();
+        // ARGV_STORAGE is process-static via OnceLock; `as_zstr` borrows for `'static`.
+        let mut view: Vec<&'static ZStr> = storage.iter().map(ZBox::as_zstr).collect();
         // Zig `initArgv`: splice BUN_OPTIONS tokens after argv[0].
         if let Some(opts) = crate::env_var::BUN_OPTIONS.get() {
             let original_len = view.len();

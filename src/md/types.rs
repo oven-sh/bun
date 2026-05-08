@@ -510,9 +510,12 @@ pub struct RefDef<'a> {
 
 /// Extract table cell alignment from block data.
 pub fn alignment_from_data(data: u32) -> Align {
-    // SAFETY: Align is #[repr(u8)] with exactly 4 variants (discriminants 0..=3);
-    // truncating `data` to 2 bits guarantees the value is in range.
-    unsafe { core::mem::transmute::<u8, Align>((data as u8) & 0b11) }
+    match data & 0b11 {
+        0 => Align::Default,
+        1 => Align::Left,
+        2 => Align::Center,
+        _ => Align::Right,
+    }
 }
 
 /// Get string name for alignment, or null for default.

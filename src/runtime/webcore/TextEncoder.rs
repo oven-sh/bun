@@ -317,9 +317,12 @@ pub extern "C" fn TextEncoder__encodeInto16(
         result.read = 1;
         result.written = 3;
     }
-    let sized: [u32; 2] = [result.read, result.written];
-    // SAFETY: [u32; 2] and u64 are the same size; matches Zig @bitCast
-    unsafe { core::mem::transmute::<[u32; 2], u64>(sized) }
+    // Zig `@bitCast([2]u32 → u64)`: field 0 (`read`) at byte offset 0, field 1 (`written`)
+    // at offset 4. Compose via native-endian bytes — identical bit pattern, no `unsafe`.
+    let mut b = [0u8; 8];
+    b[..4].copy_from_slice(&result.read.to_ne_bytes());
+    b[4..].copy_from_slice(&result.written.to_ne_bytes());
+    u64::from_ne_bytes(b)
 }
 
 #[unsafe(no_mangle)]
@@ -334,9 +337,12 @@ pub extern "C" fn TextEncoder__encodeInto8(
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
     let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
     let result: strings::EncodeIntoResult = strings::copy_latin1_into_utf8(output, input);
-    let sized: [u32; 2] = [result.read, result.written];
-    // SAFETY: [u32; 2] and u64 are the same size; matches Zig @bitCast
-    unsafe { core::mem::transmute::<[u32; 2], u64>(sized) }
+    // Zig `@bitCast([2]u32 → u64)`: field 0 (`read`) at byte offset 0, field 1 (`written`)
+    // at offset 4. Compose via native-endian bytes — identical bit pattern, no `unsafe`.
+    let mut b = [0u8; 8];
+    b[..4].copy_from_slice(&result.read.to_ne_bytes());
+    b[4..].copy_from_slice(&result.written.to_ne_bytes());
+    u64::from_ne_bytes(b)
 }
 
 // ported from: src/runtime/webcore/TextEncoder.zig

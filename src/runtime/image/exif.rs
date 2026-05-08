@@ -136,11 +136,16 @@ fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {
             return None;
         }
         let v = rd16(tiff, e + 8, big)?;
-        return if v >= 1 && v <= 8 {
-            // SAFETY: v is in 1..=8, exactly the discriminant range of #[repr(u8)] Orientation.
-            Some(unsafe { core::mem::transmute::<u8, Orientation>(v as u8) })
-        } else {
-            None
+        return match v {
+            1 => Some(Orientation::Normal),
+            2 => Some(Orientation::Flop),
+            3 => Some(Orientation::Rotate180),
+            4 => Some(Orientation::Flip),
+            5 => Some(Orientation::FlopRotate90),
+            6 => Some(Orientation::Rotate90),
+            7 => Some(Orientation::FlopRotate270),
+            8 => Some(Orientation::Rotate270),
+            _ => None,
         };
     }
     None

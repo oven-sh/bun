@@ -492,12 +492,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     //
     // BUF1: '\??\!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
     if IS_STANDALONE {
-        // SAFETY: buf1 has at least 8 bytes; we write 4 u16s (the NT prefix) as a single u64.
-        unsafe {
-            buf1_u8
-                .cast::<u64>()
-                .write_unaligned(core::mem::transmute::<[u16; 4], u64>(NT_OBJECT_PREFIX));
-        }
+        // SAFETY: buf1 has at least 8 bytes; we write 4 u16s (the NT prefix).
+        unsafe { buf1_u8.cast::<[u16; 4]>().write_unaligned(NT_OBJECT_PREFIX) };
     }
 
     // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
@@ -536,10 +532,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         unsafe {
             buf1_u8
                 .add(image_path_b_len + 2 * (NT_OBJECT_PREFIX.len() - 3 /* "exe".len */))
-                .cast::<u64>()
-                .write_unaligned(core::mem::transmute::<[u16; 4], u64>([
-                    'b' as u16, 'u' as u16, 'n' as u16, 'x' as u16,
-                ]));
+                .cast::<[u16; 4]>()
+                .write_unaligned(['b' as u16, 'u' as u16, 'n' as u16, 'x' as u16]);
         }
 
         let path_len_bytes: u16 = u16::try_from(

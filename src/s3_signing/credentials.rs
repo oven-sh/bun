@@ -68,23 +68,7 @@ fn pico_header_empty() -> PicoHeader { PicoHeader::ZERO }
 // repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.
 #[inline]
 fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
-    #[repr(C)]
-    struct Raw {
-        np: *const u8,
-        nl: usize,
-        vp: *const u8,
-        vl: usize,
-    }
-    const _: () = assert!(core::mem::size_of::<Raw>() == core::mem::size_of::<PicoHeader>());
-    // SAFETY: bun_picohttp::Header is #[repr(C)] with identical field layout/order.
-    unsafe {
-        core::mem::transmute(Raw {
-            np: name.as_ptr(),
-            nl: name.len(),
-            vp: value.as_ptr(),
-            vl: value.len(),
-        })
-    }
+    PicoHeader::new(name, value)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -27,8 +27,8 @@ impl DecodedJSValue {
     /// Equivalent to `JSC::JSValue::encode`.
     pub fn encode(self) -> JSValue {
         // SAFETY: union was constructed from a valid encoded JSValue; reading as i64 is the
-        // canonical encoding. JSValue is #[repr(transparent)] over i64.
-        unsafe { core::mem::transmute::<i64, JSValue>(self.u.as_int64) }
+        // canonical encoding.
+        JSValue::from_raw(unsafe { self.u.as_int64 })
     }
 
     fn as_u64(self) -> u64 {

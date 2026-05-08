@@ -4775,8 +4775,11 @@ impl<'a> BundleV2<'a> {
                 debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len() != 0); // will create a memory leak
             }
         }
-        // SAFETY: Index is repr(transparent) over u32
-        self.linker.compute_data_for_source_map(unsafe { core::mem::transmute::<&[Index], &[IndexInt]>(js_reachable_files) });
+        // SAFETY: Index is `#[repr(transparent)]` over u32 (= IndexInt); slice reinterpret
+        // via raw-pointer `.cast()` is sound.
+        self.linker.compute_data_for_source_map(unsafe {
+            core::slice::from_raw_parts(js_reachable_files.as_ptr().cast::<IndexInt>(), js_reachable_files.len())
+        });
         // TODO(port): errdefer { bun.outOfMemory() } — caller cannot recover
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -4805,9 +4808,7 @@ impl<'a> BundleV2<'a> {
             content: chunk::Content::Javascript({
                 let mut js = chunk::JavaScriptChunk::default();
                 // TODO(@paperclover): remove this ptrCast when Source Index is fixed
-                // SAFETY: Index is repr(transparent) over u32
-                js.files_in_chunk_order = unsafe { core::mem::transmute::<&[Index], &[u32]>(js_reachable_files) }
-                    .to_vec().into_boxed_slice();
+                js.files_in_chunk_order = js_reachable_files.iter().map(|i| i.get()).collect::<Vec<u32>>().into_boxed_slice();
                 js.parts_in_chunk_in_order = js_part_ranges.to_vec().into_boxed_slice();
                 js
             }),

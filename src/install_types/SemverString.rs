@@ -129,9 +129,7 @@ impl String {
                 // This should only happen for non-ascii strings that are exactly 8 bytes.
                 // so that's an edge-case
                 if in_[Self::MAX_INLINE_LEN - 1] >= 128 {
-                    let ptr_bits: u64 =
-                        // SAFETY: Pointer is #[repr(C)] with two u32 fields == 8 bytes
-                        unsafe { core::mem::transmute::<Pointer, u64>(Pointer::init(buf, in_)) };
+                    let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
                     let packed: u64 = (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
                     String { bytes: packed.to_ne_bytes() }
                 } else {
@@ -139,9 +137,7 @@ impl String {
                 }
             }
             _ => {
-                let ptr_bits: u64 =
-                    // SAFETY: Pointer is #[repr(C)] with two u32 fields == 8 bytes
-                    unsafe { core::mem::transmute::<Pointer, u64>(Pointer::init(buf, in_)) };
+                let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
                 let packed: u64 = (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
                 String { bytes: packed.to_ne_bytes() }
             }
@@ -194,9 +190,7 @@ impl String {
         buf.extend_from_slice(in_);
         let items = buf.as_slice();
         let in_buf = &items[items.len() - in_.len()..];
-        let ptr_bits: u64 =
-            // SAFETY: Pointer is #[repr(C)] with two u32 fields == 8 bytes
-            unsafe { core::mem::transmute::<Pointer, u64>(Pointer::init(items, in_buf)) };
+        let ptr_bits: u64 = Pointer::init(items, in_buf).to_bits();
         let packed: u64 = (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
         Ok(String { bytes: packed.to_ne_bytes() })
     }
@@ -249,8 +243,7 @@ impl String {
         let bits: u64 = u64::from_ne_bytes(self.bytes);
         // @as(u63, @truncate(bits)) → mask off bit 63
         let masked: u64 = bits & MAX_ADDRESSABLE_SPACE_MASK;
-        // SAFETY: Pointer is #[repr(C)] with two u32 fields == 8 bytes; same size as u64
-        unsafe { core::mem::transmute::<u64, Pointer>(masked) }
+        Pointer::from_bits(masked)
     }
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
@@ -508,6 +501,27 @@ impl Pointer {
         Pointer {
             off: (in_.as_ptr() as usize - buf.as_ptr() as usize) as u32,
             len: in_.len() as u32,
+        }
+    }
+
+    /// Bit-reinterpret as `u64` (Zig `@bitCast`). `#[repr(C)]` lays out `off` at byte
+    /// offset 0 and `len` at offset 4; composing via native-endian byte arrays is
+    /// byte-identical to a raw bitcast.
+    #[inline]
+    pub fn to_bits(self) -> u64 {
+        let mut b = [0u8; 8];
+        b[..4].copy_from_slice(&self.off.to_ne_bytes());
+        b[4..].copy_from_slice(&self.len.to_ne_bytes());
+        u64::from_ne_bytes(b)
+    }
+
+    /// Inverse of [`to_bits`].
+    #[inline]
+    pub fn from_bits(bits: u64) -> Pointer {
+        let b = bits.to_ne_bytes();
+        Pointer {
+            off: u32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
+            len: u32::from_ne_bytes([b[4], b[5], b[6], b[7]]),
         }
     }
 }

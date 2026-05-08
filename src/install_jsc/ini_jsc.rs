@@ -93,15 +93,11 @@ impl IniTestingAPIs {
             // return, mirroring the Zig arena's bulk-free.
             let map_ref: &mut dotenv::Map = map_storage.as_deref_mut().unwrap();
             env_storage = Some(dotenv::Loader::init(map_ref));
-            // SAFETY: `Loader<'a>` is invariant in `'a` (holds `&'a mut Map`); erase to
-            // `'static` so both `if` arms unify on a single pointer type. The borrow
-            // does not escape this function — `load_npmrc` only reads through it and
-            // both `env_storage` / `map_storage` drop at fn return.
-            unsafe {
-                core::mem::transmute::<*mut dotenv::Loader<'_>, *mut dotenv::Loader<'static>>(
-                    std::ptr::from_mut(env_storage.as_mut().unwrap()),
-                )
-            }
+            // `Loader<'a>` is invariant in `'a` (holds `&'a mut Map`); erase to `'static`
+            // via raw-pointer `.cast()` so both `if` arms unify on a single pointer type.
+            // The borrow does not escape this function — `load_npmrc` only reads through
+            // it and both `env_storage` / `map_storage` drop at fn return.
+            std::ptr::from_mut(env_storage.as_mut().unwrap()).cast::<dotenv::Loader<'static>>()
         };
 
         let mut install = Box::new(BunInstall::default());

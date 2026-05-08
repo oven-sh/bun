@@ -272,8 +272,7 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
             run_loop_timer: NonNull::new_unchecked(run_loop_timer),
             repeat: false,
             // Zig: `@enumFromInt(vm.initial_script_execution_context_identifier)`
-            // — Identifier is `#[repr(transparent)]` over u32.
-            script_execution_context_id: core::mem::transmute::<u32, ScriptExecutionContextIdentifier>(
+            script_execution_context_id: ScriptExecutionContextIdentifier(
                 vm_ref.initial_script_execution_context_identifier as u32,
             ),
             lock: Mutex::default(),

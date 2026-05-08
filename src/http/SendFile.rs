@@ -67,8 +67,8 @@ impl SendFile {
         #[cfg(target_os = "freebsd")]
         {
             let mut sbytes: i64 = 0; // std.posix.off_t
-            // SAFETY: same-size POD bitcast u64 -> i64 (Zig used @bitCast).
-            let signed_offset: i64 = unsafe { core::mem::transmute::<u64, i64>(self.offset as u64) };
+            // Same-width signedness flip (Zig `@bitCast`); `as` is a bit-reinterpret here.
+            let signed_offset: i64 = self.offset as u64 as i64;
             // FreeBSD: sendfile(fd, s, offset, nbytes, hdtr, *sbytes, flags)
             // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
             let errcode = bun_sys::get_errno(unsafe {

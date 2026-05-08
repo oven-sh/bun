@@ -351,23 +351,15 @@ impl HttpThread {
     }
 
     pub fn context<const IS_SSL: bool>(&mut self) -> &mut NewHttpContext<IS_SSL> {
-        // PORT NOTE: const-generic dispatch over two distinct fields needs
-        // transmute — `NewHttpContext<true>` and `NewHttpContext<IS_SSL>` are
-        // the same type when IS_SSL, just spelled differently.
+        // PORT NOTE: const-generic dispatch over two distinct fields — `NewHttpContext<true>`
+        // and `NewHttpContext<IS_SSL>` are the same type when IS_SSL, just spelled
+        // differently. Route through a raw-pointer `.cast()` (identity).
         if IS_SSL {
-            // SAFETY: identical type when IS_SSL == true.
-            unsafe {
-                core::mem::transmute::<&mut NewHttpContext<true>, &mut NewHttpContext<IS_SSL>>(
-                    &mut self.https_context,
-                )
-            }
+            // SAFETY: identical type when IS_SSL == true; pointer is to a live `&mut self` field.
+            unsafe { &mut *(&raw mut self.https_context).cast::<NewHttpContext<IS_SSL>>() }
         } else {
-            // SAFETY: identical type when IS_SSL == false.
-            unsafe {
-                core::mem::transmute::<&mut NewHttpContext<false>, &mut NewHttpContext<IS_SSL>>(
-                    &mut self.http_context,
-                )
-            }
+            // SAFETY: identical type when IS_SSL == false; pointer is to a live `&mut self` field.
+            unsafe { &mut *(&raw mut self.http_context).cast::<NewHttpContext<IS_SSL>>() }
         }
     }
 

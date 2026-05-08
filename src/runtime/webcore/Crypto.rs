@@ -272,10 +272,9 @@ impl Crypto {
         // Zig `array.slice()` yields `[]u8` (mutable). `JSUint8Array::slice()` takes
         // `&mut self`; use ptr()/len() (which take `&self`) to avoid the &mut requirement.
         random_data(global, array.ptr(), array.len());
-        // Zig: @enumFromInt(@as(i64, @bitCast(@intFromPtr(array))))
-        // SAFETY: JSValue is #[repr(transparent)] i64; this encodes the cell pointer
-        // back into a JSValue exactly as the Zig does.
-        unsafe { core::mem::transmute::<i64, JSValue>((std::ptr::from_ref::<JSUint8Array>(array) as usize as i64)) }
+        // Zig: @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))) — encode the cell
+        // pointer back into a JSValue.
+        JSValue::from_encoded(std::ptr::from_ref::<JSUint8Array>(array) as usize)
     }
 
     #[bun_jsc::host_fn(method)]

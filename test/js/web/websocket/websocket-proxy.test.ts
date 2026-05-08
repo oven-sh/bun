@@ -886,4 +886,64 @@ describe("WebSocket through SOCKS5 proxy", () => {
     expect(await promise).toContain("hello via socks auth");
     expect(authRecords[0]).toMatchObject({ username: "proxy_user", password: "proxy_pass" });
   });
+
+  test("ws:// through socks5:// with hostname resolves client-side", async () => {
+    records.length = 0;
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const ws = new WebSocket(`ws://localhost:${wsPort}`, {
+      proxy: `socks5://127.0.0.1:${socksPort}`,
+    });
+    const messages: string[] = [];
+    ws.onopen = () => ws.send("hello via socks5 dns");
+    ws.onmessage = event => {
+      messages.push(String(event.data));
+      if (messages.length === 2) ws.close();
+    };
+    ws.onclose = () => resolve(messages);
+    ws.onerror = reject;
+
+    expect(await promise).toContain("hello via socks5 dns");
+    // socks5:// must resolve DNS client-side: ATYP should be 0x01 or 0x04
+    expect(records[0].atyp).not.toBe(0x03);
+  });
+
+  test("wss:// through socks5:// with hostname resolves client-side", async () => {
+    records.length = 0;
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const ws = new WebSocket(`wss://localhost:${wssPort}`, {
+      proxy: `socks5://127.0.0.1:${socksPort}`,
+      tls: { rejectUnauthorized: false },
+    });
+    const messages: string[] = [];
+    ws.onopen = () => ws.send("hello via socks5 tls dns");
+    ws.onmessage = event => {
+      messages.push(String(event.data));
+      if (messages.length === 2) ws.close();
+    };
+    ws.onclose = () => resolve(messages);
+    ws.onerror = reject;
+
+    expect(await promise).toContain("hello via socks5 tls dns");
+    expect(records[0].atyp).not.toBe(0x03);
+  });
+
+  test("socks5h:// with hostname sends domain to proxy", async () => {
+    records.length = 0;
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const ws = new WebSocket(`ws://localhost:${wsPort}`, {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+    });
+    const messages: string[] = [];
+    ws.onopen = () => ws.send("hello via socks5h");
+    ws.onmessage = event => {
+      messages.push(String(event.data));
+      if (messages.length === 2) ws.close();
+    };
+    ws.onclose = () => resolve(messages);
+    ws.onerror = reject;
+
+    expect(await promise).toContain("hello via socks5h");
+    // socks5h sends domain name, ATYP must be 0x03
+    expect(records[0]).toMatchObject({ atyp: 0x03, host: "localhost", port: wsPort });
+  });
 });

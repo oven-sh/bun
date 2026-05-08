@@ -46,6 +46,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         /// Proxy state (null when not using proxy)
         proxy: ?WebSocketProxy = null,
 
+        /// Pending SOCKS5 DNS resolution (null when not resolving)
+        socks_dns_pending: ?*bun.http.SocksDNSPending = null,
+
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: ?*SSLConfig = null,
 
@@ -426,6 +429,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.hostname = "";
             }
 
+            // Cancel any pending SOCKS DNS resolution
+            if (this.socks_dns_pending) |pending| {
+                pending.markCancelled();
+                this.socks_dns_pending = null;
+            }
+
             // Clean up proxy state. Null the field and detach the tunnel's
             // back-reference before deinit so that SSLWrapper shutdown callbacks
             // cannot re-enter clearData() while the proxy is still reachable.
@@ -766,29 +775,129 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.terminate(socksErrorCode(err));
                 return;
             };
+            switch (result) {
+                .needs_dns_resolve => {
+                    this.startSocksDnsResolve();
+                    return;
+                },
+                else => {},
+            }
             socks.flush(socket) catch {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             };
-            if (result != .connected) return;
+            switch (result) {
+                .connected => {
+                    this.body.clearRetainingCapacity();
+                    if (p.isTargetHttps()) {
+                        this.startProxyTLSHandshake(socket, socks.read_buffer.slice());
+                        return;
+                    }
 
-            this.body.clearRetainingCapacity();
-            if (p.isTargetHttps()) {
-                this.startProxyTLSHandshake(socket, socks.read_buffer.slice());
+                    this.state = .reading;
+                    if (this.input_body_buf.len > 0) {
+                        bun.default_allocator.free(this.input_body_buf);
+                    }
+                    this.input_body_buf = p.takeWebsocketRequestBuf();
+                    const wrote = socket.write(this.input_body_buf);
+                    if (wrote < 0) {
+                        this.terminate(ErrorCode.failed_to_write);
+                        return;
+                    }
+                    this.to_send = this.input_body_buf[@as(usize, @intCast(wrote))..];
+                },
+                .pending => {},
+                .needs_dns_resolve => unreachable,
+            }
+        }
+
+        fn startSocksDnsResolve(this: *HTTPClient) void {
+            const p = if (this.proxy) |*proxy| proxy else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+            const target_host = p.getTargetHost();
+            var temp_buf: [256:0]u8 = undefined;
+            const hostname_z: [:0]const u8 = brk: {
+                if (target_host.len < temp_buf.len) {
+                    @memcpy(temp_buf[0..target_host.len], target_host);
+                    temp_buf[target_host.len] = 0;
+                    break :brk temp_buf[0..target_host.len :0];
+                }
+                break :brk bun.default_allocator.dupeZ(u8, target_host) catch |e| bun.handleOom(e);
+            };
+            const needs_free = target_host.len >= temp_buf.len;
+            defer if (needs_free) bun.default_allocator.free(hostname_z);
+
+            const loop = jsc.VirtualMachine.get().uwsLoop();
+            var is_cache_hit: bool = false;
+            const dns_req = bun.dns.internal.getaddrinfo(
+                loop, hostname_z, p.target_port, &is_cache_hit,
+            ) orelse {
+                this.terminate(ErrorCode.proxy_connect_failed);
+                return;
+            };
+
+            if (is_cache_hit) {
+                this.completeSocksFromDnsReqWs(dns_req);
                 return;
             }
 
-            this.state = .reading;
-            if (this.input_body_buf.len > 0) {
-                bun.default_allocator.free(this.input_body_buf);
+            if (bun.dns.internal.registerSocksIfPending(
+                dns_req,
+                if (ssl) .{ .ws_tls = this } else .{ .ws_non_tls = this },
+                loop,
+            )) |pending| {
+                this.ref(); // prevent dealloc while DNS pending
+                this.socks_dns_pending = pending;
+            } else {
+                this.completeSocksFromDnsReqWs(dns_req);
             }
-            this.input_body_buf = p.takeWebsocketRequestBuf();
-            const wrote = socket.write(this.input_body_buf);
-            if (wrote < 0) {
+        }
+
+        fn completeSocksFromDnsReqWs(this: *HTTPClient, dns_req: *bun.dns.internal.Request) void {
+            defer bun.dns.internal.freeaddrinfo(dns_req, 0);
+
+            const result = dns_req.result orelse {
+                this.terminate(ErrorCode.proxy_connect_failed);
+                return;
+            };
+            if (result.err != 0 or result.info == null) {
+                this.terminate(ErrorCode.proxy_connect_failed);
+                return;
+            }
+            const entry = &result.info.?[0];
+            const p = if (this.proxy) |*proxy| proxy else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+            const address = bun.http.SocksDNSPending.addrFromSockaddr(&entry.addr) catch {
+                this.terminate(ErrorCode.proxy_connect_failed);
+                return;
+            };
+            this.continueSocksAfterDNS(address, p.target_port);
+        }
+
+        /// Resume SOCKS5 CONNECT after DNS resolves. Called from
+        /// SocksDNSPending.onDNSResolved on the JS main thread.
+        pub fn continueSocksAfterDNS(this: *HTTPClient, address: std.net.Address, target_port: u16) void {
+            this.socks_dns_pending = null;
+            const p = if (this.proxy) |*proxy| proxy else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+            const socks = if (p.socks) |*s| s else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+            socks.writeConnectResolved(address, target_port) catch {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+            socks.flush(this.tcp) catch {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
-            }
-            this.to_send = this.input_body_buf[@as(usize, @intCast(wrote))..];
+            };
         }
 
         /// Start TLS handshake inside the proxy tunnel for wss:// connections

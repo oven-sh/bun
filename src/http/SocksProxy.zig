@@ -43,6 +43,7 @@ pub const State = enum {
 pub const ReceiveResult = enum {
     pending,
     connected,
+    needs_dns_resolve,
 };
 
 allocator: std.mem.Allocator,
@@ -153,7 +154,10 @@ pub fn receive(this: *SocksProxy, data: []const u8, target_host: []const u8, tar
                 const method = buf[1];
                 this.consume(2);
                 switch (method) {
-                    0x00 => try this.writeConnect(target_host, target_port),
+                    0x00 => {
+                        const connect_result = try this.writeConnect(target_host, target_port);
+                        if (connect_result == .needs_dns_resolve) return .needs_dns_resolve;
+                    },
                     0x02 => try this.writeAuth(),
                     0xff => return error.SocksNoAcceptableAuthMethod,
                     else => return error.SocksNoAcceptableAuthMethod,
@@ -167,7 +171,8 @@ pub fn receive(this: *SocksProxy, data: []const u8, target_host: []const u8, tar
                 const status = buf[1];
                 this.consume(2);
                 if (status != 0x00) return error.SocksAuthenticationFailed;
-                try this.writeConnect(target_host, target_port);
+                const connect_result = try this.writeConnect(target_host, target_port);
+                if (connect_result == .needs_dns_resolve) return .needs_dns_resolve;
                 return .pending;
             },
             .connect_response => {
@@ -211,22 +216,37 @@ fn writeAuth(this: *SocksProxy) !void {
     this.state = .auth_response;
 }
 
-fn writeConnect(this: *SocksProxy, target_host: []const u8, target_port: u16) !void {
-    try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
+const ConnectWriteResult = enum { written, needs_dns_resolve };
 
-    const use_remote_dns = this.kind == .socks5h;
-    if (!use_remote_dns) {
-        if (std.net.Address.parseIp(target_host, target_port)) |address| {
-            try this.writeAddress(address, target_port);
-            this.state = .connect_response;
-            return;
-        } else |_| {}
+fn writeConnect(this: *SocksProxy, target_host: []const u8, target_port: u16) !ConnectWriteResult {
+    // socks5h: always send domain name to proxy for remote DNS
+    if (this.kind == .socks5h) {
+        try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
+        if (target_host.len > 255) return error.SocksDomainTooLong;
+        try this.write_buffer.write(&.{ 0x03, @intCast(target_host.len) });
+        try this.write_buffer.write(target_host);
+        try writePort(&this.write_buffer, target_port);
+        this.state = .connect_response;
+        return .written;
     }
 
-    if (target_host.len > 255) return error.SocksDomainTooLong;
-    try this.write_buffer.write(&.{ 0x03, @intCast(target_host.len) });
-    try this.write_buffer.write(target_host);
-    try writePort(&this.write_buffer, target_port);
+    // socks5: try parse as IP literal first
+    if (std.net.Address.parseIp(target_host, target_port)) |address| {
+        try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
+        try this.writeAddress(address, target_port);
+        this.state = .connect_response;
+        return .written;
+    } else |_| {}
+
+    // socks5 + hostname: caller must resolve DNS asynchronously
+    return .needs_dns_resolve;
+}
+
+/// Called by owner after async DNS resolves for socks5:// hostnames.
+/// Writes SOCKS5 CONNECT request using the pre-resolved address.
+pub fn writeConnectResolved(this: *SocksProxy, address: std.net.Address, target_port: u16) !void {
+    try this.write_buffer.write(&.{ 0x05, 0x01, 0x00 });
+    try this.writeAddress(address, target_port);
     this.state = .connect_response;
 }
 

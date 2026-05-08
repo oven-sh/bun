@@ -9,6 +9,14 @@ pub var http_thread: HTTPThread = undefined;
 pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.AnySocket).init(bun.default_allocator);
 pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 
+pub fn nextAsyncHTTPID() u32 {
+    var id = async_http_id_monotonic.fetchAdd(1, .monotonic);
+    if (id == 0) {
+        id = async_http_id_monotonic.fetchAdd(1, .monotonic);
+    }
+    return id;
+}
+
 /// Set once at startup from `--experimental-http2-fetch` (before the HTTP
 /// thread spawns) and then only read on that thread, so no atomics needed.
 pub var experimental_http2_client_from_cli: bool = false;
@@ -155,7 +163,7 @@ pub fn registerAbortTracker(
 pub fn unregisterAbortTracker(
     client: *HTTPClient,
 ) void {
-    if (client.signals.aborted != null) {
+    if (client.signals.aborted != null or client.async_http_id != 0) {
         _ = socket_async_http_abort_tracker.swapRemove(client.async_http_id);
     }
 }
@@ -667,6 +675,7 @@ proxy_headers: ?Headers = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
 socks_proxy: ?SocksProxy = null,
+socks_dns_pending: ?*SocksDNSPending = null,
 /// Set when this request is bound to a stream on an HTTP/2 session.
 /// Owned by the session; cleared by the session when the stream completes.
 h2: ?*H2.Stream = null,
@@ -702,6 +711,10 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
+    }
+    if (this.socks_dns_pending) |pending| {
+        pending.markCancelled();
+        this.socks_dns_pending = null;
     }
     if (this.socks_proxy) |*proxy| {
         proxy.deinit();
@@ -1163,6 +1176,10 @@ pub fn doRedirect(
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
+    }
+    if (this.socks_dns_pending) |pending| {
+        pending.markCancelled();
+        this.socks_dns_pending = null;
     }
     if (this.socks_proxy) |*proxy| {
         proxy.deinit();
@@ -1869,6 +1886,105 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
     this.fail(err);
 }
 
+fn startSocksDnsResolve(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    var temp_buf: [256:0]u8 = undefined;
+    const hostname_z: [:0]const u8 = brk: {
+        if (this.url.hostname.len < temp_buf.len) {
+            @memcpy(temp_buf[0..this.url.hostname.len], this.url.hostname);
+            temp_buf[this.url.hostname.len] = 0;
+            break :brk temp_buf[0..this.url.hostname.len :0];
+        }
+        break :brk bun.default_allocator.dupeZ(u8, this.url.hostname) catch |e| bun.handleOom(e);
+    };
+    const needs_free = this.url.hostname.len >= temp_buf.len;
+    defer if (needs_free) bun.default_allocator.free(hostname_z);
+
+    const loop = bun.http.http_thread.loop.loop;
+    var is_cache_hit: bool = false;
+    const dns_req = bun.dns.internal.getaddrinfo(
+        loop, hostname_z, this.url.getPortAuto(), &is_cache_hit,
+    ) orelse {
+        this.closeAndFail(error.DNSLookupFailed, is_ssl, socket);
+        return;
+    };
+
+    if (is_cache_hit) {
+        // Synchronous path — result already available
+        this.completeSocksFromDnsReq(dns_req, is_ssl, socket);
+        return;
+    }
+
+    if (this.async_http_id == 0) {
+        this.async_http_id = nextAsyncHTTPID();
+    }
+    switch (is_ssl) {
+        true => socket_async_http_abort_tracker.put(this.async_http_id, .{ .SocketTLS = socket }) catch unreachable,
+        false => socket_async_http_abort_tracker.put(this.async_http_id, .{ .SocketTCP = socket }) catch unreachable,
+    }
+
+    // Atomic create+register under DNS cache lock
+    if (bun.dns.internal.registerSocksIfPending(
+        dns_req,
+        .{ .http = .{
+            .async_http_id = this.async_http_id,
+            .target_port = this.url.getPortAuto(),
+        }},
+        loop,
+    )) |pending| {
+        this.socks_dns_pending = pending;
+    } else {
+        // Result arrived between getaddrinfo and lock — handle sync
+        this.completeSocksFromDnsReq(dns_req, is_ssl, socket);
+    }
+}
+
+fn completeSocksFromDnsReq(
+    this: *HTTPClient,
+    dns_req: *bun.dns.internal.Request,
+    comptime is_ssl: bool,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
+    defer bun.dns.internal.freeaddrinfo(dns_req, 0);
+
+    const result = dns_req.result orelse {
+        this.closeAndFail(error.DNSLookupFailed, is_ssl, socket);
+        return;
+    };
+    if (result.err != 0 or result.info == null) {
+        this.closeAndFail(error.DNSLookupFailed, is_ssl, socket);
+        return;
+    }
+
+    const entry = &result.info.?[0];
+    const address = SocksDNSPending.addrFromSockaddr(&entry.addr) catch {
+        this.closeAndFail(error.DNSLookupFailed, is_ssl, socket);
+        return;
+    };
+
+    this.completeSocksWithAddress(is_ssl, socket, address, this.url.getPortAuto());
+}
+
+pub fn completeSocksWithAddress(
+    this: *HTTPClient,
+    comptime is_ssl: bool,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+    address: std.net.Address,
+    target_port: u16,
+) void {
+    const proxy = if (this.socks_proxy) |*proxy| proxy else {
+        this.closeAndFail(error.ProxyProtocolError, is_ssl, socket);
+        return;
+    };
+    proxy.writeConnectResolved(address, target_port) catch |err| {
+        this.closeAndFail(err, is_ssl, socket);
+        return;
+    };
+    proxy.flush(socket) catch |err| {
+        this.closeAndFail(err, is_ssl, socket);
+        return;
+    };
+}
+
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, start_payload: []const u8) void {
     log("startProxyHandshake", .{});
     // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
@@ -2089,29 +2205,44 @@ pub fn onData(
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
+            switch (result) {
+                .needs_dns_resolve => {
+                    this.startSocksDnsResolve(is_ssl, socket);
+                    return;
+                },
+                else => {},
+            }
+            // Flush write buffer before processing connected state.
+            // Required when method_response + connect_response arrive in
+            // the same packet: writeConnect fills the buffer, and we must
+            // send it before the proxy processes the CONNECT response.
             proxy.flush(socket) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
-            if (result == .connected) {
-                this.flags.proxy_tunneling = false;
-                this.state.request_sent_len = 0;
-                if (this.url.isHTTPS()) {
-                    const allocator = this.allocator;
-                    const trailing = proxy.read_buffer.slice();
-                    const start_payload = if (trailing.len > 0)
-                        allocator.dupe(u8, trailing) catch |err| bun.handleOom(err)
-                    else
-                        "";
-                    defer if (start_payload.len > 0) allocator.free(start_payload);
-                    proxy.deinit();
-                    this.socks_proxy = null;
-                    this.startProxyHandshake(is_ssl, socket, start_payload);
-                } else {
-                    this.state.request_stage = .headers;
-                    this.state.response_stage = .pending;
-                    this.onWritable(true, is_ssl, socket);
-                }
+            switch (result) {
+                .connected => {
+                    this.flags.proxy_tunneling = false;
+                    this.state.request_sent_len = 0;
+                    if (this.url.isHTTPS()) {
+                        const allocator = this.allocator;
+                        const trailing = proxy.read_buffer.slice();
+                        const start_payload = if (trailing.len > 0)
+                            allocator.dupe(u8, trailing) catch |err| bun.handleOom(err)
+                        else
+                            "";
+                        defer if (start_payload.len > 0) allocator.free(start_payload);
+                        proxy.deinit();
+                        this.socks_proxy = null;
+                        this.startProxyHandshake(is_ssl, socket, start_payload);
+                    } else {
+                        this.state.request_stage = .headers;
+                        this.state.response_stage = .pending;
+                        this.onWritable(true, is_ssl, socket);
+                    }
+                },
+                .pending => {},
+                .needs_dns_resolve => unreachable,
             }
             return;
         }
@@ -2229,6 +2360,11 @@ fn resolvePendingH2(this: *HTTPClient, resolution: PendingH2Resolution) void {
 fn fail(this: *HTTPClient, err: anyerror) void {
     this.unregisterAbortTracker();
     this.resolvePendingH2(.leader_failed);
+
+    if (this.socks_dns_pending) |pending| {
+        pending.markCancelled();
+        this.socks_dns_pending = null;
+    }
 
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
@@ -3334,6 +3470,7 @@ const string = []const u8;
 const HTTPCertError = @import("./HTTPCertError.zig");
 const ProxyTunnel = @import("./ProxyTunnel.zig");
 const SocksProxy = @import("./SocksProxy.zig");
+pub const SocksDNSPending = @import("./SocksDNSPending.zig");
 const std = @import("std");
 const URL = @import("../url/url.zig").URL;
 

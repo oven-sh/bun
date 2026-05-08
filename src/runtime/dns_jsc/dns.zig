@@ -1437,12 +1437,14 @@ pub const internal = struct {
         socket: *bun.uws.ConnectingSocket,
         prefetch: *bun.uws.Loop,
         quic: *bun.http.H3.PendingConnect,
+        socks: *bun.http.SocksDNSPending,
 
         pub fn notifyThreadsafe(this: DNSRequestOwner, req: *Request) void {
             switch (this) {
                 .socket => |socket| us_internal_dns_callback_threadsafe(socket, req),
                 .prefetch => freeaddrinfo(req, 0),
                 .quic => |pc| pc.onDNSResolvedThreadsafe(),
+                .socks => |pending| pending.onDNSResolvedThreadsafe(),
             }
         }
 
@@ -1451,6 +1453,7 @@ pub const internal = struct {
                 .prefetch => freeaddrinfo(req, 0),
                 .socket => us_internal_dns_callback(this.socket, req),
                 .quic => |pc| pc.onDNSResolved(),
+                .socks => |pending| pending.onDNSResolved(),
             }
         }
 
@@ -1459,6 +1462,7 @@ pub const internal = struct {
                 .prefetch => this.prefetch,
                 .socket => this.socket.loop(),
                 .quic => |pc| pc.loop(),
+                .socks => |pending| pending.loop(),
             };
         }
     };
@@ -1478,6 +1482,33 @@ pub const internal = struct {
         }
         bun.handleOom(request.notify.append(bun.default_allocator, owner));
         global_cache.lock.unlock();
+    }
+
+    /// Atomically create a SocksDNSPending and register it on the DNS
+    /// request's notify list while holding the cache lock. Returns null
+    /// if the result is already available (caller handles sync path).
+    /// This prevents the sync-notify UAF: if result is null under the
+    /// lock, the pending cannot be notify'd until afterResult moves the
+    /// list out, which requires the same lock.
+    pub fn registerSocksIfPending(
+        request: *Request,
+        owner_data: bun.http.SocksDNSPending.OwnerKind,
+        l: *bun.uws.Loop,
+    ) ?*bun.http.SocksDNSPending {
+        global_cache.lock.lock();
+        if (request.result != null) {
+            global_cache.lock.unlock();
+            return null;
+        }
+        const pending = bun.new(bun.http.SocksDNSPending, .{
+            .owner = owner_data,
+            .loop_ptr = l,
+            .dns_request = request,
+            .cancelled = std.atomic.Value(bool).init(false),
+        });
+        bun.handleOom(request.notify.append(bun.default_allocator, .{ .socks = pending }));
+        global_cache.lock.unlock();
+        return pending;
     }
 
     const ResultEntry = extern struct {
@@ -1885,13 +1916,13 @@ pub const internal = struct {
                     _ = request.notify.swapRemove(i);
                     return 1;
                 },
-                .prefetch, .quic => {},
+                .prefetch, .quic, .socks => {},
             }
         }
         return 0;
     }
 
-    fn freeaddrinfo(req: *Request, err: c_int) callconv(.c) void {
+    pub fn freeaddrinfo(req: *Request, err: c_int) callconv(.c) void {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 

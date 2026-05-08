@@ -262,6 +262,14 @@ export function createSocksProxy(options: SocksProxyOptions = {}): net.Server {
             if (buffer.length < offset + len + 2) return;
             host = buffer.subarray(offset, offset + len).toString();
             offset += len;
+          } else if (atyp === 0x04) {
+            if (buffer.length < offset + 16 + 2) return;
+            const parts: string[] = [];
+            for (let i = 0; i < 8; i++) {
+              parts.push(buffer.readUInt16BE(offset + i * 2).toString(16));
+            }
+            host = parts.join(":");
+            offset += 16;
           } else {
             fail(0x08);
             return;

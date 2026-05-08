@@ -173,7 +173,7 @@ pub fn init(
         .result_callback = callback,
         .http_proxy = options.http_proxy,
         .signals = options.signals orelse .{},
-        .async_http_id = if (options.signals != null and options.signals.?.aborted != null) bun.http.async_http_id_monotonic.fetchAdd(1, .monotonic) else 0,
+        .async_http_id = if (options.signals != null and options.signals.?.aborted != null) bun.http.nextAsyncHTTPID() else 0,
     };
 
     this.client = .{

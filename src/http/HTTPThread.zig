@@ -513,6 +513,7 @@ fn drainEvents(this: *@This()) void {
     this.drainQueuedWrites();
     this.drainQueuedShutdowns();
     bun.http.H3.PendingConnect.drainResolved();
+    bun.http.SocksDNSPending.drainResolved();
 
     for (this.queued_threadlocal_proxy_derefs.items) |http| {
         http.deref();

@@ -1032,6 +1032,77 @@ describe("fetch through SOCKS5 proxy", () => {
     expect(records[0]).toMatchObject({ atyp: 0x03, host: server.url.hostname, port: server.port });
     expect(records[1]).toMatchObject({ atyp: 0x03, host: server.url.hostname, port: server.port });
   });
+
+  test("socks5:// with localhost resolves client-side (ATYP != 0x03)", async () => {
+    records.length = 0;
+    const response = await fetch(`http://localhost:${httpServer.port}/`, {
+      proxy: `socks5://127.0.0.1:${socksPort}`,
+    });
+
+    expect(response.status).toBe(200);
+    // socks5:// must resolve DNS client-side: ATYP should be 0x01 (IPv4)
+    // or 0x04 (IPv6), never 0x03 (domain)
+    expect(records[0].atyp).not.toBe(0x03);
+    expect(records[0].port).toBe(httpServer.port);
+  });
+
+  test("HTTPS fetch through socks5:// with hostname resolves client-side", async () => {
+    records.length = 0;
+    const response = await fetch(`https://localhost:${httpsServer.port}/`, {
+      proxy: `socks5://127.0.0.1:${socksPort}`,
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    // socks5:// must send resolved IP, not domain name
+    expect(records[0].atyp).not.toBe(0x03);
+    expect(records[0].port).toBe(httpsServer.port);
+  });
+
+  test("socks5:// with unresolvable hostname rejects request", async () => {
+    expect(
+      fetch(`http://this-hostname-does-not-exist-bun-test.invalid:${httpServer.port}/`, {
+        proxy: `socks5://127.0.0.1:${socksPort}`,
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("socks5h:// with hostname sends domain to proxy (ATYP 0x03)", async () => {
+    records.length = 0;
+    const response = await fetch(`http://localhost:${httpServer.port}/`, {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+    });
+
+    expect(response.status).toBe(200);
+    // socks5h sends domain name, proxy resolves
+    expect(records[0]).toMatchObject({ atyp: 0x03, host: "localhost", port: httpServer.port });
+  });
+
+  test("redirect through socks5:// re-resolves DNS for new tunnel", async () => {
+    records.length = 0;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/redirect") {
+          return Response.redirect("/done", 302);
+        }
+        return new Response("redirected via socks5 dns");
+      },
+    });
+
+    const response = await fetch(`http://localhost:${server.port}/redirect`, {
+      proxy: `socks5://127.0.0.1:${socksPort}`,
+    });
+
+    expect(await response.text()).toBe("redirected via socks5 dns");
+    // Two tunnels: one for /redirect, one for /done — both client-side DNS
+    expect(records).toHaveLength(2);
+    expect(records[0].atyp).not.toBe(0x03);
+    expect(records[1].atyp).not.toBe(0x03);
+  });
 });
 
 describe.concurrent("NO_PROXY with explicit proxy option", () => {

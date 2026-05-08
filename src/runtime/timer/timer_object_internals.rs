@@ -225,10 +225,7 @@ impl TimerObjectInternals {
         // `in_callback` write reaches memory before JS runs (re-entrant
         // `_destroyed` getter reads it via a different pointer).
         unsafe { (*this).flags.set_in_callback(true) };
-        eprintln!("[run pre] this={:p} flags={:#x}", this, unsafe { core::ptr::read(core::ptr::addr_of!((*this).flags)) }.epoch() );
-        unsafe { eprintln!("[run pre raw] flags_u32={:#010x}", *(core::ptr::addr_of!((*this).flags) as *const u32)) };
         let result = Bun__JSTimeout__call(global, timer, callback, arguments);
-        unsafe { eprintln!("[run post raw] flags_u32={:#010x}", *(core::ptr::addr_of!((*this).flags) as *const u32)) };
         // PORT NOTE: reshaped for borrowck — Zig `defer this.flags.in_callback = false`
         // moved to tail; no early returns between set and clear.
         // SAFETY: `this` live per fn contract. Raw-place RMW: must reload

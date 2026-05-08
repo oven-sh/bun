@@ -581,8 +581,6 @@ where
         // Note that we set the count _before_ we reload, so that if we
         // get another hot reload request while we're reloading, we'll
         // still enqueue it.
-        #[cfg(debug_assertions)]
-        eprintln!("[hotdbg] Task::run pending_count={}", self.pending_count().load(Ordering::Relaxed));
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
@@ -592,8 +590,6 @@ where
 
     pub fn enqueue(&mut self) {
         crate::mark_binding!();
-        #[cfg(debug_assertions)]
-        eprintln!("[hotdbg] Task::enqueue count={} pending_count={}", self.count, self.pending_count().load(Ordering::Relaxed));
         if self.count == 0 {
             return;
         }

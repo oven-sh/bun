@@ -3394,17 +3394,15 @@ impl<'a> HTTPClient<'a> {
                 && tunnel_poolable
             {
                 bun_core::scoped_log!(fetch, "release socket");
+                // Hand the client's strong ref straight to the pool: `release_socket`
+                // either stores this `RefPtr` in the parked `PooledSocket` or
+                // dereffs it if pooling fails.
                 let tunnel = self.proxy_tunnel.take();
                 if let Some(t) = &tunnel {
                     // SAFETY: t is a live intrusive-refcounted ProxyTunnel
                     unsafe { (*t.as_ptr()).detach_owner(&*self) };
                 }
                 let had_tunnel = tunnel.is_some();
-                // The pool takes ownership of one strong ref — `leak` gives up
-                // our ref without decrementing (it will be released via
-                // `release_parked_refs`, or here if pooling fails).
-                let tunnel_raw: Option<NonNull<ProxyTunnel>> =
-                    tunnel.map(|t| NonNull::new(t.leak()).expect("RefPtr is non-null"));
                 // target_hostname = url.hostname (the CONNECT TCP target at
                 // writeProxyConnect line 346). The SNI override (hostname) is
                 // hashed into proxyAuthHash separately — both must match, but
@@ -3418,7 +3416,7 @@ impl<'a> HTTPClient<'a> {
                         self.connected_url.hostname,
                         self.connected_url.get_port_auto(),
                         self.tls_props.as_ref(),
-                        tunnel_raw,
+                        tunnel,
                         if had_tunnel { self.url.hostname } else { b"" },
                         if had_tunnel { self.url.get_port_auto() } else { 0 },
                         if had_tunnel { self.proxy_auth_hash() } else { 0 },

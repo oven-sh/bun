@@ -591,16 +591,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
             return None;
         }
 
-        // TODO(b2-blocked): ProxyTunnel::adopt is gated in ProxyTunnel.rs.
-        // Until it un-gates, never match a pooled CONNECT tunnel — returning
-        // one would (a) leak the transferred strong ref (caller has nowhere
-        // to attach it without `adopt`) and (b) drive the request as a fresh
-        // direct connection on an established TLS tunnel, corrupting the
-        // stream. Forcing a fresh connect is the only safe degradation.
-        if want_tunnel {
-            return None;
-        }
-
         let mut iter = self.pending_sockets.used.iterator::<true, true>();
 
         while let Some(pending_socket_index) = iter.next() {
@@ -833,19 +823,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // onOpen only promotes .pending -> .opened, and
                     // firstCall only acts on .opened/.pending, so both
                     // become no-ops for the CONNECT/handshake phases.
-                    // SAFETY: tunnel strong ref transferred from pool.
-                    //
-                    // TODO(b2-blocked): ProxyTunnel::adopt is gated in
-                    // ProxyTunnel.rs; the want_tunnel guard in
-                    // `existing_socket` makes this arm unreachable until
-                    // `adopt` un-gates. When it does, restore:
-                    //   unsafe { (*tunnel.as_ptr()).adopt::<SSL>(client, sock) };
-                    //   client.on_open::<SSL>(sock)?;
-                    //   client.on_writable::<true, SSL>(sock);
-                    // and drop the early-return guard above.
-                    // Defensive: release the transferred ref so it never leaks.
-                    unsafe { ProxyTunnel::deref(tunnel.as_ptr()) };
-                    unreachable!("pooled-tunnel reuse is disabled until ProxyTunnel::adopt un-gates");
+                    // SAFETY: tunnel strong ref transferred from pool; adopt
+                    // stores it in client.proxy_tunnel.
+                    unsafe { (*tunnel.as_ptr()).adopt::<SSL>(client, sock) };
+                    client.on_open::<SSL>(sock)?;
+                    client.on_writable::<true, SSL>(sock);
                 } else {
                     client.on_open::<SSL>(sock)?;
                     if SSL {

@@ -169,8 +169,8 @@ pub struct CronRegisterJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
-    /// Typed enum for the io-layer FilePoll vtable (
-    /// `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
+    /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
 }
 
@@ -901,8 +901,8 @@ pub struct CronRemoveJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
-    /// Typed enum for the io-layer FilePoll vtable (
-    /// `bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
+    /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
 }
 

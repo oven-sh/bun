@@ -83,15 +83,15 @@ pub struct BundleV2<'a> {
     // Real `LinkerContext<'a>` (un-gated B-2). Borrows the same arena lifetime
     // as `transpiler` (Zig stored both as raw pointers into the bundler heap).
     pub linker: LinkerContext<'a>,
-    // `jsc::hot_reloader::NewHotReloader<BundleV2, …>` is a
+    // CYCLEBREAK GENUINE: `jsc::hot_reloader::NewHotReloader<BundleV2, …>` is a
     // T6 generic instantiated over a T5 type. Stored as an erased owner +
     // `&'static WatcherVTable` pair so `add_file` is callable without naming
     // the concrete reloader.
     pub bun_watcher: Option<dispatch::WatcherHandle>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle>,
-    /// Erased `bake::DevServer` (see `dispatch::DevServerHandle`). Populated from
-    /// `transpiler.options.dev_server` + the runtime-registered vtable at
+    /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
+    /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
     pub dev_server: Option<dispatch::DevServerHandle>,
     /// In-memory files that can be used as entrypoints or imported.
@@ -1563,7 +1563,7 @@ pub mod dispatch {
     }
 }
 
-// jsc::hot_reloader::NewHotReloader<BundleV2, EventLoop, true>
+// CYCLEBREAK GENUINE: jsc::hot_reloader::NewHotReloader<BundleV2, EventLoop, true>
 // is a T6 generic type instantiated over a T5 type. bundler stores it opaquely;
 // runtime constructs/drives it. SAFETY: erased — never dereferenced in bundler.
 pub type Watcher = dispatch::WatcherHandle;
@@ -1902,7 +1902,7 @@ impl<'a> BundleV2<'a> {
     /// it is called on. Function must be called on the bundle thread.
     pub fn log_for_resolution_failures(&mut self, abs_path: &[u8], bake_graph: bake::Graph) -> &mut Logger::Log {
         if let Some(dev) = self.dev_server_handle() {
-            // DevServer → vtable. PERF(port): was inline switch.
+            // CYCLEBREAK GENUINE: DevServer → vtable. PERF(port): was inline switch.
             // SAFETY: owner is a live *mut DevServer per handle invariant.
             return unsafe { &mut *(dev.vtable.log_for_resolution_failures)(dev.owner, abs_path, bake_graph) };
         }
@@ -2868,7 +2868,7 @@ impl<'a> BundleV2<'a> {
         // `ThreadPool::init` takes `&mut this`.
         let pool: *mut ThreadPool = std::ptr::from_mut(this.arena().alloc(ThreadPool::default()));
         if cli_watch_flag {
-            // hot_reloader is T6; runtime constructs the
+            // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
             // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
             // and writes `bun_watcher` directly after `init()` returns.
         }
@@ -4067,7 +4067,7 @@ impl<'a> BundleV2<'a> {
                             bun_sys::Fd::INVALID
                         };
 
-                        // `bun_watcher` carries the
+                        // CYCLEBREAK GENUINE: `bun_watcher` carries the
                         // `&'static WatcherVTable` alongside the erased owner.
                         // Zig: `_ = this.bun_watcher.?.addFile(...) catch {};`
                         let _ = watcher_ptr.add_file(

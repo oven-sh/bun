@@ -8,8 +8,8 @@ use bun_core::{self, err};
 //
 // `js_printer` is the sole *producer* of ModuleInfo records (it walks the AST
 // during printing); the bundler/runtime only consume the resulting bytes. The
-// canonical builder type therefore lives in `bun_js_printer` (MOVE_DOWN per
-// crate), and is re-exported here so that bundler-side callers — which
+// canonical builder type therefore lives in `bun_js_printer` (moved down to
+// bun_js_printer), and is re-exported here so that bundler-side callers — which
 // thread a `&mut ModuleInfo` into `js_printer::Options { module_info }` — see
 // the *same* nominal type. The duplicate that used to live in this file caused
 // `expected ModuleInfo, found analyze_transpiled_module::ModuleInfo` (E0308) at

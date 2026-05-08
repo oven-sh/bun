@@ -234,7 +234,6 @@ pub mod api {
     }
 
     // ─── BunInstall + supporting types ───────────────────────────────────────
-    //
 
     /// schema.zig:2807 — `api.NpmRegistry`.
     /// `Default` ⇔ `std.mem.zeroes(NpmRegistry)` (empty slices).

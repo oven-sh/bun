@@ -1083,7 +1083,7 @@ pub use ${rustPath} as ${name};
       const sym = `${name}__${fn}`;
       symbols.push(sym);
       templ += `#[unsafe(no_mangle)]
-pub extern "C" fn ${sym}(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
+pub extern "C" fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
     host_fn::host_fn_static(global, callframe, ${JSSinkT}::js_${fn})
 }
 

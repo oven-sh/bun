@@ -455,10 +455,8 @@ impl PosixBufferedReader {
     }
 
     pub fn register_poll(&mut self) {
-        // A paused reader must never re-arm its poll: `on_read_chunk` re-enters
-        // JS (microtask drain) which can call `pause()` → unregister; if a
-        // caller then falls through to `register_poll()` we'd steal input from
-        // a child process reading the same TTY.
+        // A paused reader must never re-arm: on_read_chunk can run before register_poll
+        // on some retry paths and pause() inside it would otherwise be undone here.
         if self.flags.contains(PosixFlags::IS_PAUSED) {
             return;
         }

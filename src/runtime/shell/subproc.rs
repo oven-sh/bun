@@ -16,6 +16,7 @@ use bun_ptr::RefPtr;
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::webcore::{self, blob, Blob, FileSink, ReadableStream};
 use crate::shell::states::cmd::Cmd as ShellCmd;
+use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, EnvMap, Yield};
 use crate::api::bun::process::{
@@ -97,8 +98,39 @@ pub type Subprocess = ShellSubprocess;
 
 pub const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
 
+/// Backref from a heap-allocated [`ShellSubprocess`] to its owning `Cmd`.
+///
+/// Spec stores `cmd_parent: *ShellCmd` directly. In the NodeId-arena port the
+/// `Cmd` lives **inline** in `Interpreter::nodes: Vec<Node>`, so a raw `*mut
+/// Cmd` taken at spawn time dangles the moment a later `alloc_node` grows the
+/// `Vec` (long pipelines hit this — every piped command pushes new Expansion /
+/// Cmd nodes while earlier subprocesses' PipeReaders are still registered in
+/// epoll). Store `(interp, NodeId)` instead and resolve through the arena at
+/// each use site.
+#[derive(Clone, Copy)]
+pub struct CmdHandle {
+    pub interp: *mut Interpreter,
+    pub id: NodeId,
+}
+
+impl CmdHandle {
+    /// Resolve to the live `Cmd` slot. Single-threaded; the caller must not
+    /// hold another `&mut Interpreter` across this borrow.
+    ///
+    /// # Safety
+    /// `interp` must be live and `id` must still index a `Node::Cmd` slot
+    /// (i.e. the Cmd has not yet been `free_node`d). Both hold for every call
+    /// site: the subprocess / PipeReader callbacks fire strictly before
+    /// `Cmd::deinit` recycles the slot.
+    #[inline]
+    pub unsafe fn cmd_mut(self) -> &'static mut ShellCmd {
+        // SAFETY: per fn contract.
+        unsafe { (*self.interp).as_cmd_mut(self.id) }
+    }
+}
+
 pub struct ShellSubprocess {
-    pub cmd_parent: *mut ShellCmd,
+    pub cmd_parent: CmdHandle,
 
     /// Intrusively ref-counted process (`bun_ptr::ThreadSafeRefCount`).
     /// Stored raw because `Process` methods take `&mut self` and `RefPtr`
@@ -199,12 +231,13 @@ impl ShellSubprocess {
 
     pub fn on_static_pipe_writer_done(&mut self) {
         log!(
-            "Subproc(0x{:x}) onStaticPipeWriterDone(cmd=0x{:x}))",
+            "Subproc(0x{:x}) onStaticPipeWriterDone(cmd={})",
             std::ptr::from_mut(self) as usize,
-            self.cmd_parent as usize
+            self.cmd_parent.id
         );
-        // SAFETY: cmd_parent is a backref to the owning Cmd which outlives the subprocess.
-        unsafe { (*self.cmd_parent).buffered_input_close() };
+        // SAFETY: cmd_parent backref resolves to the owning Cmd which outlives
+        // the subprocess (freed only in `Cmd::deinit` after all stdio closes).
+        unsafe { self.cmd_parent.cmd_mut() }.buffered_input_close();
     }
 
     pub fn get_io(&mut self, out_kind: OutKind) -> &mut Readable {
@@ -409,7 +442,7 @@ impl ShellSubprocess {
         event_loop: EventLoopHandle,
         shellio: &mut ShellIO,
         spawn_args_: SpawnArgs<'_>,
-        cmd_parent: *mut ShellCmd,
+        cmd_parent: CmdHandle,
         // We have to use an out pointer because this function may invoke callbacks that expect a
         // fully initialized parent object. Writing to this out pointer may be the last step needed
         // to initialize the object. Raw (not `&mut`) so the caller can pass an
@@ -437,7 +470,7 @@ impl ShellSubprocess {
         event_loop: EventLoopHandle,
         spawn_args: &mut SpawnArgs<'_>,
         shellio: &mut ShellIO,
-        cmd_parent: *mut ShellCmd,
+        cmd_parent: CmdHandle,
         // We have to use an out pointer because this function may invoke callbacks that expect a
         // fully initialized parent object. Writing to this out pointer may be the last step needed
         // to initialize the object.
@@ -751,8 +784,11 @@ impl ShellSubprocess {
         };
 
         if let Some(code) = exit_code {
-            // SAFETY: cmd_parent backref outlives subprocess.
-            let cmd = unsafe { &mut *self.cmd_parent };
+            let handle = self.cmd_parent;
+            // SAFETY: cmd_parent backref outlives subprocess; resolved
+            // through the node arena so it survives `Vec<Node>` reallocation.
+            // `&mut self` is dead by NLL before `on_exit` re-enters interp.
+            let cmd = unsafe { handle.cmd_mut() };
             if cmd.exit_code.is_none() {
                 cmd.on_exit(code.into());
             }
@@ -1941,8 +1977,10 @@ impl PipeReader {
             debug_assert!(self.process.is_some());
         }
         if let Some(proc) = self.process {
-            // SAFETY: backref valid while PipeReader alive.
-            let cmd = unsafe { (*proc).cmd_parent };
+            // SAFETY: `proc` is the heap-allocated `ShellSubprocess` (stable
+            // address) freed only by `Cmd::deinit`, which runs strictly after
+            // every PipeReader has signalled done.
+            let handle = unsafe { (*proc).cmd_parent };
             if let Some(e) = self.captured_writer.err.take() {
                 // Transfer ownership of the error out of captured_writer so
                 // PipeReader.deinit doesn't deref the same SystemError twice.
@@ -1970,8 +2008,9 @@ impl PipeReader {
             } else {
                 None
             };
-            // SAFETY: cmd backref valid.
-            return unsafe { (*cmd).buffered_output_close(self.out_type, e) };
+            // SAFETY: see `CmdHandle::cmd_mut` — Cmd slot is live until all
+            // pipes signal done, which is *this* call.
+            return unsafe { handle.cmd_mut() }.buffered_output_close(self.out_type, e);
         }
         Yield::Suspended
     }

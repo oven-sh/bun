@@ -533,14 +533,18 @@ impl Cmd {
             this_id: this,
         }));
 
-        // Derive the two raw backrefs `spawn_async` needs from a single
+        // Derive the raw backrefs `spawn_async` needs from a single
         // short-lived `&mut Cmd` borrow, then let it end before the call so no
         // `&mut Interpreter` is live across the re-entrant spawn. `child_out`
         // points into the `Box<SubprocExec>` heap allocation, which is
         // address-stable for the lifetime of the Cmd (only dropped in
         // `deinit`). argv pointers borrow `cmd.args[i]` storage, which is not
         // reallocated between here and `spawn_process`.
-        let (cmd_parent_ptr, child_out): (*mut Cmd, *mut *mut ShellSubprocess) = {
+        //
+        // `cmd_parent` is `(interp, NodeId)` rather than the spec's `*ShellCmd`
+        // — the Cmd lives inline in `interp.nodes: Vec<Node>`, and a raw
+        // `*mut Cmd` would dangle on the next `alloc_node` reallocation.
+        let child_out: *mut *mut ShellSubprocess = {
             let cmd = interp.as_cmd_mut(this);
             spawn_args.argv.reserve_exact(cmd.args.len() + 1);
             for arg in &cmd.args {
@@ -548,12 +552,12 @@ impl Cmd {
                 spawn_args.argv.push(arg.as_ptr().cast());
             }
             spawn_args.argv.push(core::ptr::null());
-            let child_out = match &mut cmd.exec {
+            match &mut cmd.exec {
                 Exec::Subproc(sub) => core::ptr::addr_of_mut!(sub.child),
                 _ => unreachable!(),
-            };
-            (cmd as *mut Cmd, child_out)
+            }
         };
+        let cmd_parent = crate::shell::subproc::CmdHandle { interp: interp_ptr, id: this };
 
         let mut did_exit_immediately = false;
         // `spawn_async` is re-entrant: `watch()`/`read_all()` may fire
@@ -565,7 +569,7 @@ impl Cmd {
             event_loop,
             &mut shellio,
             spawn_args,
-            cmd_parent_ptr,
+            cmd_parent,
             child_out,
             &mut did_exit_immediately,
         );

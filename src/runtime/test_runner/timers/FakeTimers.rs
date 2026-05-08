@@ -315,10 +315,17 @@ fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
 /// This is used by testing-library/react's jestFakeTimersAreEnabled() function to detect
 /// if jest.advanceTimersByTime() should be called when draining the microtask queue.
 fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
-    // TODO(port): blocked_on bun_jsc::JSGlobalObject::to_js_value /
-    // JSValue::get_own_truthy / JSValue::delete_property — the active
-    // `JSGlobalObject` impl in `jsc/lib.rs` doesn't yet expose these.
-    let _ = (global, enabled);
+    let global_this = global.to_js_value();
+    let Ok(Some(set_timeout_fn)) = global_this.get_own_truthy(global, "setTimeout") else {
+        return;
+    };
+    // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
+    // to detect if fake timers are enabled.
+    if enabled {
+        set_timeout_fn.put(global, "clock", JSValue::TRUE);
+    } else {
+        let _ = set_timeout_fn.delete_property(global, "clock");
+    }
 }
 
 #[bun_jsc::host_fn]

@@ -1158,6 +1158,12 @@ impl JSValue {
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
+    /// `JSValue.deleteProperty` (JSValue.zig:334) — delete an own property by name.
+    pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> bool {
+        let zs = bun_string::ZigString::init(key.as_ref());
+        // SAFETY: `global` is live; `zs` borrowed for the call.
+        unsafe { JSC__JSValue__deleteProperty(self, global, &zs) }
+    }
     /// `JSValue.putBunString` (JSValue.zig:353).
     pub fn put_bun_string(self, global: &JSGlobalObject, key: &bun_string::String, value: JSValue) {
         // SAFETY: `global` is live; `key` borrowed for the call.
@@ -1648,6 +1654,7 @@ unsafe extern "C" {
         args_len: usize,
     ) -> JSValue;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
+    fn JSC__JSValue__deleteProperty(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString) -> bool;
     fn JSC__JSValue__putBunString(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);
     fn JSC__JSValue__putMayBeIndex(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);
     fn JSC__JSValue__putIndex(this: JSValue, global: *const JSGlobalObject, i: u32, value: JSValue);

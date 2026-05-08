@@ -459,6 +459,10 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
         return Err(global_object.throw(format_args!("Invalid path")));
     };
 
+    // Zig: `Syscall.chdir(fs.top_level_dir, slice)` — path=cwd, dest=target so the
+    // resulting Node SystemError carries `path: cwd`, `dest: target` and the
+    // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
+    let top_level_dir: &[u8] = fs.top_level_dir;
     match Syscall::chdir(slice) {
         bun_sys::Result::Ok(()) => {
             // When we update the cwd from JS, we have to update the bundler's version as well
@@ -499,7 +503,10 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
             let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir));
             str_.transfer_to_js(global_object)
         }
-        bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
+        bun_sys::Result::Err(e) => {
+            let e = e.with_path_dest(top_level_dir, slice.as_bytes());
+            Err(global_object.throw_value(e.to_js(global_object)))
+        }
     }
 }
 

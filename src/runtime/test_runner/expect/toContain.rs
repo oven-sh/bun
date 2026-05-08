@@ -45,7 +45,7 @@ impl Expect {
             pass: *mut bool,
         }
 
-        if value.js_type().is_array_like() {
+        if value.js_type_loose().is_array_like() {
             let mut itr = value.array_iterator(global)?;
             while let Some(item) = itr.next()? {
                 if item.is_same_value(expected, global)? {
@@ -53,7 +53,7 @@ impl Expect {
                     break;
                 }
             }
-        } else if value.is_string() && expected.is_string() {
+        } else if value.is_string_literal() && expected.is_string_literal() {
             let value_string = value.to_slice(global)?;
             let expected_string = expected.to_slice(global)?;
 

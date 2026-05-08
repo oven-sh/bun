@@ -14,7 +14,7 @@
 //   Windows: Sysinternals testlimit -d, or a tight allocator loop in another process
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows } from "harness";
 
 const flagOn = {
   ...bunEnv,
@@ -85,8 +85,11 @@ describe("MemoryPressureWatcher", () => {
       // on most kernels, so containers commonly fall through to "unavailable".
       // Either outcome is fine; just prove the install path ran and reported one.
       expect(debug).toMatch(/installed \(.*PSI\)|PSI unavailable/);
-    } else {
+    } else if (isMacOS || isWindows) {
       expect(debug).toContain("installed");
+    } else {
+      // FreeBSD etc. → Noop backend, nothing installs.
+      expect(debug).toBe("");
     }
     expect(exitCode).toBe(0);
   });

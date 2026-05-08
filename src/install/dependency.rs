@@ -666,8 +666,22 @@ impl VersionExt for Version {
         let slice = String {
             bytes: bytes[1..9].try_into().expect("infallible: size matches"),
         };
-        // SAFETY: bytes[0] was written by to_external from a valid Tag
-        let tag: Tag = unsafe { core::mem::transmute::<u8, Tag>(bytes[0]) };
+        // bytes[0] was written by `to_external` from a valid `Tag`; decode by
+        // exhaustive match so a corrupt lockfile byte traps instead of
+        // producing an invalid discriminant.
+        let tag: Tag = match bytes[0] {
+            0 => Tag::Uninitialized,
+            1 => Tag::Npm,
+            2 => Tag::DistTag,
+            3 => Tag::Tarball,
+            4 => Tag::Folder,
+            5 => Tag::Symlink,
+            6 => Tag::Workspace,
+            7 => Tag::Git,
+            8 => Tag::Github,
+            9 => Tag::Catalog,
+            n => unreachable!("invalid Dependency.Version.Tag {n}"),
+        };
         let sliced = slice.sliced(ctx.buffer);
         parse_with_tag(
             alias,

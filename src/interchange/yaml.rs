@@ -262,9 +262,22 @@ impl IndentIndicator {
     }
 
     pub const fn from_raw(n: u8) -> Self {
-        debug_assert!(n <= 9);
-        // SAFETY: #[repr(u8)] with contiguous discriminants 0..=9
-        unsafe { core::mem::transmute::<u8, IndentIndicator>(n) }
+        match n {
+            0 => IndentIndicator::Auto,
+            1 => IndentIndicator::N1,
+            2 => IndentIndicator::N2,
+            3 => IndentIndicator::N3,
+            4 => IndentIndicator::N4,
+            5 => IndentIndicator::N5,
+            6 => IndentIndicator::N6,
+            7 => IndentIndicator::N7,
+            8 => IndentIndicator::N8,
+            9 => IndentIndicator::N9,
+            // Zig's safety-checked `@enumFromInt` traps on out-of-range; the
+            // only caller (`read_indentation_indicator`) passes `digit - b'0'`
+            // after a `b'1'..=b'9'` guard, so this arm is unreachable.
+            _ => panic!("invalid IndentIndicator"),
+        }
     }
 }
 

@@ -749,12 +749,16 @@ impl Pollable {
     }
 
     pub(crate) fn tag(self) -> PollableTag {
-        let data = (self.value >> POLLABLE_ADDR_BITS) as u16;
-        if data == 0 {
-            return PollableTag::Empty;
+        // Tag was written by `init` from a valid `PollableTag` discriminant.
+        match (self.value >> POLLABLE_ADDR_BITS) as u16 {
+            0 => PollableTag::Empty,
+            1 => PollableTag::ReadFile,
+            2 => PollableTag::WriteFile,
+            // Only `init` writes the tag bits, so any other value is memory
+            // corruption / a logic bug — match Zig's safety-checked
+            // `@enumFromInt` and trap rather than fabricate a discriminant.
+            n => unreachable!("invalid PollableTag {n}"),
         }
-        // SAFETY: tag was written by `init` from a valid `PollableTag`.
-        unsafe { core::mem::transmute::<u16, PollableTag>(data) }
     }
 
     pub(crate) fn ptr(self) -> u64 {

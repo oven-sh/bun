@@ -1171,8 +1171,7 @@ pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Conta
     // SAFETY: user_data was set to &mut U when registering; this is valid for the handler call
     let result = unsafe { (&mut *user_data.cast::<U>()).call(&mut *this) };
     // @enumFromInt(@intFromBool(result))
-    // SAFETY: bool as c_uint is 0 or 1, both valid Directive discriminants
-    unsafe { core::mem::transmute::<c_uint, Directive>(result as c_uint) }
+    if result { Directive::Stop } else { Directive::Continue }
 }
 
 // ─── DocType ──────────────────────────────────────────────────────────────

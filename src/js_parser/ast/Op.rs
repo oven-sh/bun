@@ -219,10 +219,36 @@ impl Level {
 
     #[inline]
     const fn from_raw(n: u8) -> Level {
-        debug_assert!(n <= Level::Member as u8);
-        // SAFETY: Level is #[repr(u8)] and n is range-checked above (debug);
-        // callers only pass values derived from valid Level discriminants ±1.
-        unsafe { core::mem::transmute::<u8, Level>(n) }
+        // Callers only pass values derived from a valid `Level` discriminant
+        // ±1 (`sub`/`add_f`); decode by exhaustive match so an out-of-range
+        // shift traps in release too (matches Zig's safety-checked
+        // `@enumFromInt`) instead of fabricating an invalid discriminant.
+        match n {
+            0 => Level::Lowest,
+            1 => Level::Comma,
+            2 => Level::Spread,
+            3 => Level::Yield,
+            4 => Level::Assign,
+            5 => Level::Conditional,
+            6 => Level::NullishCoalescing,
+            7 => Level::LogicalOr,
+            8 => Level::LogicalAnd,
+            9 => Level::BitwiseOr,
+            10 => Level::BitwiseXor,
+            11 => Level::BitwiseAnd,
+            12 => Level::Equals,
+            13 => Level::Compare,
+            14 => Level::Shift,
+            15 => Level::Add,
+            16 => Level::Multiply,
+            17 => Level::Exponentiation,
+            18 => Level::Prefix,
+            19 => Level::Postfix,
+            20 => Level::New,
+            21 => Level::Call,
+            22 => Level::Member,
+            _ => panic!("invalid Op.Level"),
+        }
     }
 }
 

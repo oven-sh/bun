@@ -36,9 +36,28 @@ impl Opcode {
     /// to repeat the `unsafe` block.
     #[inline]
     pub const fn from_raw(n: u8) -> Opcode {
-        debug_assert!(n <= 0xF);
-        // SAFETY: Opcode is #[repr(u8)] and exhaustively covers 0x0..=0xF.
-        unsafe { core::mem::transmute::<u8, Opcode>(n) }
+        // Opcode exhaustively covers 0x0..=0xF; mask the low nibble (the
+        // header packs `opcode: u4`, so callers always pass a 4-bit value —
+        // the `& 0xF` is a no-op there but keeps the match total without an
+        // unreachable arm).
+        match n & 0xF {
+            0x0 => Opcode::Continue,
+            0x1 => Opcode::Text,
+            0x2 => Opcode::Binary,
+            0x3 => Opcode::Res3,
+            0x4 => Opcode::Res4,
+            0x5 => Opcode::Res5,
+            0x6 => Opcode::Res6,
+            0x7 => Opcode::Res7,
+            0x8 => Opcode::Close,
+            0x9 => Opcode::Ping,
+            0xA => Opcode::Pong,
+            0xB => Opcode::ResB,
+            0xC => Opcode::ResC,
+            0xD => Opcode::ResD,
+            0xE => Opcode::ResE,
+            _ => Opcode::ResF,
+        }
     }
 }
 

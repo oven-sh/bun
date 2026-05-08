@@ -91,11 +91,26 @@ impl Flags {
     }
     #[inline]
     pub fn binary_type(self) -> BinaryType {
-        // SAFETY: stored value was written via set_binary_type from a valid BinaryType discriminant
-        unsafe {
-            mem::transmute::<u8, BinaryType>(
-                ((self.0 & Self::BINARY_TYPE_MASK) >> Self::BINARY_TYPE_SHIFT) as u8,
-            )
+        // Stored value was written via `set_binary_type` from a valid
+        // `BinaryType` discriminant (4-bit field, 14 variants).
+        match ((self.0 & Self::BINARY_TYPE_MASK) >> Self::BINARY_TYPE_SHIFT) as u8 {
+            0 => BinaryType::Buffer,
+            1 => BinaryType::ArrayBuffer,
+            2 => BinaryType::Uint8Array,
+            3 => BinaryType::Uint8ClampedArray,
+            4 => BinaryType::Uint16Array,
+            5 => BinaryType::Uint32Array,
+            6 => BinaryType::Int8Array,
+            7 => BinaryType::Int16Array,
+            8 => BinaryType::Int32Array,
+            9 => BinaryType::Float16Array,
+            10 => BinaryType::Float32Array,
+            11 => BinaryType::Float64Array,
+            12 => BinaryType::BigInt64Array,
+            13 => BinaryType::BigUint64Array,
+            // 4-bit field; only `set_binary_type` writes it, so 14/15 indicate
+            // memory corruption — trap (matches Zig's safety-checked enum cast).
+            n => unreachable!("invalid BinaryType {n}"),
         }
     }
     #[inline]

@@ -5875,6 +5875,7 @@ where
                 StmtData::SForOf(current) => s = &current.body.data,
                 StmtData::SWhile(current) => s = &current.body.data,
                 StmtData::SWith(current) => s = &current.body.data,
+                StmtData::SLabel(current) => s = &current.stmt.data,
                 _ => return false,
             }
         }

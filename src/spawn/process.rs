@@ -87,6 +87,33 @@ pub use bun_spawn_sys::spawn_process::{rusage_zeroed, IoCounters, WinRusage, Win
 #[cfg(windows)]
 pub use bun_spawn_sys::uv_getrusage;
 
+/// Whether the process-exit poll should be registered one-shot.
+///
+/// On Linux we watch a pidfd via `EPOLLIN`. A pidfd becomes readable when the
+/// tracked process exits and stays readable until the fd is closed, so a
+/// plain level-triggered watch is sufficient: when the event fires we
+/// `wait4(WNOHANG)`, and on success we close the pidfd (which removes it
+/// from epoll).
+///
+/// `EPOLLONESHOT` is actively harmful here: the kernel disarms the fd the
+/// instant `epoll_wait` returns it — before user-space has dispatched it.
+/// If a poll callback then re-enters `us_loop_run_bun_tick` (e.g.
+/// `expect(p).resolves` → `waitForPromise` → `autoTick`, or any other
+/// `waitForPromise` path), the inner tick overwrites the shared
+/// `loop->ready_polls`/`num_ready_polls`/`current_ready_poll` and the outer
+/// dispatch silently skips its remaining events. A dropped one-shot pidfd
+/// event is unrecoverable: the fd is disarmed with no re-arm path, so the
+/// process's `'exit'` arrives only when the next unrelated timer wakes the
+/// loop. Level-triggered makes a dropped slot harmless — the next
+/// `epoll_wait` just returns it again. `rewatch_posix` still re-registers
+/// defensively if `wait4` returns 0, which is a harmless `CTL_MOD`.
+///
+/// macOS/FreeBSD watch the pid via `EVFILT_PROC` + `NOTE_EXIT`, which is
+/// inherently once-per-process — keep `EV_ONESHOT` there so the kernel
+/// auto-removes the filter.
+#[cfg(unix)]
+const PROCESS_POLL_ONE_SHOT: bool = !cfg!(target_os = "linux");
+
 /// §Dispatch cold-path vtable. One static instance per high-tier handler type.
 /// Replaces the Zig `TaggedPointerUnion` 12-way `inline switch`.
 // PERF(port): was inline switch
@@ -458,7 +485,7 @@ impl Process {
 
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            match fd.register(loop_, bun_aio::PollKind::Process, true) {
+            match fd.register(loop_, bun_aio::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
                 Ok(()) => {
                     self.ref_();
                     Ok(())
@@ -491,7 +518,7 @@ impl Process {
             let fd = unsafe { poll.as_mut() };
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            let maybe = fd.register(loop_, bun_aio::PollKind::Process, true);
+            let maybe = fd.register(loop_, bun_aio::PollKind::Process, PROCESS_POLL_ONE_SHOT);
             if maybe.is_ok() {
                 self.ref_();
             }

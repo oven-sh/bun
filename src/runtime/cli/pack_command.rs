@@ -2012,6 +2012,17 @@ pub fn pack<const FOR_PUBLISH: bool>(
     };
     let _close_root = CloseOnDrop::dir(root_dir);
 
+    // Scan for a README file so the registry receives the same
+    // `readme` / `readmeFilename` metadata that `npm publish` sends.
+    // `find_workspace_readme` opens its own directory handle because
+    // `root_dir` is iterated below and its kernel readdir offset gets
+    // exhausted.
+    let workspace_readme: Option<Publish::ReadmeInfo> = if FOR_PUBLISH {
+        Publish::PublishCommand::find_workspace_readme(abs_workspace_path)
+    } else {
+        None
+    };
+
     ctx.bundled_deps = match get_bundled_deps(&json.root, "bundledDependencies")? {
         Some(deps) => deps,
         None => get_bundled_deps(&json.root, "bundleDependencies")?.unwrap_or_default(),
@@ -2498,6 +2509,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             &json.source,
             shasum,
             integrity,
+            workspace_readme,
         )?)
     } else {
         None

@@ -1538,10 +1538,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 data.no = Some(p.visit_single_stmt(no, StmtsKind::None));
             }
 
-            // Trim unnecessary "else" clauses
-            if p.options.features.minify_syntax {
+            // Trim an "else" clause whose body was emptied by dead-code
+            // elimination. This avoids emitting `else {}` for e.g.
+            // `if (true) { A } else { B }` where B was pruned. Gated on
+            // the union of DCE and minify_syntax so the pre-existing
+            // `deadCodeElimination: false, minify: { syntax: true }`
+            // configuration (which already dropped the `else {}`)
+            // doesn't regress to `else ;`.
+            if p.options.features.dead_code_elimination || p.options.features.minify_syntax {
                 if let Some(no2) = data.no {
-                    if matches!(no2.data, StmtData::SEmpty(_)) {
+                    let no_is_empty = match no2.data {
+                        StmtData::SEmpty(_) => true,
+                        StmtData::SBlock(block) => block.stmts.len() == 0,
+                        _ => false,
+                    };
+                    if no_is_empty {
                         data.no = None;
                     }
                 }

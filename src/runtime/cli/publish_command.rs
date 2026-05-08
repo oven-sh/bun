@@ -73,6 +73,36 @@ fn sep_chars() -> &'static [OSPathChar] {
 
 use crate::Command;
 use crate::cli::pack_command::{self as pack, PackCommand as Pack};
+
+pub struct ReadmeInfo {
+    pub filename: Vec<u8>,
+    pub contents: Vec<u8>,
+}
+
+/// Matches npm's `{README,README.*}` glob case-insensitively. Generic
+/// over char type so it works for both UTF-8 readdir entries and UTF-16
+/// tar entry names on Windows.
+fn is_readme_filename_t<T: Copy + Into<u32>>(name: &[T]) -> bool {
+    const README: &[u8] = b"README";
+    if name.len() < README.len() {
+        return false;
+    }
+    if !strings::eql_case_insensitive_t(&name[..README.len()], README) {
+        return false;
+    }
+    name.len() == README.len() || name[README.len()].into() == u32::from(b'.')
+}
+
+#[inline]
+fn is_readme_filename(name: &[u8]) -> bool {
+    is_readme_filename_t(name)
+}
+
+#[inline]
+fn is_readme_os_path(name: &[OSPathChar]) -> bool {
+    is_readme_filename_t(name)
+}
+
 use crate::run_command::RunCommand as Run;
 use crate::cli::init_command::InitCommand;
 use crate::cli::open;
@@ -161,6 +191,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         };
 
         let mut maybe_package_json_contents: Option<Box<[u8]>> = None;
+        let mut maybe_readme: Option<ReadmeInfo> = None;
 
         let mut iter = match ArchiveIterator::init(&tarball_bytes) {
             ArchiveIterResult::Err { archive, message } => {
@@ -246,6 +277,30 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                             }
                             ArchiveIterResult::Result(bytes) => Some(bytes),
                         };
+                    } else if maybe_readme.is_none() && is_readme_os_path(filename) {
+                        // First matching README wins — libarchive iteration is one-shot.
+                        let bytes = match next.read_entry_data(iter.archive)? {
+                            ArchiveIterResult::Err { archive, message } => {
+                                Output::err_generic(
+                                    "{}: {}",
+                                    (
+                                        bstr::BStr::new(message),
+                                        bstr::BStr::new(Archive::error_string(archive)),
+                                    ),
+                                );
+                                Global::crash();
+                            }
+                            ArchiveIterResult::Result(bytes) => bytes,
+                        };
+                        #[cfg(not(windows))]
+                        let filename_utf8: Vec<u8> = filename.to_vec();
+                        #[cfg(windows)]
+                        let filename_utf8: Vec<u8> =
+                            strings::to_utf8_alloc(filename).map_err(|_| AllocError)?;
+                        maybe_readme = Some(ReadmeInfo {
+                            filename: filename_utf8,
+                            contents: bytes.into_vec(),
+                        });
                     }
                 }
             } else {
@@ -379,6 +434,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             &json_source,
             shasum,
             integrity,
+            maybe_readme,
         )?;
 
         pack::Context::print_summary(
@@ -1253,6 +1309,7 @@ impl PublishCommand {
         json_source: &logger::Source,
         shasum: SHA1Digest,
         integrity: SHA512Digest,
+        readme: Option<ReadmeInfo>,
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
 
@@ -1291,6 +1348,16 @@ impl PublishCommand {
         Expr::set_string(json, &bump, b"_npmVersion", b"10.8.3")?;
         Expr::set_string(json, &bump, b"integrity", integrity_fmt)?;
         Expr::set_string(json, &bump, b"shasum", shasum_fmt)?;
+
+        // Include README contents in the registry payload so `npm view <pkg>
+        // readme` shows something, matching `npm publish`. User-provided
+        // `readme` in package.json wins.
+        if let Some(r) = readme {
+            if json.get(b"readme").is_none() {
+                Expr::set_string(json, &bump, b"readme", leak!(r.contents))?;
+                Expr::set_string(json, &bump, b"readmeFilename", leak!(r.filename))?;
+            }
+        }
 
         let mut dist_props: Vec<G::Property> = Vec::with_capacity(3);
         dist_props.push(G::Property {
@@ -1384,6 +1451,37 @@ impl PublishCommand {
         let _ = written;
 
         Ok(writer.ctx.written_without_trailing_zero().into())
+    }
+
+    /// Searches `abs_workspace_path` for a README, matching `npm publish`. Returns
+    /// the first match from `readdir` (same ordering npm's glob walks, in practice),
+    /// or `None` if none is present.
+    pub fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
+        let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
+        let _close = scopeguard::guard(workspace_dir, |d| {
+            let _ = d.close();
+        });
+
+        let mut iter = DirIterator::iterate(workspace_dir);
+        while let Some(entry) = iter.next().ok().flatten() {
+            if entry.kind == bun_sys::EntryKind::Directory {
+                continue;
+            }
+            let name = entry.name.slice();
+            if !is_readme_filename(name) {
+                continue;
+            }
+
+            let contents = match bun_sys::File::read_from(workspace_dir, name) {
+                Ok(bytes) => bytes,
+                Err(_) => return None,
+            };
+            return Some(ReadmeInfo {
+                filename: name.to_vec(),
+                contents,
+            });
+        }
+        None
     }
 
     fn normalize_bin(

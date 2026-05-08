@@ -520,7 +520,7 @@ impl Terminal {
         let args = callframe.arguments_as_array::<1>();
         let js_options = args[0];
 
-        if js_options.is_undefined_or_null() {
+        if !js_options.is_object() {
             return Err(
                 global_object.throw(format_args!("Terminal constructor requires an options object"))
             );

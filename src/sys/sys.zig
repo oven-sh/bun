@@ -2242,15 +2242,20 @@ pub const Sigaction = if (Environment.isAndroid) extern struct {
     comptime {
         bun.assert(@sizeOf(usize) == 8);
         // Trip when the Zig stdlib gains a bionic `Sigaction` so this
-        // workaround can be dropped. bionic's struct is 32 bytes; the
-        // glibc-shaped one std currently uses is 152.
-        if (@sizeOf(std.c.Sigaction) == @sizeOf(@This()))
+        // workaround can be dropped. bionic puts `sa_flags` at offset 0;
+        // the glibc-shaped struct std currently uses puts it after a
+        // 128-byte mask.
+        if (@offsetOf(std.c.Sigaction, "flags") == @offsetOf(@This(), "flags") and
+            @offsetOf(std.c.Sigaction, "handler") == @offsetOf(@This(), "handler"))
             @compileError("std.c.Sigaction now matches bionic; remove the bun.sys.Sigaction workaround");
     }
 
     pub const handler_fn = *align(1) const fn (i32) callconv(.c) void;
     pub const sigaction_fn = *const fn (i32, *const posix.siginfo_t, ?*anyopaque) callconv(.c) void;
 
+    // bionic declares `int sa_flags`, but `SA_RESETHAND` is `0x80000000`
+    // which doesn't fit a `c_int` literal in Zig. `c_uint` is ABI-identical
+    // and matches what `std.c.Sigaction` uses for every other Linux libc.
     flags: c_uint,
     handler: extern union {
         handler: ?handler_fn,
@@ -2274,18 +2279,17 @@ pub inline fn sigaddset(set: *sigset_t, sig: u8) void {
 }
 
 pub fn sigaction(sig: u8, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) void {
-    if (comptime Environment.isAndroid) {
-        // Can't reuse `std.c.sigaction`: its `Sigaction` parameter type is
-        // the glibc-shaped one, and Zig will not let us pass ours.
-        const bionic = @extern(
-            *const fn (c_int, noalias ?*const Sigaction, noalias ?*Sigaction) callconv(.c) c_int,
-            .{ .name = "sigaction" },
-        );
-        const rc = bionic(sig, act, oact);
-        bun.debugAssert(rc == 0);
-        return;
-    }
-    posix.sigaction(sig, act, oact);
+    // Call libc directly on every platform. `std.posix.sigaction` does
+    // `else => unreachable` on error, but `raiseIgnoringPanicHandler` can
+    // legitimately pass `SIGKILL`/`SIGSTOP` here (when re-raising a child's
+    // terminating signal), for which libc returns `EINVAL`. On Android we
+    // also can't reuse `std.c.sigaction` because its parameter type is the
+    // glibc-shaped `Sigaction`.
+    const libc_sigaction = if (comptime Environment.isAndroid) @extern(
+        *const fn (c_int, noalias ?*const Sigaction, noalias ?*Sigaction) callconv(.c) c_int,
+        .{ .name = "sigaction" },
+    ) else std.c.sigaction;
+    _ = libc_sigaction(sig, act, oact);
 }
 
 pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*const std.posix.sigset_t) Maybe(usize) {

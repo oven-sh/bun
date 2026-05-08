@@ -123,7 +123,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
 
-**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`zigInputs` if zig reads it, `cppSources` if it's a `.cpp` to compile, `cppAll` if it's a header).
+**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`zigInputs` if the Rust build reads it — legacy name — `cppSources` if it's a `.cpp` to compile, `cppAll` if it's a header).
 
 **Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. If it needs a CLI flag, `build.ts`'s arg parser already handles `--anyfield=value` generically.
 
@@ -139,7 +139,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 ### Phase 1 — Configure (`configure.ts::configure`)
 
-1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/zig/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
+1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
 2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.zig`/codegen-input globs.
@@ -168,7 +168,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 ### Phase 3 — Execute
 
 - **CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.
-- **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands write to FD 3, bypassing ninja's per-job output buffering so dep/zig progress streams live. If positionals given, exec the built binary with them.
+- **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands write to FD 3, bypassing ninja's per-job output buffering so dep/cargo build progress streams live. If positionals given, exec the built binary with them.
 
 ## Module inventory
 
@@ -187,12 +187,11 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                 |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                           |
 | `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix            |
-| `zig.ts`                       | (legacy spec reference — not on the default build path)                            |
 | `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                             |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                |
 | `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                          |
 | `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                       |
-| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, zig progress decoding                   |
+| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, prefixed line streaming                 |
 | `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                            |
 | `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                   |
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                      |
@@ -228,13 +227,11 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 **PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
 
-**Windows `ReleaseFast` → `ReleaseSafe`** in `zig.ts`. Load-bearing since Bun 1.1; caught more crashes. Don't "fix" it.
-
 **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
 
 **cmd.exe quoting is partial.** `shell.ts` quote() handles spaces/special chars but NOT `%VAR%` expansion, `^` escape, `&|>` redirection. If an arg contains those, switch to powershell.
 
-**`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, zig, tarballs, prebuilt WebKit). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
+**`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, tarballs, prebuilt WebKit). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
 
 ## Node compatibility
 

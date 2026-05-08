@@ -15,7 +15,6 @@ import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
-import { ZIG_COMMIT } from "./zig.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
@@ -47,13 +46,12 @@ export interface Host {
 
 /**
  * Pinned version defaults. Each lives at the top of its own file
- * (deps/webkit.ts, zig.ts, deps/nodejs-headers.ts) — look there to bump.
+ * (deps/webkit.ts, deps/nodejs-headers.ts) — look there to bump.
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
  */
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
-  zigCommit: ZIG_COMMIT,
   webkitVersion: WEBKIT_VERSION,
 };
 
@@ -112,7 +110,6 @@ export interface Config {
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
   pgoUse: string | undefined;
   asan: boolean;
-  zigAsan: boolean;
   assertions: boolean;
   logs: boolean;
   /** x64-only: target nehalem (no AVX) instead of haswell. */
@@ -171,7 +168,6 @@ export interface Config {
   strip: string;
   /** darwin-only. */
   dsymutil: string | undefined;
-  zig: string;
   /** Self-host bun for codegen (bun install, bun build). */
   bun: string;
   /**
@@ -234,14 +230,12 @@ export interface Config {
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
   version: string;
-  /** Git commit of the bun checkout — feeds into zig's -Dsha. */
+  /** Git commit of the bun checkout — feeds into the build's -Dsha equivalent. */
   revision: string;
   canaryRevision: string;
   /** Node.js compat version. Default in versions.ts; override to test a bump. */
   nodejsVersion: string;
   nodejsAbiVersion: string;
-  /** Zig compiler commit. Default in versions.ts; override to test a new compiler. */
-  zigCommit: string;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
   webkitVersion: string;
 }
@@ -260,7 +254,6 @@ export interface PartialConfig {
   pgoGenerate?: string;
   pgoUse?: string;
   asan?: boolean;
-  zigAsan?: boolean;
   assertions?: boolean;
   logs?: boolean;
   baseline?: boolean;
@@ -289,7 +282,6 @@ export interface PartialConfig {
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
-  zigCommit?: string;
   webkitVersion?: string;
 }
 
@@ -322,7 +314,6 @@ export interface Toolchain {
   rustLlvmVersion: string | undefined;
   strip: string;
   dsymutil: string | undefined;
-  zig: string;
   bun: string;
   jsRuntime: string;
   esbuild: string;
@@ -597,9 +588,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
   const asan = abi === "android" || freebsd ? false : (partial.asan ?? asanDefault);
 
-  // Zig ASAN follows ASAN unless explicitly overridden
-  const zigAsan = partial.zigAsan ?? asan;
-
   // Assertions: default on in debug OR asan. ASAN coupling is ABI-critical:
   // the -asan WebKit prebuilt is built with ASSERT_ENABLED=1, which gates
   // struct fields (RefCountDebugger etc). If bun's C++ isn't also compiled
@@ -682,7 +670,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
   // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
-  // so ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
+  // so ccache/tarballs/webkit reuse one another's work. CI stays per-build
   // so runners remain hermetic and `rm -rf build/` is a full reset.
   // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
   // ninja regen rule — which runs from buildDir — resolves the same path.
@@ -783,14 +771,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to test a branch before bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
-  const zigCommit = partial.zigCommit ?? versionDefaults.zigCommit;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Requires BOTH host and target to be darwin — xcode only exists on
-  // macOS, and cross-compiling C++/deps to darwin isn't supported (only
-  // zig cross-compiles, and zig brings its own SDKs).
+  // macOS, and cross-compiling C++/deps to darwin isn't supported.
   let osxDeploymentTarget: string | undefined;
   let osxSysroot: string | undefined;
   if (darwin && host.os === "darwin") {
@@ -822,7 +808,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     pgoGenerate,
     pgoUse,
     asan,
-    zigAsan,
     assertions,
     logs,
     baseline,
@@ -853,7 +838,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustLlvmVersion: toolchain.rustLlvmVersion,
     strip: toolchain.strip,
     dsymutil: toolchain.dsymutil,
-    zig: toolchain.zig,
     bun: toolchain.bun,
     jsRuntime: toolchain.jsRuntime,
     esbuild: toolchain.esbuild,
@@ -880,7 +864,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     nodejsVersion,
     nodejsAbiVersion,
     canaryRevision,
-    zigCommit,
     webkitVersion,
   };
 }
@@ -1130,7 +1113,7 @@ export function formatConfig(cfg: Config, exe: string): string {
     `  ${label("build type")} ${cfg.buildType}`,
     `  ${label("build dir")} ${relBuildDir}`,
     // Revision makes it obvious why configure re-ran after a commit
-    // (the sha changes → zig's -Dsha arg changes → build.ninja differs).
+    // (the sha changes → the build's -Dsha equivalent changes → build.ninja differs).
     `  ${label("revision")} ${cfg.revision === "unknown" ? "unknown" : cfg.revision.slice(0, 10)}`,
   ];
   const features: string[] = [];
@@ -1151,7 +1134,6 @@ export function formatConfig(cfg: Config, exe: string): string {
   // revert my WebKit test branch" before the build goes weird.
   if (cfg.webkitVersion !== versionDefaults.webkitVersion)
     features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
-  if (cfg.zigCommit !== versionDefaults.zigCommit) features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");
@@ -1159,7 +1141,7 @@ export function formatConfig(cfg: Config, exe: string): string {
 
 /**
  * One-line "nothing changed" configure message. Bracketed to match the
- * [name] prefix style used by deps/zig.
+ * [name] prefix style used by deps.
  */
 export function formatConfigUnchanged(exe: string, elapsed: number): string {
   return `[configured] ${c.green(exe)} in ${elapsed}ms ${c.dim("(unchanged)")}`;

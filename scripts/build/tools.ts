@@ -167,7 +167,7 @@ function getToolVersion(exe: string, versionArg: string): { version: string } | 
   if (result.error) {
     return { reason: `spawn failed: ${result.error.message}` };
   }
-  // Some tools print version to stderr (e.g. some zig builds). Check both.
+  // Some tools print their version to stderr instead of stdout. Check both.
   const version = parseVersion(result.stdout ?? "") ?? parseVersion(result.stderr ?? "");
   if (version !== undefined) return { version };
   // Parse failed — include what we saw (truncated) so the error is

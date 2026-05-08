@@ -149,8 +149,8 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // lives there). Env passed via stream.ts `--env=K=V`.
   //
   // `--console`: cargo has its own progress bar / colour; pool=console gives
-  // it the TTY directly (same as `zig_build`). restat: cargo's incremental
-  // build doesn't touch the staticlib when nothing changed.
+  // it the TTY directly. restat: cargo's incremental build doesn't touch
+  // the staticlib when nothing changed.
   n.rule("rust_build", {
     command: `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
     description: "cargo bun_bin → $label",
@@ -299,10 +299,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // (not just those with a `build.rs` re-export).
     BUN_CODEGEN_DIR: cfg.codegenDir,
 
-    // ── build_options (mirrors zig.ts -Dversion=... / -Dsha=...) ──
+    // ── build_options (version / sha / feature flags) ──
     // Read at compile time by `bun_core::build_options` via `option_env!`.
-    // Values come from the same `Config` fields zig.ts forwards, so
-    // `process.versions.bun` / `bun --revision` agree across both backends.
+    // Values come straight from `Config`, so `process.versions.bun` /
+    // `bun --revision` reflect the configured build.
     BUN_GIT_SHA: cfg.revision,
     BUN_VERSION_MAJOR: cfg.version.split(".")[0]!,
     BUN_VERSION_MINOR: cfg.version.split(".")[1]!,

@@ -7574,7 +7574,31 @@ fn dt_delete_file(parent: sys::Dir, name: &[u8]) -> Result<(), E> {
     let z = unsafe { ZStr::from_raw(path_buf.as_ptr(), len) };
     match Syscall::unlinkat(parent.fd, z) {
         Ok(()) => Ok(()),
-        Err(e) => Err(e.get_errno()),
+        Err(e) => {
+            let errno = e.get_errno();
+            // Mirror `std.fs.Dir.deleteFileZ`: non-Linux POSIX (macOS/BSD) returns
+            // a *permission* error (EPERM, occasionally EACCES) from `unlinkat(2)`
+            // without `AT_REMOVEDIR` when the target is a directory — Linux returns
+            // EISDIR directly. Stat to disambiguate so the recursive-rm dir fallback
+            // (`Err(EISDIR) => treat_as_dir`) fires; a genuine permission error
+            // (immutable file, unwritable parent dir, …) still propagates.
+            #[cfg(any(
+                target_os = "macos", target_os = "ios", target_os = "freebsd",
+                target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly",
+            ))]
+            if matches!(errno, E::EPERM | E::EACCES) {
+                // No-follow stat — exactly `std.fs.Dir.deleteFileZ`'s
+                // `fstatatZ(self.fd, sub_path_c, posix.AT.SYMLINK_NOFOLLOW)`
+                // ("don't follow symlinks to match unlinkat"). `z` (a `&ZStr`,
+                // `Copy`) is still valid — `unlinkat` only borrowed it.
+                if let Ok(st) = Syscall::lstatat(parent.fd, z) {
+                    if sys::S::ISDIR(st.st_mode as u32) {
+                        return Err(E::EISDIR);
+                    }
+                }
+            }
+            Err(errno)
+        }
     }
 }
 

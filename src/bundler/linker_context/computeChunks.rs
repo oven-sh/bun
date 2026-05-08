@@ -666,9 +666,12 @@ pub fn compute_chunks(
                         &mut real_path_buf.0,
                     );
                 };
-                // PORT NOTE: defer dir.close() — Fd closes on Drop at scope end
+                let dir_fd = scopeguard::guard(dir_fd, |fd| {
+                    use bun_sys::FdExt as _;
+                    fd.close();
+                });
 
-                match bun_sys::get_fd_path(dir_fd, &mut real_path_buf) {
+                match bun_sys::get_fd_path(*dir_fd, &mut real_path_buf) {
                     Ok(p) => break 'dir &*p,
                     Err(err) => {
                         this.log.add_error_fmt(

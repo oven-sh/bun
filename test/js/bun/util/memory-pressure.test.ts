@@ -52,13 +52,15 @@ describe("MemoryPressureWatcher", () => {
     // Heap-size deltas are too noisy to assert on (JSC keeps block capacity
     // around after a collection), so use a WeakRef as the deterministic signal
     // that runGC(true) ran: the referent must be gone afterwards.
+    //
+    // Per spec, deref() adds the target to [[KeptAlive]] until the end of the
+    // current synchronous job, so don't deref before the GC — only after.
     const code = /* js */ `
       function makeRef() { return new WeakRef({ sentinel: true }); }
       const ref = makeRef();
-      const aliveBefore = ref.deref() !== undefined;
       const counter = Bun.unsafe.simulateMemoryPressure();
       const aliveAfter = ref.deref() !== undefined;
-      process.stdout.write(JSON.stringify({ aliveBefore, aliveAfter, counter }));
+      process.stdout.write(JSON.stringify({ aliveAfter, counter }));
     `;
     const { out, debug, stderr, exitCode } = await run(flagOn, code);
     expect({ debug, stderr }).toEqual({
@@ -66,7 +68,6 @@ describe("MemoryPressureWatcher", () => {
       stderr: expect.not.stringContaining("error"),
     });
     expect(JSON.parse(out.trim())).toEqual({
-      aliveBefore: true,
       aliveAfter: false,
       counter: 1,
     });

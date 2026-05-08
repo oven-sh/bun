@@ -1189,6 +1189,7 @@ pub fn initWithModuleGraph(
     vm.jsc_vm = vm.global.vm();
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
     bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm));
+    if (opts.is_main_thread) bun.MemoryPressureWatcher.installOnEventLoop(vm);
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));

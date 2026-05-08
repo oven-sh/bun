@@ -101,6 +101,10 @@ const Windows = struct {
         wake: libuv.uv_async_t,
         rearm: libuv.Timer,
         vm: *jsc.VirtualMachine,
+        /// uv_close is async and close callbacks fire LIFO within a loop
+        /// tick, so destroying State from one handle's close cb while the
+        /// other's is still pending is a UAF. Count both closes down to 0.
+        closing: std.atomic.Value(u32) = .init(0),
     };
 
     fn install(vm: *jsc.VirtualMachine) void {
@@ -187,14 +191,15 @@ const Windows = struct {
         }
         _ = win_externs.CloseHandle(s.notification);
         s.rearm.stop();
-        libuv.uv_close(@ptrCast(&s.rearm), null);
+        s.closing.store(2, .monotonic);
+        libuv.uv_close(@ptrCast(&s.rearm), onClosed);
         libuv.uv_close(@ptrCast(&s.wake), onClosed);
     }
 
     fn onClosed(handle: *anyopaque) callconv(.c) void {
         const h: *libuv.Handle = @ptrCast(@alignCast(handle));
         const s: *State = @ptrCast(@alignCast(h.data.?));
-        bun.destroy(s);
+        if (s.closing.fetchSub(1, .acq_rel) == 1) bun.destroy(s);
     }
 };
 

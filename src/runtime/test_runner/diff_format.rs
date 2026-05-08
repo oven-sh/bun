@@ -30,10 +30,6 @@ impl<'a> Default for DiffFormatter<'a> {
 
 impl<'a> fmt::Display for DiffFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zig: var scope = bun.AllocationScope.init(default_allocator);
-        // // defer scope.deinit(); // TODO: fix leaks
-        // Allocator param dropped (non-AST crate; global mimalloc).
-
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());
 

@@ -6,9 +6,7 @@
 
 #[path = "LinuxMemFdAllocator.rs"] pub mod linux_mem_fd_allocator;
 #[path = "MimallocArena.rs"]       pub mod mimalloc_arena;
-                                   pub mod allocation_scope;
 
-pub use allocation_scope::{AllocationScope, AllocationScopeIn};
 pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
 
 /// Push this crate's `StdAllocator` vtable addresses into the
@@ -17,7 +15,7 @@ pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
 /// `safety/alloc.zig:hasPtr`). Idempotent enough — call once at startup.
 ///
 /// Coverage vs the Zig spec's `hasPtr` chain:
-///  - `allocation_scope` / `LinuxMemFdAllocator` / `MimallocArena` ×2 /
+///  - `LinuxMemFdAllocator` / `MimallocArena` ×2 /
 ///    `bundle_v2::ExternalFreeFunctionAllocator` → registered below.
 ///  - `c_allocator` / `z_allocator` / `MimallocArena::is_instance` /
 ///    `String::is_wtf_allocator` → checked directly in `bun_safety::alloc::
@@ -28,7 +26,6 @@ pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
 ///    which `has_ptr(StdAllocator)` cannot dispatch on. They are intentionally
 ///    omitted (safe under-approximation — `has_ptr` may return `false`).
 pub fn register_safety_vtables() {
-    bun_safety::register_alloc_vtable(allocation_scope::std_vtable());
     bun_safety::register_alloc_vtable(linux_mem_fd_allocator::std_vtable());
     for vt in mimalloc_arena::std_vtables() {
         bun_safety::register_alloc_vtable(vt);

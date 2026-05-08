@@ -109,9 +109,9 @@ pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
 
     // 6. Push high-tier allocator vtable addresses into the
     //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
-    //    checks can identify `AllocationScope`/`LinuxMemFdAllocator`/
-    //    `MimallocArena` instances (Zig: inline `isInstance` chain in
-    //    `safety/alloc.zig:hasPtr`). Runs once; reads are lock-free Relaxed.
+    //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances
+    //    (Zig: inline `isInstance` chain in `safety/alloc.zig:hasPtr`).
+    //    Runs once; reads are lock-free Relaxed.
     bun_runtime::allocators::register_safety_vtables();
 
     // 7. CLI dispatch.

@@ -53,8 +53,6 @@ pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JS
         )));
     }
 
-    // PERF(port): was bun.AllocationScope (debug-tracked allocator) — global mimalloc in Phase A
-
     let mut stringifier = Stringifier::init(global, space_value)?;
 
     if let Err(err) = stringifier.find_anchors_and_aliases(global, value, ValueOrigin::Root) {

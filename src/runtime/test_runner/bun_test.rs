@@ -3,7 +3,6 @@ use core::ptr::NonNull;
 use std::cell::{Cell, UnsafeCell};
 use std::rc::{Rc, Weak};
 
-use crate::allocators::allocation_scope::AllocationScope;
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
@@ -623,7 +622,6 @@ pub enum Phase {
 pub struct BunTest {
     pub bun_test_root: *mut BunTestRoot,
     pub in_run_loop: bool,
-    pub allocation_scope: AllocationScope,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
     // PERF(port): was arena bulk-free for per-file scratch
     pub file_id: FileId,
@@ -658,16 +656,9 @@ impl BunTest {
     ) -> Self {
         let _g = group_begin!();
 
-        // Zig sets up allocation_scope/gpa/arena first then re-assigns *this.
-        // In Rust we construct directly. Zig: `.init(outer_gpa)` — `outer_gpa` was
-        // dropped per PORTING.md §Allocators (non-AST crate); `init_default()`
-        // resolves to the global mimalloc-backed `StdAllocator`.
-        let allocation_scope = AllocationScope::init_default();
-
         BunTest {
             bun_test_root,
             in_run_loop: false,
-            allocation_scope,
             phase: Phase::Collection,
             file_id,
             collection: Collection::init(bun_test_root),
@@ -1331,7 +1322,7 @@ impl Drop for BunTest {
             // SAFETY: entries were Box::into_raw'd in generic_hook; we own them
             unsafe { drop(Box::from_raw(entry)); }
         }
-        // execution, collection, result_queue, allocation_scope: dropped automatically
+        // execution, collection, result_queue: dropped automatically
         // PERF(port): was arena bulk-free (arena_allocator.deinit)
     }
 }

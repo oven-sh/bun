@@ -167,7 +167,6 @@ pub use bun_alloc as allocators;
 pub use bun_alloc::memory;
 pub use bun_alloc::mimalloc;
 pub use bun_alloc::MimallocArena;
-pub use bun_runtime::allocators::allocation_scope::AllocationScope;
 pub use bun_alloc::NullableAllocator;
 pub use bun_alloc::MaxHeapAllocator;
 pub use bun_alloc::heap_breakdown;

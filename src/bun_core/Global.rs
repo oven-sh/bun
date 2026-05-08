@@ -145,7 +145,7 @@ pub type DumpOptions = DumpStackTraceOptions;
 /// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
 /// and `std::backtrace` cannot resolve a stored address list). This is a
 /// deliberate debug-UX downgrade vs the Zig spec for the *stored*-trace path
-/// (ref_count / allocation_scope leak reports); the *current*-stack path below
+/// (ref_count leak reports); the *current*-stack path below
 /// uses `std::backtrace` and stays symbolicated. Crash-report paths that need
 /// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
 /// directly — that crate sits above us so it owns the rich impl without a hook.

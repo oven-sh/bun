@@ -6,9 +6,9 @@
 //! [`bun_alloc::StdAllocator`] (the literal `{ptr, vtable}` struct) so the
 //! comparison semantics are identical — no fat-pointer transmutes.
 //!
-//! Higher-tier `is_instance` checks (`MimallocArena`, `allocation_scope`,
-//! `LinuxMemFdAllocator`, `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`,
-//! arena vtable) live in crates above `bun_safety` in the dep graph; they
+//! Higher-tier `is_instance` checks (`MimallocArena`, `LinuxMemFdAllocator`,
+//! `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`, arena vtable)
+//! live in crates above `bun_safety` in the dep graph; they
 //! register their vtable addresses via [`crate::register_alloc_vtable`] at
 //! init (data moved down, no fn-ptr hook). `MimallocArena` is in `bun_alloc`
 //! (below us) so its `is_instance` is called directly.
@@ -25,8 +25,8 @@ fn has_ptr(alloc: StdAllocator) -> bool {
         || core::ptr::eq(alloc.vtable, basic::Z_ALLOCATOR.vtable)
         || bun_alloc::MimallocArena::is_instance(&alloc)
         || bun_alloc::String::is_wtf_allocator(alloc)
-        // Higher-tier allocators (arena, allocation_scope, LinuxMemFdAllocator,
-        // MaxHeapAllocator, CachedBytecode, bundle_v2, heap_breakdown::Zone)
+        // Higher-tier allocators (arena, LinuxMemFdAllocator, MaxHeapAllocator,
+        // CachedBytecode, bundle_v2, heap_breakdown::Zone)
         // push their vtable addresses into the registry at init. Empty
         // registry ⇒ `false` (safe under-approximation).
         || crate::known_alloc_vtable(alloc)

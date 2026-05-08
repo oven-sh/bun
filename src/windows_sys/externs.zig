@@ -161,7 +161,6 @@ pub const MEMORY_RESOURCE_NOTIFICATION_TYPE = enum(c_int) {
     HighMemoryResourceNotification = 1,
 };
 pub extern "kernel32" fn CreateMemoryResourceNotification(NotificationType: MEMORY_RESOURCE_NOTIFICATION_TYPE) callconv(.winapi) ?HANDLE;
-pub extern "kernel32" fn QueryMemoryResourceNotification(ResourceNotificationHandle: HANDLE, ResourceState: *BOOL) callconv(.winapi) BOOL;
 pub const WAITORTIMERCALLBACK = *const fn (lpParameter: ?*anyopaque, TimerOrWaitFired: BOOLEAN) callconv(.winapi) void;
 pub extern "kernel32" fn RegisterWaitForSingleObject(phNewWaitObject: *HANDLE, hObject: HANDLE, Callback: WAITORTIMERCALLBACK, Context: ?*anyopaque, dwMilliseconds: windows.ULONG, dwFlags: windows.ULONG) callconv(.winapi) BOOL;
 pub extern "kernel32" fn UnregisterWaitEx(WaitHandle: HANDLE, CompletionEvent: ?HANDLE) callconv(.winapi) BOOL;

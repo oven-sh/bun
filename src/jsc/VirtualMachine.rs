@@ -1529,7 +1529,7 @@ pub struct RuntimeHooks {
         formatter: &'a mut crate::console_object::Formatter<'f>,
         writer: &'a mut dyn bun_io::Write,
         value: JSValue,
-        name_buf: &'a mut [u8; 512],
+        name_buf: &'a [u8; 512],
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
     /// `bun.bun_js.applyStandaloneRuntimeFlags(b, graph)` — spec

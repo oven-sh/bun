@@ -1633,7 +1633,7 @@ unsafe fn console_print_runtime_object<'a, 'f>(
     formatter: &'a mut bun_jsc::Formatter<'f>,
     writer: &'a mut dyn bun_io::Write,
     value: JSValue,
-    name_buf: &'a mut [u8; 512],
+    name_buf: &'a [u8; 512],
     enable_ansi_colors: bool,
 ) -> JsResult<bool> {
     if enable_ansi_colors {
@@ -1647,7 +1647,7 @@ fn console_print_runtime_object_inner<const C: bool>(
     formatter: &mut bun_jsc::Formatter<'_>,
     writer_: &mut dyn bun_io::Write,
     value: JSValue,
-    name_buf: &mut [u8; 512],
+    name_buf: &[u8; 512],
 ) -> JsResult<bool> {
     use core::fmt::Write as _;
     use bun_jsc::{ConsoleFormatter as _, JsClass as _};

@@ -632,7 +632,6 @@ pub fn from_js_host_call(
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `TopExceptionScope::init`, replacing Zig's explicit `@src()` argument.
 #[track_caller]
-#[inline(always)]
 pub fn from_js_host_call_generic<R>(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> R,

@@ -803,6 +803,55 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
     }
 
+    /// Port of `bun_js.Run.bootBunShell` (src/bun.js.zig:142) — run a `.sh`
+    /// entry point through the bun-shell on a `MiniEventLoop` without ever
+    /// initializing JSC.
+    #[cold]
+    fn boot_bun_shell(
+        ctx: &mut ContextData,
+        entry_path: &[u8],
+    ) -> Result<crate::shell::ExitCode, bun_core::Error> {
+        // Dummy transpiler so we can load .env (Zig: "this is a hack").
+        let mut args = ctx.args.clone();
+        args.write = Some(false);
+        args.resolve = Some(api::ResolveMode::Lazy);
+        args.target = Some(api::Target::Bun);
+        let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
+        bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
+
+        let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
+        let mini = bun_event_loop::MiniEventLoop::init_global(
+            // SAFETY: `bundle.env` points to the process-lifetime DotEnv
+            // singleton (set by `Transpiler::init`); erasing the borrowed
+            // lifetime mirrors the `run_package_script_foreground` handoff.
+            Some(unsafe { &mut *bundle.env.cast::<DotEnv::Loader<'static>>() }),
+            None,
+        );
+        // SAFETY: `init_global` returns the thread-local singleton; single-
+        // threaded mini loop, no aliasing `&mut` exists across this call.
+        let mini = unsafe { &mut *mini };
+        mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
+
+        // `initAndRunFromFile`: read source then delegate to `..._from_source`.
+        let mut path_buf = PathBuffer::uninit();
+        path_buf[..entry_path.len()].copy_from_slice(entry_path);
+        path_buf[entry_path.len()] = 0;
+        // SAFETY: NUL-terminated above; `path_buf` outlives the call.
+        let path_z = unsafe { ZStr::from_raw(path_buf.as_ptr(), entry_path.len()) };
+        let src = match sys::File::read_from(Fd::cwd(), path_z) {
+            Ok(bytes) => bytes,
+            Err(err) => return Err(err.into()),
+        };
+
+        crate::shell::Interpreter::init_and_run_from_source(
+            ctx,
+            mini,
+            bun_paths::basename(entry_path),
+            &src,
+            None,
+        )
+    }
+
     /// Port of `bun_js.Run.boot` (src/bun.js.zig) — `VirtualMachine::init`,
     /// hand off CLI state, then enter `Run::start` under the JSC API lock.
     pub(crate) fn boot(
@@ -817,6 +866,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
+        }
+
+        // The shell does not need to initialize JSC (saves 1-3ms).
+        if strings::has_suffix_comptime(&entry_path, b".sh") {
+            let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
+            Global::exit(exit_code as u32);
         }
 
         // PORT NOTE: `jsc::initialize(false)` + `Expr/Stmt::Store::create()` +

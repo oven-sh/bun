@@ -601,7 +601,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
     const cargoCrossEnsure =
       cfg.rustToolchain !== undefined
-        ? `${stream} $env ${rustup} toolchain install ${cfg.rustToolchain} --force --profile minimal --component rust-src --target $rust_target`
+        ? `${stream} $env ${rustup} toolchain install ${cfg.rustToolchain} --force --component rust-src --target $rust_target`
         : `${stream} $env ${rustup} target add $rust_target`;
     n.rule("dep_cargo_cross", {
       command: `${cargoCrossEnsure} && ${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`,

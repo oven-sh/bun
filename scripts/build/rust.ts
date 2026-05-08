@@ -203,11 +203,23 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // Only registered when `cfg.rustToolchain` is pinned and `cfg.cargo` is a
   // rustup proxy — otherwise there's no channel to install / no `rustup` to
   // call, and toolchain management is the user's problem.
+  // `--console` on the rustup step too: it's sequential with cargo (both
+  // sides of `&&`) and the rule already takes the console pool, so there's
+  // no interleaving risk — and `--console` inherits stdio directly, which
+  // matters because stream.ts's pipe path can drop a fast-failing child's
+  // output (it `process.exit()`s on `close` before the async stdout writes
+  // drain). Without it, a failed `toolchain install` shows no error at all.
+  //
+  // No `--profile minimal`: the agent already has the default profile, and
+  // rustup applies `--profile` to the install spec, not just first-install —
+  // requesting a *narrower* profile on a `--force` reinstall is asking for
+  // trouble. We only care that `rust-src` and `rust-std-<triple>` exist on
+  // top of whatever profile is there.
   const rustup = findRustup(cfg);
   if (rustup !== undefined && cfg.rustToolchain !== undefined) {
     n.rule("rust_build_cross", {
       command:
-        `${stream} $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --profile minimal --component rust-src $rust_target_arg && ` +
+        `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && ` +
         `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
       description: "cargo bun_bin → $label ($rust_target_arg)",
       pool: "console",

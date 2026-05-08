@@ -139,10 +139,10 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     // "true || dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
-                    e_.right = p.visit_expr(e_.right);
+                    p.visit_expr(&mut e_.right);
                     p.is_control_flow_dead = old;
                 } else {
-                    e_.right = p.visit_expr(e_.right);
+                    p.visit_expr(&mut e_.right);
                 }
             }
             Op::Code::BinLogicalAnd => {
@@ -151,10 +151,10 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     // "false && dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
-                    e_.right = p.visit_expr(e_.right);
+                    p.visit_expr(&mut e_.right);
                     p.is_control_flow_dead = old;
                 } else {
-                    e_.right = p.visit_expr(e_.right);
+                    p.visit_expr(&mut e_.right);
                 }
             }
             Op::Code::BinNullishCoalescing => {
@@ -163,14 +163,14 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     // "notNullOrUndefined ?? dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
-                    e_.right = p.visit_expr(e_.right);
+                    p.visit_expr(&mut e_.right);
                     p.is_control_flow_dead = old;
                 } else {
-                    e_.right = p.visit_expr(e_.right);
+                    p.visit_expr(&mut e_.right);
                 }
             }
             _ => {
-                e_.right = p.visit_expr(e_.right);
+                p.visit_expr(&mut e_.right);
             }
         }
         p.decorator_class_name = prev_decorator_class_name;
@@ -700,7 +700,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                             .expect("unreachable");
                     }
 
-                    e_.right = p.visit_expr(e_.right);
+                    p.visit_expr(&mut e_.right);
                     e_.left = Expr {
                         data: ExprData::EPrivateIdentifier(private),
                         loc: e_.left.loc,

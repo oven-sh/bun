@@ -2220,7 +2220,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     self.is_revisit_for_substitution = true;
                     // O(n^2) and we will need to think more carefully about
                     // this once we implement syntax compression
-                    *expr = self.visit_expr(result);
+                    *expr = result;
+                    self.visit_expr(expr);
                     self.is_revisit_for_substitution = prev_substituting;
                 } else {
                     *expr = result;
@@ -5512,7 +5513,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         match replacement {
             ReplaceableExport::Delete => false,
             ReplaceableExport::Replace(value) => {
-                decl.value = Some(self.visit_expr(*value));
+                let mut v = *value;
+                self.visit_expr(&mut v);
+                decl.value = Some(v);
                 true
             }
             ReplaceableExport::Inject { name, value } => {
@@ -5524,9 +5527,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let r#ref = self
                     .declare_symbol(js_ast::symbol::Kind::Other, bind_loc, name)
                     .expect("unreachable");
+                let mut v = Expr { data: value.data, loc: val_loc };
+                self.visit_expr(&mut v);
                 *decl = G::Decl {
                     binding: self.b(B::Identifier { r#ref }, bind_loc),
-                    value: Some(self.visit_expr(Expr { data: value.data, loc: val_loc })),
+                    value: Some(v),
                 };
                 true
             }

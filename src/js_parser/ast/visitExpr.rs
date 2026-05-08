@@ -39,53 +39,58 @@ use js_ast::OpCode as Op;
 // `visit_expr_in_out` are surfaced.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
-    pub fn visit_expr(&mut self, expr: Expr) -> Expr {
+    // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
+    // through `e` can be cached in registers across child recursion. The by-value
+    // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
+    // and only writes back when the visitor produces a *different* node.
+    #[inline]
+    pub fn visit_expr(&mut self, e: &mut Expr) {
         // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)` — SCAN_ONLY
         // monomorphizations must never reach the visit pass.
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run visit_expr",
         );
-        self.visit_expr_in_out(expr, ExprIn::default())
+        self.visit_expr_in_out(e, ExprIn::default())
     }
 
-    pub fn visit_expr_in_out(&mut self, expr: Expr, in_: ExprIn) -> Expr {
-        if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(expr) {
+    pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+        if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(*e) {
             self.log()
-                .add_error(Some(self.source), expr.loc, b"Invalid assignment target")
+                .add_error(Some(self.source), e.loc, b"Invalid assignment target")
                 .expect("unreachable");
         }
 
         // Zig dispatches via `inline else => |tag| if (comptime @hasDecl(visitors, @tagName(tag)))`.
         // Rust has no struct-decl reflection; expand to an explicit match over the tags that have
-        // a visitor defined below. Any tag without a visitor returns `expr` unchanged.
+        // a visitor defined below. Any tag without a visitor leaves `*e` unchanged.
         use js_ast::ExprTag as Tag;
-        match expr.data.tag() {
-            Tag::ENewTarget => Self::e_new_target(self, expr, in_),
-            Tag::EString => Self::e_string(self, expr, in_),
-            Tag::ENumber => Self::e_number(self, expr, in_),
-            Tag::EThis => Self::e_this(self, expr, in_),
-            Tag::EImportMeta => Self::e_import_meta(self, expr, in_),
-            Tag::ESpread => Self::e_spread(self, expr, in_),
-            Tag::EIdentifier => Self::e_identifier(self, expr, in_),
-            Tag::EJsxElement => Self::e_jsx_element(self, expr, in_),
-            Tag::ETemplate => Self::e_template(self, expr, in_),
-            Tag::EBinary => Self::e_binary(self, expr, in_),
-            Tag::EIndex => Self::e_index(self, expr, in_),
-            Tag::EUnary => Self::e_unary(self, expr, in_),
-            Tag::EDot => Self::e_dot(self, expr, in_),
-            Tag::EIf => Self::e_if(self, expr, in_),
-            Tag::EAwait => Self::e_await(self, expr, in_),
-            Tag::EYield => Self::e_yield(self, expr, in_),
-            Tag::EArray => Self::e_array(self, expr, in_),
-            Tag::EObject => Self::e_object(self, expr, in_),
-            Tag::EImport => Self::e_import(self, expr, in_),
-            Tag::ECall => Self::e_call(self, expr, in_),
-            Tag::ENew => Self::e_new(self, expr, in_),
-            Tag::EArrow => Self::e_arrow(self, expr, in_),
-            Tag::EFunction => Self::e_function(self, expr, in_),
-            Tag::EClass => Self::e_class(self, expr, in_),
-            _ => expr,
+        match e.data.tag() {
+            Tag::ENewTarget => Self::e_new_target(self, e, in_),
+            Tag::EString => Self::e_string(self, e, in_),
+            Tag::ENumber => Self::e_number(self, e, in_),
+            Tag::EThis => Self::e_this(self, e, in_),
+            Tag::EImportMeta => Self::e_import_meta(self, e, in_),
+            Tag::ESpread => Self::e_spread(self, e, in_),
+            Tag::EIdentifier => Self::e_identifier(self, e, in_),
+            Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
+            Tag::ETemplate => Self::e_template(self, e, in_),
+            Tag::EBinary => Self::e_binary(self, e, in_),
+            Tag::EIndex => Self::e_index(self, e, in_),
+            Tag::EUnary => Self::e_unary(self, e, in_),
+            Tag::EDot => Self::e_dot(self, e, in_),
+            Tag::EIf => Self::e_if(self, e, in_),
+            Tag::EAwait => Self::e_await(self, e, in_),
+            Tag::EYield => Self::e_yield(self, e, in_),
+            Tag::EArray => Self::e_array(self, e, in_),
+            Tag::EObject => Self::e_object(self, e, in_),
+            Tag::EImport => Self::e_import(self, e, in_),
+            Tag::ECall => Self::e_call(self, e, in_),
+            Tag::ENew => Self::e_new(self, e, in_),
+            Tag::EArrow => Self::e_arrow(self, e, in_),
+            Tag::EFunction => Self::e_function(self, e, in_),
+            Tag::EClass => Self::e_class(self, e, in_),
+            _ => {}
         }
     }
 
@@ -93,28 +98,26 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
     // associated fns on this impl so they can see the const-generic feature params.
 
-    fn e_new_target(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+    fn e_new_target(_: &mut Self, _e: &mut Expr, _: ExprIn) {
         // this error is not necessary and it is causing breakages
         // if (!p.fn_only_data_visit.is_new_target_allowed) {
         //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
         // }
-        expr
     }
 
-    fn e_string(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+    fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
         // If you're using this, you're probably not using 0-prefixed legacy octal notation
         // if e.LegacyOctalLoc.Start > 0 {
-        expr
     }
 
-    fn e_number(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+    fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
         // idc about legacy octal loc
-        expr
     }
 
-    fn e_this(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        if let Some(exp) = p.value_for_this(expr.loc) {
-            return exp;
+    fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if let Some(exp) = p.value_for_this(e.loc) {
+            *e = exp;
+            return;
         }
 
         //                 // Capture "this" inside arrow functions that will be lowered into normal
@@ -122,37 +125,34 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
         //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
         // }
-        expr
     }
 
-    fn e_spread(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        if let js_ast::ExprData::ESpread(mut exp) = expr.data {
-            exp.value = p.visit_expr(exp.value);
+    fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if let js_ast::ExprData::ESpread(mut exp) = e.data {
+            p.visit_expr(&mut exp.value);
         }
-        expr
     }
 
-    fn e_await(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        if let js_ast::ExprData::EAwait(mut e_) = expr.data {
+    fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if let js_ast::ExprData::EAwait(mut e_) = e.data {
             p.await_target = Some(e_.value.data);
-            e_.value = p.visit_expr(e_.value);
+            p.visit_expr(&mut e_.value);
         }
-        expr
     }
 
-    fn e_yield(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        if let js_ast::ExprData::EYield(mut e_) = expr.data {
-            if let Some(val) = e_.value {
-                e_.value = Some(p.visit_expr(val));
+    fn e_yield(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if let js_ast::ExprData::EYield(mut e_) = e.data {
+            if let Some(val) = e_.value.as_mut() {
+                p.visit_expr(val);
             }
         }
-        expr
     }
 
     // ─── heavy visitors ─────────────────────────────────────────────────────
     // e_* accessors on `expr::Data` return Option<StoreRef<T>> / Option<T>.
 
-    fn e_import_meta(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_import_meta(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         // TODO: delete import.meta might not work
         let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
 
@@ -166,19 +166,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     continue;
                 }
                 // Substitute user-specified defines
-                return p.value_for_define(
+                *e = p.value_for_define(
                     expr.loc,
                     in_.assign_target,
                     is_delete_target,
                     &define.data,
                 );
+                return;
             }
         }
-
-        expr
     }
 
-    fn e_identifier(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         let mut e_ = expr.data.e_identifier().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target.tag(), Tag::EIdentifier)
             && e_.ref_.eql(p.delete_target.e_identifier().expect("infallible: variant checked").ref_);
@@ -286,7 +286,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         || in_.assign_target == js_ast::AssignTarget::None
                     {
                         p.ignore_usage(e_.ref_);
-                        return newvalue;
+                        *e = newvalue;
+                        return;
                     }
 
                     original_name = def.original_name();
@@ -326,11 +327,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     p.record_usage_of_runtime_require();
                 }
 
-                return p.value_for_require(expr.loc);
+                *e = p.value_for_require(expr.loc);
+                return;
             }
         }
 
-        p.handle_identifier(
+        *e = p.handle_identifier(
             expr.loc,
             e_,
             original_name,
@@ -347,9 +349,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .eql(p.call_target.e_identifier().expect("infallible: variant checked").ref_),
                 )
                 .with_was_originally_identifier(true),
-        )
+        );
     }
-    fn e_jsx_element(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         use crate::parser::{options, JSXImport, JSXTransformType};
         let _ = in_;
         let mut e_ = expr.data.e_jsx_element().expect("infallible: variant checked");
@@ -357,8 +360,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         match J::KIND {
             JSXTransformType::React => {
                 let tag: Expr = 'tagger: {
-                    if let Some(_tag) = e_.tag {
-                        break 'tagger p.visit_expr(_tag);
+                    if let Some(mut _tag) = e_.tag {
+                        p.visit_expr(&mut _tag);
+                        break 'tagger _tag;
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
                         // PORT NOTE: `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
@@ -385,15 +389,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 for property in e_.properties.slice_mut() {
                     if property.kind != G::PropertyKind::Spread {
-                        property.key = Some(p.visit_expr(property.key.expect("infallible: prop has key")));
+                        p.visit_expr(property.key.as_mut().expect("infallible: prop has key"));
                     }
 
-                    if property.value.is_some() {
-                        property.value = Some(p.visit_expr(property.value.expect("infallible: prop has value")));
+                    if let Some(v) = property.value.as_mut() {
+                        p.visit_expr(v);
                     }
 
-                    if property.initializer.is_some() {
-                        property.initializer = Some(p.visit_expr(property.initializer.unwrap()));
+                    if let Some(v) = property.initializer.as_mut() {
+                        p.visit_expr(v);
                     }
                 }
 
@@ -435,7 +439,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     let children_elements = &e_.children.slice()[0..children_count as usize];
                     for child in children_elements {
-                        let arg = p.visit_expr(*child);
+                        let mut arg = *child;
+                        p.visit_expr(&mut arg);
                         if !matches!(arg.data, Data::EMissing(..)) {
                             // PERF(port): was assume_capacity
                             VecExt::append(&mut args, arg).expect("oom");
@@ -469,7 +474,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     };
 
                     // Call createElement()
-                    return p.new_expr(
+                    *e = p.new_expr(
                         E::Call {
                             target,
                             args,
@@ -486,6 +491,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         },
                         expr.loc,
                     );
+                    return;
                 }
                 // function jsxDEV(type, config, maybeKey, source, self) {
                 else if runtime == options::JSX::Runtime::Automatic {
@@ -515,8 +521,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // while iterating a slice over the same buffer. Iterate by index to avoid
                         // borrowck on `e_.children`.
                         for i in 0..children_count {
-                            let child = e_.children.slice()[i as usize];
-                            let visited = p.visit_expr(child);
+                            let mut visited = e_.children.slice()[i as usize];
+                            p.visit_expr(&mut visited);
                             e_.children.slice_mut()[last_child as usize] = visited;
                             // if tree-shaking removes the element, we must also remove it here.
                             last_child += u32::from(!matches!(
@@ -643,7 +649,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     let jsx_target = p.jsx_import_automatic(expr.loc, is_static_jsx);
-                    return p.new_expr(
+                    *e = p.new_expr(
                         E::Call {
                             target: jsx_target,
                             args,
@@ -661,6 +667,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         },
                         expr.loc,
                     );
+                    return;
                 } else {
                     unreachable!();
                 }
@@ -668,11 +675,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             _ => unreachable!(),
         }
     }
-    fn e_template(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_template(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag {
-            e_.tag = Some(p.visit_expr(tag));
+            p.visit_expr(e_.tag.as_mut().unwrap());
 
             if Self::ALLOW_MACROS {
                 let ref_ = match &e_.tag.unwrap().data {
@@ -688,7 +696,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if let Some(macro_ref_data) = p.macro_.refs.get(&ref_.unwrap()).copied() {
                         p.ignore_usage(ref_.unwrap());
                         if p.is_control_flow_dead {
-                            return p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            return;
                         }
 
                         // this ordering incase someone wants to use a macro in a node_module conditionally
@@ -696,7 +705,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             p.log()
                                 .add_error(Some(p.source), tag.loc, b"Macros are disabled")
                                 .expect("unreachable");
-                            return p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            return;
                         }
 
                         if p.source.path.is_node_module() {
@@ -707,7 +717,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     b"For security reasons, macros cannot be run from node_modules.",
                                 )
                                 .expect("unreachable");
-                            return p.new_expr(E::Undefined {}, expr.loc);
+                            *e = p.new_expr(E::Undefined {}, expr.loc);
+                            return;
                         }
 
                         p.macro_call_count += 1;
@@ -741,11 +752,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 name,
                             )
                         else {
-                            return expr;
+                            return;
                         };
 
                         if !matches!(macro_result.data, Data::ETemplate(..)) {
-                            return p.visit_expr(macro_result);
+                            *e = macro_result;
+                            p.visit_expr(e);
+                            return;
                         }
                     }
                 }
@@ -754,18 +767,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // `Template.parts` is arena-owned (Zig: `[]E.TemplatePart`).
         for part in e_.parts_mut().iter_mut() {
-            part.value = p.visit_expr(part.value);
+            p.visit_expr(&mut part.value);
         }
 
         // When mangling, inline string values into the template literal. Note that
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
-            return e_.fold(p.arena, expr.loc);
+            *e = e_.fold(p.arena, expr.loc);
+            return;
         }
-        expr
     }
-    fn e_binary(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         use crate::ast::visit_binary_expression::BinaryExpressionVisitor;
         let mut e_ = expr.data.e_binary().expect("infallible: variant checked");
 
@@ -824,7 +838,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // in that case that we don't want to miss (before the top-level "switch"
             // statement).
             if left_binary.is_none() || left_in.assign_target != js_ast::AssignTarget::None {
-                v.e.left = p.visit_expr_in_out(left, left_in);
+                p.visit_expr_in_out(&mut v.e.left, left_in);
                 current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
                 break;
             }
@@ -850,10 +864,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
         }
 
-        current
+        *e = current;
     }
 
-    fn e_index(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_index(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
@@ -880,19 +895,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.delete_target = dot.data;
                     }
 
-                    return p.visit_expr_in_out(dot, in_);
+                    *e = dot;
+                    p.visit_expr_in_out(e, in_);
+                    return;
                 }
             }
         }
 
-        let target_visited = p.visit_expr_in_out(
-            e_.target,
-            ExprIn {
-                has_chain_parent: e_.optional_chain == Some(js_ast::OptionalChain::Continuation),
-                ..Default::default()
-            },
+        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
+        p.visit_expr_in_out(
+            &mut e_.target,
+            ExprIn { has_chain_parent, ..Default::default() },
         );
-        e_.target = target_visited;
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -979,8 +993,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 e_.index = Expr { data: Data::EPrivateIdentifier(private), loc: e_.index.loc };
             }
             _ => {
-                let index = p.visit_expr(e_.index);
-                e_.index = index;
+                p.visit_expr(&mut e_.index);
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
@@ -1007,7 +1020,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             }
 
                             // don't call visitExprInOut on `dot` because we've already visited `target` above!
-                            return dot;
+                            *e = dot;
+                            return;
                         }
 
                         // Handle property rewrites to ensure things
@@ -1025,7 +1039,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 .with_is_delete_target(is_delete_target)
                                 .with_assign_target(in_.assign_target),
                         ) {
-                            return rewrite;
+                            *e = rewrite;
+                            return;
                         }
                     }
                 }
@@ -1050,13 +1065,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 debug_assert!(strings::is_all_ascii(&literal));
                             }
                             if num < literal.len() {
-                                return p.new_expr(
+                                *e = p.new_expr(
                                     E::String {
                                         data: E::Str::new(&literal[num..num + 1]),
                                         ..Default::default()
                                     },
                                     expr.loc,
                                 );
+                                return;
                             }
                         }
                     } else if let Some(array) = target.data.as_e_array() {
@@ -1064,7 +1080,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if array.items.len_u32() == 1 && number.value == 0.0 {
                             let inlined = *array.items.at(0);
                             if inlined.can_be_inlined_from_property_access() {
-                                return inlined;
+                                *e = inlined;
+                                return;
                             }
                         }
 
@@ -1075,12 +1092,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let inlined = *array.items.at(int);
                             // ['a', , 'c'][1] -> undefined
                             if matches!(inlined.data, Data::EMissing(..)) {
-                                return p.new_expr(E::Undefined {}, inlined.loc);
+                                *e = p.new_expr(E::Undefined {}, inlined.loc);
+                                return;
                             }
                             if cfg!(debug_assertions) {
                                 debug_assert!(inlined.can_be_inlined_from_property_access());
                             }
-                            return inlined;
+                            *e = inlined;
+                            return;
                         }
                     }
                 }
@@ -1115,18 +1134,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // PORT NOTE: `e_` is `StoreRef<E::Index>` — mutations above wrote through
         // DerefMut into the same arena slot `expr.data` already points at. Zig's
-        // `p.newExpr(e_, loc)` re-wraps the same pointer; here `expr` is already that.
-        expr
+        // `p.newExpr(e_, loc)` re-wraps the same pointer; here `*e` is already that.
     }
 
-    fn e_unary(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+    fn e_unary(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        let expr = *e;
         let mut e_ = expr.data.e_unary().expect("infallible: variant checked");
         match e_.op {
             Op::UnTypeof => {
                 let id_before = matches!(e_.value.data, Data::EIdentifier(..));
-                e_.value = p.visit_expr_in_out(
-                    e_.value,
-                    ExprIn { assign_target: Op::unary_assign_target(e_.op), ..Default::default() },
+                let assign_target = Op::unary_assign_target(e_.op);
+                p.visit_expr_in_out(
+                    &mut e_.value,
+                    ExprIn { assign_target, ..Default::default() },
                 );
                 let id_after = matches!(e_.value.data, Data::EIdentifier(..));
 
@@ -1144,26 +1164,29 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
                     p.ignore_usage_of_runtime_require();
-                    return p.new_expr(
+                    *e = p.new_expr(
                         E::String { data: b"function".into(), ..Default::default() },
                         expr.loc,
                     );
+                    return;
                 }
 
                 if let Some(typeof_) = SideEffects::typeof_(&e_.value.data) {
-                    return p.new_expr(E::String { data: typeof_.into(), ..Default::default() }, expr.loc);
+                    *e = p.new_expr(E::String { data: typeof_.into(), ..Default::default() }, expr.loc);
+                    return;
                 }
             }
             Op::UnDelete => {
-                e_.value = p.visit_expr_in_out(
-                    e_.value,
+                p.visit_expr_in_out(
+                    &mut e_.value,
                     ExprIn { has_chain_parent: true, ..Default::default() },
                 );
             }
             _ => {
-                e_.value = p.visit_expr_in_out(
-                    e_.value,
-                    ExprIn { assign_target: Op::unary_assign_target(e_.op), ..Default::default() },
+                let assign_target = Op::unary_assign_target(e_.op);
+                p.visit_expr_in_out(
+                    &mut e_.value,
+                    ExprIn { assign_target, ..Default::default() },
                 );
 
                 // Post-process the unary expression
@@ -1175,42 +1198,49 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         let side_effects = SideEffects::to_boolean(p, &e_.value.data);
                         if side_effects.ok {
-                            return p.new_expr(E::Boolean { value: !side_effects.value }, expr.loc);
+                            *e = p.new_expr(E::Boolean { value: !side_effects.value }, expr.loc);
+                            return;
                         }
 
                         if p.options.features.minify_syntax {
                             if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.arena) {
-                                return exp;
+                                *e = exp;
+                                return;
                             }
                             if let Data::EImportMetaMain(m) = &mut e_.value.data {
                                 m.inverted = !m.inverted;
-                                return e_.value;
+                                *e = e_.value;
+                                return;
                             }
                         }
                     }
                     Op::UnCpl => {
                         if p.should_fold_typescript_constant_expressions {
                             if let Some(value) = SideEffects::to_number(&e_.value.data) {
-                                return p.new_expr(
+                                *e = p.new_expr(
                                     E::Number { value: f64::from(!float_to_int32(value)) },
                                     expr.loc,
                                 );
+                                return;
                             }
                         }
                     }
                     Op::UnVoid => {
                         if p.expr_can_be_removed_if_unused(&e_.value) {
-                            return p.new_expr(E::Undefined {}, e_.value.loc);
+                            *e = p.new_expr(E::Undefined {}, e_.value.loc);
+                            return;
                         }
                     }
                     Op::UnPos => {
                         if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            return p.new_expr(E::Number { value: num }, expr.loc);
+                            *e = p.new_expr(E::Number { value: num }, expr.loc);
+                            return;
                         }
                     }
                     Op::UnNeg => {
                         if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            return p.new_expr(E::Number { value: -num }, expr.loc);
+                            *e = p.new_expr(E::Number { value: -num }, expr.loc);
+                            return;
                         }
                     }
 
@@ -1235,7 +1265,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
                         if let Data::EBinary(comma) = &e_.value.data {
                             if comma.op == Op::BinComma {
-                                return comma.left.join_with_comma(p.new_expr(
+                                *e = comma.left.join_with_comma(p.new_expr(
                                     E::Unary {
                                         op: e_.op,
                                         value: comma.right,
@@ -1243,15 +1273,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     },
                                     comma.right.loc,
                                 ));
+                                return;
                             }
                         }
                     }
                 }
             }
         }
-        expr
     }
-    fn e_dot(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_dot(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
@@ -1266,12 +1297,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if in_.assign_target == js_ast::AssignTarget::None {
                         // Substitute user-specified defines
                         if !define.data.valueless() {
-                            return p.value_for_define(
+                            *e = p.value_for_define(
                                 expr.loc,
                                 in_.assign_target,
                                 is_delete_target,
                                 &define.data,
                             );
+                            return;
                         }
 
                         if define.data.method_call_must_be_replaced_with_undefined()
@@ -1319,8 +1351,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        e_.target = p.visit_expr_in_out(
-            e_.target,
+        p.visit_expr_in_out(
+            &mut e_.target,
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: in_
                     .property_access_for_method_call_maybe_should_replace_with_undefined,
@@ -1332,7 +1364,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {
             // we do not need to call p.recordUsageOfRuntimeRequire(); because `require`
             // was not a call target. even if the call target is `require.resolve`, it should be set.
-            return Expr { data: Data::ERequireResolveCallTarget, loc: expr.loc };
+            *e = Expr { data: Data::ERequireResolveCallTarget, loc: expr.loc };
+            return;
         }
 
         if e_.optional_chain.is_none() {
@@ -1347,7 +1380,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .with_is_delete_target(is_delete_target),
                 // .is_template_tag = p.template_tag != null,
             ) {
-                return _expr;
+                *e = _expr;
+                return;
             }
 
             if Self::ALLOW_MACROS {
@@ -1357,22 +1391,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && e_.target.data.e_object().expect("infallible: variant checked").was_originally_macro
                     {
                         if let Some(obj) = e_.target.get(&e_.name) {
-                            return obj;
+                            *e = obj;
+                            return;
                         }
                     }
                 }
             }
         }
-        expr
     }
 
-    fn e_if(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_if().expect("infallible: variant checked");
+    fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
-        e_.test_ = p.visit_expr(e_.test_);
+        p.visit_expr(&mut e_.test_);
         p.in_branch_condition = prev_in_branch;
 
         e_.test_ = SideEffects::simplify_boolean(p, e_.test_);
@@ -1380,65 +1414,70 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let side_effects = SideEffects::to_boolean(p, &e_.test_.data);
 
         if !side_effects.ok {
-            e_.yes = p.visit_expr(e_.yes);
-            e_.no = p.visit_expr(e_.no);
+            p.visit_expr(&mut e_.yes);
+            p.visit_expr(&mut e_.no);
         } else {
             // Mark the control flow as dead if the branch is never taken
             if side_effects.value {
                 // "true ? live : dead"
-                e_.yes = p.visit_expr(e_.yes);
+                p.visit_expr(&mut e_.yes);
                 let old = p.is_control_flow_dead;
                 p.is_control_flow_dead = true;
-                e_.no = p.visit_expr(e_.no);
+                p.visit_expr(&mut e_.no);
                 p.is_control_flow_dead = old;
 
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    return SideEffects::simplify_unused_expr(p, e_.test_)
+                    *e = SideEffects::simplify_unused_expr(p, e_.test_)
                         .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
                         .join_with_comma(e_.yes);
+                    return;
                 }
 
                 // "(1 ? fn : 2)()" => "fn()"
                 // "(1 ? this.fn : 2)" => "this.fn"
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 if is_call_target && e_.yes.has_value_for_this_in_call() {
-                    return p
+                    *e = p
                         .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
                         .join_with_comma(e_.yes);
+                    return;
                 }
 
-                return e_.yes;
+                *e = e_.yes;
+                return;
             } else {
                 // "false ? dead : live"
                 let old = p.is_control_flow_dead;
                 p.is_control_flow_dead = true;
-                e_.yes = p.visit_expr(e_.yes);
+                p.visit_expr(&mut e_.yes);
                 p.is_control_flow_dead = old;
-                e_.no = p.visit_expr(e_.no);
+                p.visit_expr(&mut e_.no);
 
                 // "(a, false) ? b : c" => "a, c"
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    return SideEffects::simplify_unused_expr(p, e_.test_)
+                    *e = SideEffects::simplify_unused_expr(p, e_.test_)
                         .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
                         .join_with_comma(e_.no);
+                    return;
                 }
 
                 // "(1 ? fn : 2)()" => "fn()"
                 // "(1 ? this.fn : 2)" => "this.fn"
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 if is_call_target && e_.no.has_value_for_this_in_call() {
-                    return p
+                    *e = p
                         .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
                         .join_with_comma(e_.no);
+                    return;
                 }
-                return e_.no;
+                *e = e_.no;
+                return;
             }
         }
-        expr
     }
 
-    fn e_array(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_array().expect("infallible: variant checked");
+    fn e_array(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let mut e_ = e.data.e_array().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
         }
@@ -1448,8 +1487,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             match &mut item.data {
                 Data::EMissing(..) => {}
                 Data::ESpread(spread) => {
-                    spread.value = p.visit_expr_in_out(
-                        spread.value,
+                    p.visit_expr_in_out(
+                        &mut spread.value,
                         ExprIn { assign_target: in_.assign_target, ..Default::default() },
                     );
 
@@ -1473,14 +1512,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             p.decorator_class_name =
                                 Some(p.load_name_from_ref(e2.left.data.e_identifier().expect("infallible: variant checked").ref_));
                         }
-                        e2.left = p.visit_expr_in_out(
-                            e2.left,
+                        p.visit_expr_in_out(
+                            &mut e2.left,
                             ExprIn {
                                 assign_target: js_ast::AssignTarget::Replace,
                                 ..Default::default()
                             },
                         );
-                        e2.right = p.visit_expr(e2.right);
+                        p.visit_expr(&mut e2.right);
                         p.decorator_class_name = None;
 
                         if matches!(e2.left.data.tag(), Tag::EIdentifier) {
@@ -1495,15 +1534,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             );
                         }
                     } else {
-                        *item = p.visit_expr_in_out(
-                            *item,
+                        p.visit_expr_in_out(
+                            item,
                             ExprIn { assign_target: in_.assign_target, ..Default::default() },
                         );
                     }
                 }
                 _ => {
-                    *item = p.visit_expr_in_out(
-                        *item,
+                    p.visit_expr_in_out(
+                        item,
                         ExprIn { assign_target: in_.assign_target, ..Default::default() },
                     );
                 }
@@ -1519,11 +1558,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 e_.items = items;
             }
         }
-        expr
     }
 
-    fn e_object(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_object().expect("infallible: variant checked");
+    fn e_object(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let mut e_ = e.data.e_object().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
         }
@@ -1532,11 +1570,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut has_proto = false;
         for property in e_.properties.slice_mut() {
             if property.kind != G::PropertyKind::Spread {
-                property.key = Some(p.visit_expr(
+                p.visit_expr(
                     property
                         .key
+                        .as_mut()
                         .unwrap_or_else(|| panic!("Expected property key")),
-                ));
+                );
                 let key = property.key.expect("infallible: prop has key");
                 // Forbid duplicate "__proto__" properties according to the specification
                 if !property.flags.contains(Flags::Property::IsComputed)
@@ -1598,10 +1637,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // — class-name keys are parser-produced (UTF-8, no rope).
                     p.decorator_class_name = if !key_str.is_utf16 { Some(key_str.data.slice()) } else { None };
                 }
-                property.value = Some(p.visit_expr_in_out(
-                    property.value.expect("infallible: prop has value"),
+                p.visit_expr_in_out(
+                    property.value.as_mut().expect("infallible: prop has value"),
                     ExprIn { assign_target: in_.assign_target, ..Default::default() },
-                ));
+                );
                 p.decorator_class_name = None;
             }
 
@@ -1624,7 +1663,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                     }
                 }
-                property.initializer = Some(p.visit_expr(property.initializer.unwrap()));
+                p.visit_expr(property.initializer.as_mut().unwrap());
                 p.decorator_class_name = None;
 
                 if let Some(val) = property.value {
@@ -1642,11 +1681,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
         let _ = has_spread;
-        expr
     }
-    fn e_import(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_import(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let _ = in_;
-        let mut e_ = expr.data.e_import().expect("infallible: variant checked");
+        let mut e_ = e.data.e_import().expect("infallible: variant checked");
         // We want to forcefully fold constants inside of imports
         // even when minification is disabled, so that if we have an
         // import based on a string template, it does not cause a
@@ -1659,8 +1697,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
-        e_.expr = p.visit_expr(e_.expr);
-        e_.options = p.visit_expr(e_.options);
+        p.visit_expr(&mut e_.expr);
+        p.visit_expr(&mut e_.options);
 
         // Import transposition is able to duplicate the options structure, so
         // only perform it if the expression is side effect free.
@@ -1686,13 +1724,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             p.should_fold_typescript_constant_expressions =
                 prev_should_fold_typescript_constant_expressions;
-            return p.maybe_transpose_if_import(e_.expr, &state);
+            *e = p.maybe_transpose_if_import(e_.expr, &state);
+            return;
         }
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
-        expr
     }
-    fn e_call(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
         p.call_target = e_.target.data;
 
@@ -1706,10 +1745,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         };
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        e_.target = p.visit_expr_in_out(
-            e_.target,
+        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
+        p.visit_expr_in_out(
+            &mut e_.target,
             ExprIn {
-                has_chain_parent: e_.optional_chain == Some(js_ast::OptionalChain::Continuation),
+                has_chain_parent,
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
                 ..Default::default()
             },
@@ -1836,7 +1876,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             for arg in e_.args.slice_mut() {
-                *arg = p.visit_expr(*arg);
+                p.visit_expr(arg);
             }
 
             // Restore deferred state (Zig `defer`).
@@ -1846,7 +1886,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             if method_call_should_be_replaced_with_undefined {
                 p.is_control_flow_dead = old_is_control_flow_dead;
-                return Expr { data: Data::EUndefined(E::Undefined {}), loc: expr.loc };
+                *e = Expr { data: Data::EUndefined(E::Undefined {}), loc: expr.loc };
+                return;
             }
         }
 
@@ -1855,7 +1896,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // to avoid stack memory usage from copying values back and forth.
         if p.bundler_feature_flag_ref.is_valid() {
             if let Some(result) = Self::maybe_replace_bundler_feature_call(p, &mut *e_, expr.loc) {
-                return result;
+                *e = result;
+                return;
             }
         }
 
@@ -1875,12 +1917,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 match &first.data {
                     Data::EString(..) => {
                         // require(FOO) => require(FOO)
-                        return p.transpose_require(first, &state);
+                        *e = p.transpose_require(first, &state);
+                        return;
                     }
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
-                        return p.transpose_known_to_be_if_require(first, &state);
+                        *e = p.transpose_known_to_be_if_require(first, &state);
+                        return;
                     }
                     _ => {}
                 }
@@ -1890,7 +1934,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // dead here. We don't want to spend time scanning the required files
             // if they will never be used.
             if p.is_control_flow_dead {
-                return p.new_expr(E::Null {}, expr.loc);
+                *e = p.new_expr(E::Null {}, expr.loc);
+                return;
             }
 
             if p.options.warn_about_unbundled_modules {
@@ -1913,13 +1958,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.record_usage_of_runtime_require();
             }
 
-            return expr;
+            return;
         } else if matches!(e_.target.data, Data::ERequireResolveCallTarget) {
             // Ignore calls to require.resolve() if the control flow is provably
             // dead here. We don't want to spend time scanning the required files
             // if they will never be used.
             if p.is_control_flow_dead {
-                return p.new_expr(E::Null {}, expr.loc);
+                *e = p.new_expr(E::Null {}, expr.loc);
+                return;
             }
 
             if e_.args.len_u32() == 1 {
@@ -1928,14 +1974,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
                         // (this will register dependencies)
-                        return p.transpose_require_resolve_known_string(first);
+                        *e = p.transpose_require_resolve_known_string(first);
+                        return;
                     }
                     Data::EIf(..) => {
                         // require.resolve(FOO  ? '123' : '456')
                         //  =>
                         // FOO ? require.resolve('123') : require.resolve('456')
                         // This makes static analysis later easier
-                        return p.transpose_known_to_be_if_require_resolve(first, e_.target);
+                        *e = p.transpose_known_to_be_if_require_resolve(first, e_.target);
+                        return;
                     }
                     _ => {}
                 }
@@ -1946,7 +1994,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .expect("unreachable");
             }
 
-            return expr;
+            return;
         } else if let Some(special) = e_.target.data.e_special() {
             match special {
                 E::Special::HotAccept => {
@@ -1955,7 +2003,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // code is correct, discard the entire
                     // expression in production.
                     if !p.options.features.hot_module_reloading {
-                        return Expr { data: Data::EUndefined(E::Undefined {}), loc: expr.loc };
+                        *e = Expr { data: Data::EUndefined(E::Undefined {}), loc: expr.loc };
+                        return;
                     }
                 }
                 _ => {}
@@ -1973,14 +2022,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let macro_ref_data = *p.macro_.refs.get(&ref_).unwrap();
                 p.ignore_usage(ref_);
                 if p.is_control_flow_dead {
-                    return p.new_expr(E::Undefined {}, e_.target.loc);
+                    *e = p.new_expr(E::Undefined {}, e_.target.loc);
+                    return;
                 }
 
                 if p.options.features.no_macros {
                     p.log()
                         .add_error(Some(p.source), expr.loc, b"Macros are disabled")
                         .expect("unreachable");
-                    return p.new_expr(E::Undefined {}, expr.loc);
+                    *e = p.new_expr(E::Undefined {}, expr.loc);
+                    return;
                 }
 
                 if p.source.path.is_node_module() {
@@ -1991,7 +2042,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             b"For security reasons, macros cannot be run from node_modules.",
                         )
                         .expect("unreachable");
-                    return p.new_expr(E::Undefined {}, expr.loc);
+                    *e = p.new_expr(E::Undefined {}, expr.loc);
+                    return;
                 }
 
                 let name: &[u8] = macro_ref_data
@@ -2042,12 +2094,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 )
                                 .expect("unreachable");
                         }
-                        return expr;
+                        return;
                     }
                 };
 
                 if !matches!(macro_result.data, Data::ECall(..)) {
-                    return p.visit_expr(macro_result);
+                    *e = macro_result;
+                    p.visit_expr(e);
+                    return;
                 }
             }
         }
@@ -2129,10 +2183,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if float % 1.0 == 0.0 && float < (str_.len() as f64) && float >= 0.0 {
                                 let char_ = str_[float as usize];
                                 if char_ < 0x80 {
-                                    return p.new_expr(
+                                    *e = p.new_expr(
                                         E::Number { value: f64::from(char_) },
                                         expr.loc,
                                     );
+                                    return;
                                 }
                             }
                         }
@@ -2140,16 +2195,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
         }
-
-        expr
     }
 
-    fn e_new(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+    fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
-        e_.target = p.visit_expr(e_.target);
+        p.visit_expr(&mut e_.target);
 
         for arg in e_.args.slice_mut() {
-            *arg = p.visit_expr(*arg);
+            p.visit_expr(arg);
         }
 
         if p.options.features.minify_syntax {
@@ -2160,10 +2214,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 expr.loc,
                 p.options.features.minify_whitespace,
             ) {
-                return minified;
+                *e = minified;
+                return;
             }
         }
-        expr
     }
 
     /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.
@@ -2253,11 +2307,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             loc,
         })
     }
-    fn e_arrow(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_arrow(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_arrow().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
-            return expr;
+            return;
         }
 
         // Zig: `std.mem.toBytes(...)` then `bytesToValue(...)` to save/restore. In Rust the struct
@@ -2339,17 +2394,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.handle_react_refresh_post_visit_function_body(&mut stmts_list, hook);
                 e_.body.stmts = crate::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
 
-                return p.get_react_refresh_hook_signal_init(hook, expr);
+                *e = p.get_react_refresh_hook_signal_init(hook, expr);
+                return;
             }
         }
         e_.body.stmts = crate::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
-        expr
     }
-    fn e_function(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_function(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_function().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
-            return expr;
+            return;
         }
 
         // Zig: `const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;`
@@ -2405,13 +2461,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             );
         }
 
-        final_expr
+        *e = final_expr;
     }
-    fn e_class(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+    fn e_class(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_class().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
-            return expr;
+            return;
         }
 
         // Save name from assignment context before visiting (nested visits may overwrite it)
@@ -2423,7 +2480,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
-            return p.lower_standard_decorators_expr(&mut e_, expr.loc, decorator_name_from_context);
+            *e = p.lower_standard_decorators_expr(&mut e_, expr.loc, decorator_name_from_context);
+            return;
         }
 
         // Remove unused class names when minifying (only when bundling is enabled)
@@ -2441,7 +2499,5 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         {
             e_.class_name = None;
         }
-
-        expr
     }
 }

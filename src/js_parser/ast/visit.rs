@@ -230,8 +230,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let dup: Option<&mut StringVoidMap> =
                 duplicate_args_check.as_mut().map(|g| &mut **g);
             self.visit_binding(arg.binding, dup);
-            if let Some(default) = arg.default {
-                arg.default = Some(self.visit_expr(default));
+            if let Some(default) = arg.default.as_mut() {
+                self.visit_expr(default);
             }
         }
     }
@@ -240,7 +240,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // `Vec<Expr>` is not `Copy` in Rust; mutate in place instead.
     pub fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
         for dec in decs.slice_mut() {
-            *dec = self.visit_expr(*dec);
+            self.visit_expr(dec);
         }
     }
 
@@ -317,13 +317,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                     }
                 }
-                decl.value = Some(self.visit_expr_in_out(
-                    val,
+                self.visit_expr_in_out(
+                    &mut val,
                     ExprIn {
                         is_immediately_assigned_to_decl: true,
                         ..Default::default()
                     },
-                ));
+                );
+                decl.value = Some(val);
                 self.decorator_class_name = prev_decorator_class_name;
 
                 if self.options.features.react_fast_refresh {
@@ -590,8 +591,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     AssignTarget::None
                 };
                 self.stmt_expr_value = st.value.data;
-                st.value = self.visit_expr_in_out(
-                    st.value,
+                self.visit_expr_in_out(
+                    &mut st.value,
                     ExprIn {
                         assign_target,
                         ..Default::default()
@@ -601,8 +602,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             StmtData::SLocal(mut st) => {
                 for dec in st.decls.slice_mut() {
                     self.visit_binding(dec.binding, None);
-                    if let Some(val) = dec.value {
-                        dec.value = Some(self.visit_expr(val));
+                    if let Some(val) = dec.value.as_mut() {
+                        self.visit_expr(val);
                     }
                 }
                 st.kind = self.select_local_kind(st.kind);
@@ -671,7 +672,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 }
                             }
                         }
-                        item.default_value = Some(self.visit_expr(default_value));
+                        self.visit_expr(item.default_value.as_mut().unwrap());
                         self.decorator_class_name = prev_decorator_class_name2;
 
                         if let BData::BIdentifier(bind_) = item.binding.data {
@@ -692,7 +693,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Arena-owned B::Object valid for 'a; exclusive during visit pass.
                 for property in bind.properties_mut() {
                     if !property.flags.contains(flags::Property::IsSpread) {
-                        property.key = self.visit_expr(property.key);
+                        self.visit_expr(&mut property.key);
                     }
 
                     self.visit_binding(property.value, duplicate_arg_check.as_deref_mut());
@@ -711,7 +712,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 }
                             }
                         }
-                        property.default_value = Some(self.visit_expr(default_value));
+                        self.visit_expr(property.default_value.as_mut().unwrap());
                         self.decorator_class_name = prev_decorator_class_name3;
 
                         if let BData::BIdentifier(bind_) = property.value.data {
@@ -881,8 +882,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // SAFETY: shadow_ref_ptr valid for 'a; no live &mut alias here.
         self.record_declared_symbol(unsafe { *shadow_ref_ptr });
 
-        if let Some(extends) = class.extends {
-            class.extends = Some(self.visit_expr(extends));
+        if let Some(extends) = class.extends.as_mut() {
+            self.visit_expr(extends);
         }
 
         {
@@ -949,8 +950,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => unreachable!(),
                     };
                     self.record_declared_symbol(priv_ref);
-                } else if let Some(key) = property.key {
-                    property.key = Some(self.visit_expr(key));
+                } else if let Some(key) = property.key.as_mut() {
+                    self.visit_expr(key);
                 }
 
                 // Make it an error to use "arguments" in a class body
@@ -1013,12 +1014,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 self.decorator_class_name = Some(name);
                             }
                         }
-                        let visited = self.visit_expr(val);
+                        let mut visited = val;
+                        self.visit_expr(&mut visited);
                         property.value =
                             Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
                         self.decorator_class_name = prev_dcn;
                     } else {
-                        property.value = Some(self.visit_expr(val));
+                        self.visit_expr(property.value.as_mut().unwrap());
                     }
 
                     if Self::IS_TYPESCRIPT_ENABLED {
@@ -1044,12 +1046,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 self.decorator_class_name = Some(name);
                             }
                         }
-                        let visited = self.visit_expr(val);
+                        let mut visited = val;
+                        self.visit_expr(&mut visited);
                         property.initializer =
                             Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
                         self.decorator_class_name = prev_dcn2;
                     } else {
-                        property.initializer = Some(self.visit_expr(val));
+                        self.visit_expr(property.initializer.as_mut().unwrap());
                     }
                 }
 

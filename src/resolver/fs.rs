@@ -416,6 +416,20 @@ impl FileSystem {
         }
     }
 
+    /// Link-time provider for `bun_sys::__bun_fs_top_level_dir` (PORTING.md
+    /// §Dispatch). Returns `b"."` until [`FileSystem::init`] has run so early
+    /// callers (pre-`start()`) get the Zig-equivalent fallback.
+    #[unsafe(no_mangle)]
+    pub fn __bun_fs_top_level_dir() -> &'static [u8] {
+        if !INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire) {
+            return b".";
+        }
+        // SAFETY: `INSTANCE_LOADED` Acquire synchronizes with the Release store
+        // in `init_with_force`; `top_level_dir` is `&'static [u8]` written once
+        // and never mutated.
+        unsafe { (*(*INSTANCE.get()).as_ptr()).top_level_dir }
+    }
+
     #[inline]
     pub(crate) fn instance() -> *mut FileSystem {
         // PORT NOTE: returns the raw `*mut` singleton (Zig `*FileSystem`). Do NOT

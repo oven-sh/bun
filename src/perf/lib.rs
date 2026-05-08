@@ -92,6 +92,36 @@ pub fn is_enabled() -> bool {
     IS_ENABLED.load(Ordering::SeqCst)
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Link-time providers for `bun_core::perf` (PORTING.md §Dispatch). T0 declares
+// `extern "Rust" { __bun_perf_* }`; `bun_perf` is the sole `#[no_mangle]`
+// definer. Wraps the platform `Ctx` (boxed) into the T0 opaque
+// `bun_core::perf::Ctx { end, data }` handle.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[unsafe(no_mangle)]
+pub fn __bun_perf_is_enabled() -> bool {
+    is_enabled()
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_perf_trace_begin(_name: &'static str) -> bun_core::perf::Ctx {
+    if !is_enabled() {
+        // PERF(port): @branchHint(.likely) — common case, no allocation.
+        return bun_core::perf::Ctx::DISABLED;
+    }
+    // PORT NOTE: Zig resolved `name` to a comptime `PerfEvent` via `@field`; the
+    // Rust generator hasn't emitted the full string→variant table yet, so route
+    // through `_Stub` (matches the existing `bun_bundler::ungate_support::perf`
+    // shim). TODO(b1): map `_name` once `generate-perf-trace-events.sh` emits Rust.
+    let boxed = Box::into_raw(Box::new(trace(PerfEvent::_Stub)));
+    unsafe fn end(data: *mut core::ffi::c_void) {
+        // SAFETY: `data` is the `Box<Ctx>` we just leaked; `Ctx::drop` calls `end()`.
+        drop(unsafe { Box::from_raw(data.cast::<Ctx>()) });
+    }
+    bun_core::perf::Ctx::new(end, boxed.cast())
+}
+
 /// Trace an event using the system profiler (Instruments).
 ///
 /// When instruments is not connected, this is a no-op.

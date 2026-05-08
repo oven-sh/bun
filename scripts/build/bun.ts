@@ -22,8 +22,8 @@
  * build in parallel on separate machines then meet for linking.
  */
 
-import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
@@ -862,7 +862,42 @@ function linkImplicitInputs(cfg: Config): string[] {
  * time instead of cryptic build failures later.
  */
 export function validateBunConfig(cfg: Config): void {
-  // All modes now implemented. Kept as a hook for future validation
-  // (e.g. incompatible option combos).
-  void cfg;
+  // build.ninja encodes both absolute -I/-D paths derived from cfg.cwd and
+  // buildDir-relative source paths (../../src/...). If buildDir is reached
+  // through a symlink that escapes this checkout — e.g. a sibling worktree
+  // symlinking its build/ at ours to "share" artifacts — a configure from
+  // that worktree overwrites our build.ninja with its own absolute paths
+  // while the relative ones still resolve against whichever cwd ninja is
+  // launched from. The result is the same header included via two distinct
+  // realpaths, defeating #pragma once and producing redefinition errors (or
+  // PCH macro mismatches) the next time the rightful owner builds. Refuse
+  // up front so the misconfigured worktree fails loudly instead of poisoning
+  // a neighbour. An explicit --build-dir pointing outside the repo is still
+  // permitted; only a symlink masquerading as a path under cwd is rejected.
+  if (existsSync(cfg.buildDir)) {
+    const realCwd = realpathSync(cfg.cwd);
+    const realBuild = realpathSync(cfg.buildDir);
+    const rel = relative(realCwd, realBuild);
+    const escapes = rel.startsWith("..") || rel === "";
+    const claimedRel = relative(cfg.cwd, cfg.buildDir);
+    const claimsInside = !claimedRel.startsWith("..") && claimedRel !== "";
+    assert(
+      !(claimsInside && escapes),
+      `buildDir '${cfg.buildDir}' resolves to '${realBuild}', outside the source tree '${realCwd}'.\n` +
+        `A symlinked build/ shared between worktrees corrupts build.ninja for both. ` +
+        `Remove the symlink and let this worktree own its build directory ` +
+        `(ccache already shares object files across checkouts).`,
+    );
+  }
+  // Also reject the common shape directly: <cwd>/build as a symlink. This
+  // catches the race before the first configure ever creates buildDir.
+  const buildParent = resolve(cfg.cwd, "build");
+  if (cfg.buildDir.startsWith(buildParent + sep) && existsSync(buildParent)) {
+    assert(
+      !lstatSync(buildParent).isSymbolicLink(),
+      `'${buildParent}' is a symlink (→ ${realpathSync(buildParent)}). ` +
+        `Sharing build/ between worktrees corrupts build.ninja for both — ` +
+        `remove the symlink; ccache already shares compiled objects.`,
+    );
+  }
 }

@@ -2194,7 +2194,7 @@ impl<'a> PackageInstaller<'a> {
         let log = unsafe { &mut *self.manager().log };
         let scripts_list = match scripts.get_list(
             log,
-            self.lockfile_mut(),
+            self.lockfile(),
             package_path,
             folder_name,
             resolution,

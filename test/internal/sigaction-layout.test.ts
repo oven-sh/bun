@@ -10,9 +10,9 @@
 // reads the disposition back via sigaction(sig, NULL, &old), and checks the
 // handler pointer and flags round-trip. That property holds iff the Zig
 // struct agrees with libc's on this platform.
-import { test, expect } from "bun:test";
-import { isPosix } from "harness";
 import { sigactionLayout } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
+import { isPosix } from "harness";
 
 test.skipIf(!isPosix)("bun.sys.Sigaction matches the host libc's struct sigaction", () => {
   expect(sigactionLayout).toBeFunction();

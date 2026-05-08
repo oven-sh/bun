@@ -3,7 +3,7 @@ use bstr::BStr;
 use std::io::Write as _;
 
 use bun_collections::StringHashMap;
-use bun_core::{Global, Output};
+use bun_core::{pretty, prettyln, Global, Output};
 use bun_http::{self as http, HeaderBuilder};
 use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
@@ -191,7 +191,7 @@ impl AuditCommand {
 
             return Ok(exit_code);
         } else {
-            Output::prettyln(format_args!("<green>No vulnerabilities found<r>"));
+            prettyln!("<green>No vulnerabilities found<r>");
 
             print_skipped_packages(&packages_result.skipped_packages);
 
@@ -202,25 +202,21 @@ impl AuditCommand {
 
 fn print_skipped_packages(skipped_packages: &Vec<Box<[u8]>>) {
     if !skipped_packages.is_empty() {
-        Output::pretty(format_args!("<d>Skipped<r> "));
+        pretty!("<d>Skipped<r> ");
         for (i, package_name) in skipped_packages.iter().enumerate() {
             if i > 0 {
-                Output::pretty(format_args!(", "));
+                pretty!(", ");
             }
-            Output::pretty(format_args!("{}", BStr::new(package_name)));
+            pretty!("{}", BStr::new(package_name));
         }
 
         if skipped_packages.len() > 1 {
-            Output::prettyln(format_args!(
-                " <d>because they do not come from the default registry<r>"
-            ));
+            prettyln!(" <d>because they do not come from the default registry<r>");
         } else {
-            Output::prettyln(format_args!(
-                " <d>because it does not come from the default registry<r>"
-            ));
+            prettyln!(" <d>because it does not come from the default registry<r>");
         }
 
-        Output::prettyln(format_args!(""));
+        prettyln!("");
     }
 }
 
@@ -781,7 +777,7 @@ fn print_enhanced_audit_report(
 
     if let ExprData::EObject(obj) = &expr.data {
         if obj.properties.len_u32() == 0 {
-            Output::prettyln(format_args!("<green>No vulnerabilities found<r>"));
+            prettyln!("<green>No vulnerabilities found<r>");
             return Ok(0);
         }
     }
@@ -893,16 +889,13 @@ fn print_enhanced_audit_report(
                 // };
 
                 if !main_vuln.vulnerable_versions.is_empty() {
-                    Output::prettyln(format_args!(
+                    prettyln!(
                         "<red>{}<r>  {}",
                         BStr::new(&main_vuln.package_name),
                         BStr::new(&main_vuln.vulnerable_versions)
-                    ));
+                    );
                 } else {
-                    Output::prettyln(format_args!(
-                        "<red>{}<r>",
-                        BStr::new(&main_vuln.package_name)
-                    ));
+                    prettyln!("<red>{}<r>", BStr::new(&main_vuln.package_name));
                 }
 
                 for path in &package_info.dependents {
@@ -911,11 +904,11 @@ fn print_enhanced_audit_report(
                             let vulnerable_pkg = &path.path[path.path.len() - 1];
                             let workspace_part = &path.path[0];
 
-                            Output::prettyln(format_args!(
+                            prettyln!(
                                 "  <d>{} › <red>{}<r>",
                                 BStr::new(workspace_part),
                                 BStr::new(vulnerable_pkg)
-                            ));
+                            );
                         } else {
                             let vulnerable_pkg = &path.path[0];
 
@@ -934,43 +927,43 @@ fn print_enhanced_audit_report(
                                 vuln_pkg_path.extend_from_slice(item);
                             }
 
-                            Output::prettyln(format_args!(
+                            prettyln!(
                                 "  <d>{} › <red>{}<r>",
                                 BStr::new(&vuln_pkg_path),
                                 BStr::new(vulnerable_pkg)
-                            ));
+                            );
                         }
                     } else {
-                        Output::prettyln(format_args!("  <d>(direct dependency)<r>"));
+                        prettyln!("  <d>(direct dependency)<r>");
                     }
                 }
 
                 for vuln in &package_info.vulnerabilities {
                     if !vuln.title.is_empty() {
                         if vuln.severity.as_ref() == b"critical" {
-                            Output::prettyln(format_args!(
+                            prettyln!(
                                 "  <red>critical<d>:<r> {} - <d>{}<r>",
                                 BStr::new(&vuln.title),
                                 BStr::new(&vuln.url)
-                            ));
+                            );
                         } else if vuln.severity.as_ref() == b"high" {
-                            Output::prettyln(format_args!(
+                            prettyln!(
                                 "  <red>high<d>:<r> {} - <d>{}<r>",
                                 BStr::new(&vuln.title),
                                 BStr::new(&vuln.url)
-                            ));
+                            );
                         } else if vuln.severity.as_ref() == b"moderate" {
-                            Output::prettyln(format_args!(
+                            prettyln!(
                                 "  <yellow>moderate<d>:<r> {} - <d>{}<r>",
                                 BStr::new(&vuln.title),
                                 BStr::new(&vuln.url)
-                            ));
+                            );
                         } else {
-                            Output::prettyln(format_args!(
+                            prettyln!(
                                 "  <cyan>low<d>:<r> {} - <d>{}<r>",
                                 BStr::new(&vuln.title),
                                 BStr::new(&vuln.url)
-                            ));
+                            );
                         }
                     }
                 }
@@ -981,52 +974,50 @@ fn print_enhanced_audit_report(
                 //     Output.prettyln("  To fix: <green>`bun update --latest`<r><d> (may be a breaking change)<r>", .{});
                 // }
 
-                Output::prettyln(format_args!(""));
+                prettyln!("");
             }
         }
 
         let total = vuln_counts.low + vuln_counts.moderate + vuln_counts.high + vuln_counts.critical;
         if total > 0 {
-            Output::pretty(format_args!("<b>{} vulnerabilities<r> (", total));
+            pretty!("<b>{} vulnerabilities<r> (", total);
 
             let mut has_previous = false;
             if vuln_counts.critical > 0 {
-                Output::pretty(format_args!("<red><b>{} critical<r>", vuln_counts.critical));
+                pretty!("<red><b>{} critical<r>", vuln_counts.critical);
                 has_previous = true;
             }
             if vuln_counts.high > 0 {
                 if has_previous {
-                    Output::pretty(format_args!(", "));
+                    pretty!(", ");
                 }
-                Output::pretty(format_args!("<red>{} high<r>", vuln_counts.high));
+                pretty!("<red>{} high<r>", vuln_counts.high);
                 has_previous = true;
             }
             if vuln_counts.moderate > 0 {
                 if has_previous {
-                    Output::pretty(format_args!(", "));
+                    pretty!(", ");
                 }
-                Output::pretty(format_args!("<yellow>{} moderate<r>", vuln_counts.moderate));
+                pretty!("<yellow>{} moderate<r>", vuln_counts.moderate);
                 has_previous = true;
             }
             if vuln_counts.low > 0 {
                 if has_previous {
-                    Output::pretty(format_args!(", "));
+                    pretty!(", ");
                 }
-                Output::pretty(format_args!("<cyan>{} low<r>", vuln_counts.low));
+                pretty!("<cyan>{} low<r>", vuln_counts.low);
             }
-            Output::prettyln(format_args!(")"));
+            prettyln!(")");
 
-            Output::prettyln(format_args!(""));
-            Output::prettyln(format_args!(
-                "To update all dependencies to the latest compatible versions:"
-            ));
-            Output::prettyln(format_args!("  <green>bun update<r>"));
-            Output::prettyln(format_args!(""));
-            Output::prettyln(format_args!(
+            prettyln!("");
+            prettyln!("To update all dependencies to the latest compatible versions:");
+            prettyln!("  <green>bun update<r>");
+            prettyln!("");
+            prettyln!(
                 "To update all dependencies to the latest versions (including breaking changes):"
-            ));
-            Output::prettyln(format_args!("  <green>bun update --latest<r>"));
-            Output::prettyln(format_args!(""));
+            );
+            prettyln!("  <green>bun update --latest<r>");
+            prettyln!("");
         }
 
         if total > 0 {

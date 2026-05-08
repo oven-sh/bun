@@ -4860,7 +4860,7 @@ pub static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
 
 // PORT NOTE: the event-loop per-task bodies (`__bun_run_immediate_task` /
 // `__bun_run_wtf_timer`) live in [`crate::dispatch`] alongside the other
-// §Dispatch hot-path bodies (`__bun_run_tasks` / `__bun_run_file_poll`).
+// §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_file_poll`).
 
 /// `bun_aio::__bun_get_vm_ctx` body — recover the global event-loop context
 /// for the requested arm. Zig had no crate split here: callers reached

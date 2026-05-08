@@ -12,10 +12,7 @@
 //!    in the crate that owns `YourType`.
 //! 3. Add a match arm in `bun_runtime::dispatch::run_tasks`.
 
-use core::sync::atomic::{AtomicPtr, Ordering};
-
-use crate::event_loop::{EventLoop, JsTerminated};
-use crate::virtual_machine::VirtualMachine;
+use crate::event_loop::JsTerminated;
 use crate::{JSGlobalObject, JsError};
 
 // ─── Task / TaskTag / Taskable ───────────────────────────────────────────────
@@ -34,34 +31,11 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 }
 
 // ─── run_tasks dispatch ─────────────────────────────────────────────────────
-// High-tier `run_tasks` body lives in `bun_runtime::dispatch`; resolved at
-// link time. Unit-test / tool builds without the runtime tier link a stub
-// that drains without dispatching.
-
-unsafe extern "Rust" {
-    /// High-tier dispatcher: drain `el.tasks`, run each, drain microtasks per
-    /// item, bump `*counter`. Defined `#[no_mangle]` in
-    /// `bun_runtime::dispatch::tick_queue_with_count`. Link-time resolved.
-    fn __bun_run_tasks(
-        el: &mut EventLoop,
-        vm: &mut VirtualMachine,
-        counter: &mut u32,
-    ) -> Result<(), JsTerminated>;
-}
-
-/// Dispatch via the link-time extern. Exposed for callers that hold
-/// `&mut EventLoop` + `&mut VirtualMachine` separately.
-// PERF(port): was inline switch — direct calls per arm in
-// `bun_runtime::dispatch::run_tasks`.
-#[inline]
-pub fn run_tasks(
-    el: &mut EventLoop,
-    vm: &mut VirtualMachine,
-    counter: &mut u32,
-) -> Result<(), JsTerminated> {
-    // SAFETY: `el`/`vm` are the live per-thread loop+VM (caller contract).
-    unsafe { __bun_run_tasks(el, vm, counter) }
-}
+// The per-tick dispatch entry point is `bun_jsc::event_loop::tick_queue_with_
+// count` (declares `__bun_tick_queue_with_count`, defined in
+// `bun_runtime::dispatch`). The former duplicate `__bun_run_tasks` extern +
+// `pub fn run_tasks` wrapper here had no callers and aliased the same body —
+// deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
 
 /// Shared helper for the high-tier match arms that bubble `JsError` out of a
 /// task body: report the uncaught exception, or convert termination into the

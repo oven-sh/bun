@@ -3179,9 +3179,15 @@ impl core::fmt::Display for f16 {
 // ── perf ──────────────────────────────────────────────────────────────────
 // Port of `bun.perf` (src/perf/perf.zig). The Linux ftrace backend is
 // libc-only, so it folds in directly and `bun_core::perf::trace("X")` is real
-// instrumentation on Linux. The macOS `os_signpost` backend depends on
-// `bun_sys::darwin::OSLog` (above T0); it stays in the `bun_perf` crate and
-// the T0 path is a no-op there. Windows/other platforms are no-ops in Zig too.
+// instrumentation on Linux. macOS: the Zig backend wraps `Bun__signpost_emit`
+// (c-bindings.cpp) which keys on the codegen `PerfEvent` int — that table
+// lives in `bun_perf` (T2, owns generated_perf_trace_events), so T0 reports
+// disabled on macOS. **No functional divergence today**: `bun_perf`'s Darwin
+// arm currently routes through the `bun_sys::darwin::os_log::signpost::Interval`
+// stub whose `end()` is a no-op, so neither tier emits signposts yet. When
+// `Bun__signpost_emit` is wired, callers above T0 use `bun_perf::trace`; T0
+// callsites (audited r5) are bundler/parser hot paths where Linux ftrace is
+// the profiling target. Windows/other platforms are no-ops in Zig too.
 pub mod perf {
     use core::sync::atomic::{AtomicU8, Ordering};
     #[cfg(target_os = "linux")]

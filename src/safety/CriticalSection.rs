@@ -142,7 +142,7 @@ impl State {
                 "`CriticalSection` first entered here:",
                 (),
             );
-            // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
+            // bun_core::dump_stack_trace (T0 fallback — raw addrs).
             crate::dump_stored_trace(&self.owner_trace);
         }
     }

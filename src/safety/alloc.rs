@@ -157,8 +157,7 @@ impl CheckedAllocator {
                     "allocator mismatch",
                     format_args!("collection first used here, with a different allocator:"),
                 );
-                // Hook-registered: `bun_crash_handler::dump_stack_trace`
-                // (frame_count = 10, stop_at_jsc_llint = true).
+                // bun_core::dump_stack_trace (T0 fallback — raw addrs).
                 crate::dump_stored_trace(&self.trace);
             }
             // Assertion will always fail. We want the error message.
@@ -203,7 +202,7 @@ impl CheckedAllocator {
             #[cfg(debug_assertions)]
             {
                 Output::err_generic("collection first used here:", ());
-                // Hook-registered: `bun_crash_handler::dump_stack_trace`.
+                // bun_core::dump_stack_trace (T0 fallback — raw addrs).
                 crate::dump_stored_trace(&self.trace);
             }
             panic!(

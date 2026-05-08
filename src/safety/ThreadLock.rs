@@ -62,9 +62,8 @@ impl ThreadLock {
                         "assertion failure",
                         format_args!("`ThreadLock` was already locked here:"),
                     );
-                    // Hook-registered: bun_crash_handler::dump_stack_trace (CYCLEBREAK §Debug-hook).
-                    // Options { frame_count: 10, stop_at_jsc_llint: true } are baked into the
-                    // provider registered by bun_runtime::init().
+                    // bun_core::dump_stack_trace (T0 fallback — raw addrs;
+                    // crash-report path uses the richer bun_crash_handler).
                     crate::dump_stored_trace(&self.locked_at);
                 }
                 panic!(

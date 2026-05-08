@@ -1100,17 +1100,8 @@ pub fn __bun_tick_queue_with_count(
     tick_queue_with_count(el, vm_ref, counter)
 }
 
-/// `__bun_run_tasks` body — declared `extern "Rust"` in `bun_jsc::task`.
-/// Same body as [`tick_queue_with_count`]; separate symbol because the caller
-/// already holds `&mut EventLoop` + `&mut VirtualMachine` separately.
-#[unsafe(no_mangle)]
-pub fn __bun_run_tasks(
-    el: &mut EventLoop,
-    vm: &mut VirtualMachine,
-    counter: &mut u32,
-) -> Result<(), JsTerminated> {
-    tick_queue_with_count(el, vm, counter)
-}
+// (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`
+// had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

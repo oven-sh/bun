@@ -59,5 +59,7 @@ describe("TLS upgrade", () => {
     // TLSSocket (the TCP wrapper from upgradeTLS), accumulating over time.
     // Allow some slack for prototypes/structures (typically 2-3 baseline).
     await expectMaxObjectTypeCount(expect, "TLSSocket", 10, 1000);
-  });
+    // Debug/ASAN handshakes are slow; this is wall-clock crypto cost across
+    // 50 sequential upgrades, not a wait-for-condition.
+  }, 30_000);
 });

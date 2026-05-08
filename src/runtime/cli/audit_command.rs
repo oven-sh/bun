@@ -2,7 +2,7 @@ use bun_collections::VecExt;
 use bstr::BStr;
 use std::io::Write as _;
 
-use bun_collections::StringHashMap;
+use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::{pretty, prettyln, Global, Output};
 use bun_http::{self as http, HeaderBuilder};
 use bun_install::lockfile::package::{PackageColumns as _, PackageColumns as _};
@@ -49,14 +49,16 @@ struct DependencyPath {
 }
 
 struct AuditResult {
-    vulnerable_packages: StringHashMap<PackageInfo>,
+    // Insertion-ordered so the printed report follows the registry's response
+    // property order instead of std HashMap's randomized iteration.
+    vulnerable_packages: StringArrayHashMap<PackageInfo>,
     all_vulnerabilities: Vec<VulnerabilityInfo>,
 }
 
 impl AuditResult {
     pub fn init() -> AuditResult {
         AuditResult {
-            vulnerable_packages: StringHashMap::new(),
+            vulnerable_packages: StringArrayHashMap::default(),
             all_vulnerabilities: Vec::new(),
         }
     }

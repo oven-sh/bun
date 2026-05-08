@@ -23,7 +23,9 @@ await fetch("https://example.com", {
 });
 ```
 
-For SOCKS proxies, credentials are sent using SOCKS username/password authentication. Custom `proxy.headers` only apply to HTTP and HTTPS proxies.
+For SOCKS proxies, credentials are sent using SOCKS username/password authentication. With `socks5://`, Bun resolves the target hostname locally and sends the resolved IP address to the proxy. With `socks5h://`, Bun sends the hostname to the proxy and lets the proxy resolve DNS.
+
+Custom `proxy.headers` only apply to HTTP and HTTPS proxies.
 
 ---
 

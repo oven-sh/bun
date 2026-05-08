@@ -1939,7 +1939,8 @@ interface BunFetchRequestInit extends RequestInit {
    * Can be a string URL or an object with `url` and optional `headers`.
    * Supported proxy URL schemes are `http:`, `https:`, `socks5:`, and `socks5h:`.
    * SOCKS proxies support username/password credentials in the proxy URL.
-   * `proxy.headers` only applies to HTTP(S) proxies.
+   * `socks5:` resolves target hostnames locally; `socks5h:` lets the proxy
+   * resolve target hostnames. `proxy.headers` only applies to HTTP(S) proxies.
    *
    * @example
    * ```js

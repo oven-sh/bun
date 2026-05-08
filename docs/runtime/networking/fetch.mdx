@@ -60,7 +60,7 @@ const response = await fetch("http://example.com", {
 ```
 
 The proxy URL can use `http://`, `https://`, `socks5://`, or `socks5h://`.
-SOCKS proxies support username/password credentials in the proxy URL:
+SOCKS proxies support username/password credentials in the proxy URL. With `socks5://`, Bun resolves the target hostname locally and sends the resolved IP address to the proxy. With `socks5h://`, Bun sends the hostname to the proxy and lets the proxy resolve DNS:
 
 ```ts
 const response = await fetch("https://example.com", {

@@ -68,10 +68,15 @@ pub enum BreakState {
 
 impl BreakState {
     #[inline]
-    const fn from_raw(n: u8) -> Self {
-        debug_assert!(n <= 4);
-        // SAFETY: #[repr(u8)] enum with variants 0..=4; caller guarantees range.
-        unsafe { core::mem::transmute::<u8, Self>(n) }
+    pub const fn from_raw(n: u8) -> Self {
+        // #[repr(u8)] enum with variants 0..=4; caller guarantees range.
+        match n {
+            1 => Self::RegionalIndicator,
+            2 => Self::ExtendedPictographic,
+            3 => Self::IndicConjunctBreakConsonant,
+            4 => Self::IndicConjunctBreakLinker,
+            _ => Self::Default,
+        }
     }
 }
 

@@ -1541,7 +1541,7 @@ pub(super) extern "C" fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) -
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn Bun__graphemeBreak(cp1: u32, cp2: u32, state_ptr: *mut u8) -> bool {
     // SAFETY: state_ptr is non-null per C++ caller contract; BreakState is #[repr(u8)].
-    let mut state: grapheme::BreakState = unsafe { core::mem::transmute::<u8, grapheme::BreakState>(*state_ptr) };
+    let mut state = grapheme::BreakState::from_raw(unsafe { *state_ptr });
     let result = grapheme::grapheme_break(cp1, cp2, &mut state);
     // SAFETY: same as above.
     unsafe { *state_ptr = state as u8 };

@@ -133,8 +133,13 @@ impl Sync {
     }
     #[inline]
     fn state(self) -> SyncState {
-        // SAFETY: 2-bit field, all 4 values are valid SyncState discriminants.
-        unsafe { core::mem::transmute(((self.0 >> Self::STATE_SHIFT) & 0b11) as u8) }
+        // 2-bit field — all 4 values are valid SyncState discriminants.
+        match (self.0 >> Self::STATE_SHIFT) & 0b11 {
+            0 => SyncState::Pending,
+            1 => SyncState::Signaled,
+            2 => SyncState::Waking,
+            _ => SyncState::Shutdown,
+        }
     }
     #[inline]
     fn set_state(&mut self, s: SyncState) {

@@ -383,7 +383,7 @@ impl Task {
         // SAFETY: fn(&mut T) and fn(*mut ()) have identical single-pointer ABI;
         // ctx is always a valid &mut T at call time (see run()).
         Task {
-            callback: unsafe { core::mem::transmute::<fn(&mut T), fn(*mut ())>(callback) },
+            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(&mut T), fn(*mut ())>(callback) },
             ctx: std::ptr::from_mut::<T>(ctx).cast::<()>(),
         }
     }

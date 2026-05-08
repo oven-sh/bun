@@ -56,8 +56,13 @@ impl EnvStr {
 
     #[inline]
     fn tag(self) -> Tag {
-        // SAFETY: only constructed via `pack` with a valid `Tag` discriminant.
-        unsafe { core::mem::transmute::<u16, Tag>(((self.0 >> TAG_SHIFT) & TAG_MASK) as u16) }
+        // Only constructed via `pack` with a valid `Tag` discriminant
+        // (`TAG_MASK` is 2 bits, value 3 unreachable); 3-variant match.
+        match ((self.0 >> TAG_SHIFT) & TAG_MASK) as u16 {
+            1 => Tag::Refcounted,
+            2 => Tag::Slice,
+            _ => Tag::Empty,
+        }
     }
 
     #[inline]

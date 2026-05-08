@@ -424,16 +424,16 @@ impl HTTPClientResultCallback {
         this: *mut T,
         callback: fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
     ) -> Self {
-        // SAFETY: fn-pointer cast over *mut T → *mut () first arg; same
-        // calling convention, the receiver casts `ctx` back before use.
-        unsafe {
-            Self {
-                ctx: this.cast::<()>(),
-                function: core::mem::transmute::<
+        Self {
+            ctx: this.cast::<()>(),
+            // SAFETY: fn-pointer cast over *mut T → *mut () first arg; same
+            // calling convention, the receiver casts `ctx` back before use.
+            function: unsafe {
+                bun_ptr::cast_fn_ptr::<
                     fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
                     HTTPClientResultCallbackFunction,
-                >(callback),
-            }
+                >(callback)
+            },
         }
     }
 }

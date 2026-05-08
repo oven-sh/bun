@@ -387,14 +387,17 @@ impl ShellArgs {
     /// route through this helper.
     #[inline]
     pub fn set_script_ast(&mut self, script: bun_shell_parser::ast::Script<'_>) {
-        // SAFETY: `ast::Script` is `bun_shell_parser::ast::Script<'static>` —
-        // identical type, only the lifetime parameter differs. `self.__arena`
-        // owns every node `script` references and is dropped only when this
+        // `ast::Script` is `bun_shell_parser::ast::Script<'static>` — identical
+        // type, only the lifetime parameter differs. `self.__arena` owns every
+        // node `script.stmts` references and is dropped only when this
         // `ShellArgs` is, so the widened references remain valid for the
-        // interpreter's lifetime.
-        self.script_ast = unsafe {
-            core::mem::transmute::<bun_shell_parser::ast::Script<'_>, ast::Script>(script)
-        };
+        // interpreter's lifetime. Re-construct field-by-field via a slice
+        // pointer cast (`Stmt<'a>` and `Stmt<'static>` are layout-identical).
+        let stmts = script.stmts;
+        // SAFETY: lifetime-only widen; arena outlives `self` (see above).
+        let stmts: &'static [ast::Stmt] =
+            unsafe { core::slice::from_raw_parts(stmts.as_ptr().cast::<ast::Stmt>(), stmts.len()) };
+        self.script_ast = ast::Script { stmts };
     }
 
     /// Spec: interpreter.zig `ShellArgs.memoryCost`.

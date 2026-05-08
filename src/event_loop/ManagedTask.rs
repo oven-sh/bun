@@ -54,7 +54,7 @@ impl ManagedTask {
             // ABI for all `T: Sized`; `run` passes back the exact pointer stored
             // in `ctx` below, so the callee observes its original `*mut T`.
             callback: unsafe {
-                core::mem::transmute::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
+                bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
                     callback,
                 )
             },

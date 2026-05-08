@@ -340,8 +340,13 @@ pub mod ssl_wrapper {
 
         #[inline]
         pub fn handshake_state(&self) -> HandshakeState {
-            // SAFETY: bits 0-1 are always written via set_handshake_state with a valid #[repr(u8)] discriminant in range 0..=2.
-            unsafe { core::mem::transmute::<u8, HandshakeState>(self.0 & Self::HANDSHAKE_MASK) }
+            // bits 0-1 are always written via set_handshake_state with a valid
+            // discriminant in range 0..=2; 3-variant exhaustive match.
+            match self.0 & Self::HANDSHAKE_MASK {
+                1 => HandshakeState::HandshakeCompleted,
+                2 => HandshakeState::HandshakeRenegotiationPending,
+                _ => HandshakeState::HandshakePending,
+            }
         }
         #[inline]
         pub fn set_handshake_state(&mut self, s: HandshakeState) {

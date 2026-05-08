@@ -289,6 +289,31 @@ pub fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
     view
 }
 
+/// Reinterpret a fn pointer between two ABI-identical signatures.
+///
+/// Rust forbids `as`-casting between fn-pointer types even when the only
+/// difference is the pointee type of a `*mut T` parameter, so the Zig
+/// `@ptrCast` of a comptime fn item has no direct safe spelling. This is the
+/// single audited bit-cast for that pattern; callers state the source and
+/// destination signatures explicitly so a width or arity drift is a compile
+/// error at the call site, not silent UB.
+///
+/// # Safety
+/// `F` and `G` must be fn-pointer types with the **same calling convention,
+/// arity, and ABI** — they may differ only in the nominal pointee type of
+/// thin-pointer parameters that the callee casts back before use.
+#[inline(always)]
+pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
+    const {
+        assert!(core::mem::size_of::<F>() == core::mem::size_of::<fn()>());
+        assert!(core::mem::size_of::<G>() == core::mem::size_of::<fn()>());
+    }
+    // SAFETY: caller contract — `F` and `G` are ABI-identical fn pointers.
+    // `read` of a pointer-sized `Copy` value through a same-size cast is the
+    // bitwise reinterpretation `@ptrCast` performs.
+    unsafe { (&raw const f).cast::<G>().read() }
+}
+
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
 /// Runtime sibling of `bun_js_parser::StoreSlice<T>` for `*const [T]` struct

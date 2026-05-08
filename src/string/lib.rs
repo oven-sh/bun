@@ -216,18 +216,18 @@ impl String {
             callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len() as u32);
             return Self::DEAD;
         }
-        // SAFETY: Ctx is pointer-sized (asserted); the C ABI for the callback
-        // is identical with Ctx erased to *mut c_void.
-        let ctx_erased: *mut c_void = unsafe { core::mem::transmute_copy(&ctx) };
         // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` (raw pointer, no
         // destructor). The Rust const-assert only checks size, so an owning
         // pointer-sized `Ctx` (e.g. `Box<T>`) would otherwise be dropped here
         // and later double-freed by the WTF finalizer. Ownership transfers to
         // the external string; suppress the local drop.
-        core::mem::forget(ctx);
+        let ctx = core::mem::ManuallyDrop::new(ctx);
+        // SAFETY: Ctx is pointer-sized (asserted); read the bits as *mut c_void.
+        let ctx_erased: *mut c_void =
+            unsafe { core::ptr::from_ref::<Ctx>(&*ctx).cast::<*mut c_void>().read() };
         let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, u32)> =
             // SAFETY: same ABI; first param erased per the const-assert above.
-            Some(unsafe { core::mem::transmute::<
+            Some(unsafe { bun_ptr::cast_fn_ptr::<
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, u32),
             >(callback) });

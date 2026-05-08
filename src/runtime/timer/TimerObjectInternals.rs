@@ -89,8 +89,14 @@ impl Flags {
     /// Kind does not include AbortSignal's timeout since it has no corresponding ID callback.
     #[inline]
     pub fn kind(self) -> Kind {
-        // SAFETY: Kind is #[repr(u2)] with 3 variants; stored value always written via set_kind.
-        unsafe { core::mem::transmute::<u8, Kind>(((self.0 & Self::KIND_MASK) >> Self::KIND_SHIFT) as u8) }
+        // Kind is `#[repr(u2)]` with 3 variants; stored value always written
+        // via `set_kind`. Exhaustive match (the unreachable 4th bit-state
+        // folds into the default arm — `set_kind` never writes it).
+        match ((self.0 & Self::KIND_MASK) >> Self::KIND_SHIFT) as u8 {
+            1 => Kind::SetInterval,
+            2 => Kind::SetImmediate,
+            _ => Kind::SetTimeout,
+        }
     }
     #[inline]
     pub fn set_kind(&mut self, k: Kind) {

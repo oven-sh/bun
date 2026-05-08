@@ -357,9 +357,15 @@ impl Context {
     }
 
     pub fn set_flush(&mut self, flush: c_int) {
-        // SAFETY: caller passes a valid BrotliEncoderOperation discriminant.
-        self.flush = unsafe { core::mem::transmute::<c_int, Op>(flush) };
-        // TODO(port): Op repr width — confirm #[repr(c_int)].
+        // Caller passes a valid BrotliEncoderOperation discriminant (Node
+        // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
+        // so the prior `c_int` bit-cast was a width hazard anyway.
+        self.flush = match flush {
+            1 => Op::flush,
+            2 => Op::finish,
+            3 => Op::emit_metadata,
+            _ => Op::process,
+        };
     }
 
     pub fn do_work(&mut self) {

@@ -1539,10 +1539,10 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
                     } else {
-                        // Zig: `"{d}"` → `WTF::dtoa`. Compute once so the width
-                        // estimate and the printed bytes cannot diverge.
+                        // Zig `"{d}"` preserves the sign bit on -0; WTF::dtoa does not.
                         let mut dtoa_buf = [0u8; 124];
-                        let dtoa = bun_fmt::FormatDouble::dtoa(&mut dtoa_buf, num);
+                        let dtoa =
+                            bun_fmt::FormatDouble::dtoa_with_negative_zero(&mut dtoa_buf, num);
                         self.add_for_new_line(dtoa.len());
                         writer.write_all(
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>").as_bytes(),

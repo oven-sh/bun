@@ -470,7 +470,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeser
 #[unsafe(no_mangle)]
 pub extern "C" fn zig_log(msg: *const c_char) {
     // SAFETY: caller passes a NUL-terminated C string.
-    let bytes = unsafe { CStr::from_ptr(msg) }.to_bytes();
+    let bytes = unsafe { bun_core::ffi::cstr(msg) }.to_bytes();
     // Zig: `Output.errorWriter().print("{s}\n", .{bytes}) catch {}`.
     bun_core::Output::print_error(format_args!("{}\n", bstr::BStr::new(bytes)));
 }

@@ -1815,7 +1815,7 @@ impl RunCommand {
                         // SAFETY: argv0 is a valid NUL-terminated C string
                         // (points at argv[0], `self_exe_path`, or `optional_bun_path`).
                         let target = unsafe {
-                            let cstr = CStr::from_ptr(argv0);
+                            let cstr = bun_core::ffi::cstr(argv0);
                             ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
                         };
                         // SAFETY: PATHS entries are NUL-terminated string literals.
@@ -2272,7 +2272,7 @@ impl RunCommand {
                             // SAFETY: `executable_z` is the NUL-terminated form
                             // of `executable` (caller invariant).
                             let exec_z = unsafe {
-                                let cstr = ::core::ffi::CStr::from_ptr(executable_z);
+                                let cstr = bun_core::ffi::cstr(executable_z);
                                 ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
                             };
                             match sys::stat(exec_z) {
@@ -3502,7 +3502,7 @@ impl RunCommand {
             #[cfg(unix)]
             {
                 // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
-                let mut size: libc::winsize = unsafe { ::core::mem::zeroed() };
+                let mut size: libc::winsize = unsafe { bun_core::ffi::zeroed() };
                 // SAFETY: ioctl with valid winsize ptr
                 if unsafe {
                     libc::ioctl(
@@ -3522,7 +3522,7 @@ impl RunCommand {
                 if let Ok(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
                     // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
                     let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
-                        unsafe { ::core::mem::zeroed() };
+                        unsafe { bun_core::ffi::zeroed() };
                     if sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
                         != sys::windows::FALSE
                     {

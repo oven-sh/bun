@@ -173,7 +173,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             // port lands. Kept as-is here to avoid an untestable change.
             // SAFETY: see TODO — this is technically invalid_value UB on
             // Windows; the field is overwritten before any read.
-            waker: unsafe { core::mem::zeroed() },
+            waker: unsafe { bun_core::ffi::zeroed() },
             queue: UnboundedQueue::new(),
             generation: 0,
             ready_event: ResetEvent::default(),
@@ -243,7 +243,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         {
             // PORT NOTE: libuv Timer lives on stack for the lifetime of this never-returning fn.
             // SAFETY: `init()` fully initializes before use.
-            let mut timer: bun_sys::windows::libuv::Timer = unsafe { core::mem::zeroed() };
+            let mut timer: bun_sys::windows::libuv::Timer = unsafe { bun_core::ffi::zeroed() };
             // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
             // write-once in `Waker::init()` above and never mutated by `wake()`, so a
             // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)

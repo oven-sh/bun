@@ -42,7 +42,7 @@ pub unsafe fn zst<H>() -> H {
     const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
     // SAFETY: `H` has zero size (asserted above) and is inhabited per caller
     // contract, so the empty bit-pattern is a valid value.
-    unsafe { core::mem::zeroed() }
+    unsafe { bun_core::ffi::zeroed() }
 }
 
 /// Recover `&mut U` from a uWS user-data word, returning `None` for null.

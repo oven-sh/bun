@@ -198,7 +198,7 @@ impl Which {
     fn arg(interp: &Interpreter, cmd: NodeId, idx: usize) -> Vec<u8> {
         let args = Builtin::of(interp, cmd).args_slice();
         // SAFETY: argv entries are NUL-terminated.
-        unsafe { CStr::from_ptr(args[idx]) }.to_bytes().to_vec()
+        unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes().to_vec()
     }
 
     /// Spec: which.zig — `bun.which(path_buf, PATH, cwd, arg)`.

@@ -1,7 +1,7 @@
 // @link "deps/zlib/libz.a"
 
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void, CStr};
+use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use core::mem::size_of;
 
 use bun_alloc::mimalloc;
@@ -192,7 +192,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             input,
             buf: [0u8; BUFFER_SIZE],
             // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (matches Zig `undefined` then full assign).
-            zlib: unsafe { core::mem::zeroed() },
+            zlib: unsafe { bun_core::ffi::zeroed() },
             state: ZlibReaderState::Uninitialized,
         });
 
@@ -246,7 +246,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib (static or stream-owned).
-            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
+            return Some(unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
         }
         None
     }
@@ -471,7 +471,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             input,
             list_ptr: list,
             // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (overwritten below).
-            zlib: unsafe { core::mem::zeroed() },
+            zlib: unsafe { bun_core::ffi::zeroed() },
             state: ZlibReaderArrayListState::Uninitialized,
         });
 
@@ -526,7 +526,7 @@ impl<'a> ZlibReaderArrayList<'a> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib.
-            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
+            return Some(unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
         }
         None
     }
@@ -944,7 +944,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
             input,
             list_ptr: list,
             // SAFETY: zStream_struct is #[repr(C)] POD; all-zero is valid (overwritten below).
-            zlib: unsafe { core::mem::zeroed() },
+            zlib: unsafe { bun_core::ffi::zeroed() },
             state: ZlibCompressorArrayListState::Uninitialized,
         });
 
@@ -1016,7 +1016,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib.
-            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
+            return Some(unsafe { bun_core::ffi::cstr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
         }
         None
     }

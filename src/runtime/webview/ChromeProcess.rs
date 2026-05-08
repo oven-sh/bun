@@ -104,9 +104,9 @@ pub extern "C" fn Bun__Chrome__ensure(
         };
         let vm = global.bun_vm_ptr();
         // SAFETY: caller passes valid NUL-terminated strings when non-null.
-        let user_data_dir = if user_data_dir.is_null() { None } else { Some(unsafe { CStr::from_ptr(user_data_dir) }) };
+        let user_data_dir = if user_data_dir.is_null() { None } else { Some(unsafe { bun_core::ffi::cstr(user_data_dir) }) };
         // SAFETY: caller passes valid NUL-terminated strings when non-null.
-        let path = if path.is_null() { None } else { Some(unsafe { CStr::from_ptr(path) }) };
+        let path = if path.is_null() { None } else { Some(unsafe { bun_core::ffi::cstr(path) }) };
         let fd = match spawn(vm, user_data_dir, path, extra, stdout_inherit, stderr_inherit) {
             Ok(fd) => fd,
             Err(err) => {

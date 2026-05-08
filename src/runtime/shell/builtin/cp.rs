@@ -200,13 +200,13 @@ impl Cp {
                     let evtloop = Builtin::event_loop(interp, cmd);
                     let tgt_ptr = Builtin::of(interp, cmd).args_slice()[target];
                     // SAFETY: argv entries are NUL-terminated.
-                    let tgt = unsafe { CStr::from_ptr(tgt_ptr) }.to_bytes().to_vec();
+                    let tgt = unsafe { bun_core::ffi::cstr(tgt_ptr) }.to_bytes().to_vec();
                     let operands = 1 + (target - start);
                     let interp_ptr = std::ptr::from_mut::<Interpreter>(interp);
                     for i in start..target {
                         let p = Builtin::of(interp, cmd).args_slice()[i];
                         // SAFETY: argv entries are NUL-terminated.
-                        let src = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
+                        let src = unsafe { bun_core::ffi::cstr(p) }.to_bytes().to_vec();
                         let task = ShellCpTask::create(
                             cmd, evtloop, opts, operands, src, tgt.clone(), cwd.clone(),
                             interp_ptr,

@@ -1402,7 +1402,7 @@ impl<'a> SpawnArgs<'a> {
                 p
             } else if cfg!(unix) {
                 // SAFETY: BUN_DEFAULT_PATH_FOR_SPAWN is a NUL-terminated C string constant.
-                unsafe { core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
+                unsafe { bun_core::ffi::cstr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
             } else {
                 b""
             },

@@ -86,8 +86,8 @@ impl Default for File {
         // (PORTING.md forbids blanket zeroed() over enums). FileState::Deinitialized == 0.
         Self {
             // SAFETY: uv_fs_t / uv_buf_t are #[repr(C)] libuv POD; all-zero is the valid pre-init state.
-            fs: unsafe { core::mem::zeroed() },
-            iov: unsafe { core::mem::zeroed() },
+            fs: unsafe { bun_core::ffi::zeroed() },
+            iov: unsafe { bun_core::ffi::zeroed() },
             file: 0,
             state: FileState::Deinitialized,
             close_after_operation: false,

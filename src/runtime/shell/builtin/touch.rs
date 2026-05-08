@@ -139,7 +139,7 @@ impl Touch {
                 for i in args_start..argc {
                     let p = Builtin::of(interp, cmd).args_slice()[i];
                     // SAFETY: argv entries are NUL-terminated.
-                    let path = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
+                    let path = unsafe { bun_core::ffi::cstr(p) }.to_bytes().to_vec();
                     let task =
                         ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
                     // SAFETY: freshly heap-allocated.

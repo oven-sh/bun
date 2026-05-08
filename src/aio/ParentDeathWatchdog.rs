@@ -552,7 +552,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
     {
         // SAFETY: info is fully written by proc_pidinfo on success (rc == size).
         unsafe {
-            let mut info: bun_sys::c::struct_proc_bsdinfo = core::mem::zeroed();
+            let mut info: bun_sys::c::struct_proc_bsdinfo = bun_core::ffi::zeroed();
             let size: c_int =
                 c_int::try_from(core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>()).expect("int cast");
             let rc = bun_sys::c::proc_pidinfo(

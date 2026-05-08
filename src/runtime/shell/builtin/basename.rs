@@ -29,7 +29,7 @@ impl Basename {
             let mut buf = Vec::new();
             for arg in args {
                 // SAFETY: argv entries are NUL-terminated.
-                let path = unsafe { CStr::from_ptr(*arg) }.to_bytes();
+                let path = unsafe { bun_core::ffi::cstr(*arg) }.to_bytes();
                 buf.extend_from_slice(bun_paths::resolve_path::basename(path));
                 buf.push(b'\n');
             }

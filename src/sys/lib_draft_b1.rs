@@ -809,7 +809,7 @@ fn statx_fallback(fd: Fd, path: Option<*const c_char>, flags: u32) -> Result<Pos
 #[cfg(target_os = "linux")]
 fn statx_impl(fd: Fd, path: Option<*const c_char>, flags: u32, mask: u32) -> Result<PosixStat> {
     // SAFETY: all-zero is a valid Statx (repr(C) POD).
-    let mut buf: syscall::Statx = unsafe { mem::zeroed() };
+    let mut buf: syscall::Statx = unsafe { bun_core::ffi::zeroed() };
 
     loop {
         // SAFETY: FFI call with valid fd, NUL-terminated path (or empty), and zeroed out-buffer.
@@ -1314,7 +1314,7 @@ fn open_dir_at_windows_nt_path(
     };
     let mut fd: w::HANDLE = w::INVALID_HANDLE_VALUE;
     // SAFETY: all-zero is a valid value for this repr(C) POD type.
-    let mut io: w::IO_STATUS_BLOCK = unsafe { mem::zeroed() };
+    let mut io: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
 
     // SAFETY: FFI call; arguments are valid for the duration of the call.
     let rc = unsafe {
@@ -1530,7 +1530,7 @@ pub fn open_file_at_windows_nt_path(
         SecurityQualityOfService: core::ptr::null_mut(),
     };
     // SAFETY: all-zero is a valid value for this repr(C) POD type.
-    let mut io: windows::IO_STATUS_BLOCK = unsafe { mem::zeroed() };
+    let mut io: windows::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
 
     let mut attributes = options.attributes;
     loop {
@@ -2463,7 +2463,7 @@ pub fn ftruncate(fd: Fd, size: isize) -> Result<()> {
     #[cfg(windows)]
     {
         // SAFETY: all-zero is a valid value for this repr(C) POD type.
-        let mut io_status_block: w::IO_STATUS_BLOCK = unsafe { mem::zeroed() };
+        let mut io_status_block: w::IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
         let mut eof_info = w::FILE_END_OF_FILE_INFORMATION { EndOfFile: size as i64 };
 
         // SAFETY: FFI call; arguments are valid for the duration of the call.
@@ -3113,7 +3113,7 @@ pub fn get_fd_path<'a>(fd: Fd, out_buffer: &'a mut PathBuffer) -> Result<&'a mut
         // /dev/fd readlink trick used for the Linuxulator path doesn't
         // resolve to an absolute path on native FreeBSD, so go via fcntl.
         // SAFETY: all-zero is a valid value for this repr(C) POD type.
-        let mut info: c::struct_kinfo_file = unsafe { mem::zeroed() };
+        let mut info: c::struct_kinfo_file = unsafe { bun_core::ffi::zeroed() };
         info.kf_structsize = mem::size_of::<c::struct_kinfo_file>() as _;
         if let Result::Err(err) = fcntl(fd, c::F_KINFO, core::ptr::from_mut(&mut info) as usize) {
             return Result::Err(err);
@@ -3842,7 +3842,7 @@ pub fn exists_at_type(fd: Fd, subpath: impl AsRef<[u8]>) -> Result<ExistsAtType>
             SecurityQualityOfService: core::ptr::null_mut(),
         };
         // SAFETY: all-zero is a valid value for this repr(C) POD type.
-        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { mem::zeroed() };
+        let mut basic_info: w::FILE_BASIC_INFORMATION = unsafe { bun_core::ffi::zeroed() };
         // SAFETY: FFI call; arguments are valid for the duration of the call.
         let rc = unsafe { ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
         if let Some(err) = Result::<bool>::errno_sys(rc, Tag::access) {
@@ -4585,7 +4585,7 @@ pub fn get_self_exe_shared_lib_paths() -> core::result::Result<Vec<Box<ZStr>>, b
             let name = (*info).dlpi_name;
             if name.is_null() { return 0; }
             if *name == b'/' as c_char {
-                let s = core::ffi::CStr::from_ptr(name).to_bytes();
+                let s = bun_core::ffi::cstr(name).to_bytes();
                 list.push(ZStr::from_bytes(s));
             }
             0
@@ -4603,7 +4603,7 @@ pub fn get_self_exe_shared_lib_paths() -> core::result::Result<Vec<Box<ZStr>>, b
             // SAFETY: i < img_count; returns a valid NUL-terminated C string.
             let name = unsafe { libc::_dyld_get_image_name(i) };
             // SAFETY: _dyld_get_image_name returns a valid NUL-terminated C string.
-            let s = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
+            let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
             paths.push(ZStr::from_bytes(s));
         }
         return Ok(paths);
@@ -4986,7 +4986,7 @@ pub mod generate_header {
             let uts = LINUX_OS_NAME.get_or_init(|| {
                 // SAFETY: `uname(2)` fills the struct on success; zero-init beforehand
                 // so a (theoretical) failure leaves a valid all-zero utsname.
-                let mut name: libc::utsname = unsafe { core::mem::zeroed() };
+                let mut name: libc::utsname = unsafe { bun_core::ffi::zeroed() };
                 unsafe { libc::uname(&mut name) };
                 name
             });
@@ -4994,7 +4994,7 @@ pub mod generate_header {
             // more frequently than the "version" field.
             // SAFETY: utsname.release is a NUL-terminated C buffer.
             let release = unsafe {
-                core::ffi::CStr::from_ptr(uts.release.as_ptr())
+                bun_core::ffi::cstr(uts.release.as_ptr())
             }.to_bytes();
             let sliced = bun_semver::SlicedString::init(release, release);
             bun_semver::Version::parse(sliced).version.min()
@@ -5091,7 +5091,7 @@ pub mod os {
         #[cfg(target_os = "linux")]
         {
             // SAFETY: zero-init is a valid `sysinfo` repr; sysinfo(2) overwrites it.
-            let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
+            let mut info: libc::sysinfo = unsafe { bun_core::ffi::zeroed() };
             // SAFETY: FFI call; out-param is valid for the duration.
             if unsafe { libc::sysinfo(&mut info) } == 0 {
                 return (info.totalram as u64).wrapping_mul(info.mem_unit as u64);

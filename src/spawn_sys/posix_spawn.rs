@@ -624,7 +624,7 @@ pub mod posix_spawn {
                     if p.is_null() {
                         &b""[..]
                     } else {
-                        CStr::from_ptr(p).to_bytes()
+                        bun_core::ffi::cstr(p).to_bytes()
                     }
                 };
                 sys::syslog!(
@@ -645,7 +645,7 @@ pub mod posix_spawn {
                 if p.is_null() {
                     &b""[..]
                 } else {
-                    CStr::from_ptr(p).to_bytes()
+                    bun_core::ffi::cstr(p).to_bytes()
                 }
             };
             sys::Result::Err(sys::Error {
@@ -785,7 +785,7 @@ pub mod posix_spawn {
                         bun_spawn::FileActionType::Open => {
                             // SAFETY: `.Open` actions always have a non-null path
                             // backed by a CString in `act.paths` (see `open_z`).
-                            let p = unsafe { CStr::from_ptr(action.path) };
+                            let p = unsafe { bun_core::ffi::cstr(action.path) };
                             if let Err(e) = posix_actions.open_z(
                                 Fd::from_native(action.fds[0]),
                                 p,

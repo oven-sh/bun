@@ -860,7 +860,7 @@ impl Linux {
                     // SAFETY: i was just advanced past this event's name_len bytes; offset is within buf[0..n].
                     let name_ptr = unsafe { buf.0.as_ptr().add(i - ev.name_len as usize) };
                     // SAFETY: kernel NUL-pads name within name_len bytes.
-                    unsafe { core::ffi::CStr::from_ptr(name_ptr.cast()).to_bytes() }
+                    unsafe { bun_core::ffi::cstr(name_ptr.cast()).to_bytes() }
                 } else {
                     b""
                 };
@@ -1258,7 +1258,7 @@ impl Kqueue {
         let kq = unsafe { (*plat).kq };
 
         // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD).
-        let mut kev: Kevent = unsafe { core::mem::zeroed() };
+        let mut kev: Kevent = unsafe { bun_core::ffi::zeroed() };
         kev.ident = fd.native() as usize;
         kev.filter = EVFILT::VNODE;
         kev.flags = EV::ADD | EV::CLEAR | EV::ENABLE;
@@ -1339,7 +1339,7 @@ impl Kqueue {
         let kq = unsafe { (*plat).kq };
         let running: &AtomicBool = unsafe { &(*plat).running };
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
-        let mut events: [Kevent; 128] = unsafe { core::mem::zeroed() };
+        let mut events: [Kevent; 128] = unsafe { bun_core::ffi::zeroed() };
         while running.load(Ordering::Acquire) {
             // SAFETY: thin wrapper over libc::kevent.
             let count = unsafe {

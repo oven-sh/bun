@@ -454,7 +454,7 @@ impl MutableString {
         // PERF(port): Zig used `inline for` (unrolled); plain loop here.
         let mut buffers: [libc::iovec; COUNT] =
             // SAFETY: every element is written in the loop below before return.
-            unsafe { core::mem::zeroed() };
+            unsafe { bun_core::ffi::zeroed() };
         for (b, r) in buffers.iter_mut().zip(ranges.iter()) {
             let s = &self.list[r.0..r.1];
             *b = libc::iovec { iov_base: s.as_ptr().cast_mut().cast::<_>(), iov_len: s.len() };
@@ -473,7 +473,7 @@ impl MutableString {
     ) -> [SocketBuffer; COUNT] {
         let mut buffers: [SocketBuffer; COUNT] =
             // SAFETY: every element is written in the loop below before return.
-            unsafe { core::mem::zeroed() };
+            unsafe { bun_core::ffi::zeroed() };
         for (b, r) in buffers.iter_mut().zip(ranges.iter()) {
             let s = &self.list[r.0..r.1];
             *b = SocketBuffer { len: s.len() as u32, base: s.as_ptr() as *mut _ };

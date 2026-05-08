@@ -642,7 +642,7 @@ pub fn crash_handler(
 
                     if let Some(name) = INSIDE_NATIVE_PLUGIN.with(|c| c.get()) {
                         // SAFETY: name was set from a valid NUL-terminated C string
-                        let native_plugin_name = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
+                        let native_plugin_name = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
                         let fmt = "\nBun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nThis indicates either a bug in the native plugin or in Bun.\n";
                         if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(native_plugin_name)))).is_err() { abort(); }
                     } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
@@ -651,7 +651,7 @@ pub fn crash_handler(
                         let name: &[u8] = UNSUPPORTED_UV_FUNCTION.with(|c| c.get())
                             .map(|p| {
                                 // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes()
+                                unsafe { bun_core::ffi::cstr(p) }.to_bytes()
                             })
                             .unwrap_or(b"<unknown>");
                         let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
@@ -783,7 +783,7 @@ pub fn crash_handler(
                         }
                         if let Some(name) = INSIDE_NATIVE_PLUGIN.with(|c| c.get()) {
                             // SAFETY: name was set from a valid NUL-terminated C string
-                            let native_plugin_name = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
+                            let native_plugin_name = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
                             if write!(writer, "{}", Output::pretty_fmt_args(
                                 "Bun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                                 true,
@@ -794,7 +794,7 @@ pub fn crash_handler(
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION.with(|c| c.get())
                                 .map(|p| {
                                     // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
-                                    unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes()
+                                    unsafe { bun_core::ffi::cstr(p) }.to_bytes()
                                 })
                                 .unwrap_or(b"<unknown>");
                             let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
@@ -906,7 +906,7 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
     #[cfg(unix)]
     fn getrlimit_nofile() -> Option<libc::rlimit> {
         // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
-        let mut lim: libc::rlimit = unsafe { core::mem::zeroed() };
+        let mut lim: libc::rlimit = unsafe { bun_core::ffi::zeroed() };
         // SAFETY: &mut lim is a valid out-pointer.
         if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } == 0 { Some(lim) } else { None }
     }
@@ -1018,7 +1018,7 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
         #[cfg(unix)]
         {
             // SAFETY: zeroed rlimit is valid POD (integers).
-            let limit = getrlimit_nofile().unwrap_or(unsafe { core::mem::zeroed() });
+            let limit = getrlimit_nofile().unwrap_or(unsafe { bun_core::ffi::zeroed() });
 
             if limit.rlim_cur > 0 && limit.rlim_cur < (8192 * 2) {
                 pretty_error!(
@@ -1211,7 +1211,7 @@ pub fn reset_on_posix() {
     }
     // Zig: std.posix.Sigaction{ .handler = .{ .sigaction = handleSegfaultPosix }, ... }.
     // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
-    let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
+    let mut act: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
     act.sa_sigaction = handle_segfault_posix as *const () as usize;
     act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
     // SAFETY: sa_mask is a valid out-pointer.
@@ -1284,7 +1284,7 @@ pub fn reset_segfault_handler() {
     #[cfg(unix)]
     {
         // SAFETY: zeroed sigaction is valid POD; handler = SIG_DFL (= 0), flags = 0.
-        let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
+        let mut act: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
         act.sa_sigaction = libc::SIG_DFL;
         // SAFETY: sa_mask is a valid out-pointer.
         unsafe { libc::sigemptyset(&raw mut act.sa_mask); }
@@ -1367,7 +1367,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
                 b""
             } else {
                 // SAFETY: non-null branch — gnu_get_libc_version returned a valid C string.
-                unsafe { core::ffi::CStr::from_ptr(version) }.to_bytes()
+                unsafe { bun_core::ffi::cstr(version) }.to_bytes()
             };
             let kernel_version = bun_analytics::GenerateHeader::generate_platform::kernel_version();
             if platform.os == bun_analytics::schema::analytics::OperatingSystem::wsl {
@@ -2006,7 +2006,7 @@ fn report(url: &[u8]) {
         // TODO(b2-blocked): bun_str::w! / strings::convert_utf8_to_utf16_in_buffer
         use bun_sys::windows;
         // SAFETY: all-zero is a valid PROCESS_INFORMATION (#[repr(C)] POD, no NonNull/NonZero fields)
-        let mut process: windows::PROCESS_INFORMATION = unsafe { core::mem::zeroed() };
+        let mut process: windows::PROCESS_INFORMATION = unsafe { bun_core::ffi::zeroed() };
         let mut startup_info = windows::STARTUPINFOW {
             cb: core::mem::size_of::<windows::STARTUPINFOW>() as u32,
             lpReserved: core::ptr::null_mut(),
@@ -2135,7 +2135,7 @@ fn crash() -> ! {
         // Zig: std.posix.Sigaction{ .handler = SIG.DFL, .mask = sigemptyset(), .flags = 0 }.
         // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
         // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
-        let mut sigact: libc::sigaction = unsafe { core::mem::zeroed() };
+        let mut sigact: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
         sigact.sa_sigaction = libc::SIG_DFL;
         // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
         unsafe { libc::sigemptyset(&raw mut sigact.sa_mask); }
@@ -2405,7 +2405,7 @@ pub fn suppress_core_dumps_if_necessary() {
         // Zig: std.posix.getrlimit / setrlimit. bun_sys::posix has no rlimit
         // surface yet — go straight to libc (already a dep, async-signal-safe).
         // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
-        let mut existing_limit: libc::rlimit = unsafe { core::mem::zeroed() };
+        let mut existing_limit: libc::rlimit = unsafe { bun_core::ffi::zeroed() };
         // SAFETY: &mut existing_limit is a valid out-pointer.
         if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &raw mut existing_limit) } != 0 {
             return;
@@ -2892,7 +2892,7 @@ pub extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
         suppress_reporting();
     }
     // SAFETY: name is non-null (Zig dereferences it unconditionally with `.?`)
-    let name_bytes = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
+    let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
     // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
     // buffer suffices — `panic_impl` erases to &'static for the abort path.
     let mut msg = BoundedArray::<u8, 256>::default();
@@ -2917,7 +2917,7 @@ pub extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
     if !action.is_null() {
         debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
         // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
-        let s = unsafe { core::ffi::CStr::from_ptr(action) }.to_bytes();
+        let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
         // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
         CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(unsafe {
             core::mem::transmute::<&[u8], &'static [u8]>(s)

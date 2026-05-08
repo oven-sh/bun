@@ -879,7 +879,7 @@ fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'
         let sn = props.get().server_name;
         if !sn.is_null() {
             // SAFETY: server_name is a NUL-terminated CStr owned by the SSLConfig.
-            let sn_slice = unsafe { core::ffi::CStr::from_ptr(sn) }.to_bytes();
+            let sn_slice = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
             if !sn_slice.is_empty() {
                 // SAFETY: lifetime tied to `client.tls_props`, which outlives this call.
                 return unsafe { bun_core::ffi::slice(sn_slice.as_ptr(), sn_slice.len()) };

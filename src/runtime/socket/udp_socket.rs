@@ -199,7 +199,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         let slice = buf.get_payload(i);
 
         // SAFETY: inet_ntop returned non-null NUL-terminated string into addr_buf.
-        let span = unsafe { core::ffi::CStr::from_ptr(hostname) }.to_bytes();
+        let span = unsafe { bun_core::ffi::cstr(hostname) }.to_bytes();
         let mut hostname_string = if let Some(id) = scope_id {
             'blk: {
                 #[cfg(not(windows))]
@@ -208,7 +208,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
                     // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
                     if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }.is_null() {
                         // SAFETY: if_indextoname wrote a NUL-terminated string.
-                        let name = unsafe { core::ffi::CStr::from_ptr(buffer.as_ptr().cast::<c_char>()) }.to_bytes();
+                        let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }.to_bytes();
                         break 'blk BunString::create_format(format_args!(
                             "{}%{}",
                             bstr::BStr::new(span),
@@ -710,7 +710,7 @@ impl UDPSocket {
         }
 
         // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut addr: sockaddr_storage = unsafe { core::mem::zeroed() };
+        let mut addr: sockaddr_storage = unsafe { bun_core::ffi::zeroed() };
         if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], &mut addr)? {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::setsockopt)
@@ -719,7 +719,7 @@ impl UDPSocket {
         }
 
         // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut interface: sockaddr_storage = unsafe { core::mem::zeroed() };
+        let mut interface: sockaddr_storage = unsafe { bun_core::ffi::zeroed() };
 
         let Some(socket) = this.socket else {
             return Err(global_this.throw(format_args!("Socket is closed")));
@@ -1195,7 +1195,7 @@ impl UDPSocket {
         // to `socket.send`, so a borrowed pointer cannot be freed out from
         // under us. `payload_arg` itself stays rooted in the callframe.
         // SAFETY: all-zero is a valid sockaddr_storage.
-        let mut addr: sockaddr_storage = unsafe { core::mem::zeroed() };
+        let mut addr: sockaddr_storage = unsafe { bun_core::ffi::zeroed() };
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
                 if !this.parse_addr(global_this, dest.port, dest.address, &mut addr)? {

@@ -520,7 +520,7 @@ mod platform {
                     // is left untouched, so zero-initialize it rather than
                     // reading uninitialized stack if the call fails.
                     // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
-                    let mut io: IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+                    let mut io: IO_STATUS_BLOCK = unsafe { bun_core::ffi::zeroed() };
                     if self.first {
                         // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
                         self.buf.fill(0);
@@ -881,7 +881,7 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16> {
                     // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on integer arrays
                     buf: [0u8; 8192],
                     // SAFETY: NameData is [u8; 513] or [u16; 257]; zero is a valid bit pattern.
-                    name_data: unsafe { core::mem::zeroed() },
+                    name_data: unsafe { bun_core::ffi::zeroed() },
                     name_filter: None,
                 },
             };

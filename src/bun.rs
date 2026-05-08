@@ -394,9 +394,9 @@ pub fn free_all_threadlocal_buffers() {
 // These are Zig comptime-reflection helpers over @typeInfo with no direct Rust
 // equivalent. Callers should use Rust-native idioms instead:
 //   `bun.cast(*T, p)`       → `p.cast::<T>()` / `p as *mut T`
-//   `bun.len(p)`            → `slice.len()` / `CStr::from_ptr(p).to_bytes().len()`
-//   `bun.span(p)`           → `CStr::from_ptr(p).to_bytes()` / `core::slice::from_raw_parts`
-//   `bun.sliceTo(p, 0)`     → `bun_str::slice_to_nul(p)` / `CStr::from_ptr(p)`
+//   `bun.len(p)`            → `slice.len()` / `bun_core::ffi::cstr(p).to_bytes().len()`
+//   `bun.span(p)`           → `bun_core::ffi::cstr(p).to_bytes()` / `core::slice::from_raw_parts`
+//   `bun.sliceTo(p, 0)`     → `bun_str::slice_to_nul(p)` / `bun_core::ffi::cstr(p)`
 // TODO(port): comptime reflection — replace 22 callers with idioms above
 
 #[inline]
@@ -408,13 +408,13 @@ pub unsafe fn cast<To>(value: *const c_void) -> *mut To {
 #[inline]
 pub unsafe fn len_cstr(value: *const c_char) -> usize {
     // SAFETY: caller guarantees `value` is NUL-terminated
-    unsafe { core::ffi::CStr::from_ptr(value) }.to_bytes().len()
+    unsafe { bun_core::ffi::cstr(value) }.to_bytes().len()
 }
 
 #[inline]
 pub unsafe fn span(pointer: *const c_char) -> &'static [u8] {
     // SAFETY: caller guarantees `pointer` is NUL-terminated and outlives the slice
-    unsafe { core::ffi::CStr::from_ptr(pointer) }.to_bytes()
+    unsafe { bun_core::ffi::cstr(pointer) }.to_bytes()
 }
 
 /// Scan `pointer` until `end` or NUL sentinel, return the slice.
@@ -1119,7 +1119,7 @@ pub fn is_missing_io_uring() -> bool {
 #[inline]
 pub unsafe fn zero<T>() -> T {
     // SAFETY: caller asserts all-zero is a valid T
-    unsafe { core::mem::zeroed() }
+    unsafe { bun_core::ffi::zeroed() }
 }
 
 // ─── getFdPath ────────────────────────────────────────────────────────────────
@@ -1889,7 +1889,7 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
         let mut out: Vec<Box<bun_str::ZStr>> = Vec::with_capacity(os_argv.len());
         for &p in os_argv {
             // SAFETY: os argv entries are NUL-terminated
-            let s = unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes();
+            let s = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
             out.push(bun_str::ZStr::from_bytes(s));
         }
         // SAFETY: single-threaded init

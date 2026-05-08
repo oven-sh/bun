@@ -1556,7 +1556,7 @@ impl WindowsNamedPipeListeningContext {
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
             // SAFETY: all-zero is a valid pre-init `uv_pipe_t` (C struct,
             // initialised by `uv_pipe_init`).
-            uv_pipe: unsafe { core::mem::zeroed() },
+            uv_pipe: unsafe { bun_core::ffi::zeroed() },
             listener: NonNull::new(listener),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm_ptr(),

@@ -210,7 +210,7 @@ impl Loop {
 
             {
                 // SAFETY: all-zero is a valid epoll_event (POD).
-                let mut epoll: linux::epoll_event = unsafe { core::mem::zeroed() };
+                let mut epoll: linux::epoll_event = unsafe { bun_core::ffi::zeroed() };
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
                 epoll.u64 = std::ptr::from_mut::<Loop>(loop_) as usize as u64;
@@ -246,7 +246,7 @@ impl Loop {
             // the kevent() wait so the pending queue gets drained). EV_CLEAR
             // makes it edge-triggered so we never need to read() the eventfd.
             // SAFETY: all-zero is a valid kevent (POD).
-            let mut change: KEvent = unsafe { core::mem::zeroed() };
+            let mut change: KEvent = unsafe { bun_core::ffi::zeroed() };
             change.ident = usize::try_from(loop_.waker.get_fd().native()).expect("int cast");
             change.filter = libc::EVFILT_READ;
             change.flags = libc::EV_ADD | libc::EV_CLEAR;
@@ -953,7 +953,7 @@ impl Poll {
             }
         };
         // SAFETY: all-zero is a valid KEvent (POD).
-        *kqueue_event = unsafe { core::mem::zeroed() };
+        *kqueue_event = unsafe { bun_core::ffi::zeroed() };
         // `ident` is `u64` on Darwin's `kevent64_s`, `usize` on FreeBSD `kevent`.
         // Zig `@intCast` would trap on a negative fd in safe builds — keep that
         // safety net so a stray -1 doesn't silently register ident=u64::MAX.
@@ -1555,7 +1555,7 @@ pub mod waker {
     #[cfg(target_os = "macos")]
     impl KEventWaker {
         // SAFETY: all-zero is a valid kevent64_s array (POD).
-        const ZEROED: [Kevent64; 16] = unsafe { core::mem::zeroed() };
+        const ZEROED: [Kevent64; 16] = unsafe { bun_core::ffi::zeroed() };
 
         pub fn wake(&mut self) {
             // SAFETY: FFI call with a valid mach_port created in init.
@@ -1718,7 +1718,7 @@ pub mod closer {
     impl Closer {
         pub fn close(fd: Fd, loop_: *mut uv::Loop) {
             // SAFETY: all-zero is a valid uv::fs_t (libuv C struct, zero-init by convention).
-            let io_request: uv::fs_t = unsafe { core::mem::zeroed() };
+            let io_request: uv::fs_t = unsafe { bun_core::ffi::zeroed() };
             let closer = bun_core::heap::into_raw(Box::new(Closer { io_request }));
             // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
             // SAFETY: closer is a freshly-boxed valid pointer.

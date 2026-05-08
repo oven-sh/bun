@@ -40,7 +40,7 @@ pub fn main() {
     {
         // TODO(port): route through bun_sys once sigaction wrappers exist
         // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
-        let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
+        let mut act: libc::sigaction = unsafe { bun_core::ffi::zeroed() };
         act.sa_sigaction = libc::SIG_IGN;
         // SAFETY: act is fully initialized; passing null for oldact is allowed.
         unsafe {

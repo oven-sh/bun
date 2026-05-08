@@ -722,7 +722,7 @@ impl<'a> Loader<'a> {
         self.map.map.ensure_total_capacity(environ.len())?;
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
-            let env = unsafe { core::ffi::CStr::from_ptr(_env) }.to_bytes();
+            let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
             if let Some(i) = strings::index_of_char(env, b'=') {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];

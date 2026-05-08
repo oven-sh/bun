@@ -383,7 +383,7 @@ impl Source {
     // SAFETY: byte arrays and raw `*mut` pointers are valid all-zero (null fat ptr =
     // `(null, 0)`); only read after `init()` overwrites every field. See TODO above for
     // the adapter/stream caveat.
-    pub const ZEROED: Self = unsafe { core::mem::zeroed() };
+    pub const ZEROED: Self = unsafe { crate::ffi::zeroed() };
 
     /// Accessors replacing the self-referential `*std.Io.Writer` fields.
     #[inline]

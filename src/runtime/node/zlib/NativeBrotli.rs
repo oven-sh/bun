@@ -40,7 +40,7 @@ impl Default for Context {
             avail_out: 0,
             flush: Op::process,
             // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
-            last_result: unsafe { core::mem::zeroed() },
+            last_result: unsafe { bun_core::ffi::zeroed() },
             error_: c::BrotliDecoderErrorCode2::NO_ERROR,
         }
     }

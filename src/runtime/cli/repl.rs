@@ -862,7 +862,7 @@ impl<'a> Repl<'a> {
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
             // sa_sigaction/sa_flags below. `act` is valid for the duration of the call.
             unsafe {
-                let mut act: bun_sys::posix::Sigaction = core::mem::zeroed();
+                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
                 act.sa_sigaction = sigint_handler as *const () as usize;
                 act.sa_flags = 0;
                 bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
@@ -884,7 +884,7 @@ impl<'a> Repl<'a> {
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
             // restores the default disposition. `act` is valid for the duration of the call.
             unsafe {
-                let mut act: bun_sys::posix::Sigaction = core::mem::zeroed();
+                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
                 act.sa_sigaction = libc::SIG_DFL;
                 act.sa_flags = 0;
                 bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());

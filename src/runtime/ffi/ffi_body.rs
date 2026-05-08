@@ -175,7 +175,7 @@ fn get_dl_error() -> Result<Box<[u8]>, bun_core::Error> {
         let msg: &[u8] = unsafe {
             let p = libc::dlerror();
             if !p.is_null() {
-                core::ffi::CStr::from_ptr(p).to_bytes()
+                bun_core::ffi::cstr(p).to_bytes()
             } else {
                 b"unknown error"
             }
@@ -560,7 +560,7 @@ impl CompileC {
         let mut msg: &[u8] = if message.is_null() {
             b""
         } else {
-            unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes()
+            unsafe { bun_core::ffi::cstr(message) }.to_bytes()
         };
         if msg.is_empty() {
             return;
@@ -2079,7 +2079,7 @@ impl Function {
         // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
         let this = unsafe { &mut *ctx };
         // SAFETY: TCC passes a valid NUL-terminated string
-        let mut msg: &[u8] = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+        let mut msg: &[u8] = unsafe { bun_core::ffi::cstr(message) }.to_bytes();
         if !msg.is_empty() {
             let mut offset: usize = 0;
             // the message we get from TCC sometimes has garbage in it

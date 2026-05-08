@@ -261,7 +261,7 @@ impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
             // SAFETY: matches Zig `task: Task = undefined` — caller must set before use.
-            task: unsafe { core::mem::zeroed() },
+            task: unsafe { bun_core::ffi::zeroed() },
             next: PackedNextPtr::NONE,
         }
     }

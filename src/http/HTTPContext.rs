@@ -958,7 +958,7 @@ impl<const SSL: bool> Handler<SSL> {
                 unsafe {
                     bun_core::ZStr::from_raw(
                         ssl_error.code.cast::<u8>(),
-                        core::ffi::CStr::from_ptr(ssl_error.code).count_bytes(),
+                        bun_core::ffi::cstr(ssl_error.code).count_bytes(),
                     )
                 }
             },
@@ -969,7 +969,7 @@ impl<const SSL: bool> Handler<SSL> {
                 unsafe {
                     bun_core::ZStr::from_raw(
                         ssl_error.reason.cast::<u8>(),
-                        core::ffi::CStr::from_ptr(ssl_error.reason).count_bytes(),
+                        bun_core::ffi::cstr(ssl_error.reason).count_bytes(),
                     )
                 }
             },

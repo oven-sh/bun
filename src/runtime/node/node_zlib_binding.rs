@@ -698,7 +698,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let msg_bytes: &[u8] = if err_.msg.is_null() {
             b""
         } else {
-            unsafe { core::ffi::CStr::from_ptr(err_.msg) }.to_bytes()
+            unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
         let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
         let msg_value = match msg_str.transfer_to_js(global_this) {
@@ -709,7 +709,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let code_bytes: &[u8] = if err_.code.is_null() {
             b""
         } else {
-            unsafe { core::ffi::CStr::from_ptr(err_.code) }.to_bytes()
+            unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
         let mut code_str = BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
         let code_value = match code_str.transfer_to_js(global_this) {

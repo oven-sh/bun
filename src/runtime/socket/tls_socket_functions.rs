@@ -164,7 +164,7 @@ pub fn get_servername(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
         return Ok(JSValue::UNDEFINED);
     }
     // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
-    let slice = unsafe { CStr::from_ptr(servername) }.to_bytes();
+    let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
@@ -237,7 +237,7 @@ pub fn get_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFr
         return Ok(JSValue::NULL);
     }
     // SAFETY: SSL_get_version returns a static NUL-terminated C string.
-    let slice = unsafe { CStr::from_ptr(version) }.to_bytes();
+    let slice = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
     if slice.is_empty() {
         return Ok(JSValue::NULL);
     }
@@ -455,7 +455,7 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
                 let sn_str = unsafe { ffi::OBJ_nid2sn(sign_nid) };
                 if !sn_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                    sig_with_md = unsafe { CStr::from_ptr(sn_str) }.to_bytes();
+                    sig_with_md = unsafe { bun_core::ffi::cstr(sn_str) }.to_bytes();
                 } else {
                     sig_with_md = b"UNDEF";
                 }
@@ -466,7 +466,7 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
         let hash_str = unsafe { ffi::OBJ_nid2sn(hash_nid) };
         if !hash_str.is_null() {
             // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-            let hash_slice = unsafe { CStr::from_ptr(hash_str) }.to_bytes();
+            let hash_slice = unsafe { bun_core::ffi::cstr(hash_str) }.to_bytes();
             let mut buffer: Vec<u8> = Vec::with_capacity(sig_with_md.len() + hash_slice.len() + 1);
             buffer.extend_from_slice(sig_with_md);
             buffer.push(b'+');
@@ -501,7 +501,7 @@ pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
         result.put(global, b"name", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
-        let s = unsafe { CStr::from_ptr(name) }.to_bytes();
+        let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         result.put(global, b"name", ZigString::from_utf8(s).to_js(global));
     }
 
@@ -511,7 +511,7 @@ pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
         result.put(global, b"standardName", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_standard_name returns a static NUL-terminated C string.
-        let s = unsafe { CStr::from_ptr(standard_name) }.to_bytes();
+        let s = unsafe { bun_core::ffi::cstr(standard_name) }.to_bytes();
         result.put(global, b"standardName", ZigString::from_utf8(s).to_js(global));
     }
 
@@ -521,7 +521,7 @@ pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
         result.put(global, b"version", JSValue::NULL);
     } else {
         // SAFETY: SSL_CIPHER_get_version returns a static NUL-terminated C string.
-        let s = unsafe { CStr::from_ptr(version) }.to_bytes();
+        let s = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
         result.put(global, b"version", ZigString::from_utf8(s).to_js(global));
     }
 
@@ -681,7 +681,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
                 let nid_str = unsafe { ffi::OBJ_nid2sn(nid) };
                 if !nid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                    curve_name = unsafe { CStr::from_ptr(nid_str) }.to_bytes();
+                    curve_name = unsafe { bun_core::ffi::cstr(nid_str) }.to_bytes();
                 } else {
                     curve_name = b"";
                 }
@@ -690,7 +690,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
                 let kid_str = unsafe { ffi::OBJ_nid2sn(kid) };
                 if !kid_str.is_null() {
                     // SAFETY: OBJ_nid2sn returns a static NUL-terminated C string.
-                    curve_name = unsafe { CStr::from_ptr(kid_str) }.to_bytes();
+                    curve_name = unsafe { bun_core::ffi::cstr(kid_str) }.to_bytes();
                 } else {
                     curve_name = b"";
                 }
@@ -893,7 +893,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         let reason_ptr = unsafe { ffi::ERR_reason_error_string(ssl_error) };
         if !reason_ptr.is_null() {
             // SAFETY: ERR_reason_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { CStr::from_ptr(reason_ptr) }.to_bytes();
+            let reason = unsafe { bun_core::ffi::cstr(reason_ptr) }.to_bytes();
             if reason.is_empty() {
                 break;
             }
@@ -905,7 +905,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         let func_ptr = unsafe { ffi::ERR_func_error_string(ssl_error) };
         if !func_ptr.is_null() {
             // SAFETY: ERR_func_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { CStr::from_ptr(func_ptr) }.to_bytes();
+            let reason = unsafe { bun_core::ffi::cstr(func_ptr) }.to_bytes();
             if !reason.is_empty() {
                 const VIA: &[u8] = b" via ";
                 output_buf[written..written + VIA.len()].copy_from_slice(VIA);
@@ -919,7 +919,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         let lib_ptr = unsafe { ffi::ERR_lib_error_string(ssl_error) };
         if !lib_ptr.is_null() {
             // SAFETY: ERR_lib_error_string returns a static NUL-terminated C string.
-            let reason = unsafe { CStr::from_ptr(lib_ptr) }.to_bytes();
+            let reason = unsafe { bun_core::ffi::cstr(lib_ptr) }.to_bytes();
             if !reason.is_empty() {
                 output_buf[written] = b' ';
                 written += 1;

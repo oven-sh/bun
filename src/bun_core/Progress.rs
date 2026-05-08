@@ -457,7 +457,7 @@ impl Progress {
                     // TODO(port): verify bun_sys::windows::CONSOLE_SCREEN_BUFFER_INFO layout & kernel32 bindings.
                     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO =
                         // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (POD).
-                        unsafe { core::mem::zeroed() };
+                        unsafe { crate::ffi::zeroed() };
                     // SAFETY: file.console_handle() is a valid console HANDLE (is_windows_terminal asserted
                     // above); `info` is a live stack local out-ptr.
                     if unsafe {

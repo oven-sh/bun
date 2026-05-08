@@ -396,7 +396,7 @@ impl Watcher {
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
         // SAFETY: all-zero is a valid KEvent
-        let mut event: KEvent = unsafe { core::mem::zeroed() };
+        let mut event: KEvent = unsafe { bun_core::ffi::zeroed() };
 
         event.flags = (EV_ADD | EV_CLEAR | EV_ENABLE) as _;
         // we want to know about the vnode

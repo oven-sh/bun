@@ -58,8 +58,8 @@ pub fn uninit() -> Task<'static> {
         // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
         // valid storage and is never read before the caller overwrites it.
         tag: Tag::PackageManifest,
-        request: unsafe { core::mem::zeroed() },
-        data: unsafe { core::mem::zeroed() },
+        request: unsafe { bun_core::ffi::zeroed() },
+        data: unsafe { bun_core::ffi::zeroed() },
         // Every Zig caller passes `logger.Log.init(allocator)` for this field.
         // `Log` contains `Vec<Msg>` (NonNull invariant) so it cannot be
         // `mem::zeroed()`; and struct-update `..Task::uninit()` *drops* the

@@ -174,14 +174,14 @@ pub fn verify_error_to_js(
     } else {
         // SAFETY: non-null `code` is a NUL-terminated C string owned by
         // uSockets for the duration of the handshake callback.
-        unsafe { core::ffi::CStr::from_ptr(err.code) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(err.code) }.to_bytes()
     };
     let reason: &[u8] = if err.reason.is_null() {
         b""
     } else {
         // SAFETY: non-null `reason` is a NUL-terminated C string owned by
         // uSockets for the duration of the handshake callback.
-        unsafe { core::ffi::CStr::from_ptr(err.reason) }.to_bytes()
+        unsafe { bun_core::ffi::cstr(err.reason) }.to_bytes()
     };
 
     let fallback = SystemError {

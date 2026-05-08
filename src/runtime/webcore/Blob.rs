@@ -5421,7 +5421,7 @@ pub extern "C" fn Blob__fromBytesWithType(
 ) -> *mut Blob {
     let blob = Blob__fromBytes(global_this, ptr, len);
     // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
-    let mime_slice = unsafe { core::ffi::CStr::from_ptr(mime) }.to_bytes();
+    let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
     if !mime_slice.is_empty() {
         unsafe {
             (*blob).content_type = std::ptr::from_ref::<[u8]>(mime_slice);
@@ -5483,7 +5483,7 @@ pub extern "C" fn Blob__fromMmapWithType(
         let store = Store::init_mmap(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
         let blob = Blob::new(Blob::init_with_store(store, global_this));
         // SAFETY: caller (C++) passes a valid NUL-terminated C string.
-        let mime_slice = unsafe { core::ffi::CStr::from_ptr(mime) }.to_bytes();
+        let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
         if !mime_slice.is_empty() {
             // SAFETY: `blob` was just produced by heap::alloc in Blob::new.
             unsafe {

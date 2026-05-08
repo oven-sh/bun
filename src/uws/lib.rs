@@ -140,8 +140,8 @@ pub fn on_thread_exit() {
 #[unsafe(no_mangle)]
 pub extern "C" fn BUN__warn__extra_ca_load_failed(filename: *const c_char, error_msg: *const c_char) {
     // SAFETY: C++ caller passes valid NUL-terminated strings.
-    let filename = unsafe { core::ffi::CStr::from_ptr(filename) };
-    let error_msg = unsafe { core::ffi::CStr::from_ptr(error_msg) };
+    let filename = unsafe { bun_core::ffi::cstr(filename) };
+    let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
     bun_core::Output::warn(&format_args!(
         "ignoring extra certs from {}, load failed: {}",
         bstr::BStr::new(filename.to_bytes()),
@@ -160,11 +160,11 @@ mod c {
 
 pub fn get_default_ciphers() -> &'static ZStr {
     // SAFETY: us_get_default_ciphers returns a static NUL-terminated string;
-    // CStr::from_ptr computes the length, ZStr::from_raw rebuilds the
+    // bun_core::ffi::cstr computes the length, ZStr::from_raw rebuilds the
     // length-carrying slice (excluding the NUL).
     unsafe {
         let p = c::us_get_default_ciphers();
-        let len = core::ffi::CStr::from_ptr(p).to_bytes().len();
+        let len = bun_core::ffi::cstr(p).to_bytes().len();
         ZStr::from_raw(p.cast::<u8>(), len)
     }
 }

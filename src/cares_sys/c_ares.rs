@@ -354,9 +354,7 @@ impl struct_hostent {
             return;
         }
         let mut start: *mut struct_hostent = ptr::null_mut();
-        let mut addrttls: [struct_ares_addrttl; 256] =
-            // SAFETY: POD scratch buffer for ares_parse_a_reply.
-            unsafe { core::mem::zeroed() };
+        let mut addrttls = [struct_ares_addrttl::default(); 256];
         let mut naddrttls: i32 = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
@@ -504,8 +502,7 @@ impl hostent_with_ttls {
 
     pub fn parse_a(buffer: *mut u8, buffer_length: c_int) -> Result<Box<hostent_with_ttls>, Error> {
         let mut start: *mut struct_hostent = ptr::null_mut();
-        // SAFETY: POD scratch buffer.
-        let mut addrttls: [struct_ares_addrttl; 256] = unsafe { core::mem::zeroed() };
+        let mut addrttls = [struct_ares_addrttl::default(); 256];
         let mut naddrttls: c_int = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
@@ -524,8 +521,7 @@ impl hostent_with_ttls {
 
     pub fn parse_aaaa(buffer: *mut u8, buffer_length: c_int) -> Result<Box<hostent_with_ttls>, Error> {
         let mut start: *mut struct_hostent = ptr::null_mut();
-        // SAFETY: POD scratch buffer.
-        let mut addr6ttls: [struct_ares_addr6ttl; 256] = unsafe { core::mem::zeroed() };
+        let mut addr6ttls = [struct_ares_addr6ttl::default(); 256];
         let mut naddr6ttls: c_int = 256;
         // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
         let result = unsafe {
@@ -755,8 +751,7 @@ impl Channel {
             container.on_dns_socket_state(socket, readable != 0, writable != 0);
         }
 
-        // SAFETY: all-zero is a valid Options.
-        let mut opts: Options = unsafe { core::mem::zeroed() };
+        let mut opts = Options::default();
 
         // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
         // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
@@ -817,8 +812,7 @@ impl Channel {
             port_buf.as_ptr().cast::<c_char>()
         };
 
-        // SAFETY: all-zero is a valid AddrInfo_hints (POD ints).
-        let mut hints_buf: [AddrInfo_hints; 3] = unsafe { core::mem::zeroed() };
+        let mut hints_buf = [AddrInfo_hints::default(); 3];
         for (i, hint) in hints[..hints.len().min(2)].iter().enumerate() {
             hints_buf[i] = *hint;
         }
@@ -1076,7 +1070,7 @@ pub struct struct_ares_in6_addr {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct struct_ares_addrttl {
     pub ipaddr: u32,
     pub ttl: c_int,
@@ -1087,6 +1081,15 @@ pub struct struct_ares_addrttl {
 pub struct struct_ares_addr6ttl {
     pub ip6addr: struct_ares_in6_addr,
     pub ttl: c_int,
+}
+
+impl Default for struct_ares_addr6ttl {
+    #[inline]
+    fn default() -> Self {
+        // SAFETY: `#[repr(C)]` POD — 16-byte union of u8 + c_int. All-zero is
+        // a valid bit pattern (matches Zig `std.mem.zeroes`).
+        unsafe { core::mem::zeroed() }
+    }
 }
 
 #[repr(C)]

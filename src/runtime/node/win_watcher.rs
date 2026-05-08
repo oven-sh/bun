@@ -319,7 +319,7 @@ impl PathWatcher {
 
         let this_box = Box::new(PathWatcher {
             // SAFETY: all-zero is a valid uv_fs_event_t (POD C struct).
-            handle: unsafe { core::mem::zeroed() },
+            handle: unsafe { bun_core::ffi::zeroed() },
             manager: Some(manager_ptr),
             emit_in_progress: false,
             handlers: ArrayHashMap::default(),

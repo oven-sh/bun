@@ -2267,7 +2267,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if let Some((name_ptr, name_len)) = server_name_raw {
                 // SAFETY: name_ptr/name_len were just extracted from the live
                 // `config.ssl_config.server_name` CString; valid + NUL-terminated.
-                let server_name = unsafe { core::ffi::CStr::from_ptr(name_ptr) };
+                let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
                 // SAFETY: app is the live handle just stored in self.app.
                 if unsafe { (*app).add_server_name_with_options(server_name, ssl_options) }.is_err() {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2322,7 +2322,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 };
                 // SAFETY: name_ptr/name_len point into config.sni[i].server_name;
                 // set_routes() does not mutate config.sni so the bytes are valid.
-                let sni_name = unsafe { core::ffi::CStr::from_ptr(name_ptr) };
+                let sni_name = unsafe { bun_core::ffi::cstr(name_ptr) };
                 // SAFETY: sni_name is a CStr; NUL invariant holds for ZStr.
                 let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
 

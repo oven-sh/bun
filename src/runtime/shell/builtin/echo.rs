@@ -35,7 +35,7 @@ impl Echo {
             let mut args_start = 0usize;
             for arg in args {
                 // SAFETY: argv entries are NUL-terminated.
-                let flag = unsafe { CStr::from_ptr(*arg) }.to_bytes();
+                let flag = unsafe { bun_core::ffi::cstr(*arg) }.to_bytes();
                 if flag.len() < 2 || flag[0] != b'-' {
                     break;
                 }
@@ -64,7 +64,7 @@ impl Echo {
                     break;
                 }
                 // SAFETY: argv entries are NUL-terminated.
-                let thearg = unsafe { CStr::from_ptr(*arg) }.to_bytes();
+                let thearg = unsafe { bun_core::ffi::cstr(*arg) }.to_bytes();
                 let is_last = i == args_len - 1;
 
                 if escape_sequences {

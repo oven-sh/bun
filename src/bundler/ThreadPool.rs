@@ -105,7 +105,7 @@ mod io_thread_pool {
         // an all-zero `Mutex` is the documented unlocked state on every impl.
         // SAFETY: `Mutex` is `repr(Rust)` over an atomic / Futex word; zero is
         // the valid initial value (matches `#[derive(Default)]`).
-        unsafe { core::mem::zeroed() }
+        unsafe { bun_core::ffi::zeroed() }
     };
     /// 0 means not initialized. 1 means initialized but not used.
     /// N > 1 means N-1 `ThreadPool`s are using the IO thread pool.

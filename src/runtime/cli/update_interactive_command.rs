@@ -1202,7 +1202,7 @@ impl UpdateInteractiveCommand {
         {
             // TODO(port): replace std.posix.system.ioctl with bun_sys
             // SAFETY: all-zero is a valid Winsize (#[repr(C)] POD, no NonNull/NonZero fields).
-            let mut size: bun_core::Winsize = unsafe { core::mem::zeroed() };
+            let mut size: bun_core::Winsize = unsafe { bun_core::ffi::zeroed() };
             // SAFETY: ioctl with TIOCGWINSZ on stdout fd; size is a valid out-ptr.
             if unsafe {
                 libc::ioctl(
@@ -1229,7 +1229,7 @@ impl UpdateInteractiveCommand {
             };
 
             // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = unsafe { core::mem::zeroed() };
+            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = unsafe { bun_core::ffi::zeroed() };
             // SAFETY: handle is valid; csbi is a valid out-ptr.
             if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
                 != windows::FALSE

@@ -2447,7 +2447,7 @@ pub fn parse_flags<'a, O: FlagParser>(
     let mut idx = 0usize;
     while idx < args.len() {
         // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init).
-        let flag = unsafe { core::ffi::CStr::from_ptr(args[idx]) }.to_bytes();
+        let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),
             ParseFlagResult::ContinueParsing => {}

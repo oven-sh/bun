@@ -246,6 +246,14 @@ pub unsafe fn set_global(ctx: *mut ContextData) {
     GLOBAL_CLI_CTX.store(ctx, core::sync::atomic::Ordering::Release);
 }
 
+/// Raw pointer to the process-global CLI context (null before
+/// `set_global`). Higher-tier crates that need a `&mut` view should go
+/// through this single source of truth rather than keeping a parallel static.
+#[inline]
+pub fn global_ptr() -> *mut ContextData {
+    GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire)
+}
+
 /// Read-only handle to the process-global CLI context, or `None` if the CLI
 /// has not been initialized (embedder/tests). Prefer this over
 /// `bun_runtime::cli::Command::get` from crates below `bun_runtime`.

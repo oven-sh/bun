@@ -547,11 +547,10 @@ pub mod command {
         Context, ContextData, DebugOptions, HotReload, RuntimeOptions, TestOptions,
     };
 
-    // Zig: `var global_cli_ctx: Context = undefined;` + `var context_data: ContextData = undefined;`
-    // Process-lifetime singletons; written exactly once in `create_context_data`
-    // during single-threaded startup, read everywhere thereafter.
-    static GLOBAL_CLI_CTX: core::sync::atomic::AtomicPtr<ContextData> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+    // Zig: `var context_data: ContextData = undefined;` — process-lifetime
+    // storage, written exactly once in `create_context_data` during
+    // single-threaded startup. The pointer to it is published via
+    // `bun_options_types::Context::set_global` (single source of truth).
     static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
@@ -562,15 +561,15 @@ pub mod command {
     /// `&mut ContextData` is live (single-threaded CLI dispatch).
     #[inline]
     pub unsafe fn global_ctx() -> *mut ContextData {
-        GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Relaxed)
+        bun_options_types::Context::global_ptr()
     }
 
     /// Zig: `pub fn get() Context` — process-global CLI context handle.
     #[inline]
     pub fn get() -> Context<'static> {
-        // SAFETY: only called after `create_context_data` initialized GLOBAL_CLI_CTX
+        // SAFETY: only called after `create_context_data` published the ctx
         // during single-threaded startup; callers treat the result as read-mostly.
-        unsafe { &mut *GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Relaxed) }
+        unsafe { &mut *bun_options_types::Context::global_ptr() }
     }
 
     pub fn is_bun_x(argv0: &[u8]) -> bool {
@@ -730,9 +729,6 @@ pub mod command {
             });
             (*CONTEXT_DATA.get()).assume_init_mut()
         };
-        GLOBAL_CLI_CTX.store(ctx_ptr, core::sync::atomic::Ordering::Release);
-        // Publish to the lower-tier accessor so crates below `bun_runtime`
-        // (e.g. `bun_jsc`) can read parsed runtime options without a cycle.
         // SAFETY: single-threaded CLI startup; `ctx_ptr` is process-lifetime.
         unsafe { bun_options_types::Context::set_global(ctx_ptr) };
 

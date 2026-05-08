@@ -702,6 +702,28 @@ pub mod command {
         Tag::AutoCommand
     }
 
+    /// Initialize the process-global `CONTEXT_DATA` and publish it via
+    /// `Context::set_global`. Shared by `create_context_data` and the
+    /// standalone-graph fast path in `start()` (Zig: the bare
+    /// `context_data = .{...}; global_cli_ctx = &context_data;` sequence).
+    fn write_context_no_parse(log: &mut logger::Log) -> &'static mut ContextData {
+        // SAFETY: single-threaded CLI startup; first and only write to
+        // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
+        // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
+        // address is sound for the process lifetime.
+        unsafe {
+            (*CONTEXT_DATA.get()).write(ContextData {
+                args: bun_options_types::schema::api::TransformOptions::default(),
+                log: std::ptr::from_mut::<logger::Log>(log),
+                start_time: START_TIME.read(),
+                ..Default::default()
+            });
+            let ctx = (*CONTEXT_DATA.get()).assume_init_mut();
+            bun_options_types::Context::set_global(ctx);
+            ctx
+        }
+    }
+
     /// `ContextData.create` — populates the global ctx and runs `Arguments::parse`.
     ///
     /// PORT NOTE: Zig had `comptime command: Tag` → const generic. `Tag` lacks
@@ -716,32 +738,14 @@ pub mod command {
         // and debug logging only.
         unsafe { CMD.write(Some(cmd)) };
 
-        // SAFETY: single-threaded CLI startup; first and only write to
-        // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
-        // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
-        // address is sound for the process lifetime.
-        let ctx_ptr: *mut ContextData = unsafe {
-            (*CONTEXT_DATA.get()).write(ContextData {
-                args: bun_options_types::schema::api::TransformOptions::default(),
-                log: std::ptr::from_mut::<logger::Log>(log),
-                start_time: START_TIME.read(),
-                ..Default::default()
-            });
-            (*CONTEXT_DATA.get()).assume_init_mut()
-        };
-        // SAFETY: single-threaded CLI startup; `ctx_ptr` is process-lifetime.
-        unsafe { bun_options_types::Context::set_global(ctx_ptr) };
+        let ctx = write_context_no_parse(log);
 
         if USES_GLOBAL_OPTIONS[cmd] {
-            // SAFETY: just initialized above; single-threaded.
-            let ctx = unsafe { &mut *ctx_ptr };
             ctx.args = arguments::parse(cmd, ctx)?;
         }
 
         #[cfg(windows)]
         {
-            // SAFETY: just initialized above; single-threaded.
-            let ctx = unsafe { &mut *ctx_ptr };
             if ctx.debug.hot_reload == HotReload::Watch {
                 // TODO(b2-blocked): bun_sys::windows::is_watcher_child /
                 // become_watcher_manager — Windows watcher hand-off path.
@@ -756,7 +760,7 @@ pub mod command {
             }
         }
 
-        Ok(ctx_ptr)
+        Ok(ctx)
     }
     pub use create_context_data as init;
 
@@ -812,24 +816,10 @@ pub mod command {
                         break 'brk unsafe { &mut *result };
                     }
 
-                    // SAFETY: single-threaded CLI startup; first and only write to
-                    // `CONTEXT_DATA` for the process lifetime.
-                    let ctx_ptr: *mut ContextData = unsafe {
-                        (*CONTEXT_DATA.get()).write(ContextData {
-                            log: std::ptr::from_mut::<logger::Log>(log),
-                            start_time: START_TIME.read(),
-                            ..Default::default()
-                        });
-                        (*CONTEXT_DATA.get()).assume_init_mut()
-                    };
-                    // SAFETY: single-threaded CLI startup; publishes the just-initialized ctx.
-                    unsafe { bun_options_types::Context::set_global(ctx_ptr) };
-
                     // If no compile_exec_argv, skip executable name if present
                     offset_for_passthrough = 1.min(bun::argv().len());
 
-                    // SAFETY: just initialized
-                    break 'brk unsafe { &mut *ctx_ptr };
+                    break 'brk write_context_no_parse(log);
                 };
 
                 ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);

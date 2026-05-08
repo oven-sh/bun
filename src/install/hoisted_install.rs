@@ -109,6 +109,11 @@ pub fn install_hoisted_packages(
             )?;
         }
     }
+    // Re-derive after `filter()` so every subsequent `this` use (progress
+    // setup through the install loop) is a fresh child of `mgr_ptr` under
+    // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
+    // line-77 reborrow's tag.
+    let this = unsafe { &mut *mgr_ptr };
 
     let _restore_buffers = scopeguard::guard(
         (original_trees, original_tree_dep_ids),
@@ -338,30 +343,20 @@ pub fn install_hoisted_packages(
             let trees_count = this.lockfile.buffers.trees.len();
             let trusted_deps = this.find_trusted_dependencies_from_update_requests();
 
-            // SAFETY: `mgr_ptr` is the provenance root for every `this` access
-            // in this fn (see shadow-reborrow at top). `PackageInstaller`
-            // stores `&'a mut PackageManager` (Zig: non-exclusive `*PM`); the
-            // body below also reborrows `*mgr_ptr` for `pending_task_count` /
-            // `run_tasks` / lifecycle ticks. Under Stacked Borrows the
-            // installer's `&mut` and those reborrows alias — Phase B must
-            // retype `PackageInstaller.manager` as `*mut PackageManager`
-            // (LIFETIMES.tsv: BACKREF). For now derive both from `mgr_ptr` so
-            // the code compiles with the spec's call shape intact.
+            // `PackageInstaller.{manager,lockfile,progress}` are BACKREF raw
+            // pointers (Zig: non-exclusive `*PM` / `*Lockfile`); copying
+            // `mgr_ptr` into them does not move `this`, so the body below
+            // keeps using `this` for `pending_task_count` / `run_tasks` /
+            // lifecycle ticks via the same provenance root.
             break 'brk PackageInstaller {
-                manager: unsafe { &mut *mgr_ptr },
-                // SAFETY: `mgr_ptr` BACKREF — `&PackageManager.options` aliases
-                // the `&mut PackageManager` in `manager`; Zig stores `*const
-                // Options`. Phase B retypes one of them to a raw ptr.
-                options: unsafe { &(*mgr_ptr).options },
+                manager: mgr_ptr,
                 metas,
                 bins,
                 names,
                 pkg_name_hashes,
                 resolutions,
                 pkg_dependencies,
-                // SAFETY: `lockfile_ptr` derived from `mgr_ptr`; aliases
-                // `installer.manager.lockfile` exactly as Zig's `*Lockfile`.
-                lockfile: unsafe { &mut *lockfile_ptr },
+                lockfile: lockfile_ptr,
                 root_node_modules_folder: node_modules_folder,
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
@@ -369,8 +364,7 @@ pub fn install_hoisted_packages(
                         .to_vec(),
                     tree_id: 0,
                 },
-                // SAFETY: same `mgr_ptr` BACKREF note as `manager` above —
-                // `*mut Progress` aliases the `&mut PackageManager` in `manager`.
+                // SAFETY: `mgr_ptr` is the provenance root; raw place addr.
                 progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
@@ -406,12 +400,6 @@ pub fn install_hoisted_packages(
         installer.node_modules.path.push(SEP);
 
         // `defer installer.deinit()` — handled by Drop.
-
-        // Re-derive `this` from the raw root so post-construction accesses
-        // don't trip "use of moved value" on the borrow handed to
-        // `installer.manager`. SAFETY: see the BACKREF note on the
-        // `PackageInstaller { manager: ... }` initialiser above.
-        let this = unsafe { &mut *mgr_ptr };
 
         let top_level_len =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
@@ -449,7 +437,7 @@ pub fn install_hoisted_packages(
                         true,
                         log_level,
                     )?;
-                    if !installer.options.do_.install_packages() {
+                    if !this.options.do_.install_packages() {
                         return Err(bun_core::err!("InstallFailed"));
                     }
                 }
@@ -467,7 +455,7 @@ pub fn install_hoisted_packages(
                 true,
                 log_level,
             )?;
-            if !installer.options.do_.install_packages() {
+            if !this.options.do_.install_packages() {
                 return Err(bun_core::err!("InstallFailed"));
             }
 
@@ -475,7 +463,7 @@ pub fn install_hoisted_packages(
             this.report_slow_lifecycle_scripts();
         }
 
-        while this.pending_task_count() > 0 && installer.options.do_.install_packages() {
+        while this.pending_task_count() > 0 && this.options.do_.install_packages() {
             struct Closure<'a, 'b> {
                 installer: &'a mut PackageInstaller<'b>,
                 err: Option<bun_core::Error>,
@@ -571,7 +559,7 @@ pub fn install_hoisted_packages(
             }
         }
 
-        if !installer.options.do_.install_packages() {
+        if !this.options.do_.install_packages() {
             return Err(bun_core::err!("InstallFailed"));
         }
 

@@ -72,8 +72,13 @@ macro_rules! debug {
 
 pub struct Installer<'a> {
     pub trusted_dependencies_mutex: Mutex,
-    // this is not const for `lockfile.trusted_dependencies`
-    pub lockfile: &'a mut Lockfile,
+    /// Zig: `*Lockfile` — BACKREF. Raw pointer (not `&'a mut`) for the same
+    /// reason as `manager`: `Task::run` executes concurrently on the thread
+    /// pool and each task derefs this field; a `&'a mut` would assert
+    /// exclusivity every concurrent task violates. Mutated only for
+    /// `lockfile.trusted_dependencies` (under `trusted_dependencies_mutex`,
+    /// narrowed via `addr_of_mut!`). Never null. Read via `lockfile()`.
+    pub lockfile: *mut Lockfile,
 
     pub summary: InstallSummary, // = .{ .successfully_installed = .empty }
     pub installed: Bitset,
@@ -86,7 +91,12 @@ pub struct Installer<'a> {
     pub scripts_node: Option<core::ptr::NonNull<ProgressNode>>,
     pub is_new_bun_modules: bool,
 
-    pub manager: &'a mut PackageManager,
+    /// Zig: `*PackageManager` — BACKREF. Raw pointer (not `&'a mut`) because
+    /// `Task::run`/`Task::callback` execute concurrently on the thread pool
+    /// and each derefs this field; a `&'a mut` here would assert exclusivity
+    /// every concurrent task violates. Never null. Access via `manager()` /
+    /// `manager_mut()` (main thread only for `_mut`).
+    pub manager: *mut PackageManager,
     pub command_ctx: Command::Context<'a>,
 
     pub store: &'a Store,
@@ -118,8 +128,41 @@ pub struct Installer<'a> {
 }
 
 impl<'a> Installer<'a> {
+    // BACKREF accessors — `manager` points outside `Self`; see field doc.
+    #[inline]
+    pub fn manager(&self) -> &'a PackageManager {
+        // SAFETY: BACKREF — never null; pointee outlives `'a`.
+        unsafe { &*self.manager }
+    }
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn manager_mut(&self) -> &'a mut PackageManager {
+        // SAFETY: BACKREF — never null; disjoint from `*self`. Return is `'a`
+        // (not elided) so `start_task` can hold it across `&mut self.tasks[i]`
+        // — same field-disjoint shape the prior `&'a mut` field permitted.
+        // Caller must be on the main thread (only main mutates
+        // `PackageManager`; `Task::run` / `Task::callback` on the pool read
+        // via the raw field, never this accessor). A
+        // `debug_assert!(is_main_thread())` is deferred until
+        // `bun_crash_handler::cli_state::set_main_thread_id` is actually
+        // wired at startup — today the sentinel is never set, so the assert
+        // would fire unconditionally.
+        unsafe { &mut *self.manager }
+    }
+    #[inline]
+    pub fn lockfile(&self) -> &'a Lockfile {
+        // SAFETY: BACKREF — never null; pointee outlives `'a`. Never aliased by
+        // a *whole-struct* `&mut Lockfile`; the single mutated field
+        // (`trusted_dependencies`) is written under
+        // `trusted_dependencies_mutex` via a raw narrowed `addr_of_mut!` place
+        // (Task::run), not a `&mut Lockfile`. Callers must not project into
+        // `trusted_dependencies` from this `&Lockfile` across a tick.
+        unsafe { &*self.lockfile }
+    }
+
     /// Called from main thread
     pub fn start_task(&mut self, entry_id: StoreEntryId) {
+        let manager = self.manager_mut();
         let task = &mut self.tasks[entry_id.get() as usize];
         debug_assert!(matches!(
             task.result,
@@ -132,11 +175,11 @@ impl<'a> Installer<'a> {
         ));
 
         task.result = Result::None;
-        self.manager.thread_pool.schedule(thread_pool::Batch::from(&raw mut task.task));
+        manager.thread_pool.schedule(thread_pool::Batch::from(&raw mut task.task));
     }
 
     pub fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
-        if let Some(removed) = self.manager.task_queue.remove(&task_id) {
+        if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let store = self.store;
 
             let node_pkg_ids = store.nodes.items_pkg_id();
@@ -145,7 +188,7 @@ impl<'a> Installer<'a> {
             let entry_steps = entries.items_step();
             let entry_node_ids = entries.items_node_id();
 
-            let pkgs = self.lockfile.packages.slice();
+            let pkgs = self.lockfile().packages.slice();
             let pkg_names = pkgs.items_name();
             let pkg_name_hashes = pkgs.items_name_hash();
             let pkg_resolutions = pkgs.items_resolution();
@@ -197,7 +240,7 @@ impl<'a> Installer<'a> {
         err: bun_core::Error,
         url: &[u8],
     ) {
-        if let Some(removed) = self.manager.task_queue.remove(&task_id) {
+        if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let callbacks = removed;
 
             let entry_steps = self.store.entries.items_step();
@@ -217,7 +260,7 @@ impl<'a> Installer<'a> {
             // callbacks dropped here
         } else {
             // No waiting entry — still surface the error so it isn't lost.
-            let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+            let string_buf = self.lockfile().buffers.string_bytes.as_slice();
             Output::err_generic(
                 "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                 (
@@ -243,7 +286,7 @@ impl<'a> Installer<'a> {
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
         let patch_task_ptr = install::PatchTask::new_apply_patch_hash(
-            self.manager,
+            self.manager_mut(),
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
@@ -271,7 +314,7 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub fn on_task_fail(&mut self, entry_id: StoreEntryId, err: TaskError) {
-        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
         let entry_node_ids = entries.items_node_id();
@@ -279,7 +322,7 @@ impl<'a> Installer<'a> {
         let nodes = &self.store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
 
-        let pkgs = self.lockfile.packages.slice();
+        let pkgs = self.lockfile().packages.slice();
         let pkg_names = pkgs.items_name();
         let pkg_resolutions = pkgs.items_resolution();
 
@@ -374,7 +417,7 @@ impl<'a> Installer<'a> {
                 // OOM/capacity: Zig aborts; port keeps fire-and-forget
                 let _ = store_path.append_fmt(format_args!(
                     "node_modules/{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
+                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
                 ));
 
                 let _ = sys::unlink(store_path.slice_z());
@@ -383,7 +426,7 @@ impl<'a> Installer<'a> {
             _ => {}
         }
 
-        if self.manager.options.enable.fail_early() {
+        if self.manager().options.enable.fail_early() {
             Global::exit(1);
         }
 
@@ -394,7 +437,7 @@ impl<'a> Installer<'a> {
     }
 
     pub fn decrement_pending_tasks(&mut self) {
-        self.manager.decrement_pending_tasks();
+        self.manager_mut().decrement_pending_tasks();
     }
 
     /// Called from main thread
@@ -480,7 +523,7 @@ impl<'a> Installer<'a> {
                 break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
             }
 
-            let dep = &self.lockfile.buffers.dependencies[dep_id as usize];
+            let dep = &self.lockfile().buffers.dependencies[dep_id as usize];
 
             if dep.behavior.is_workspace() {
                 break 'state (node_id, CompleteState::Skipped);
@@ -776,14 +819,12 @@ impl Task {
         //     while these locals are live — that would reborrow through
         //     `&Installer` and alias `*manager_ptr` / `*lockfile_ptr`.
         let installer_ptr = self.installer;
-        let manager_ptr: *mut PackageManager =
-            unsafe { *core::ptr::addr_of!((*installer_ptr).manager).cast::<*mut PackageManager>() };
-        let lockfile_ptr: *mut Lockfile =
-            unsafe { *core::ptr::addr_of!((*installer_ptr).lockfile).cast::<*mut Lockfile>() };
-        let lockfile: &Lockfile = unsafe { &*lockfile_ptr };
         let installer = unsafe { &*installer_ptr };
+        let manager_ptr: *mut PackageManager = installer.manager;
+        let lockfile_ptr: *mut Lockfile = installer.lockfile;
+        let lockfile: &Lockfile = unsafe { &*lockfile_ptr };
 
-        let pkgs = installer.lockfile.packages.slice();
+        let pkgs = lockfile.packages.slice();
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
@@ -1485,9 +1526,9 @@ impl Task {
                         continue;
                     }
 
-                    let string_buf = installer.lockfile.buffers.string_bytes.as_slice();
+                    let string_buf = lockfile.buffers.string_bytes.as_slice();
 
-                    let dep = &installer.lockfile.buffers.dependencies[dep_id as usize];
+                    let dep = &lockfile.buffers.dependencies[dep_id as usize];
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
 
@@ -1498,10 +1539,7 @@ impl Task {
                         {
                             break 'brk (true, true);
                         }
-                        if installer
-                            .lockfile
-                            .has_trusted_dependency(dep.name.slice(string_buf), &pkg_res)
-                        {
+                        if lockfile.has_trusted_dependency(dep.name.slice(string_buf), &pkg_res) {
                             break 'brk (true, false);
                         }
                         break 'brk (false, false);
@@ -1530,7 +1568,7 @@ impl Task {
                                     },
                                     version_buf: lockfile.buffers.string_bytes.as_slice(),
                                 },
-                                installer.lockfile.buffers.resolutions.as_slice(),
+                                lockfile.buffers.resolutions.as_slice(),
                                 pkg_metas,
                                 manager.options.cpu,
                                 manager.options.os,
@@ -1544,7 +1582,7 @@ impl Task {
 
                         let scripts_list = match pkg_scripts.get_list(
                             &mut log,
-                            installer.lockfile,
+                            lockfile,
                             &mut pkg_cwd,
                             dep.name.slice(string_buf),
                             &pkg_res,
@@ -1640,8 +1678,8 @@ impl Task {
                         continue;
                     }
 
-                    let string_buf = installer.lockfile.buffers.string_bytes.as_slice();
-                    let dependencies = installer.lockfile.buffers.dependencies.as_slice();
+                    let string_buf = lockfile.buffers.string_bytes.as_slice();
+                    let dependencies = lockfile.buffers.dependencies.as_slice();
 
                     let dep_name = dependencies[dep_id as usize].name.slice(string_buf);
 
@@ -1667,8 +1705,8 @@ impl Task {
                         node_pkg_ids,
                         pkg_name_hashes,
                         pkg_resolutions_lists,
-                        installer.lockfile.buffers.resolutions.as_slice(),
-                        installer.lockfile.packages.items_meta(),
+                        lockfile.buffers.resolutions.as_slice(),
+                        lockfile.packages.items_meta(),
                         pkg_id,
                     ) {
                         let mut p = DefaultAbsPath::init_top_level_dir();
@@ -1682,7 +1720,7 @@ impl Task {
                         let replacement_node_id = entry_node_ids[replacement_entry_id.get() as usize];
                         let replacement_pkg_id = node_pkg_ids[replacement_node_id.get() as usize];
                         target_package_name = strings::StringOrTinyString::init(
-                            installer.lockfile.str(&pkg_names[replacement_pkg_id as usize]),
+                            lockfile.str(&pkg_names[replacement_pkg_id as usize]),
                         );
                     }
 
@@ -1701,7 +1739,7 @@ impl Task {
                         package_name: strings::StringOrTinyString::init(dep_name),
                         target_package_name,
                         string_buf,
-                        extern_string_buf: installer.lockfile.buffers.extern_strings.as_slice(),
+                        extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
                         seen: Some(&mut seen),
                         target_node_modules_path: target_nm_ptr,
                         node_modules_path: &mut node_modules_path,
@@ -1832,8 +1870,7 @@ impl Task {
         // the `&mut` lifetimes from overlapping).
         let installer_ptr = this.installer;
         let installer = unsafe { &*installer_ptr };
-        let manager_ptr: *mut PackageManager =
-            unsafe { *core::ptr::addr_of!((*installer_ptr).manager).cast::<*mut PackageManager>() };
+        let manager_ptr: *mut PackageManager = installer.manager;
 
         match res {
             Yield::Yield => {}
@@ -1944,13 +1981,13 @@ impl<'a> Installer<'a> {
         pkg_name_hash: PackageNameHash,
         pkg_res: &Resolution,
     ) -> core::result::Result<PatchInfo, bun_alloc::AllocError> {
-        if self.lockfile.patched_dependencies.len() == 0
-            && self.manager.patched_dependencies_to_remove.len() == 0
+        if self.lockfile().patched_dependencies.len() == 0
+            && self.manager().patched_dependencies_to_remove.len() == 0
         {
             return Ok(PatchInfo::None);
         }
 
-        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let mut version_buf: Vec<u8> = Vec::new();
 
@@ -1959,7 +1996,7 @@ impl<'a> Installer<'a> {
 
         match pkg_res.tag {
             ResolutionTag::Workspace => {
-                if let Some(workspace_version) = self.lockfile.workspace_versions.get(&pkg_name_hash)
+                if let Some(workspace_version) = self.lockfile().workspace_versions.get(&pkg_name_hash)
                 {
                     write!(&mut version_buf, "{}", workspace_version.fmt(string_buf))
                         .map_err(|_| bun_alloc::AllocError)?;
@@ -1977,7 +2014,7 @@ impl<'a> Installer<'a> {
 
         let name_and_version_hash = bun_semver::semver_string::Builder::string_hash(&version_buf);
 
-        if let Some(patch) = self.lockfile.patched_dependencies.get(&name_and_version_hash) {
+        if let Some(patch) = self.lockfile().patched_dependencies.get(&name_and_version_hash) {
             return Ok(PatchInfo::Patch(PatchInfoPatch {
                 name_and_version_hash,
                 patch_path: patch.path.slice(string_buf).into(),
@@ -1986,7 +2023,7 @@ impl<'a> Installer<'a> {
         }
 
         if self
-            .manager
+            .manager()
             .patched_dependencies_to_remove
             .contains_key(&name_and_version_hash)
         {
@@ -1999,11 +2036,11 @@ impl<'a> Installer<'a> {
     }
 
     pub fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
-        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
         let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-        let pkg_name = self.lockfile.packages.items_name()[pkg_id as usize];
+        let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize];
 
         let mut hidden_hoisted_node_modules = AutoPath::init();
 
@@ -2025,7 +2062,7 @@ impl<'a> Installer<'a> {
         // OOM/capacity: Zig aborts; port keeps fire-and-forget
         let _ = target.append_fmt(format_args!(
             "{}/node_modules/{}",
-            store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
+            store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
             bstr::BStr::new(pkg_name.slice(string_buf)),
         ));
 
@@ -2058,7 +2095,7 @@ impl<'a> Installer<'a> {
         pkg_metas: &[package::Meta],
         pkg_id: PackageID,
     ) -> Option<StoreEntryId> {
-        let postinstall_optimizer = &self.manager.postinstall_optimizer;
+        let postinstall_optimizer = &self.manager().postinstall_optimizer;
         if !postinstall_optimizer.is_native_binlink_enabled() {
             return None;
         }
@@ -2070,7 +2107,7 @@ impl<'a> Installer<'a> {
         }) {
             match optimizer {
                 PostinstallOptimizer::NativeBinlink => {
-                    let manager = &self.manager;
+                    let manager = self.manager();
                     let target_cpu = manager.options.cpu;
                     let target_os = manager.options.os;
                     if let Some(replacement_pkg_id) =
@@ -2106,7 +2143,7 @@ impl<'a> Installer<'a> {
         parent_entry_id: StoreEntryId,
     ) -> core::result::Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        let lockfile = &*self.lockfile;
+        let lockfile = self.lockfile();
         let store = self.store;
 
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2168,7 +2205,7 @@ impl<'a> Installer<'a> {
                 let replacement_pkg_id = node_pkg_ids[replacement_node_id.get() as usize];
                 let pkg_names = pkgs.items_name();
                 target_package_name = strings::StringOrTinyString::init(
-                    self.lockfile.str(&pkg_names[replacement_pkg_id as usize]),
+                    self.lockfile().str(&pkg_names[replacement_pkg_id as usize]),
                 );
             }
 
@@ -2181,7 +2218,7 @@ impl<'a> Installer<'a> {
             };
             let mut bin_linker = bin_real::Linker {
                 bin,
-                global_bin_path: self.manager.options.bin_path,
+                global_bin_path: self.manager().options.bin_path,
                 package_name,
                 string_buf,
                 extern_string_buf,
@@ -2210,7 +2247,7 @@ impl<'a> Installer<'a> {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
 
-                if self.manager.options.log_level.is_verbose() {
+                if self.manager().options.log_level.is_verbose() {
                     Output::pretty_errorln(format_args!(
                         "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                         bstr::BStr::new(package_name.slice()),
@@ -2257,11 +2294,11 @@ impl<'a> Installer<'a> {
         match which {
             Which::Final => buf.append_fmt(format_args!(
                 "{}",
-                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
+                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
             )),
             Which::Staging => buf.append_fmt(format_args!(
                 "{}.tmp-{:x}",
-                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
+                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
                 self.global_store_tmp_suffix,
             )),
         }
@@ -2296,13 +2333,13 @@ impl<'a> Installer<'a> {
                 // tree. Without --force, the existing entry came from a
                 // concurrent install and is content-identical — keep it and
                 // discard ours.
-                if self.manager.options.enable.force_install() {
+                if self.manager().options.enable.force_install() {
                     let mut old = AutoAbsPath::init();
                     let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     let _ = old.append_fmt(format_args!(
                         "{}.old-{:x}",
-                        store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
+                        store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
                         bun_core::fast_random(),
                     ));
                     if let Some(swap_err) =
@@ -2349,7 +2386,7 @@ impl<'a> Installer<'a> {
         buf.append_fmt(format_args!(
             "{}/{}",
             NODE_MODULES_BUN,
-            store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
+            store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
         ));
     }
 
@@ -2439,7 +2476,7 @@ impl<'a> Installer<'a> {
         buf: &mut impl paths::PathLike,
         entry_id: StoreEntryId,
     ) {
-        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
         let entry_node_ids = entries.items_node_id();
@@ -2447,7 +2484,7 @@ impl<'a> Installer<'a> {
         let nodes = &self.store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
 
-        let pkgs = self.lockfile.packages.slice();
+        let pkgs = self.lockfile().packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
 
         let node_id = entry_node_ids[entry_id.get() as usize];
@@ -2466,7 +2503,7 @@ impl<'a> Installer<'a> {
                 buf.append_fmt(format_args!(
                     "{}/{}/node_modules",
                     NODE_MODULES_BUN,
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
+                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
                 ));
             }
         }
@@ -2499,10 +2536,10 @@ impl<'a> Installer<'a> {
         which: Which,
     ) {
         if self.entry_uses_global_store(entry_id) {
-            let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+            let string_buf = self.lockfile().buffers.string_bytes.as_slice();
             let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
             let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-            let pkg_name = self.lockfile.packages.items_name()[pkg_id as usize];
+            let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize];
             self.append_global_store_entry_path(buf, entry_id, which);
             buf.append(b"node_modules");
             buf.append(pkg_name.slice(string_buf));
@@ -2512,7 +2549,7 @@ impl<'a> Installer<'a> {
     }
 
     pub fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
-        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
         let entry_node_ids = entries.items_node_id();
@@ -2522,7 +2559,7 @@ impl<'a> Installer<'a> {
         let node_dep_ids = nodes.items_dep_id();
         // let node_peers = nodes.items().peers;
 
-        let pkgs = self.lockfile.packages.slice();
+        let pkgs = self.lockfile().packages.slice();
         let pkg_names = pkgs.items_name();
         let pkg_resolutions = pkgs.items_resolution();
 
@@ -2541,7 +2578,7 @@ impl<'a> Installer<'a> {
                     );
                     buf.append_fmt(format_args!(
                         "{}",
-                        store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
+                        store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
                     ));
                     buf.append(b"node_modules");
                     if pkg_name.is_empty() {
@@ -2565,7 +2602,7 @@ impl<'a> Installer<'a> {
                 // threads, so the lazy init is hoisted to the main-thread caller
                 // (`isolated_install::install_packages`, before any `start_task`).
                 // Reading the cached field here is then equivalent.
-                let symlink_dir_path: &[u8] = &self.manager.global_link_dir_path;
+                let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
                 debug_assert!(
                     !symlink_dir_path.is_empty(),
                     "global_link_dir_path must be ensured before tasks start",
@@ -2582,7 +2619,7 @@ impl<'a> Installer<'a> {
                 );
                 buf.append_fmt(format_args!(
                     "{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
+                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
                 ));
                 buf.append(b"node_modules");
                 buf.append(pkg_name.slice(string_buf));
@@ -2603,7 +2640,7 @@ impl<'a> Installer<'a> {
         pkg_res: &Resolution,
         pkg_names: &'b [SemverString],
     ) -> Option<&'b [u8]> {
-        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         match pkg_res.tag {
             ResolutionTag::Root => {

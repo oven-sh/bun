@@ -189,13 +189,15 @@ struct Wait<'a, 'b> {
 
 impl<'a, 'b> Wait<'a, 'b> {
     pub fn is_done(&mut self) -> bool {
-        // PORT NOTE: reshaped for borrowck — Zig passes both `installer` and
-        // `installer.manager` into `runTasks`; in Rust, capture a raw `*mut`
-        // to the manager so the `&mut Installer` arg doesn't alias.
-        let pkg_manager: *mut PackageManager = self.installer.manager;
-        let log_level = unsafe { (*pkg_manager).options.log_level };
+        // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
+        // materializes the unique `&mut PackageManager` for this main-thread
+        // tick without aliasing `&mut Installer`.
+        let pkg_manager = self.installer.manager_mut();
+        let log_level = pkg_manager.options.log_level;
+        // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
+        // is the live `&mut PackageManager` for this call.
         if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
-            unsafe { &mut *pkg_manager },
+            pkg_manager,
             self.installer,
             true,
             log_level,
@@ -204,7 +206,7 @@ impl<'a, 'b> Wait<'a, 'b> {
             return true;
         }
 
-        let pkg_manager = unsafe { &mut *pkg_manager };
+        let pkg_manager = self.installer.manager_mut();
         if let Some(node) = pkg_manager.scripts_node_mut() {
             // if we're just waiting for scripts, make it known.
 
@@ -1983,12 +1985,13 @@ pub fn install_isolated_packages(
         // the local would pop the stored raw's Stacked Borrows tag, and the
         // run-tasks tick callback dereferences that raw via `scripts_node_mut()`.
         let scripts_node_ptr = manager.scripts_node;
-        // PORT NOTE: reshaped for borrowck — Zig holds `*PackageManager` while
-        // also borrowing `manager.lockfile`; raw-reborrow so both `&mut`s exist.
+        // `Installer.manager` is a BACKREF raw pointer; copying `manager_ptr`
+        // does not move `manager`, so the body keeps using `manager` via the
+        // shadow-reborrow below.
         let manager_ptr: *mut PackageManager = manager;
         let mut installer = store::Installer {
-            lockfile,
-            manager: unsafe { &mut *manager_ptr },
+            lockfile: lockfile_ptr,
+            manager: manager_ptr,
             command_ctx,
             installed,
             install_node: if show_progress { Some(&mut install_node) } else { None },

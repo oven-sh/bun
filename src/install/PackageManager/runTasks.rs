@@ -286,7 +286,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         installer.store.entries.items_node_id()[entry_id.get() as usize];
                     let dep_id =
                         installer.store.nodes.items_dep_id()[node_id.get() as usize];
-                    let dep = &installer.lockfile.buffers.dependencies[dep_id as usize];
+                    let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
                     let optional = dep.behavior.contains(Behavior::OPTIONAL);
                     // SAFETY: `list` is the per-entry scripts slot owned by
                     // `store.entries.items_scripts()[entry_id]`; this Task is

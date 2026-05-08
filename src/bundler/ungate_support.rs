@@ -81,9 +81,12 @@ pub mod bun_css {
     // local stub struct shadowed the glob; that shadow is dropped here so
     // callers (`ParseTask.rs`, `prepareCssAstsForChunk.rs`) see the real type
     // directly.
-    #[cfg(feature = "css")]
+    // `bun_css` is now an UNCONDITIONAL dep (`bun_js_parser` already pulls it
+    // in for `BundledAst.css`'s field type, so the optional flag saved nothing
+    // and only caused E0308 when downstream crates built `bun_bundler` without
+    // `default-features` — the `no_css` stub `BundlerStyleSheet` and the real
+    // one in `JSAst.css` are distinct nominal types). Glob-re-export always.
     pub use ::bun_css::*;
-    #[cfg(feature = "css")]
     pub use ::bun_css::css_modules::Config as CssModuleConfig;
 
     // ── feature ≠ "css" ──────────────────────────────────────────────────
@@ -92,9 +95,11 @@ pub mod bun_css {
     // `ParseTask::get_ast` never reaches `.css` without the feature, so the
     // bodies below are the correct "css-disabled" semantics (empty sheet,
     // identity minify).
-    #[cfg(not(feature = "css"))]
+    // Retained as dead code for reference; never compiled now that the
+    // `::bun_css` re-export above is unconditional.
+    #[cfg(any())]
     pub use self::no_css::*;
-    #[cfg(not(feature = "css"))]
+    #[cfg(any())]
     mod no_css {
         use bun_collections::VecExt;
         use bun_options_types::ImportRecord;

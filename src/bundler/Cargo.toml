@@ -33,11 +33,17 @@ bun_resolve_builtins.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
-# bun_css — needed by Chunk.rs/ParseTask.rs/LinkerContext.rs (un-gated B-2: css
-# calc lattice now real). Optional so the crate can still typecheck while a
-# concurrent agent has src/css/ mid-edit; enabled by default via the `css`
-# feature below.
-bun_css = { workspace = true, optional = true }
+# bun_css — needed by Chunk.rs/ParseTask.rs/LinkerContext.rs. NOT optional:
+# `bun_js_parser` (an unconditional dep below) already pulls in `bun_css`
+# unconditionally for `BundledAst.css`'s field type, so making it optional here
+# saved no compile time and only caused E0308 (the `no_css` stub
+# `BundlerStyleSheet` vs the real one in `JSAst.css`) whenever a downstream
+# crate (`bun_standalone_graph`, `bun_jsc` direct check) built `bun_bundler`
+# without `default-features`. The `css` feature flag below is kept for the
+# cfg-gates in code paths that reference heavy CSS-parsing internals
+# (logger pointers, debug assertions on `local_scope` entries) — those gates
+# now distinguish "extra debug behavior" not "is the crate available".
+bun_css.workspace = true
 # phase-c: bun_jsc decoupled from css (not on -e path)
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
@@ -69,6 +75,9 @@ bun_hash.workspace = true
 
 [features]
 default = ["css"]
-css = ["dep:bun_css"]
+# Kept for the in-code cfg-gates (debug assertions on css_ast.local_scope,
+# logger-pointer wiring); no longer controls whether `bun_css` is a dep
+# (it's unconditional — see the dep comment above).
+css = []
 debug_logs = []
 show_crash_trace = []

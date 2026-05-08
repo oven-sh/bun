@@ -104,6 +104,85 @@ pub mod TestingAPIs {
             );
         }
     }
+
+    /// Exposes the `bun.sys.Sigaction` struct layout via a SIGUSR2 install /
+    /// readback / restore round-trip so `test/internal/sigaction-layout.test.ts`
+    /// can verify that the libc's sigaction sees the handler+flags we set
+    /// (regression test for the bionic LP64 layout fix). The Rust port uses the
+    /// `libc` crate's `sigaction`/`sigset_t` directly, which already has the
+    /// correct per-target layout (bionic included), so this is a sanity check
+    /// rather than a fix-carrier — the layout bug was Zig-stdlib-specific.
+    #[bun_jsc::host_fn]
+    pub fn sigaction_layout(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(not(unix))]
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        #[cfg(unix)]
+        {
+            use bun_sys::posix::{sigaction, sigset_t, Sigaction};
+            extern "C" fn sentry(_: core::ffi::c_int) {}
+            unsafe extern "C" {
+                fn sigemptyset(set: *mut sigset_t) -> core::ffi::c_int;
+                fn sigaddset(set: *mut sigset_t, signum: core::ffi::c_int) -> core::ffi::c_int;
+            }
+            // From <signal.h>: SIGUSR2 is 12 on Linux/Android, 31 on macOS/FreeBSD.
+            // SA_RESTART is 0x10000000 on Linux/Android, 0x0002 on macOS/FreeBSD.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            const SIGUSR2: core::ffi::c_int = 12;
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            const SIGUSR2: core::ffi::c_int = 31;
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            const SA_RESTART: core::ffi::c_int = 0x10000000;
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            const SA_RESTART: core::ffi::c_int = 0x0002;
+            // SAFETY: sigemptyset/sigaddset/sigaction are thin libc wrappers;
+            // the sigset_t/sigaction storage is fully owned and initialized
+            // here, and SIGUSR2's previous disposition is restored before
+            // return so no process-level side effect leaks.
+            let (act_flags, rb_handler, rb_flags) = unsafe {
+                let mut mask = core::mem::MaybeUninit::<sigset_t>::zeroed();
+                sigemptyset(mask.as_mut_ptr());
+                sigaddset(mask.as_mut_ptr(), SIGUSR2);
+                let act = Sigaction {
+                    sa_sigaction: sentry as usize,
+                    sa_mask: mask.assume_init(),
+                    sa_flags: SA_RESTART,
+                    ..core::mem::zeroed()
+                };
+                let mut prev = core::mem::MaybeUninit::<Sigaction>::zeroed();
+                let mut readback = core::mem::MaybeUninit::<Sigaction>::zeroed();
+                sigaction(SIGUSR2, &act, prev.as_mut_ptr());
+                sigaction(SIGUSR2, core::ptr::null(), readback.as_mut_ptr());
+                sigaction(SIGUSR2, prev.as_ptr(), core::ptr::null_mut());
+                let readback = readback.assume_init();
+                (
+                    act.sa_flags & SA_RESTART,
+                    readback.sa_sigaction,
+                    readback.sa_flags & SA_RESTART,
+                )
+            };
+
+            let installed = JSValue::create_empty_object(global, 2);
+            installed.put(global, b"handler", JSValue::js_number(sentry as usize as f64));
+            installed.put(global, b"flags", JSValue::js_number(act_flags as f64));
+            let rb = JSValue::create_empty_object(global, 2);
+            rb.put(global, b"handler", JSValue::js_number(rb_handler as f64));
+            rb.put(global, b"flags", JSValue::js_number(rb_flags as f64));
+            let out = JSValue::create_empty_object(global, 3);
+            out.put(global, b"installed", installed);
+            out.put(global, b"readback", rb);
+            out.put(
+                global,
+                b"sizeof",
+                JSValue::js_number(core::mem::size_of::<Sigaction>() as f64),
+            );
+            Ok(out)
+        }
+    }
 }
 
 // ported from: src/sys_jsc/error_jsc.zig

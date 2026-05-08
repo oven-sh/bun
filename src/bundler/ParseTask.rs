@@ -694,7 +694,6 @@ pub struct FileLoaderHash {
 // parser type, so this is the identity.
 // ───────────────────────────────────────────────────────────────────────────
 
-#[cfg(feature = "css")]
 fn css_symbols_to_parser_symbols(
     src: Vec<bun_logger::Symbol>,
 ) -> bun_js_parser::ast::symbol::List {
@@ -738,13 +737,6 @@ fn css_symbols_to_parser_symbols(
     out
 }
 
-#[cfg(not(feature = "css"))]
-#[inline(always)]
-fn css_symbols_to_parser_symbols(
-    src: Vec<bun_js_parser::ast::symbol::Symbol>,
-) -> bun_js_parser::ast::symbol::List {
-    src
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // getAST

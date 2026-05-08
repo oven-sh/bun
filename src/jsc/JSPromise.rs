@@ -246,7 +246,8 @@ impl Strong {
     /// (e.g. `bake::DevServer::PromiseEnsureRouteBundledCtx::ensurePromise`)
     /// allocate a second slot here instead.
     pub fn from_value(value: JSValue, global: &JSGlobalObject) -> Self {
-        debug_assert!(value.as_promise().is_some());
+        // No `as_promise()` debug-check here: this is reached from finalizers
+        // (Server::deinit_if_we_can) where JSCell::classInfo() would assert.
         Self { strong: JscStrong::create(value, global) }
     }
 

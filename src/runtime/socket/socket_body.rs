@@ -545,53 +545,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             None => unreachable!("do_connect requires self.connection to be set"),
         }
-        // The C layer attaches SSL eagerly on the resolved-DNS / unix fast
-        // paths (`us_internal_ssl_attach` inside `group.connect*`), so a write
-        // that lands before `on_open` would `SSL_write` and serialize a
-        // ClientHello without SNI/ALPN. Prime them now; for `.connecting`
-        // sockets SSL isn't attached until after_open, so this is a no-op.
-        if SSL && ssl_ctx.is_some() {
-            self.prime_tls_client_hello();
-        }
         Ok(())
-    }
-
-    /// Apply per-socket SNI/ALPN to a freshly-attached client `SSL*` so a
-    /// pre-`on_open` write can't generate a bare ClientHello. Idempotent —
-    /// `on_open` re-runs the same setup.
-    fn prime_tls_client_hello(&self) {
-        if !SSL || self.is_server() {
-            return;
-        }
-        // Only `.connected` has an attached `SSL*`; `.connecting` returns a
-        // sentinel from `get_native_handle` that is not a valid `SSL*`.
-        let uws::InternalSocket::Connected(_) = self.socket.socket else { return };
-        let Some(ssl_ptr) = self.socket.ssl() else { return };
-        // SAFETY: BoringSSL FFI; `ssl_ptr` is a live `*mut SSL`.
-        if unsafe { boringssl_sys::SSL_is_init_finished(ssl_ptr) } != 0 {
-            return;
-        }
-        if let Some(server_name) = &self.server_name {
-            let host: &[u8] = server_name.as_ref();
-            if !host.is_empty() {
-                let host_z = bun_core::ZBox::from_bytes(host);
-                // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                unsafe { boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
-            }
-        } else if let Some(super::listener::UnixOrHost::Host { host, .. }) = &self.connection {
-            let host: &[u8] = host.as_ref();
-            if !host.is_empty() {
-                let host_z = bun_core::ZBox::from_bytes(host);
-                // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-                unsafe { boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
-            }
-        }
-        if let Some(protos) = &self.protos {
-            // SAFETY: BoringSSL FFI; `protos` is a valid slice.
-            unsafe {
-                boringssl_sys::SSL_set_alpn_protos(ssl_ptr, protos.as_ptr(), protos.len());
-            }
-        }
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn shim

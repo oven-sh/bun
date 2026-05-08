@@ -11,6 +11,22 @@ pub trait Ch: PathChar + Into<u32> {}
 impl Ch for u8 {}
 impl Ch for u16 {}
 
+/// Borrow `wbuf[..len]` as a `&WStr`, where `wbuf[len] == 0`. Safe-surface
+/// form of [`WStr::from_raw`] for the dominant call shape in this module: a
+/// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
+/// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
+/// returned lifetime to it; the NUL is debug-asserted (release relies on the
+/// caller upholding the documented `wbuf[len] == 0` precondition — same
+/// contract as Zig `[:0]const u16` slicing). Mirrors [`ZStr::from_buf`].
+#[inline(always)]
+pub(crate) fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
+    debug_assert!(len < wbuf.len(), "wstr_in_buf: NUL must lie within wbuf");
+    debug_assert_eq!(wbuf[len], 0, "wstr_in_buf: missing NUL at wbuf[len]");
+    // SAFETY: `wbuf[..=len]` is in-bounds of a single allocation (slice
+    // bound, debug-asserted above); `wbuf[len] == 0` per caller contract.
+    unsafe { WStr::from_raw(wbuf.as_ptr(), len) }
+}
+
 #[inline(always)]
 fn ch<T: Ch>(c: u8) -> T {
     T::from_u8(c)
@@ -81,8 +97,7 @@ pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     let written = encode_into_result.written as usize;
     debug_assert!(written < buf.len());
     buf[written] = 0;
-    // SAFETY: buf[written] == 0 written above
-    unsafe { ZStr::from_raw(buf.as_ptr(), written) }
+    ZStr::from_buf(buf, written)
 }
 
 pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
@@ -121,23 +136,20 @@ pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
             wbuf[..prefix.len()].copy_from_slice(&prefix);
             let n = to_w_path_normalized(&mut wbuf[prefix.len()..], &utf8[4..]).len();
             let total = n + prefix.len();
-            // SAFETY: inner call wrote NUL at wbuf[prefix.len() + n] == wbuf[total]
-            return unsafe { WStr::from_raw(wbuf.as_ptr(), total) };
+            return wstr_in_buf(wbuf, total);
         }
         let prefix = windows::NT_UNC_OBJECT_PREFIX;
         wbuf[..prefix.len()].copy_from_slice(&prefix);
         let n = to_w_path_normalized(&mut wbuf[prefix.len()..], &utf8[2..]).len();
         let total = n + prefix.len();
-        // SAFETY: inner call wrote NUL at wbuf[total]
-        return unsafe { WStr::from_raw(wbuf.as_ptr(), total) };
+        return wstr_in_buf(wbuf, total);
     }
 
     let prefix = windows::NT_OBJECT_PREFIX;
     wbuf[..prefix.len()].copy_from_slice(&prefix);
     let n = to_w_path_normalized(&mut wbuf[prefix.len()..], utf8).len();
     let total = n + prefix.len();
-    // SAFETY: inner call wrote NUL at wbuf[total]
-    unsafe { WStr::from_raw(wbuf.as_ptr(), total) }
+    wstr_in_buf(wbuf, total)
 }
 
 pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
@@ -157,23 +169,20 @@ pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
             wbuf[..prefix.len()].copy_from_slice(&prefix);
             let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[4..]).len();
             let total = n + prefix.len();
-            // SAFETY: inner call wrote NUL at wbuf[total]
-            return unsafe { WStr::from_raw(wbuf.as_ptr(), total) };
+            return wstr_in_buf(wbuf, total);
         }
         let prefix = windows::NT_UNC_OBJECT_PREFIX;
         wbuf[..prefix.len()].copy_from_slice(&prefix);
         let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[2..]).len();
         let total = n + prefix.len();
-        // SAFETY: inner call wrote NUL at wbuf[total]
-        return unsafe { WStr::from_raw(wbuf.as_ptr(), total) };
+        return wstr_in_buf(wbuf, total);
     }
 
     let prefix = windows::NT_OBJECT_PREFIX;
     wbuf[..prefix.len()].copy_from_slice(&prefix);
     let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], path).len();
     let total = n + prefix.len();
-    // SAFETY: inner call wrote NUL at wbuf[total]
-    unsafe { WStr::from_raw(wbuf.as_ptr(), total) }
+    wstr_in_buf(wbuf, total)
 }
 
 pub fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
@@ -181,8 +190,7 @@ pub fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
     wbuf[utf16.len() + plen] = 0;
-    // SAFETY: wbuf[utf16.len() + plen] == 0 written above
-    unsafe { WStr::from_raw(wbuf.as_ptr(), utf16.len() + plen) }
+    wstr_in_buf(wbuf, utf16.len() + plen)
 }
 
 pub fn add_long_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
@@ -190,16 +198,14 @@ pub fn add_long_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr 
     wbuf[..plen].copy_from_slice(&windows::LONG_PATH_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
     wbuf[utf16.len() + plen] = 0;
-    // SAFETY: wbuf[utf16.len() + plen] == 0 written above
-    unsafe { WStr::from_raw(wbuf.as_ptr(), utf16.len() + plen) }
+    wstr_in_buf(wbuf, utf16.len() + plen)
 }
 
 pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     if strings::has_prefix_comptime_type::<u16>(utf16, &windows::NT_OBJECT_PREFIX) {
         wbuf[..utf16.len()].copy_from_slice(utf16);
         wbuf[utf16.len()] = 0;
-        // SAFETY: wbuf[utf16.len()] == 0 written above
-        return unsafe { WStr::from_raw(wbuf.as_ptr(), utf16.len()) };
+        return wstr_in_buf(wbuf, utf16.len());
     }
     if strings::has_prefix_comptime_type::<u16>(utf16, &windows::LONG_PATH_PREFIX) {
         // Replace prefix
@@ -220,8 +226,7 @@ pub fn to_extended_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a 
     }
     wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
     let n = to_w_path_normalized(&mut wbuf[4..], utf8).len();
-    // SAFETY: inner call wrote NUL at wbuf[4 + n]
-    unsafe { WStr::from_raw(wbuf.as_ptr(), n + 4) }
+    wstr_in_buf(wbuf, n + 4)
 }
 
 pub fn to_w_path_normalize_auto_extend<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
@@ -262,8 +267,7 @@ pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr
 
     wbuf[len] = 0;
 
-    // SAFETY: wbuf[len] == 0 written above
-    unsafe { WStr::from_raw(wbuf.as_ptr(), len) }
+    wstr_in_buf(wbuf, len)
 }
 
 pub fn to_path_normalized<'a>(buf: &'a mut [u8], utf8: &[u8]) -> &'a ZStr {
@@ -353,8 +357,7 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     {
         wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
         let n = to_w_path(&mut wbuf[4..], path).len();
-        // SAFETY: inner call wrote NUL at wbuf[4 + n]
-        return unsafe { WStr::from_raw(wbuf.as_ptr(), n + 4) };
+        return wstr_in_buf(wbuf, n + 4);
     }
     to_w_path(wbuf, path)
 }
@@ -396,8 +399,7 @@ pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
 
     wbuf[count] = 0;
 
-    // SAFETY: wbuf[count] == 0 written above
-    unsafe { WStr::from_raw(wbuf.as_ptr(), count) }
+    wstr_in_buf(wbuf, count)
 }
 
 pub fn to_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
@@ -414,8 +416,7 @@ pub fn to_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
         len += 1;
     }
     buf[len] = 0;
-    // SAFETY: buf[len] == 0 written above
-    unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
+    ZStr::from_buf_mut(buf, len)
 }
 
 pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {

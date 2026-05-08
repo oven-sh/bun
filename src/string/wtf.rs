@@ -84,10 +84,20 @@ impl WTFStringImplStruct {
         unsafe { WTFStringImpl__isThreadSafe(self) }
     }
 
+    /// Borrow `len` raw bytes from `m_ptr`. `m_ptr` is a `repr(C)` union of
+    /// `*const u8` / `*const u16`; the `latin1` arm is a valid byte pointer
+    /// regardless of encoding (the C++ side stores both at the same offset).
+    /// Centralises the `from_raw_parts(m_ptr.latin1, …)` triple used by
+    /// `byte_slice` / `latin1_slice` / `utf8_slice`.
+    #[inline(always)]
+    fn raw_bytes(&self, len: usize) -> &[u8] {
+        // SAFETY: `m_ptr.latin1` points at the impl's character buffer for the
+        // lifetime of `self`; every caller passes `len ≤ byte_length()`.
+        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, len) }
+    }
+
     pub fn byte_slice(&self) -> &[u8] {
-        // SAFETY: m_ptr.latin1 is always a valid byte pointer regardless of encoding,
-        // and byte_length() covers exactly the backing buffer.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, self.byte_length()) }
+        self.raw_bytes(self.byte_length())
     }
 
     #[inline]
@@ -110,8 +120,7 @@ impl WTFStringImplStruct {
     #[inline]
     pub fn latin1_slice(&self) -> &[u8] {
         debug_assert!(self.is_8bit());
-        // SAFETY: when is_8bit(), m_ptr.latin1 points to m_length bytes.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, self.length() as usize) }
+        self.raw_bytes(self.length() as usize)
     }
 
     /// Caller must ensure that the string is 8-bit and ASCII.
@@ -120,8 +129,7 @@ impl WTFStringImplStruct {
         if cfg!(debug_assertions) {
             debug_assert!(self.can_use_as_utf8());
         }
-        // SAFETY: caller contract (8-bit + ASCII) guarantees latin1 bytes are valid UTF-8.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, self.length() as usize) }
+        self.raw_bytes(self.length() as usize)
     }
 
     pub fn to_zig_string(&self) -> ZigString {

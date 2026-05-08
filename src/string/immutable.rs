@@ -2975,8 +2975,13 @@ pub fn without_prefix_comptime<'a>(input: &'a [u8], prefix: &'static [u8]) -> &'
 
 pub fn without_prefix_comptime_z<'a>(input: &'a crate::ZStr, prefix: &'static [u8]) -> &'a crate::ZStr {
     if has_prefix_comptime(input.as_bytes(), prefix) {
-        // SAFETY: trailing NUL is preserved past the new start.
-        return unsafe { crate::ZStr::from_raw(input.as_ptr().add(prefix.len()).cast(), input.len() - prefix.len()) };
+        // `as_bytes_with_nul()[prefix.len()..]` keeps the trailing NUL at
+        // index `input.len() - prefix.len()` of the sub-slice; `from_buf`
+        // debug-asserts it.
+        return crate::ZStr::from_buf(
+            &input.as_bytes_with_nul()[prefix.len()..],
+            input.len() - prefix.len(),
+        );
     }
     input
 }

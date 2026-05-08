@@ -9,6 +9,7 @@ use bun_highway::copy_u16_to_u8 as highway_copy_u16_to_u8;
 use crate::{WStr, ZStr};
 
 use crate::immutable::CodePoint; // i32
+use crate::immutable::paths::wstr_in_buf;
 use crate::lexer as js_lexer;
 use bun_simdutf_sys::simdutf;
 
@@ -44,6 +45,56 @@ unsafe fn allocated_slice_mut(v: &mut Vec<u8>) -> &mut [u8] {
     // invariant beyond initialization, and the caller contract forbids reading
     // before write.
     unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr(), cap) }
+}
+
+/// simdutf UTF-16LE→UTF-8 into `list[0..capacity)`, then commit the written
+/// length on success. Wraps the `allocated_slice_mut` + `set_len` pair shared
+/// by `convert_utf16_to_utf8{,_without_invalid_surrogate_pairs}`. On
+/// `SURROGATE`, `list.len()` is left untouched for the caller's slow path.
+#[inline]
+fn simdutf_utf16le_into_allocated(list: &mut Vec<u8>, utf16: &[u16]) -> simdutf::SIMDUTFResult {
+    // SAFETY: simdutf only writes into the allocated output buffer; on
+    // non-SURROGATE it wrote `result.count` bytes starting at offset 0.
+    unsafe {
+        let result =
+            simdutf::convert::utf16::to::utf8::with_errors::le(utf16, allocated_slice_mut(list));
+        if result.status != simdutf::Status::SURROGATE {
+            list.set_len(result.count);
+        }
+        result
+    }
+}
+
+/// Widen-append `src` ASCII bytes onto `dst` as `u16` code units. Reserves,
+/// commits the new length, then scalar-widens via `copy_u8_into_u16`. Folds
+/// the `reserve + set_len + copy_u8_into_u16` triple repeated across the
+/// UTF-8→UTF-16 paths into one audited block.
+#[inline]
+fn append_u8_as_u16(dst: &mut Vec<u16>, src: &[u8]) {
+    if src.is_empty() {
+        return;
+    }
+    let end = dst.len();
+    dst.reserve(src.len());
+    // SAFETY: `src.len()` u16 slots reserved above; `copy_u8_into_u16`
+    // writes exactly `src.len()` of them immediately below.
+    unsafe { dst.set_len(end + src.len()) };
+    copy_u8_into_u16(&mut dst[end..], src);
+}
+
+/// Narrow-append `src` Latin-1/ASCII `u16` code units onto `dst` as bytes.
+/// Mirrors [`append_u8_as_u16`] for the UTF-16→UTF-8 fast path.
+#[inline]
+fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
+    if src.is_empty() {
+        return;
+    }
+    let end = dst.len();
+    dst.reserve(src.len());
+    // SAFETY: `src.len()` bytes reserved above; `copy_u16_into_u8` writes
+    // exactly `src.len()` of them immediately below.
+    unsafe { dst.set_len(end + src.len()) };
+    copy_u16_into_u8(&mut dst[end..], src);
 }
 
 // ───────────────────────────── NewCodePointIterator ─────────────────────────────
@@ -435,17 +486,11 @@ where
 pub(super) fn convert_utf16_to_utf8(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8>, AllocError> {
     // Zig writes into `list.allocatedSlice()` (offset 0..capacity) then sets
     // `list.items.len = result.count` — i.e. discards any prior contents.
-    // SAFETY: simdutf only writes into the allocated output buffer.
-    let result = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, unsafe {
-        allocated_slice_mut(&mut list)
-    });
+    let result = simdutf_utf16le_into_allocated(&mut list, utf16);
     if result.status == simdutf::Status::SURROGATE {
         // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
         return to_utf8_list_with_type_bun::<false>(&mut list, utf16).map(|_| list);
     }
-
-    // SAFETY: simdutf wrote `result.count` bytes starting at offset 0.
-    unsafe { list.set_len(result.count) };
     Ok(list)
 }
 
@@ -461,33 +506,28 @@ pub(super) fn convert_utf16_to_utf8_without_invalid_surrogate_pairs(
 ) -> Result<Vec<u8>, SurrogatePairError> {
     // Zig writes into `list.allocatedSlice()` (offset 0..capacity) then sets
     // `list.items.len = result.count` — i.e. discards any prior contents.
-    // SAFETY: simdutf only writes into the allocated output buffer.
-    let result = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, unsafe {
-        allocated_slice_mut(&mut list)
-    });
+    let result = simdutf_utf16le_into_allocated(&mut list, utf16);
     if result.status == simdutf::Status::SURROGATE {
         return Err(SurrogatePairError::SurrogatePair);
     }
-
-    // SAFETY: simdutf wrote `result.count` bytes starting at offset 0.
-    unsafe { list.set_len(result.count) };
     Ok(list)
 }
 
 pub(super) fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) -> Result<(), AllocError> {
-    // SAFETY: simdutf only writes into the spare-capacity output buffer.
-    let result = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, unsafe {
-        spare_capacity_as_slice(list)
-    });
+    // SAFETY: simdutf only writes into the spare-capacity output buffer; on
+    // non-SURROGATE it wrote `result.count` bytes after the current len.
+    let result = unsafe {
+        let r = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, spare_capacity_as_slice(list));
+        if r.status != simdutf::Status::SURROGATE {
+            list.set_len(list.len() + r.count);
+        }
+        r
+    };
 
     if result.status == simdutf::Status::SURROGATE {
         // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
         let _ = to_utf8_list_with_type_bun::<false>(list, utf16)?;
-        return Ok(());
     }
-
-    // SAFETY: simdutf wrote `result.count` bytes after the current len.
-    unsafe { list.set_len(list.len() + result.count) };
     Ok(())
 }
 
@@ -590,11 +630,7 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
         {
             list.reserve_exact((i + count + list.len() + utf16_remaining.len() + 4).saturating_sub(list.len()));
         }
-        let old_len = list.len();
-        // SAFETY: capacity reserved above; bytes written immediately below.
-        unsafe { list.set_len(old_len + i) };
-
-        copy_u16_into_u8(&mut list[old_len..], to_copy);
+        append_u16_as_u8(list, to_copy);
 
         if SKIP_TRAILING_REPLACEMENT {
             if replacement.is_lead && utf16_remaining.is_empty() {
@@ -602,23 +638,19 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
             }
         }
 
-        let cur_len = list.len();
-        // SAFETY: capacity reserved above for `count` bytes; encodeWTF8RuneT writes them.
-        unsafe { list.set_len(cur_len + count) };
-        // SAFETY: we need a *[4]u8 view starting at cur_len; capacity guarantees ≥4 bytes available.
-        let four: &mut [u8; 4] = unsafe {
-            &mut *list.as_mut_ptr().add(cur_len).cast::<[u8; 4]>()
-        };
-        let _ = encode_wtf8_rune_t::<u32>(four, replacement.code_point);
+        // Encode into a stack scratch then append the `count` (≤ 4) bytes.
+        // Capacity for `count` is reserved above, so `extend_from_slice` is a
+        // bounds-check + memcpy with no realloc — same write traffic as the
+        // previous in-place `*[4]u8` cast without the raw-pointer view.
+        let mut four = [0u8; 4];
+        let _ = encode_wtf8_rune_t::<u32>(&mut four, replacement.code_point);
+        list.extend_from_slice(&four[..count]);
     }
 
     if !utf16_remaining.is_empty() {
         let need = utf16_remaining.len() + list.len();
         list.reserve_exact(need.saturating_sub(list.len()));
-        let old_len = list.len();
-        // SAFETY: capacity reserved; bytes written immediately below.
-        unsafe { list.set_len(old_len + utf16_remaining.len()) };
-        copy_u16_into_u8(&mut list[old_len..], utf16_remaining);
+        append_u16_as_u8(list, utf16_remaining);
     }
 
     bun_core::scoped_log!(strings, "UTF16 {} -> {} UTF8", utf16.len(), list.len());
@@ -1360,12 +1392,8 @@ impl BOM {
                     )
                 };
                 let out = to_utf8_alloc(trimmed_bytes_u16)?;
-                if list.capacity() < out.len() {
-                    list.reserve(out.len() - list.len());
-                }
-                // SAFETY: capacity ensured; bytes overwritten immediately below.
-                unsafe { list.set_len(out.len()) };
-                list.copy_from_slice(&out);
+                list.clear();
+                list.extend_from_slice(&out);
                 // TODO(port): Zig returned `out` (the new alloc); returning list slice instead to honor
                 // "always points to the base of the input" doc comment.
                 Ok(&list[..])
@@ -1455,8 +1483,9 @@ pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
             }
 
             // Reuse `out` as a Vec with `i` valid items and full capacity.
-            // SAFETY: `i <= out.len()`; first `i` items will be overwritten/kept.
-            unsafe { out.set_len(i) };
+            // `out` was `vec![0u16; out_length]` so all items are initialized;
+            // `i <= out.len()` makes this a pure shrink.
+            out.truncate(i);
             break 'simd Some(out);
         }
     } else {
@@ -1466,9 +1495,7 @@ pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
         Some(v) => v,
         None => {
             let mut list = Vec::with_capacity(i + 2);
-            // SAFETY: capacity reserved; bytes written immediately below.
-            unsafe { list.set_len(i) };
-            copy_u8_into_u16(&mut list, &bytes[..i]);
+            append_u8_as_u16(&mut list, &bytes[..i]);
             list
         }
     };
@@ -1499,11 +1526,7 @@ pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
 
     while let Some(j) = first_non_ascii(remaining) {
         let j = j as usize;
-        let end = output.len();
-        output.reserve(j);
-        // SAFETY: capacity reserved; bytes written immediately below.
-        unsafe { output.set_len(end + j) };
-        copy_u8_into_u16(&mut output[end..end + j], &remaining[..j]);
+        append_u8_as_u16(&mut output, &remaining[..j]);
         remaining = &remaining[j..];
 
         let replacement = convert_utf8_bytes_into_utf16(remaining);
@@ -1530,10 +1553,7 @@ pub(super) fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
         let need = output.len() + remaining.len() + if SENTINEL { 1 } else { 0 };
         output.reserve_exact(need.saturating_sub(output.len()));
 
-        let old = output.len();
-        // SAFETY: capacity reserved; bytes written immediately below.
-        unsafe { output.set_len(old + remaining.len()) };
-        copy_u8_into_u16(&mut output[old..], remaining);
+        append_u8_as_u16(&mut output, remaining);
     }
 
     if SENTINEL {
@@ -1591,8 +1611,8 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                 return Ok(Some((out, [0; 3], 0)));
             }
 
-            // SAFETY: `first_non_ascii_idx <= out.len()`.
-            unsafe { out.set_len(first_non_ascii_idx) };
+            // `out` was `vec![0u16; out_length]`; `first_non_ascii_idx <= out.len()`.
+            out.truncate(first_non_ascii_idx);
             break 'output out;
         }
     } else {
@@ -1607,11 +1627,8 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
     while let Some(i) = non_ascii {
         let i = i as usize;
         {
-            let end = output.len();
             output.reserve(i + 2); // +2 for UTF16 codepoint
-            // SAFETY: capacity reserved; bytes written immediately below.
-            unsafe { output.set_len(end + i) };
-            copy_u8_into_u16(&mut output[end..end + i], &remaining[..i]);
+            append_u8_as_u16(&mut output, &remaining[..i]);
             remaining = &remaining[i..];
         }
 
@@ -1660,10 +1677,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
     if !remaining.is_empty() {
         let need = output.len() + remaining.len();
         output.reserve_exact(need.saturating_sub(output.len()));
-        let old = output.len();
-        // SAFETY: capacity reserved; bytes written immediately below.
-        unsafe { output.set_len(old + remaining.len()) };
-        copy_u8_into_u16(&mut output[old..], remaining);
+        append_u8_as_u16(&mut output, remaining);
     }
 
     bun_core::scoped_log!(strings, "toUTF16 {} UTF8 -> {} UTF16", bytes.len(), output.len());
@@ -1908,13 +1922,11 @@ pub fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -
     // TODO: see convert_utf8_to_utf16_in_buffer
     if input.is_empty() {
         buf[0] = 0;
-        // SAFETY: buf[0] == 0 written above.
-        return unsafe { WStr::from_raw(buf.as_ptr(), 0) };
+        return wstr_in_buf(buf, 0);
     }
     let result = simdutf::convert::utf8::to::utf16::le(input, buf);
     buf[result] = 0;
-    // SAFETY: buf[result] == 0 written above.
-    unsafe { WStr::from_raw(buf.as_ptr(), result) }
+    wstr_in_buf(buf, result)
 }
 
 pub(super) fn convert_utf16_to_utf8_in_buffer<'a>(

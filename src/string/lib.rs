@@ -124,6 +124,18 @@ impl String {
         unsafe { &*self.value.wtf }
     }
 
+    /// Read the raw `*mut WTFStringImplStruct` without dereferencing. Used
+    /// where the pointer value itself is needed (identity comparison,
+    /// hand-off to C++) rather than the struct fields.
+    #[inline(always)]
+    pub(crate) fn wtf_ptr(&self) -> WTFStringImpl {
+        debug_assert_eq!(self.tag, Tag::WTFStringImpl);
+        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf` is the active union field;
+        // reading the pointer (not dereferencing) is always sound for the
+        // POD `*mut` union arm.
+        unsafe { self.value.wtf }
+    }
+
     /// `bun.String.init(anytype)` — polymorphic borrow constructor
     /// (string.zig:331). Mirrors the Zig `switch (@TypeOf(value))` table via
     /// `Into<Self>` impls below: `String` is identity, `ZigString` is wrapped,
@@ -308,12 +320,15 @@ impl String {
             return (s, &mut []);
         }
         debug_assert_eq!(s.as_wtf().ref_count(), 1);
-        // SAFETY: WTF tag verified above; impl has a writable latin1 buffer of `len`.
-        let ptr = unsafe { (*s.value.wtf).m_ptr.latin1.cast_mut() };
-        // SAFETY: `ptr` points at `len` writable bytes owned by the new WTF
+        // SAFETY: WTF tag verified above; impl has a writable latin1 buffer of
+        // `len`. `ptr` points at `len` writable bytes owned by the new WTF
         // impl; the `'static` lifetime mirrors Zig's `[]u8` return (lifetime
         // is actually tied to `s` — caller must not outlive it).
-        (s, unsafe { core::slice::from_raw_parts_mut(ptr, len) })
+        let buf = unsafe {
+            let ptr = (*s.value.wtf).m_ptr.latin1.cast_mut();
+            core::slice::from_raw_parts_mut(ptr, len)
+        };
+        (s, buf)
     }
     pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
         let s = BunString__fromUTF16Unitialized(len);
@@ -321,9 +336,12 @@ impl String {
             return (s, &mut []);
         }
         debug_assert_eq!(s.as_wtf().ref_count(), 1);
-        let ptr = unsafe { (*s.value.wtf).m_ptr.utf16.cast_mut() };
         // SAFETY: see `create_uninitialized_latin1`.
-        (s, unsafe { core::slice::from_raw_parts_mut(ptr, len) })
+        let buf = unsafe {
+            let ptr = (*s.value.wtf).m_ptr.utf16.cast_mut();
+            core::slice::from_raw_parts_mut(ptr, len)
+        };
+        (s, buf)
     }
 
     /// `bun.String.createExternalGloballyAllocated(.latin1, bytes)` — takes
@@ -384,8 +402,7 @@ impl String {
     #[inline]
     pub fn leak_wtf_impl(self) -> WTFStringImpl {
         if self.tag == Tag::WTFStringImpl {
-            // SAFETY: tag == WTFStringImpl guarantees `value.wtf` is the active union field.
-            unsafe { self.value.wtf }
+            self.wtf_ptr()
         } else {
             core::ptr::null_mut()
         }
@@ -931,7 +948,7 @@ impl String {
             if let ZigStringSlice::Static(ptr, len) = slice {
                 self.ref_();
                 self.ref_();
-                let string_impl = unsafe { self.value.wtf };
+                let string_impl = self.wtf_ptr();
                 return SliceWithUnderlyingString {
                     utf8: ZigStringSlice::WTF { string_impl, ptr, len },
                     underlying: *self,
@@ -1695,27 +1712,16 @@ impl ZigStringSlice {
 impl ZigStringSlice {
     /// Consume into an owned `Vec<u8>` — moves out the buffer if `Owned`,
     /// allocates a copy otherwise. WTF-backed slices deref the impl.
-    pub fn into_vec(self) -> Vec<u8> {
-        // Suppress Drop; we run the variant-specific cleanup ourselves.
-        let mut this = core::mem::ManuallyDrop::new(self);
-        match &mut *this {
-            // SAFETY: `this` is ManuallyDrop so the Vec's destructor won't
-            // double-run; we read it out exactly once and never use `this` again.
-            Self::Owned(v) => unsafe { core::ptr::read(v) },
-            Self::Static(p, l) if *l == 0 => Vec::new(),
-            Self::Static(p, l) => unsafe { core::slice::from_raw_parts(*p, *l).to_vec() },
-            Self::WTF { string_impl, ptr, len } => {
-                let v = if *len == 0 {
-                    Vec::new()
-                } else {
-                    // SAFETY: WTF ref held; latin1/utf8 bytes valid for `len`.
-                    unsafe { core::slice::from_raw_parts(*ptr, *len).to_vec() }
-                };
-                // SAFETY: paired with the ref taken in `to_latin1_slice` (wtf.rs); pointer is live until this deref.
-                unsafe { wtf::Bun__WTFStringImpl__deref(*string_impl) };
-                v
-            }
+    pub fn into_vec(mut self) -> Vec<u8> {
+        // For `Owned`, move the buffer out (leaving an empty Vec to drop
+        // harmlessly). For `Static`/`WTF`, allocate a copy of the borrowed
+        // bytes; the subsequent `Drop` of `self` releases the WTF ref (paired
+        // with the ref taken in `to_latin1_slice`). Equivalent to the prior
+        // `ManuallyDrop` + per-variant raw-read dance without any unsafe.
+        if let Self::Owned(v) = &mut self {
+            return core::mem::take(v);
         }
+        self.slice().to_vec()
     }
 }
 impl Drop for ZigStringSlice {
@@ -1801,17 +1807,15 @@ impl SliceWithUnderlyingString {
     /// into the old impl (string.zig:1090).
     pub fn to_thread_safe(&mut self) {
         if self.underlying.tag == Tag::WTFStringImpl {
-            // SAFETY: tag check guarantees the wtf union arm is active.
-            let orig = unsafe { self.underlying.value.wtf };
+            let orig = self.underlying.wtf_ptr();
             self.underlying.to_thread_safe();
-            // SAFETY: still WTFStringImpl after to_thread_safe().
-            let new = unsafe { self.underlying.value.wtf };
+            let new = self.underlying.wtf_ptr();
             if new != orig {
                 if self.utf8.is_wtf_allocated() {
                     self.utf8 = ZigStringSlice::EMPTY;
-                    // SAFETY: `new` is a live WTFStringImpl just installed by
-                    // `to_thread_safe`; takes a ref for the latin1 view.
-                    self.utf8 = unsafe { (*new).to_latin1_slice() };
+                    // `as_wtf()` derefs the live impl just installed by
+                    // `to_thread_safe`; `to_latin1_slice` takes a ref for the view.
+                    self.utf8 = self.underlying.as_wtf().to_latin1_slice();
                 }
             }
         }

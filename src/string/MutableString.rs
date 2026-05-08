@@ -405,8 +405,7 @@ impl MutableString {
             self.list.push(0);
         }
         let len = self.list.len() - 1;
-        // SAFETY: self.list[len] == 0 (just pushed or was already there).
-        unsafe { ZStr::from_raw_mut(self.list.as_mut_ptr(), len) }
+        ZStr::from_buf_mut(&mut self.list, len)
     }
 
     pub fn to_owned_slice_length(&mut self, length: usize) -> Box<[u8]> {

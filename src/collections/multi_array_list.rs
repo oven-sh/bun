@@ -504,29 +504,27 @@ impl<T> Slice<T> {
     #[inline]
     pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            // SAFETY: ZST/empty slice; pointer is irrelevant.
-            return unsafe {
-                core::slice::from_raw_parts(ptr::NonNull::<F>::dangling().as_ptr(), self.len)
-            };
-        }
-        // SAFETY: column `fi` is `capacity` contiguous `F`s; `len <= capacity`.
-        unsafe { core::slice::from_raw_parts(self.ptrs[fi].cast::<F>(), self.len) }
+        let p = if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
+            ptr::NonNull::<F>::dangling().as_ptr()
+        } else {
+            self.ptrs[fi].cast::<F>()
+        };
+        // SAFETY: ZST/empty → dangling is valid for any length; otherwise
+        // column `fi` is `capacity` contiguous `F`s and `len <= capacity`.
+        unsafe { core::slice::from_raw_parts(p, self.len) }
     }
 
     /// Returns the mutable column slice for field `NAME` typed as `&mut [F]`.
     #[inline]
     pub fn items_mut<const NAME: &'static str, F>(&mut self) -> &mut [F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            // SAFETY: ZST/empty slice; pointer is irrelevant.
-            return unsafe {
-                core::slice::from_raw_parts_mut(ptr::NonNull::<F>::dangling().as_ptr(), self.len)
-            };
-        }
-        // SAFETY: column `fi` is `capacity` contiguous `F`s; `len <= capacity`.
-        // `&mut self` enforces exclusive column access.
-        unsafe { core::slice::from_raw_parts_mut(self.ptrs[fi].cast::<F>(), self.len) }
+        let p = if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
+            ptr::NonNull::<F>::dangling().as_ptr()
+        } else {
+            self.ptrs[fi].cast::<F>()
+        };
+        // SAFETY: see `items`. `&mut self` enforces exclusive column access.
+        unsafe { core::slice::from_raw_parts_mut(p, self.len) }
     }
 
     /// Raw column pointer for callers that need simultaneous mutable access to
@@ -760,33 +758,27 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     #[inline]
     pub fn items<const NAME: &'static str, F>(&self) -> &[F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            // SAFETY: ZST/empty — dangling is valid for any length.
-            return unsafe {
-                core::slice::from_raw_parts(ptr::NonNull::<F>::dangling().as_ptr(), self.len)
-            };
-        }
-        // SAFETY: column holds `capacity` aligned `F`s; `len <= capacity`.
-        unsafe {
-            core::slice::from_raw_parts(self.column_ptr_by_index(fi).cast::<F>(), self.len)
-        }
+        let p = if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
+            ptr::NonNull::<F>::dangling().as_ptr()
+        } else {
+            self.column_ptr_by_index(fi).cast::<F>()
+        };
+        // SAFETY: ZST/empty → dangling is valid for any length; otherwise the
+        // column holds `capacity` aligned `F`s and `len <= capacity`.
+        unsafe { core::slice::from_raw_parts(p, self.len) }
     }
 
     /// Get the mutable slice of values for field `NAME`.
     #[inline]
     pub fn items_mut<const NAME: &'static str, F>(&mut self) -> &mut [F] {
         let fi = const { Reflected::<T>::check::<NAME, F>() };
-        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
-            // SAFETY: ZST/empty — dangling is valid for any length.
-            return unsafe {
-                core::slice::from_raw_parts_mut(ptr::NonNull::<F>::dangling().as_ptr(), self.len)
-            };
-        }
-        // SAFETY: column holds `capacity` aligned `F`s; `len <= capacity`.
-        // `&mut self` enforces exclusive column access.
-        unsafe {
-            core::slice::from_raw_parts_mut(self.column_ptr_by_index(fi).cast::<F>(), self.len)
-        }
+        let p = if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
+            ptr::NonNull::<F>::dangling().as_ptr()
+        } else {
+            self.column_ptr_by_index(fi).cast::<F>()
+        };
+        // SAFETY: see `items`. `&mut self` enforces exclusive column access.
+        unsafe { core::slice::from_raw_parts_mut(p, self.len) }
     }
 
     /// Raw column pointer; see [`Slice::items_raw`].

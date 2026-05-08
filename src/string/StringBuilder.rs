@@ -106,16 +106,15 @@ impl StringBuilder {
         debug_assert!(self.len + 1 <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
+        let start = self.len;
         let dst = self.writable();
         dst[..slice.len()].copy_from_slice(slice);
         dst[slice.len()] = 0;
-        let base = dst.as_mut_ptr();
         self.len += slice.len() + 1;
 
         debug_assert!(self.len <= self.cap);
 
-        // SAFETY: base[..slice.len()] just written, base[slice.len()] == 0.
-        unsafe { ZStr::from_raw(base, slice.len()) }
+        ZStr::from_buf(&self.allocated_slice()[start..], slice.len())
     }
 
     pub fn append_str(&mut self, str: &BunString) -> &[u8] {
@@ -127,16 +126,14 @@ impl StringBuilder {
         debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
+        let start = self.len;
         let dst = self.writable();
         dst[..slice.len()].copy_from_slice(slice);
-        let base = dst.as_ptr();
         self.len += slice.len();
 
         debug_assert!(self.len <= self.cap);
 
-        // SAFETY: base[..slice.len()] was just written; lives in `self.ptr`'s
-        // allocation for the lifetime of `&mut self`.
-        unsafe { slice::from_raw_parts(base, slice.len()) }
+        &self.allocated_slice()[start..start + slice.len()]
     }
 
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {
@@ -199,16 +196,13 @@ impl StringBuilder {
         debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
-        let buf = self.writable();
-        let base = buf.as_ptr();
-        let written = buf_print(buf, args).expect("unreachable");
+        let start = self.len;
+        let written = buf_print(self.writable(), args).expect("unreachable");
         self.len += written;
 
         debug_assert!(self.len <= self.cap);
 
-        // SAFETY: base[..written] was just written by buf_print; lives in
-        // `self.ptr`'s allocation for the lifetime of `&mut self`.
-        unsafe { slice::from_raw_parts(base, written) }
+        &self.allocated_slice()[start..start + written]
     }
 
     pub fn fmt_append_count(&mut self, args: fmt::Arguments<'_>) -> StringPointer {

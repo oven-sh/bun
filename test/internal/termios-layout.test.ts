@@ -11,12 +11,10 @@
 // back via bun.sys.tcgetattr. That round-trip holds iff the Zig struct
 // agrees with libc's on this platform.
 import { expect, test } from "bun:test";
+import { termiosLayout } from "bun:internal-for-testing";
 import { isPosix } from "harness";
 
 test.skipIf(!isPosix)("bun.sys.termios matches the host libc's struct termios", () => {
-  // Resolve lazily so a build without the binding fails this test rather
-  // than erroring at module load.
-  const { termiosLayout } = require("bun:internal-for-testing") as typeof import("bun:internal-for-testing");
   expect(termiosLayout).toBeFunction();
 
   const result = termiosLayout();

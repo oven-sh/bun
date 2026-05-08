@@ -3518,7 +3518,7 @@ impl VirtualMachine {
         hash_: Option<u32>,
     ) -> *mut crate::ref_string::RefString {
         use crate::ref_string::RefString;
-        use std::collections::hash_map::Entry;
+        use bun_collections::zig_hash_map::MapEntry as Entry;
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));

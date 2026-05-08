@@ -346,7 +346,7 @@ impl SavedSourceMap {
     }
 
     pub fn put_value(&mut self, path: &[u8], value: Value) -> Result<(), bun_core::Error> {
-        use std::collections::hash_map::Entry;
+        use bun_collections::zig_hash_map::MapEntry as Entry;
 
         // TODO(port): narrow error set
         self.lock();

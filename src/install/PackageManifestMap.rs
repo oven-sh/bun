@@ -1,7 +1,5 @@
 use bun_collections::HashMap;
-// PORT NOTE: bun_collections::HashMap aliases std::collections::HashMap, so its
-// .entry() returns the std Entry, not bun_collections::hash_map::Entry.
-use std::collections::hash_map::Entry;
+use bun_collections::zig_hash_map::MapEntry as Entry;
 use bun_semver::string::Builder as StringBuilder;
 use bun_sys::Fd;
 
@@ -41,11 +39,8 @@ impl Value {
     }
 }
 
-// Zig used `IdentityContext(PackageNameHash)` (key is already a hash) with load factor 80.
-// `bun_collections::HashMap` aliases std HashMap, which has no `BuildHasher` for
-// `IdentityContext` yet — re-hashing the u64 is correctness-neutral, only a perf
-// difference. Matches the precedent in `npm.rs`.
-type ManifestHashMap = HashMap<PackageNameHash, Value>;
+// Zig: `std.HashMap(PackageNameHash, Value, IdentityContext(PackageNameHash), 80)`.
+type ManifestHashMap = HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CacheBehavior {

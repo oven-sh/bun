@@ -354,25 +354,20 @@ impl MinifyRenamer {
             let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx;
             let slots = &mut self.slots[ns];
 
-            // PORT NOTE: `top_level_symbol_to_slot` is a std HashMap (no Zig-style
-            // `getOrPut`); use the entry API.
-            use std::collections::hash_map::Entry;
-            match self.top_level_symbol_to_slot.entry(stable.ref_) {
-                Entry::Occupied(e) => {
-                    let slot = &mut slots[*e.get()];
-                    slot.count += stable.count;
-                    if must_start_with_capital {
-                        slot.needs_capital_for_jsx = true;
-                    }
+            let gpe = self.top_level_symbol_to_slot.get_or_put(stable.ref_)?;
+            if gpe.found_existing {
+                let slot = &mut slots[*gpe.value_ptr];
+                slot.count += stable.count;
+                if must_start_with_capital {
+                    slot.needs_capital_for_jsx = true;
                 }
-                Entry::Vacant(e) => {
-                    e.insert(slots.len());
-                    slots.push(SymbolSlot {
-                        name: TinyString::String(name_str_empty()),
-                        count: stable.count,
-                        needs_capital_for_jsx: must_start_with_capital,
-                    });
-                }
+            } else {
+                *gpe.value_ptr = slots.len();
+                slots.push(SymbolSlot {
+                    name: TinyString::String(name_str_empty()),
+                    count: stable.count,
+                    needs_capital_for_jsx: must_start_with_capital,
+                });
             }
         }
         Ok(())

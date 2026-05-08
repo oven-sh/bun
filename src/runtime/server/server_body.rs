@@ -691,7 +691,7 @@ impl AnyRoute {
         argument: JSValue,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
-        use std::collections::hash_map::Entry as StdEntry;
+        use bun_collections::zig_hash_map::MapEntry as StdEntry;
         if let Some(html_bundle) = <HTMLBundle as bun_jsc::JsClass>::from_js(argument) {
             let entry = init_ctx.dedupe_html_bundle_map.entry(html_bundle.cast_const());
             // PERF(port): was bun.handleOom — Rust HashMap aborts on OOM

@@ -793,11 +793,9 @@ pub mod semver_string {
     }
 
     // Zig: `std.HashMap(u64, String, IdentityContext(u64), 80)`.
-    // TODO(port): 80% max load factor + identity hasher not expressible on
-    // bun_collections::HashMap (std alias) yet — semantically equivalent for now.
     #[derive(Default)]
     pub struct StringPool {
-        map: HashMap<u64, String>,
+        map: HashMap<u64, String, bun_collections::IdentityContext<u64>>,
     }
     pub struct StringPoolEntry<'a> {
         pub found_existing: bool,
@@ -805,17 +803,11 @@ pub mod semver_string {
     }
     impl StringPool {
         pub fn get_or_put(&mut self, hash: u64) -> Result<StringPoolEntry<'_>, AllocError> {
-            use std::collections::hash_map::Entry;
-            match self.map.entry(hash) {
-                Entry::Occupied(o) => Ok(StringPoolEntry {
-                    found_existing: true,
-                    value_ptr: o.into_mut(),
-                }),
-                Entry::Vacant(v) => Ok(StringPoolEntry {
-                    found_existing: false,
-                    value_ptr: v.insert(String::EMPTY),
-                }),
-            }
+            let gpe = self.map.get_or_put(hash)?;
+            Ok(StringPoolEntry {
+                found_existing: gpe.found_existing,
+                value_ptr: gpe.value_ptr,
+            })
         }
         #[inline]
         pub fn contains(&self, hash: &u64) -> bool {
@@ -827,14 +819,10 @@ pub mod semver_string {
             self.map.capacity()
         }
         /// Zig `HashMap.ensureTotalCapacity(n)` — pre-reserve so `n` entries
-        /// fit without rehash. `try_reserve` takes *additional* capacity.
+        /// fit without rehash.
         #[inline]
         pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
-            let len = self.map.len();
-            if n > len {
-                self.map.try_reserve(n - len).map_err(|_| AllocError)?;
-            }
-            Ok(())
+            self.map.ensure_total_capacity(n)
         }
     }
 

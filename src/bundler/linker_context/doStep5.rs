@@ -235,8 +235,8 @@ impl LinkerContext<'_> {
                 &*(meta.top_level_symbol_to_parts_overlay
                     as *const bun_js_parser::ast::ast::TopLevelSymbolToParts)
                     .add(id as usize),
-                &mut *(ast.top_level_symbols_to_parts
-                    as *mut bun_js_parser::ast::ast::TopLevelSymbolToParts)
+                &*(ast.top_level_symbols_to_parts
+                    as *const bun_js_parser::ast::ast::TopLevelSymbolToParts)
                     .add(id as usize),
             )
         };

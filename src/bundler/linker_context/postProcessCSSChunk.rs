@@ -17,9 +17,7 @@ pub fn post_process_css_chunk(
     chunk: &mut Chunk,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
-    // SAFETY: `ctx.c` is a non-null backref into `BundleV2.linker`, valid for the
-    // duration of the link pass; this fn is the sole writer for `chunk` (per-chunk task).
-    let c = unsafe { &mut *ctx.c };
+    let c = ctx.c();
     // TODO(port): worker.arena is a per-worker arena — thread `&'bump Bump` in Phase B
     // PORT NOTE: avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();

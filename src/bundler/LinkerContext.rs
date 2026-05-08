@@ -603,9 +603,7 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                // SAFETY: `symbols.get` returns a stable `*mut Symbol` into the
-                // SoA symbol table; sole writer here.
-                unsafe { (*self.graph.symbols.get(original_ref).expect("infallible: ref in symbol table")).link = actual_ref };
+                self.graph.symbol_mut(original_ref).link = actual_ref;
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph.generate_symbol_import_and_use(
@@ -1446,6 +1444,19 @@ impl<'a> GenerateChunkCtx<'a> {
         // The bundle is valid for the link step.
         unsafe { &*bun_core::from_field_ptr!(BundleV2, linker, self.c.cast_const()) }
     }
+
+    /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
+    /// deref of the `c: *mut LinkerContext` backref (set in
+    /// `generate_chunks_in_parallel`); callers previously open-coded
+    /// `unsafe { &mut *ctx.c }`. The per-chunk tasks each touch a disjoint
+    /// chunk, so the linker fields they write don't alias across tasks.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn c(&self) -> &mut LinkerContext<'a> {
+        // SAFETY: non-null backref into `BundleV2.linker`, valid for the
+        // chunk-generation pass; this task's chunk row is disjoint from peers'.
+        unsafe { &mut *self.c }
+    }
 }
 
 pub struct PendingPartRange<'a> {
@@ -2157,10 +2168,8 @@ impl<'a> LinkerContext<'a> {
         for &export_ref in export_refs.keys() {
             #[cfg(debug_assertions)]
             {
-                // SAFETY: `symbols.get` returns a stable `*mut Symbol` into the
-                // SoA symbol table; read-only here. `parse_graph` is a backref
-                // into BundleV2 (LIFETIMES.tsv).
-                let sym = unsafe { &*self.graph.symbols.get(export_ref).expect("infallible: ref in symbol table") };
+                // `parse_graph` is a backref into BundleV2 (LIFETIMES.tsv).
+                let sym = self.graph.symbol(export_ref);
                 debug_tree_shake!(
                     "Export name: {} (in {})",
                     bstr::BStr::new(sym.original_name.slice()),
@@ -3140,11 +3149,9 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref).unwrap();
 
                     if named_import.namespace_ref.is_some() && named_import.namespace_ref.expect("infallible: checked is_some").is_valid() {
-                        // SAFETY: get() yields a stable *mut into the symbols NestedList
-                        // (NonNull-backed heap, never reallocated during linking). Sole
-                        // live &mut into that allocation here — `named_import` borrows
-                        // `graph.ast`, a disjoint allocation.
-                        let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).expect("infallible: ref in symbol table") };
+                        // `named_import` borrows `graph.ast`; the symbol slot is a
+                        // disjoint allocation, so no aliasing with this `&mut`.
+                        let symbol = self.graph.symbol_mut(tracker.import_ref);
                         symbol.import_item_status = ImportItemStatus::Missing;
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
@@ -3174,12 +3181,10 @@ impl<'a> LinkerContext<'a> {
                 }
                 ImportTrackerStatus::NoMatch => {
                     // Report mismatched imports and exports
-                    // SAFETY: get() yields a stable *mut into the symbols NestedList
-                    // (NonNull-backed heap, never reallocated during linking). Sole live
-                    // &mut into that allocation for this scope — subsequent borrows
+                    // The mutated symbol slot is disjoint from the later borrows
                     // (`named_import` from graph.ast, `get_source` from parse_graph,
-                    // `self.log`) touch disjoint allocations and never reach symbols.
-                    let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).expect("infallible: ref in symbol table") };
+                    // `self.log`) — all separate allocations.
+                    let symbol = self.graph.symbol_mut(tracker.import_ref);
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();
                     let source = self.get_source(prev_source_index);
@@ -3410,11 +3415,7 @@ impl<'a> LinkerContext<'a> {
                     ).expect("unreachable");
                 }
                 MatchImportKind::Namespace => {
-                    // SAFETY: get() yields a stable *mut into the symbols NestedList
-                    // (NonNull-backed heap, never reallocated during linking). Sole
-                    // live &mut into that allocation — one-shot field store, no other
-                    // borrow of symbols is live in this arm.
-                    unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") }.namespace_alias =
+                    self.graph.symbol_mut(import_ref).namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
@@ -3434,11 +3435,9 @@ impl<'a> LinkerContext<'a> {
                         },
                     ).expect("unreachable");
 
-                    // SAFETY: get() yields a stable *mut into the symbols NestedList
-                    // (NonNull-backed heap, never reallocated during linking). Sole
-                    // live &mut into that allocation — one-shot field store after
-                    // `imports_to_bind.put` (disjoint map) has fully returned.
-                    unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") }.namespace_alias =
+                    // One-shot field store after `imports_to_bind.put` (disjoint
+                    // map) has fully returned.
+                    self.graph.symbol_mut(import_ref).namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
@@ -3469,12 +3468,10 @@ impl<'a> LinkerContext<'a> {
 
                     // TODO: log locations of the ambiguous exports
 
-                    // SAFETY: get() yields a stable *mut into the symbols NestedList
-                    // (NonNull-backed heap, never reallocated during linking). Sole
-                    // live &mut into that allocation for this scope — `source`/`r`
-                    // borrow parse_graph, `named_import`/`alias` borrow arena slices,
-                    // and `self.log` is a disjoint field; none reach symbols.
-                    let symbol = unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") };
+                    // The mutated symbol slot is disjoint from `source`/`r`
+                    // (parse_graph), `named_import`/`alias` (arena slices), and
+                    // `self.log` — all separate allocations.
+                    let symbol = self.graph.symbol_mut(import_ref);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import.alias.expect("infallible: alias present").slice();
                     if symbol.import_item_status == ImportItemStatus::Generated {

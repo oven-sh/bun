@@ -466,11 +466,8 @@ pub fn scan_imports_and_exports(
                 {
                     let exports_ref = this.graph.symbols.follow(col_ref!(exports_refs)[source_index]);
                     let module_ref = this.graph.symbols.follow(col_ref!(module_refs)[source_index]);
-                    // SAFETY: `Map::get` returns a stable `*mut Symbol`; refs are valid.
-                    unsafe {
-                        (*this.graph.symbols.get(exports_ref).unwrap()).kind = SymbolKind::Unbound;
-                        (*this.graph.symbols.get(module_ref).unwrap()).kind = SymbolKind::Unbound;
-                    }
+                    this.graph.symbol_mut(exports_ref).kind = SymbolKind::Unbound;
+                    this.graph.symbol_mut(module_ref).kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
                 {
@@ -644,11 +641,8 @@ pub fn scan_imports_and_exports(
                 if r#ref.is_valid() {
                     let original_name =
                         builder.fmt(format_args!("init_{}", source.fmt_identifier()));
-                    // SAFETY: `Map::get` returns a stable `*mut Symbol`; ref is valid.
-                    unsafe {
-                        (*this.graph.symbols.get(r#ref).unwrap()).original_name =
-                            js_ast::StoreStr::new(original_name);
-                    }
+                    this.graph.symbol_mut(r#ref).original_name =
+                        js_ast::StoreStr::new(original_name);
                 }
             }
 

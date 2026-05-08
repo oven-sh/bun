@@ -4,5 +4,8 @@
   "type": "module",
   "devDependencies": {
     "bun-types": "^0.7.0"
+  },
+  "dependencies": {
+    "three": "^0.184.0"
   }
 }

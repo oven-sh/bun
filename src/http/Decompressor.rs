@@ -150,9 +150,9 @@ impl Decompressor {
                 reader.list_ptr = unsafe { erase_mut(&mut body_out_str.list) };
                 // expandToCapacity:
                 // SAFETY: capacity bytes are allocated; zlib initializes
-                // `[initial, capacity)` before `read_all`'s defer truncates `len`
-                // back to `total_out`, so no uninitialized byte is observed at the
-                // truncated length.
+                // `[initial, capacity)` before `read_all`'s defer truncates
+                // `len` back to `total_out`, so no uninitialized byte is ever
+                // observed at the truncated length.
                 unsafe { reader.list_ptr.set_len(reader.list_ptr.capacity()) };
                 // SAFETY: `initial <= len <= capacity`; the offset is within the
                 // allocation and `read_all` only writes into `[initial, capacity)`.

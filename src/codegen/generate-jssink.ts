@@ -480,7 +480,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
     return ${name}__endWithSink(ptr, lexicalGlobalObject);
 }
 
-extern "C" JSC::EncodedJSValue ${name}__getInternalFd(WebCore::${className}*);
+extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr);
 
 // TODO: how to make this a property callback. then, we can expose this as a documented field
 // It should not be shipped as a function call.
@@ -500,7 +500,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObj
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    return ${name}__getInternalFd(sink);
+    return ${name}__getInternalFd(ptr);
 }
 
 JSC_DECLARE_HOST_FUNCTION(${name}__doClose);
@@ -1089,10 +1089,8 @@ pub extern "C" fn ${sym}(global: *mut JSGlobalObject, callframe: *mut CallFrame)
 `;
     }
 
-    // extern "C" JSC::EncodedJSValue ${name}__getInternalFd(WebCore::JS${name}*)
-    // C++ caller passes `sink` (non-null after dynamicDowncast check). Note:
-    // JSSink.cpp passes the JS wrapper here, not `wrapped()`/`m_sinkPtr` — a
-    // pre-existing C++/Zig spec disagreement not introduced by this refactor.
+    // extern "C" JSC::EncodedJSValue ${name}__getInternalFd(void* sinkPtr)
+    // C++ caller passes `sink->wrapped()` (null-checked before calling).
     symbols.push(`${name}__getInternalFd`);
     templ += `#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {

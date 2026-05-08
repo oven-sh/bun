@@ -657,7 +657,7 @@ impl<'a> LinkerContext<'a> {
             let tla_checks: *mut [TlaCheck] = unsafe { (*parse_graph).ast.items_tla_check_mut() };
             let input_files: *const [Source] = unsafe { (*parse_graph).input_files.items_source() };
             let flags: *mut [crate::ungate_support::js_meta::Flags] = self.graph.meta.items_flags_mut();
-            let css_asts: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
+            let css_asts: *const [js_ast::ast::bundled_ast::CssCol] = self.graph.ast.items_css();
             let files_len = self.graph.files.len();
             let import_records_len = unsafe { (&*import_records_list).len() };
 
@@ -752,7 +752,7 @@ impl<'a> LinkerContext<'a> {
         // cache raw column base pointers and reborrow at each recursive call.
         let parts: *mut [Vec<Part>] = self.graph.ast.items_parts_mut();
         let import_records: *const [Vec<ImportRecord>] = self.graph.ast.items_import_records();
-        let css_reprs: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
+        let css_reprs: *const [js_ast::ast::bundled_ast::CssCol] = self.graph.ast.items_css();
         let side_effects: *const [SideEffects] = self.parse_graph().input_files.items_side_effects();
         let entry_point_kinds: *const [EntryPoint::Kind] = std::ptr::from_ref(self.graph.files.items_entry_point_kind());
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
@@ -1926,7 +1926,7 @@ impl<'a> LinkerContext<'a> {
             return;
         }
 
-        let all_css_asts: &[Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
+        let all_css_asts = self.graph.ast.items_css();
         let all_symbols: &[Vec<Symbol>] = self.graph.ast.items_symbols();
         // SAFETY: parse_graph backref; raw deref because `all_sources` is held
         // across `&mut self.mangled_props` below (split borrow).
@@ -1938,10 +1938,10 @@ impl<'a> LinkerContext<'a> {
 
         for (source_index, maybe_css_ast) in all_css_asts.iter().enumerate() {
             if let Some(css_ast_ptr) = maybe_css_ast {
-                // SAFETY: the SoA `css` column stores type-erased
-                // `*mut BundlerStyleSheet` (see `BundledAst.rs:58`); cast back
-                // to the concrete type. Pointer owned by the graph arena.
-                let css_ast = unsafe { &*(*css_ast_ptr).cast::<css::BundlerStyleSheet>() };
+                // SAFETY: the SoA `css` column stores arena-owned
+                // `*mut BundlerStyleSheet` (see `BundledAst.rs`); valid for the
+                // duration of the link pass.
+                let css_ast = unsafe { &**css_ast_ptr };
                 if css_ast.local_scope.count() == 0 {
                     continue;
                 }
@@ -2146,7 +2146,7 @@ impl<'a> LinkerContext<'a> {
         parts: &[Vec<Part>],
         import_records: &[Vec<ImportRecord>],
         file_entry_bits: &mut [AutoBitSet],
-        css_reprs: &[Option<*mut core::ffi::c_void>],
+        css_reprs: &[js_ast::ast::bundled_ast::CssCol],
     ) {
         if !self.graph.files_live.is_set(source_index as usize) {
             return;
@@ -2239,7 +2239,7 @@ impl<'a> LinkerContext<'a> {
         parts: &mut [Vec<Part>],
         import_records: &[Vec<ImportRecord>],
         entry_point_kinds: &[EntryPoint::Kind],
-        css_reprs: &[Option<*mut core::ffi::c_void>],
+        css_reprs: &[js_ast::ast::bundled_ast::CssCol],
     ) {
         #[cfg(debug_assertions)]
         {
@@ -2387,7 +2387,7 @@ impl<'a> LinkerContext<'a> {
         parts: &mut [Vec<Part>],
         import_records: &[Vec<ImportRecord>],
         entry_point_kinds: &[EntryPoint::Kind],
-        css_reprs: &[Option<*mut core::ffi::c_void>],
+        css_reprs: &[js_ast::ast::bundled_ast::CssCol],
     ) {
         let part: &mut Part = &mut parts[source_index as usize].slice_mut()[part_index as usize];
 
@@ -2577,20 +2577,20 @@ impl<'a> LinkerContext<'a> {
     ///
     /// PORT NOTE: signature reshaped vs. the gated draft above — the un-gated
     /// caller (`scanImportsAndExports.rs`) holds raw SoA column pointers and
-    /// passes the `css_asts` column as an opaque `*mut [Option<*mut c_void>]`
-    /// (the `bun_css::BundlerStyleSheet` element type is still gated). `log`
-    /// is borrowed through `&mut self` instead of as a separate parameter.
+    /// passes the `css_asts` column as a raw `*const [CssCol]` (the
+    /// scanImportsAndExports caller holds raw SoA pointers). `log` is borrowed
+    /// through `&mut self` instead of as a separate parameter.
     pub fn scan_css_imports(
         &mut self,
         file_source_index: u32,
         file_import_records: &[ImportRecord],
-        css_asts: *const [Option<*mut core::ffi::c_void>],
+        css_asts: *const [js_ast::ast::bundled_ast::CssCol],
         sources: &[Source],
         loaders: &[Loader],
     ) -> ScanCssImportsResult {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
         // the duration of `scanImportsAndExports`; we only test `is_none()`.
-        let css_asts: &[Option<*mut core::ffi::c_void>] = unsafe { &*css_asts };
+        let css_asts = unsafe { &*css_asts };
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {
                 // Other file is not CSS

@@ -25,8 +25,9 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_glob.workspace = true
-# TODO(b1): bun_css does not compile yet (1467 errors); re-add when green.
-# bun_css.workspace = true
+# `BundledAst.css` stores `*mut bun_css::BundlerStyleSheet`; bun_css does not
+# depend on js_parser, so this is a forward (T2→T2 peer) dep — no cycle.
+bun_css.workspace = true
 bun_highway.workspace = true
 bun_http_types.workspace = true
 bun_interchange.workspace = true

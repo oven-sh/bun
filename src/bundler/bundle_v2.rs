@@ -1409,10 +1409,11 @@ pub mod dispatch {
     }
 
     unsafe extern "Rust" {
-        /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Sets the
-        /// bundler-thread flag, initializes JSC, generates bytecode, and
-        /// returns an owned copy of the bytes.
-        fn __bun_bundler_generate_cached_bytecode(
+        /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
+        /// "generate JSC bytecode off the main JS thread" helper — marks the
+        /// calling thread as bytecode-only, initializes JSC, generates, and
+        /// returns an owned copy of the bytes. Definer-prefixed (`__bun_jsc_*`).
+        fn __bun_jsc_generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
             source_provider_url: &mut bun_string::String,
@@ -1429,7 +1430,7 @@ pub mod dispatch {
         source_provider_url: &mut bun_string::String,
     ) -> Option<Box<[u8]>> {
         // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc`.
-        unsafe { __bun_bundler_generate_cached_bytecode(format, source, source_provider_url) }
+        unsafe { __bun_jsc_generate_cached_bytecode(format, source, source_provider_url) }
     }
 
     /// CYCLEBREAK GENUINE: `bun.jsc.hot_reloader.NewHotReloader<BundleV2, …>` is
@@ -4616,7 +4617,7 @@ impl<'a> BundleV2<'a> {
                             // `*const` slice (the scanImportsAndExports caller holds raw
                             // SoA pointers); it only reads via `is_none()`. Zig spec
                             // (`LinkerContext.zig:496`) types this `[]const ?*...`.
-                            std::ptr::from_ref::<[Option<*mut core::ffi::c_void>]>(css_asts),
+                            std::ptr::from_ref(css_asts),
                             sources,
                             loaders,
                         ) == crate::linker_context_mod::ScanCssImportsResult::Errors {

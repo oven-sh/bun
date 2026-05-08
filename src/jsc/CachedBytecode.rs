@@ -141,12 +141,17 @@ impl CachedBytecode {
     }
 }
 
-/// Link-time entry point for `bun_bundler` (declared `extern "Rust"` there).
-/// Performs the full Zig sequence from `generateChunksInParallel.zig`:
-/// set the thread-local bundler flag, initialize JSC, generate, copy the
-/// bytes into an owned buffer, and release the C++ handle.
+/// Link-time entry point for lower-tier crates (declared `extern "Rust"` in
+/// `bun_bundler`). Generic "generate JSC bytecode off the main JS thread"
+/// helper: marks the calling thread as a bytecode-only thread (so WTF timer
+/// callbacks don't try to reach a non-existent VM), initializes JSC, generates
+/// bytecode for the given output `format`, copies the bytes into an owned
+/// buffer, and releases the C++ handle.
+///
+/// Symbol is definer-prefixed (`__bun_jsc_*`) per LAYERING_AUDIT — the body is
+/// jsc-internal setup, not bundler logic.
 #[unsafe(no_mangle)]
-pub fn __bun_bundler_generate_cached_bytecode(
+pub fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
     source_provider_url: &mut BunString,

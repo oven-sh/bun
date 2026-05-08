@@ -1106,6 +1106,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_css",
  "bun_glob",
  "bun_highway",
  "bun_http_types",

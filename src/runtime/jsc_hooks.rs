@@ -2650,22 +2650,47 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :481-510 — pending imports → AsyncModule queue.
-                // TODO(b2-blocked): `vm.modules.enqueue` — `AsyncModule::Queue`
-                // gated. Spec writes `*(*extra).promise_ptr` inside `enqueue`
-                // before `return error.AsyncModule`; without that write,
-                // returning AsyncModule trips `transpile_file`'s
-                // `debug_assert!(!promise.is_null())`. Gate the whole branch
-                // alongside the enqueue so the path falls through and surfaces
-                // a real error via the link/print tail instead.
-                
                 if parse_result.pending_imports.len() > 0 {
-                    if unsafe { (*extra).promise_ptr.is_null() } {
+                    let promise_ptr = unsafe { (*extra).promise_ptr };
+                    if promise_ptr.is_null() {
                         return Err(bun_core::err!("UnexpectedPendingResolution"));
                     }
-                    // `vm.modules.enqueue(.{ .promise_ptr = promise_ptr, ... })`
-                    // hands `arena` ownership to the queue and writes the
-                    // JSInternalPromise out-param.
-                    arena_guard.2 = false;
+
+                    if parse_result.source.contents_is_recycled {
+                        // this shared buffer is about to become owned by the AsyncModule struct
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        let fs_cache = unsafe { &mut (*jsc_vm).transpiler.resolver.caches.fs };
+                        let buf = core::ptr::from_mut(fs_cache.shared_buffer()).cast_const();
+                        // `parse_result.source.contents` borrows the detached buffer's bytes;
+                        // ownership moves to the AsyncModule via the arena/parse_result, so the
+                        // swapped-out backing storage must not be freed here (Zig never freed it).
+                        core::mem::forget(fs_cache.reset_shared_buffer(buf));
+                    }
+
+                    // Hand `arena` ownership to the queue (defuse the give-back guard).
+                    let (_, arena, _, _) = scopeguard::ScopeGuard::into_inner(arena_guard);
+                    // SAFETY: per fn contract — `jsc_vm` / `global_object` are the live
+                    // per-thread VM / global; `package_json` is the opaque watcher
+                    // forward-decl of `bun_resolver::package_json::PackageJSON`.
+                    unsafe {
+                        (*jsc_vm).modules.enqueue(
+                            &*global_object,
+                            bun_jsc::async_module::InitOpts {
+                                parse_result,
+                                path: path.clone(),
+                                loader,
+                                fd,
+                                package_json: package_json.map(|p| {
+                                    &*core::ptr::from_ref(p)
+                                        .cast::<bun_resolver::package_json::PackageJSON>()
+                                }),
+                                promise_ptr: Some(promise_ptr),
+                                specifier,
+                                referrer,
+                                arena,
+                            },
+                        );
+                    }
                     return Err(bun_core::err!("AsyncModule"));
                 }
 

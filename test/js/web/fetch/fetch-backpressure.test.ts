@@ -483,6 +483,120 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
     });
   }, 30_000);
 
+  // #28035: `res.body.pipeThrough(TransformStream)` must propagate
+  // backpressure back to the socket. The pipeTo loop waits on the
+  // TransformStream writable's readyPromise, so a stalled reader on the
+  // piped output stops `onPull` → `didDrain` stops firing →
+  // `outstanding_body_bytes` climbs past `receive_body_high_water` →
+  // `maybePauseReceive` pauses the socket. Without the fix the
+  // ByteStream.buffer grows unbounded because the HTTP thread never
+  // observes the stall.
+  test("stalled pipeThrough(TransformStream) reader pauses the socket read (#28035)", async () => {
+    await withH1Server(async (url, onReq) => {
+      const { promise: gotSocket, resolve } = Promise.withResolvers<net.Socket>();
+      onReq(resolve);
+      await using proc = spawnFetch(`
+        ${h1Prelude}
+        const res = await fetch("${url}");
+        // Identity TransformStream: the pipeTo loop reads res.body and
+        // writes here; when the output reader stalls the writable's
+        // readyPromise goes pending and the loop stops pulling.
+        const reader = res.body
+          .pipeThrough(new TransformStream())
+          .getReader();
+        process.stdout.write("reader\\n");
+        const first = await reader.read();
+        // Sit on the first chunk: maybePauseReceive fires once
+        // outstanding >= receive_body_high_water.
+        const sawPause = await until(c => c.pauses, 1);
+        const c = counts();
+        process.stdout.write("paused:" + sawPause + ":" + c.pauses + ":" + c.resumes + ":" + first.value.byteLength + "\\n");
+        // Now drain: every read() posts a consume via didDrain and the
+        // socket resumes below receive_body_low_water.
+        let total = first.value.byteLength;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+        }
+        const c2 = counts();
+        process.stdout.write("read:" + total + ":" + c2.pauses + ":" + c2.resumes + "\\n");
+      `);
+      const waitFor = lineReader(proc.stdout);
+      await waitFor("reader");
+      const socket = await gotSocket;
+      // Push past receive_body_high_water (4 MiB) while the piped
+      // reader sits on its first chunk.
+      const pumped = pump(socket, 16 * 1024 * 1024);
+      const paused = await waitFor("paused:");
+      const [, sawPause, pauses, resumes, firstLen] = paused.split(":");
+      expect({ sawPause, pauses: Number(pauses), resumes: Number(resumes) }).toEqual({
+        sawPause: "true",
+        pauses: 1,
+        resumes: 0,
+      });
+      expect(Number(firstLen)).toBeGreaterThan(0);
+      // Child is now draining; let the pump finish and close so the
+      // reader sees done.
+      await pumped;
+      socket.end();
+      const read = await waitFor("read:");
+      const [, total, pauses2, resumes2] = read.split(":").map(Number);
+      expect(total).toBe(16 * 1024 * 1024);
+      // Every pause was matched by a resume so the body completed.
+      expect(resumes2).toBe(pauses2);
+      socket.destroy();
+      proc.kill();
+      await proc.exited;
+    });
+  }, 30_000);
+
+  // Same as above but through TextDecoderStream — the shape reported in
+  // the #28035 comments ("blocking our SSE client"). TextDecoderStream
+  // is a TransformStream under the hood; the extra hop through
+  // `createTransformStream` must not change the backpressure behaviour.
+  test("stalled pipeThrough(TextDecoderStream) reader pauses the socket read (#28035)", async () => {
+    await withH1Server(async (url, onReq) => {
+      const { promise: gotSocket, resolve } = Promise.withResolvers<net.Socket>();
+      onReq(resolve);
+      await using proc = spawnFetch(`
+        ${h1Prelude}
+        const res = await fetch("${url}");
+        const reader = res.body
+          .pipeThrough(new TextDecoderStream())
+          .getReader();
+        process.stdout.write("reader\\n");
+        const first = await reader.read();
+        const sawPause = await until(c => c.pauses, 1);
+        const c = counts();
+        process.stdout.write("paused:" + sawPause + ":" + c.pauses + ":" + c.resumes + ":" + first.value.length + "\\n");
+        await reader.cancel();
+        const sawResume = await until(c => c.resumes, c.pauses);
+        process.stdout.write("cancelled:" + sawResume + "\\n");
+        await new Promise(() => {});
+      `);
+      const waitFor = lineReader(proc.stdout);
+      await waitFor("reader");
+      const socket = await gotSocket;
+      void pump(socket, 8 * 1024 * 1024);
+      const paused = await waitFor("paused:");
+      const [, sawPause, pauses, , firstLen] = paused.split(":");
+      expect(sawPause).toBe("true");
+      expect(Number(pauses)).toBeGreaterThanOrEqual(1);
+      expect(Number(firstLen)).toBeGreaterThan(0);
+      // reader.cancel() on the piped output propagates through
+      // pipeToErrorsMustBePropagatedBackward → readableStreamCancel on
+      // res.body → ignoreRemainingResponseBody disarms
+      // body_consumption_tracked and posts the sentinel → socket
+      // resumes.
+      const cancelled = await waitFor("cancelled:");
+      expect(cancelled).toBe("cancelled:true");
+      socket.destroy();
+      proc.kill();
+      await proc.exited;
+    });
+  }, 30_000);
+
   // Regression: uSockets' repeat-recv fast path keeps calling recv() in
   // the same epoll tick while the buffer comes back full, so a
   // us_socket_pause() issued mid-stream doesn't stop the final chunk

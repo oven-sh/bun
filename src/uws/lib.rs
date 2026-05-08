@@ -1296,6 +1296,24 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         Self { socket: InternalSocket::Detached }
     }
 
+    /// Reinterpret the const-generic discriminant. Callers that branch on a
+    /// runtime `if SSL { ... }` need a `NewSocketHandler<true>` in one arm and
+    /// `<false>` in the other; the layout is identical (single `InternalSocket`
+    /// field — the bool only gates `get_native_handle`). Debug-asserts the
+    /// caller passed the matching arm.
+    #[inline]
+    pub const fn assume_ssl(self) -> NewSocketHandler<true> {
+        debug_assert!(SSL);
+        NewSocketHandler { socket: self.socket }
+    }
+
+    /// See [`Self::assume_ssl`].
+    #[inline]
+    pub const fn assume_tcp(self) -> NewSocketHandler<false> {
+        debug_assert!(!SSL);
+        NewSocketHandler { socket: self.socket }
+    }
+
     #[inline]
     pub fn detach(&mut self) {
         self.socket = InternalSocket::Detached;

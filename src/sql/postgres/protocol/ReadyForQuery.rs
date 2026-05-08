@@ -20,10 +20,9 @@ impl ReadyForQuery {
         debug_assert!(length >= 4);
 
         let status = reader.int::<u8>()?;
-        Ok(Self {
-            // SAFETY: server sends a valid TransactionStatusIndicator byte; enum is #[repr(u8)].
-            status: unsafe { core::mem::transmute::<u8, TransactionStatusIndicator>(status) },
-        })
+        // TransactionStatusIndicator is a `#[repr(transparent)] struct(u8)` newtype —
+        // wrap directly, no discriminant validation needed.
+        Ok(Self { status: TransactionStatusIndicator(status) })
     }
 
     // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs

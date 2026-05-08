@@ -106,7 +106,7 @@ pub struct Installer<'a> {
 
     /// Zig: `std.atomic.Value(PackageInstall.Method)`. Stable Rust has no
     /// generic atomic-enum, so store the `#[repr(u8)]` discriminant and
-    /// transmute at the load/store sites below.
+    /// round-trip via `Method::from_u8` at the load sites below.
     pub supported_backend: AtomicU8,
 
     pub trusted_dependencies_from_update_requests: ArrayHashMap<TruncatedPackageNameHash, ()>,
@@ -737,11 +737,20 @@ impl Step {
     /// only ever stored via `Step::* as u32` (this file) so the value is
     /// always a valid discriminant.
     #[inline]
-    pub fn from_u32(raw: u32) -> Step {
-        debug_assert!(raw <= Step::Blocked as u32);
-        // SAFETY: `Step` is `#[repr(u8)]` with contiguous discriminants
-        // 0..=Blocked; `raw` originated from `Step::* as u32`.
-        unsafe { core::mem::transmute(raw as u8) }
+    pub const fn from_u32(raw: u32) -> Step {
+        match raw {
+            0 => Step::LinkPackage,
+            1 => Step::SymlinkDependencies,
+            2 => Step::CheckIfBlocked,
+            3 => Step::SymlinkDependencyBinaries,
+            4 => Step::RunPreinstall,
+            5 => Step::Binaries,
+            6 => Step::RunPostInstallAndPrePostPrepare,
+            7 => Step::Done,
+            8 => Step::Blocked,
+            // Was @enumFromInt; cold atomic-load decode so the panic branch is fine.
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -1150,7 +1159,7 @@ impl Task {
                     // .monotonic access of `supported_backend` is okay because it's an
                     // optimization. It's okay if another thread doesn't see an update to this
                     // value "in time".
-                    let mut backend = unsafe { core::mem::transmute::<u8, InstallMethod>(installer.supported_backend.load(Ordering::Relaxed)) };
+                    let mut backend = InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed));
                     'backend: loop {
                         // PORT NOTE: reshaped for borrowck — Zig builds `dest_subpath` once
                         // before the labeled-switch and passes it by-value (struct copy)

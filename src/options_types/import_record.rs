@@ -53,19 +53,27 @@ pub type Label = EnumMap<ImportKind, &'static [u8]>;
 
 // `bun_logger::ImportKind` is the canonical T2 definition (see comment at
 // logger/lib.rs:279). This T3 mirror has identical `#[repr(u8)]`
-// discriminants, so the conversion is a tag transmute. Kept as an explicit
-// `From` (not a `pub use`) until the type-unification pass collapses the
-// duplicate; lets `import_record.kind.into()` flow into `Log::add_resolve_*`.
+// discriminants. Kept as an explicit `From` (not a `pub use`) until the
+// type-unification pass collapses the duplicate; lets
+// `import_record.kind.into()` flow into `Log::add_resolve_*`.
 impl From<ImportKind> for bun_logger::ImportKind {
     #[inline]
     fn from(k: ImportKind) -> Self {
-        // SAFETY: both enums are `#[repr(u8)]` with identical discriminants
-        // (0..=11). Verified by exhaustive match in debug builds.
-        debug_assert_eq!(
-            core::mem::size_of::<ImportKind>(),
-            core::mem::size_of::<bun_logger::ImportKind>(),
-        );
-        unsafe { core::mem::transmute::<ImportKind, bun_logger::ImportKind>(k) }
+        use bun_logger::ImportKind as L;
+        match k {
+            ImportKind::EntryPointRun => L::EntryPointRun,
+            ImportKind::EntryPointBuild => L::EntryPointBuild,
+            ImportKind::Stmt => L::Stmt,
+            ImportKind::Require => L::Require,
+            ImportKind::Dynamic => L::Dynamic,
+            ImportKind::RequireResolve => L::RequireResolve,
+            ImportKind::At => L::At,
+            ImportKind::AtConditional => L::AtConditional,
+            ImportKind::Url => L::Url,
+            ImportKind::Composes => L::Composes,
+            ImportKind::HtmlManifest => L::HtmlManifest,
+            ImportKind::Internal => L::Internal,
+        }
     }
 }
 

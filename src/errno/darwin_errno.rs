@@ -322,8 +322,8 @@ impl GetErrno for usize {
         // Reinterpret as signed (Zig: @bitCast). Darwin syscalls never encode
         // errno in the return value, so only `-1` is the sentinel.
         if self as isize == -1 {
-            // SAFETY: __error() returns a value in [0, MAX) per <sys/errno.h>.
-            unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
+            // __error() returns a value in [0, MAX) per <sys/errno.h>.
+            E::from_raw(crate::posix::errno() as u16)
         } else {
             E::SUCCESS
         }
@@ -340,8 +340,8 @@ macro_rules! impl_get_errno_libc {
                 // `(-1i64 as $t as i64)` yields -1 for signed $t and the
                 // zero-extended all-ones value for unsigned $t.
                 if self as i64 == (-1i64 as $t as i64) {
-                    // SAFETY: errno is always a valid E discriminant on Darwin
-                    unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
+                    // errno is always a valid E discriminant on Darwin
+                    E::from_raw(crate::posix::errno() as u16)
                 } else {
                     E::SUCCESS
                 }

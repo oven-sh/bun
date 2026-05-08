@@ -296,6 +296,25 @@ impl OwnedURL {
 }
 
 impl<'a> URL<'a> {
+    /// Detach the borrow-checker lifetime from a `URL`.
+    ///
+    /// Centralized helper for the self-referential pattern where a `URL`
+    /// borrows from a buffer that the caller is about to move into a sibling
+    /// field on the same struct (e.g. `self.url = URL::parse(&buf);
+    /// self.redirect = buf;`). All slices in `URL` are `(ptr, len)` views, so
+    /// the value is bitwise unchanged — only the borrow-checker tag widens.
+    ///
+    /// # Safety
+    /// Caller must guarantee every slice the returned `URL<'b>` references
+    /// outlives `'b`. The buffer must NOT be dropped, reallocated, or mutated
+    /// for the lifetime of the returned value.
+    #[inline(always)]
+    pub unsafe fn erase_lifetime<'b>(self) -> URL<'b> {
+        // SAFETY: `URL` is a POD aggregate of `&[u8]` slices; lifetime is a
+        // borrow-checker construct only — bitwise identical across `'a`/`'b`.
+        unsafe { core::mem::transmute::<URL<'a>, URL<'b>>(self) }
+    }
+
     pub fn is_file(&self) -> bool {
         self.protocol == b"file"
     }

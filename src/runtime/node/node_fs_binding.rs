@@ -7,7 +7,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsClass, JsResult, 
 
 use crate::node::fs::{
     self, args, async_, ret, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn,
-    NodeFS, NodeFSFunctionEnum,
+    NodeFS, NodeFSDispatch, NodeFSFunctionEnum, Op,
 };
 
 /// Signature of every generated NodeFS host function.
@@ -33,7 +33,10 @@ fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
     this: &mut Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-) -> JsResult<JSValue> {
+) -> JsResult<JSValue>
+where
+    Op<{ F }>: NodeFSDispatch<R, A>,
+{
     // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine`; borrowed only
     // for the duration of argument parsing on the JS thread.
     let vm: &VirtualMachine = global.bun_vm();
@@ -121,7 +124,10 @@ fn run_async<A: FsArgument>(
 }
 
 #[inline(always)]
-const fn call_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>() -> NodeFSFunction {
+const fn call_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>() -> NodeFSFunction
+where
+    Op<{ F }>: NodeFSDispatch<R, A>,
+{
     run_sync::<R, A, F>
 }
 

@@ -90,6 +90,23 @@ pub enum Method {
     Symlink,
 }
 
+impl Method {
+    /// Decode the `AtomicU8` repr back into a `Method`. Stored via
+    /// `Method::* as u8` so the value is always a valid discriminant.
+    #[inline]
+    pub const fn from_u8(n: u8) -> Self {
+        match n {
+            0 => Method::Clonefile,
+            1 => Method::ClonefileEachDir,
+            2 => Method::Hardlink,
+            3 => Method::Copyfile,
+            4 => Method::Symlink,
+            // Was @enumFromInt; cold atomic-load decode so the panic branch is fine.
+            _ => unreachable!(),
+        }
+    }
+}
+
 type BackendSupport = enum_map::EnumMap<Method, bool>;
 
 pub static METHOD_MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {

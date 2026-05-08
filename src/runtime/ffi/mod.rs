@@ -532,6 +532,37 @@ pub enum ABIType {
 impl ABIType {
     pub const MAX: i32 = ABIType::NapiValue as i32;
 
+    /// Zig `std.enums.fromInt(ABIType, int) orelse ...` — returns `None` for
+    /// out-of-range discriminants. The enum is `#[repr(i32)]` with contiguous
+    /// values `0..=MAX` plus `Buffer = 20`, so range-check then match.
+    #[inline]
+    pub const fn from_int(n: i32) -> Option<Self> {
+        Some(match n {
+            0 => Self::Char,
+            1 => Self::Int8T,
+            2 => Self::Uint8T,
+            3 => Self::Int16T,
+            4 => Self::Uint16T,
+            5 => Self::Int32T,
+            6 => Self::Uint32T,
+            7 => Self::Int64T,
+            8 => Self::Uint64T,
+            9 => Self::Double,
+            10 => Self::Float,
+            11 => Self::Bool,
+            12 => Self::Ptr,
+            13 => Self::Void,
+            14 => Self::CString,
+            15 => Self::I64Fast,
+            16 => Self::U64Fast,
+            17 => Self::Function,
+            18 => Self::NapiEnv,
+            19 => Self::NapiValue,
+            20 => Self::Buffer,
+            _ => return None,
+        })
+    }
+
     pub const LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
         b"bool" => ABIType::Bool,
         b"c_int" => ABIType::Int32T,

@@ -323,9 +323,18 @@ fn with_path_like(err: sys::Error, p: &PathOrFileDescriptor) -> sys::Error {
 /// either definition.
 #[inline]
 fn encoding_to_node(e: Encoding) -> bun_string::NodeEncoding {
-    // SAFETY: identical `#[repr(u8)]` layout — see `src/runtime/node/types.rs`
-    // Encoding vs `bun_string::encoding::Encoding`.
-    unsafe { core::mem::transmute::<u8, bun_string::NodeEncoding>(e as u8) }
+    use bun_string::NodeEncoding as N;
+    match e {
+        Encoding::Utf8 => N::Utf8,
+        Encoding::Ucs2 => N::Ucs2,
+        Encoding::Utf16le => N::Utf16le,
+        Encoding::Latin1 => N::Latin1,
+        Encoding::Ascii => N::Ascii,
+        Encoding::Base64 => N::Base64,
+        Encoding::Base64url => N::Base64url,
+        Encoding::Hex => N::Hex,
+        Encoding::Buffer => N::Buffer,
+    }
 }
 
 
@@ -571,7 +580,10 @@ pub struct UVFSRequest<R, A: Unprotect, const F: NodeFSFunctionEnum> {
 }
 
 #[cfg(windows)]
-impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
+impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F>
+where
+    Op<{ F }>: NodeFSDispatch<R, A>,
+{
     pub const HEAP_LABEL: &'static str = F.heap_label_uv();
 
     /// Deref the raw `global_object` pointer.
@@ -1016,7 +1028,10 @@ pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
     pub tracker: AsyncTaskTracker,
 }
 
-impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
+impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F>
+where
+    Op<{ F }>: NodeFSDispatch<R, A>,
+{
     /// NewAsyncFSTask supports cancelable operations via AbortSignal,
     /// so long as a "signal" field exists. The task wrapper will ensure
     /// a promise rejection happens if signaled, but if `function` is
@@ -7080,118 +7095,140 @@ impl NodeFS {
     /// `NodeFS::<method>`.
     ///
     /// PORT NOTE: Zig spells this `@field(NodeFS, @tagName(FunctionEnum))(self,
-    /// args, .async)`. Rust has no field-by-string reflection, so we match on
-    /// the const-generic `F` and route each arm to the concrete method. The
-    /// `(R, A, F)` triple is fixed by the `async_::*` type aliases — every
-    /// monomorphisation of `AsyncFSTask<R, A, {F}>` picks exactly one arm whose
-    /// `args::*` / `ret::*` are the same types as `A` / `R`, so the
-    /// `transmute_copy` calls below are identity casts.
-    pub fn dispatch<R, A, const F: NodeFSFunctionEnum>(&mut self, args: &A, flavor: Flavor) -> Maybe<R> {
-        macro_rules! call {
-            ($method:ident, $Args:ty, $Ret:ty) => {{
-                debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<$Args>());
-                debug_assert_eq!(core::mem::size_of::<Maybe<R>>(), core::mem::size_of::<Maybe<$Ret>>());
-                // SAFETY: per the `async_::*` aliases, `A == $Args` and `R == $Ret`
-                // for this `F`; both casts are between identical types.
-                let args: &$Args = unsafe { &*core::ptr::from_ref::<A>(args).cast::<$Args>() };
-                let r: Maybe<$Ret> = self.$method(args, flavor);
-                let r = core::mem::ManuallyDrop::new(r);
-                unsafe { core::mem::transmute_copy::<Maybe<$Ret>, Maybe<R>>(&r) }
-            }};
-        }
-        match F {
-            NodeFSFunctionEnum::Access => call!(access, args::Access, ret::Access),
-            NodeFSFunctionEnum::AppendFile => call!(append_file, args::AppendFile, ret::AppendFile),
-            NodeFSFunctionEnum::Chmod => call!(chmod, args::Chmod, ret::Chmod),
-            NodeFSFunctionEnum::Chown => call!(chown, args::Chown, ret::Chown),
-            NodeFSFunctionEnum::Close => call!(close, args::Close, ret::Close),
-            NodeFSFunctionEnum::CopyFile => call!(copy_file, args::CopyFile, ret::CopyFile),
-            NodeFSFunctionEnum::Exists => call!(exists, args::Exists, ret::Exists),
-            NodeFSFunctionEnum::Fchmod => call!(fchmod, args::FChmod, ret::Fchmod),
-            NodeFSFunctionEnum::Fchown => call!(fchown, args::Fchown, ret::Fchown),
-            NodeFSFunctionEnum::Fdatasync => call!(fdatasync, args::FdataSync, ret::Fdatasync),
-            NodeFSFunctionEnum::Fstat => call!(fstat, args::Fstat, ret::Fstat),
-            NodeFSFunctionEnum::Fsync => call!(fsync, args::Fsync, ret::Fsync),
-            NodeFSFunctionEnum::Ftruncate => call!(ftruncate, args::FTruncate, ret::Ftruncate),
-            NodeFSFunctionEnum::Futimes => call!(futimes, args::Futimes, ret::Futimes),
-            NodeFSFunctionEnum::Lchmod => call!(lchmod, args::LCHmod, ret::Lchmod),
-            NodeFSFunctionEnum::Lchown => call!(lchown, args::LChown, ret::Lchown),
-            NodeFSFunctionEnum::Link => call!(link, args::Link, ret::Link),
-            NodeFSFunctionEnum::Lstat => call!(lstat, args::Lstat, ret::Lstat),
-            NodeFSFunctionEnum::Lutimes => call!(lutimes, args::Lutimes, ret::Lutimes),
-            NodeFSFunctionEnum::Mkdir => call!(mkdir, args::Mkdir, ret::Mkdir),
-            NodeFSFunctionEnum::Mkdtemp => call!(mkdtemp, args::MkdirTemp, ret::Mkdtemp),
-            NodeFSFunctionEnum::Open => call!(open, args::Open, ret::Open),
-            NodeFSFunctionEnum::Read => call!(read, args::Read, ret::Read),
-            NodeFSFunctionEnum::Readdir => call!(readdir, args::Readdir, ret::Readdir),
-            NodeFSFunctionEnum::ReadFile => call!(read_file, args::ReadFile, ret::ReadFile),
-            NodeFSFunctionEnum::Readlink => call!(readlink, args::Readlink, ret::Readlink),
-            NodeFSFunctionEnum::Readv => call!(readv, args::Readv, ret::Readv),
-            NodeFSFunctionEnum::Realpath => call!(realpath, args::Realpath, ret::Realpath),
-            NodeFSFunctionEnum::RealpathNonNative => call!(realpath_non_native, args::Realpath, ret::Realpath),
-            NodeFSFunctionEnum::Rename => call!(rename, args::Rename, ret::Rename),
-            NodeFSFunctionEnum::Rm => call!(rm, args::Rm, ret::Rm),
-            NodeFSFunctionEnum::Rmdir => call!(rmdir, args::RmDir, ret::Rmdir),
-            NodeFSFunctionEnum::Stat => call!(stat, args::Stat, ret::Stat),
-            NodeFSFunctionEnum::Statfs => call!(statfs, args::StatFS, ret::StatFS),
-            NodeFSFunctionEnum::Symlink => call!(symlink, args::Symlink, ret::Symlink),
-            NodeFSFunctionEnum::Truncate => call!(truncate, args::Truncate, ret::Truncate),
-            NodeFSFunctionEnum::Unlink => call!(unlink, args::Unlink, ret::Unlink),
-            NodeFSFunctionEnum::Utimes => call!(utimes, args::Utimes, ret::Utimes),
-            NodeFSFunctionEnum::Write => call!(write, args::Write, ret::Write),
-            NodeFSFunctionEnum::WriteFile => call!(write_file, args::WriteFile, ret::WriteFile),
-            NodeFSFunctionEnum::Writev => call!(writev, args::Writev, ret::Writev),
-        }
+    /// args, .async)`. Rust has no field-by-string reflection, so the
+    /// `(R, A, F)` triple is bound by [`NodeFSDispatch`] impls (one per
+    /// `NodeFSFunctionEnum` variant); the `where Op<{F}>: NodeFSDispatch<R, A>`
+    /// bound proves `R == ret::*` / `A == args::*` for this `F` so no identity
+    /// cast is needed.
+    #[inline]
+    pub fn dispatch<R, A, const F: NodeFSFunctionEnum>(&mut self, args: &A, flavor: Flavor) -> Maybe<R>
+    where
+        Op<{ F }>: NodeFSDispatch<R, A>,
+    {
+        <Op<{ F }> as NodeFSDispatch<R, A>>::run(self, args, flavor)
     }
 
     #[cfg(windows)]
-    pub fn uv_dispatch<R, A, const F: NodeFSFunctionEnum>(&mut self, args: &A, rc: i64) -> Maybe<R> {
-        macro_rules! call {
-            ($method:ident, $Args:ty, $Ret:ty) => {{
-                debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<$Args>());
-                debug_assert_eq!(core::mem::size_of::<Maybe<R>>(), core::mem::size_of::<Maybe<$Ret>>());
-                // SAFETY: identity cast — see `dispatch` above.
-                let args: &$Args = unsafe { &*core::ptr::from_ref::<A>(args).cast::<$Args>() };
-                let r: Maybe<$Ret> = self.$method(args, rc);
-                let r = core::mem::ManuallyDrop::new(r);
-                unsafe { core::mem::transmute_copy::<Maybe<$Ret>, Maybe<R>>(&r) }
-            }};
-        }
-        match F {
-            NodeFSFunctionEnum::Open => call!(uv_open, args::Open, ret::Open),
-            NodeFSFunctionEnum::Close => call!(uv_close, args::Close, ret::Close),
-            NodeFSFunctionEnum::Read => call!(uv_read, args::Read, ret::Read),
-            NodeFSFunctionEnum::Write => call!(uv_write, args::Write, ret::Write),
-            NodeFSFunctionEnum::Readv => call!(uv_readv, args::Readv, ret::Readv),
-            NodeFSFunctionEnum::Writev => call!(uv_writev, args::Writev, ret::Writev),
-            // Statfs takes `req` too — handled via uv_callbackreq → uv_dispatch_req.
-            _ => unreachable!("uv_dispatch: not a UVFSRequest variant"),
-        }
+    #[inline]
+    pub fn uv_dispatch<R, A, const F: NodeFSFunctionEnum>(&mut self, args: &A, rc: i64) -> Maybe<R>
+    where
+        Op<{ F }>: NodeFSDispatch<R, A>,
+    {
+        <Op<{ F }> as NodeFSDispatch<R, A>>::run_uv(self, args, rc)
     }
 
     /// Variant of [`Self::uv_dispatch`] for `uv_callbackreq` — passes the live
     /// `uv::fs_t` through so the handler can read `req.ptr` (only `statfs`
     /// needs it; node_fs.zig:276-288).
     #[cfg(windows)]
+    #[inline]
     pub fn uv_dispatch_req<R, A, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
         req: &mut uv::fs_t,
         rc: i64,
-    ) -> Maybe<R> {
-        match F {
-            NodeFSFunctionEnum::Statfs => {
-                debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<args::StatFS>());
-                debug_assert_eq!(core::mem::size_of::<Maybe<R>>(), core::mem::size_of::<Maybe<ret::StatFS>>());
-                // SAFETY: identity cast — `A == args::StatFS` for `F == Statfs`.
-                let args: &args::StatFS = unsafe { &*(args as *const A as *const args::StatFS) };
-                let r = core::mem::ManuallyDrop::new(self.uv_statfs(args, req, rc));
-                // SAFETY: identity cast — `R == ret::StatFS` for `F == Statfs`.
-                unsafe { core::mem::transmute_copy::<Maybe<ret::StatFS>, Maybe<R>>(&r) }
-            }
-            _ => unreachable!("uv_dispatch_req: not a req-passing UVFSRequest variant"),
-        }
+    ) -> Maybe<R>
+    where
+        Op<{ F }>: NodeFSDispatch<R, A>,
+    {
+        <Op<{ F }> as NodeFSDispatch<R, A>>::run_uv_req(self, args, req, rc)
     }
+}
+
+/// Type-level marker for [`NodeFSDispatch`] — one ZST per `NodeFSFunctionEnum`
+/// variant. Exists so the `(R, A) ↔ F` binding can be proved by a `where`
+/// bound instead of pointer-cast identity casts.
+pub struct Op<const F: NodeFSFunctionEnum>;
+
+/// Per-`F` binding from `(R, A)` to its `NodeFS` method. Every
+/// `AsyncFSTask<R, A, {F}>` / `UVFSRequest<R, A, {F}>` instantiation in
+/// `async_::*` has exactly one impl, so the `where Op<{F}>: NodeFSDispatch<R, A>`
+/// bound is always satisfied at every monomorphised call site.
+pub trait NodeFSDispatch<R, A> {
+    fn run(fs: &mut NodeFS, args: &A, flavor: Flavor) -> Maybe<R>;
+    #[cfg(windows)]
+    fn run_uv(_fs: &mut NodeFS, _args: &A, _rc: i64) -> Maybe<R> {
+        unreachable!("uv_dispatch: not a UVFSRequest variant")
+    }
+    #[cfg(windows)]
+    fn run_uv_req(_fs: &mut NodeFS, _args: &A, _req: &mut uv::fs_t, _rc: i64) -> Maybe<R> {
+        unreachable!("uv_dispatch_req: not a req-passing UVFSRequest variant")
+    }
+}
+
+macro_rules! node_fs_ops {
+    ($(
+        $Variant:ident => $method:ident, $Args:ty, $Ret:ty
+        $(, uv = $uv_method:ident)?
+        $(, uv_req = $uv_req_method:ident)?
+    );+ $(;)?) => {
+        $(
+            impl NodeFSDispatch<$Ret, $Args> for Op<{ NodeFSFunctionEnum::$Variant }> {
+                #[inline]
+                fn run(fs: &mut NodeFS, args: &$Args, flavor: Flavor) -> Maybe<$Ret> {
+                    fs.$method(args, flavor)
+                }
+                $(
+                    #[cfg(windows)]
+                    #[inline]
+                    fn run_uv(fs: &mut NodeFS, args: &$Args, rc: i64) -> Maybe<$Ret> {
+                        fs.$uv_method(args, rc)
+                    }
+                )?
+                $(
+                    #[cfg(windows)]
+                    #[inline]
+                    fn run_uv_req(fs: &mut NodeFS, args: &$Args, req: &mut uv::fs_t, rc: i64) -> Maybe<$Ret> {
+                        fs.$uv_req_method(args, req, rc)
+                    }
+                )?
+            }
+        )+
+    };
+}
+
+node_fs_ops! {
+    Access => access, args::Access, ret::Access;
+    AppendFile => append_file, args::AppendFile, ret::AppendFile;
+    Chmod => chmod, args::Chmod, ret::Chmod;
+    Chown => chown, args::Chown, ret::Chown;
+    Close => close, args::Close, ret::Close, uv = uv_close;
+    CopyFile => copy_file, args::CopyFile, ret::CopyFile;
+    Exists => exists, args::Exists, ret::Exists;
+    Fchmod => fchmod, args::FChmod, ret::Fchmod;
+    Fchown => fchown, args::Fchown, ret::Fchown;
+    Fdatasync => fdatasync, args::FdataSync, ret::Fdatasync;
+    Fstat => fstat, args::Fstat, ret::Fstat;
+    Fsync => fsync, args::Fsync, ret::Fsync;
+    Ftruncate => ftruncate, args::FTruncate, ret::Ftruncate;
+    Futimes => futimes, args::Futimes, ret::Futimes;
+    Lchmod => lchmod, args::LCHmod, ret::Lchmod;
+    Lchown => lchown, args::LChown, ret::Lchown;
+    Link => link, args::Link, ret::Link;
+    Lstat => lstat, args::Lstat, ret::Lstat;
+    Lutimes => lutimes, args::Lutimes, ret::Lutimes;
+    Mkdir => mkdir, args::Mkdir, ret::Mkdir;
+    Mkdtemp => mkdtemp, args::MkdirTemp, ret::Mkdtemp;
+    Open => open, args::Open, ret::Open, uv = uv_open;
+    Read => read, args::Read, ret::Read, uv = uv_read;
+    Readdir => readdir, args::Readdir, ret::Readdir;
+    ReadFile => read_file, args::ReadFile, ret::ReadFile;
+    Readlink => readlink, args::Readlink, ret::Readlink;
+    Readv => readv, args::Readv, ret::Readv, uv = uv_readv;
+    Realpath => realpath, args::Realpath, ret::Realpath;
+    RealpathNonNative => realpath_non_native, args::Realpath, ret::Realpath;
+    Rename => rename, args::Rename, ret::Rename;
+    Rm => rm, args::Rm, ret::Rm;
+    Rmdir => rmdir, args::RmDir, ret::Rmdir;
+    Stat => stat, args::Stat, ret::Stat;
+    Statfs => statfs, args::StatFS, ret::StatFS, uv_req = uv_statfs;
+    Symlink => symlink, args::Symlink, ret::Symlink;
+    Truncate => truncate, args::Truncate, ret::Truncate;
+    Unlink => unlink, args::Unlink, ret::Unlink;
+    Utimes => utimes, args::Utimes, ret::Utimes;
+    Write => write, args::Write, ret::Write, uv = uv_write;
+    WriteFile => write_file, args::WriteFile, ret::WriteFile;
+    Writev => writev, args::Writev, ret::Writev, uv = uv_writev;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

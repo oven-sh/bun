@@ -1537,8 +1537,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     };
 
     if is_map {
-        // SAFETY: SourceId is #[repr(transparent)] over u64 (same size as id)
-        let source_id: source_map_store::SourceId = unsafe { ::core::mem::transmute(id) };
+        let source_id = source_map_store::SourceId(id);
         // PORT NOTE: `render_json` needs `&mut DevServer` while `entry` borrows
         // `dev.source_maps.entries[_]`. The entry is read-only (`&self`) and
         // `render_json` does not touch `source_maps.entries`, so erase the
@@ -3144,10 +3143,7 @@ impl DevServer {
             );
 
             for removed in &self.incremental_result.failures_removed {
-                payload.extend_from_slice(
-                    // SAFETY: encode() returns a #[repr(transparent)] u32 wrapper (@bitCast in Zig)
-                    &unsafe { ::core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
-                );
+                payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
                 removed.deinit(self);
             }
 
@@ -3209,10 +3205,7 @@ impl DevServer {
             );
 
             for removed in &self.incremental_result.failures_removed {
-                payload.extend_from_slice(
-                    // SAFETY: encode() returns a #[repr(transparent)] u32 wrapper (@bitCast in Zig)
-                    &unsafe { ::core::mem::transmute::<_, u32>(removed.get_owner().encode()) }.to_le_bytes(),
-                );
+                payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
                 removed.deinit(self);
             }
 
@@ -5757,8 +5750,7 @@ impl SafeFileId {
         SafeFileId((side as u32) | (index << 1))
     }
     fn side(self) -> bake::Side {
-        // SAFETY: low bit is always a valid bake::Side discriminant
-        unsafe { ::core::mem::transmute((self.0 & 1) as u8) }
+        if (self.0 & 1) == 0 { bake::Side::Client } else { bake::Side::Server }
     }
     fn index(self) -> u32 {
         (self.0 >> 1) & 0x3FFF_FFFF

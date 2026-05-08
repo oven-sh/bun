@@ -2319,7 +2319,7 @@ impl Example {
         // `AsyncHTTP::init_sync` (single-threaded CLI; same as
         // `fetch_from_github`).
         unsafe {
-            *URL_.get() = Some(core::mem::transmute::<URL<'_>, URL<'static>>(api_url));
+            *URL_.get() = Some(api_url.erase_lifetime());
         }
 
         // SAFETY: `http_proxy` borrows from `env_loader`'s arena-backed map
@@ -2327,7 +2327,7 @@ impl Example {
         // to `'static` for `AsyncHTTP::init_sync` — same as `fetch_from_github`.
         let mut http_proxy: Option<URL<'static>> = env_loader
             .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
-            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
+            .map(|u| unsafe { u.erase_lifetime() });
 
         // ensure very stable memory address
         let async_http: &mut HTTP::AsyncHTTP =
@@ -2430,7 +2430,7 @@ impl Example {
         // SAFETY: see note on `http_proxy` above — env-loader-backed `'static`.
         http_proxy = env_loader
             .get_http_proxy_for(&parsed_tarball_url)
-            .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
+            .map(|u| unsafe { u.erase_lifetime() });
 
         *async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,

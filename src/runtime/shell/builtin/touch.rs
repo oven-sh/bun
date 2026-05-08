@@ -73,24 +73,22 @@ impl Touch {
     }
 
     fn fail_parse(interp: &mut Interpreter, cmd: NodeId, e: ParseError) -> Yield {
-        let buf: Vec<u8> = match e {
-            ParseError::IllegalOption(s) => Builtin::fmt_error_arena(
+        let buf: Vec<u8> = match &e {
+            ParseError::IllegalOption(_) => Builtin::fmt_error_arena(
                 interp,
                 cmd,
                 Some(Kind::Touch),
-                // SAFETY: payload borrows argv or is 'static.
-                format_args!("illegal option -- {}\n", bstr::BStr::new(unsafe { &*s })),
+                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
             )
             .to_vec(),
             ParseError::ShowUsage => Kind::Touch.usage_string().to_vec(),
-            ParseError::Unsupported(s) => Builtin::fmt_error_arena(
+            ParseError::Unsupported(_) => Builtin::fmt_error_arena(
                 interp,
                 cmd,
                 Some(Kind::Touch),
                 format_args!(
                     "unsupported option, please open a GitHub issue -- {}\n",
-                    // SAFETY: see above.
-                    bstr::BStr::new(unsafe { &*s })
+                    bstr::BStr::new(e.opt())
                 ),
             )
             .to_vec(),
@@ -137,9 +135,7 @@ impl Touch {
                 let evtloop = Builtin::event_loop(interp, cmd);
                 let interp_ptr: *mut Interpreter = interp;
                 for i in args_start..argc {
-                    let p = Builtin::of(interp, cmd).args_slice()[i];
-                    // SAFETY: argv entries are NUL-terminated.
-                    let path = unsafe { bun_core::ffi::cstr(p) }.to_bytes().to_vec();
+                    let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
                     let task =
                         ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
                     // SAFETY: freshly heap-allocated.

@@ -21,16 +21,16 @@ enum State {
 
 impl Dirname {
     pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
-        let args = Builtin::of(interp, cmd).args_slice();
-        if args.is_empty() {
+        let bltn = Builtin::of(interp, cmd);
+        let argc = bltn.args_slice().len();
+        if argc == 0 {
             return Self::fail(interp, cmd, b"usage: dirname string\n");
         }
 
-        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+        let stdout_needs_io = bltn.stdout.needs_io();
         let mut buf = Vec::new();
-        for arg in args {
-            // SAFETY: argv entries are NUL-terminated.
-            let path = unsafe { bun_core::ffi::cstr(*arg) }.to_bytes();
+        for i in 0..argc {
+            let path = bltn.arg_bytes(i);
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
             let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
             buf.extend_from_slice(dir);

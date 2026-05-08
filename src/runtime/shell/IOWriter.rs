@@ -123,6 +123,19 @@ impl Writer {
     fn set_dead(&mut self) {
         self.ptr = ChildPtr::NULL;
     }
+    /// Tee `chunk` into the optional capture buffer.
+    ///
+    /// `bytelist` (when set) points into a live `ShellExecEnv` `Bufio`
+    /// (`OutFd::captured` — see its doc); the env outlives every queued
+    /// `Writer`. Localises the per-callsite raw deref in
+    /// `do_file_write` / `on_write_pollable`.
+    #[inline]
+    fn tee(&self, chunk: &[u8]) {
+        if let Some(bl) = self.bytelist {
+            // SAFETY: see doc comment.
+            let _ = unsafe { (*bl).append_slice(chunk) };
+        }
+    }
 }
 
 /// Spec: IOWriter.zig `Writers = SmolList(Writer, 2)`.
@@ -700,11 +713,8 @@ impl IOWriter {
             }
         };
         let s = self.state();
-        if let Some(bl) = s.writers[idx].bytelist {
-            let lo = s.total_bytes_written;
-            // SAFETY: bytelist points into a live ShellExecEnv Bufio.
-            let _ = unsafe { (*bl).append_slice(&s.buf[lo..lo + amt]) };
-        }
+        let lo = s.total_bytes_written;
+        s.writers[idx].tee(&s.buf[lo..lo + amt]);
         s.total_bytes_written += amt;
         s.writers[idx].written += amt;
         if !s.writers[idx].wrote_everything() {
@@ -737,11 +747,8 @@ impl IOWriter {
         if s.writers[idx].is_dead() {
             self.run_yield(self.bump(idx));
         } else {
-            if let Some(bl) = s.writers[idx].bytelist {
-                let lo = s.total_bytes_written;
-                // SAFETY: bytelist points into a live ShellExecEnv Bufio.
-                let _ = unsafe { (*bl).append_slice(&s.buf[lo..lo + amount]) };
-            }
+            let lo = s.total_bytes_written;
+            s.writers[idx].tee(&s.buf[lo..lo + amount]);
             s.total_bytes_written += amount;
             s.writers[idx].written += amount;
             if status == bun_io::WriteStatus::EndOfFile {

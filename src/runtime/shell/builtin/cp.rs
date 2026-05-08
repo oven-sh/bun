@@ -103,24 +103,22 @@ impl Cp {
     }
 
     fn fail_parse(interp: &mut Interpreter, cmd: NodeId, e: ParseError) -> Yield {
-        let buf: Vec<u8> = match e {
-            ParseError::IllegalOption(s) => Builtin::fmt_error_arena(
+        let buf: Vec<u8> = match &e {
+            ParseError::IllegalOption(_) => Builtin::fmt_error_arena(
                 interp,
                 cmd,
                 Some(Kind::Cp),
-                // SAFETY: payload borrows argv or is 'static.
-                format_args!("illegal option -- {}\n", bstr::BStr::new(unsafe { &*s })),
+                format_args!("illegal option -- {}\n", bstr::BStr::new(e.opt())),
             )
             .to_vec(),
             ParseError::ShowUsage => Kind::Cp.usage_string().to_vec(),
-            ParseError::Unsupported(s) => Builtin::fmt_error_arena(
+            ParseError::Unsupported(_) => Builtin::fmt_error_arena(
                 interp,
                 cmd,
                 Some(Kind::Cp),
                 format_args!(
                     "unsupported option, please open a GitHub issue -- {}\n",
-                    // SAFETY: see above.
-                    bstr::BStr::new(unsafe { &*s })
+                    bstr::BStr::new(e.opt())
                 ),
             )
             .to_vec(),
@@ -198,15 +196,11 @@ impl Cp {
                     let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
                     let opts = Self::state_mut(interp, cmd).opts;
                     let evtloop = Builtin::event_loop(interp, cmd);
-                    let tgt_ptr = Builtin::of(interp, cmd).args_slice()[target];
-                    // SAFETY: argv entries are NUL-terminated.
-                    let tgt = unsafe { bun_core::ffi::cstr(tgt_ptr) }.to_bytes().to_vec();
+                    let tgt = Builtin::of(interp, cmd).arg_bytes(target).to_vec();
                     let operands = 1 + (target - start);
                     let interp_ptr = std::ptr::from_mut::<Interpreter>(interp);
                     for i in start..target {
-                        let p = Builtin::of(interp, cmd).args_slice()[i];
-                        // SAFETY: argv entries are NUL-terminated.
-                        let src = unsafe { bun_core::ffi::cstr(p) }.to_bytes().to_vec();
+                        let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
                         let task = ShellCpTask::create(
                             cmd, evtloop, opts, operands, src, tgt.clone(), cwd.clone(),
                             interp_ptr,
@@ -343,17 +337,16 @@ impl Cp {
         let output = core::mem::take(&mut *task.verbose_output.lock());
         let output_task = OutputTask::<Cp>::new(cmd, OutputSrc::Arrlist(output));
 
-        if let Some(e) = task.err.take() {
-            let errstr = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
+        let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
+            let s = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
             // Spec: else-arm `e.deinit()` — `e` drops here when not stored.
-            // SAFETY: freshly allocated.
-            return unsafe { OutputTask::<Cp>::start(output_task, interp, Some(&errstr)) };
-        }
+            s
+        });
         // SAFETY: freshly allocated.
-        unsafe { OutputTask::<Cp>::start(output_task, interp, None) }
+        unsafe { OutputTask::<Cp>::start(output_task, interp, errstr.as_deref()) }
     }
 
     #[inline]
@@ -523,13 +516,14 @@ impl ShellCpTask {
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
     pub unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
-        if let Err(e) = result {
-            // SAFETY: caller contract — `this` is live and exclusively owned
-            // by this thread until `enqueue_to_event_loop` hands it off.
-            unsafe { (*this).err = Some(ShellErr::new_sys(e)) };
+        // SAFETY: caller contract — `this` is live and exclusively owned by
+        // this thread until `enqueue_to_event_loop` hands it off.
+        unsafe {
+            if let Err(e) = result {
+                (*this).err = Some(ShellErr::new_sys(e));
+            }
+            Self::enqueue_to_event_loop(this);
         }
-        // SAFETY: same allocation handed to `schedule`.
-        unsafe { Self::enqueue_to_event_loop(this) };
     }
 
     /// Spec: cp.zig `schedule` — `WorkPool.schedule(&this.task)`. Unlike most
@@ -560,18 +554,18 @@ impl ShellCpTask {
     /// immediately (success path defers the post to `cp_on_finish`).
     unsafe fn work_pool_callback(task: *mut crate::shell::interpreter::WorkPoolTask) {
         // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
-        // is embedded in `ShellCpTask` at `TASK_OFFSET`.
-        let this = unsafe {
-            task.cast::<u8>()
-                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET).cast::<ShellCpTask>()
-        };
-        // SAFETY: `this` is a live heap-allocated task; the worker thread
-        // has exclusive access until the bounce-back is posted.
-        if let Some(e) = unsafe { &mut *this }.run_from_thread_pool_impl() {
-            // SAFETY: still exclusive.
-            unsafe { (*this).err = Some(e) };
-            // SAFETY: same allocation handed to `schedule`.
-            unsafe { Self::enqueue_to_event_loop(this) };
+        // is embedded in `ShellCpTask` at `TASK_OFFSET`. `this` is a live
+        // heap-allocated task; the worker thread has exclusive access until
+        // the bounce-back is posted.
+        unsafe {
+            let this = task
+                .cast::<u8>()
+                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET)
+                .cast::<ShellCpTask>();
+            if let Some(e) = (*this).run_from_thread_pool_impl() {
+                (*this).err = Some(e);
+                Self::enqueue_to_event_loop(this);
+            }
         }
     }
 
@@ -768,12 +762,11 @@ impl ShellCpTask {
                 // PORT NOTE: reshaped for borrowck — read the raw `global`
                 // field instead of `vm.global()` so the `&mut VirtualMachine`
                 // passed below doesn't overlap a `&JSGlobalObject` borrow.
-                let global = unsafe { &*(*vm_ptr).global };
+                let (global, vm) = unsafe { (&*(*vm_ptr).global, &mut *vm_ptr) };
                 let _ = crate::node::fs::ShellAsyncCpTask::create_with_shell_task(
                     global,
                     args,
-                    // SAFETY: see above — `vm_ptr` is live for the call.
-                    unsafe { &mut *vm_ptr },
+                    vm,
                     std::ptr::from_mut::<ShellCpTask>(self),
                     false,
                 );

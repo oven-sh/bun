@@ -42,10 +42,12 @@ impl ShellAsyncSubprocessDone {
     /// `this` is the live `heap::alloc` payload enqueued by
     /// `ShellSubprocess::on_process_exit`.
     pub unsafe fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: caller contract.
-        let owned = unsafe { bun_core::heap::take(this) };
-        // SAFETY: `interp` outlives every spawned subprocess.
-        let interp = unsafe { &mut *owned.interp };
+        // SAFETY: caller contract; `interp` outlives every spawned subprocess.
+        let (owned, interp) = unsafe {
+            let owned = bun_core::heap::take(this);
+            let interp = &mut *owned.interp;
+            (owned, interp)
+        };
         crate::shell::states::cmd::Cmd::on_subprocess_done(interp, owned.cmd, owned.exit_code);
     }
 }
@@ -105,13 +107,11 @@ pub struct CondExprStatInner {
 
 impl ShellCondExprStatTask {
     pub fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
-        // SAFETY: live Box'd task.
-        let inner = unsafe { &mut (*this).task };
+        // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
+        let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::states::cond_expr::CondExpr::on_stat_task_done(
-            interp, inner.cond, &inner.stat, &inner.path,
+            interp, owned.task.cond, &owned.task.stat, &owned.task.path,
         );
-        // SAFETY: paired with `heap::alloc` at schedule time.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

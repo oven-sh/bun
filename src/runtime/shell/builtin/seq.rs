@@ -53,18 +53,14 @@ impl Seq {
         // Flag parsing — operates on raw argv pointers so we can stash
         // borrowed slices into separator/terminator.
         while idx < argc {
-            let arg_ptr = Builtin::of(interp, cmd).args_slice()[idx];
-            // SAFETY: argv entries are NUL-terminated.
-            let arg = unsafe { bun_core::ffi::cstr(arg_ptr) }.to_bytes();
+            let arg = Builtin::of(interp, cmd).arg_bytes(idx);
 
             if arg == b"-s" || arg == b"--separator" {
                 idx += 1;
                 if idx >= argc {
                     return Self::fail(interp, cmd, b"seq: option requires an argument -- s\n");
                 }
-                let next = Builtin::of(interp, cmd).args_slice()[idx];
-                // SAFETY: argv entries are NUL-terminated.
-                let bytes = unsafe { bun_core::ffi::cstr(next) }.to_bytes();
+                let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
                 Self::state_mut(interp, cmd).separator = bun_ptr::RawSlice::new(bytes);
                 idx += 1;
                 continue;
@@ -79,9 +75,7 @@ impl Seq {
                 if idx >= argc {
                     return Self::fail(interp, cmd, b"seq: option requires an argument -- t\n");
                 }
-                let next = Builtin::of(interp, cmd).args_slice()[idx];
-                // SAFETY: argv entries are NUL-terminated.
-                let bytes = unsafe { bun_core::ffi::cstr(next) }.to_bytes();
+                let bytes = Builtin::of(interp, cmd).arg_bytes(idx);
                 Self::state_mut(interp, cmd).terminator = bun_ptr::RawSlice::new(bytes);
                 idx += 1;
                 continue;
@@ -102,9 +96,7 @@ impl Seq {
         // Positional args.
         macro_rules! parse_num {
             ($i:expr) => {{
-                let p = Builtin::of(interp, cmd).args_slice()[$i];
-                // SAFETY: argv entries are NUL-terminated.
-                let s = unsafe { bun_core::ffi::cstr(p) }.to_bytes();
+                let s = Builtin::of(interp, cmd).arg_bytes($i);
                 match parse_f32(s) {
                     Some(n) if n.is_finite() => n,
                     _ => return Self::fail(interp, cmd, b"seq: invalid argument\n"),

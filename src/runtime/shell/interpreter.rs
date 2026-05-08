@@ -515,8 +515,7 @@ impl Interpreter {
         // NUL-terminate for `open()` and so `__cwd` matches Zig's `[:0]` shape
         // (downstream `cwd()` strips the trailing 0).
         pathbuf[cwd_len] = 0;
-        // SAFETY: getcwd wrote `cwd_len` bytes + we wrote the NUL at [cwd_len].
-        let cwd_z = unsafe { bun_core::ZStr::from_raw(pathbuf.as_ptr(), cwd_len) };
+        let cwd_z = bun_core::ZStr::from_buf(pathbuf.as_slice(), cwd_len);
 
         let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
             Ok(fd) => fd,
@@ -534,8 +533,7 @@ impl Interpreter {
             #[cfg(unix)]
             {
                 bun_sys::open(
-                    // SAFETY: static C string with NUL.
-                    unsafe { bun_core::ZStr::from_raw(b"/dev/null\0".as_ptr(), 9) },
+                    bun_core::ZStr::from_static(b"/dev/null\0"),
                     bun_sys::O::RDONLY,
                     0,
                 )
@@ -543,7 +541,7 @@ impl Interpreter {
             #[cfg(windows)]
             {
                 bun_sys::open(
-                    unsafe { bun_core::ZStr::from_raw(b"NUL\0".as_ptr(), 3) },
+                    bun_core::ZStr::from_static(b"NUL\0"),
                     bun_sys::O::RDONLY,
                     0,
                 )
@@ -1751,16 +1749,36 @@ impl ShellExecEnv {
     }
 
     pub fn buffered_stdout(&mut self) -> *mut Vec<u8> {
-        match &mut self._buffered_stdout {
-            Bufio::Owned(o) => std::ptr::from_mut(o),
-            Bufio::Borrowed(b) => *b,
-        }
+        std::ptr::from_mut(self.buffered_stdout_mut())
     }
 
     pub fn buffered_stderr(&mut self) -> *mut Vec<u8> {
+        std::ptr::from_mut(self.buffered_stderr_mut())
+    }
+
+    /// Mutably borrow the captured-stdout buffer (owned, or the parent env's
+    /// buffer for subshell/pipeline children — see `Bufio`).
+    ///
+    /// Returning `&mut Vec<u8>` (rather than the raw `*mut` of
+    /// [`buffered_stdout`]) is sound because `Bufio::Borrowed` always points
+    /// into a parent `ShellExecEnv` that strictly outlives this child env
+    /// (parents `deinit` after children) and the shell is single-threaded.
+    #[inline]
+    pub fn buffered_stdout_mut(&mut self) -> &mut Vec<u8> {
+        match &mut self._buffered_stdout {
+            Bufio::Owned(o) => o,
+            // SAFETY: see doc comment.
+            Bufio::Borrowed(b) => unsafe { &mut **b },
+        }
+    }
+
+    /// See [`buffered_stdout_mut`].
+    #[inline]
+    pub fn buffered_stderr_mut(&mut self) -> &mut Vec<u8> {
         match &mut self._buffered_stderr {
-            Bufio::Owned(o) => std::ptr::from_mut(o),
-            Bufio::Borrowed(b) => *b,
+            Bufio::Owned(o) => o,
+            // SAFETY: see `buffered_stdout_mut`.
+            Bufio::Borrowed(b) => unsafe { &mut **b },
         }
     }
 
@@ -1945,8 +1963,7 @@ impl ShellExecEnv {
             buf[n] = 0;
             n
         };
-        // SAFETY: we wrote `new_cwd_len` bytes + a NUL at `[new_cwd_len]`.
-        let new_cwd_z = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), new_cwd_len) };
+        let new_cwd_z = bun_core::ZStr::from_buf(buf.as_slice(), new_cwd_len);
 
         let new_cwd_fd = shell_openat(
             self.cwd_fd,
@@ -2139,8 +2156,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
     #[cfg(unix)]
     {
         bun_sys::open(
-            // SAFETY: static C string with NUL.
-            unsafe { bun_core::ZStr::from_raw(b"/dev/null\0".as_ptr(), 9) },
+            bun_core::ZStr::from_static(b"/dev/null\0"),
             bun_sys::O::RDWR,
             0,
         )
@@ -2150,7 +2166,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
         // Spec uses `sys_uv.open("nul", 0, 0)` — flags `0` is `O_RDONLY` in
         // libuv's encoding, but Windows NUL is bidirectional regardless.
         bun_sys::open(
-            unsafe { bun_core::ZStr::from_raw(b"nul\0".as_ptr(), 3) },
+            bun_core::ZStr::from_static(b"nul\0"),
             bun_sys::O::RDWR,
             0,
         )
@@ -2268,8 +2284,7 @@ fn shell_get_path<'a>(
         let end = source_root_len + to_tail.len();
         buf[source_root_len..end].copy_from_slice(to_tail);
         buf[end] = 0;
-        // SAFETY: wrote `end` bytes + NUL at `[end]`.
-        return Ok(unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), end) });
+        return Ok(bun_core::ZStr::from_buf(buf.as_slice(), end));
     }
     if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
         return Ok(to);
@@ -2402,6 +2417,22 @@ pub enum ParseError {
     IllegalOption(*const [u8]),
     Unsupported(*const [u8]),
     ShowUsage,
+}
+
+impl ParseError {
+    /// Borrow the option-name payload. The pointer borrows either a `'static`
+    /// literal (e.g. `b"-"`) or the owning `Builtin`'s argv storage
+    /// (NUL-terminated `Vec<u8>` in `Cmd::args`, live for the `Builtin`'s
+    /// lifetime — see [`Builtin::arg_bytes`](crate::shell::builtin::Builtin::arg_bytes)).
+    /// Builtins format the error before any argv mutation.
+    #[inline]
+    pub fn opt(&self) -> &[u8] {
+        match self {
+            // SAFETY: see doc comment.
+            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => unsafe { &**s },
+            ParseError::ShowUsage => b"",
+        }
+    }
 }
 
 /// Spec: interpreter.zig `ParseFlagResult`.
@@ -2575,48 +2606,56 @@ impl<P: OutputTaskVTable> OutputTask<P> {
         interp: &mut Interpreter,
         errbuf: Option<&[u8]>,
     ) -> Yield {
-        let me = unsafe { &mut *this };
-        log!(
-            "OutputTask(0x{:x}) start errbuf={:?}",
-            this as usize,
-            errbuf.map(|b| b.len())
-        );
-        me.state = OutputTaskState::WaitingWriteErr;
-        if let Some(err) = errbuf {
-            if let Some(y) = P::write_err(interp, me.parent, this, err) {
+        // SAFETY: caller contract — `this` is the live `heap::alloc`'d task.
+        // The `&mut *this` is short-lived per `P::*` callback (those re-enter
+        // via raw `this`, not via a reborrow of `me`).
+        unsafe {
+            let me = &mut *this;
+            log!(
+                "OutputTask(0x{:x}) start errbuf={:?}",
+                this as usize,
+                errbuf.map(|b| b.len())
+            );
+            me.state = OutputTaskState::WaitingWriteErr;
+            if let Some(err) = errbuf {
+                if let Some(y) = P::write_err(interp, me.parent, this, err) {
+                    return y;
+                }
+                return Self::next(this, interp);
+            }
+            me.state = OutputTaskState::WaitingWriteOut;
+            if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
                 return y;
             }
-            return unsafe { Self::next(this, interp) };
+            P::on_write_out(interp, me.parent);
+            me.state = OutputTaskState::Done;
+            Self::deinit(this, interp)
         }
-        me.state = OutputTaskState::WaitingWriteOut;
-        if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-            return y;
-        }
-        P::on_write_out(interp, me.parent);
-        me.state = OutputTaskState::Done;
-        unsafe { Self::deinit(this, interp) }
     }
 
     /// Spec: interpreter.zig `OutputTask.next`.
     pub unsafe fn next(this: *mut Self, interp: &mut Interpreter) -> Yield {
-        let me = unsafe { &mut *this };
-        match me.state {
-            OutputTaskState::WaitingWriteErr => {
-                P::on_write_err(interp, me.parent);
-                me.state = OutputTaskState::WaitingWriteOut;
-                if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-                    return y;
+        // SAFETY: caller contract — see `start`.
+        unsafe {
+            let me = &mut *this;
+            match me.state {
+                OutputTaskState::WaitingWriteErr => {
+                    P::on_write_err(interp, me.parent);
+                    me.state = OutputTaskState::WaitingWriteOut;
+                    if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
+                        return y;
+                    }
+                    P::on_write_out(interp, me.parent);
+                    me.state = OutputTaskState::Done;
+                    Self::deinit(this, interp)
                 }
-                P::on_write_out(interp, me.parent);
-                me.state = OutputTaskState::Done;
-                unsafe { Self::deinit(this, interp) }
+                OutputTaskState::WaitingWriteOut => {
+                    P::on_write_out(interp, me.parent);
+                    me.state = OutputTaskState::Done;
+                    Self::deinit(this, interp)
+                }
+                OutputTaskState::Done => panic!("Invalid state"),
             }
-            OutputTaskState::WaitingWriteOut => {
-                P::on_write_out(interp, me.parent);
-                me.state = OutputTaskState::Done;
-                unsafe { Self::deinit(this, interp) }
-            }
-            OutputTaskState::Done => panic!("Invalid state"),
         }
     }
 
@@ -2634,11 +2673,12 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 
     /// Spec: interpreter.zig `OutputTask.deinit` — fires `on_done` then frees.
     unsafe fn deinit(this: *mut Self, interp: &mut Interpreter) -> Yield {
-        debug_assert!(unsafe { (*this).state } == OutputTaskState::Done);
-        log!("OutputTask(0x{:x}) deinit", this as usize);
-        let parent = unsafe { (*this).parent };
         // SAFETY: `this` was heap-allocated in `new`; reclaim and drop.
-        drop(unsafe { bun_core::heap::take(this) });
+        let me = unsafe { bun_core::heap::take(this) };
+        debug_assert!(me.state == OutputTaskState::Done);
+        log!("OutputTask(0x{:x}) deinit", this as usize);
+        let parent = me.parent;
+        drop(me);
         P::on_done(interp, parent)
     }
 }
@@ -2756,15 +2796,14 @@ impl ShellTask {
         use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        let this = unsafe { ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>() };
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
         // main thread may already be touching `*this`, so no live `&mut`
-        // into it may span that call.
-        // SAFETY: `this` is live and exclusively owned by this thread until
-        // the enqueue below.
-        let event_loop = unsafe { (*this).event_loop };
-        let task_ptr = unsafe {
-            match &mut (*this).concurrent_task {
+        // into it may span that call. `this` is live and exclusively owned by
+        // this thread until the enqueue below.
+        let (event_loop, task_ptr) = unsafe {
+            let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
+            let event_loop = (*this).event_loop;
+            let task_ptr = match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Zig: `concurrent_task.js.from(ctx, .manual_deinit)` —
                     // tag resolved via `C: Taskable`.
@@ -2778,7 +2817,8 @@ impl ShellTask {
                         mini: at.from(this, shell_task_run_from_main_thread_mini::<C>),
                     }
                 }
-            }
+            };
+            (event_loop, task_ptr)
         };
         event_loop.enqueue_task_concurrent(task_ptr);
     }
@@ -2812,11 +2852,13 @@ impl ShellTask {
 /// intrusive `*WorkPoolTask`, run the user body, then post back to main.
 unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which is
-    // embedded in `C` at `TASK_OFFSET` (Zig: two `container_of` hops).
-    let ctx = unsafe { task.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>() };
-    C::run_from_thread_pool(ctx);
-    // SAFETY: `ctx` is still the live heap allocation handed to `schedule`.
-    unsafe { ShellTask::on_finish::<C>(ctx) };
+    // embedded in `C` at `TASK_OFFSET` (Zig: two `container_of` hops). `ctx`
+    // remains the live heap allocation handed to `schedule`.
+    unsafe {
+        let ctx = task.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>();
+        C::run_from_thread_pool(ctx);
+        ShellTask::on_finish::<C>(ctx);
+    }
 }
 
 /// Spec: interpreter.zig `InnerShellTask.runFromMainThreadMini` — mini-loop
@@ -2824,8 +2866,7 @@ unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
 fn shell_task_run_from_main_thread_mini<C: ShellTaskCtx>(this: *mut ShellTask, _: *mut ()) {
     // SAFETY: `this` is the `ShellTask` embedded in a live `C` at `TASK_OFFSET`;
     // mini-loop dispatch runs on the main thread.
-    let ctx = unsafe { this.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>() };
-    unsafe { ShellTask::run_from_main_thread::<C>(ctx) };
+    unsafe { ShellTask::run_from_main_thread::<C>(this.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>()) };
 }
 
 #[cold]
@@ -2926,24 +2967,21 @@ pub fn create_shell_interpreter(
     }
 
     let interpreter = bun_core::heap::into_raw(interpreter);
-    // SAFETY: `interpreter` is a fresh heap allocation.
-    unsafe {
+    // SAFETY: `interpreter` is a fresh heap allocation; the C++ wrapper takes
+    // ownership of the raw pointer and `interpreter` outlives this call.
+    // Single-threaded.
+    let js_value = unsafe {
         (*interpreter).flags.set_quiet(quiet);
         (*interpreter).global_this = std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut();
         (*interpreter).estimated_size_for_gc = (*interpreter).compute_estimated_size_for_gc();
-    }
-
-    // SAFETY: C++ wrapper takes ownership; `interpreter` outlives this call.
-    let js_value = unsafe {
-        Bun__createShellInterpreter(global, interpreter, parsed_shell_script_js, resolve, reject)
-    };
-    // SAFETY: same allocation, single thread.
-    unsafe {
+        let js_value =
+            Bun__createShellInterpreter(global, interpreter, parsed_shell_script_js, resolve, reject);
         (*interpreter).this_jsvalue = js_value;
         (*interpreter)
             .keep_alive
             .ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr()));
-    }
+        js_value
+    };
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }

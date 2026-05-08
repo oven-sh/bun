@@ -210,13 +210,7 @@ impl Cat {
                     *reader = None;
                 }
 
-                let arg_ptr = Builtin::of(interp, cmd).args_slice()[args_start + idx];
-                // SAFETY: argv entries are NUL-terminated and outlive this call.
-                let arg = unsafe { bun_core::ffi::cstr(arg_ptr) }.to_bytes();
-                // SAFETY: `arg_ptr` points at a NUL-terminated buffer; `arg`
-                // excludes the trailing NUL so `from_raw(ptr, len)` is sound.
-                let path =
-                    unsafe { bun_core::ZStr::from_raw(arg.as_ptr(), arg.len()) };
+                let path = Builtin::of(interp, cmd).arg_zstr(args_start + idx);
 
                 if let CatState::ExecFilepathArgs { idx: i, .. } =
                     &mut Self::state_mut(interp, cmd).state

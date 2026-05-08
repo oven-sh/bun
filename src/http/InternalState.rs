@@ -140,8 +140,7 @@ impl<'a> InternalState<'a> {
 
         let body_msg = self.body_out_str;
         if let Some(body) = body_msg {
-            // SAFETY: body_out_str is a live user-owned buffer for the lifetime of this state
-            unsafe { (*body.as_ptr()).reset() };
+            crate::body_out::as_mut(body).reset();
         }
         // Decompressor::deinit → handled by Drop on assignment below
         // TODO(port): Decompressor may need explicit deinit if it holds FFI handles not freed by Drop
@@ -168,13 +167,42 @@ impl<'a> InternalState<'a> {
         };
     }
 
+    /// The caller-owned response body buffer (set in [`Self::init`]).
+    ///
+    /// INVARIANT: `body_out_str` points at a `MutableString` owned by the
+    /// `AsyncHTTP`/`FetchTasklet` that initiated this request and outlives
+    /// this `InternalState`; it is a separate heap allocation, never aliasing
+    /// any field of `self`.
+    #[inline]
+    fn body_out_mut(&mut self) -> &mut MutableString {
+        crate::body_out::as_mut(self.body_out_str.unwrap())
+    }
+
     pub fn get_body_buffer(&mut self) -> &mut MutableString {
         if self.encoding.is_compressed() {
             return &mut self.compressed_body;
         }
+        self.body_out_mut()
+    }
 
-        // SAFETY: body_out_str is a live user-owned buffer for the lifetime of this state
-        unsafe { self.body_out_str.unwrap().as_mut() }
+    /// Split-borrow `chunked_decoder` and the body buffer (which is either
+    /// `compressed_body` or the caller-owned `body_out_str`). Both targets are
+    /// disjoint from each other and from every other field touched by
+    /// `phr_decode_chunked` callers, so this lets the chunked-decode hot path
+    /// in `lib.rs` operate on safe references instead of repeated raw-ptr
+    /// place expressions.
+    #[inline]
+    pub fn chunked_decoder_and_body_buffer(
+        &mut self,
+    ) -> (&mut bun_picohttp::phr_chunked_decoder, &mut MutableString) {
+        if self.encoding.is_compressed() {
+            (&mut self.chunked_decoder, &mut self.compressed_body)
+        } else {
+            // body_out_str is a separate heap allocation, never aliasing
+            // `chunked_decoder` (a value field of `self`).
+            let body = crate::body_out::as_mut(self.body_out_str.unwrap());
+            (&mut self.chunked_decoder, body)
+        }
     }
 
     pub fn is_done(&self) -> bool {
@@ -381,8 +409,11 @@ impl<'a> InternalState<'a> {
             return Ok(false);
         }
 
-        // SAFETY: body_out_str is a live user-owned buffer for the lifetime of this state
-        let body_out_str = unsafe { self.body_out_str.unwrap().as_mut() };
+        // PORT NOTE: not `self.body_out_mut()` — `decompress_bytes` below takes
+        // `&mut self` alongside `body_out_str`; the accessor would tie the
+        // borrow to `self`. The free `body_out::as_mut` yields an unbounded
+        // `&mut` to the disjoint caller-owned allocation.
+        let body_out_str = crate::body_out::as_mut(self.body_out_str.unwrap());
 
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
@@ -413,8 +444,7 @@ impl<'a> InternalState<'a> {
             }
         }
 
-        // SAFETY: same invariant as above
-        Ok(unsafe { (*self.body_out_str.unwrap().as_ptr()).list.len() } > 0)
+        Ok(!self.body_out_mut().list.is_empty())
     }
 }
 

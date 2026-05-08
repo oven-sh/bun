@@ -12,6 +12,19 @@ use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
 
+/// Upgrade a `*mut Stream` from `session.streams` to `&mut Stream`.
+///
+/// INVARIANT: stream pointers in the session map are `heap::alloc`-boxed
+/// allocations valid for the session's lifetime (freed only via
+/// `ClientSession::drop_stream`/`on_close`, never while a frame for that id is
+/// being dispatched). They are independent heap allocations, so `&mut Stream`
+/// is disjoint from any `&mut ClientSession` borrow. HTTP-thread-only.
+#[inline(always)]
+fn stream_mut<'a>(ptr: *mut Stream) -> &'a mut Stream {
+    // SAFETY: see INVARIANT above.
+    unsafe { &mut *ptr }
+}
+
 /// Dispatch every complete frame in `buf` and return the number of bytes
 /// consumed. The caller spills the unconsumed tail (a partial frame) into
 /// `read_buffer`. Operating on a borrowed slice lets `onData` parse
@@ -26,11 +39,10 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
         }
         let mut header = wire::FrameHeader::default();
         wire::FrameHeader::from::<true>(&mut header, &remaining[0..wire::FrameHeader::BYTE_SIZE], 0);
-        // SAFETY: stream_identifier was just byte-swapped from the wire; mask top bit.
-        let sid = unsafe { core::ptr::addr_of!(header.stream_identifier).read_unaligned() };
-        let sid = wire::UInt31WithReserved::from(sid).uint31();
-        // SAFETY: write back masked value (packed field).
-        unsafe { core::ptr::addr_of_mut!(header.stream_identifier).write_unaligned(sid) };
+        // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy;
+        // assignment to a packed field is an unaligned store. No `unsafe`.
+        let sid = wire::UInt31WithReserved::from({ header.stream_identifier }).uint31();
+        header.stream_identifier = sid;
         let length = header.length();
         // RFC 9113 §4.2: a frame larger than the local SETTINGS_MAX_FRAME_SIZE
         // (we never advertise above the 16384 default) is a connection
@@ -135,9 +147,9 @@ pub fn dispatch_frame(
                     &payload[i..i + wire::SettingsPayloadUnit::BYTE_SIZE],
                     0,
                 );
-                // SAFETY: packed-struct fields — read unaligned.
-                let utype = unsafe { core::ptr::addr_of!(unit.r#type).read_unaligned() };
-                let uvalue = unsafe { core::ptr::addr_of!(unit.value).read_unaligned() };
+                // PORT NOTE: brace-expr copies of packed fields (unaligned-safe).
+                let utype = { unit.r#type };
+                let uvalue = { unit.value };
                 match utype {
                     ST_MAX_FRAME_SIZE => {
                         // RFC 9113 §6.5.2: values outside [16384, 2^24-1]
@@ -179,9 +191,7 @@ pub fn dispatch_frame(
                             i64::from(uvalue) - i64::from(session.remote_initial_window_size);
                         session.remote_initial_window_size = uvalue;
                         for &s_ptr in session.streams.values() {
-                            // SAFETY: stream pointers in the map are valid for the
-                            // session's lifetime; no aliasing within this loop.
-                            let s = unsafe { &mut *s_ptr };
+                            let s = stream_mut(s_ptr);
                             let next = i64::from(s.send_window) + delta;
                             if next > i64::from(wire::MAX_WINDOW_SIZE) {
                                 session.fatal_error = Some(err!(HTTP2FlowControlError));
@@ -229,9 +239,7 @@ pub fn dispatch_frame(
                 session.conn_send_window = i32::try_from(next).expect("int cast");
                 session.stream_progressed = true;
             } else if let Some(&stream_ptr) = session.streams.get(&(stream_id & 0x7fff_ffff)) {
-                // SAFETY: stream pointer valid for session lifetime; aliases neither
-                // session.streams (read done) nor session fields touched below.
-                let stream = unsafe { &mut *stream_ptr };
+                let stream = stream_mut(stream_ptr);
                 // §6.9/§6.9.1: zero increment / overflow on a stream are
                 // stream-level errors; RST_STREAM and fail just that one.
                 if inc == 0 {
@@ -341,7 +349,7 @@ pub fn dispatch_frame(
                 return;
             }
             // SAFETY: stream pointer from map is valid for session lifetime.
-            let stream = unsafe { &mut *maybe_stream.unwrap() };
+            let stream = stream_mut(maybe_stream.unwrap());
             session.stream_progressed = true;
             if flags & wire::HeadersFrameFlags::PADDED as u8 != 0 {
                 fragment = match strip_padding(fragment) {
@@ -384,7 +392,7 @@ pub fn dispatch_frame(
             }
             if let Some(&stream_ptr) = session.streams.get(&session.expecting_continuation) {
                 // SAFETY: stream pointer valid for session lifetime.
-                let stream = unsafe { &mut *stream_ptr };
+                let stream = stream_mut(stream_ptr);
                 if stream.header_block.len() + payload.len() > LOCAL_MAX_HEADER_LIST_SIZE as usize {
                     session.fatal_error = Some(err!(HTTP2HeaderListTooLarge));
                     return;
@@ -426,7 +434,7 @@ pub fn dispatch_frame(
                 }
             };
             // SAFETY: stream pointer valid for session lifetime.
-            let stream = unsafe { &mut *stream_ptr };
+            let stream = stream_mut(stream_ptr);
             session.stream_progressed = true;
             // §8.1.1: DATA before the *final* response HEADERS is malformed —
             // a 1xx alone (status_code still 0) doesn't satisfy this.
@@ -479,7 +487,7 @@ pub fn dispatch_frame(
                 None => return,
             };
             // SAFETY: stream pointer valid for session lifetime.
-            let stream = unsafe { &mut *stream_ptr };
+            let stream = stream_mut(stream_ptr);
             let had_response = stream.remote_closed();
             stream.rst_done = true;
             stream.state = StreamState::Closed;
@@ -519,7 +527,7 @@ pub fn dispatch_frame(
             let last_id = session.goaway_last_stream_id;
             for &s_ptr in session.streams.values() {
                 // SAFETY: stream pointer valid for session lifetime.
-                let s = unsafe { &mut *s_ptr };
+                let s = stream_mut(s_ptr);
                 if s.id > last_id {
                     s.fatal_error = Some(if graceful {
                         err!(HTTP2RefusedStream)

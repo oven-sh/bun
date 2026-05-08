@@ -12,6 +12,7 @@ use bun_uws as uws;
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
+use crate::http_context::ActiveSocketExt;
 use crate::{h2, h3, AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext};
 
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
@@ -446,8 +447,7 @@ impl HttpThread {
                 }
 
                 let now = self.timer_read();
-                // SAFETY: custom_context is a live Box::leak'd allocation.
-                let ctx_nn = unsafe { NonNull::new_unchecked(std::ptr::from_mut(custom_context)) };
+                let ctx_nn = NonNull::from(&mut *custom_context);
                 let _ = custom_ssl_context_map().put(
                     requested_config,
                     SslContextCacheEntry {
@@ -548,32 +548,27 @@ impl HttpThread {
                     match socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.get::<HttpClient>() {
+                            if let Some(client) = tagged.client_mut() {
                                 // If we only call socket.close(), then it won't
                                 // call `onClose` if this happens before `onOpen` is
                                 // called.
-                                //
-                                // SAFETY: tagged-pointer recovered from socket ext.
-                                unsafe { (*client).close_and_abort::<true>(socket) };
+                                client.close_and_abort::<true>(socket);
                                 continue;
                             }
-                            if let Some(session) = tagged.get::<h2::ClientSession>() {
-                                // SAFETY: session alive while tagged on a socket.
-                                unsafe { (*session).abort_by_http_id(http.async_http_id) };
+                            if let Some(session) = tagged.session_mut() {
+                                session.abort_by_http_id(http.async_http_id);
                                 continue;
                             }
                             socket.close(uws::CloseKind::Failure);
                         }
                         uws::AnySocket::SocketTcp(socket) => {
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.get::<HttpClient>() {
-                                // SAFETY: tagged-pointer recovered from socket ext.
-                                unsafe { (*client).close_and_abort::<false>(socket) };
+                            if let Some(client) = tagged.client_mut() {
+                                client.close_and_abort::<false>(socket);
                                 continue;
                             }
-                            if let Some(session) = tagged.get::<h2::ClientSession>() {
-                                // SAFETY: session alive while tagged on a socket.
-                                unsafe { (*session).abort_by_http_id(http.async_http_id) };
+                            if let Some(session) = tagged.session_mut() {
+                                session.abort_by_http_id(http.async_http_id);
                                 continue;
                             }
                             socket.close(uws::CloseKind::Failure);
@@ -626,9 +621,7 @@ impl HttpThread {
                                 continue;
                             }
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.get::<HttpClient>() {
-                                // SAFETY: tagged-pointer recovered from socket ext.
-                                let client = unsafe { &mut *client };
+                            if let Some(client) = tagged.client_mut() {
                                 if let crate::HTTPRequestBody::Stream(stream) =
                                     &mut client.state.original_request_body
                                 {
@@ -636,11 +629,8 @@ impl HttpThread {
                                     client.flush_stream::<true>(socket);
                                 }
                             }
-                            if let Some(session) = tagged.get::<h2::ClientSession>() {
-                                // SAFETY: session alive while tagged on a socket.
-                                unsafe {
-                                    (*session).stream_body_by_http_id(write.async_http_id, ended)
-                                };
+                            if let Some(session) = tagged.session_mut() {
+                                session.stream_body_by_http_id(write.async_http_id, ended);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -648,9 +638,7 @@ impl HttpThread {
                                 continue;
                             }
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.get::<HttpClient>() {
-                                // SAFETY: tagged-pointer recovered from socket ext.
-                                let client = unsafe { &mut *client };
+                            if let Some(client) = tagged.client_mut() {
                                 if let crate::HTTPRequestBody::Stream(stream) =
                                     &mut client.state.original_request_body
                                 {
@@ -658,11 +646,8 @@ impl HttpThread {
                                     client.flush_stream::<false>(socket);
                                 }
                             }
-                            if let Some(session) = tagged.get::<h2::ClientSession>() {
-                                // SAFETY: session alive while tagged on a socket.
-                                unsafe {
-                                    (*session).stream_body_by_http_id(write.async_http_id, ended)
-                                };
+                            if let Some(session) = tagged.session_mut() {
+                                session.stream_body_by_http_id(write.async_http_id, ended);
                             }
                         }
                     }
@@ -693,28 +678,20 @@ impl HttpThread {
                     match *socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.get::<HttpClient>() {
-                                // SAFETY: tagged-pointer recovered from socket ext.
-                                unsafe { (*client).drain_response_body::<true>(socket) };
+                            if let Some(client) = tagged.client_mut() {
+                                client.drain_response_body::<true>(socket);
                             }
-                            if let Some(session) = tagged.get::<h2::ClientSession>() {
-                                // SAFETY: session alive while tagged on a socket.
-                                unsafe {
-                                    (*session).drain_response_body_by_http_id(drain.async_http_id)
-                                };
+                            if let Some(session) = tagged.session_mut() {
+                                session.drain_response_body_by_http_id(drain.async_http_id);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
-                            if let Some(client) = tagged.get::<HttpClient>() {
-                                // SAFETY: tagged-pointer recovered from socket ext.
-                                unsafe { (*client).drain_response_body::<false>(socket) };
+                            if let Some(client) = tagged.client_mut() {
+                                client.drain_response_body::<false>(socket);
                             }
-                            if let Some(session) = tagged.get::<h2::ClientSession>() {
-                                // SAFETY: session alive while tagged on a socket.
-                                unsafe {
-                                    (*session).drain_response_body_by_http_id(drain.async_http_id)
-                                };
+                            if let Some(session) = tagged.session_mut() {
+                                session.drain_response_body_by_http_id(drain.async_http_id);
                             }
                         }
                     }

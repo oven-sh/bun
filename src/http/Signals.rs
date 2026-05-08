@@ -36,6 +36,22 @@ impl Signals {
         // the caller guarantees the Store outlives this Signals.
         unsafe { ptr.as_ref() }.load(Ordering::Relaxed) // Zig .monotonic == LLVM monotonic == Rust Relaxed
     }
+
+    /// Store `value` into the named signal slot if present. No-op when the
+    /// slot is `None` (matches Zig `if (this.signals.<field>) |p| p.store(..)`).
+    pub fn store(self, field: Field, value: bool, ordering: Ordering) {
+        let ptr: Option<NonNull<AtomicBool>> = match field {
+            Field::HeaderProgress => self.header_progress,
+            Field::ResponseBodyStreaming => self.response_body_streaming,
+            Field::Aborted => self.aborted,
+            Field::CertErrors => self.cert_errors,
+            Field::Upgraded => self.upgraded,
+        };
+        if let Some(ptr) = ptr {
+            // SAFETY: see [`Signals::get`].
+            unsafe { ptr.as_ref() }.store(value, ordering);
+        }
+    }
 }
 
 pub struct Store {

@@ -68,6 +68,29 @@ pub struct Stream {
     pub pending_body: bun_ptr::RawSlice<u8>,
 }
 
+impl Stream {
+    /// Mutable access to the owning `HTTPClient` while `client` is `Some`.
+    ///
+    /// INVARIANT: `client` is a weak back-pointer set in `attach` and cleared
+    /// (via `take()`) before any terminal callback that could free the
+    /// `AsyncHTTP` embedding it; while `Some`, the client is alive and is a
+    /// disjoint allocation from both this `Stream` and the `ClientSession`.
+    /// HTTP-thread-only.
+    #[inline]
+    pub fn client_mut(&mut self) -> Option<&mut HTTPClient<'static>> {
+        // SAFETY: see INVARIANT above.
+        self.client.map(|mut c| unsafe { c.as_mut() })
+    }
+
+    /// Shared access to the owning `HTTPClient` while `client` is `Some`.
+    /// See [`Self::client_mut`] for the lifetime invariant.
+    #[inline]
+    pub fn client_ref(&self) -> Option<&HTTPClient<'static>> {
+        // SAFETY: see [`Self::client_mut`] INVARIANT.
+        self.client.map(|c| unsafe { c.as_ref() })
+    }
+}
+
 /// RFC 9113 §5.1. A `Stream` is created by sending HEADERS, so it starts
 /// `.open`; `idle`/`reserved` are never represented as objects. END_STREAM
 /// half-closes one side; both, or any RST_STREAM, transitions to `.closed`.

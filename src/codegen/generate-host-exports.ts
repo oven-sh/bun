@@ -347,10 +347,18 @@ const externTotal = Object.values(externBlocks).reduce((a, b) => a + b, 0);
 /// elsewhere) — same expansion as `#[bun_jsc::host_call]` /
 /// `bun_jsc::jsc_host_abi!`. Rust forbids macros in ABI position, so we emit
 /// both arms verbatim; the inactive one is compiled out.
-function emitNoMangle(abi: Export["abi"], symbol: string, sig: string, ret: string, body: string): string {
+function emitNoMangle(
+  abi: Export["abi"],
+  symbol: string,
+  sig: string,
+  ret: string,
+  body: string,
+  unsafeFn = false,
+): string {
+  const qual = unsafeFn ? "unsafe " : "";
   const item = (abiStr: string, cfg: string) =>
     `${cfg}#[unsafe(no_mangle)]
-pub extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
+pub ${qual}extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
 ${body}
 }`;
   if (abi === "jsc") {
@@ -380,24 +388,29 @@ function emitThunk(e: Export): string {
       // JSC host fn: `(g, cf) -> JSValue`. Always JSC ABI — these are
       // dispatched through `JSC::JSFunction` (`BUN_DECLARE_HOST_FUNCTION`).
       // Keep raw `*mut` params so the symbol coerces to `host_fn::JSHostFn`
-      // when Rust code passes it as a callback (e.g. `JSValue::then2`).
+      // when Rust code passes it as a callback (e.g. `JSValue::then2`). The
+      // thunk is `pub unsafe extern fn` (matches `JSHostFn`'s `unsafe`
+      // qualifier) and routes through the `_raw` helper that derefs under a
+      // documented safety contract — so no safe `pub fn` derefs a raw ptr.
       const body = retIsJsResult
-        ? `    host_fn::host_fn_static(g, cf, ${impl})`
-        : `    host_fn::host_fn_static_passthrough(g, cf, ${impl})`;
+        ? `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid.\n    unsafe { host_fn::host_fn_static_raw(g, cf, ${impl}) }`
+        : `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid.\n    unsafe { host_fn::host_fn_static_passthrough_raw(g, cf, ${impl}) }`;
       return `
 // ${loc}
-${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body)}`;
+${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body, /*unsafeFn*/ true)}`;
     }
     case "lazy": {
       // Lazy property creator: `(g) -> JSValue`. ABI is whatever the C++ decl
       // uses — `e.abi` (default `c` for direct `extern "C"` calls; `jsc` for
-      // `SYSV_ABI` lazyPropCb-style getters).
+      // `SYSV_ABI` lazyPropCb-style getters). `&JSGlobalObject` is
+      // ABI-identical to non-null `*const JSGlobalObject`; C++ never passes
+      // null here.
       const body = retIsJsResult
         ? `    host_fn::host_fn_lazy(g, ${impl})`
         : `    host_fn::host_fn_lazy_passthrough(g, ${impl})`;
       return `
 // ${loc}
-${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject", "JSValue", body)}`;
+${emitNoMangle(e.abi, e.symbol, "g: &JSGlobalObject", "JSValue", body)}`;
     }
     case "rust": {
       // `extern "Rust"` link-time hook: forward the safe signature verbatim

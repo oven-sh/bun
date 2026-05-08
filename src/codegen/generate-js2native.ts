@@ -314,7 +314,7 @@ export function getJS2NativeRust() {
     thunks.push(
       `// $zig(${path.basename(call.filename)}, ${call.symbol})`,
       `#[unsafe(no_mangle)]`,
-      `pub extern "C" fn ${sym}(global: *mut JSGlobalObject) -> JSValue {`,
+      `pub extern "C" fn ${sym}(global: &JSGlobalObject) -> JSValue {`,
       `    host_fn::host_fn_lazy(global, |g| ${target}(g))`,
       `}`,
       ``,
@@ -333,7 +333,7 @@ export function getJS2NativeRust() {
     thunks.push(
       `// $zig(${path.basename(x.filename)}, ${x.symbol_target})`,
       `#[unsafe(no_mangle)]`,
-      `pub extern "C" fn ${sym}(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {`,
+      `pub extern "C" fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {`,
       `    host_fn::host_fn_static(global, callframe, |g, cf| ${target}(g, cf))`,
       `}`,
       ``,

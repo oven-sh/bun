@@ -894,8 +894,10 @@ fn attempt_security_scan_with_retry(
         code = new_code;
     }
 
+    let event_loop_handle = EventLoopHandle::from_any(&mut manager.event_loop);
     let mut scanner = Box::new(SecurityScanSubprocess {
         manager,
+        event_loop_handle,
         code: Box::<[u8]>::from(code.as_slice()),
         json_data: Box::<[u8]>::from(&*json_data),
         process: None,
@@ -938,6 +940,11 @@ fn attempt_security_scan_with_retry(
 
 pub struct SecurityScanSubprocess<'a> {
     manager: &'a mut PackageManager,
+    /// Stable storage for the io-layer opaque `bun_io::EventLoopHandle`
+    /// (which carries `*const EventLoopHandle`). `manager.event_loop` is an
+    /// `AnyEventLoop` — different layout — so its address is NOT a valid
+    /// substitute. Mirrors the pattern in `StaticPipeWriter::io_evtloop`.
+    event_loop_handle: EventLoopHandle,
     code: Box<[u8]>,
     json_data: Box<[u8]>,
     /// Intrusive `*mut Process` (Zig `?*Process`). `Process` is
@@ -1039,14 +1046,13 @@ impl<'a> BufferedReaderParent for SecurityScanSubprocess<'a> {
         unsafe { (*this).loop_() }
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        // CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void`; pass
-        // the address of the manager's `AnyEventLoop` and let the registered
-        // FilePoll vtable downcast it (see `bun_io::EventLoopHandle` note).
-        unsafe {
-            bun_io::EventLoopHandle(
-                (&raw const (*this).manager.event_loop).cast_mut().cast::<core::ffi::c_void>(),
-            )
-        }
+        // CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that
+        // `io_ev` reads back as `*const bun_event_loop::EventLoopHandle`. Pass
+        // the address of the stored handle (NOT `manager.event_loop`, which is
+        // an `AnyEventLoop` with a different layout).
+        bun_io::EventLoopHandle(
+            unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
+        )
     }
 }
 

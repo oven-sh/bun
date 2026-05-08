@@ -410,10 +410,14 @@ impl<'a> PackageInstaller<'a> {
     // overlaps `*self`. The `_mut` accessors take `&self` (not `&mut self`)
     // so call sites retain field-disjoint borrow semantics — e.g.
     // `self.manager_mut().spawn(self.command_ctx, ...)` — exactly as the
-    // original `&'a mut PackageManager` field allowed. The single-threaded
-    // install pass guarantees no two `&mut PackageManager` are live at once;
-    // callers must not hold the result across a call that re-derives one
-    // through another path.
+    // original `&'a mut PackageManager` field allowed. The *return* lifetime
+    // is `'a` (not elided to the `&self` borrow) for the same reason: e.g.
+    // `link_tree_bins` does `let m = self.manager_mut(); let t = &mut
+    // self.trees[i];` — an elided return would keep `self` borrowed shared
+    // while `m` is live and reject the later `&mut self.trees` projection.
+    // The single-threaded install pass guarantees no two `&mut
+    // PackageManager` are live at once; callers must not hold the result
+    // across a call that re-derives one through another path.
     // ──────────────────────────────────────────────────────────────────────
 
     #[inline]

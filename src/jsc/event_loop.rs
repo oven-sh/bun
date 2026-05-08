@@ -305,7 +305,7 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue {
+        if count == 1 && !self.vm_ref().is_inside_deferred_task_queue.get() {
             let _ = self.drain_microtasks();
         }
 
@@ -331,7 +331,7 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        let inside_deferred = self.vm_ref().is_inside_deferred_task_queue;
+        let inside_deferred = self.vm_ref().is_inside_deferred_task_queue.get();
         let result = if allow_drain_microtask && count == 1 && !inside_deferred {
             self.drain_microtasks()
         } else {
@@ -366,11 +366,9 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         jsc_vm: *mut jsc::VM,
     ) -> Result<(), JsTerminated> {
-        let vm = self.vm();
         // During spawnSync, the isolated event loop shares the same VM/GlobalObject.
         // Draining microtasks would execute user JavaScript, which must not happen.
-        // SAFETY: `vm` is the live owning VM; field reads/writes only.
-        if unsafe { (*vm).suppress_microtask_drain } {
+        if self.vm_ref().suppress_microtask_drain.get() {
             return Ok(());
         }
 
@@ -383,20 +381,18 @@ impl EventLoop {
             DrainMicrotasksResult::JsTerminated => return Err(JsTerminated::JSTerminated),
         }
 
-        // SAFETY: `vm` is the live owning VM.
-        unsafe { (*vm).is_inside_deferred_task_queue = true };
+        // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
+        // overlap `&mut self: EventLoop`, which is a value field of the VM).
+        self.vm_ref().is_inside_deferred_task_queue.set(true);
         self.deferred_tasks.run();
-        // SAFETY: `vm` is the live owning VM.
-        unsafe { (*vm).is_inside_deferred_task_queue = false };
+        self.vm_ref().is_inside_deferred_task_queue.set(false);
 
         // PORT NOTE: spec event_loop.zig:144-146 guards on `event_loop_handle != null`
         // but then calls `this.virtual_machine.uwsLoop().drainQuicIfNecessary()`.
         // On Windows `uwsLoop()` returns `uws.Loop.get()` (NOT `event_loop_handle`,
         // which is the libuv loop). Mirror that here.
-        // SAFETY: `vm` is the live owning VM; field read only.
-        if unsafe { (*vm).event_loop_handle.is_some() } {
-            // SAFETY: `uws_loop()` returns a live uws loop for the VM lifetime.
-            unsafe { (*(*vm).uws_loop()).drain_quic_if_necessary() };
+        if self.vm_ref().event_loop_handle.is_some() {
+            self.vm_ref().uws_loop_mut().drain_quic_if_necessary();
         }
 
         #[cfg(debug_assertions)]
@@ -409,16 +405,16 @@ impl EventLoop {
     }
 
     pub fn drain_microtasks(&mut self) -> Result<(), JsTerminated> {
-        // PORT NOTE: reshaped for borrowck — capture raw ptrs before &mut self call.
-        let global = self.global.unwrap().as_ptr();
+        // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
+        // global borrow detaches from `&self` and survives the `&mut self` call.
+        let global = self.vm_ref().global();
         let jsc_vm = self.vm_ref().jsc_vm;
-        // SAFETY: `global` is set during VM init and outlives EventLoop.
-        self.drain_microtasks_with_global(unsafe { &*global }, jsc_vm)
+        self.drain_microtasks_with_global(global, jsc_vm)
     }
 
     // should be called after exit()
     pub fn maybe_drain_microtasks(&mut self) {
-        if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue {
+        if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get() {
             let _ = self.drain_microtasks();
         }
     }
@@ -619,10 +615,10 @@ impl EventLoop {
         self.tick_concurrent();
         self.process_gc_timer();
 
-        // PORT NOTE: reshaped for borrowck — capture raw ptr; deref per use.
-        let global = self.global.unwrap().as_ptr();
-        // SAFETY: `ctx` is the VM that owns `self`; field read only.
-        let global_vm = unsafe { (*ctx).jsc_vm };
+        // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
+        // global borrow detaches from `&self` and survives the `&mut self` call.
+        let global = self.vm_ref().global();
+        let global_vm = self.vm_ref().jsc_vm;
 
         loop {
             // Zig: while (tickWithCount > 0) : (handleRejectedPromises) { tickConcurrent } else { ... }
@@ -631,8 +627,7 @@ impl EventLoop {
                 self.global_ref().handle_rejected_promises();
             }
             // Zig while-else: else branch runs whenever the condition becomes false.
-            // SAFETY: `global` outlives EventLoop (set during VM init).
-            if self.drain_microtasks_with_global(unsafe { &*global }, global_vm).is_err()
+            if self.drain_microtasks_with_global(global, global_vm).is_err()
                 || scope.has_exception()
             {
                 self.entered_event_loop_count -= 1;
@@ -665,17 +660,15 @@ impl EventLoop {
         self.tick_concurrent();
 
         let vm = self.vm();
-        // SAFETY: `vm` is the VM that owns `self`; field reads/writes only.
-        let prev = unsafe { (*vm).suppress_microtask_drain };
-        // SAFETY: see above.
-        unsafe { (*vm).suppress_microtask_drain = true };
+        // `Cell` swap through `&VirtualMachine` — no `&mut VM` formed (would
+        // overlap `&mut self: EventLoop`, which is a value field of the VM).
+        let prev = self.vm_ref().suppress_microtask_drain.replace(true);
 
         while self.tick_with_count(vm) > 0 {
             self.tick_concurrent();
         }
 
-        // SAFETY: see above.
-        unsafe { (*vm).suppress_microtask_drain = prev };
+        self.vm_ref().suppress_microtask_drain.set(prev);
         // PORT NOTE: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
     }
 
@@ -747,13 +740,12 @@ impl EventLoop {
 
     pub fn ensure_waker(&mut self) {
         jsc::mark_binding();
-        let vm = self.vm();
-        // SAFETY: `vm` is the live owning VM; field reads/writes only.
-        if unsafe { (*vm).event_loop_handle.is_none() } {
+        if self.vm_ref().event_loop_handle.is_none() {
             #[cfg(windows)]
             {
                 self.uws_loop = NonNull::new(uws::Loop::get());
             }
+            let vm = self.vm();
             // SAFETY: `vm` is the live owning VM.
             unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
             // PORT NOTE: reshaped for borrowck — Zig passes `vm.gc_controller` and
@@ -895,8 +887,9 @@ impl EventLoop {
 impl EventLoop {
     pub fn tick_while_paused(&mut self, done: &mut bool) {
         while !*done {
-            // live uws/uv loop for the VM lifetime.
-            unsafe { (*(*self.vm()).event_loop_handle.unwrap()).tick() };
+            // SAFETY: `event_loop_handle` is the live uws/uv loop for the VM
+            // lifetime once `ensure_waker()` has run.
+            unsafe { (*self.vm_ref().event_loop_handle.unwrap()).tick() };
         }
     }
 
@@ -916,18 +909,14 @@ impl EventLoop {
     }
 
     pub fn tick_possibly_forever(&mut self) {
-        let ctx = self.vm();
         let loop_ptr = self.usockets_loop();
         // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
         let loop_ = unsafe { &mut *loop_ptr };
 
         #[cfg(unix)]
         {
-            // SAFETY: `ctx` is the live owning VM; field reads/writes only.
-            let pending_unref = unsafe { (*ctx).pending_unref_counter };
+            let pending_unref = self.vm_ref().take_pending_unref();
             if pending_unref > 0 {
-                // SAFETY: see above.
-                unsafe { (*ctx).pending_unref_counter = 0 };
                 loop_.unref_count(pending_unref);
             }
         }
@@ -953,8 +942,7 @@ impl EventLoop {
         self.process_gc_timer();
         loop_.tick();
 
-        // SAFETY: `ctx` is the live owning VM.
-        unsafe { (*ctx).on_after_event_loop() };
+        self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
         self.tick();
     }
@@ -1003,8 +991,7 @@ impl EventLoop {
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
-    // SAFETY: event_loop() returns a non-null raw pointer into the owning VM.
-    let event_loop = unsafe { &*vm_ref.event_loop() };
+    let event_loop = vm_ref.event_loop_shared();
     let result = JSValue::create_empty_object(global_object, 3);
     result.put(global_object, b"activeTasks", JSValue::js_number(vm_ref.active_tasks as f64));
     result.put(
@@ -1083,31 +1070,40 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 // to `*mut EventLoop` and forwards to the real method.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Recover `&mut EventLoop` from the erased vtable `owner`. Private to this
+/// module — every caller below is a `#[no_mangle]` trampoline whose contract
+/// (the `bun_event_loop` vtable) guarantees `owner` is a live `*mut EventLoop`.
+/// Centralizes the per-trampoline `unsafe { (*el(owner)).method() }` deref.
 #[inline(always)]
-unsafe fn el(owner: *mut ()) -> *mut EventLoop {
-    owner.cast::<EventLoop>()
+fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
+    // SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`
+    // in `__bun_js_event_loop_current` / `EventLoopHandle::js`. All calls go
+    // through the trampolines below on the JS thread.
+    unsafe { &mut *owner.cast::<EventLoop>() }
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_iteration_number(owner: *mut ()) -> u64 {
-    // SAFETY: `owner` is a live `*mut EventLoop`; `usockets_loop()` returns the
-    // live VM-owned uws loop.
-    unsafe { (*(*el(owner)).usockets_loop()).iteration_number() }
+    // Spec event_loop.zig:359 reads the EventLoop's own `uws_loop` field; on
+    // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
+    // code paths. Route through `usockets_loop()` to match spec semantics.
+    // SAFETY: `usockets_loop()` returns the live VM-owned uws loop.
+    unsafe { (*el_ref(owner).usockets_loop()).iteration_number() }
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_file_polls(owner: *mut ()) -> *mut Async::file_poll::Store {
-    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
     // Return raw to avoid asserting uniqueness — multiple handles may name the
     // same VM (see `EventLoopHandle::file_polls` doc).
-    let vm = unsafe { (*el(owner)).vm() };
-    unsafe {
-        std::ptr::from_mut((*vm)
+    std::ptr::from_mut(
+        el_ref(owner)
+            .vm_ref()
+            .as_mut()
             .rare_data()
             .file_polls_
             .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
-            .as_mut())
-    }
+            .as_mut(),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1124,102 +1120,87 @@ pub fn __bun_js_event_loop_put_file_poll(owner: *mut (), poll: *mut Async::FileP
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_uws_loop(owner: *mut ()) -> *mut uws::Loop {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).usockets_loop() }
+    el_ref(owner).usockets_loop()
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_pipe_read_buffer(owner: *mut ()) -> *mut [u8] {
-    // SAFETY: `owner` is a live `*mut EventLoop`; `pipe_read_buffer` reaches
-    // VM-owned scratch. Return a raw fat ptr — see method SAFETY doc re aliasing.
-    unsafe { std::ptr::from_mut::<[u8]>((*el(owner)).pipe_read_buffer()) }
+    // SAFETY: `pipe_read_buffer` reaches VM-owned scratch. Return a raw fat
+    // ptr — see method SAFETY doc re aliasing.
+    unsafe { std::ptr::from_mut::<[u8]>(el_ref(owner).pipe_read_buffer()) }
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_tick(owner: *mut ()) {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).tick() };
+    el_ref(owner).tick();
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_auto_tick(owner: *mut ()) {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).auto_tick() };
+    el_ref(owner).auto_tick();
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_auto_tick_active(owner: *mut ()) {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).auto_tick_active() };
+    el_ref(owner).auto_tick_active();
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_global_object(owner: *mut ()) -> *mut () {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).global }.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
+    el_ref(owner).global.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_bun_vm(owner: *mut ()) -> *mut () {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).virtual_machine }.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
+    el_ref(owner).virtual_machine.map_or(core::ptr::null_mut(), |p| p.as_ptr().cast())
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_stdout(owner: *mut ()) -> *mut () {
-    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
-    unsafe { (*(*el(owner)).vm()).rare_data().stdout().cast() }
+    el_ref(owner).vm_ref().as_mut().rare_data().stdout().cast()
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_stderr(owner: *mut ()) -> *mut () {
-    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
-    unsafe { (*(*el(owner)).vm()).rare_data().stderr().cast() }
+    el_ref(owner).vm_ref().as_mut().rare_data().stderr().cast()
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_enter(owner: *mut ()) {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).enter() };
+    el_ref(owner).enter();
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_exit(owner: *mut ()) {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).exit() };
+    el_ref(owner).exit();
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_enqueue_task(owner: *mut (), task: Task) {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).enqueue_task(task) };
+    el_ref(owner).enqueue_task(task);
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_enqueue_task_concurrent(owner: *mut (), task: *mut ConcurrentTaskItem) {
-    // SAFETY: `owner` is a live `*mut EventLoop`.
-    unsafe { (*el(owner)).enqueue_task_concurrent(task) };
+    el_ref(owner).enqueue_task_concurrent(task);
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_env(owner: *mut ()) -> *mut bun_dotenv::Loader<'static> {
-    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
-    unsafe { (*(*el(owner)).vm()).transpiler.env }
+    el_ref(owner).vm_ref().transpiler.env
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_top_level_dir(owner: *mut ()) -> *const [u8] {
-    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM. The
-    // `fs.top_level_dir` slice is borrowed for the VM lifetime.
-    unsafe { std::ptr::from_ref::<[u8]>((*(*(*el(owner)).vm()).transpiler.fs).top_level_dir) }
+    std::ptr::from_ref::<[u8]>(el_ref(owner).vm_ref().top_level_dir())
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_js_event_loop_create_null_delimited_env_map(
     owner: *mut (),
 ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
-    // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM.
-    unsafe { (*(*(*el(owner)).vm()).transpiler.env).map.create_null_delimited_env_map() }
+    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
+    unsafe { (*el_ref(owner).vm_ref().transpiler.env).map.create_null_delimited_env_map() }
 }
 
 #[unsafe(no_mangle)]
@@ -1240,20 +1221,23 @@ pub fn __bun_js_event_loop_current() -> *mut () {
 // or `*mut EventLoop`; cast back and forward to the real method/field.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Recover `&mut VirtualMachine` from the erased SpawnSync vtable `vm`.
+/// Private — every caller is a `#[no_mangle]` trampoline whose contract
+/// guarantees `vm` is the live per-thread `*mut VirtualMachine`.
 #[inline(always)]
-unsafe fn vm_cast(vm: *mut ()) -> *mut VirtualMachine {
-    vm.cast::<VirtualMachine>()
+fn vm_from_ptr<'a>(vm: *mut ()) -> &'a mut VirtualMachine {
+    // SAFETY: SpawnSync vtable contract — `vm` is the live per-thread VM.
+    unsafe { &mut *vm.cast::<VirtualMachine>() }
 }
 
 /// Heap-allocate a fresh `EventLoop` bound to `vm`; on Windows, store
 /// `uws_loop` in `event_loop.uws_loop`. Spec SpawnSyncEventLoop.zig:62-68.
 #[unsafe(no_mangle)]
 pub fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
-    let vm = unsafe { vm_cast(vm) };
+    let vm = vm_from_ptr(vm);
     let mut el = Box::new(EventLoop::default());
-    // SAFETY: `vm` is the live per-thread VM.
-    el.global = NonNull::new(unsafe { (*vm).global });
-    el.virtual_machine = NonNull::new(vm);
+    el.global = NonNull::new(vm.global);
+    el.virtual_machine = NonNull::new(std::ptr::from_mut(vm));
     #[cfg(windows)]
     {
         el.uws_loop = NonNull::new(uws_loop);
@@ -1275,27 +1259,22 @@ pub fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
 /// Spec SpawnSyncEventLoop.zig:93-95.
 #[unsafe(no_mangle)]
 pub fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ()) {
-    let el = el.cast::<EventLoop>();
-    let vm = unsafe { vm_cast(vm) };
-    // SAFETY: `el` is the live heap-owned isolated loop; `vm` is the per-thread VM.
-    unsafe {
-        (*el).global = NonNull::new((*vm).global);
-        (*el).virtual_machine = NonNull::new(vm);
-    }
+    let el = el_ref(el);
+    let vm = vm_from_ptr(vm);
+    el.global = NonNull::new(vm.global);
+    el.virtual_machine = NonNull::new(std::ptr::from_mut(vm));
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
-    // SAFETY: `el` is the live heap-owned isolated loop.
-    unsafe { (*el.cast::<EventLoop>()).tick_tasks_only() };
+    el_ref(el).tick_tasks_only();
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_spawn_sync_vm_get_event_loop_handle(
     vm: *mut (),
 ) -> bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle {
-    // SAFETY: `vm` is the live per-thread VM.
-    unsafe { (*vm_cast(vm)).event_loop_handle }.and_then(NonNull::new)
+    vm_from_ptr(vm).event_loop_handle.and_then(NonNull::new)
 }
 
 #[unsafe(no_mangle)]
@@ -1303,22 +1282,19 @@ pub fn __bun_spawn_sync_vm_set_event_loop_handle(
     vm: *mut (),
     h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
 ) {
-    // SAFETY: `vm` is the live per-thread VM.
-    unsafe { (*vm_cast(vm)).event_loop_handle = h.map(NonNull::as_ptr) };
+    vm_from_ptr(vm).event_loop_handle = h.map(NonNull::as_ptr);
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
-    // SAFETY: `vm` is the live per-thread VM; `el` is its previous `event_loop`
-    // pointer (a `*mut EventLoop` into `regular_event_loop`/`macro_event_loop`).
-    unsafe { (*vm_cast(vm)).event_loop = el.cast::<EventLoop>() };
+    // `el` is its previous `event_loop` pointer (a `*mut EventLoop` into
+    // `regular_event_loop`/`macro_event_loop`).
+    vm_from_ptr(vm).event_loop = el.cast::<EventLoop>();
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
-    // SAFETY: `vm` is the live per-thread VM.
-    let vm = unsafe { vm_cast(vm) };
-    unsafe { core::mem::replace(&mut (*vm).suppress_microtask_drain, v) }
+    vm_from_ptr(vm).suppress_microtask_drain.replace(v)
 }
 
 // ported from: src/jsc/event_loop.zig

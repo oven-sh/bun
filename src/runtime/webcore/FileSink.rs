@@ -401,7 +401,7 @@ impl FileSink {
             if !vm_ptr.is_null() {
                 // SAFETY: `bun_vm()` non-null implies the per-thread VM; never aliased here.
                 let vm = unsafe { &*vm_ptr };
-                if !vm.is_inside_deferred_task_queue {
+                if !vm.is_inside_deferred_task_queue.get() {
                     AutoFlusher::register_deferred_microtask_with_type::<Self>(self, vm);
                 }
             }
@@ -449,7 +449,7 @@ impl FileSink {
         if self.pending.state == streams::PendingState::Pending {
             self.pending.result = streams::Writable::Err(err);
             if let Some(vm) = self.js_vm() {
-                if vm.is_inside_deferred_task_queue {
+                if vm.is_inside_deferred_task_queue.get() {
                     self.run_pending_later();
                     #[cfg(windows)]
                     self.clear_keep_alive_ref();

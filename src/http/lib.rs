@@ -754,13 +754,21 @@ mod boring_extra {
         pub(crate) fn SSL_get_peer_cert_chain(
             ssl: *const bun_boringssl::c::SSL,
         ) -> *mut core::ffi::c_void; // STACK_OF(X509)*
-        pub(crate) fn sk_X509_value(stack: *const core::ffi::c_void, idx: usize) -> *mut bun_boringssl::c::X509;
+        // `sk_X509_value` is a `static inline` wrapper in BoringSSL's headers
+        // (DEFINE_STACK_OF), so there is no exported symbol to link against —
+        // call the underlying generic function it expands to.
+        pub(crate) fn OPENSSL_sk_value(stack: *const core::ffi::c_void, idx: usize) -> *mut core::ffi::c_void;
         pub(crate) fn SSL_set_tlsext_host_name(ssl: *mut bun_boringssl::c::SSL, name: *const core::ffi::c_char) -> c_int;
         pub(crate) fn SSL_set_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
         pub(crate) fn SSL_clear_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
         pub(crate) fn SSL_set_alpn_protos(ssl: *mut bun_boringssl::c::SSL, protos: *const u8, protos_len: usize) -> c_int;
         pub(crate) fn SSL_enable_signed_cert_timestamps(ssl: *mut bun_boringssl::c::SSL);
         pub(crate) fn SSL_enable_ocsp_stapling(ssl: *mut bun_boringssl::c::SSL);
+    }
+
+    #[inline]
+    pub(crate) unsafe fn sk_X509_value(stack: *const core::ffi::c_void, idx: usize) -> *mut bun_boringssl::c::X509 {
+        unsafe { OPENSSL_sk_value(stack, idx).cast() }
     }
 
     // BoringSSL defines this as 0 (a no-op flag), but we keep the

@@ -107,9 +107,13 @@ members = [
   "src/bunfig",
   "src/bun_bin",
 ]
-# Vendored cargo deps (e.g. lolhtml) are built standalone by
-# `scripts/build/deps/*.ts` with `cargo build --cwd vendor/...`; without an
-# exclude, cargo walks up and tries to attach them to this workspace.
+# `vendor/lolhtml/c-api` is consumed as a path dependency of
+# `bun_lolhtml_sys` so its `#[no_mangle]` C API ends up inside
+# `libbun_rust.a` (one Rust staticlib → one copy of std on the link line).
+# It is deliberately NOT a workspace member: keeping it excluded means its
+# `[profile]` section is ignored and its heavy dev-dependencies (criterion,
+# html5ever) never enter `Cargo.lock`. The source is fetched into `vendor/`
+# by the build system (`scripts/build/deps/lolhtml.ts`) before cargo runs.
 exclude = ["vendor"]
 
 [workspace.package]

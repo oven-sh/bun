@@ -26,7 +26,11 @@ if [ ! -d "$CG" ]; then
   echo "+memory +pids" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
 fi
 echo 32G   > "$CG/memory.max"    2>/dev/null || true
-echo 8192  > "$CG/pids.max"      2>/dev/null || true
+echo max   > "$CG/pids.max"      2>/dev/null || true
+
+# single-instance lock — daemon also fires this, don't race
+exec 9>/tmp/scoreboard.lock
+flock -n 9 || { echo "[scoreboard] another run in progress, skipping" >&2; exit 0; }
 
 # per-test isolated TMPDIR (own dir, nuked after) — tests that pollute /tmp
 # can't leak into each other or the host

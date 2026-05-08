@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, tempDirWithFiles } from "harness";
+import { bunExe, isPosix, tempDirWithFiles } from "harness";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -13,7 +13,7 @@ beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
 });
 
-const BUN = process.argv0;
+const BUN = bunExe();
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 let node_modules_tempdir: string;

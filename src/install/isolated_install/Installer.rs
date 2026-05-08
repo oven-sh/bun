@@ -86,7 +86,12 @@ pub struct Installer<'a> {
     pub scripts_node: Option<core::ptr::NonNull<ProgressNode>>,
     pub is_new_bun_modules: bool,
 
-    pub manager: &'a mut PackageManager,
+    /// Zig: `*PackageManager` — BACKREF. Raw pointer (not `&'a mut`) because
+    /// `Task::run`/`Task::callback` execute concurrently on the thread pool
+    /// and each derefs this field; a `&'a mut` here would assert exclusivity
+    /// every concurrent task violates. Never null. Access via `manager()` /
+    /// `manager_mut()` (main thread only for `_mut`).
+    pub manager: *mut PackageManager,
     pub command_ctx: Command::Context<'a>,
 
     pub store: &'a Store,
@@ -118,8 +123,23 @@ pub struct Installer<'a> {
 }
 
 impl<'a> Installer<'a> {
+    // BACKREF accessors — `manager` points outside `Self`; see field doc.
+    #[inline]
+    pub fn manager(&self) -> &'a PackageManager {
+        // SAFETY: BACKREF — never null; pointee outlives `'a`.
+        unsafe { &*self.manager }
+    }
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn manager_mut(&self) -> &'a mut PackageManager {
+        // SAFETY: BACKREF — never null; disjoint from `*self`. Caller must be
+        // on the main thread (only main mutates `PackageManager`).
+        unsafe { &mut *self.manager }
+    }
+
     /// Called from main thread
     pub fn start_task(&mut self, entry_id: StoreEntryId) {
+        let manager = self.manager_mut();
         let task = &mut self.tasks[entry_id.get() as usize];
         debug_assert!(matches!(
             task.result,
@@ -132,11 +152,11 @@ impl<'a> Installer<'a> {
         ));
 
         task.result = Result::None;
-        self.manager.thread_pool.schedule(thread_pool::Batch::from(&raw mut task.task));
+        manager.thread_pool.schedule(thread_pool::Batch::from(&raw mut task.task));
     }
 
     pub fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
-        if let Some(removed) = self.manager.task_queue.remove(&task_id) {
+        if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let store = self.store;
 
             let node_pkg_ids = store.nodes.items_pkg_id();
@@ -197,7 +217,7 @@ impl<'a> Installer<'a> {
         err: bun_core::Error,
         url: &[u8],
     ) {
-        if let Some(removed) = self.manager.task_queue.remove(&task_id) {
+        if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let callbacks = removed;
 
             let entry_steps = self.store.entries.items_step();
@@ -243,7 +263,7 @@ impl<'a> Installer<'a> {
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
         let patch_task_ptr = install::PatchTask::new_apply_patch_hash(
-            self.manager,
+            self.manager_mut(),
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
@@ -383,7 +403,7 @@ impl<'a> Installer<'a> {
             _ => {}
         }
 
-        if self.manager.options.enable.fail_early() {
+        if self.manager().options.enable.fail_early() {
             Global::exit(1);
         }
 
@@ -394,7 +414,7 @@ impl<'a> Installer<'a> {
     }
 
     pub fn decrement_pending_tasks(&mut self) {
-        self.manager.decrement_pending_tasks();
+        self.manager_mut().decrement_pending_tasks();
     }
 
     /// Called from main thread
@@ -776,12 +796,11 @@ impl Task {
         //     while these locals are live — that would reborrow through
         //     `&Installer` and alias `*manager_ptr` / `*lockfile_ptr`.
         let installer_ptr = self.installer;
-        let manager_ptr: *mut PackageManager =
-            unsafe { *core::ptr::addr_of!((*installer_ptr).manager).cast::<*mut PackageManager>() };
+        let installer = unsafe { &*installer_ptr };
+        let manager_ptr: *mut PackageManager = installer.manager;
         let lockfile_ptr: *mut Lockfile =
             unsafe { *core::ptr::addr_of!((*installer_ptr).lockfile).cast::<*mut Lockfile>() };
         let lockfile: &Lockfile = unsafe { &*lockfile_ptr };
-        let installer = unsafe { &*installer_ptr };
 
         let pkgs = installer.lockfile.packages.slice();
         let pkg_names = pkgs.items_name();
@@ -1832,8 +1851,7 @@ impl Task {
         // the `&mut` lifetimes from overlapping).
         let installer_ptr = this.installer;
         let installer = unsafe { &*installer_ptr };
-        let manager_ptr: *mut PackageManager =
-            unsafe { *core::ptr::addr_of!((*installer_ptr).manager).cast::<*mut PackageManager>() };
+        let manager_ptr: *mut PackageManager = installer.manager;
 
         match res {
             Yield::Yield => {}
@@ -1945,7 +1963,7 @@ impl<'a> Installer<'a> {
         pkg_res: &Resolution,
     ) -> core::result::Result<PatchInfo, bun_alloc::AllocError> {
         if self.lockfile.patched_dependencies.len() == 0
-            && self.manager.patched_dependencies_to_remove.len() == 0
+            && self.manager().patched_dependencies_to_remove.len() == 0
         {
             return Ok(PatchInfo::None);
         }
@@ -1986,7 +2004,7 @@ impl<'a> Installer<'a> {
         }
 
         if self
-            .manager
+            .manager()
             .patched_dependencies_to_remove
             .contains_key(&name_and_version_hash)
         {
@@ -2058,7 +2076,7 @@ impl<'a> Installer<'a> {
         pkg_metas: &[package::Meta],
         pkg_id: PackageID,
     ) -> Option<StoreEntryId> {
-        let postinstall_optimizer = &self.manager.postinstall_optimizer;
+        let postinstall_optimizer = &self.manager().postinstall_optimizer;
         if !postinstall_optimizer.is_native_binlink_enabled() {
             return None;
         }
@@ -2070,7 +2088,7 @@ impl<'a> Installer<'a> {
         }) {
             match optimizer {
                 PostinstallOptimizer::NativeBinlink => {
-                    let manager = &self.manager;
+                    let manager = self.manager();
                     let target_cpu = manager.options.cpu;
                     let target_os = manager.options.os;
                     if let Some(replacement_pkg_id) =
@@ -2181,7 +2199,7 @@ impl<'a> Installer<'a> {
             };
             let mut bin_linker = bin_real::Linker {
                 bin,
-                global_bin_path: self.manager.options.bin_path,
+                global_bin_path: self.manager().options.bin_path,
                 package_name,
                 string_buf,
                 extern_string_buf,
@@ -2210,7 +2228,7 @@ impl<'a> Installer<'a> {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
 
-                if self.manager.options.log_level.is_verbose() {
+                if self.manager().options.log_level.is_verbose() {
                     Output::pretty_errorln(format_args!(
                         "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                         bstr::BStr::new(package_name.slice()),
@@ -2296,7 +2314,7 @@ impl<'a> Installer<'a> {
                 // tree. Without --force, the existing entry came from a
                 // concurrent install and is content-identical — keep it and
                 // discard ours.
-                if self.manager.options.enable.force_install() {
+                if self.manager().options.enable.force_install() {
                     let mut old = AutoAbsPath::init();
                     let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
                     // OOM/capacity: Zig aborts; port keeps fire-and-forget
@@ -2565,7 +2583,7 @@ impl<'a> Installer<'a> {
                 // threads, so the lazy init is hoisted to the main-thread caller
                 // (`isolated_install::install_packages`, before any `start_task`).
                 // Reading the cached field here is then equivalent.
-                let symlink_dir_path: &[u8] = &self.manager.global_link_dir_path;
+                let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
                 debug_assert!(
                     !symlink_dir_path.is_empty(),
                     "global_link_dir_path must be ensured before tasks start",

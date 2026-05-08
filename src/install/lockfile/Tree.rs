@@ -365,8 +365,7 @@ pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
         }
     }
     path_buf[path_written] = 0;
-    // SAFETY: path_buf[path_written] == 0 written immediately above.
-    let rel = unsafe { ZStr::from_raw(path_buf.as_ptr(), path_written) };
+    let rel = ZStr::from_buf(path_buf, path_written);
 
     (rel, depth)
 }

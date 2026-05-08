@@ -1477,39 +1477,25 @@ impl Lockfile {
         }
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
-        let pkgs = self.packages.slice();
+        let mut pkgs = self.packages.slice();
         let len = pkgs.len();
 
-        let pkg_names = pkgs.items_name();
-        let pkg_name_hashes = pkgs.items_name_hash();
-        let pkg_resolutions = pkgs.items_resolution();
-        // PORT NOTE: reshaped for borrowck — Zig takes `pkgs.items(.bin)` and
-        // `pkgs.items(.meta)` as simultaneous mutable column views. `items_*_mut`
-        // each borrow `&mut pkgs`, so go through `Slice::items_raw` (raw column
-        // pointers) and form disjoint `&mut [_]`s — distinct columns never alias
-        // (contiguous SoA layout).
-        // SAFETY: `Bin`/`Meta` are the exact column types; `len` rows are
-        // initialized; the two columns are non-overlapping allocations.
-        let pkg_bins: &mut [crate::bin::Bin] = unsafe {
-            bun_core::ffi::slice_mut(
-                pkgs.items_raw::<"bin", crate::bin::Bin>(),
-                len,
-            )
-        };
+        // PORT NOTE: Zig takes `pkgs.items(.bin)` / `pkgs.items(.meta)` as
+        // simultaneous mutable column views; `split_mut()` yields disjoint
+        // `&mut [_]` per column from one `&mut Slice` borrow.
+        let self::package::PackageColumnsMut {
+            name: pkg_names,
+            name_hash: pkg_name_hashes,
+            resolution: pkg_resolutions,
+            bin: pkg_bins,
+            meta,
+            ..
+        } = pkgs.split_mut();
         // PORT NOTE: Zig has two near-identical loops gated by `update_os_cpu`;
         // collapse to one loop and bind `pkg_metas` as an empty slice when the
         // const generic is false (Zig left it `undefined`).
-        let pkg_metas: &mut [self::package::meta::Meta] = if UPDATE_OS_CPU {
-            // SAFETY: see above — disjoint column, `len` initialized rows.
-            unsafe {
-                bun_core::ffi::slice_mut(
-                    pkgs.items_raw::<"meta", self::package::meta::Meta>(),
-                    len,
-                )
-            }
-        } else {
-            &mut []
-        };
+        let pkg_metas: &mut [self::package::meta::Meta] =
+            if UPDATE_OS_CPU { meta } else { &mut [] };
 
         for i in 0..len {
             let pkg_name = pkg_names[i];
@@ -1666,14 +1652,16 @@ impl<'a> Printer<'a> {
             let lockfile_path__len =
                 resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut lockfile_path_buf2.0, &parts).len();
             lockfile_path_buf2[lockfile_path__len] = 0;
-            // SAFETY: NUL written at [len] above.
+            // SAFETY: NUL written at [len] above. Not `from_buf`: borrowck
+            // can't see that the `path_in_buf2` flag picks the *other* buffer
+            // for the chdir scratch write below, so the borrow must be detached.
             lockfile_path =
                 unsafe { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__len) };
             path_in_buf2 = true;
         } else if !path.is_empty() {
             lockfile_path_buf1[..path.len()].copy_from_slice(path);
             lockfile_path_buf1[path.len()] = 0;
-            // SAFETY: NUL written at [len] above.
+            // SAFETY: NUL written at [len] above. See note above re. borrowck.
             lockfile_path =
                 unsafe { ZStr::from_raw(lockfile_path_buf1.as_ptr(), path.len()) };
         }
@@ -1923,8 +1911,7 @@ impl Lockfile {
                     .expect("unreachable");
             }
             let written = start_len - cursor.len();
-            // SAFETY: trailing NUL written above; len excludes it.
-            unsafe { ZStr::from_raw(tmpname_buf.as_ptr(), written - 1) }
+            ZStr::from_buf(&tmpname_buf, written - 1)
         };
         // TODO(port): Zig `{x}` on `&[8]u8` formats as lowercase hex of bytes; verify HexBytes matches.
 
@@ -1997,6 +1984,27 @@ impl Lockfile {
         // PORT NOTE: Zig had compile-time guards rejecting by-value String/ExternalString.
         // In Rust we just take &T; the temporary-pointer hazard does not exist.
         slicable.slice(self.buffers.string_bytes.as_slice())
+    }
+
+    /// [`str`](Self::str) with the borrow detached from `self`.
+    ///
+    /// The install pipeline frequently needs to read a string out of
+    /// `buffers.string_bytes` and then call back into `&mut PackageManager`
+    /// (which owns the `Lockfile`). Zig's `[]const u8` carries no lifetime so
+    /// the borrow conflict does not exist there; in Rust the caller would
+    /// otherwise have to write `unsafe { detach_lifetime(self.str(x)) }` at
+    /// every site. Consolidating that here keeps the SAFETY argument in one
+    /// place.
+    ///
+    /// SAFETY (internal): `string_bytes` is append-only for the lifetime of a
+    /// resolve/enqueue pass and is never reallocated while a detached slice is
+    /// live (Zig invariant). The returned slice must not outlive the
+    /// `Lockfile`.
+    #[inline]
+    pub fn str_detached<'a, T: bun_semver::Slicable>(&self, slicable: &T) -> &'a [u8] {
+        // SAFETY: see doc comment — same invariant every prior call site
+        // already relied on via `bun_ptr::detach_lifetime`.
+        unsafe { bun_ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
     }
 
     /// Construct an empty Lockfile value (in-place equivalent of Zig `initEmpty`).

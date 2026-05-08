@@ -637,10 +637,10 @@ impl RunCommand {
         {
             for shell in Self::SHELLS_TO_SEARCH {
                 if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                    // SAFETY: which() writes a NUL-terminated path into `buf` and returns a
-                    // borrow of it; reborrow as &ZStr with the buffer's lifetime.
+                    // `which()` writes a NUL-terminated path into `buf` and
+                    // returns a borrow of it; reborrow as `&ZStr`.
                     let len = found.len();
-                    return Some(unsafe { ZStr::from_raw(buf.as_ptr(), len) });
+                    return Some(ZStr::from_buf(buf, len));
                 }
             }
 
@@ -659,8 +659,7 @@ impl RunCommand {
                     let body = shell.as_bytes();
                     buf[..body.len()].copy_from_slice(body);
                     buf[body.len()] = 0;
-                    // SAFETY: just wrote body + NUL into buf.
-                    return Some(unsafe { ZStr::from_raw(buf.as_ptr(), body.len()) });
+                    return Some(ZStr::from_buf(buf, body.len()));
                 }
             }
 

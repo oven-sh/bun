@@ -430,19 +430,15 @@ pub fn install_isolated_packages(
             'check_cycle: {
                 // check for cycles
                 let mut nodes_slice = nodes.slice();
-                let node_pkg_ids = nodes_slice.items_pkg_id();
-                let node_dep_ids = nodes_slice.items_dep_id();
-                let node_parent_ids = nodes_slice.items_parent_id();
-                // PORT NOTE: reshaped for borrowck — Zig grabbed multiple
-                // mutable column views from one Slice; in Rust those overlap
-                // on `&mut self`, so go through `items_raw` and rebuild
-                // disjoint `&mut [_]` views.
-                let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
-                    bun_core::ffi::slice_mut(
-                        nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
-                        nodes_slice.len(),
-                    )
-                };
+                // PORT NOTE: Zig grabbed multiple mutable column views from one
+                // Slice; `split_mut()` yields disjoint `&mut [_]` per column.
+                let store::node::NodeColumnsMut {
+                    pkg_id: node_pkg_ids,
+                    dep_id: node_dep_ids,
+                    parent_id: node_parent_ids,
+                    nodes: node_nodes,
+                    ..
+                } = nodes_slice.split_mut();
 
                 let mut curr_id = entry.parent_id;
                 while curr_id != store::node::Id::INVALID {
@@ -505,24 +501,16 @@ pub fn install_isolated_packages(
                 }
 
                 'dont_dedupe: {
-                    let nodes_slice = nodes.slice();
-                    // PORT NOTE: disjoint-column raw views (see above).
-                    let nodes_len = nodes_slice.len();
-                    let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
-                        bun_core::ffi::slice_mut(
-                            nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
-                            nodes_len,
-                        )
-                    };
-                    let node_dep_ids = nodes_slice.items_dep_id();
-                    let node_parent_ids = nodes_slice.items_parent_id();
-                    let node_dependencies = nodes_slice.items_dependencies();
-                    let node_peers: &mut [store::node::Peers] = unsafe {
-                        bun_core::ffi::slice_mut(
-                            nodes_slice.items_raw::<"peers", store::node::Peers>(),
-                            nodes_len,
-                        )
-                    };
+                    let mut nodes_slice = nodes.slice();
+                    // PORT NOTE: disjoint-column views via `split_mut`.
+                    let store::node::NodeColumnsMut {
+                        nodes: node_nodes,
+                        dep_id: node_dep_ids,
+                        parent_id: node_parent_ids,
+                        dependencies: node_dependencies,
+                        peers: node_peers,
+                        ..
+                    } = nodes_slice.split_mut();
 
                     let ctx_hash: u64 = if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
                         0
@@ -652,28 +640,15 @@ pub fn install_isolated_packages(
                 ..Default::default()
             })?;
 
-            let nodes_slice = nodes.slice();
-            // PORT NOTE: disjoint-column raw views (see above).
-            let nodes_len = nodes_slice.len();
-            let node_parent_ids = nodes_slice.items_parent_id();
-            let node_dependencies: &mut [Vec<store::node::DependencyIds>] = unsafe {
-                bun_core::ffi::slice_mut(
-                    nodes_slice.items_raw::<"dependencies", Vec<store::node::DependencyIds>>(),
-                    nodes_len,
-                )
-            };
-            let node_peers: &mut [store::node::Peers] = unsafe {
-                bun_core::ffi::slice_mut(
-                    nodes_slice.items_raw::<"peers", store::node::Peers>(),
-                    nodes_len,
-                )
-            };
-            let node_nodes: &mut [Vec<store::node::Id>] = unsafe {
-                bun_core::ffi::slice_mut(
-                    nodes_slice.items_raw::<"nodes", Vec<store::node::Id>>(),
-                    nodes_len,
-                )
-            };
+            let mut nodes_slice = nodes.slice();
+            // PORT NOTE: disjoint-column views via `split_mut`.
+            let store::node::NodeColumnsMut {
+                parent_id: node_parent_ids,
+                dependencies: node_dependencies,
+                peers: node_peers,
+                nodes: node_nodes,
+                ..
+            } = nodes_slice.split_mut();
 
             if let Some(parent_id) = entry.parent_id.try_get() {
                 node_nodes[parent_id as usize].push(node_id);
@@ -988,21 +963,13 @@ pub fn install_isolated_packages(
                     if info.peers.eql(curr_peers, &eql_ctx) {
                         // dedupe! depend on the already created entry
 
-                        let entries = store_entries.slice();
-                        // PORT NOTE: disjoint-column raw views (see above).
-                        let entries_len = entries.len();
-                        let entry_dependencies: &mut [store::entry::Dependencies] = unsafe {
-                            bun_core::ffi::slice_mut(
-                                entries.items_raw::<"dependencies", store::entry::Dependencies>(),
-                                entries_len,
-                            )
-                        };
-                        let entry_parents: &mut [Vec<store::entry::Id>] = unsafe {
-                            bun_core::ffi::slice_mut(
-                                entries.items_raw::<"parents", Vec<store::entry::Id>>(),
-                                entries_len,
-                            )
-                        };
+                        let mut entries = store_entries.slice();
+                        // PORT NOTE: disjoint-column views via `split_mut`.
+                        let store::entry::EntryColumnsMut {
+                            dependencies: entry_dependencies,
+                            parents: entry_parents,
+                            ..
+                        } = entries.split_mut();
 
                         let parents = &mut entry_parents[info.entry_id.get() as usize];
 
@@ -1179,17 +1146,14 @@ pub fn install_isolated_packages(
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {
-            let entries = store.entries.slice();
-            // PORT NOTE: disjoint-column raw views (see above).
-            let entries_len = entries.len();
-            let entry_hashes: &mut [u64] = unsafe {
-                bun_core::ffi::slice_mut(
-                    entries.items_raw::<"entry_hash", u64>(),
-                    entries_len,
-                )
-            };
-            let entry_node_ids = entries.items_node_id();
-            let entry_dependencies = entries.items_dependencies();
+            let mut entries = store.entries.slice();
+            // PORT NOTE: disjoint-column views via `split_mut`.
+            let store::entry::EntryColumnsMut {
+                entry_hash: entry_hashes,
+                node_id: entry_node_ids,
+                dependencies: entry_dependencies,
+                ..
+            } = entries.split_mut();
 
             let node_pkg_ids = store.nodes.items_pkg_id();
             let node_dep_ids = store.nodes.items_dep_id();

@@ -770,8 +770,7 @@ pub fn path_for_cached_npm_path<'a>(
     #[cfg(windows)]
     {
         let mut path_buf = PathBuffer::uninit();
-        // SAFETY: cache_path_buf[cache_path_len] == 0 written by buf_print_z above
-        let cache_path = unsafe { ZStr::from_raw(cache_path_buf.as_ptr(), cache_path_len) };
+        let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
             &this.cache_directory_path,
             &mut path_buf,
@@ -788,8 +787,7 @@ pub fn path_for_cached_npm_path<'a>(
 
     #[cfg(not(windows))]
     {
-        // SAFETY: cache_path_buf[cache_path_len] == 0 written by buf_print_z above
-        let cache_path = unsafe { ZStr::from_raw(cache_path_buf.as_ptr(), cache_path_len) };
+        let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         match sys::readlinkat(cache_dir, cache_path, &mut buf.0[..]) {
             Ok(n) => Ok(&mut buf.0[..n]),
             Err(err) => {
@@ -870,8 +868,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
             } else {
                 folder_path_buf[..folder.len()].copy_from_slice(folder);
                 folder_path_buf[folder.len()] = 0;
-                // SAFETY: folder_path_buf[folder.len()] == 0 written above
-                cache_dir_subpath = unsafe { ZStr::from_raw(folder_path_buf.as_ptr(), folder.len()) };
+                cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
             }
             cache_dir = Dir::cwd();
         }
@@ -894,8 +891,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
             } else {
                 folder_path_buf[..folder.len()].copy_from_slice(folder);
                 folder_path_buf[folder.len()] = 0;
-                // SAFETY: folder_path_buf[folder.len()] == 0 written above
-                cache_dir_subpath = unsafe { ZStr::from_raw(folder_path_buf.as_ptr(), folder.len()) };
+                cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
             }
             cache_dir = Dir::cwd();
         }
@@ -926,8 +922,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 off += folder.len();
                 ptr[off] = 0;
                 let len = off;
-                // SAFETY: ptr[len] == 0 written above
-                cache_dir_subpath = unsafe { ZStr::from_raw(folder_path_buf.as_ptr(), len) };
+                cache_dir_subpath = ZStr::from_buf(folder_path_buf, len);
                 cache_dir = directory;
             }
         }
@@ -1121,8 +1116,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
         initial_len - cursor.len()
     };
     tmpname_buf[tmpname_len + 8] = 0;
-    // SAFETY: tmpname_buf[tmpname_len + 8] == 0 written above
-    let tmpname = unsafe { ZStr::from_raw(tmpname_buf.as_ptr(), tmpname_len + 8) };
+    let tmpname = ZStr::from_buf(&tmpname_buf, tmpname_len + 8);
 
     if let Err(err) = tmpfile.create(tmpname) {
         Output::pretty_errorln(format_args!("<r><red>error:<r> failed to create tmpfile: {}", err.name()));

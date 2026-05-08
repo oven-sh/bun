@@ -662,9 +662,7 @@ impl<'a> PackageInstaller<'a> {
 
                 if let Some(err) = bin_linker.err {
                     if log_level != Options::LogLevel::Silent {
-                        // SAFETY: `manager.log` is a borrowed `*mut Log` set in
-                        // `init()` and outlives the install pass; never null.
-                        unsafe { &mut *manager.log }
+                        manager.log_mut()
                             .add_error_fmt_opts(
                                 format_args!(
                                     "Failed to link <b>{}<r>: {}",
@@ -1099,8 +1097,7 @@ impl<'a> PackageInstaller<'a> {
             temp_lockfile.init_empty();
             // PORT NOTE: `defer temp_lockfile.deinit()` — Lockfile impls Drop.
             let mut string_builder = temp_lockfile.string_builder();
-            // SAFETY: `manager.log` is a borrowed `*mut Log` set in `init()`; never null.
-            let log = unsafe { &mut *self.manager().log };
+            let log = self.manager().log_mut();
             if let Err(err) = temp.fill_from_package_json(
                 &mut string_builder,
                 log,
@@ -1358,10 +1355,8 @@ impl<'a> PackageInstaller<'a> {
                     } else {
                         self.folder_path_buf[..folder.len()].copy_from_slice(folder);
                         self.folder_path_buf[folder.len()] = 0;
-                        // SAFETY: buf[folder.len()] == 0 written above
-                        installer.cache_dir_subpath = unsafe {
-                            ZStr::from_raw(self.folder_path_buf.as_ptr(), folder.len())
-                        };
+                        installer.cache_dir_subpath =
+                            ZStr::from_buf(&self.folder_path_buf, folder.len());
                     }
                     installer.cache_dir = bun_sys::cwd();
                 } else {
@@ -2193,8 +2188,7 @@ impl<'a> PackageInstaller<'a> {
     ) -> bool {
         let mut scripts: PackageScripts =
             self.lockfile().packages.items_scripts()[package_id as usize];
-        // SAFETY: `manager.log` is a borrowed `*mut Log` set in `init()`; never null.
-        let log = unsafe { &mut *self.manager().log };
+        let log = self.manager().log_mut();
         let scripts_list = match scripts.get_list(
             log,
             self.lockfile(),

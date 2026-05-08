@@ -433,9 +433,7 @@ impl ExtractTarball {
                             let write_result = gh_tag.write_all(resolved);
                             let _ = gh_tag.close(); // close error is non-actionable (Zig parity: discarded)
                             if write_result.is_err() {
-                                // SAFETY: literal is NUL-terminated.
-                                let bun_tag_z =
-                                    unsafe { ZStr::from_raw(b".bun-tag\0".as_ptr(), 8) };
+                                let bun_tag_z = ZStr::from_static(b".bun-tag\0");
                                 let _ = sys::unlinkat(extract_destination.fd(), bun_tag_z);
                             }
                         }
@@ -600,13 +598,8 @@ impl ExtractTarball {
                                             .copy_from_slice(tmpname.as_bytes());
                                         tempdest_buf[tmpname.len()..][0..4]
                                             .copy_from_slice(&[b't', b'm', b'p', 0]);
-                                        // SAFETY: tempdest_buf[tmpname.len()+3] == 0 written above.
-                                        let tempdest = unsafe {
-                                            ZStr::from_raw(
-                                                tempdest_buf.as_ptr(),
-                                                tmpname.len() + 3,
-                                            )
-                                        };
+                                        let tempdest =
+                                            ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
                                         match sys::renameat_concurrently_a(
                                             Fd::from_std_dir(&cache_dir),
                                             folder_name,
@@ -861,10 +854,7 @@ impl ExtractTarball {
                             let mut dest_buf = PathBuffer::uninit();
                             dest_buf[..dest_name.len()].copy_from_slice(dest_name);
                             dest_buf[dest_name.len()] = 0;
-                            // SAFETY: NUL-terminated above.
-                            let dest_z = unsafe {
-                                ZStr::from_raw(dest_buf.as_ptr(), dest_name.len())
-                            };
+                            let dest_z = ZStr::from_buf(&dest_buf, dest_name.len());
                             let _ = sys::symlinkat(final_path, index_dir, dest_z);
                             let _ = sys::close(index_dir);
                         }

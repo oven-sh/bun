@@ -5487,9 +5487,9 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
 
 /// sys.zig:2992 — fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
-/// (`bun.getFdPathW`) re-export this. Accepts a bare `&mut [u16]` so the
-/// `__bun_fd_path_w` link-time hook (raw ptr+cap) can call through without a
-/// `WPathBuffer` newtype.
+/// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at
+/// `bun_core::fd_path_raw_w` for T0/T1 callers that cannot depend on this
+/// crate.
 #[cfg(windows)]
 pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
     crate::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), out).map_err(|e| {
@@ -7209,26 +7209,6 @@ pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
         read: |fd, buf| read(fd, buf).map_err(Into::into),
     };
 
-/// `bun_uws_sys::__bun_uws_stat_file` body — declared `extern "Rust"` in
-/// `bun_uws_sys::SocketContext` so the SSL-context cache key can fold cert-file
-/// `(mtime, size)` without depending on `bun_sys`. Spec
-/// `SocketContext.zig:81`: `bun.sys.stat(path)` → `[mt.sec, mt.nsec, st.size]`.
-#[unsafe(no_mangle)]
-pub fn __bun_uws_stat_file(path: &bun_core::ZStr) -> Option<[i64; 3]> {
-    match stat(path) {
-        Ok(st) => {
-            #[cfg(unix)]
-            {
-                // libc::stat exposes mtime as `st_mtime` (sec) +
-                // `st_mtime_nsec` (nsec) on Linux/BSD/macOS.
-                Some([st.st_mtime as i64, st.st_mtime_nsec as i64, st.st_size as i64])
-            }
-            #[cfg(windows)]
-            {
-                // uv_stat_t shape (Windows sys_uv path).
-                Some([st.mtim.sec as i64, st.mtim.nsec as i64, st.st_size as i64])
-            }
-        }
-        Err(_) => None,
-    }
-}
+// (former `__bun_uws_stat_file` provider deleted — body moved DOWN into
+// `bun_uws_sys::socket_context::stat_for_digest`, which calls `libc::stat`
+// directly. uws_sys already links libc; the cross-crate hook bought nothing.)

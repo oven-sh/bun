@@ -36,8 +36,8 @@ pub mod mysql_native_password {
         // Stage 1: SHA1(password)
         // TODO(port): Zig passed `jsc.VirtualMachine.get().rareData().boringEngine()`;
         // engine is optional and bun_jsc is higher-tier — pass null (matches
-        // bun_install::integrity / bun_exe_format::macho precedent). Phase B may
-        // wire a BORING_ENGINE_HOOK like bun_s3_signing if profiling shows need.
+        // bun_install::integrity / bun_exe_format::macho precedent). Revisit if
+        // profiling shows the engine matters here (it accelerates HW SHA only).
         SHA1::hash(password, &mut stage1, core::ptr::null_mut());
 
         // Stage 2: SHA1(SHA1(password))

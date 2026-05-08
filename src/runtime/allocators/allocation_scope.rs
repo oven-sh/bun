@@ -644,6 +644,9 @@ static VTABLE: AllocatorVTable = AllocatorVTable {
     free: vtable_free,
 };
 
+/// For `bun_safety::register_alloc_vtable` (see `super::register_safety_vtables`).
+#[inline] pub(super) fn std_vtable() -> &'static AllocatorVTable { &VTABLE }
+
 // Smaller traces since AllocationScope prints so many
 pub const TRACE_LIMITS: WriteStackTraceLimits = WriteStackTraceLimits {
     frame_count: 6,

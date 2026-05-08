@@ -14,8 +14,8 @@
 //! referencing these function without calling them.
 
 use crate::defines;
-use bun_js_parser as js_ast;
-use bun_js_parser::ExprData;
+use crate as js_ast;
+use crate::ExprData;
 use std::sync::OnceLock;
 
 // Zig: `string = []const u8`; each entry is a property-access chain (`&[_]string{...}`).

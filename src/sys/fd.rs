@@ -425,84 +425,9 @@ pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError>
     Ok(out)
 }
 
-/// Best-effort fd → path for debug Display. Returns bytes written, 0 on
-/// failure, -1 on EBADF/ENOENT (so caller can show `[BADF]`). Declared
-/// `extern "Rust"` in `bun_core::util`; link-time resolved.
-#[unsafe(no_mangle)]
-pub unsafe fn __bun_fd_path(fd: Fd, buf: *mut u8, cap: usize) -> isize {
-    #[cfg(target_os = "linux")]
-    {
-        // readlink("/proc/self/fd/N")
-        let mut proc = [0u8; 32];
-        use std::io::Write as _;
-        let mut c = std::io::Cursor::new(&mut proc[..]);
-        let _ = write!(c, "/proc/self/fd/{}\0", fd.0);
-        // SAFETY: proc is NUL-terminated above; buf has cap bytes.
-        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
-        if n < 0 {
-            let e = sys::last_errno();
-            return if e == sys::E::ENOENT as i32 || e == sys::E::EBADF as i32 { -1 } else { 0 };
-        }
-        n
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // F_GETPATH writes a NUL-terminated path into buf.
-        // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; caller
-        // passes 1024 which is the platform MAXPATHLEN on Darwin.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
-        if rc < 0 {
-            let e = sys::last_errno();
-            return if e == sys::E::ENOENT as i32 || e == sys::E::EBADF as i32 { -1 } else { 0 };
-        }
-        // strlen the result.
-        unsafe { libc::strlen(buf.cast()) as isize }
-    }
-    #[cfg(target_os = "freebsd")]
-    {
-        // No procfs on FreeBSD; fcntl(F_KINFO) fills a kinfo_file with kf_path.
-        // libc's struct has private padding fields, so build it via zeroed
-        // MaybeUninit + addr_of_mut! instead of a struct literal.
-        use core::ptr::{addr_of, addr_of_mut};
-        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
-        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
-        unsafe {
-            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
-                .write(core::mem::size_of::<libc::kinfo_file>() as libc::c_int);
-        }
-        // SAFETY: F_KINFO expects a *mut kinfo_file with kf_structsize set.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
-        if rc < 0 {
-            let e = sys::last_errno();
-            return if e == sys::E::ENOENT as i32 || e == sys::E::EBADF as i32 { -1 } else { 0 };
-        }
-        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
-        let len = unsafe { libc::strlen(path.cast()) };
-        let n = len.min(cap);
-        // SAFETY: path has `len` initialized bytes; buf has `cap` bytes.
-        unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
-        n as isize
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
-    { let _ = (fd, buf, cap); 0 }
-}
-
-/// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Declared
-/// `extern "Rust"` in `bun_core::util`; link-time resolved. Returns code
-/// units written (>0), <0 on error, 0 on non-Windows.
-#[unsafe(no_mangle)]
-pub unsafe fn __bun_fd_path_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
-    #[cfg(windows)]
-    {
-        // SAFETY: buf has `cap` u16 units; `get_fd_path_w` writes at most that.
-        match unsafe { sys::get_fd_path_w(fd, core::slice::from_raw_parts_mut(buf, cap)) } {
-            Ok(s) => s.len() as isize,
-            Err(_) => -1,
-        }
-    }
-    #[cfg(not(windows))]
-    { let _ = (fd, buf, cap); 0 }
-}
+// fd → path bodies moved down to `bun_core::fd_path_raw[_w]` (libc/kernel32-
+// only; PORTING.md "move storage down"). `bun_sys` keeps the richer
+// `get_fd_path[_w]` returning `Maybe<&mut [u8/u16]>` for callers that want
+// `bun_sys::Error` with a syscall tag.
 
 // ported from: src/sys/fd.zig

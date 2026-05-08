@@ -1015,16 +1015,126 @@ impl FdOptional {
     }
 }
 
-unsafe extern "Rust" {
-    /// Resolves an FD to its path (readlink `/proc/self/fd/N` on Linux,
-    /// `F_GETPATH` on macOS, `F_KINFO` on FreeBSD). Defined `#[no_mangle]` in `bun_sys::fd` so T0
-    /// doesn't depend on bun_paths/bun_sys at compile time. Returns bytes
-    /// written (>0), 0 on failure, -1 on EBADF/ENOENT.
-    pub fn __bun_fd_path(fd: Fd, buf: *mut u8, cap: usize) -> isize;
-    /// Wide-char variant (Windows `getFdPathW` → `GetFinalPathNameByHandleW`).
-    /// Returns code units written (>0), <0 on error. Defined `#[no_mangle]` in
-    /// `bun_sys::fd`.
-    pub fn __bun_fd_path_w(fd: Fd, buf: *mut u16, cap: usize) -> isize;
+/// Best-effort fd → path. Returns bytes written (>0), 0 on misc failure,
+/// -1 on EBADF/ENOENT (caller may render `[BADF]`). Body is libc-only
+/// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,
+/// `fcntl(F_KINFO)` on FreeBSD), so it lives at T0 — moved down from
+/// `bun_sys::fd` per PORTING.md (no cross-crate extern).
+///
+/// SAFETY: `buf` must be valid for `cap` writable bytes.
+pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
+    #[cfg(target_os = "linux")]
+    {
+        let mut proc = [0u8; 32];
+        use std::io::Write as _;
+        let mut c = std::io::Cursor::new(&mut proc[..]);
+        let _ = write!(c, "/proc/self/fd/{}\0", fd.0);
+        // SAFETY: proc is NUL-terminated above; buf has cap bytes.
+        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
+        if n < 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            return if e == libc::ENOENT || e == libc::EBADF { -1 } else { 0 };
+        }
+        return n;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; callers
+        // pass ≥1024 which is the platform MAXPATHLEN on Darwin.
+        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            return if e == libc::ENOENT || e == libc::EBADF { -1 } else { 0 };
+        }
+        // SAFETY: kernel wrote a NUL-terminated path.
+        return unsafe { libc::strlen(buf.cast()) as isize };
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        use core::ptr::{addr_of, addr_of_mut};
+        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
+        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
+        unsafe {
+            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
+                .write(core::mem::size_of::<libc::kinfo_file>() as libc::c_int);
+        }
+        // SAFETY: F_KINFO expects a *mut kinfo_file with kf_structsize set.
+        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            return if e == libc::ENOENT || e == libc::EBADF { -1 } else { 0 };
+        }
+        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
+        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
+        let len = unsafe { libc::strlen(path.cast()) };
+        let n = len.min(cap);
+        // SAFETY: path has `len` initialized bytes; buf has `cap` bytes.
+        unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
+        return n as isize;
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+    { let _ = (fd, buf, cap); 0 }
+}
+
+/// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Returns code
+/// units written (>0), <0 on error, 0 on non-Windows. Body is a single
+/// kernel32 call, so it lives at T0 — moved down from `bun_sys` per
+/// PORTING.md (no cross-crate extern).
+///
+/// SAFETY: `buf` must be valid for `cap` writable `u16` units.
+pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn GetFinalPathNameByHandleW(
+                hFile: *mut core::ffi::c_void,
+                lpszFilePath: *mut u16,
+                cchFilePath: u32,
+                dwFlags: u32,
+            ) -> u32;
+        }
+        // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
+        // SAFETY: buf has `cap` u16 units; handle from Fd::native().
+        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
+        if n == 0 || n > cap { return -1; }
+        // Strip the `\\?\` prefix if present so callers see a plain DOS path
+        // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
+        // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
+        // or `&mut [u16]` over `buf` while the memmove runs, or the write through
+        // `buf` would invalidate that borrow's tag under Stacked Borrows.
+        // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
+        // bounds-checked against `n` first.
+        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
+        let bs = b'\\' as u16;
+        let off: usize = if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
+            if n >= 8
+                && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
+                && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
+                && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
+                && at(7) == bs
+            {
+                // `\\?\UNC\server\share` → `\\server\share`
+                // SAFETY: index 6 < n (checked above).
+                unsafe { *buf.add(6) = bs };
+                6
+            } else {
+                // `\\?\C:\...` → `C:\...`
+                4
+            }
+        } else {
+            0
+        };
+        let out_len = n - off;
+        if off != 0 {
+            // SAFETY: src = buf+off and dst = buf both derive from the same
+            // raw `*mut u16` provenance (no intervening reference), src > dst,
+            // and `out_len` units fit within the `n` initialized units.
+            unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
+        }
+        return out_len as isize;
+    }
+    #[cfg(not(windows))]
+    { let _ = (fd, buf, cap); 0 }
 }
 
 impl core::fmt::Display for Fd {
@@ -1038,7 +1148,7 @@ impl core::fmt::Display for Fd {
             if fd.0 >= 3 {
                 let mut buf = [0u8; 1024];
                 // SAFETY: buf is 1024 bytes, passed with matching cap.
-                let n = unsafe { __bun_fd_path(fd, buf.as_mut_ptr(), buf.len()) };
+                let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
                 if n > 0 {
                     write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
                 } else if n == -1 {
@@ -2943,14 +3053,12 @@ impl Timespec {
 
     /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
     /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
-    /// monotonic clock directly. Mocked-time hook installed by bun_jsc at
-    /// startup via `set_now_hook`.
+    /// monotonic clock directly. Test-runner fake-timers write the mocked
+    /// nanosecond value via `mock_time::set` / `mock_time::clear`.
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
-            if let Some(hook) = NOW_HOOK.load() {
-                if let Some(ts) = hook() { return ts; }
-            }
+            if let Some(ns) = mock_time::get() { return Timespec::from_ns(ns); }
         }
         Self::now_real()
     }
@@ -2987,22 +3095,34 @@ pub mod timespec_mode {
     pub type Mode = super::TimespecMockMode;
 }
 
-/// Mocked-time injection hook (set by bun_runtime when `useFakeTimers` is active).
-/// Returns `None` when no fake time is set so callers fall through to the real clock.
-struct NowHookSlot(core::sync::atomic::AtomicPtr<()>);
-impl NowHookSlot {
-    const fn new() -> Self { Self(core::sync::atomic::AtomicPtr::new(core::ptr::null_mut())) }
-    fn load(&self) -> Option<fn() -> Option<Timespec>> {
-        let p = self.0.load(AOrdering::Relaxed);
-        if p.is_null() { None } else { Some(unsafe { core::mem::transmute::<*mut (), fn() -> Option<Timespec>>(p) }) }
+/// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
+/// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
+/// from `bun_runtime::test_runner::timers::FakeTimers::CurrentTime`.
+/// Sentinel `i64::MIN` ⇒ not mocked.
+pub mod mock_time {
+    use core::sync::atomic::{AtomicI64, Ordering};
+
+    static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
+
+    /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
+    #[inline] pub fn set(ns: i64) { MOCKED_TIME_NS.store(ns, Ordering::Relaxed); }
+    /// Clear the mocked time so `Timespec::now(AllowMockedTime)` reads the
+    /// real clock again.
+    #[inline] pub fn clear() { MOCKED_TIME_NS.store(i64::MIN, Ordering::Relaxed); }
+    /// Current mocked time, or `None` if not mocked.
+    #[inline] pub fn get() -> Option<i64> {
+        let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
+        if v == i64::MIN { None } else { Some(v) }
     }
 }
-static NOW_HOOK: NowHookSlot = NowHookSlot::new();
-pub fn set_timespec_now_hook(hook: Option<fn() -> Option<Timespec>>) {
-    NOW_HOOK.0.store(
-        hook.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
-        AOrdering::Relaxed,
-    );
+
+impl Timespec {
+    /// Construct from a signed nanosecond count. Euclidean division keeps
+    /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
+    #[inline]
+    pub const fn from_ns(ns: i64) -> Timespec {
+        Timespec { sec: ns.div_euclid(Self::NS_PER_S), nsec: ns.rem_euclid(Self::NS_PER_S) }
+    }
 }
 
 // ── f16 ───────────────────────────────────────────────────────────────────
@@ -3046,61 +3166,141 @@ impl core::fmt::Display for f16 {
 }
 
 // ── perf ──────────────────────────────────────────────────────────────────
-// Port of `bun.perf` (src/perf/perf.zig). Real impl wires to OS-native
-// signpost/ftrace and is gated behind a runtime env-var check; T0 ships the
-// `Disabled` arm only so `let _tracer = bun_core::perf::trace("X")` compiles
-// and is a no-op. The macOS `OSLog`/Linux `ftrace` backends live in `bun_sys`
-// (higher tier) and are wired in via `set_backend` at init — §Dispatch hook
-// pattern (low tier defines `static HOOK`, high tier writes it).
+// Port of `bun.perf` (src/perf/perf.zig). The Linux ftrace backend is
+// libc-only, so it folds in directly and `bun_core::perf::trace("X")` is real
+// instrumentation on Linux. macOS: the Zig backend wraps `Bun__signpost_emit`
+// (c-bindings.cpp) which keys on the codegen `PerfEvent` int — that table
+// lives in `bun_perf` (T2, owns generated_perf_trace_events), so T0 reports
+// disabled on macOS. **No functional divergence today**: `bun_perf`'s Darwin
+// arm currently routes through the `bun_sys::darwin::os_log::signpost::Interval`
+// stub whose `end()` is a no-op, so neither tier emits signposts yet. When
+// `Bun__signpost_emit` is wired, callers above T0 use `bun_perf::trace`; T0
+// callsites (audited r5) are bundler/parser hot paths where Linux ftrace is
+// the profiling target. Windows/other platforms are no-ops in Zig too.
 pub mod perf {
-    use core::sync::atomic::{AtomicPtr, Ordering};
+    use core::sync::atomic::{AtomicU8, Ordering};
+    #[cfg(target_os = "linux")]
+    use core::sync::atomic::AtomicBool;
+    #[cfg(target_os = "linux")]
+    use std::sync::Once;
 
-    /// Opaque per-span state returned by `trace()`. `end()` is idempotent;
-    /// `Drop` calls it so `let _t = trace("x");` works as a scope guard.
+    /// Per-span state returned by `trace()`. `end()` is idempotent; `Drop`
+    /// calls it so `let _t = trace("x");` works as a scope guard.
     #[must_use = "bind to a local (`let _t = perf::trace(..)`) so the span has nonzero duration"]
     pub struct Ctx {
-        end: Option<unsafe fn(*mut core::ffi::c_void)>,
-        data: *mut core::ffi::c_void,
+        #[cfg(target_os = "linux")]
+        linux: Option<Linux>,
     }
     impl Ctx {
-        pub const DISABLED: Ctx = Ctx { end: None, data: core::ptr::null_mut() };
+        pub const DISABLED: Ctx = Ctx {
+            #[cfg(target_os = "linux")]
+            linux: None,
+        };
         #[inline]
         pub fn end(&mut self) {
-            if let Some(f) = self.end.take() {
-                // SAFETY: backend produced `data` paired with `end`.
-                unsafe { f(self.data) };
-            }
+            #[cfg(target_os = "linux")]
+            if let Some(l) = self.linux.take() { l.end(); }
         }
     }
     impl Drop for Ctx { #[inline] fn drop(&mut self) { self.end(); } }
 
-    type BeginFn = unsafe fn(name: &'static str) -> Ctx;
-    static BACKEND: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+    // Tri-state so the disabled fast path is a single Relaxed load (this sits
+    // on every `trace()` call across the bundler/parser hot paths). The flag
+    // is write-once-at-init so Relaxed is sufficient; a benign init race just
+    // re-runs the env probe.
+    const UNSET: u8 = 0;
+    const DISABLED: u8 = 1;
+    const ENABLED: u8 = 2;
+    static IS_ENABLED: AtomicU8 = AtomicU8::new(UNSET);
 
-    #[inline]
-    pub fn is_enabled() -> bool { !BACKEND.load(Ordering::Relaxed).is_null() }
-
-    /// Installed once at startup by `bun_sys::perf::init()`.
-    pub fn set_backend(begin: Option<BeginFn>) {
-        BACKEND.store(
-            begin.map(|f| f as *mut ()).unwrap_or(core::ptr::null_mut()),
-            Ordering::Release,
-        );
+    #[cold]
+    fn is_enabled_init() -> bool {
+        #[cfg(target_os = "linux")]
+        let on = crate::env_var::feature_flag::BUN_TRACE.get().unwrap_or(false) && Linux::is_supported();
+        // macOS: os_signpost requires `bun_sys::darwin::OSLog` (above T0).
+        // **`bun_perf` is the canonical entry point** (it drives both the
+        // ftrace and signpost backends via `PerfEvent`); `bun_core::perf` is
+        // the T0 subset for low-tier callers that cannot reach `bun_perf` and
+        // only need Linux ftrace. T0 therefore reports disabled on macOS.
+        #[cfg(not(target_os = "linux"))]
+        let on = false;
+        IS_ENABLED.store(if on { ENABLED } else { DISABLED }, Ordering::Relaxed);
+        on
     }
 
-    /// `bun.perf.trace("Event.name")`. When no backend is registered (the
-    /// common case — Instruments/ftrace not attached), this is a single
-    /// relaxed-load + branch.
+    #[inline]
+    pub fn is_enabled() -> bool {
+        match IS_ENABLED.load(Ordering::Relaxed) {
+            DISABLED => false,
+            ENABLED => true,
+            _ => is_enabled_init(),
+        }
+    }
+
+    /// `bun.perf.trace("Event.name")`. Emits an ftrace span on Linux when
+    /// `BUN_TRACE=1`; no-op elsewhere (macOS signposts live in `bun_perf`).
     #[inline]
     pub fn trace(name: &'static str) -> Ctx {
-        let p = BACKEND.load(Ordering::Relaxed);
-        if p.is_null() {
+        if !is_enabled() {
+            let _ = name;
             return Ctx::DISABLED;
         }
-        // SAFETY: `p` was stored from a `BeginFn` in `set_backend`.
-        let begin: BeginFn = unsafe { core::mem::transmute::<*mut (), BeginFn>(p) };
-        // SAFETY: backend contract — `name` is `'static`.
-        unsafe { begin(name) }
+        #[cfg(target_os = "linux")]
+        { return Ctx { linux: Some(Linux::init(name)) }; }
+        #[allow(unreachable_code)]
+        { let _ = name; Ctx::DISABLED }
+    }
+
+    // ── Linux ftrace backend (folded from src/perf/lib.rs) ────────────────
+    #[cfg(target_os = "linux")]
+    struct Linux { start_time: u64, name: &'static str }
+
+    #[cfg(target_os = "linux")]
+    impl Linux {
+        fn is_supported() -> bool {
+            static INIT_ONCE: Once = Once::new();
+            static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
+            INIT_ONCE.call_once(|| {
+                // SAFETY: FFI; Bun__linux_trace_init has no preconditions.
+                let r = unsafe { Bun__linux_trace_init() };
+                IS_INITIALIZED.store(r != 0, Ordering::Relaxed);
+            });
+            IS_INITIALIZED.load(Ordering::Relaxed)
+        }
+        #[inline]
+        fn init(name: &'static str) -> Self {
+            Self {
+                start_time: crate::Timespec::now(crate::TimespecMockMode::ForceRealTime).ns(),
+                name,
+            }
+        }
+        fn end(self) {
+            if !Self::is_supported() { return; }
+            let duration = crate::Timespec::now(crate::TimespecMockMode::ForceRealTime)
+                .ns()
+                .saturating_sub(self.start_time);
+            // Zig passed `@tagName(event).ptr` (NUL-terminated). Build a small
+            // stack CString from the &'static str literal.
+            let mut buf = [0u8; 96];
+            let n = self.name.len().min(buf.len() - 1);
+            buf[..n].copy_from_slice(&self.name.as_bytes()[..n]);
+            // SAFETY: FFI; pointer is NUL-terminated within `buf`.
+            let _ = unsafe {
+                Bun__linux_trace_emit(
+                    buf.as_ptr() as *const core::ffi::c_char,
+                    i64::try_from(duration).unwrap_or(i64::MAX),
+                )
+            };
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe extern "C" {
+        fn Bun__linux_trace_init() -> core::ffi::c_int;
+        fn Bun__linux_trace_emit(
+            event_name: *const core::ffi::c_char,
+            duration_ns: i64,
+        ) -> core::ffi::c_int;
     }
 }
 

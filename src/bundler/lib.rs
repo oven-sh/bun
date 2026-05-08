@@ -55,8 +55,9 @@ pub mod barrel_imports;
 pub mod linker_graph;
 #[path = "Chunk.rs"]
 pub mod chunk;
-#[path = "defines-table.rs"]
-pub mod defines_table;
+// Moved down to `bun_js_parser::defines_table` so the parser reads its own
+// const without a cross-crate hook. Re-export for existing callers.
+pub use bun_js_parser::defines_table;
 pub mod transpiler;
 #[path = "ParseTask.rs"]
 pub mod parse_task;

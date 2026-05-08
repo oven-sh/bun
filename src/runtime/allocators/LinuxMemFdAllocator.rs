@@ -385,4 +385,7 @@ mod allocator_interface {
     };
 }
 
+/// For `bun_safety::register_alloc_vtable` (see `super::register_safety_vtables`).
+#[inline] pub(super) fn std_vtable() -> &'static AllocatorVTable { allocator_interface::VTABLE }
+
 // ported from: src/bun_alloc/LinuxMemFdAllocator.zig

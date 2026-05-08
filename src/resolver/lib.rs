@@ -391,6 +391,7 @@ pub mod fs {
         #[inline]
         pub fn set_top_level_dir(&mut self, dir: &'static [u8]) {
             self.top_level_dir = dir;
+            bun_core::set_top_level_dir(dir);
         }
 
         /// Zig: `topLevelDirWithoutTrailingSlash` (fs.zig).

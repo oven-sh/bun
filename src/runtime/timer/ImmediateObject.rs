@@ -146,9 +146,8 @@ impl ImmediateObject {
     }
 
     /// Spec ImmediateObject.zig `runImmediateTask` — thin forwarder to
-    /// `internals.run_immediate_task`. Registered into
-    /// `bun_jsc::event_loop::RUN_IMMEDIATE_HOOK` by
-    /// [`crate::dispatch::install_dispatch_hooks`].
+    /// `internals.run_immediate_task`. Reached from `bun_jsc::event_loop`
+    /// via `__bun_run_immediate_task` (definer in [`crate::dispatch`]).
     ///
     /// Returns `true` if an exception was thrown.
     ///

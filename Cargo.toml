@@ -170,6 +170,7 @@ getrandom = "0.4"
 parking_lot = "0.12"
 strum = { version = "0.26", features = ["derive"] }
 phf = { version = "0.11", features = ["macros"] }
+hashbrown = { version = "0.15", default-features = false, features = ["inline-more"] }
 bstr = { version = "1", default-features = false, features = ["alloc"] }
 scopeguard = "1"
 const_format = "0.2"

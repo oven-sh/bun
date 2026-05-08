@@ -29,6 +29,7 @@ type JavascriptString<'s> = &'s [u16];
 
 pub use tables::{
     PropertyModifierKeyword, T, TypescriptStmtKeyword,
+    is_strict_mode_reserved_word, keyword,
     KEYWORDS as Keywords, STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords,
     TYPE_SCRIPT_ACCESSIBILITY_MODIFIER as TypeScriptAccessibilityModifier,
     TOKEN_TO_STRING as tokenToString,
@@ -1454,7 +1455,7 @@ lexer_impl_header! {
         //   // This is an fine (equivalent to "foo.var;")
         //   foo.var;
         //
-        result.token = if Keywords.contains_key(result.contents) {
+        result.token = if tables::keyword(result.contents).is_some() {
             T::TEscapedKeyword
         } else {
             T::TIdentifier
@@ -2290,7 +2291,7 @@ lexer_impl_header! {
                         // it shows up in profiling
                         self.identifier = self.raw();
                         self.token =
-                            Keywords.get(self.identifier).copied().unwrap_or(T::TIdentifier);
+                            tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
                     } else {
                         // @branchHint(.unlikely)
                         let scan_result = self

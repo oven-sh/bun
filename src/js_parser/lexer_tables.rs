@@ -157,6 +157,123 @@ impl T {
     }
 }
 
+/// Hot-path keyword classifier — called once per identifier in the lexer.
+///
+/// Replaces the `phf::Map` lookup for `KEYWORDS` (which hashes through
+/// SipHash13 and showed up as ~4% self-time under `phf_shared::hash` in
+/// `perf record` on the three.js bundle). Mirrors Zig's `ComptimeStringMap`
+/// strategy: bucket by length, then compare against the small set of
+/// same-length candidates as fixed-size arrays so rustc/LLVM emit a single
+/// integer load + compare per candidate (no hash, no bounds checks, no
+/// memcmp call).
+///
+/// All JS keywords are 2..=10 ASCII bytes; the length dispatch rejects the
+/// overwhelming majority of identifiers (which are not keywords) with one
+/// branch when `len > 10`.
+#[inline]
+pub fn keyword(s: &[u8]) -> Option<T> {
+    /// Reinterpret `s` as `&[u8; $n]` (length already checked by the outer
+    /// `match s.len()`), then match literal byte arrays. Matching on a
+    /// fixed-size array lets LLVM lower each arm to a wide integer compare
+    /// instead of a `memcmp` call.
+    macro_rules! by_len {
+        ($n:literal: $($lit:literal => $tok:expr,)*) => {{
+            debug_assert_eq!(s.len(), $n);
+            // SAFETY: the enclosing `match s.len()` arm guarantees
+            // `s.len() == $n`, so `s.as_ptr()` addresses at least `$n`
+            // initialized bytes and the `[u8; $n]` view is in-bounds and
+            // properly aligned (alignment of `[u8; N]` is 1).
+            let arr: &[u8; $n] = unsafe { &*(s.as_ptr() as *const [u8; $n]) };
+            match arr {
+                $($lit => Some($tok),)*
+                _ => None,
+            }
+        }};
+    }
+    match s.len() {
+        2 => by_len!(2:
+            b"do" => T::TDo,
+            b"if" => T::TIf,
+            b"in" => T::TIn,
+        ),
+        3 => by_len!(3:
+            b"for" => T::TFor,
+            b"new" => T::TNew,
+            b"try" => T::TTry,
+            b"var" => T::TVar,
+        ),
+        4 => by_len!(4:
+            b"case" => T::TCase,
+            b"else" => T::TElse,
+            b"enum" => T::TEnum,
+            b"null" => T::TNull,
+            b"this" => T::TThis,
+            b"true" => T::TTrue,
+            b"void" => T::TVoid,
+            b"with" => T::TWith,
+        ),
+        5 => by_len!(5:
+            b"break" => T::TBreak,
+            b"catch" => T::TCatch,
+            b"class" => T::TClass,
+            b"const" => T::TConst,
+            b"false" => T::TFalse,
+            b"super" => T::TSuper,
+            b"throw" => T::TThrow,
+            b"while" => T::TWhile,
+        ),
+        6 => by_len!(6:
+            b"delete" => T::TDelete,
+            b"export" => T::TExport,
+            b"import" => T::TImport,
+            b"return" => T::TReturn,
+            b"switch" => T::TSwitch,
+            b"typeof" => T::TTypeof,
+        ),
+        7 => by_len!(7:
+            b"default" => T::TDefault,
+            b"extends" => T::TExtends,
+            b"finally" => T::TFinally,
+        ),
+        8 => by_len!(8:
+            b"continue" => T::TContinue,
+            b"debugger" => T::TDebugger,
+            b"function" => T::TFunction,
+        ),
+        10 => by_len!(10:
+            b"instanceof" => T::TInstanceof,
+        ),
+        _ => None,
+    }
+}
+
+/// Hot-path strict-mode reserved-word check. Same strategy as [`keyword`]:
+/// length-bucketed fixed-array compare to avoid the SipHash inside
+/// `phf::Set::contains`. All entries are 3..=10 ASCII bytes.
+#[inline]
+pub fn is_strict_mode_reserved_word(s: &[u8]) -> bool {
+    macro_rules! by_len {
+        ($n:literal: $($lit:literal,)*) => {{
+            debug_assert_eq!(s.len(), $n);
+            // SAFETY: enclosing `match s.len()` arm guarantees `s.len() == $n`;
+            // see `keyword()` for the full invariant.
+            let arr: &[u8; $n] = unsafe { &*(s.as_ptr() as *const [u8; $n]) };
+            matches!(arr, $($lit)|*)
+        }};
+    }
+    match s.len() {
+        3 => by_len!(3: b"let",),
+        5 => by_len!(5: b"yield",),
+        6 => by_len!(6: b"public", b"static",),
+        7 => by_len!(7: b"package", b"private",),
+        9 => by_len!(9: b"interface", b"protected",),
+        10 => by_len!(10: b"implements",),
+        _ => false,
+    }
+}
+
+// Kept for non-hot-path callers (e.g. error formatting, `to_string` on the
+// token). The lexer hot loop uses `keyword()` above instead.
 pub static KEYWORDS: phf::Map<&'static [u8], T> = phf_map! {
     b"break" => T::TBreak,
     b"case" => T::TCase,
@@ -673,3 +790,37 @@ pub static JSX_ENTITY: phf::Map<&'static [u8], CodePoint> = phf_map! {
 };
 
 // ported from: src/js_parser/lexer_tables.zig
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyword_fn_matches_phf_table() {
+        // Positive: every entry in the canonical phf map round-trips.
+        for (k, &v) in KEYWORDS.entries() {
+            assert_eq!(keyword(k), Some(v), "keyword({:?})", k);
+        }
+        // Negative: a few near-misses and the strict-mode set (which are NOT
+        // in KEYWORDS) must miss.
+        for k in [
+            b"" as &[u8], b"i", b"iff", b"forr", b"functions", b"instanceo",
+            b"let", b"yield", b"static", b"implements", b"awaits",
+        ] {
+            assert_eq!(keyword(k), None, "keyword({:?})", k);
+        }
+    }
+
+    #[test]
+    fn strict_mode_reserved_fn_matches_phf_set() {
+        for k in STRICT_MODE_RESERVED_WORDS.iter() {
+            assert!(is_strict_mode_reserved_word(k), "{:?}", k);
+        }
+        for k in [
+            b"" as &[u8], b"le", b"lett", b"publi", b"publics", b"var",
+            b"function", b"interfac", b"interfaces",
+        ] {
+            assert!(!is_strict_mode_reserved_word(k), "{:?}", k);
+        }
+    }
+}

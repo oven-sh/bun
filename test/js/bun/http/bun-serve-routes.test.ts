@@ -717,3 +717,86 @@ it("route precedence for mix of method-specific routes and any routes", async ()
     "POST /test/ANY/POST",
   );
 });
+
+// Once a router node has enough direct children, uWS builds a hash index over
+// them so registration stays O(n). This exercises that index end-to-end:
+// building it, matching static + parameterised siblings through it, and
+// maintaining it across reload() (which removes handlers and culls nodes).
+describe("many sibling routes", () => {
+  const N = 256;
+
+  function buildRoutes(prefix: string) {
+    const routes: Record<string, (req: any) => Response> = {};
+    // top-level siblings
+    for (let i = 0; i < N; i++) {
+      const body = `${prefix}top-${i}`;
+      routes[`/r${i}`] = () => new Response(body);
+    }
+    // nested siblings under a shared parent
+    for (let i = 0; i < N; i++) {
+      const body = `${prefix}nested-${i}`;
+      routes[`/api/r${i}`] = () => new Response(body);
+    }
+    // parameterised + wildcard siblings sitting next to the static ones
+    routes["/api/:id"] = req => new Response(`${prefix}param-${req.params.id}`);
+    routes["/api/:id/sub"] = req => new Response(`${prefix}paramsub-${req.params.id}`);
+    routes["/api/*"] = () => new Response(`${prefix}wild`);
+    return routes;
+  }
+
+  async function check(server: Server, prefix: string) {
+    // spot-check across the range so we cover first/last/middle insertions
+    for (const i of [0, 1, 15, 16, 17, N >> 1, N - 2, N - 1]) {
+      expect(await fetch(new URL(`/r${i}`, server.url)).then(r => r.text())).toBe(`${prefix}top-${i}`);
+      expect(await fetch(new URL(`/api/r${i}`, server.url)).then(r => r.text())).toBe(`${prefix}nested-${i}`);
+    }
+    // parameter route must still win over nothing and lose to exact match
+    expect(await fetch(new URL(`/api/r0`, server.url)).then(r => r.text())).toBe(`${prefix}nested-0`);
+    expect(await fetch(new URL(`/api/xyz`, server.url)).then(r => r.text())).toBe(`${prefix}param-xyz`);
+    expect(await fetch(new URL(`/api/xyz/sub`, server.url)).then(r => r.text())).toBe(`${prefix}paramsub-xyz`);
+    expect(await fetch(new URL(`/api/xyz/deep/er`, server.url)).then(r => r.text())).toBe(`${prefix}wild`);
+    expect(await fetch(new URL(`/unmatched`, server.url)).then(r => r.text())).toBe("fallback");
+  }
+
+  it("matches static, param and wildcard routes alongside many siblings", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: buildRoutes("a-"),
+      fetch: () => new Response("fallback"),
+    });
+    await check(server, "a-");
+  });
+
+  it("survives reload() replacing every route", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: buildRoutes("a-"),
+      fetch: () => new Response("fallback"),
+    });
+    await check(server, "a-");
+
+    // Replace every handler: exercises findHandler()/remove()/cullNode() on
+    // a node whose child index is populated, then re-registers through it.
+    server.reload({
+      routes: buildRoutes("b-"),
+      fetch: () => new Response("fallback"),
+    });
+    await check(server, "b-");
+
+    // Drop the nested siblings entirely so /api/:id must match what used to
+    // be exact hits, after their nodes were culled from the index.
+    const sparse: Record<string, (req: any) => Response> = {};
+    for (let i = 0; i < N; i++) {
+      const body = `c-top-${i}`;
+      sparse[`/r${i}`] = () => new Response(body);
+    }
+    sparse["/api/:id"] = req => new Response(`c-param-${req.params.id}`);
+    server.reload({ routes: sparse, fetch: () => new Response("fallback") });
+
+    expect(await fetch(new URL(`/r0`, server.url)).then(r => r.text())).toBe("c-top-0");
+    expect(await fetch(new URL(`/r${N - 1}`, server.url)).then(r => r.text())).toBe(`c-top-${N - 1}`);
+    expect(await fetch(new URL(`/api/r0`, server.url)).then(r => r.text())).toBe("c-param-r0");
+    expect(await fetch(new URL(`/api/r${N - 1}`, server.url)).then(r => r.text())).toBe(`c-param-r${N - 1}`);
+    expect(await fetch(new URL(`/unmatched`, server.url)).then(r => r.text())).toBe("fallback");
+  });
+});

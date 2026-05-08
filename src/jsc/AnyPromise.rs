@@ -150,14 +150,14 @@ impl AnyPromise {
             f: Option<F>,
         }
 
-        extern "C" fn call<F>(wrap_: *mut c_void, global: *mut JSGlobalObject) -> JSValue
+        extern "C" fn call<F>(wrap_: *mut c_void, global: &JSGlobalObject) -> JSValue
         where
             F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
         {
             // SAFETY: `wrap_` is `&mut Wrapper<F>` passed below; `global` is a
-            // live JSGlobalObject* supplied by JSC for the duration of the call.
+            // live JSGlobalObject* supplied by JSC for the duration of the
+            // call (`&T` ≡ non-null `*const T` at the C ABI).
             let wrap_ = unsafe { &mut *wrap_.cast::<Wrapper<F>>() };
-            let global = unsafe { &*global };
             let f = wrap_.f.take().expect("AnyPromise::wrap called twice");
             // Zig: `jsc.toJSHostCall(global, @src(), Fn, wrap_.args)` — installs the
             // host-call exception/return-value validation around the invocation.
@@ -215,7 +215,7 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
         promise: JSValue,
         ctx: *mut c_void,
-        f: extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue,
+        f: extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue,
     );
 }
 

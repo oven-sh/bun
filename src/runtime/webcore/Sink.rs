@@ -1394,15 +1394,13 @@ macro_rules! js_sink {
             }
 
             // Symbol owned by generated_jssink.rs (`${abi_name}__close`).
-            pub extern "C" fn close(global: *mut JSGlobalObject, sink_ptr: *mut c_void) -> JSValue {
+            pub extern "C" fn close(global: &JSGlobalObject, sink_ptr: *mut c_void) -> JSValue {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
                 let Some(sink_ptr) = ::core::ptr::NonNull::new(sink_ptr) else {
                     return JSValue::UNDEFINED;
                 };
                 // SAFETY: sink_ptr is a ThisSink* from C++.
                 let this = unsafe { &mut *sink_ptr.as_ptr().cast::<ThisSink>() };
-                // SAFETY: global is a valid JSGlobalObject*.
-                let global = unsafe { &*global };
 
                 if let Some(err) = this.sink.get_pending_error() {
                     // VM::throw_error returns JsError (no payload); set pending
@@ -1504,12 +1502,11 @@ macro_rules! js_sink {
             // Symbol owned by generated_jssink.rs (`${abi_name}__endWithSink`).
             // TODO(port): callconv(jsc.conv) — #[bun_jsc::host_call] emits the right ABI.
             #[bun_jsc::host_call]
-            pub extern fn end_with_sink(ptr: *mut c_void, global: *mut JSGlobalObject) -> JSValue {
+            pub extern fn end_with_sink(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue {
                 ::bun_jsc::mark_binding(::core::panic::Location::caller());
 
-                // SAFETY: ptr is a ThisSink*, global is valid.
+                // SAFETY: ptr is a ThisSink* from C++.
                 let this = unsafe { &mut *ptr.cast::<ThisSink>() };
-                let global = unsafe { &*global };
 
                 if let Some(err) = this.sink.get_pending_error() {
                     return match global.throw_value(err) {

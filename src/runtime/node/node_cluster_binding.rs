@@ -309,20 +309,16 @@ pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
     Ok(JSValue::UNDEFINED)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__refChannelUnlessOverridden(global: *mut JSGlobalObject) {
-    // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
-    let global = unsafe { &*global };
+// HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
+pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.ref_(vm_ctx());
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__unrefChannelUnlessOverridden(global: *mut JSGlobalObject) {
-    // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
-    let global = unsafe { &*global };
+// HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
+pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.unref(vm_ctx());
@@ -339,10 +335,8 @@ pub fn channel_ignore_one_disconnect_event_listener(
     Ok(JSValue::FALSE)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__shouldIgnoreOneDisconnectEventListener(global: *mut JSGlobalObject) -> bool {
-    // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
-    let global = unsafe { &*global };
+// HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)
+pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }

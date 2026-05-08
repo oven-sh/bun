@@ -1339,15 +1339,11 @@ pub extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn BakeProdResolve(
-    global: *const JSGlobalObject,
+    global: &JSGlobalObject,
     a_str: BunString,
     specifier_str: BunString,
 ) -> BunString {
     // PERF(port): was stack-fallback alloc (2x PathBuffer)
-    // SAFETY: `global` is a non-null *const JSGlobalObject passed from C++ FFI;
-    // the JSGlobalObject outlives this call.
-    let global = unsafe { &*global };
-
     let specifier = specifier_str.to_utf8();
 
     if let Some(alias) = bun_resolve_builtins::Alias::get(

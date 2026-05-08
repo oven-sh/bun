@@ -3662,13 +3662,11 @@ macro_rules! export_path_host_fn {
         const _: () = {
             #[unsafe(export_name = $export)]
             unsafe extern "C" fn __wrapped(
-                global: *mut JSGlobalObject,
+                global: &JSGlobalObject,
                 is_windows: bool,
                 args_ptr: *const JSValue,
                 args_len: u16,
             ) -> JSValue {
-                // SAFETY: JSC guarantees `global` is live for the host call.
-                let global = unsafe { &*global };
                 crate::jsc::host_fn::to_js_host_call(
                     global,
                     || $target(global, is_windows, args_ptr, args_len),

@@ -14,7 +14,7 @@
 //! proc-macro: the proc-macro emits the `#[no_mangle]` shim *inline* next to
 //! every impl, scattering ~425 unmangled symbols across 80+ files. Centralising
 //! them here means (a) one place to audit the C-ABI surface, (b) the source
-//! files contain zero `unsafe { &*global }` boilerplate, (c) win-x64
+//! files contain zero raw-pointer-deref boilerplate, (c) win-x64
 //! `extern "sysv64"` cfg-splitting is done once instead of duplicated per
 //! macro expansion.
 #![allow(

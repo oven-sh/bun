@@ -539,9 +539,7 @@ use super::*;
 
 #[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
 #[bun_jsc::host_call]
-pub fn js_function_request_or_response_has_body_value(_global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
-    // SAFETY: JSC passes a live callframe (global is unused).
-    let callframe = unsafe { &*callframe };
+pub fn js_function_request_or_response_has_body_value(_global: *mut JSGlobalObject, callframe: &CallFrame) -> JSValue {
     let arguments = callframe.arguments_old::<1>();
     let this_value = arguments.ptr[0];
     if this_value.is_empty_or_undefined_or_null() {

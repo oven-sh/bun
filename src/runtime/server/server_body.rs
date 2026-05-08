@@ -3403,13 +3403,11 @@ pub fn server_set_max_http_header_size_(
 #[bun_jsc::host_call]
 #[unsafe(export_name = "Server__setAppFlags")]
 fn server_set_app_flags_shim(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
 ) -> JSValue {
-    // SAFETY: `global` is a live JSC global supplied by the C++ caller.
-    let global = unsafe { &*global };
     host_fn::to_js_host_fn_result(
         global,
         server_set_app_flags_(global, server, require_host_header, use_strict_method_validation),
@@ -3419,24 +3417,20 @@ fn server_set_app_flags_shim(
 #[bun_jsc::host_call]
 #[unsafe(export_name = "Server__setOnClientError")]
 fn server_set_on_client_error_shim(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     server: JSValue,
     callback: JSValue,
 ) -> JSValue {
-    // SAFETY: `global` is a live JSC global supplied by the C++ caller.
-    let global = unsafe { &*global };
     host_fn::to_js_host_fn_result(global, server_set_on_client_error_(global, server, callback))
 }
 
 #[bun_jsc::host_call]
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
 fn server_set_max_http_header_size_shim(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     server: JSValue,
     max_header_size: u64,
 ) -> JSValue {
-    // SAFETY: `global` is a live JSC global supplied by the C++ caller.
-    let global = unsafe { &*global };
     host_fn::to_js_host_fn_result(
         global,
         server_set_max_http_header_size_(global, server, max_header_size),

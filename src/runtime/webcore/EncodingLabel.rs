@@ -66,10 +66,16 @@ impl EncodingLabel {
 
     pub fn which(input_: &[u8]) -> Option<EncodingLabel> {
         let input = strings::trim(input_, b" \t\r\n\x0C");
-        // TODO(port): phf custom hasher — Zig used ComptimeStringMap.getAnyCase (ASCII case-insensitive).
-        // All keys in STRING_MAP are already lowercase; Phase B must lowercase `input` before lookup
-        // (or use a case-insensitive phf hasher) to preserve behavior.
-        STRING_MAP.get(input).copied()
+        // All keys in STRING_MAP are lowercase ASCII; lookup is case-insensitive per WHATWG.
+        // Longest key is 19 bytes, so a small stack buffer covers all valid labels.
+        let mut buf = [0u8; 32];
+        if input.len() > buf.len() {
+            return None;
+        }
+        for (i, &b) in input.iter().enumerate() {
+            buf[i] = b.to_ascii_lowercase();
+        }
+        STRING_MAP.get(&buf[..input.len()]).copied()
     }
 }
 
@@ -243,7 +249,6 @@ static STRING_MAP: phf::Map<&'static [u8], EncodingLabel> = phf::phf_map! {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/EncodingLabel.zig (239 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      which() needs ASCII-lowercase before phf lookup (Zig used getAnyCase); phf_map! may need &[u8] key coercion in Phase B
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

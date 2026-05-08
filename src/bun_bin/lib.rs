@@ -107,10 +107,12 @@ pub extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
     // TODO(phase-c): `ParentDeathWatchdog::install()` lives in `bun_spawn`;
     // wire once that crate is in the dep graph.
 
-    // 6. §Dispatch — high-tier hot-path (Task/FilePoll/Timer) and cold-path
-    //    (RuntimeHooks/LoaderHooks) bodies are link-time `extern "Rust"`
-    //    `#[no_mangle]` symbols in `bun_runtime::{dispatch,jsc_hooks}`; no
-    //    runtime registration needed.
+    // 6. Push high-tier allocator vtable addresses into the
+    //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
+    //    checks can identify `AllocationScope`/`LinuxMemFdAllocator`/
+    //    `MimallocArena` instances (Zig: inline `isInstance` chain in
+    //    `safety/alloc.zig:hasPtr`). Runs once; reads are lock-free Relaxed.
+    bun_runtime::allocators::register_safety_vtables();
 
     // 7. CLI dispatch.
     bun_runtime::cli::Cli::start();

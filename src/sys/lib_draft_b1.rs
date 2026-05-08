@@ -63,41 +63,24 @@ macro_rules! log {
 pub use log as syslog;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Debug-hook registration (CYCLEBREAK.md §Debug-hook). Low-tier `sys` cannot
-// depend on `bun_crash_handler` (T3) / `bun_resolver::fs` (T5). High tier
-// (`bun_runtime::init()`) writes the fn-ptr at startup; null = no-op.
-// ──────────────────────────────────────────────────────------────────────────
-
-/// Set by `bun_runtime::init()` to `bun_crash_handler::dump_current_stack_trace`.
-/// Signature: `unsafe fn(return_address: Option<usize>, frame_count: u32, stop_at_jsc_llint: bool)`.
-pub static DUMP_STACK: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+// Debug helpers — forward straight to bun_core (storage moved down to T0).
+// ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub fn dump_stack_trace(return_address: Option<usize>, frame_count: u32, stop_at_jsc_llint: bool) {
-    let hook = DUMP_STACK.load(core::sync::atomic::Ordering::Relaxed);
-    if !hook.is_null() {
-        // SAFETY: registered by bun_runtime::init() with the signature documented on DUMP_STACK.
-        let f: unsafe fn(Option<usize>, u32, bool) = unsafe { core::mem::transmute(hook) };
-        unsafe { f(return_address, frame_count, stop_at_jsc_llint) };
-    }
+    bun_core::dump_current_stack_trace(
+        return_address,
+        bun_core::DumpStackTraceOptions {
+            frame_count: frame_count as usize,
+            stop_at_jsc_llint,
+            ..Default::default()
+        },
+    );
 }
-
-/// Set by `bun_runtime::init()` to `bun_resolver::fs::FileSystem::instance().top_level_dir`.
-/// Signature: `fn() -> &'static [u8]`.
-pub static TOP_LEVEL_DIR_HOOK: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 #[inline]
 pub fn top_level_dir() -> &'static [u8] {
-    let hook = TOP_LEVEL_DIR_HOOK.load(core::sync::atomic::Ordering::Relaxed);
-    if hook.is_null() {
-        b"."
-    } else {
-        // SAFETY: registered by bun_runtime::init() with the signature documented on TOP_LEVEL_DIR_HOOK.
-        let f: fn() -> &'static [u8] = unsafe { core::mem::transmute(hook) };
-        f()
-    }
+    bun_core::top_level_dir()
 }
 
 // `syscall` namespace: on Linux this is direct syscalls, on macOS/FreeBSD it's libc.
@@ -5418,7 +5401,6 @@ pub fn archive_file_sink(fd: Fd) -> libarchive_sys::ArchiveFileSink {
 /// any `bun_core::Output` write so `OUTPUT_SINK_VTABLE` is always live.
 pub fn install_hooks() {
     bun_core::output::install_output_sink(&OUTPUT_SINK_VTABLE);
-    // DUMP_STACK / TOP_LEVEL_DIR_HOOK are written by bun_runtime (higher tier).
 }
 
 

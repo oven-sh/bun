@@ -92,12 +92,6 @@ impl Request {
             Some(unsafe { core::slice::from_raw_parts(p, n) })
         }
     }
-    pub fn date_for_header(&mut self, name: &[u8]) -> Option<u64> {
-        // Cycle-break: parsing an HTTP date requires `bun_str::String` +
-        // `jsc::VirtualMachine` (tier > 0). Low tier calls a link-time
-        // `extern "Rust"` defined in `bun_runtime::jsc_hooks`.
-        self.header(name).and_then(crate::request::parse_date_via_hook)
-    }
     pub fn query(&mut self, name: &[u8]) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local

@@ -49,14 +49,6 @@ pub static CURRENT_TIME: CurrentTime = CurrentTime {
     date_now_offset: AtomicU64::new(0f64.to_bits()),
 };
 
-/// Installed into [`bun_core::set_timespec_now_hook`] so that
-/// `Timespec::now(.allow_mocked_time)` sees the fake clock while
-/// `useFakeTimers()` is active. Returns `None` to fall through to the real
-/// monotonic clock when fake timers are not enabled.
-pub fn mocked_timespec_now() -> Option<Timespec> {
-    CURRENT_TIME.get_timespec_now()
-}
-
 impl CurrentTime {
     pub fn get_timespec_now(&self) -> Option<Timespec> {
         let value = *self.offset_raw.read().unwrap();
@@ -73,6 +65,9 @@ impl CurrentTime {
         {
             *self.offset_raw.write().unwrap() = *offset;
         }
+        // Mirror into T0 storage so `Timespec::now(.allow_mocked_time)` sees
+        // the fake clock (spec bun.zig:3223 — `getRoughTickCount`).
+        bun_core::mock_time::set(offset.ns() as i64);
         let timespec_ms: f64 = offset.ms() as f64;
         let mut date_now_offset = f64::from_bits(self.date_now_offset.load(Ordering::Relaxed));
         if let Some(js) = js {
@@ -94,6 +89,7 @@ impl CurrentTime {
         {
             *self.offset_raw.write().unwrap() = MIN_TIMESPEC;
         }
+        bun_core::mock_time::clear();
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
         unsafe { JSMock__setOverridenDateNow(global, -1.0) };
         // SAFETY: `vm` is the live per-thread VirtualMachine (never null).

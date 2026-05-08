@@ -700,12 +700,11 @@ impl EventLoop {
     /// drained Vec as the next-tick buffer.
     ///
     /// PORT NOTE: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
-    /// the per-task body dispatches through [`RUN_IMMEDIATE_HOOK`] (installed
-    /// by `bun_runtime`). When no hook is installed (unit tests) the swap still
-    /// happens — this is load-bearing for `auto_tick`'s `has_pending_immediate`
-    /// read, which must observe the post-swap `immediate_tasks` (next-tick
-    /// immediates), not the un-drained current batch (busy-spin hazard, spec
-    /// Timer.zig:251-256).
+    /// the per-task body dispatches through `__bun_run_immediate_task` (link-
+    /// time, definer in `bun_runtime`). The swap always happens — this is
+    /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
+    /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
+    /// un-drained current batch (busy-spin hazard, spec Timer.zig:251-256).
     pub fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
         let mut to_run_now = core::mem::take(&mut self.immediate_tasks);
 

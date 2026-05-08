@@ -2385,8 +2385,8 @@ pub fn init_with_runtime_once(
                 // on posix `Fd(0)` is stdin, not the invalid marker.
                 root_package_json_file: bun_sys::File::from_fd(Fd::invalid()),
                 // MOVE_DOWN(b0): AnyEventLoop is now bun_event_loop. The Js variant wraps an
-                // erased *mut () set by tier-6; bun_event_loop::AnyEventLoop::js_current() reads
-                // the JS_EVENT_LOOP_HOOK registered by bun_runtime::init().
+                // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
+                // event loop via `bun_aio::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
                 event_loop: AnyEventLoop::js_current(),
                 original_package_json_path: ZBox::from_vec_with_nul(original_package_json_path),
                 subcommand: Subcommand::Install,

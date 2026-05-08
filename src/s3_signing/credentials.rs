@@ -134,41 +134,91 @@ impl Default for MultiPartUploadOptions {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// CYCLEBREAK(b0) hooks — break upward dep on bun_jsc::VirtualMachine.
-// bun_runtime::init() registers these; they are no-ops while null.
+// AWSSignatureCache — storage moved DOWN from `bun_jsc::rare_data`.
+//
+// Zig (`credentials.zig:485`) reached `jsc.VirtualMachine.getMainThreadVM()
+// orelse get()).rareData().awsCache` inline. The "per-VM" placement was
+// nominal: the lookup always picked the *main-thread* VM, so the cache was
+// process-global in practice. Hosting it here as a `static` makes the
+// layering honest — `bun_s3_signing` reads its own data, no upward hook.
 // ──────────────────────────────────────────────────────────────────────────
 
-use core::ptr::null_mut;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use bun_collections::StringArrayHashMap;
+use parking_lot::Mutex;
 
-/// `unsafe fn(numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]>`
-// LAYERING: the per-VM `AWSSignatureCache` + `boringEngine` live in
-// `bun_jsc::rare_data` (which depends on this crate). Zig
-// (`credentials.zig:485`) reached `jsc.VirtualMachine.get().rareData()`
-// inline. The bodies are defined `#[no_mangle]` in `bun_jsc::rare_data` and
-// declared here as `extern "Rust"`; the linker resolves them.
-unsafe extern "Rust" {
-    fn __bun_s3_aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]>;
-    fn __bun_s3_aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]);
-    fn __bun_s3_boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE;
+/// Memoised SigV4 derived signing key, keyed by `(numeric_day,
+/// region+service+secret)`. PORTING.md §Concurrency: lock owns the data — Zig
+/// had a sidecar `bun.Mutex` next to `cache`/`date`; here the mutex wraps
+/// both.
+#[derive(Default)]
+pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
+
+#[derive(Default)]
+struct AWSSignatureCacheInner {
+    cache: StringArrayHashMap<[u8; DIGESTED_HMAC_256_LEN]>,
+    date: u64,
 }
+
+impl AWSSignatureCache {
+    /// Returns the cached 32-byte derived signing key for `key` if it was set
+    /// for `numeric_day`.
+    ///
+    /// PORT NOTE: Zig returned `cache.getKey(key)` (a borrow into map storage)
+    /// past `lock.unlock()` — racy against a concurrent `set` rehashing the
+    /// map. Return the 32-byte *value* by copy instead; the only consumer
+    /// (`sign` below) wants the digest, and a fixed-size copy avoids handing
+    /// out a guard.
+    pub fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
+        let inner = self.0.lock();
+        if inner.date == 0 || inner.date != numeric_day {
+            return None;
+        }
+        inner.cache.get(key).copied()
+    }
+
+    pub fn set(&self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
+        let mut inner = self.0.lock();
+        if inner.date == 0 {
+            inner.cache = StringArrayHashMap::new();
+        } else if inner.date != numeric_day {
+            // day changed so we clean the old cache
+            // PORT NOTE: Zig freed each key explicitly; StringArrayHashMap with
+            // owned Box<[u8]> keys drops them on clear.
+            inner.cache.clear();
+        }
+        inner.date = numeric_day;
+        bun_core::handle_oom(inner.cache.put(key, value));
+    }
+}
+
+// Drop: `StringArrayHashMap` drops its owned `Box<[u8]>` keys automatically;
+// Zig's `deinit { date = 0; clean(); cache.deinit() }` is fully covered.
+
+/// Process-global instance. Zig hung this off `RareData` but always reached it
+/// via `getMainThreadVM()`, so it was a singleton in practice.
+/// `StringArrayHashMap::new` is not `const`, so lazy-init the inner on first
+/// use; the outer `Mutex` itself is const-constructible.
+static AWS_SIGNATURE_CACHE: std::sync::LazyLock<AWSSignatureCache> =
+    std::sync::LazyLock::new(AWSSignatureCache::default);
 
 #[inline]
 fn aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
-    // SAFETY: link-time extern; `key` borrowed for the call.
-    unsafe { __bun_s3_aws_cache_get(day, key) }
+    AWS_SIGNATURE_CACHE.get(day, key)
 }
 
 #[inline]
 fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
-    // SAFETY: link-time extern; `key` borrowed for the call.
-    unsafe { __bun_s3_aws_cache_set(day, key, digest) }
+    AWS_SIGNATURE_CACHE.set(day, key, digest)
 }
 
+/// BoringSSL `ENGINE*` for `EVP_Digest`. Zig lazily `ENGINE_new()`'d one per
+/// VM via `RareData::boringEngine`; BoringSSL's `EVP_Digest` ignores the
+/// `impl` argument entirely (it's an OpenSSL-compat shim — see
+/// `vendor/boringssl/include/openssl/digest.h`: "BoringSSL does not support
+/// engines"). Passing null is bit-identical, so the upward hook is dropped.
 #[inline]
 fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
-    // SAFETY: link-time extern.
-    unsafe { __bun_s3_boring_engine() }
+    core::ptr::null_mut()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -537,8 +587,8 @@ impl S3Credentials {
                     BStr::new(&self.secret_access_key)
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
-                // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get*().rare_data().aws_cache().
-                // Runtime registers AWS_CACHE_{GET,SET}_HOOK; null hook = cache miss.
+                // PORT NOTE: was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
+                // Storage moved DOWN — `AWS_SIGNATURE_CACHE` is a process static here.
                 if let Some(cached) = aws_cache_get(date_result.numeric_day, key) {
                     break 'brk_sign cached;
                 }
@@ -702,7 +752,8 @@ impl S3Credentials {
                     .map_err(|_| SignError::NoSpaceLeft)?;
                 };
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
-                // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get().rare_data().boring_engine().
+                // PORT NOTE: was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
+                // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
                 bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
 
                 let sign_value = buf_print!(
@@ -810,7 +861,8 @@ impl S3Credentials {
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
-                // CYCLEBREAK(b0): was bun_jsc::VirtualMachine::get().rare_data().boring_engine().
+                // PORT NOTE: was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
+                // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
                 bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
 
                 let sign_value = buf_print!(

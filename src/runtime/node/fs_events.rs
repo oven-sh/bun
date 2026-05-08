@@ -973,6 +973,11 @@ pub fn watch(
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
         if FSEVENTS_DEFAULT_LOOP.read().is_none() {
             FSEVENTS_DEFAULT_LOOP.write(NonNull::new(FSEventsLoop::init()?));
+            // First loop ever created → arrange `close_and_wait` to run from
+            // `Bun__onExit`. Spec `Global.zig:220` runs it BEFORE
+            // `runExitCallbacks()`, so push to the pre-exit list rather than
+            // the generic atexit list (storage lives in bun_core; forward dep).
+            bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
         }
         Ok(FSEventsWatcher::init(
             FSEVENTS_DEFAULT_LOOP.read().unwrap().as_ptr(),
@@ -984,6 +989,9 @@ pub fn watch(
         ))
     }
 }
+
+/// `extern "C"` thunk so this fits `bun_core::Global::ExitFn`.
+extern "C" fn close_and_wait_on_exit() { close_and_wait() }
 
 pub fn close_and_wait() {
     #[cfg(not(target_os = "macos"))]

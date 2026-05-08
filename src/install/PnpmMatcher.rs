@@ -1,47 +1,16 @@
 //! https://github.com/pnpm/pnpm/blob/3abd3946237aa6ba7831552310ec371ddd3616c2/config/matcher/src/index.ts
 
-use core::ptr::NonNull;
-
 use bun_alloc::{AllocError, Arena};
 use bun_js_parser::ast;
 use bun_logger as logger;
 use bun_string::{escape_reg_exp, strings, String as BunString};
 
 // LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
-// Zig called it inline. The bodies are defined `#[no_mangle]` in
-// `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
-// resolved at link time. Stored as raw NonNull<()> (NOT Box<ZST> — Box over a
-// zero-sized opaque is a dangling sentinel that would leak the real JSC
-// allocation and skip its destructor).
-unsafe extern "Rust" {
-    /// Compile a pattern (flags are always `None` at every install call site).
-    /// Performs jsc::initialize(false) lazily on first call.
-    fn __bun_regex_compile(pattern: BunString) -> Option<NonNull<()>>;
-    fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
-    fn __bun_regex_drop(regex: NonNull<()>);
-}
-
-/// Erased owned JSC regex; drops through the link-time externs.
-pub struct RegularExpression(NonNull<()>);
-impl RegularExpression {
-    #[inline]
-    pub fn matches(&self, input: &BunString) -> bool {
-        // SAFETY: self.0 was produced by `__bun_regex_compile`.
-        unsafe { __bun_regex_matches(self.0, input) }
-    }
-}
-impl Drop for RegularExpression {
-    fn drop(&mut self) {
-        // SAFETY: self.0 was produced by `__bun_regex_compile`; drop runs JSC destructor + free.
-        unsafe { __bun_regex_drop(self.0) }
-    }
-}
-
-#[inline]
-fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
-    // SAFETY: link-time extern; pattern ownership transfers.
-    unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
-}
+// The link-time extern + erased wrapper are declared **once** in
+// `bun_install_types::NodeLinker` (lower tier on the install→jsc cycle); we
+// re-import rather than re-declaring so the workspace has exactly one
+// `__bun_regex_*` declarer.
+pub use bun_install_types::NodeLinker::{compile_regex, RegularExpression};
 
 pub struct PnpmMatcher {
     pub matchers: Box<[Matcher]>,

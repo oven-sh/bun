@@ -238,12 +238,10 @@ unsafe fn init_runtime_state(
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
-    // Wire `Timespec::now(.allow_mocked_time)` to the fake-timer clock so
-    // timers scheduled under `jest.useFakeTimers()` use the mocked epoch
+    // `Timespec::now(.allow_mocked_time)` reads `bun_core::mock_time` directly;
+    // `FakeTimers::CurrentTime::{set,clear}` write that storage so timers
+    // scheduled under `jest.useFakeTimers()` use the mocked epoch
     // (spec bun.zig:3223 — `getRoughTickCount` consults `FakeTimers.current_time`).
-    bun_core::set_timespec_now_hook(Some(
-        crate::test_runner::timers::fake_timers::mocked_timespec_now,
-    ));
 
     // ── vm.transpiler — spec VirtualMachine.zig:1241-1246:
     //   `Transpiler.init(allocator, log, configureTransformOptionsForBunVM(opts.args), opts.env_loader)`
@@ -760,7 +758,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // Spec event_loop.zig:368-376. The swap + drain loop is now un-gated in
-    // `bun_jsc::event_loop` (per-task body dispatched via `RUN_IMMEDIATE_HOOK`),
+    // `bun_jsc::event_loop` (per-task body dispatched via `__bun_run_immediate_task`),
     // so `immediate_tasks` after this call reflects next-tick immediates and
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
@@ -4873,7 +4871,7 @@ pub static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
 
 // PORT NOTE: the event-loop per-task bodies (`__bun_run_immediate_task` /
 // `__bun_run_wtf_timer`) live in [`crate::dispatch`] alongside the other
-// §Dispatch hot-path bodies (`__bun_run_tasks` / `__bun_run_file_poll`).
+// §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_file_poll`).
 
 /// `bun_aio::__bun_get_vm_ctx` body — recover the global event-loop context
 /// for the requested arm. Zig had no crate split here: callers reached
@@ -4897,22 +4895,22 @@ pub fn __bun_get_vm_ctx(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
     }
 }
 
-/// `bun_uws_sys::__bun_uws_parse_date` body — declared `extern "Rust"` in
-/// `bun_uws_sys::request`. Spec `Request.zig:62` `dateForHeader`: wrap the
-/// header bytes in a `bun.String`, call `String.parseDate(&s, vm.global)`,
-/// return `@intFromFloat` if finite and non-negative, else `null`.
-#[unsafe(no_mangle)]
-pub fn __bun_uws_parse_date(value: &[u8]) -> Option<u64> {
+/// Spec `Request.zig:62` `dateForHeader`: wrap the header bytes in a
+/// `bun.String`, call `String.parseDate(&s, vm.global)`, return
+/// `@intFromFloat` if finite and non-negative, else `null`. The Zig method
+/// lived on `uws.Request`; in Rust the call site moved UP to this crate (sole
+/// caller is `server::FileRoute::on`) so `bun_uws_sys` (T0) has no upward
+/// hook into `bun_jsc`.
+pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives
-    // the VM; `date_for_header` is only reachable from a `Bun.serve` request
+    // the VM; `parse_http_date` is only reachable from a `Bun.serve` request
     // callback (JS thread, VM live).
     let global = unsafe { &*(*vm).global };
     let mut string = bun_string::String::init(value);
     // PORT NOTE: Zig `dateForHeader` returns `bun.JSError!?u64` and lets the
-    // caller propagate the throw. The Rust `AnyRequest::date_for_header`
-    // returns plain `Option<u64>` (the only callers — FileRoute / static
-    // routes — treat a throw the same as "header absent / unparsable"), so
+    // caller propagate the throw. The only callers — FileRoute / static
+    // routes — treat a throw the same as "header absent / unparsable", so
     // swallow `JsError` here and surface `None`.
     let date_f64 = match bun_jsc::bun_string_jsc::parse_date(&mut string, global) {
         Ok(v) => v,
@@ -4929,13 +4927,6 @@ pub fn __bun_uws_parse_date(value: &[u8]) -> Option<u64> {
     }
 }
 
-/// `bun_core::__bun_fs_events_close_and_wait` body — declared `extern "Rust"`
-/// in `bun_core::Global`. Spec `Global.zig:220`:
-/// `bun.jsc.Node.FSEvents.closeAndWait()`.
-#[unsafe(no_mangle)]
-pub fn __bun_fs_events_close_and_wait() {
-    crate::node::fs_events::close_and_wait();
-}
 
 /// `bun_event_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for
 /// `AbstractVM::JsKind`'s `get_vm()`. Zig: `jsc.VirtualMachine.get()` inline.

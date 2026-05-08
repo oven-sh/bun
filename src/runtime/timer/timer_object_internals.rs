@@ -3,7 +3,7 @@
 //! B-2 un-gate: struct + `Flags` packed-u32 state machine are real;
 //! `run_immediate_task()` + helpers (`event_loop_timer`/`ref_`/`deref_`/
 //! `set_enable_keeping_event_loop_alive`/`run`) un-gated for the
-//! `RUN_IMMEDIATE_HOOK` dispatch path. `fire()` + `reschedule()`/
+//! `__bun_run_immediate_task` dispatch path. `fire()` + `reschedule()`/
 //! `should_reschedule_timer()`/`convert_to_interval()` un-gated for the
 //! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()` un-gated for
 //! the `TimeoutObject::init` / `ImmediateObject::init` constructors.
@@ -58,7 +58,7 @@ impl Default for TimerObjectInternals {
 pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `runImmediateTask` path — un-gated for `RUN_IMMEDIATE_HOOK` (dispatch.rs).
+// `runImmediateTask` path — un-gated for `__bun_run_immediate_task` (dispatch.rs).
 // ──────────────────────────────────────────────────────────────────────────
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.

@@ -1599,19 +1599,16 @@ impl RuntimeTranspilerCache {
     }
 }
 
+pub mod defines_table;
+
 // ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
 // B-3 UNIFIED: canonical `Define` / `DefineData` / `DotDefine` live here so the
 // parser (`P.define: &'a Define`) and the bundler (`BundleOptions.define:
 // Box<Define>`) share one nominal type. `bun_bundler::defines` re-exports these
-// and layers the table-backed `init` / json-parse on top via an extension
-// trait — those bodies need `defines_table` / `bun_interchange` which sit a
-// tier above js_parser. The fallback table lookup in `for_identifier` is
-// reached via the `PURE_GLOBAL_IDENTIFIER_LOOKUP` hook that bundler registers
-// once at startup (PORTING.md §Dispatch — cold path, one indirect call per
-// unbound-identifier visit; the Zig original inlined the static map).
+// and layers the json-parse / dotenv `init` on top via an extension trait. The
+// pure-global fallback table also lives at this tier (`defines_table`) so
+// `for_identifier` reads its own const — no cross-crate hook.
 pub mod defines {
-    use std::sync::OnceLock;
-
     use bun_collections::{StringArrayHashMap, StringHashMap};
     use bun_string::strings;
 
@@ -1625,14 +1622,6 @@ pub mod defines {
     pub type UserDefinesArray = StringArrayHashMap<DefineData>;
 
     pub type IdentifierDefine = DefineData;
-
-    /// Hook: `bun_bundler::defines_table::PURE_GLOBAL_IDENTIFIER_MAP` lookup.
-    /// Set once by the bundler's `Define::init`. `None` ⇒ no global fallback
-    /// (matches Zig when the table is compiled out).
-    // PERF(port): was direct comptime-map probe.
-    pub static PURE_GLOBAL_IDENTIFIER_LOOKUP: OnceLock<
-        fn(&[u8]) -> Option<&'static IdentifierDefine>,
-    > = OnceLock::new();
 
     #[derive(Clone)]
     pub struct DotDefine {
@@ -1867,8 +1856,10 @@ pub mod defines {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
-            // Table fallback via hook (registered by bun_bundler::defines).
-            PURE_GLOBAL_IDENTIFIER_LOOKUP.get().and_then(|f| f(name))
+            // Pure-global fallback — table lives at this tier (no hook).
+            crate::defines_table::PURE_GLOBAL_IDENTIFIER_MAP
+                .get(name)
+                .map(|v| v.value())
         }
 
         // Zig: `comptime Iterator: type, iter: Iterator` — type param dropped.
@@ -2280,9 +2271,8 @@ pub mod defines_full_draft {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
-            // TODO(port): pure_global_identifier_map lives in
-            // bun_bundler::defines_table — moves down with the rest of the
-            // table in a later pass (large comptime string map).
+            // Draft module — pure-global table is wired into the canonical
+            // `crate::defines::Define` (this draft type is unused).
             None
         }
 

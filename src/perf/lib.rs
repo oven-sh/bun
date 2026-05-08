@@ -1,3 +1,9 @@
+//! `bun.perf` — system-profiler tracing (Instruments os_signpost on macOS,
+//! ftrace on Linux). **This crate is the canonical entry point** for
+//! `PerfEvent`-keyed spans. A T0 subset lives at `bun_core::perf` for low-tier
+//! callers that cannot reach this crate; that subset is Linux-only (ftrace
+//! needs no high-tier deps) and reports disabled on macOS, so callers above T0
+//! should use `bun_perf::trace` to keep os_signpost coverage.
 #![warn(unreachable_pub)]
 #[allow(unused_imports)]
 use core::ffi::{c_char, c_int};

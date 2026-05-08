@@ -11,7 +11,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 // MOVE_DOWN(b0): was bun_crash_handler::StoredTrace — type moves to bun_core.
 use bun_core::StoredTrace;
@@ -39,22 +39,22 @@ use std::collections::HashMap;
 type ArrayHashMap<K, V> = HashMap<K, V>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Debug-hook (CYCLEBREAK §Debug-hook registration): set by
-// `bun_runtime::init()` → `crash_handler::dump_stack_trace`. Null = no-op.
+// Debug stack dump — calls straight into bun_core (T0 owns the std::backtrace
+// fallback). Crash-report symbolication lives in bun_crash_handler and is
+// invoked from there directly when needed.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// fn-ptr signature: `unsafe fn(trace: *const StoredTrace /* null = current */, ret_addr: usize)`
-pub static DUMP_STACK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-
 #[inline]
-fn dump_stack_hook(trace: *const StoredTrace, ret_addr: usize) {
-    let p = DUMP_STACK.load(Ordering::Relaxed);
-    if p.is_null() {
-        return;
+fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
+    match trace {
+        None => bun_core::dump_current_stack_trace(
+            if ret_addr == 0 { None } else { Some(ret_addr) },
+            bun_core::DumpStackTraceOptions::default(),
+        ),
+        Some(stored) => {
+            bun_core::dump_stack_trace(&stored.trace(), bun_core::DumpStackTraceOptions::default())
+        }
     }
-    // SAFETY: `bun_runtime::init()` stores a fn-ptr matching this signature.
-    let f: unsafe fn(*const StoredTrace, usize) = unsafe { core::mem::transmute(p) };
-    unsafe { f(trace, ret_addr) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -247,7 +247,7 @@ impl<T: RefCounted> RefCount<T> {
         );
         if DEBUG_STACK_TRACE {
             // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
-            dump_stack_hook(core::ptr::null(), return_address());
+            dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
         count.raw_count.set(count.raw_count.get() + 1);
@@ -281,7 +281,7 @@ impl<T: RefCounted> RefCount<T> {
         );
         if DEBUG_STACK_TRACE {
             // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
-            dump_stack_hook(core::ptr::null(), return_address());
+            dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
         count.raw_count.set(count.raw_count.get() - 1);
@@ -1413,7 +1413,7 @@ fn generic_dump(
     for (_, entry) in map.iter() {
         bun_core::pretty_error!("<b>RefPtr acquired at:<r>\n");
         // TODO(b0-genuine): was dump_stack_trace(trace, AllocationScope::TRACE_LIMITS)
-        dump_stack_hook(&raw const entry.acquired_at, 0);
+        dump_stack_hook(Some(&entry.acquired_at), 0);
         i += 1;
         if i >= 3 {
             bun_core::pretty_error!("  {} omitted ...\n", map.len() - i);

@@ -53,7 +53,6 @@ pub const EXIT_CODE: u8 = 128 + 1;
 // single-writer-at-startup discipline, but no `static mut` aliasing.
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static ORIGINAL_PPID: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
-static INSTALL_THREAD_ID: std::sync::OnceLock<std::thread::ThreadId> = std::sync::OnceLock::new();
 
 /// Whether no-orphans mode was enabled at startup. Read by the spawn path to
 /// decide whether to default `linux_pdeathsig` on children.
@@ -168,18 +167,10 @@ unsafe extern "C" {
     fn Bun__noOrphans_killTracked();
 }
 
-/// Whether the spawn-side `linux_pdeathsig` default should apply to a child
-/// being spawned *right now*. `PR_SET_PDEATHSIG` is thread-scoped: it fires
-/// when the *thread* that vforked the child exits, not when the parent
-/// process exits. A `Bun.spawn()` from a JS `Worker` vforks on that Worker's
-/// OS thread, so defaulting PDEATHSIG there would kill the child on
-/// `worker.terminate()` while Bun itself is still alive. Restricting the
-/// default to the main thread keeps "die with Bun" semantics; Workers can
-/// still opt in explicitly via the (Zig-level) `linux_pdeathsig` option.
-pub fn should_default_spawn_pdeathsig() -> bool {
-    ENABLED.load(Ordering::Relaxed)
-        && INSTALL_THREAD_ID.get().copied() == Some(std::thread::current().id())
-}
+// `should_default_spawn_pdeathsig` moved down to `bun_spawn_sys::pdeathsig::
+// should_default()` (lowest tier that reads it). The thread-scoping rationale
+// — `PR_SET_PDEATHSIG` fires on the *thread*'s exit, so defaulting it from a
+// JS Worker would kill children on `worker.terminate()` — is documented there.
 
 static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
@@ -212,11 +203,10 @@ pub fn enable() {
         if ENABLED.swap(true, Ordering::Relaxed) {
             return;
         }
-        let _ = INSTALL_THREAD_ID.set(std::thread::current().id());
-        // Let `bun_spawn_sys::spawn_process_posix` consult our thread-scoped
-        // policy when defaulting `linux_pdeathsig` — the -sys crate has no
-        // `bun_aio` dep, so it calls back through this hook.
-        bun_spawn_sys::pdeathsig::set_hook(should_default_spawn_pdeathsig);
+        // Let `bun_spawn_sys::spawn_process_posix` default `linux_pdeathsig`
+        // for children spawned from this thread. Storage lives in spawn_sys
+        // (lowest tier that reads it); we just flip the flag.
+        bun_spawn_sys::pdeathsig::set_default(true);
         // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
         // nested bun) inherits no-orphans mode without the parent having to thread
         // the flag through. No-op if we got here via the env var.

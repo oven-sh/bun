@@ -1,7 +1,8 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{c_char, c_int, c_void};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[allow(unused_imports)]
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 use const_format::{concatcp, formatcp};
 
@@ -15,23 +16,44 @@ use crate::{USE_MIMALLOC, debug_allocator_data}; // B-1 stubs (real consts ungat
 use crate::ZStr;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Debug-hook registration (CYCLEBREAK §Debug-hook)
-// Low tier defines the hook; bun_runtime::init() writes the fn-ptr.
+// Process-wide top-level directory (cwd at startup). Storage lives at T0 so
+// `bun_sys::File::read_from_user_input` reads it directly; the resolver's
+// `FileSystem::init` writes it once via `set_top_level_dir`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Set by `bun_crash_handler` at startup. No-op if null.
-pub static RESET_SEGV: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+// Stored behind a `RwLock<&'static [u8]>` rather than a split (AtomicPtr,
+// AtomicUsize) pair: `install::PackageManager` calls `fs.set_top_level_dir()`
+// during workspace discovery (potentially after worker threads exist), so a
+// reader could otherwise observe an OLD len with a NEW ptr (or vice-versa) and
+// build an out-of-bounds `from_raw_parts`. The read path is cold (display /
+// path-relative formatting) so one uncontended read-lock is cheaper than a UB
+// window; writes are rare and serial.
+static TOP_LEVEL_DIR: parking_lot::RwLock<&'static [u8]> = parking_lot::RwLock::new(b".");
 
-unsafe extern "Rust" {
-    /// `bun.jsc.Node.FSEvents.closeAndWait()` — flush the macOS FSEvents
-    /// CFRunLoop thread before process exit (spec `Global.zig:220`). Body is
-    /// `#[no_mangle]` in `bun_runtime::node::fs_events`; link-time resolved.
-    fn __bun_fs_events_close_and_wait();
-    /// `bun.crash_handler.dumpStackTrace` — symbolicating dumper. Body is
-    /// `#[no_mangle]` in `bun_crash_handler`; link-time resolved.
-    fn __bun_dump_stack_trace(trace: &StackTrace<'_>, limits: &DumpStackTraceOptions);
+/// Record the top-level directory (interned `'static` slice). Idempotent;
+/// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
+#[inline]
+pub fn set_top_level_dir(dir: &'static [u8]) {
+    *TOP_LEVEL_DIR.write() = dir;
 }
+
+/// Top-level directory recorded at startup (defaults to `"."`).
+#[inline]
+pub fn top_level_dir() -> &'static [u8] {
+    *TOP_LEVEL_DIR.read()
+}
+
+/// Set by `bun_crash_handler::init()` once it has installed its segfault
+/// handlers. `raise_ignoring_panic_handler` consults this to decide whether
+/// the crash signals need resetting to `SIG_DFL` before re-raising.
+pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+/// VEH handle returned by `AddVectoredExceptionHandler`, written by
+/// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
+/// removes it before re-raising so the signal goes to the OS default.
+#[cfg(windows)]
+pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<c_void> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE-IN: crash_handler primitives (CYCLEBREAK §→core, from ptr/safety/collections/sys)
@@ -119,17 +141,51 @@ impl Default for DumpStackTraceOptions {
 }
 pub type DumpOptions = DumpStackTraceOptions;
 
-/// Zig: `crash_handler.dumpStackTrace`. Forwards to the symbolicating dumper
-/// in `bun_crash_handler` via a link-time `extern "Rust"`.
+/// Zig: `crash_handler.dumpStackTrace`. T0 fallback prints raw return
+/// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
+/// and `std::backtrace` cannot resolve a stored address list). This is a
+/// deliberate debug-UX downgrade vs the Zig spec for the *stored*-trace path
+/// (ref_count / allocation_scope leak reports); the *current*-stack path below
+/// uses `std::backtrace` and stays symbolicated. Crash-report paths that need
+/// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
+/// directly — that crate sits above us so it owns the rich impl without a hook.
+///
+/// `limits.stop_at_jsc_llint` / `skip_stdlib` / `skip_*_patterns` are accepted
+/// for signature parity but **ignored** here (they require symbol names to
+/// match against). Only `frame_count` is honoured.
 pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     crate::output::flush();
-    // SAFETY: link-time extern; `trace`/`limits` borrowed for the call.
-    unsafe { __bun_dump_stack_trace(trace, &limits) }
+    let n = trace.index.min(trace.instruction_addresses.len()).min(limits.frame_count);
+    for &addr in &trace.instruction_addresses[..n] {
+        if addr == 0 { break; }
+        eprintln!("    at 0x{addr:x}");
+    }
 }
 
+/// Capture and dump the current call stack. Uses `std::backtrace` so T0
+/// callers (ThreadLock-panic, FD-debug) still get symbolicated frames without
+/// reaching up to `bun_crash_handler`. `limits` is accepted for signature
+/// parity with `bun_crash_handler::dump_current_stack_trace` but **ignored**
+/// (see body); the rich llvm-symbolizer / frame-filtered path lives in
+/// `bun_crash_handler` for crash reports specifically.
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
-    let stored = StoredTrace::capture(first_address);
-    dump_stack_trace(&stored.trace(), limits);
+    // `std::backtrace` cannot seed capture from a return address, so the Zig
+    // behaviour of skipping frames above `first_address` (e.g. ref_count
+    // passing `return_address()` so the dump starts at the user's ref/deref
+    // site) is not reproduced here — the dump helper + a couple of internal
+    // frames appear as leading noise. Debug-only; the parameter is kept so the
+    // signature matches `bun_crash_handler::dump_current_stack_trace` (which
+    // *does* honour it via `StoredTrace::capture`).
+    let _ = first_address;
+    // `frame_count` truncation is dropped to avoid the intermediate
+    // `format!` heap allocation on a path that may run during panic/OOM
+    // (`force_capture` already allocates internally, so this only removes the
+    // *extra* alloc — debug-only output, the few extra trailing frames are
+    // acceptable noise).
+    let _ = limits;
+    crate::output::flush();
+    let bt = std::backtrace::Backtrace::force_capture();
+    eprintln!("{bt}");
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────
@@ -490,6 +546,20 @@ pub fn add_exit_callback(function: ExitFn) {
     Bun__atexit(function);
 }
 
+/// Callbacks `Bun__onExit` runs BEFORE `run_exit_callbacks()`. Spec
+/// `Global.zig:220` hard-codes `bun.jsc.Node.FSEvents.closeAndWait()` ahead of
+/// `runExitCallbacks()`; that crate sits above us, so it pushes its callback
+/// here at first-loop creation (data moved down — same `Vec<ExitFn>` shape as
+/// `ON_EXIT_CALLBACKS`, no fn-ptr type-erase).
+static PRE_EXIT_CALLBACKS: parking_lot::Mutex<Vec<ExitFn>> = parking_lot::Mutex::new(Vec::new());
+
+pub fn add_pre_exit_callback(function: ExitFn) {
+    let mut cbs = PRE_EXIT_CALLBACKS.lock();
+    if !cbs.iter().any(|f| *f as usize == function as usize) {
+        cbs.push(function);
+    }
+}
+
 pub fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
@@ -578,11 +648,34 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     Output::flush();
     Output::source::stdio::restore();
 
-    // clear segfault handler — via debug-hook (CYCLEBREAK pattern 3).
-    // SAFETY: hook is either null (no-op) or a valid `fn()` written by crash_handler init.
-    let hook = RESET_SEGV.load(Ordering::Relaxed);
-    if !hook.is_null() {
-        unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };
+    // Clear the crash handler's segfault hooks so the re-raised signal goes to
+    // SIG_DFL instead of recursing into the panic handler. Storage moved down
+    // from `bun_crash_handler` — it sets `CRASH_HANDLER_INSTALLED` on init and
+    // we do the libc reset ourselves (no fn-ptr hook). Mirrors
+    // `crash_handler.zig::resetSegfaultHandler`: skip when ASAN owns the
+    // signals (we never installed over them); on Windows remove the VEH.
+    #[cfg(unix)]
+    if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
+        // SAFETY: zeroed sigaction with SIG_DFL is a valid disposition.
+        unsafe {
+            let mut act: libc::sigaction = core::mem::zeroed();
+            act.sa_sigaction = libc::SIG_DFL;
+            libc::sigemptyset(&raw mut act.sa_mask);
+            for &s in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
+                let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
+            }
+        }
+    }
+    #[cfg(windows)]
+    if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
+        let handle = WINDOWS_SEGFAULT_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
+        if !handle.is_null() {
+            unsafe extern "system" {
+                fn RemoveVectoredExceptionHandler(handle: *mut c_void) -> u32;
+            }
+            // SAFETY: `handle` came from `AddVectoredExceptionHandler`.
+            let _ = unsafe { RemoveVectoredExceptionHandler(handle) };
+        }
     }
 
     // clear signal handler
@@ -660,11 +753,14 @@ pub static Bun__userAgent: SyncCStr =
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {
-    // `bun.jsc.Node.FSEvents.closeAndWait()` — link-time `extern "Rust"`
-    // defined in `bun_runtime::node::fs_events` (CYCLEBREAK).
-    // SAFETY: link-time extern; no preconditions.
-    unsafe { __bun_fs_events_close_and_wait() };
-
+    // `bun.jsc.Node.FSEvents.closeAndWait()` (spec `Global.zig:220`) — runs
+    // BEFORE the generic exit-callback list, matching Zig ordering. fs_events
+    // pushes into `PRE_EXIT_CALLBACKS` on first loop create.
+    let pre: Vec<ExitFn> = core::mem::take(&mut *PRE_EXIT_CALLBACKS.lock());
+    for callback in &pre {
+        // SAFETY: callbacks are `unsafe extern "C" fn()`; called once at exit.
+        unsafe { callback() };
+    }
     run_exit_callbacks();
     Output::flush();
     core::hint::black_box(Bun__atexit as unsafe extern "C" fn(ExitFn));

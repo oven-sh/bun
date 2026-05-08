@@ -146,6 +146,13 @@ inherits = "release"
 lto = "thin"
 codegen-units = 16
 
+# Release with debuginfo retained for `perf record` / flamegraphs. Same opt
+# level as release; binary is large but profilable.
+[profile.release-profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
+
 [workspace.lints.clippy]
 # Prefer `.cast::<T>()` / `.cast_const()` / `.cast_mut()` / `ptr::from_ref` /
 # `ptr::from_mut` over `as *const T` / `as *mut T`. The method forms cannot

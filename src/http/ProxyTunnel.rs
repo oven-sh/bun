@@ -457,12 +457,17 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
 }
 
 pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
-    // SAFETY: see on_open. Only the `data` `NonNull` is copied out of the
-    // `proxy_tunnel` `RefPtr` — we never form `&mut HTTPClient` here, because
-    // write_encrypted is fired from inside SSLWrapper::flush/handle_traffic
-    // whose caller may already hold `&mut HTTPClient` (e.g. on_handshake →
-    // on_writable). The pointee is alive: this client holds a strong ref while
-    // tunneling.
+    // SAFETY: forms a transient shared `&(*ctx).proxy_tunnel` (via `as_ref()`)
+    // only to copy out the tunnel's `data` `NonNull`. write_encrypted is fired
+    // from inside SSLWrapper::flush/handle_traffic; the call chains that reach
+    // here (e.g. on_handshake → on_writable → flush, on_open → flush) each
+    // NLL-end their `client_from_ctx`/`*ctx` borrow before reentering, so there
+    // is NO live `&mut HTTPClient` anywhere up the stack — the shared borrow
+    // formed here cannot alias one. (This was already required even by the
+    // older `Copy` read of `(*ctx).proxy_tunnel`, which `*ctx`-derefs all the
+    // same; `RefPtr` has no read-without-ref primitive — if it grows one, use
+    // it here instead of `.as_ref().map(...)`.) The pointee is alive: this
+    // client holds a strong ref to the tunnel for the duration of tunneling.
     let Some(proxy_nn) = (unsafe { (*ctx).proxy_tunnel.as_ref().map(|p| p.data) }) else { return };
     // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
     // disjoint field accessors only — never form `&mut ProxyTunnel`, because

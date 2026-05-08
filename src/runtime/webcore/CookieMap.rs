@@ -48,21 +48,23 @@ impl CookieMap {
         })
     }
 
-    pub fn deref(&mut self) {
-        CookieMap__deref(self)
-    }
-
-    pub fn ref_(&mut self) {
-        CookieMap__ref(self)
-    }
+    // NOTE: no inherent `ref`/`deref` on `CookieMap` — `CookieMapRef` is the
+    // sanctioned owner of the intrusive C++ refcount. Exposing bare refcount
+    // mutators on the pointee would let `&mut *cookie_map_ref` corrupt the
+    // count relative to the ref's owned `+1` (double-unref / UAF on Drop),
+    // mirroring how `RefPtr` discourages bare `ref`/`deref` on its pointee.
 }
 
 /// Intrusive smart pointer over a C++-refcounted `CookieMap`.
 ///
-/// Owns exactly one strong ref: `new_ref` bumps it (for a borrowed handle),
-/// `adopt` takes over an already-`+1`'d raw pointer, and `Drop` releases it.
-/// Mirrors `AbortSignalRef` — a raw FFI handle (opaque C++ object) cannot live
-/// inside `Box`/`Arc`, so this newtype is the sanctioned owning representation.
+/// Owns exactly one strong ref: `new_ref` bumps it (for a borrowed handle)
+/// and `Drop` releases it. Mirrors `AbortSignalRef` — a raw FFI handle (opaque
+/// C++ object) cannot live inside `Box`/`Arc`, so this newtype is the
+/// sanctioned owning representation.
+///
+/// (A `+1`-transfer constructor — adopting an already-bumped raw pointer
+/// without a fresh `ref()` — is deliberately omitted until a caller needs it;
+/// every construction site in the tree goes through `new_ref`.)
 #[repr(transparent)]
 pub struct CookieMapRef(NonNull<CookieMap>);
 
@@ -73,19 +75,6 @@ impl CookieMapRef {
     pub fn new_ref(cookie_map: &CookieMap) -> Self {
         CookieMap__ref(cookie_map);
         Self(NonNull::from(cookie_map))
-    }
-
-    /// Adopt a `*mut CookieMap` that already carries a `+1` reference this
-    /// `CookieMapRef` will release on drop.
-    ///
-    /// # Safety
-    /// `ptr` must be non-null, point to a live `CookieMap`, and carry an owned
-    /// reference being transferred in.
-    #[inline]
-    pub unsafe fn adopt(ptr: *mut CookieMap) -> Self {
-        debug_assert!(!ptr.is_null());
-        // SAFETY: caller contract — `ptr` is non-null.
-        Self(unsafe { NonNull::new_unchecked(ptr) })
     }
 
     #[inline]

@@ -1140,14 +1140,6 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
 
-  /* SEMI_SOCKET: TCP connect not yet complete and on_open hasn't fired, so
-   * SNI/ALPN are not on the SSL yet. Calling SSL_write now would serialize a
-   * ClientHello without them; report 0 written so the caller buffers until
-   * on_open → ssl_update_handshake → on_writable drains it. */
-  if ((us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
-    return 0;
-  }
-
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   loop_ssl_data->ssl_read_input_length = 0;

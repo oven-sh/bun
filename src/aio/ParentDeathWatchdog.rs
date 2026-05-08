@@ -181,6 +181,13 @@ pub fn should_default_spawn_pdeathsig() -> bool {
         && INSTALL_THREAD_ID.get().copied() == Some(std::thread::current().id())
 }
 
+/// Link-time provider for `bun_spawn_sys::pdeathsig::__bun_spawn_should_default_pdeathsig`
+/// (PORTING.md §Dispatch — `extern "Rust"`, linker is the registry).
+#[unsafe(no_mangle)]
+pub fn __bun_spawn_should_default_pdeathsig() -> bool {
+    should_default_spawn_pdeathsig()
+}
+
 static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
@@ -213,10 +220,9 @@ pub fn enable() {
             return;
         }
         let _ = INSTALL_THREAD_ID.set(std::thread::current().id());
-        // Let `bun_spawn_sys::spawn_process_posix` consult our thread-scoped
-        // policy when defaulting `linux_pdeathsig` — the -sys crate has no
-        // `bun_aio` dep, so it calls back through this hook.
-        bun_spawn_sys::pdeathsig::set_hook(should_default_spawn_pdeathsig);
+        // `bun_spawn_sys::spawn_process_posix` consults our thread-scoped
+        // policy when defaulting `linux_pdeathsig` via the link-time
+        // `__bun_spawn_should_default_pdeathsig` hook (defined below).
         // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
         // nested bun) inherits no-orphans mode without the parent having to thread
         // the flag through. No-op if we got here via the env var.

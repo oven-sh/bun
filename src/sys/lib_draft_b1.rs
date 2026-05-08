@@ -64,40 +64,32 @@ pub use log as syslog;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Debug-hook registration (CYCLEBREAK.md §Debug-hook). Low-tier `sys` cannot
-// depend on `bun_crash_handler` (T3) / `bun_resolver::fs` (T5). High tier
-// (`bun_runtime::init()`) writes the fn-ptr at startup; null = no-op.
+// depend on `bun_crash_handler` / `bun_resolver::fs`. High tier defines
+// `#[no_mangle]` bodies; link-time `extern "Rust"` (PORTING.md §Dispatch).
 // ──────────────────────────────────────────────────────------────────────────
 
-/// Set by `bun_runtime::init()` to `bun_crash_handler::dump_current_stack_trace`.
-/// Signature: `unsafe fn(return_address: Option<usize>, frame_count: u32, stop_at_jsc_llint: bool)`.
-pub static DUMP_STACK: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+unsafe extern "Rust" {
+    /// `bun_crash_handler::dump_current_stack_trace` — capture + symbolicate the
+    /// live stack for diagnostic logging. Body is `#[no_mangle]` in
+    /// `bun_crash_handler`; link-time resolved.
+    fn __bun_sys_dump_stack(return_address: Option<usize>, frame_count: u32, stop_at_jsc_llint: bool);
+    /// `bun_resolver::fs::FileSystem::instance().top_level_dir` — process cwd at
+    /// startup. Returns `b"."` until `FileSystem::init()` has run. Body is
+    /// `#[no_mangle]` in `bun_resolver::fs`; link-time resolved.
+    fn __bun_fs_top_level_dir() -> &'static [u8];
+}
 
 #[inline]
 pub fn dump_stack_trace(return_address: Option<usize>, frame_count: u32, stop_at_jsc_llint: bool) {
-    let hook = DUMP_STACK.load(core::sync::atomic::Ordering::Relaxed);
-    if !hook.is_null() {
-        // SAFETY: registered by bun_runtime::init() with the signature documented on DUMP_STACK.
-        let f: unsafe fn(Option<usize>, u32, bool) = unsafe { core::mem::transmute(hook) };
-        unsafe { f(return_address, frame_count, stop_at_jsc_llint) };
-    }
+    // SAFETY: link-time `extern "Rust"`; body in `bun_crash_handler` has no preconditions.
+    unsafe { __bun_sys_dump_stack(return_address, frame_count, stop_at_jsc_llint) };
 }
-
-/// Set by `bun_runtime::init()` to `bun_resolver::fs::FileSystem::instance().top_level_dir`.
-/// Signature: `fn() -> &'static [u8]`.
-pub static TOP_LEVEL_DIR_HOOK: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 #[inline]
 pub fn top_level_dir() -> &'static [u8] {
-    let hook = TOP_LEVEL_DIR_HOOK.load(core::sync::atomic::Ordering::Relaxed);
-    if hook.is_null() {
-        b"."
-    } else {
-        // SAFETY: registered by bun_runtime::init() with the signature documented on TOP_LEVEL_DIR_HOOK.
-        let f: fn() -> &'static [u8] = unsafe { core::mem::transmute(hook) };
-        f()
-    }
+    // SAFETY: link-time `extern "Rust"`; body in `bun_resolver::fs` reads an
+    // `AtomicBool` + process-lifetime singleton.
+    unsafe { __bun_fs_top_level_dir() }
 }
 
 // `syscall` namespace: on Linux this is direct syscalls, on macOS/FreeBSD it's libc.
@@ -5418,7 +5410,6 @@ pub fn archive_file_sink(fd: Fd) -> libarchive_sys::ArchiveFileSink {
 /// any `bun_core::Output` write so `OUTPUT_SINK_VTABLE` is always live.
 pub fn install_hooks() {
     bun_core::output::install_output_sink(&OUTPUT_SINK_VTABLE);
-    // DUMP_STACK / TOP_LEVEL_DIR_HOOK are written by bun_runtime (higher tier).
 }
 
 

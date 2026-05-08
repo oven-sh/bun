@@ -1314,6 +1314,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
     if (opts.is_main_thread) bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm));
+    if (opts.is_main_thread) bun.MemoryPressureWatcher.installOnEventLoop(vm);
 
     if (opts.smol)
         is_smol_mode = opts.smol;
@@ -2107,6 +2108,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 }
 
 pub fn deinit(this: *VirtualMachine) void {
+    if (this.is_main_thread) bun.MemoryPressureWatcher.uninstall();
     this.auto_killer.deinit();
 
     if (source_code_printer) |print| {

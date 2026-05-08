@@ -1,5 +1,5 @@
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-    const object = JSValue.createEmptyObject(globalThis, 3);
+    const object = JSValue.createEmptyObject(globalThis, 4);
     const fields = comptime .{
         .gcAggressionLevel = gcAggressionLevel,
         .arrayBufferToString = arrayBufferToString,
@@ -10,6 +10,13 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
             globalThis,
             comptime ZigString.static(name),
             jsc.JSFunction.create(globalThis, name, @field(fields, name), 1, .{}),
+        );
+    }
+    if (comptime bun.Environment.isDebug) {
+        object.put(
+            globalThis,
+            comptime ZigString.static("simulateMemoryPressure"),
+            jsc.JSFunction.create(globalThis, "simulateMemoryPressure", simulateMemoryPressure, 0, .{}),
         );
     }
     return object;
@@ -65,6 +72,15 @@ fn dump_mimalloc(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
         dump_zone_malloc_stats();
     }
     return .js_undefined;
+}
+
+/// Debug-only test seam for `MemoryPressureWatcher`. Runs the same JS-thread
+/// `respond()` path the OS callback would, returns the post-increment
+/// `analytics.Features.memory_pressure` count.
+pub fn simulateMemoryPressure(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    if (comptime !bun.Environment.isDebug) return .js_undefined;
+    const count = bun.MemoryPressureWatcher.simulate(globalThis.bunVM());
+    return JSValue.jsNumber(@as(i64, @intCast(count)));
 }
 
 const bun = @import("bun");

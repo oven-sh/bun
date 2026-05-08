@@ -686,12 +686,11 @@ pub struct FileLoaderHash {
 // ───────────────────────────────────────────────────────────────────────────
 // CSS Symbol bridge — `bun_logger::Symbol` ↔ `bun_js_parser::Symbol`
 //
-// Both port the same Zig `js_ast.Symbol` (Symbol.zig). Under
-// `feature = "css"` `StylesheetExtra.symbols` is `Vec<bun_logger::Symbol>`;
+// Both port the same Zig `js_ast.Symbol` (Symbol.zig).
+// `StylesheetExtra.symbols` is `Vec<bun_logger::Symbol>`;
 // `new_lazy_export_ast_impl` takes `Vec<bun_js_parser::Symbol>`. Convert
 // field-by-field so CSS-module local refs (`ref.inner_index()`) index a
-// populated symbol table (.zig:613). Under no-css the shim already yields the
-// parser type, so this is the identity.
+// populated symbol table (.zig:613).
 // ───────────────────────────────────────────────────────────────────────────
 
 fn css_symbols_to_parser_symbols(
@@ -1142,16 +1141,8 @@ fn get_ast(
             // then poke the logger pointer in directly — `temp_log` outlives
             // all parsing/minification below (mirrors Zig's `*Log` aliasing).
             let parser_options = {
-                #[allow(unused_mut)]
                 let mut parseropts = bun_css::ParserOptions::default(None);
-                #[cfg(feature = "css")]
-                {
-                    parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
-                }
-                #[cfg(not(feature = "css"))]
-                {
-                    let _ = &mut temp_log;
-                }
+                parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
                 if enable_css_modules {
                     parseropts.filename = bun_paths::basename(source.path.pretty);
                     parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
@@ -1169,16 +1160,13 @@ fn get_ast(
                 Ok(v) => v,
                 Err(e) => {
                     // .zig:587 — surface the actual CSS parse diagnostic.
-                    #[cfg(feature = "css")]
                     let _ = e.add_to_logger(&mut temp_log, source);
-                    #[cfg(not(feature = "css"))]
-                    let _ = e;
                     let _ = temp_log.append_to_maybe_recycled(log, source);
                     return Err(err!("SyntaxError"));
                 }
             };
             // Make sure the css modules local refs have a valid tag
-            #[cfg(all(debug_assertions, feature = "css"))]
+            #[cfg(debug_assertions)]
             if css_ast.local_scope.count() > 0 {
                 for entry in css_ast.local_scope.values() {
                     debug_assert!(entry.ref_.inner_index() < extra.symbols.len() as u32);
@@ -1193,10 +1181,7 @@ fn get_ast(
                 &extra,
             ) {
                 // .zig:604 — surface the actual minify diagnostic.
-                #[cfg(feature = "css")]
                 let _ = e.add_to_logger(&mut temp_log, source);
-                #[cfg(not(feature = "css"))]
-                let _ = e;
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Err(err!("MinifyError"));
             }
@@ -1206,7 +1191,7 @@ fn get_ast(
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
             let root = Expr::init(E::Object::default(), Loc { start: 0 });
             let css_ast_heap = std::ptr::from_mut(bump.alloc(css_ast));
-            // PORT NOTE: under `feature = "css"` `StylesheetExtra.symbols` is
+            // PORT NOTE: `StylesheetExtra.symbols` is
             // `Vec<bun_logger::Symbol>`; `new_lazy_export_ast_impl` takes
             // `Vec<bun_js_parser::Symbol>`. Both port the same Zig
             // `js_ast.Symbol`; convert field-by-field so CSS-module local refs

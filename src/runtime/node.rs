@@ -557,13 +557,9 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
     }
 }
 
-// phase-c: bun_css is feature-gated off the bun_bin dep graph; this extension
-// trait only exists when the `css` feature is enabled.
-#[cfg(feature = "css")]
 pub trait MaybeCssExt<R>: Sized {
     fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>>;
 }
-#[cfg(feature = "css")]
 impl<R> MaybeCssExt<R> for Maybe<R, bun_css::BasicParseError> {
     #[inline]
     fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>> {

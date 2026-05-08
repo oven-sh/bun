@@ -1,44 +1,29 @@
 use crate::mal_prelude::*;
 use std::io::Write as _;
 #[allow(unused_imports)]
-#[allow(unused_imports)]
-#[allow(unused_imports)]
 use bun_collections::VecExt as _VecExt;
 
 use bun_alloc::AllocError;
-#[cfg(feature = "css")]
 use bun_alloc::Arena;
-#[cfg(feature = "css")]
 use bun_collections::{ArrayHashMap, VecExt, DynamicBitSetUnmanaged};
-#[cfg(feature = "css")]
 use bun_core::fmt as bun_fmt;
 use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
-#[cfg(feature = "css")]
 use bun_js_parser::ast::Symbol;
 use bun_js_parser::js_lexer;
-#[cfg(feature = "css")]
 use bun_js_parser::Ref;
-#[cfg(feature = "css")]
 use bun_logger::{Loc, Log, Source};
-#[cfg(feature = "css")]
 use bun_options_types::ImportRecord;
 
-#[cfg(feature = "css")]
 use crate::bun_css::{BundlerStyleSheet, CssRef, CssRefTag};
-#[cfg(feature = "css")]
 use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
 use crate::{Index, IndexInt, LinkerContext};
 
-#[cfg(feature = "css")]
 type BitSet = DynamicBitSetUnmanaged;
-#[cfg(feature = "css")]
 type SymbolList = Vec<Symbol>;
 
 /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
 /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
-#[cfg(feature = "css")]
 struct SliceBoxAdapter;
-#[cfg(feature = "css")]
 impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
     fn hash(&self, key: &[u8]) -> u32 {
         // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`.
@@ -58,13 +43,10 @@ pub fn generate_code_for_lazy_export(
     // PORT NOTE: reshaped for borrowck — take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
-    #[cfg(feature = "css")]
     // SAFETY: parse_graph backref; raw deref because `all_sources` is held
     // across `&mut *this.log` below (split borrow).
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
-    #[cfg(feature = "css")]
     let all_css_asts: &[Option<*mut BundlerStyleSheet>] = this.graph.ast.items_css();
-    #[cfg(feature = "css")]
     // SAFETY: `css` SoA column stores arena-owned `*mut BundlerStyleSheet`.
     let maybe_css_ast: Option<&BundlerStyleSheet> =
         all_css_asts[source_index as usize].map(|p| unsafe { &*p });
@@ -90,11 +72,6 @@ pub fn generate_code_for_lazy_export(
     // If this JavaScript file is a stub from a CSS file, populate the exports of
     // this JavaScript stub with the local names from that CSS file. This is done
     // now instead of earlier because we need the whole bundle to be present.
-    //
-    // PORT NOTE: gated on `feature = "css"` — the no-css shim's
-    // `BundlerStyleSheet` lacks `composes`/`CssRef`/`LocalEntry`, and with CSS
-    // disabled `items_css()` is always `None` so this branch is unreachable.
-    #[cfg(feature = "css")]
     if let Some(css_ast) = maybe_css_ast {
         // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
         let stmt: Stmt = unsafe { (*part.stmts)[0] };

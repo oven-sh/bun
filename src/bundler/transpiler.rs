@@ -2801,14 +2801,6 @@ impl<'a> Transpiler<'a> {
                 bun_core::Output::panic(format_args!("TODO: dataurl, base64"));
             }
             options::Loader::Css => {
-                #[cfg(not(feature = "css"))]
-                {
-                    let _ = (&file_path, file_path_ext);
-                    bun_core::Output::panic(format_args!(
-                        "CSS loader requires the `css` feature"
-                    ));
-                }
-                #[cfg(feature = "css")]
                 {
                     use crate::ungate_support::bun_css;
 

@@ -131,15 +131,6 @@ pub mod r#gen {
     pub use bun_jsc::generated::bun_object::BracesOptions;
 }
 
-/// `Bun.color()` requires the `css` feature (`bun_css` crate). When that
-/// feature is disabled, throw instead of silently returning undefined.
-#[cfg(not(feature = "css"))]
-pub fn color_unsupported(global_this: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-    Err(global_this.throw_invalid_arguments(format_args!(
-        "Bun.color() is unavailable: built without the `css` feature"
-    )))
-}
-
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // Zig's `host_fn.wrapStaticMethod(T, "name", auto_protect)` reflects on the
 // target fn's parameter types and decodes each from the CallFrame. The Rust
@@ -298,11 +289,7 @@ pub mod bun_object {
     export_callbacks! {
         BunObject_callback_allocUnsafe => super::alloc_unsafe,
         BunObject_callback_build => super::static_adapters::js_bundler_build,
-        // Bun.color() — falls back to a throw stub when `css` is disabled.
-        #[cfg(feature = "css")]
         BunObject_callback_color => bun_css_jsc::js_function_color,
-        #[cfg(not(feature = "css"))]
-        BunObject_callback_color => super::color_unsupported,
         BunObject_callback_connect => super::static_adapters::listener_connect,
         BunObject_callback_deflateSync => JSZlib::deflate_sync,
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,

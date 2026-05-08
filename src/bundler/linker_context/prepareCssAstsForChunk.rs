@@ -6,35 +6,24 @@ use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::{BundleV2, Chunk, LinkerContext};
 
-#[cfg(feature = "css")]
 use bun_collections::VecExt;
-#[cfg(feature = "css")]
 use crate::bun_css::{
     BundlerStyleSheet, ImportConditions, ImportInfo, LocalsResultsMap, PrinterOptions, Targets,
 };
-#[cfg(feature = "css")]
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
     BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, ParserOptions,
     SmallList,
 };
-#[cfg(feature = "css")]
 use crate::bun_fs::Path;
-#[cfg(feature = "css")]
 use bun_logger::{Loc, Range};
-#[cfg(feature = "css")]
 use bun_options_types::{
     import_record::Flags as ImportRecordFlags, BundleEnums::Index as AstIndex, ImportKind,
     ImportRecord, ImportRecordTag,
 };
-#[cfg(feature = "css")]
 use bun_resolver::DataURL;
-#[cfg(feature = "css")]
 use crate::bun_str::strings;
 
-#[cfg(feature = "css")]
-#[cfg(feature = "css")]
-#[cfg(feature = "css")]
 use crate::chunk::{Content, CssImportOrderKind};
 
 // PORT NOTE: Zig stores `*Chunk` / `*LinkerContext` (freely-aliasing mutable
@@ -103,7 +92,6 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
 /// holds `crate::bun_fs::Path<'static>` (= `bun_resolver::fs::Path`). Both are field-identical
 /// mirrors of Zig `Fs.Path`. Re-construct field-by-field rather than transmute
 /// non-`repr(C)` structs. Inverse of `findImportedFilesInCSSOrder::fs_path_from_import_record`.
-#[cfg(feature = "css")]
 #[inline]
 fn import_record_path_from_fs(p: &Path<'static>) -> bun_paths::fs::Path<'static> {
     bun_paths::fs::Path {
@@ -121,13 +109,6 @@ fn import_record_path_from_fs(p: &Path<'static>) -> bun_paths::fs::Path<'static>
     }
 }
 
-#[cfg(not(feature = "css"))]
-fn prepare_css_asts_for_chunk_impl(_c: &mut LinkerContext, _chunk: &mut Chunk, _bump: &Bump) {
-    // CSS chunk preparation is unreachable without `feature = "css"` — the
-    // loader dispatch never produces CSS chunks.
-}
-
-#[cfg(feature = "css")]
 fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
     // across `&mut *c.log` below (split borrow).
@@ -472,7 +453,6 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
     }
 }
 
-#[cfg(feature = "css")]
 fn wrap_rules_with_conditions(
     ast: &mut BundlerStyleSheet,
     temp_bump: &Bump,

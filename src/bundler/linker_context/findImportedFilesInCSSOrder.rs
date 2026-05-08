@@ -7,7 +7,6 @@ use bun_collections::{ArrayHashMap, VecExt, StringArrayHashMap};
 use bun_core::handle_oom;
 use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
 
-#[cfg(feature = "css")]
 use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::bun_fs;
@@ -99,7 +98,6 @@ unsafe fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImp
 /// as far as "@layer" is concerned. So we may in some cases keep both the
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
-#[cfg(feature = "css")]
 pub fn find_imported_files_in_css_order<'a>(
     this: &'a mut LinkerContext,
     temp_arena: &'a Arena,
@@ -724,23 +722,12 @@ pub fn find_imported_files_in_css_order<'a>(
     order
 }
 
-#[cfg(not(feature = "css"))]
-pub fn find_imported_files_in_css_order<'a>(
-    _this: &'a mut LinkerContext,
-    _temp_arena: &'a Arena,
-    _entry_points: &[Index],
-) -> Vec<CssImportOrder> {
-    // Without the CSS parser there are no CSS source files to order.
-    Vec::new()
-}
-
 /// Zig: `wrapping_conditions.deepCloneInfallible(visitor.arena)`.
 ///
 /// The returned list is later bitwise-copied into `CssImportOrder` entries via
 /// `bitwise_copy(wrapping_conditions)`, so callers `mem::forget` the local after
 /// the recursive `visit()` to transfer ownership. Reserves one extra slot for
 /// the single `append_assume_capacity` each call site performs.
-#[cfg(feature = "css")]
 #[inline]
 fn deep_clone_conditions(
     list: &Vec<ImportConditions>,
@@ -768,7 +755,6 @@ fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
     out
 }
 
-#[cfg(feature = "css")]
 fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -815,7 +801,6 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
 ///
 /// Note that all of this deliberately ignores the existence of "@layer" because
 /// that is handled separately. All of this is only for handling unlayered styles.
-#[cfg(feature = "css")]
 pub fn is_conditional_import_redundant(
     earlier: &Vec<ImportConditions>,
     later: &Vec<ImportConditions>,
@@ -875,14 +860,6 @@ pub fn is_conditional_import_redundant(
     true
 }
 
-#[cfg(not(feature = "css"))]
-pub fn is_conditional_import_redundant(
-    _earlier: &Vec<ImportConditions>,
-    _later: &Vec<ImportConditions>,
-) -> bool {
-    false
-}
-
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 enum CssOrderDebugStep {
@@ -938,7 +915,7 @@ fn debug_css_order_impl(
     order: &Vec<CssImportOrder>,
     step: CssOrderDebugStep,
 ) {
-    #[cfg(all(debug_assertions, feature = "css"))]
+    #[cfg(debug_assertions)]
     {
         use crate::bun_css::{ImportInfo, LocalsResultsMap, Printer, PrinterOptions};
 
@@ -995,7 +972,7 @@ fn debug_css_order_impl(
             debug!("  {}: {} {}\n", i, entry.fmt(this), conditions_str);
         }
     }
-    #[cfg(not(all(debug_assertions, feature = "css")))]
+    #[cfg(not(debug_assertions))]
     {
         let _ = (this, order, step);
     }

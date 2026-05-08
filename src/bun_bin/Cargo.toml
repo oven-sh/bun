@@ -29,6 +29,5 @@ bun_platform.workspace = true
 
 # Phase-C: bun_runtime now compiles green; pulled in for `Cli::start()`.
 # bun_jsc remains gated until the JSC bridge links.
-# `css` re-enabled for phase-g test parity (Bun.color(), css internals).
-bun_runtime = { workspace = true, features = ["css"] }
+bun_runtime.workspace = true
 # bun_jsc.workspace = true

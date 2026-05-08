@@ -190,7 +190,7 @@ itoa = "1"
 bun_analytics = { path = "src/analytics" }
 bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
-bun_bundler = { path = "src/bundler", default-features = false }
+bun_bundler = { path = "src/bundler" }
 bun_codegen = { path = "src/codegen" }
 bun_collections = { path = "src/collections" }
 bun_css = { path = "src/css" }

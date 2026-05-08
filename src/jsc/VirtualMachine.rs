@@ -2340,12 +2340,16 @@ pub fn process_fetch_log(
                 errors.push(v);
             }
 
-            // PORT NOTE: Zig leaked the `allocPrint` buffer into a borrowed
-            // `ZigString` (the AggregateError copies it into a JSString). Keep
-            // `message_text` alive across the FFI call instead.
-            let message_text =
-                format!("{} errors building \"{specifier}\"", errors.len()).into_bytes();
-            let message = crate::ZigString::init(&message_text);
+            // C++ `Zig::toString` does `createWithoutCopying`, so the buffer
+            // must outlive the AggregateError. Mark it global so JSC adopts it
+            // as an ExternalStringImpl and frees it via `free_global_string`.
+            let message_text: &'static mut [u8] = Box::leak(
+                format!("{} errors building \"{specifier}\"", errors.len())
+                    .into_bytes()
+                    .into_boxed_slice(),
+            );
+            let mut message = crate::ZigString::init(message_text);
+            message.mark_global();
             *ret = ErrorableResolvedSource::err(
                 err,
                 take(global_this.create_aggregate_error(&errors, &message)),

@@ -2039,6 +2039,10 @@ impl JSValue {
     }
     /// `JSValue.forEachProperty` (JSValue.zig:96) — enumerate own props,
     /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
+    ///
+    /// Mirrors the Zig codegen wrapper shape (cpp.zig `check_slow`): seat the
+    /// exception scope and call the FFI directly so the deep `print_as`
+    /// recursion does not pay an extra closure frame per object level.
     #[inline(always)]
     pub fn for_each_property(
         self,
@@ -2054,10 +2058,14 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
+        let mut scope_storage = core::mem::MaybeUninit::uninit();
+        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
         // SAFETY: `global` is live; `callback` has C ABI.
-        host_fn::from_js_host_call_generic(global, || unsafe {
-            JSC__JSValue__forEachProperty(self, global, ctx, callback)
-        })
+        unsafe { JSC__JSValue__forEachProperty(self, global, ctx, callback) };
+        let result = scope.return_if_exception();
+        // SAFETY: `scope` was init'd above and is destroyed exactly once.
+        unsafe { crate::TopExceptionScope::destroy(scope) };
+        result
     }
     /// `JSValue.forEachPropertyNonIndexed` (JSValue.zig:87) — like
     /// [`for_each_property`](Self::for_each_property) but skips array-index
@@ -2076,10 +2084,14 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
+        let mut scope_storage = core::mem::MaybeUninit::uninit();
+        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
         // SAFETY: `global` is live; `callback` has C ABI.
-        host_fn::from_js_host_call_generic(global, || unsafe {
-            JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback)
-        })
+        unsafe { JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback) };
+        let result = scope.return_if_exception();
+        // SAFETY: `scope` was init'd above and is destroyed exactly once.
+        unsafe { crate::TopExceptionScope::destroy(scope) };
+        result
     }
     /// `JSValue.forEachPropertyOrdered` (JSValue.zig:105) — like
     /// [`for_each_property`](Self::for_each_property) but visits keys in
@@ -2100,10 +2112,14 @@ impl JSValue {
                 callback: ForEachPropertyCallback,
             );
         }
+        let mut scope_storage = core::mem::MaybeUninit::uninit();
+        let scope = crate::TopExceptionScope::init(&mut scope_storage, global);
         // SAFETY: `global` is live; `callback` has C ABI.
-        host_fn::from_js_host_call_generic(global, || unsafe {
-            JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback)
-        })
+        unsafe { JSC__JSValue__forEachPropertyOrdered(self, global, ctx, callback) };
+        let result = scope.return_if_exception();
+        // SAFETY: `scope` was init'd above and is destroyed exactly once.
+        unsafe { crate::TopExceptionScope::destroy(scope) };
+        result
     }
     /// `JSValue.isBuffer` (JSValue.zig:492) — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side

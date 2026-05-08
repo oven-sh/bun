@@ -6,7 +6,7 @@
 
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    log, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind,
+    log, EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind,
 };
 use crate::shell::io::{IO, OutKind};
 use crate::shell::states::base::Base;
@@ -97,7 +97,14 @@ impl Expansion {
     /// `child_done` advances `word_idx`.
     pub fn next(interp: &mut Interpreter, this: NodeId) -> Yield {
         loop {
-            let me = interp.as_expansion_mut(this);
+            // Split-borrow: `me` from `nodes`, `vm_args_utf8` from its own
+            // field, so `expand_simple_no_io` can expand `$N` without aliasing.
+            let event_loop = interp.event_loop;
+            let command_ctx = interp.command_ctx;
+            let vm_args_utf8 = &mut interp.vm_args_utf8;
+            let Node::Expansion(me) = &mut interp.nodes[this.idx()] else {
+                unreachable!()
+            };
             match me.state {
                 ExpansionState::Idle => {
                     me.state = ExpansionState::Walking;
@@ -132,8 +139,15 @@ impl Expansion {
                 // SAFETY: `shell_ptr` is a live env owned by the parent state
                 // node; the Expansion never outlives it.
                 let shell = unsafe { &*shell_ptr };
-                let is_cmd_subst =
-                    Self::expand_simple_no_io(shell, simple, &mut me.current_out, true);
+                let is_cmd_subst = Self::expand_simple_no_io(
+                    shell,
+                    simple,
+                    &mut me.current_out,
+                    true,
+                    event_loop,
+                    command_ctx,
+                    vm_args_utf8,
+                );
                 if !is_cmd_subst {
                     me.word_idx += 1;
                     continue;
@@ -197,6 +211,9 @@ impl Expansion {
         atom: &ast::SimpleAtom,
         out: &mut Vec<u8>,
         expand_tilde: bool,
+        event_loop: EventLoopHandle,
+        command_ctx: *mut bun_options_types::Context::ContextData,
+        vm_args_utf8: &mut Vec<bun_str::ZigStringSlice>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
         match atom {
@@ -219,10 +236,8 @@ impl Expansion {
                     v.deref();
                 }
             }
-            ast::SimpleAtom::VarArgv(_) => {
-                // TODO(port): Expansion.zig `expandVarArgv` reaches into
-                // `vm.main`/`vm.argv`/`worker.argv`. Empty until the
-                // VirtualMachine accessors are wired.
+            ast::SimpleAtom::VarArgv(int) => {
+                Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
             ast::SimpleAtom::Asterisk => out.push(b'*'),
             ast::SimpleAtom::DoubleAsterisk => out.extend_from_slice(b"**"),

@@ -306,35 +306,30 @@ pub fn host_fn_result<R: IntoHostFnReturn>(
 // ──────────────────────── safe codegen-thunk entry points ────────────────────────
 //
 // `generate-classes.ts::generateRust()` emits per-property `#[no_mangle]` thunks
-// that previously open-coded `unsafe { &*ptr }` per pointer per site (~4k
-// `unsafe` blocks in the generated file alone, three derefs each). These
-// wrappers centralise those derefs: the generated thunk is
-// now a one-liner `host_fn_this(this, global, callframe, T::method)` and the
-// user's inherent method takes safe `&mut self` / `&JSGlobalObject` /
+// whose params are typed as `&mut T` / `&JSGlobalObject` / `&CallFrame` and
+// forward straight into these helpers. `&T`/`&mut T` and `*const T`/`*mut T`
+// are ABI-identical in `extern "C"` for non-null inputs, and the C++ caller
+// (`ZigGeneratedClasses.cpp`) guarantees every pointer it passes is non-null,
+// properly aligned, and live for the duration of the call — so the reference
+// type *is* the safe spelling of the C ABI contract. The non-null obligation
+// is discharged by the type system at the thunk boundary (a `&T` param is a
+// `nonnull` `noalias` pointer in LLVM IR), not by an `unsafe { &*ptr }` deref
+// inside a safe `pub fn` (which would be a soundness hole — safe Rust could
+// otherwise pass null and trigger UB).
+//
+// The user's inherent method takes safe `&mut self` / `&JSGlobalObject` /
 // `&CallFrame`. User methods that need the `VirtualMachine` call
 // `global.bun_vm()` (now safe, returns `&'static VirtualMachine`).
-//
-// SAFETY (shared across all `host_fn_*` below): the C++ caller
-// (`ZigGeneratedClasses.cpp`) guarantees `this` / `global` / `callframe` are
-// non-null, properly-aligned, and live for the duration of the call. The
-// generated thunk is `extern "C"` and these helpers are its *only* callers,
-// so the raw-pointer contract is discharged once here rather than at ~1.4k
-// emitted call sites. The helpers are `pub fn` (not `pub unsafe fn`) so the
-// generated thunk body is a safe expression and the `unsafe`-block count in
-// `build/debug/codegen/*.rs` stays at zero; the soundness obligation is
-// documented and audited in this one file instead.
 
 /// Prototype method: `fn(&mut self, &JSGlobalObject, &CallFrame) -> R`.
 #[track_caller]
 #[inline]
 pub fn host_fn_this<T, R: IntoHostFnReturn>(
-    this: *mut T,
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
+    this: &mut T,
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
     f: impl FnOnce(&mut T, &JSGlobalObject, &CallFrame) -> R,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global, callframe, this) = unsafe { (&*global, &*callframe, &mut *this) };
     host_fn_result(global, || f(this, global, callframe))
 }
 
@@ -342,14 +337,12 @@ pub fn host_fn_this<T, R: IntoHostFnReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_this_value<T, R: IntoHostFnReturn>(
-    this: *mut T,
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
+    this: &mut T,
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
     js_this: JSValue,
     f: impl FnOnce(&mut T, &JSGlobalObject, &CallFrame, JSValue) -> R,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global, callframe, this) = unsafe { (&*global, &*callframe, &mut *this) };
     host_fn_result(global, || f(this, global, callframe, js_this))
 }
 
@@ -357,12 +350,10 @@ pub fn host_fn_this_value<T, R: IntoHostFnReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_getter<T, R: IntoHostFnReturn>(
-    this: *mut T,
-    global: *mut JSGlobalObject,
+    this: &mut T,
+    global: &JSGlobalObject,
     f: impl FnOnce(&mut T, &JSGlobalObject) -> R,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global, this) = unsafe { (&*global, &mut *this) };
     host_fn_result(global, || f(this, global))
 }
 
@@ -370,13 +361,11 @@ pub fn host_fn_getter<T, R: IntoHostFnReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_getter_this<T, R: IntoHostFnReturn>(
-    this: *mut T,
+    this: &mut T,
     this_value: JSValue,
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     f: impl FnOnce(&mut T, JSValue, &JSGlobalObject) -> R,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global, this) = unsafe { (&*global, &mut *this) };
     host_fn_result(global, || f(this, this_value, global))
 }
 
@@ -384,13 +373,11 @@ pub fn host_fn_getter_this<T, R: IntoHostFnReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_setter<T, R: IntoHostSetterReturn>(
-    this: *mut T,
-    global: *mut JSGlobalObject,
+    this: &mut T,
+    global: &JSGlobalObject,
     value: JSValue,
     f: impl FnOnce(&mut T, &JSGlobalObject, JSValue) -> R,
 ) -> bool {
-    // SAFETY: see block comment above.
-    let (global, this) = unsafe { (&*global, &mut *this) };
     host_setter_result(global, || f(this, global, value))
 }
 
@@ -398,14 +385,12 @@ pub fn host_fn_setter<T, R: IntoHostSetterReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_setter_this<T, R: IntoHostSetterReturn>(
-    this: *mut T,
+    this: &mut T,
     this_value: JSValue,
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     value: JSValue,
     f: impl FnOnce(&mut T, JSValue, &JSGlobalObject, JSValue) -> R,
 ) -> bool {
-    // SAFETY: see block comment above.
-    let (global, this) = unsafe { (&*global, &mut *this) };
     host_setter_result(global, || f(this, this_value, global, value))
 }
 
@@ -413,12 +398,10 @@ pub fn host_fn_setter_this<T, R: IntoHostSetterReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_static<R: IntoHostFnReturn>(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
     host_fn_result(global, || f(global, callframe))
 }
 
@@ -428,13 +411,44 @@ pub fn host_fn_static<R: IntoHostFnReturn>(
 /// when the body legitimately leaves an exception pending.
 #[inline]
 pub fn host_fn_static_passthrough(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
+) -> JSValue {
+    f(global, callframe)
+}
+
+/// Raw-pointer entry for `host`-shape exports whose `#[no_mangle]` thunk must
+/// keep `(*mut JSGlobalObject, *mut CallFrame)` params so the symbol coerces
+/// to [`JsHostFn`] when Rust passes it as a callback (e.g. `JSValue::then2`).
+/// All other thunks take references directly.
+///
+/// # Safety
+/// `global` and `callframe` must be non-null, properly aligned, and valid for
+/// the duration of the call. The C++ JSC trampoline guarantees this.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_static_raw<R: IntoHostFnReturn>(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
+) -> JSValue {
+    // SAFETY: caller contract.
+    host_fn_static(unsafe { &*global }, unsafe { &*callframe }, f)
+}
+
+/// Raw-pointer entry for `host`-shape exports, no exception scope.
+///
+/// # Safety
+/// See [`host_fn_static_raw`].
+#[inline]
+pub unsafe fn host_fn_static_passthrough_raw(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
-    f(global, callframe)
+    // SAFETY: caller contract.
+    host_fn_static_passthrough(unsafe { &*global }, unsafe { &*callframe }, f)
 }
 
 /// Lazy property creator / free getter: `fn(&JSGlobalObject) -> R`. Used by
@@ -443,22 +457,18 @@ pub fn host_fn_static_passthrough(
 #[track_caller]
 #[inline]
 pub fn host_fn_lazy<R: IntoHostFnReturn>(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     f: impl FnOnce(&JSGlobalObject) -> R,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global,) = unsafe { (&*global,) };
     host_fn_result(global, || f(global))
 }
 
 /// Lazy property creator, no exception scope (bare-`JSValue` impls).
 #[inline]
 pub fn host_fn_lazy_passthrough(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     f: impl FnOnce(&JSGlobalObject) -> JSValue,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global,) = unsafe { (&*global,) };
     f(global)
 }
 
@@ -466,13 +476,11 @@ pub fn host_fn_lazy_passthrough(
 #[track_caller]
 #[inline]
 pub fn host_fn_static_getter<P, R: IntoHostFnReturn>(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     this_value: JSValue,
     prop: P,
     f: impl FnOnce(&JSGlobalObject, JSValue, P) -> R,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global,) = unsafe { (&*global,) };
     host_fn_result(global, || f(global, this_value, prop))
 }
 
@@ -480,14 +488,12 @@ pub fn host_fn_static_getter<P, R: IntoHostFnReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_static_setter<P, R: IntoHostSetterReturn>(
-    global: *mut JSGlobalObject,
+    global: &JSGlobalObject,
     this_value: JSValue,
     value: JSValue,
     prop: P,
     f: impl FnOnce(&JSGlobalObject, JSValue, JSValue, P) -> R,
 ) -> bool {
-    // SAFETY: see block comment above.
-    let (global,) = unsafe { (&*global,) };
     host_setter_result(global, || f(global, this_value, value, prop))
 }
 
@@ -495,12 +501,10 @@ pub fn host_fn_static_setter<P, R: IntoHostSetterReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_construct<R: IntoHostConstructReturn>(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
 ) -> *mut c_void {
-    // SAFETY: see block comment above.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
     host_construct_result(global, || f(global, callframe))
 }
 
@@ -508,13 +512,11 @@ pub fn host_fn_construct<R: IntoHostConstructReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
     this_value: JSValue,
     f: impl FnOnce(&JSGlobalObject, &CallFrame, JSValue) -> R,
 ) -> *mut c_void {
-    // SAFETY: see block comment above.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
     host_construct_result(global, || f(global, callframe, this_value))
 }
 
@@ -522,21 +524,20 @@ pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
 #[track_caller]
 #[inline]
 pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
-    this: *mut T,
-    global: *mut JSGlobalObject,
+    this: &mut T,
+    global: &JSGlobalObject,
     this_value: JSValue,
     f: impl FnOnce(&mut T, &JSGlobalObject, JSValue) -> R,
 ) -> JSValue {
-    // SAFETY: see block comment above.
-    let (global, this) = unsafe { (&*global, &mut *this) };
     host_fn_result(global, || f(this, global, this_value))
 }
 
 /// Finalizer: `fn(*mut T)`. The user impl receives the raw pointer (not
 /// `&mut`) so it may `heap::take` / `drop_in_place` without an outstanding
-/// borrow. This wrapper exists only so the generated thunk body contains zero
-/// `unsafe` tokens. Takes a closure (not `unsafe fn`) so user impls of any
-/// ABI / safety qualifier coerce.
+/// borrow. This wrapper exists to provide the panic barrier; user impls are
+/// safe `pub fn finalize(this: *mut Self)` with an internal
+/// `unsafe { Box::from_raw }` so the generated thunk body contains zero
+/// `unsafe` tokens.
 #[inline]
 pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(*mut T)) {
     // No `JSGlobalObject` in scope to surface the panic as a JS exception, but

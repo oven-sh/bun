@@ -2841,11 +2841,11 @@ function generateRust(
   const symbols: string[] = [];
   function thunk(sym: string, sig: string, body: string) {
     symbols.push(sym);
-    // Safe-body thunks: every body routes through a safe `host_fn::*` helper
-    // (which centralises the raw-pointer deref + SAFETY contract) or takes its
-    // pointer params as `&`/`&mut` directly (ABI-identical to `*const`/`*mut`
-    // for non-null inputs, which the C++ caller guarantees). No `unsafe` token
-    // appears in the generated file.
+    // Safe-body thunks: every pointer param is typed as `&`/`&mut` directly
+    // (ABI-identical to `*const`/`*mut` for non-null inputs, which the C++
+    // caller guarantees) and routed through a safe `host_fn::*` helper. No
+    // `unsafe` token appears in the generated file; the non-null contract is
+    // enforced by the type system at the ABI boundary.
     thunks.push(`#[unsafe(no_mangle)]\npub extern "C" fn ${sym}${sig} {\n${body}\n}`);
   }
   const T = typeName;
@@ -2871,14 +2871,14 @@ function generateRust(
   if (finalize) {
     // `finalize` receives the raw `*mut Self` (not `&mut`) so the impl may
     // `Box::from_raw` / `drop_in_place` without an outstanding mutable borrow.
-    // The `unsafe { }` covers user impls declared `pub unsafe fn finalize`
-    // (e.g. `Interpreter`); `unused_unsafe` is allowed for the safe-fn
-    // majority. SAFETY: `this` is the unique GC-owned `m_ctx` pointer, valid
-    // and not aliased — `JS${T}::~JS${T}` is the only caller.
+    // User impls are safe `pub fn finalize(this: *mut Self)` with an internal
+    // `unsafe { Box::from_raw }`. SAFETY: `this` is the unique GC-owned
+    // `m_ctx` pointer, valid and not aliased — `JS${T}::~JS${T}` is the only
+    // caller.
     thunk(
       classSymbolName(typeName, "finalize"),
       `(this: *mut ${T})`,
-      `    host_fn::host_fn_finalize(this, |t| unsafe { ${T}::finalize(t) })`,
+      `    host_fn::host_fn_finalize(this, |t| ${T}::finalize(t))`,
     );
   }
 
@@ -2886,13 +2886,13 @@ function generateRust(
     if (constructNeedsThis) {
       thunk(
         classSymbolName(typeName, "construct"),
-        `(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void`,
+        `(global: &JSGlobalObject, callframe: &CallFrame, this_value: JSValue) -> *mut c_void`,
         `    host_fn::host_fn_construct_this(global, callframe, this_value, ${T}::constructor).cast()`,
       );
     } else {
       thunk(
         classSymbolName(typeName, "construct"),
-        `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void`,
+        `(global: &JSGlobalObject, callframe: &CallFrame) -> *mut c_void`,
         `    host_fn::host_fn_construct(global, callframe, ${T}::constructor).cast()`,
       );
     }
@@ -2901,7 +2901,7 @@ function generateRust(
   if (call) {
     thunk(
       classSymbolName(typeName, "call"),
-      `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue`,
+      `(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue`,
       `    host_fn::host_fn_static(global, callframe, ${T}::call)`,
     );
   }
@@ -2909,7 +2909,7 @@ function generateRust(
   if (getInternalProperties) {
     thunk(
       symbolName(typeName, "getInternalProperties"),
-      `(this: *mut ${T}, global: *mut JSGlobalObject, this_value: JSValue) -> JSValue`,
+      `(this: &mut ${T}, global: &JSGlobalObject, this_value: JSValue) -> JSValue`,
       `    host_fn::host_fn_internal_props(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
     );
   }
@@ -2930,7 +2930,7 @@ function generateRust(
         const id = rustSnakeIdent(g);
         thunk(
           names.getter,
-          `(this: *mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: *mut JSGlobalObject) -> JSValue`,
+          `(this: &mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
           thisValue
             ? `    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
             : `    host_fn::host_fn_getter(this, global, |t, g| ${T}::${id}(t, g))`,
@@ -2941,7 +2941,7 @@ function generateRust(
         const id = rustSnakeIdent(s);
         thunk(
           names.setter,
-          `(this: *mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: *mut JSGlobalObject, value: JSValue) -> bool`,
+          `(this: &mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> bool`,
           thisValue
             ? `    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
             : `    host_fn::host_fn_setter(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
@@ -2963,7 +2963,7 @@ function generateRust(
         }
         thunk(
           names.fn,
-          `(this: *mut ${T}, global: *mut JSGlobalObject, callframe: *mut CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
+          `(this: &mut ${T}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
           passThis
             ? `    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
             : `    host_fn::host_fn_this(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
@@ -2986,7 +2986,7 @@ function generateRust(
         const id = rustSnakeIdent(g);
         thunk(
           names.getter,
-          `(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue`,
+          `(global: &JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue`,
           `    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| ${T}::${id}(g, t, p))`,
         );
       }
@@ -2995,7 +2995,7 @@ function generateRust(
         const id = rustSnakeIdent(s);
         thunk(
           names.setter,
-          `(global: *mut JSGlobalObject, this_value: JSValue, value: JSValue, prop: PropertyName) -> bool`,
+          `(global: &JSGlobalObject, this_value: JSValue, value: JSValue, prop: PropertyName) -> bool`,
           `    host_fn::host_fn_static_setter(global, this_value, value, prop, |g, t, v, p| ${T}::${id}(g, t, v, p))`,
         );
       }
@@ -3015,7 +3015,7 @@ function generateRust(
         }
         thunk(
           names.fn,
-          `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue`,
+          `(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue`,
           `    host_fn::host_fn_static(global, callframe, |g, c| ${T}::${id}(g, c))`,
         );
       }

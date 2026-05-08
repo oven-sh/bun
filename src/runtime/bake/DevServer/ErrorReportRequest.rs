@@ -56,9 +56,9 @@ impl BodyReaderHandler for ErrorReportRequest {
     }
 
     unsafe fn on_error(this: *mut Self) {
-        // SAFETY: caller passes the original heap-allocated pointer; finalize
+        // Caller passes the original heap-allocated pointer; finalize
         // consumes it via heap::take exactly once.
-        unsafe { ErrorReportRequest::finalize(this) }
+        ErrorReportRequest::finalize(this)
     }
 }
 
@@ -75,12 +75,13 @@ impl ErrorReportRequest {
         uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
     }
 
-    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`;
-    /// called exactly once (success path here, or via `on_error` on abort/error).
-    pub unsafe fn finalize(ctx: *mut ErrorReportRequest) {
-        // SAFETY: caller contract — ctx is the original Box allocation; no live
-        // borrow of *ctx exists (BodyReaderHandler hands us the raw pointer,
-        // never `&mut self`).
+    /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
+    /// exactly once (success path here, or via `on_error` on abort/error).
+    pub fn finalize(ctx: *mut ErrorReportRequest) {
+        // SAFETY: `ctx` is the original Box allocation produced by `run`; no
+        // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
+        // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
+        // both of which uphold this contract.
         unsafe {
             (*ctx).dev.as_mut().server.as_mut().unwrap().on_static_request_complete();
             drop(bun_core::heap::take(ctx));
@@ -404,11 +405,10 @@ impl ErrorReportRequest {
             },
         );
         // `should_finalize_self = true;` — see PORT NOTE at fn top.
-        // SAFETY: `ctx` is the original heap-allocated pointer (caller
-        // contract); the only borrow derived from it (`dev`) points into a
-        // separate DevServer allocation, so freeing `*ctx` does not invalidate
-        // any live reference.
-        unsafe { ErrorReportRequest::finalize(ctx) };
+        // `ctx` is the original heap-allocated pointer (caller contract); the
+        // only borrow derived from it (`dev`) points into a separate DevServer
+        // allocation, so freeing `*ctx` does not invalidate any live reference.
+        ErrorReportRequest::finalize(ctx);
         Ok(())
     }
 }

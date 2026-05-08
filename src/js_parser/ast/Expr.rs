@@ -1008,7 +1008,13 @@ impl Expr {
 // Static state
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): icount is a global mutable usize — needs atomic or thread_local
+// Zig: `pub var icount: usize = 0;` — a plain non-atomic global, never read
+// (debug counter). Kept for parity but **debug-only**: in release the
+// `lock xadd` per node was a contended cache line bouncing across the bundler
+// worker pool on every Expr allocation. Zig's increment is a non-atomic store
+// (i.e. racy garbage under threads) so a debug-gated atomic is strictly more
+// faithful than the old unconditional one.
+#[cfg(debug_assertions)]
 pub static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 // We don't need to dynamically allocate booleans
@@ -1035,10 +1041,12 @@ macro_rules! impl_into_expr_data_boxed {
     ($($ty:ident => $variant:ident),* $(,)?) => {
         $(
             impl IntoExprData for E::$ty {
+                #[inline]
                 fn into_data_store(self) -> Data {
                     // SAFETY: Store::append never returns null.
                     Data::$variant(unsafe { StoreRef::from_raw(data::Store::append(self)) })
                 }
+                #[inline]
                 fn into_data_alloc(self, bump: &Bump) -> Data {
                     Data::$variant(StoreRef::from_bump(bump.alloc(self)))
                 }
@@ -1051,7 +1059,9 @@ macro_rules! impl_into_expr_data_inline {
     ($($ty:ident => $variant:ident),* $(,)?) => {
         $(
             impl IntoExprData for E::$ty {
+                #[inline]
                 fn into_data_store(self) -> Data { Data::$variant(self) }
+                #[inline]
                 fn into_data_alloc(self, _bump: &Bump) -> Data { Data::$variant(self) }
             }
         )*
@@ -1137,6 +1147,7 @@ impl IntoExprData for E::CommonJSExportIdentifier {
 
 // E::EString — special debug assert + boxed
 impl IntoExprData for E::EString {
+    #[inline]
     fn into_data_store(self) -> Data {
         #[cfg(debug_assertions)]
         {
@@ -1163,9 +1174,11 @@ impl IntoExprData for E::EString {
 // `Clone` (rope `next` ptr); Zig copies the struct bytes. Mirror with a
 // shallow field-copy.
 impl IntoExprData for &E::EString {
+    #[inline]
     fn into_data_store(self) -> Data {
         Data::EString(unsafe { StoreRef::from_raw(data::Store::append(self.shallow_clone())) })
     }
+    #[inline]
     fn into_data_alloc(self, bump: &Bump) -> Data {
         Data::EString(StoreRef::from_bump(bump.alloc(self.shallow_clone())))
     }
@@ -1300,13 +1313,17 @@ impl Expr {
     /// When the lifetime of an Expr.Data's pointer must exist longer than reset() is called, use this function.
     /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
+    #[inline]
     pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
         Expr { loc, data: st.into_data_alloc(bump) }
     }
 
+    #[inline]
     pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
         Expr { loc, data: st.into_data_store() }
@@ -3203,9 +3220,11 @@ pub mod data {
         fn instance() -> *mut Backing {
             INSTANCE.with(|c| c.get())
         }
+        #[inline]
         pub fn memory_allocator() -> *mut ASTMemoryAllocator {
             MEMORY_ALLOCATOR.with(|c| c.get())
         }
+        #[inline]
         pub fn set_memory_allocator(p: *mut ASTMemoryAllocator) {
             MEMORY_ALLOCATOR.with(|c| c.set(p));
         }
@@ -3270,6 +3289,7 @@ pub mod data {
             }
         }
 
+        #[inline]
         pub fn append<T>(value: T) -> *mut T {
             let ma = memory_allocator();
             if !ma.is_null() {

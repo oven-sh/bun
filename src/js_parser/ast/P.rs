@@ -4366,17 +4366,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let contents_ptr = self.source.contents.as_ptr() as usize;
         let name_ptr = name.as_ptr() as usize;
         if contents_ptr <= name_ptr && (name_ptr + name.len()) <= (contents_ptr + self.source.contents.len()) {
-            // Zig: `.{ .source_index = offset, .inner_index = len, .tag = .source_contents_slice }`
+            // Zig: `@intCast` — unchecked in ReleaseFast. Both values are
+            // bounded by `source.contents.len()` which the lexer already
+            // requires to fit in u32 (Loc is i32). debug_assert preserves the
+            // safety check without the per-identifier branch in release.
+            let off = name_ptr - contents_ptr;
+            debug_assert!(off <= u32::MAX as usize && name.len() <= u32::MAX as usize);
             Ok(Ref::new(
-                u32::try_from(name.len()).expect("int cast"),
-                u32::try_from(name_ptr - contents_ptr).expect("int cast"),
+                name.len() as u32,
+                off as u32,
                 js_ast::base::RefTag::SourceContentsSlice,
             ))
         } else {
-            // TODO(port): Zig u31 — Rust has no u31; using u32 and trusting bit-width
-            let inner_index = u32::try_from(self.allocated_names.len()).expect("int cast");
+            // Zig u31 `@intCast` — allocated_names.len() is bounded by the
+            // symbol budget (asserted by Ref::pack's INNER_INDEX_BITS check).
+            let inner_index = self.allocated_names.len();
+            debug_assert!(inner_index <= u32::MAX as usize);
             self.allocated_names.push(name);
-            Ok(Ref::init(inner_index, self.source.index.0, false))
+            Ok(Ref::init(inner_index as u32, self.source.index.0, false))
         }
     }
 

@@ -1,4 +1,5 @@
 use bun_collections::VecExt;
+#[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::{Arena, ArenaVecExt as _};
@@ -44,9 +45,9 @@ impl Tag {
     }
 }
 
-// Zig: `pub var icount: usize = 0;` — mutable global counter.
-// PERF(port): Zig used a plain non-atomic global; Rust requires atomic for safe
-// shared mutation. Relaxed ordering matches the unsynchronized Zig increment.
+// Zig: `pub var icount: usize = 0;` — mutable global counter, never read.
+// Debug-only so release doesn't pay a contended `lock xadd` per Binding.
+#[cfg(debug_assertions)]
 pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -115,11 +116,13 @@ impl BindingAlloc for crate::ast::b::Missing {
 impl Binding {
     #[inline]
     pub fn init(t: impl BindingInit, loc: logger::Loc) -> Binding {
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Binding { loc, data: t.into_b() }
     }
     #[inline]
     pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: logger::Loc) -> Binding {
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Binding { loc, data: t.alloc_into_b(bump) }
     }

@@ -19,12 +19,34 @@ done | sort -u > "$DIAG/all.txt"
 TOTAL=$(wc -l < "$DIAG/all.txt")
 echo "[scoreboard] running $TOTAL files (timeout 15s each, -P32)..." >&2
 
+# cgroup: cap memory + pids so a runaway test can't OOM the host or fork-bomb
+CG=/sys/fs/cgroup/bun-scoreboard
+if [ ! -d "$CG" ]; then
+  mkdir -p "$CG"
+  echo "+memory +pids" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+fi
+echo 32G   > "$CG/memory.max"    2>/dev/null || true
+echo 8192  > "$CG/pids.max"      2>/dev/null || true
+
+# per-test isolated TMPDIR (own dir, nuked after) — tests that pollute /tmp
+# can't leak into each other or the host
+TMPROOT="$DIAG/tmproot"; rm -rf "$TMPROOT"; mkdir -p "$TMPROOT"
+
+# move the xargs supervisor itself into the cgroup so all children inherit
+echo $$ > "$CG/cgroup.procs" 2>/dev/null || true
+
 cat "$DIAG/all.txt" | xargs -P 32 -I{} sh -c '
   slug=$(echo "{}" | tr / _)
-  timeout 15 '"$BIN"' test "{}" > '"$DIAG"'/"$slug".log 2>&1
+  td='"$TMPROOT"'/"$slug"; mkdir -p "$td"
+  TMPDIR="$td" TEMP="$td" TMP="$td" \
+    timeout --kill-after=5 15 '"$BIN"' test "{}" > '"$DIAG"'/"$slug".log 2>&1
   rc=$?
+  rm -rf "$td"
   echo "{}|$rc"
 ' >> "$DIAG/results.txt"
+
+# move ourselves back out so the cgroup can be cleaned later
+echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null || true
 
 SHA=$(git rev-parse --short HEAD)
 {

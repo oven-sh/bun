@@ -1507,6 +1507,7 @@ dependencies = [
  "bun_spawn",
  "bun_string",
  "bun_sys",
+ "bun_which",
  "const_format",
  "enum-map",
  "enumset",

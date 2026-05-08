@@ -16,15 +16,11 @@ use bun_paths::resolve_path::{self, platform};
 use bun_string::{self, strings, String as BunString, Tag as BunStringTag};
 use bun_wyhash::hash as wyhash;
 
-// ── local stubs for lower-tier symbols not yet on their stub surface ──────
-// TODO(b1): bun_schema::api missing — StringPointer is `{offset:u32,length:u32}`
+// `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
+// (T0, already a dep). Re-exported under `api::` so `QueryStringMap` /
+// `CombinedScanner` field types keep resolving.
 pub mod api {
-    #[repr(C)]
-    #[derive(Clone, Copy, Default, Debug)]
-    pub struct StringPointer {
-        pub offset: u32,
-        pub length: u32,
-    }
+    pub use bun_core::StringPointer;
 }
 
 // TODO(b2-blocked): bun_io::Write — bun_io crate gated (does not compile yet).

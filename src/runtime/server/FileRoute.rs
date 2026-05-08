@@ -77,9 +77,9 @@ unsafe fn fh_copy_to(
     values: *mut StringPointer,
     buf: *mut u8,
 ) {
-    // SAFETY: see `fh_count`. `bun_http_types::ETag::StringPointer` and
-    // `bun_string::StringPointer` are both `#[repr(C)] {u32,u32}`.
-    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).copy_to(names.cast(), values.cast(), buf) }
+    // SAFETY: see `fh_count`. `bun_http::headers::api::StringPointer` and
+    // `bun_jsc`'s `StringPointer` param are the same `bun_core::StringPointer`.
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).copy_to(names, values, buf) }
 }
 
 static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =

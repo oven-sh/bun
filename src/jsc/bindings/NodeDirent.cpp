@@ -331,15 +331,21 @@ extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject*
 extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = globalObject->m_JSDirentClassStructure.get(globalObject);
     auto* object = JSC::JSFinalObject::create(vm, structure);
     JSString* pathValue = nullptr;
-    if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath && (*previousPath)->length() == path->impl.wtf->length()) {
-        auto view = (*previousPath)->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (view == path->impl.wtf) {
+    if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath) {
+        // The caller (readdir result toJS loop) already deduplicates the
+        // underlying StringImpl per directory, so consecutive entries that
+        // share a parent path arrive here with the same `path->impl.wtf`
+        // pointer that we adopted into `*previousPath` last call. Compare the
+        // impl pointer directly instead of materializing a
+        // GCOwnedDataScope<StringView> via JSString::view(), whose
+        // construction/destruction acquires a WTF::Lock and touches a
+        // HashTable per call in debug builds.
+        auto* prevImpl = (*previousPath)->tryGetValueImpl();
+        if (prevImpl && (prevImpl == path->impl.wtf || WTF::equal(prevImpl, path->impl.wtf))) {
             pathValue = *previousPath;
 
             // Decrement the ref count of the previous path

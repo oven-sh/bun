@@ -353,11 +353,12 @@ pub fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> Result<bun_sys::F
 
 // PORT NOTE: Zig borrowed `[]const u8` from `Api.BunInstall` (process-lifetime
 // arena). Rust `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
-// per Phase-A "no struct lifetime params". Leak a clone to bridge — these are
-// one-shot config strings that live until process exit anyway.
+// per Phase-A "no struct lifetime params". Park a clone for the lifetime of
+// the install command (matches Zig's never-reset config arena) via the named
+// hand-off helper.
 #[inline]
 fn leak_static(s: &[u8]) -> &'static [u8] {
-    Box::leak(s.to_vec().into_boxed_slice())
+    bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
 impl Options {
@@ -525,8 +526,10 @@ impl Options {
             if let Some(exclusions) = &config.minimum_release_age_excludes {
                 let leaked: Vec<&'static [u8]> =
                     exclusions.iter().map(|e| leak_static(e)).collect();
+                // Parked for the lifetime of the install command (config arena
+                // equivalent), same as `leak_static` above.
                 self.minimum_release_age_excludes =
-                    Some(&*Box::leak(leaked.into_boxed_slice()));
+                    Some(&*bun_core::heap::release(leaked.into_boxed_slice()));
             }
 
             // `PnpmMatcher` is move-only; `config` is `&` here so the matchers

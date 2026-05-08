@@ -1084,7 +1084,17 @@ pub mod expr {
                     }
                     E::Object { properties, ..*o }.into_data_store()
                 }
-                Data::EString(s) => s.shallow_clone().into_data_store(),
+                Data::EString(s) => {
+                    let mut cloned = s.shallow_clone();
+                    // Dupe the bytes too so the clone is fully detached from the
+                    // source buffer (callers may free/replace `Source.contents`).
+                    cloned.data = if cloned.is_utf16 {
+                        data_store_dupe_utf16(cloned.slice16())
+                    } else {
+                        data_store_dupe_str(cloned.data)
+                    };
+                    cloned.into_data_store()
+                }
                 // Inline `Copy` payloads — no heap to clone.
                 d @ (Data::EBoolean(_)
                 | Data::ENumber(_)
@@ -1212,6 +1222,25 @@ pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
         // arena ownership, freed only on `data_store_reset`.
         unsafe { core::mem::transmute::<&[u8], &'static [u8]>(copied) }
     })
+}
+
+/// `data_store_dupe_str` for UTF-16 `EString` payloads. Returns the duped
+/// buffer re-encoded as `EString.data` (ptr cast to `*u8`, len = u16 count).
+fn data_store_dupe_utf16(s16: &[u16]) -> &'static [u8] {
+    let ov = DATA_STORE_OVERRIDE.with(|c| c.get());
+    // SAFETY: same arena-ownership erasure as `data_store_dupe_str`; the
+    // `*u8` cast / element-count length is `EString`'s utf16 encoding (see
+    // `init_utf16`/`slice16`).
+    unsafe {
+        let copied: &[u16] = if !ov.is_null() {
+            (*ov).alloc_slice_copy(s16)
+        } else {
+            DATA_STORE.with(|s| {
+                core::mem::transmute::<&[u16], &'static [u16]>(s.borrow().alloc_slice_copy(s16))
+            })
+        };
+        core::slice::from_raw_parts(copied.as_ptr().cast::<u8>(), copied.len())
+    }
 }
 
 macro_rules! impl_into_expr_data_boxed {

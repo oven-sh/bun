@@ -1188,10 +1188,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/clap/clap.zig (734 lines)
-//   confidence: medium
-//   todos:      23
-//   notes:      const-generic `&'static [Param<Id>]` (Args/ComptimeClap) needs adt_const_params or macro in Phase B; comptime parse_param/parse_long_names downgraded to runtime; std.io counting/fixed-buffer writers stubbed locally
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/clap/clap.zig

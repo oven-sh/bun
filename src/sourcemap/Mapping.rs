@@ -749,10 +749,4 @@ pub fn parse(
     ParseResult::Success(psm)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap/Mapping.zig (605 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      MultiArrayList SoA column accessor API is assumed; ParseResult/ParsedSourceMap/Loc field shapes from sibling files; List::sort has a borrowck hazard (column slice vs &mut self).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap/Mapping.zig

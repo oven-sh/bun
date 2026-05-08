@@ -79,10 +79,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainValue.zig (64 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard wraps &mut self for defer postMatch; Formatter init defaults and get_signature const-ness need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainValue.zig

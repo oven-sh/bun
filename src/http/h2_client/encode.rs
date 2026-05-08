@@ -424,13 +424,4 @@ pub fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
     encoded.push(rest as u8);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h2_client/encode.zig (255 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      borrowck conflicts (session+encode_scratch, session+streams
-//               iter) resolved via mem::take / index-loop; ThreadSafeStreamBuffer
-//               accessed via raw NonNull deref; classify_request_header replaces
-//               comptime case-insensitive map
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h2_client/encode.zig

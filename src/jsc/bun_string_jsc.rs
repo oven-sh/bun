@@ -388,12 +388,4 @@ pub mod unicode_testing_apis {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/bun_string_jsc.zig (265 lines)
-//   confidence: high
-//   notes:      ZigString.Slice allocator-vtable replaced by enum variants
-//               (`is_allocated`/`is_wtf_allocated`/`take_owned_raw`);
-//               markBinding(@src()) dropped; utf8 ownership transferred to JSC
-//               via `take_owned_raw` + `to_external_value`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/bun_string_jsc.zig

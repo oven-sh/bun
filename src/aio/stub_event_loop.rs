@@ -16,10 +16,4 @@ pub struct FilePoll {
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/aio/stub_event_loop.zig (3 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      opaque FFI handle stubs (Nomicon pattern); !Send + !Sync + !Unpin
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/aio/stub_event_loop.zig

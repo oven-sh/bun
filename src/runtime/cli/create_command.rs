@@ -2788,10 +2788,4 @@ impl GitHandler {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/create_command.zig (2460 lines)
-//   confidence: low
-//   todos:      31
-//   notes:      Heavy use of mutable statics + std.fs/std.process; InjectionPrefill AST-static tree stubbed (only feeds dead code + npx_react_scripts_build); Output::pretty fmt-string positional args need macro rework; many borrow lifetimes faked as 'static.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/create_command.zig

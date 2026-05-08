@@ -52,10 +52,4 @@ pub mod js_bindings {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/fmt_jsc.zig (39 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      bun_gen::fmt_jsc::Formatter mirrored locally; MutableString writer used directly (BufferedWriter elided)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/fmt_jsc.zig

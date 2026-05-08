@@ -588,10 +588,4 @@ pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> 
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/masking.zig (572 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      DefineEnumProperty/DeriveParse/DeriveToCss mapped to placeholder #[derive(css::Parse, css::ToCss)] + #[css(name=..)]; PropertyFieldMap/VendorPrefixMap comptime metadata flattened to assoc const slices; PropertyId/PropertyIdTag variant names guessed (kebab→PascalCase)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/masking.zig

@@ -221,10 +221,4 @@ impl IniTestingAPIs {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_jsc/ini_jsc.zig (129 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      arena removed (test-only path); JSObject::create anon-struct ported as local PojoFields impl; dotenv::Loader/Map ownership reshaped to fn-scope Options (no Box::leak per §Forbidden); env lifetime erased to *mut Loader<'static> to unify VM-owned/local-constructed arms
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_jsc/ini_jsc.zig

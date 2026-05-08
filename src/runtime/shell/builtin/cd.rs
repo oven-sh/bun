@@ -78,9 +78,4 @@ impl Cd {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/cd.zig (165 lines)
-//   confidence: medium
-//   blocked_on: ShellExecEnv::change_cwd, IOWriter::enqueue
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/cd.zig

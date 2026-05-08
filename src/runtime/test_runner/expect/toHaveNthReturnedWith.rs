@@ -152,10 +152,4 @@ pub fn to_have_nth_returned_with(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveNthReturnedWith.zig (98 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard wraps `this` for post_match defer; get_signature assumed const fn; Expect.throw assumed to take format_args!; two to_fmt(&mut formatter) in one format_args! may need borrowck reshape in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveNthReturnedWith.zig

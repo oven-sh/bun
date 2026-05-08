@@ -202,10 +202,4 @@ pub static USES_GLOBAL_OPTIONS: LazyLock<EnumMap<Tag, bool>> = LazyLock::new(|| 
     }
 });
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/options_types/CommandTag.zig (185 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      params/printHelp aliases dropped (would cycle cli↔options_types); EnumArray tables use LazyLock<EnumMap> since enum_map! is not const
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/options_types/CommandTag.zig

@@ -67,10 +67,4 @@ pub fn get(code: u16) -> Option<&'static [u8]> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/HTTPStatusText.zig (68 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      pure lookup table; returns &'static [u8] byte literals
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/HTTPStatusText.zig

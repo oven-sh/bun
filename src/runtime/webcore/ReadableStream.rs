@@ -1184,10 +1184,4 @@ impl<C: SourceContext> NewSource<C> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/ReadableStream.zig (853 lines)
-//   confidence: medium
-//   todos:      15
-//   notes:      NewSource comptime fn-bundle → SourceContext trait; .classes.ts codegen accessors (js.*, toJS/fromJS, cached props) bound via SourceContext::JS_* consts + source_context_codegen! macro; global_this field lifetime needs Phase B decision.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/ReadableStream.zig

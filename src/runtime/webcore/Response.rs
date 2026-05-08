@@ -1436,10 +1436,4 @@ fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers
 // TODO: move to http.zig. this has nothing to do with jsc or WebCore
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/Response.zig (936 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      Intrusive refcount + WeakPtrData kept raw; Init.headers is Option<HeadersRef> — RAII NonNull<FetchHeaders> wrapper that deref()s the C++ handle on Drop (NOT Rc/Arc — payload lives on C++ heap); js codegen module (gc.stream/bodySetCached) stubbed; write_format defer-dedent reshaped for borrowck; getURL JS getter renamed get_url_js (snake_case collision with getUrl).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/Response.zig

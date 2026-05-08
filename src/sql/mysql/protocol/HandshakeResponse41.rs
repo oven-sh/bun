@@ -106,9 +106,7 @@ impl HandshakeResponse41 {
         Ok(())
     }
 
-    // TODO(port): Zig `pub const write = writeWrap(HandshakeResponse41, writeInternal).write;`
-    // is a comptime-generated wrapper. Approximated here as a direct delegating method;
-    // verify against the ported `write_wrap` signature in Phase B.
+    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
@@ -117,10 +115,4 @@ impl HandshakeResponse41 {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/HandshakeResponse41.zig (109 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Capabilities field access assumes named bool fields (not bitflags getters); write_wrap signature guessed; struct field defaults noted in comments only.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/HandshakeResponse41.zig

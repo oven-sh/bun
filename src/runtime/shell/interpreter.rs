@@ -2929,14 +2929,4 @@ pub fn create_shell_interpreter(
     Ok(js_value)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/interpreter.zig (2164 lines)
-//   confidence: medium-high — NodeId-arena dispatch + JS-side
-//               init/run/finish/finalize fully ported; `StatePtrUnion`
-//               superseded by NodeId arena.
-//   not-ported: `CmdEnvIter` (subproc.rs owns its
-//               own env iterator shape), `ShellExecEnv.writeFailingErrorFmt`
-//               (Zig `anytype ctx` + comptime fmt callback — callers port the
-//               three-arm match inline against their concrete `IO.OutKind`).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/interpreter.zig

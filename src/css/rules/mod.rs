@@ -1105,10 +1105,4 @@ pub struct MinifyContext<'a, 'bump> {
     pub err: Option<css::error::MinifyError>,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/rules.zig (681 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      hub un-gated; CssRule<R> + CssRuleList::{to_css,minify,deep_clone} + MinifyContext + StyleRuleKey + merge_style_rules real; all leaf-rule to_css impls real — to_css_shim! deleted; minify .style arm + merge_style_rules body + StyleRuleKey hash/eq internally gated on StyleRule behavior + selector helpers; 'bump arena lifetime dropped from CssRuleList until crate-wide thread
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/rules.zig

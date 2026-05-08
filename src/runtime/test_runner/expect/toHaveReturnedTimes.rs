@@ -14,11 +14,4 @@ pub fn to_have_returned_times(
     Expect::to_have_returned_times(this, global, callframe)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveReturnedTimes.zig (1 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin delegating shim — Expect::to_have_returned_times is an inherent method in
-//               toHaveReturned.rs, so it cannot be `pub use`d directly.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveReturnedTimes.zig

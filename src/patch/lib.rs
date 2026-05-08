@@ -2129,9 +2129,4 @@ fn should_skip_line(line: &[u8]) -> bool {
             && !(line.len() >= 4 && (&line[0..4] == b"--- " || &line[0..4] == b"+++ ")))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/patch/patch.zig (1434 lines)
-//   notes:      All `&'a [u8]` borrow input patch text; git_diff_postprocess
-//               iterator reshaped for borrowck.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/patch/patch.zig

@@ -63,15 +63,7 @@ impl SSLRequest {
         Ok(())
     }
 
-    // pub const write = writeWrap(SSLRequest, writeInternal).write;
-    // TODO(port): writeWrap is a comptime fn-generator that produces a `write` fn wrapping
-    // write_internal. Port as a trait impl or macro in Phase B (see new_writer::write_wrap).
+    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/SSLRequest.zig (42 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      writeWrap codegen pattern needs trait/macro; NewWriter<Context> generic shape assumed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/SSLRequest.zig

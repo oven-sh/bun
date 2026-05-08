@@ -797,10 +797,4 @@ pub mod abort_handler {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/parallel/Coordinator.zig (522 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      borrowck reshapes around &mut self + &mut Worker (callers pass workers from self.workers); StreamCapture/Timespec/SpawnStatus crate paths guessed; argv/envps null-sentinel slices need a real type
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/parallel/Coordinator.zig

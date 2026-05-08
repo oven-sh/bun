@@ -204,10 +204,4 @@ impl Specifier {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/css_modules.zig (138 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      Composes::to_css gated on CustomIdent::to_css (Printer::write_ident); implement_{eql,deep_clone,hash} hand-expanded (comptime-reflection helpers); css::Result<T> = Result<T, ParseError>
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/css_modules.zig

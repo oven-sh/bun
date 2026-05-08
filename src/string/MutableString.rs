@@ -691,10 +691,4 @@ impl<'a> std::io::Write for BufferedWriter<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/MutableString.zig (473 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      Allocator field dropped (global mimalloc); ensure_valid_identifier returns owned Box<[u8]> instead of borrow-or-owned (consider Cow); write_all16 large-path looks buggy upstream — ported intent, flagged.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/MutableString.zig

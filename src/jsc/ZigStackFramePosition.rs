@@ -49,10 +49,4 @@ impl ZigStackFramePosition {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ZigStackFramePosition.zig (32 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      reader/writer anytype params need trait bounds; decode's omitted line_start_byte field needs confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ZigStackFramePosition.zig

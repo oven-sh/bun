@@ -195,10 +195,4 @@ pub fn assert_unpoisoned(ptr: *const c_void) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/safety/asan.zig (144 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      cfg name for enable_asan needs Phase B confirmation (feature = "asan" placeholder)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/safety/asan.zig

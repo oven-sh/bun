@@ -1060,16 +1060,7 @@ pub mod ssl_wrapper {
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // PORT STATUS
-    //   source:     src/runtime/socket/ssl_wrapper.zig (542 lines)
-    //   moved-in:   MOVE_DOWN bun_runtime → bun_uws (for http_jsc)
-    //   confidence: medium
-    //   omitted:    `init(SSLConfig, ..)` — SSLConfig is tier-6/http_types;
-    //               callers convert via `.as_usockets()` and use
-    //               `init_from_options` (or wrap it as an extension trait
-    //               in their own tier).
-    // ──────────────────────────────────────────────────────────────────────
+    // ported from: src/runtime/socket/ssl_wrapper.zig
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1927,10 +1918,4 @@ pub use bun_uws_sys::AnyResponse;
 
 pub use bun_uws_sys::response::WriteResult;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws/uws.zig (177 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      mostly thin re-exports; module-as-PascalCase aliases and open Opcode enum need Phase B review
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws/uws.zig

@@ -965,10 +965,4 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
     exception
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/tls_socket_functions.zig (673 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Mixin host-fns for TLSSocket; BoringSSL FFI return-type nullability (Option vs raw ptr) and StringOrBuffer::from_js signature need Phase B fixup.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/tls_socket_functions.zig

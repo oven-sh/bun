@@ -767,13 +767,4 @@ impl Linker {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker.zig (421 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ImportPathFormat const-generic demoted to runtime arg
-//               (no `adt_const_params` in this crate); PluginRunner.on_resolve
-//               dispatched via fn-ptr field populated by `bun_jsc` (cycle
-//               break — `JSGlobalObject` is unreachable from this crate).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker.zig

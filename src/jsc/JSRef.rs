@@ -257,10 +257,4 @@ impl Default for JsRef {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSRef.zig (225 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      Strong.Optional folded into bun_jsc::Strong; explicit .deinit() calls become implicit via Strong's Drop on reassignment. Zig `pub fn deinit` dropped per PORTING.md — callers migrate to `*jsref = JsRef::empty()` in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSRef.zig

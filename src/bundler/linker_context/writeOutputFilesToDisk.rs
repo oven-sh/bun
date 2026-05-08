@@ -643,13 +643,4 @@ pub fn write_output_files_to_disk(
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/writeOutputFilesToDisk.zig (483 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      MaxHeapAllocator reset under borrowck and chunks aliasing into
-//               code()/code_standalone() use raw-ptr workaround matching Zig
-//               semantics; Framework.server_components offset hardcoded until
-//               bake_types lands the field.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/writeOutputFilesToDisk.zig

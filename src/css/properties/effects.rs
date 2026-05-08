@@ -55,10 +55,4 @@ pub struct DropShadow {
     pub blur: Length,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/effects.zig (56 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      type-only definitions; SmallList<T, N> assumed in crate::css_parser
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/effects.zig

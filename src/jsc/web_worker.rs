@@ -1570,17 +1570,4 @@ unsafe fn resolve_entry_point_specifier<'s>(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/web_worker.zig (981 lines)
-//   confidence: medium
-//   notes:      Forward-dep calls (`bun_runtime::cli` execArgv parse,
-//               `bun_runtime::bun_js::apply_standalone_runtime_flags`,
-//               `bun_runtime::api::cron::CronJob`, `webcore::ObjectURLRegistry`)
-//               dispatched through `virtual_machine::RuntimeHooks` — the
-//               documented cycle-break per VirtualMachine.rs §Dispatch.
-//               `StandaloneModuleGraph.find` / `.base_public_path` surfaced as
-//               trait methods on `bun_resolver::StandaloneModuleGraph`
-//               (LAYERING: trait already lives in the lower crate; method
-//               additions are non-cyclic).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/web_worker.zig

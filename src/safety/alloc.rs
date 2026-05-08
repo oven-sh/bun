@@ -225,10 +225,4 @@ pub const ENABLED: bool = cfg!(feature = "ci_assert");
 #[allow(dead_code)]
 const TRACES_ENABLED: bool = cfg!(debug_assertions);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/safety/alloc.zig (192 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Reworked from `&dyn Allocator` fat-pointer transmutes to `StdAllocator` (the literal {ptr, vtable} port) so .ptr/.vtable compare exactly as in Zig. Higher-tier `is_instance` checks (arena/allocation_scope/LinuxMemFd/MaxHeap/MimallocArena/CachedBytecode/bundle_v2/heap_breakdown) folded into the `ALLOC_HAS_PTR` hook; `MimallocArena::is_instance` for `transfer_ownership` via `IS_MIMALLOC_ARENA` hook. `is_wtf_allocator`/c_allocator/z_allocator vtable checks are direct (already moved down to bun_alloc).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/safety/alloc.zig

@@ -798,13 +798,4 @@ impl ID {
 const US_PER_S: i64 = 1_000_000;
 const NS_PER_US: i64 = 1_000;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/Timer.zig (703 lines)
-//   confidence: medium (B-2 struct/state un-gate)
-//   notes:      All/Maps/Kind/ID/TimerHeap/FakeTimers real; insert/remove/
-//               update/get_timeout/drain_timers real (vm erased per §Dispatch).
-//               TimerHeap is the real bun_io::heap::Intrusive pairing-heap
-//               (meld/remove/combine_siblings) — multi-timer setTimeout works.
-//               JS host fns gated on bun_jsc.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/Timer.zig

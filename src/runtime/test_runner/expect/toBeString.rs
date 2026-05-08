@@ -51,10 +51,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeString.zig (35 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard wraps &mut Self for defer post_match; Formatter ctor + Expect::throw fmt-args signature need Phase B alignment
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeString.zig

@@ -339,10 +339,4 @@ pub extern "C" fn TextEncoder__encodeInto8(
     unsafe { core::mem::transmute::<[u32; 2], u64>(sized) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/TextEncoder.zig (265 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      JSString::Iterator field shapes (data/fn ptrs) and ArrayBuffer accessor return types (slice/byte_slice mutability) assumed; Zig `pub export fn c` kept verbatim — likely dead/typo upstream.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/TextEncoder.zig

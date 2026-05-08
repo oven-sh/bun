@@ -1117,15 +1117,4 @@ pub fn __bun_run_tasks(
     tick_queue_with_count(el, vm, counter)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/Task.zig tickQueueWithCount (96-arm switch) +
-//               src/aio/posix_event_loop.zig FilePoll.onUpdate (13-arm switch) +
-//               src/event_loop/EventLoopTimer.zig fire (24-arm switch)
-//   confidence: medium — table exhaustive, every arm calls the real per-type
-//               entry point; some upstream types (shell glob/cond_expr/dir,
-//               IOWriter::run_from_main_thread, security-scan pipe writer)
-//               are forward-declared in their owning modules.
-//   notes:      §Dispatch hot-path — high tier owns the match; low tier
-//               stores (tag, ptr) and calls link-time `extern "Rust"` only.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/Task.zig

@@ -205,10 +205,4 @@ impl Parser<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/render_blocks.zig (153 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      TextType enum name guessed; row_text borrow of self.text may need reshaping for borrowck vs &mut self method calls
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/render_blocks.zig

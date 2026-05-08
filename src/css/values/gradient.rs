@@ -1710,10 +1710,4 @@ pub fn convert_stops_to_webkit(
     Some(stops)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/gradient.zig (1657 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      Arena-backed (BumpVec) per §Allocators; bump threaded through deep_clone/get_fallback/get_prefixed/from_standard/from_position. parse_items/to_css obtain arena via input.arena()/dest.arena(). serialize_items needs trait for generic .percentage check. EndingShape parse/to_css use placeholder derive helpers. ComptimeEnumMap getAnyCase → if-chain.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/gradient.zig

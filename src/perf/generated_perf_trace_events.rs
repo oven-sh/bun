@@ -45,10 +45,4 @@ impl PerfEvent {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/perf/generated_perf_trace_events.zig (62 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      generated file — update scripts/generate-perf-trace-events.sh to emit a #[repr(i32)] enum PerfEvent
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/perf/generated_perf_trace_events.zig

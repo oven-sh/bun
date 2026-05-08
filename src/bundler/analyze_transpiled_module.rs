@@ -473,10 +473,4 @@ pub extern "C" fn zig_log(msg: *const c_char) {
     bun_core::Output::print_error(format_args!("{}\n", bstr::BStr::new(bytes)));
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/analyze_transpiled_module.zig (397 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      ModuleInfo/StringID/VarKind/FetchParameters re-exported from bun_js_printer (canonical producer); ModuleInfoDeserialized kept local as the raw-pointer FFI view; non-u8 deserialized slices are align(1) and need read_unaligned.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/analyze_transpiled_module.zig

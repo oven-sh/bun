@@ -786,10 +786,4 @@ static INDENT_SPACES: [u8; INDENTS_LEVELS * 2] = [b' '; INDENTS_LEVELS * 2];
 // TODO(port): narrow — bun.ast.Symbol.Map. Moved down to bun_logger per CYCLEBREAK B-0.
 type SymbolMap = bun_logger::symbol::Map;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/printer.zig (581 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      ctx field lifetime needs Phase-B reshape (raw *const StyleContext); get_written_amt routes through bun_io::Write::written_len(); write_ident/write_dashed_ident borrowck reshaped by hoisting 'a refs out of css_module before closure
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/printer.zig

@@ -301,10 +301,4 @@ impl WatcherAtomics {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/DevServer/WatcherAtomics.zig (213 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      NextEvent open-enum modeled as transparent u8 newtype over AtomicU8; *HotReloadEvent kept raw (cross-thread + self-borrow); cache-line align dropped (PERF); 0xAA undefined-mem check is Zig-only
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/DevServer/WatcherAtomics.zig

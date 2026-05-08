@@ -613,10 +613,4 @@ fn write_i32_le(w: &mut Vec<u8>, v: i32) {
     w.extend_from_slice(&v.to_le_bytes());
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/DevServer/ErrorReportRequest.zig (404 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      borrowed BunString fields in ZigStackFrame are Tag::ZigString — Drop's deref() is a no-op; per-map source_map_arena reset elided (Rust port allocates into global heap).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/DevServer/ErrorReportRequest.zig

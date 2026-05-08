@@ -154,10 +154,4 @@ pub fn new_writer<C: WriterContext>(ctx: C) -> NewWriter<C> {
     NewWriter { wrapped: ctx }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/NewWriter.zig (128 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      NewWriterWrap's comptime fn-ptr params folded into WriterContext trait; `String` method renamed `bun_string` to avoid snake_case collision
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/NewWriter.zig

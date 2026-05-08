@@ -5002,23 +5002,4 @@ pub fn __bun_http_sync_download_get<'a>(
     Ok(response.status_code as u16)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/VirtualMachine.zig init() steps 1313-1322 +
-//               src/jsc/event_loop.zig autoTick() +
-//               src/jsc/ModuleLoader.zig transpileSourceCode/fetchBuiltinModule
-//   confidence: low — vtable wiring + Timer::All/ServerEntryPoint real;
-//               fetch_builtin_module HardcodedModule lookup real;
-//               transpile_source_code body ported (arena mgmt / loader
-//               dispatch / log-swap real; parse→link→print arm un-gated:
-//               ParseOptions / parse_maybe_return_file_only / Linker::link
-//               / Transpiler::print live; source-map handler + Expr::to_js
-//               + ModuleInfo::create still gated).
-//               js_synthetic_module / get_hardcoded_module real.
-//   todos:      see TODO(b2-cycle) markers — uws::Loop surface,
-//               HiveAllocator, Debugger, RuntimeTranspilerStore,
-//               StandaloneModuleGraph, MacroEntryPoint,
-//               Runtime::source_code().
-//   notes:      §Dispatch cold-path — fn-ptr indirection acceptable, each
-//               hook does real work (alloc/syscall/parse).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/VirtualMachine.zig

@@ -446,10 +446,4 @@ impl ConcurrentTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/ConcurrentTask.zig (121 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      UnboundedQueue intrusive field param + ManagedTask::New comptime reflection need Phase B wiring; mark_binding! assumed macro
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/ConcurrentTask.zig

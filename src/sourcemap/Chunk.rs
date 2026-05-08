@@ -552,10 +552,4 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
 
 pub type Builder = NewBuilder<VLQSourceMap>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap/Chunk.zig (400 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      get_buffer() returns &mut instead of by-value copy; line_offset_table_byte_offset_list lifetime needs Phase B threading; InternalSourceMap.Builder.finalize_take() assumed to move out finalized buffer
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap/Chunk.zig

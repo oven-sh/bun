@@ -149,10 +149,4 @@ fn parse_int_u64(s: &[u8]) -> Result<u64, bun_core::Error> {
     Ok(acc)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/CommandTag.zig (85 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Other(&'a [u8]) borrows input; phf assoc-static syntax needs Phase B review; parse_int_u64 is base-10-only (radix-0 TODO)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/CommandTag.zig

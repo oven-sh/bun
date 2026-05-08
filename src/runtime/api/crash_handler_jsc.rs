@@ -160,10 +160,4 @@ pub mod js_bindings {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/crash_handler_jsc.zig (99 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      diverging fns (panic/root_error/oom/raise) rely on `!` coercion to JsResult<JSValue>
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/crash_handler_jsc.zig

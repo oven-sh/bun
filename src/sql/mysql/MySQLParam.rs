@@ -11,10 +11,4 @@ pub struct Param {
     pub flags: ColumnFlags,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/MySQLParam.zig (11 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `type` field uses raw ident `r#type`; module paths for sibling imports may need adjustment in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/MySQLParam.zig

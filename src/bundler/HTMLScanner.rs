@@ -465,12 +465,4 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/HTMLScanner.zig (308 lines)
-//   confidence: medium
-//   notes:      comptime fn-generation (`generateHandlerForTag` + `inline for`)
-//               mapped to per-selector user-data records carrying tag index;
-//               errdefer reshaped into inner Result block; LIFETIMES.tsv had
-//               no rows so log/source classified BORROW_PARAM locally
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/HTMLScanner.zig

@@ -167,12 +167,4 @@ impl Stream {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h2_client/Stream.zig (114 lines)
-//   confidence: medium-high
-//   todos:      0
-//   notes:      session/client are raw backrefs; pending_body borrows
-//               client.state.request_body via raw slice ptr; u31 id widened
-//               to u32.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h2_client/Stream.zig

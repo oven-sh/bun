@@ -366,10 +366,4 @@ impl Drop for PerMessageDeflate {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/websocket_client/WebSocketDeflate.zig (236 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      RareData stack-fallback 128KB scratch dropped (PERF); rare_data uses Cell for interior mutability to satisfy &'a borrow; init() error path lets Drop run (*End on zeroed/failed z_stream is a no-op).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/websocket_client/WebSocketDeflate.zig

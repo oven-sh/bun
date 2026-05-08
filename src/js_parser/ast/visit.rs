@@ -1985,5 +1985,3 @@ pub fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<logger::Loc> {
     }
     None
 }
-
-

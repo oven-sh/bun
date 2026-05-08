@@ -155,8 +155,4 @@ impl Script {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Script.zig (133 lines)
-//   confidence: high (NodeId-arena conversion complete; ast field access wired)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Script.zig

@@ -58,10 +58,4 @@ const _: () = assert!(
     "EncodedValueDescriptor.as_bits assumes a little-endian system",
 );
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/DecodedJSValue.zig (49 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ffi::NOT_CELL_MASK from sibling FFI.zig; encode() uses transmute (JSValue is repr(transparent) i64)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/DecodedJSValue.zig

@@ -559,10 +559,4 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/prepareCssAstsForChunk.zig (331 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Shallow-copy semantics ported via `ptr::read` (matches Zig struct copy of arena-backed data); `Vec` reslice mirrors Zig ArrayListUnmanaged ptr/cap reassignment — the backing buffer is arena-owned and never freed via these views.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/prepareCssAstsForChunk.zig

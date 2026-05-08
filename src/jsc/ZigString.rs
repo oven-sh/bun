@@ -1127,10 +1127,4 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
 }
 } // mod _body
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ZigString.zig (865 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      Slice keeps NullableAllocator to distinguish WTF/mimalloc/borrowed; `static()` needs macro; allocator params dropped per guide but Slice ownership model needs Phase B review
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ZigString.zig

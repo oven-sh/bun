@@ -136,10 +136,4 @@ pub enum Status {
     Again,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/SendFile.zig (101 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      NewHTTPContext<false>::HTTPSocket nested-type ref + raw sendfile FFI paths need Phase-B wiring; u63 modeled as u64 clamped to i64::MAX.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/SendFile.zig

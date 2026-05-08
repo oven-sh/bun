@@ -25,10 +25,4 @@ unsafe extern "C" {
     fn JSC__CustomGetterSetter__isSetterNull(this: *const CustomGetterSetter) -> bool;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/CustomGetterSetter.zig (11 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      opaque FFI handle + two extern "C" wrappers; externs inlined pending jsc_sys
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/CustomGetterSetter.zig

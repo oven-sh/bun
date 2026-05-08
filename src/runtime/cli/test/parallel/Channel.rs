@@ -662,10 +662,4 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
 #[allow(unused_imports)]
 use offset_of as _;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/parallel/Channel.zig (346 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      comptime owner_field replaced by ChannelOwner trait (CHANNEL_OFFSET); Box<uv::Pipe> ownership vs close_and_destroy needs Phase-B reconcile; ingest() borrows self.in across owner() call — may need raw-ptr split.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/parallel/Channel.zig

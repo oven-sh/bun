@@ -130,10 +130,4 @@ pub use my_sql_connection::MySQLConnection;
 pub use my_sql_query::MySQLQuery;
 pub use my_sql_request_queue::MySQLRequestQueue;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql.zig (28 lines)
-//   confidence: medium
-//   todos:      see TODO(b2-blocked) above
-//   notes:      `create_binding` body gated; submodule filenames PascalCase → #[path]
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql.zig

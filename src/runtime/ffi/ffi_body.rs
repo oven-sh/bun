@@ -3269,10 +3269,4 @@ fn make_napi_env_if_needed<'a>(
     None
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/ffi/ffi.zig (2465 lines)
-//   confidence: low
-//   todos:      34
-//   notes:      Heavy TCC/JSC interop; ZStr ownership, mutable statics, TCC::State API surface, map_to_js_object const generation, and borrowck reshaping all need Phase B attention. Function::deinit folded into Drop.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/ffi/ffi.zig

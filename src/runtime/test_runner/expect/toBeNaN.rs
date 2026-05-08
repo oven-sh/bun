@@ -45,10 +45,4 @@ pub fn to_be_nan(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) 
     this.throw(global, signature, format_args!(concat!("\n\n", "Received: <red>{}<r>\n"), value_fmt))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeNaN.zig (42 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Expect::throw assumed to take format_args!; get_signature assumed const fn
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeNaN.zig

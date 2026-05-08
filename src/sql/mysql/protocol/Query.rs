@@ -114,10 +114,4 @@ pub fn execute<C: WriterContext>(query: &[u8], writer: NewWriter<C>) -> Result<(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/Query.zig (70 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Execute<'a> borrows all fields (Phase-B lifetime decision pending); writeWrap metaprogramming flattened; write_null_bitmap added to NewWriterWrap (Zig lazy-comp gap)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/Query.zig

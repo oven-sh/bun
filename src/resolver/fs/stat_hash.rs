@@ -87,10 +87,4 @@ impl StatHash {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolver/fs/stat_hash.zig (49 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      XxHash64 crate TBD; bun.S/bun.timespec mapped to bun_sys::{S,Timespec}; wtf::write_http_date is a JSC dep in a base crate
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolver/fs/stat_hash.zig

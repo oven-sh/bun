@@ -1201,11 +1201,4 @@ impl WriteFileWaitFromLockedValueTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/blob/write_file.zig (757 lines)
-//   confidence: medium
-//   notes:      FileOpener/FileCloser modeled as traits (matching ReadFile);
-//               WriteFileWindows is `#[cfg(windows)]`-gated since libuv types
-//               are Windows-only in the Rust crate graph.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/blob/write_file.zig

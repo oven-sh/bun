@@ -573,10 +573,4 @@ pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ThreadPool;
 pub use crate::ParseTask;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/convertStmtsForChunk.zig (558 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Zig has args[3] OOB write in first __reExport branch; ported as push (args[2]). S::Local shallow-copied via ptr::read to mirror Zig `s.*`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/convertStmtsForChunk.zig

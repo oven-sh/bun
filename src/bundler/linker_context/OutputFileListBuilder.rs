@@ -230,10 +230,4 @@ impl OutputFileList {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/OutputFileListBuilder.zig (150 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      MultiArrayList .items(.loader) accessor + OutputFile Copy/move semantics need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/OutputFileListBuilder.zig

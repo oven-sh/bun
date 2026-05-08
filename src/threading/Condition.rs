@@ -380,10 +380,4 @@ impl FutexImpl {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/Condition.zig (278 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      WindowsImpl reaches into Mutex internals (impl_.srwlock / locking_thread) — verify field names in bun_threading::Mutex; Futex::Deadline error type assumed to be TimeoutError.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/Condition.zig

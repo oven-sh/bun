@@ -155,11 +155,4 @@ impl SASL {
 // TODO(port): Zig `deinit` is reset-for-reuse (zeroes scalar state, no owned resources);
 // add `pub fn reset(&mut self)` if callers need it. Not mapped to Drop — no side effects.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/SASL.zig (94 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      hmac/nonce/client_key_signature un-gated (bun_sha_hmac + bun_core::csprng);
-//               compute_salted_password inlines BoringSSL PKCS5_PBKDF2_HMAC (no bun_runtime dep)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/SASL.zig

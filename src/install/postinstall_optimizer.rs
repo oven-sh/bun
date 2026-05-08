@@ -278,10 +278,4 @@ impl List {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/postinstall_optimizer.zig (198 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      LazyLock for comptime hash/version consts; ArrayHashMap needs identity-u64 ctx; npm::OperatingSystem::WIN32/ALL bitfield consts assumed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/postinstall_optimizer.zig

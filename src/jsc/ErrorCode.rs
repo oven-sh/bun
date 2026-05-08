@@ -1461,10 +1461,4 @@ pub static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
 #[unsafe(no_mangle)]
 pub static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/bindings/ErrorCode.ts (codegen) + src/jsc/ErrorCode.zig
-//   confidence: high (discriminants verified against build/debug/codegen/ErrorCode.zig)
-//   notes:      `ErrorCode` doubles as the legacy anyerror-wrapper; high-range
-//               sentinels never collide with the 312-entry codegen table.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/bindings/ErrorCode.ts

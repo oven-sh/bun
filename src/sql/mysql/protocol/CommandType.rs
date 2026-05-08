@@ -35,10 +35,4 @@ pub enum CommandType {
     COM_RESET_CONNECTION = 0x1f,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/CommandType.zig (34 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      plain #[repr(u8)] enum; variant names kept SCREAMING_SNAKE to match wire-protocol naming
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/CommandType.zig

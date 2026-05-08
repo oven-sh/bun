@@ -102,10 +102,4 @@ pub fn to_end_with(
     // `formatter` drops here (was: defer formatter.deinit())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toEndWith.zig (64 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      to_fmt double-&mut-borrow needs reshape; get_signature must be const/macro; Formatter ctor shape guessed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toEndWith.zig

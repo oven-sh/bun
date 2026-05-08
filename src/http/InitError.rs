@@ -16,10 +16,4 @@ impl From<InitError> for bun_core::Error {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/InitError.zig (6 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      bare error set → thiserror+IntoStaticStr enum; From<InitError> for bun_core::Error provided
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/InitError.zig

@@ -243,10 +243,4 @@ const _: () = assert!(core::mem::align_of::<DebugHTTPServerRequestContext>() > D
 const _: () = assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () = assert!(core::mem::align_of::<body::ValueBufferer<'_>>() > DeferredDerefTask::TAG_MASK);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/NativePromiseContext.zig (163 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Tag.fromType comptime-switch ported as trait; server::*::RequestContext paths are placeholders pending server.zig port; Task built via Task::new (Rust Task has no setUintptr — {tag,ptr} pair).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/NativePromiseContext.zig

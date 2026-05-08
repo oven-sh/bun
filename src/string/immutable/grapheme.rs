@@ -411,10 +411,4 @@ const fn is_extended_pictographic(gb: GraphemeBreakNoControl) -> bool {
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/immutable/grapheme.zig (331 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Precompute::DATA uses const-eval (&mut in const fn, stable 1.83+); packed u13/u4 → transparent u16/u8 with manual shifts (LSB-first); u21 cp → u32; grapheme_tables is generated (stub).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/immutable/grapheme.zig

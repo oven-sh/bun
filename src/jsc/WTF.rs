@@ -101,10 +101,4 @@ pub fn write_http_date(buffer: &mut [u8; 32], timestamp_ms: u64) -> &mut [u8] {
 
 pub use crate::string_builder::StringBuilder;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/WTF.zig (71 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      namespace struct flattened to module; markBinding calls dropped
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/WTF.zig

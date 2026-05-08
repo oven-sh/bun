@@ -101,9 +101,4 @@ impl Drop for ProcessAutoKiller {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ProcessAutoKiller.zig (75 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ProcessAutoKiller.zig

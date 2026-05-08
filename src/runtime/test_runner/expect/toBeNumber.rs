@@ -48,10 +48,4 @@ pub fn to_be_number(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeNumber.zig (35 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `defer postMatch` modeled via scopeguard wrapping &mut Expect; Expect::throw assumed to take format_args! (Zig fmt+args tuple collapsed)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeNumber.zig

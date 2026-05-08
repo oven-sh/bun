@@ -73,10 +73,4 @@ pub fn parse(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/JSONCObject.zig (64 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Arena threaded into interchange/ast crates; ASTMemoryAllocator enter/exit modeled as RAII guard; Expr.to_js error-set narrowing matches against ToJSError variants.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/JSONCObject.zig

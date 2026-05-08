@@ -9,10 +9,4 @@ pub fn to_js(_: &JSGlobalObject, value: bool) -> Result<JSValue, AnyPostgresErro
     Ok(JSValue::js_boolean(value))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/types/bool.zig (18 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      TO const was untyped comptime_int in Zig; assumed `short` to match FROM.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/types/bool.zig

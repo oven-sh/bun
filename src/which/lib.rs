@@ -305,15 +305,4 @@ pub fn which_win<'a>(
     None
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/which/which.zig (172 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      search_bin/search_bin_in_path/which_win return &[u16] instead of
-//               &WStr (WStr::from_raw_mut not yet available). NUL is still
-//               written at buf[len]; callers reconstruct WStr from buf.as_ptr().
-//   b2-status:  fully un-gated. search_bin body cfg(windows)-only — exists_os_path
-//               takes OSPathSliceZ (=ZStr on POSIX, =WStr on Windows); the W-path
-//               check is unreachable on POSIX (which() never calls which_win there).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/which/which.zig

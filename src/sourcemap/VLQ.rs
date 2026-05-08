@@ -197,10 +197,4 @@ pub fn decode_assume_valid(encoded: &[u8], start: usize) -> VLQResult {
     VLQResult { start: start + encoded_.len(), value: 0 }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap/VLQ.zig (168 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      const-fn lookup tables; `inline for` lowered to runtime loops (PERF tagged); write_to uses bun_io::Write
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap/VLQ.zig

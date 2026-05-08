@@ -38,10 +38,4 @@ pub fn read(data: &[u8]) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/SocketMonitor.zig (25 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      `check`/`enabled` shape depends on sibling DebugSocketMonitor* ports; hex fmt helper assumed in bun_core::fmt
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/SocketMonitor.zig

@@ -145,10 +145,4 @@ impl<T> Rect<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/rect.zig (143 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      needsDeinit/deinit dropped (Drop handles it); css::generic::* dispatch fns assumed as trait shims — Phase B replaces with real trait bounds (Eql/ToCss/Parse/DeepClone/IsCompatible).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/rect.zig

@@ -1524,10 +1524,4 @@ pub fn export() {
     // force-reference — drop in Rust (linker keeps #[no_mangle])
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/upgrade_command.zig (1010 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      heavy std.process.Child + std.fs usage replaced with bun_core::spawn_sync/bun_sys stubs; AsyncHTTP/Progress borrow lifetimes need Phase B attention; module-level static PathBuffers replaced with stack locals; Bun__githubURL exported at module scope
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/upgrade_command.zig

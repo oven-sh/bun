@@ -1678,13 +1678,4 @@ impl<'a> Corker<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/ServerWebSocket.zig (1298 lines)
-//   confidence: medium
-//   notes:      handler kept as `*const` (server-lifetime) + active_connections
-//               mutated through &; on_close defer reshaped via scopeguard with
-//               raw ptr; signal: ?*AbortSignal kept as NonNull (intrusive C++
-//               refcount, never Arc); std.net.Address → std::net::SocketAddr +
-//               bun_core::fmt::format_ip
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/ServerWebSocket.zig

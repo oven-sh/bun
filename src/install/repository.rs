@@ -1027,10 +1027,4 @@ impl<'a> fmt::Display for Formatter<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/repository.zig (726 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      thread-local buffer slices + std::process/std::fs usage need Phase B reshape; SHARED_ENV mutable static needs sync wrapper
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/repository.zig

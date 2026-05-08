@@ -1335,13 +1335,4 @@ pub fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -
     unsafe { core::mem::replace(&mut (*vm).suppress_microtask_drain, v) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/event_loop.zig (748 lines)
-//   confidence: high
-//   notes:      Full bodies ported. Task / ImmediateObject / WTFTimer dispatch
-//               hoisted to bun_runtime via link-time `extern "Rust"` (low tier
-//               stores `*mut ()`, high tier owns the cast); auto_tick / auto_tick_active
-//               dispatch via virtual_machine::RuntimeHooks (need Timer::All for
-//               poll deadline). All re-exports resolve to real types.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/event_loop.zig

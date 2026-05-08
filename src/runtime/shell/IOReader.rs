@@ -465,12 +465,4 @@ pub fn on_reader_done(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/IOReader.zig (312 lines)
-//   confidence: medium
-//   notes:      RefCount→Arc; UnsafeCell interior; *mut Interpreter backref
-//               for async callbacks (set_interp must be wired by
-//               interpreter.rs); AsyncDeinit hop folded into Drop;
-//               SystemError ref/Clone pending bun_sys.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/IOReader.zig

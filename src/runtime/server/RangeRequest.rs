@@ -133,10 +133,4 @@ fn parse_u64(s: &[u8]) -> Option<u64> {
     core::str::from_utf8(s).ok()?.parse::<u64>().ok()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/RangeRequest.zig (86 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      AnyRequest passed by value to match Zig; Phase B may want &AnyRequest depending on bun_uws shape.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/RangeRequest.zig

@@ -710,13 +710,4 @@ fn create_zeroed_pipe() -> *mut uv::Pipe {
     Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/spawn/stdio.zig (507 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Nested Stdio.* types hoisted to module scope; use_memfd Drop
-//               semantics differ slightly from Zig (see PORT NOTE — assigning
-//               *self drops prior variant, closing prior .memfd which Zig left
-//               open); create_zeroed_pipe returns *mut uv::Pipe (OWNED).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/spawn/stdio.zig

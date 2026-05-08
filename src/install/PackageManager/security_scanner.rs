@@ -1941,10 +1941,4 @@ fn parse_security_advisories_from_expr(
     Ok(advisories_list.into_boxed_slice())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/security_scanner.zig (1302 lines)
-//   confidence: medium
-//   todos:      15
-//   notes:      spawn/IPC plumbing (BufferedReader vtable, StaticPipeWriter<Self>, argv/environ FFI, Windows uv.Pipe closeAndDestroy errdefer, sleep_until aliasing) needs Phase-B attention; Output/time/stdin helpers assumed in bun_core/bun_sys.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/security_scanner.zig

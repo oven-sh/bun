@@ -320,10 +320,4 @@ const _: () = {
     }
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/font_palette_values.zig (294 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      structs/enums un-gated except FontPaletteValuesProperty (payloads need gated_prop! properties::{font,custom}); ArrayList=Vec + deep_clone/ParserOptions arena dropped (arena 'bump threading deferred to Phase B crate-wide pass); nested parser namespaces → trait impls; parse/to_css/deep_clone gated on properties::{font,custom} + RuleBodyParser + CSSIntegerFns + DeepClone
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/font_palette_values.zig

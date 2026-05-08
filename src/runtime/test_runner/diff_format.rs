@@ -133,10 +133,4 @@ pub extern "C" fn zig__renderDiff(
     let _ = bun_core::output::error_writer().print(format_args!("DIFF:\n{}\n", formatter));
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/diff_format.zig (84 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      JestPrettyFormat nested-decl access fixed to module-level FormatOptions/MessageLevel; print_diff_main allocator param dropped.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/diff_format.zig

@@ -94,10 +94,4 @@ pub fn parse(
     out.to_js_by_parse_json(global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/TOMLObject.zig (79 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      arena/ASTMemoryAllocator threading into bun_interchange/bun_js_printer needs Phase B API alignment; throw_stack_overflow shimmed locally pending upstream un-gate
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/TOMLObject.zig

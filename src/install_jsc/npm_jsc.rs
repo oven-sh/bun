@@ -217,14 +217,4 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_jsc/npm_jsc.zig (125 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      js_parse_manifest body fully ported against live PackageManifest
-//               fields; Scope.url constructed via OwnedURL::from_href (no unsafe
-//               lifetime extension). libcIsMatch Zig source omits `try` —
-//               mirrored with `?` for JsResult typing (semantically identical:
-//               the body re-checks `has_exception()` immediately after).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_jsc/npm_jsc.zig

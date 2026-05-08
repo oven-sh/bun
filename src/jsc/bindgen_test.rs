@@ -65,10 +65,4 @@ pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8
     math_result
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/bindgen_test.zig (37 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `gen` is codegen output (bun.gen.bindgen_test) hand-ported in src/jsc/bindings/GeneratedBindings.rs.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/bindgen_test.zig

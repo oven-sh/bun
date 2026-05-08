@@ -330,9 +330,4 @@ impl fmt::Display for NameFormatter {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ZigStackFrame.zig (252 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ZigStackFrame.zig

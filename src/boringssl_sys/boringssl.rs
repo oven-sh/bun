@@ -6,13 +6,7 @@
 //! bindgen dump. When the bindgen pipeline lands this module is replaced
 //! wholesale.
 //
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/boringssl_sys/boringssl.zig (19306 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      hand-curated subset (93 symbols) pending bindgen regeneration
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/boringssl_sys/boringssl.zig
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use core::marker::{PhantomData, PhantomPinned};

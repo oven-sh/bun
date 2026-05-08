@@ -1046,10 +1046,4 @@ impl Parser<'_> {
 // type is assumed to be `types::LineType` re-exported here for brevity.
 use crate::types::LineType;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/blocks.zig (865 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      All fns are `impl Parser` methods; get_block_header_at returns &mut into Vec<u8> (borrowck hazard); process_line signature reshaped to pass line_buf+idx instead of aliasing *Line; RefDef struct name/shape assumed from types.zig.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/blocks.zig

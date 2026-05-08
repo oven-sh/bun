@@ -248,10 +248,4 @@ impl<'a> Default for Options<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/Headers.zig (182 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      MultiArrayList<Entry> column-accessor API (set_len/items_*/dual-mut) is assumed; FetchHeaders HeaderName enum path needs verification; allocator field dropped (non-AST crate).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/Headers.zig

@@ -2188,10 +2188,4 @@ pub fn serialize_json_source_map_for_standalone(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/standalone_graph/StandaloneModuleGraph.zig (1548 lines)
-//   confidence: medium
-//   todos:      31
-//   notes:      heavy cross-crate deps (macho/pe/elf/zstd/json/sourcemap/fs); &'static [u8] fields point into executable section; LazySourceMap.load reshaped (split punned slice into two Vecs); inject() trailing windows-metadata block is unreachable (matches Zig); to_executable() fd cleanup hand-rolled (errdefer captures mutated fd)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/standalone_graph/StandaloneModuleGraph.zig

@@ -80,10 +80,4 @@ pub enum Field {
     Upgraded,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/Signals.zig (34 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      pointer fields kept as Option<NonNull<AtomicBool>> (BACKREF into Store); comptime FieldEnum lowered to runtime enum match
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/Signals.zig

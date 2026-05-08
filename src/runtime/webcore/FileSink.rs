@@ -1462,10 +1462,4 @@ unsafe extern "C" fn on_reject_stream_shim(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/FileSink.zig (862 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      intrusive refcount + @fieldParentPtr kept raw; FileSinkRef RAII guard for ref/deref; JSSink/StreamingWriter generic instantiation and host-fn export wiring need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/FileSink.zig

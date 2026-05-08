@@ -3605,10 +3605,4 @@ pub use spawn_process_body::spawn_process_windows;
 
 pub use spawn_process_body::sync;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/process.zig (2927 lines)
-//   confidence: low
-//   todos:      48
-//   notes:      B-2 un-gate: Process impl (init_posix/on_exit/watch/watch_or_reap/rewatch/close/kill/enable+disable_keeping_event_loop_alive), PollerPosix impl, PosixSpawnResult::to_process now real. PollerPosix::Fd holds NonNull<FilePoll> (hive slot). EventLoopHandle→EventLoopCtx bridged via local event_loop_handle_to_ctx (Js arm uses GET_VM_CTX_HOOK). WaiterThreadPosix full body un-gated: append/reload_handlers/init/loop_ real (UnboundedQueue<TaskQueueEntry> + ConcurrentTask::create + AnyTaskWithExtraContext::New::init). sync runner remains gated. PollerWindows must become #[repr(C)] for offset_of.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/process.zig

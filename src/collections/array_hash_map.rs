@@ -1519,12 +1519,4 @@ pub mod string_hash_map_unowned {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     vendor/zig/lib/std/array_hash_map.zig (subset) +
-//               src/bun.zig `StringHashMapUnowned` / `CaseInsensitiveASCIIStringContext`
-//   confidence: medium
-//   notes:      lookup is hash-prefiltered linear scan (no index_header yet);
-//               GetOrPutResult requires V: Default (Zig left value undefined);
-//               StringHashMap::get_or_put cannot expose the stored key.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: vendor/zig/lib/std/array_hash_map.zig

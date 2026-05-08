@@ -3241,10 +3241,4 @@ pub mod serializer {
 
 pub use serializer as Serializer;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/Package.zig (2300 lines)
-//   confidence: medium
-//   todos:      23
-//   notes:      Serializer.sizes hand-expanded (no comptime reflection). Remaining @field/@typeInfo in fromNPM/Diff still needs trait surface in Phase B; borrowck reshaping needed for overlapping lockfile buffer borrows.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/Package.zig

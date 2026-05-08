@@ -89,10 +89,4 @@ pub fn to_throw_error_matching_inline_snapshot(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toThrowErrorMatchingInlineSnapshot.zig (53 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match via scopeguard owning &mut Expect; throw() collapsed (fmt,args)→format_args!
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toThrowErrorMatchingInlineSnapshot.zig

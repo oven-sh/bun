@@ -224,12 +224,4 @@ pub fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize
     map.capacity() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/DevServer/memory_cost.zig (216 lines)
-//   confidence: high
-//   notes:      `useAllFields` exhaustiveness checks dropped (no Rust field
-//               reflection); kept as comment lists. `entry.files` is `Vec`
-//               in the port (not `MultiArrayList`), so its byte cost is
-//               `cap * size_of::<Shared>()`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/DevServer/memory_cost.zig

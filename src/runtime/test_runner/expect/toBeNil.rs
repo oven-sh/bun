@@ -47,10 +47,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeNil.zig (35 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      scopeguard owns `this` to model `defer postMatch`; Formatter init assumes Default + pub fields
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeNil.zig

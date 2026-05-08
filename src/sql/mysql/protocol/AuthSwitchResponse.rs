@@ -30,10 +30,4 @@ impl AuthSwitchResponse {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/AuthSwitchResponse.zig (18 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      write_wrap comptime adapter needs Rust-side macro/trait in new_writer
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/AuthSwitchResponse.zig

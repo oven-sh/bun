@@ -30,10 +30,4 @@ pub struct OriginalLocation {
     pub name: Option<u32>,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/sourcemap.zig (29 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      pure data structs; []const u8 fields mapped to *const [u8] (CSS arena), ArrayList→Vec (may need bumpalo)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/sourcemap.zig

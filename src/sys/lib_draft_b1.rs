@@ -5447,10 +5447,4 @@ pub mod coreutils_error_map;
 pub mod sys_uv;
 mod raw;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/sys.zig (4635 lines)
-//   confidence: low
-//   todos:      43
-//   notes:      Heavy anytype/@TypeOf dispatch needs WinPathChar/WinPathLike traits; Maybe<T> errno_sys* helpers assumed on Result; raw syscall module + posix shim need wiring in Phase B. @intCast sites now use try_from; SAFETY annotated on 166/167 unsafe blocks.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/sys.zig

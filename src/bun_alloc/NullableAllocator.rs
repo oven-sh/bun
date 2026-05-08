@@ -95,10 +95,4 @@ const _: () = assert!(
     "Expected the sizes to be the same."
 );
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/NullableAllocator.zig (48 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Ported against `StdAllocator` (Zig `std.mem.Allocator` struct shape) instead of `&dyn Allocator`; is_wtf_allocator is a local vtable-identity check against `StringImplAllocator::VTABLE` (hoisted into bun_alloc to break the bun_alloc→bun_string dep cycle without a fn-ptr hook).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/NullableAllocator.zig

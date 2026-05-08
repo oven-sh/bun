@@ -419,9 +419,4 @@ impl FlagParser for Opts {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/touch.zig (414 lines)
-//   confidence: high (NodeId style; thread-pool body ported)
-//   blocked_on: IOWriter::enqueue body
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/touch.zig

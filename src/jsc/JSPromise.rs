@@ -598,10 +598,4 @@ pub enum UnwrapMode {
     LeaveUnhandled,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSPromise.zig (372 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      `wrap()` reshaped from comptime ArgsTuple+toJSHostCall to FnOnce+trampoline; resolve/reject/rejectAsHandled extern are void — exception checked via global.has_exception() (mirrors cpp.zig wrapper); `JsTerminated`/`JscWeak`/`JscStrong` API surface assumed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSPromise.zig

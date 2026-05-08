@@ -388,13 +388,4 @@ unsafe extern "C" {
 // `js = jsc.Codegen.JSSourceMap` and `fromJS`/`fromJSDirect`/`toJS` re-exports are
 // provided by the `#[bun_jsc::JsClass]` derive; no manual re-export needed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap_jsc/JSSourceMap.zig (316 lines)
-//   confidence: medium
-//   todos:      JsClass/host_fn proc-macros only (no body gates)
-//   notes:      find_source_map fully ported; SavedSourceMap::get returns
-//               Arc<ParsedSourceMap> per LIFETIMES.tsv so the +1 ref adopts
-//               directly into the field. JsClass payload; arena dropped; verify
-//               codegen cached-setter + host_fn export name in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap_jsc/JSSourceMap.zig

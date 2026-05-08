@@ -22,10 +22,4 @@ impl PmWhyCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/pm_why_command.zig (12 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      thin delegating wrapper; Command.Context mapped to crate::command::Context
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/pm_why_command.zig

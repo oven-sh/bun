@@ -37,10 +37,4 @@ impl ViewportRule {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/viewport.zig (31 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      struct + to_css + deep_clone un-gated (deep_clone routes declarations through dc::decl_block until DeclarationBlock::deep_clone un-gates); DeclarationBlock<'static> until 'bump threaded
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/viewport.zig

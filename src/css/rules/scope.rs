@@ -93,10 +93,4 @@ impl<R> ScopeRule<R> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/scope.zig (76 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      struct un-gated; to_css/deep_clone gated on CssRuleList::to_css + selector serialize + Printer context helpers; with_context/with_cleared_context reshaped to closures
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/scope.zig

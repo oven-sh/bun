@@ -763,15 +763,4 @@ impl Default for Index {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/options_types/BundleEnums.zig (75 lines)
-//               + move-in TYPE_ONLY: bundler/options.zig (ModuleType, Target, Loader),
-//                 resolver/resolver.zig (SideEffects), bake/bake.zig (BuiltInModule),
-//                 js_parser/ast/base.zig (Index)
-//   confidence: high (Format/WindowsOptions/BundlePackage), medium (move-in types)
-//   todos:      3
-//   notes:      WindowsOptions string fields conservatively Box<[u8]>; inherent
-//               `type` alias needs Rust 1.79+ or move to module scope; Loader::from_string
-//               case-insensitive fallback is O(n) over phf entries.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/options_types/BundleEnums.zig

@@ -291,10 +291,4 @@ pub struct UnicodeBidi;
 // TODO(port): Zig source is `css.DefineEnumProperty(@compileError(...))` — unimplemented placeholder.
 pub struct BoxDecorationBreak;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/text.zig (272 lines)
-//   confidence: medium
-//   todos:      20
-//   notes:      Most types are `@compileError` placeholders in Zig; ported as unit structs. `DefineEnumProperty` needs a Rust derive macro in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/text.zig

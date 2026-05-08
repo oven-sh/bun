@@ -157,10 +157,4 @@ pub fn post_process_css_chunk(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/postProcessCSSChunk.zig (127 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      worker.arena is a per-worker arena (not global mimalloc) — thread `&'bump Bump` to StringJoiner/break_output_into_pieces in Phase B; default_allocator arg to j.push dropped; enum variant paths for options.{source_maps,mode} and MultiArrayList field-slice accessor are guessed — verify in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/postProcessCSSChunk.zig

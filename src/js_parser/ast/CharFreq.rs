@@ -188,10 +188,4 @@ fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
 // Zig file ends with `pub const Class = G.Class;` — re-export.
 pub use crate::ast::g::Class;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/CharFreq.zig (137 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      compile() threads &'bump Bump to NameMinifier::init (arena-backed per caller in bundler/linker_context); NameMinifier assumed <'bump> with head/tail as bun_alloc::ArenaVec<'bump, u8> and DEFAULT_HEAD/DEFAULT_TAIL consts; align(1) on freqs not preserved
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/CharFreq.zig

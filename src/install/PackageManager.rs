@@ -2531,10 +2531,4 @@ pub fn init_with_runtime_once(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager.zig (1328 lines)
-//   confidence: low
-//   todos:      29
-//   notes:      Singleton allocate-then-fill pattern (holder RAW_PTR vs OnceLock), ZStr ownership, std.fs.Dir/File mapping, bun.once/LazyBool, and zeroed() Lockfile placeholders all need Phase-B reconciliation; WakeHandler.getonDependencyError intentionally fixes a Zig bug.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager.zig

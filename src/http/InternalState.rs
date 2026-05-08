@@ -447,10 +447,4 @@ pub enum Stage {
 pub type RequestStage = HTTPStage;
 pub type ResponseStage = HTTPStage;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/InternalState.zig (258 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      body_out_str is user-owned raw ptr (no TSV row); request_body self-borrows original_request_body; defer compressed_body.reset() expanded inline at every error return; gzip_elapsed field missing in Zig source too
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/InternalState.zig

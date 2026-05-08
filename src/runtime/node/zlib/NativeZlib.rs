@@ -606,10 +606,4 @@ impl Context {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/zlib/NativeZlib.zig (369 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      CompressionStream mixin + .classes.ts codegen (js::*SetCached) deferred to Phase B; dictionary field borrows JS ArrayBuffer via raw *const [u8]; LIFETIMES.tsv had no rows so global_this kept as raw *mut.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/zlib/NativeZlib.zig

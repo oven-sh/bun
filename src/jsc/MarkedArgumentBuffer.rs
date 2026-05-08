@@ -112,10 +112,4 @@ macro_rules! marked_argument_buffer_wrap {
     }};
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/MarkedArgumentBuffer.zig (39 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `wrap` ported as macro_rules! (Rust can't const-generic over fn ptr); externs need jsc_sys home
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/MarkedArgumentBuffer.zig

@@ -74,10 +74,4 @@ impl UseDirective {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/UseDirective.zig (64 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      enum(u2) → #[repr(u8)]; nested Boundering/Flags hoisted to module scope
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/UseDirective.zig

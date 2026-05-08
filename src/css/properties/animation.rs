@@ -666,10 +666,4 @@ pub enum TimelineRangeName {
     ExitCrossing,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/animation.zig (515 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      DefineEnumProperty/DeriveParse/DeriveToCss comptime mixins stubbed as crate helper calls — Phase B should replace with derive macros; PropertyFieldMap/VendorPrefixMap reified as const slices.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/animation.zig

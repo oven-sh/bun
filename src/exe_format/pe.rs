@@ -925,10 +925,4 @@ unsafe extern "C" {
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/exe_format/pe.zig (748 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Zig *align(1) T views ported as raw pointers + unsafe deref; Phase B must resolve unaligned-access UB (packed repr or read_unaligned)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/exe_format/pe.zig

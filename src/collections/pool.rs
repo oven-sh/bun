@@ -618,13 +618,4 @@ macro_rules! __paste_storage {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/pool.zig (262 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      per-monomorphization storage supplied via `S: PoolStorage<T>` +
-//               `object_pool!` macro; `Init`/`reset` folded into `ObjectPoolType`
-//               trait; allocator field dropped (global mimalloc); `global` mode
-//               degrades to thread-local for `Sync` safety.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/pool.zig

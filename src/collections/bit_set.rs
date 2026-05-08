@@ -1937,10 +1937,4 @@ mod tests {
     // reflection (`needs_ptr`). Re-author in Phase B against a `BitSet` trait.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/bit_set.zig (1968 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      ArrayBitSet needs generic_const_exprs (or 2nd const param); IntegerBitSet backed by usize not exact-width uN; DynamicBitSetUnmanaged kept raw-ptr+header layout for List views (no Drop — Phase B should split borrowed-view type from owning type); IteratorOptions split into KIND/DIRECTION const generics; test helpers stubbed (no test blocks in Zig source).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/bit_set.zig

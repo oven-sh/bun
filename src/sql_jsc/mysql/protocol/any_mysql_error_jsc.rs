@@ -143,11 +143,4 @@ pub fn mysql_error_to_js(
     .unwrap_or_else(|ex| global_object.take_exception(ex))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/protocol/any_mysql_error_jsc.zig (60 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      generic over MaybeBytes / IntoAnyMySQLError to bridge
-//               &str|&[u8]|&Vec<u8>|Option<_> messages and bun_core::Error callers
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/protocol/any_mysql_error_jsc.zig

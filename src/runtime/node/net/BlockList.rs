@@ -474,9 +474,4 @@ fn _compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
     l128.cmp(&r128)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/net/BlockList.zig (256 lines)
-//   confidence: high
-//   notes:      JsClass m_ctx payload w/ intrusive atomic refcount; jsc.conv callback ABI on Windows-x64 still needs `#[bun_jsc::host_call]` typedef; sockaddr union field access (.sin/.sin6) per sibling SocketAddress port
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/net/BlockList.zig

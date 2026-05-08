@@ -63,10 +63,4 @@ pub struct ListStyle;
 // TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — unimplemented upstream
 pub enum MarkerSide {}
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/list.zig (64 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      5 types are @compileError stubs upstream (css.todo_stuff.depth) — left as empty enums/unit struct; 'bump lifetime threaded for arena Vec per AST-crate rule
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/list.zig

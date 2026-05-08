@@ -3494,10 +3494,4 @@ pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
     Ordering::Equal
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/immutable.zig (2431 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      SIMD @Vector loops (count_char, index_of_not_char, index_of_needs_url_encode, encode_bytes_to_hex, first_non_ascii16) ported as scalar with PERF(port) markers; comptime-type dispatch (T==u8) approximated via size_of checks; move_all_slices needs reflection derive; concat_if_needed leaks Box to match Zig out-param ownership.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/immutable.zig

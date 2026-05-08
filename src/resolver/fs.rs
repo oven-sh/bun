@@ -3067,10 +3067,4 @@ pub mod stat_hash;
 // TODO(b2-blocked): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
 // bun_http_types::wtf::write_http_date — gated until those land.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolver/fs.zig (2063 lines)
-//   confidence: medium
-//   todos:      46
-//   notes:      heavy global-singleton + threadlocal state; Path/PathName/PathContentsPair need <'a> lifetimes; read_directory_with_iterator borrowck/ownership of in_place Box<DirEntry> needs reshape; std.fs.Dir/File mapped to bun_sys placeholders; DirEntry.dir/Entry.dir kept &'static (interned) despite Zig free — Phase B revisit
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolver/fs.zig

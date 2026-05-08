@@ -242,10 +242,4 @@ pub mod analytics {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/analytics/schema.zig (526 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      generated schema file — Reader/Writer ported as traits (anytype → trait bound); concrete BufReader ports the Zig Reader struct; only the analytics::{OperatingSystem,Architecture,Platform} subset of message types is hand-ported, rest awaits peechy regen
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/analytics/schema.zig

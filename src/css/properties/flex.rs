@@ -957,10 +957,4 @@ impl FlexHandler {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/flex.zig (949 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      DefineEnumProperty/DefineShorthand are comptime-reflection derives; FlexHandler's @field/@unionInit token-pasting ported as macro_rules! — Phase B must verify single_property! 2009-block gating matches Zig exactly.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/flex.zig

@@ -662,10 +662,4 @@ impl HeadingIdTracker {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/helpers.zig (482 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      u21→u32 for codepoints; StringHashMap key ownership API assumed; allocator params dropped (non-AST crate)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/helpers.zig

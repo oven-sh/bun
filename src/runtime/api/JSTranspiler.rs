@@ -1779,10 +1779,4 @@ pub fn is_likely_object_literal(code: &[u8]) -> bool {
     !(end > 0 && code[end - 1] == b';')
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/JSTranspiler.zig (1228 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      LIFETIMES.tsv lists Arc<JSTranspiler> but ported as IntrusiveRc per §Pointers (reconcile); arena field retained in non-AST crate. transformSync's by-value `prev_bundler` snapshot reduced to allocator/log/macro_context restore via TranspilerStateGuard.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/JSTranspiler.zig

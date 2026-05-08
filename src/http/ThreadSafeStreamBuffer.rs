@@ -146,10 +146,4 @@ impl Drop for StreamBufferGuard<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/ThreadSafeStreamBuffer.zig (61 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      intrusive ThreadSafeRefCount stubbed pending bun_ptr::IntrusiveArc; acquire/release split-lock kept for complex callers, RAII via lock()->StreamBufferGuard
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/ThreadSafeStreamBuffer.zig

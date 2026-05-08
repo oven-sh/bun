@@ -252,10 +252,4 @@ fn define_var(name: &'static [u8], value: css::Token) -> Property {
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/ui.zig (212 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Several Zig decls are `@compileError(todo_stuff.depth)` stubs — ported as unit structs with TODO; ColorScheme packed-struct → bitflags; arena arena threaded as &Arena.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/ui.zig

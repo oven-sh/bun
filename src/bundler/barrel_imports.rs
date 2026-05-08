@@ -812,10 +812,4 @@ fn persist_barrel_export(
     unsafe { (dev.vtable.register_barrel_export)(dev.owner, barrel_path, alias) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/barrel_imports.zig (562 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      heavy borrowck reshaping in BFS loop (overlapping &mut graph.ast); resolve_barrel_records body blocked on un-gating BundleV2::{resolve_import_records,process_resolve_queue,patch_import_record_source_indices}
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/barrel_imports.zig

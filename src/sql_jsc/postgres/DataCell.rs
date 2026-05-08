@@ -1562,10 +1562,4 @@ unsafe extern "C" {
     fn Postgres__formatTimeTz(microseconds: i64, tz_offset_seconds: i32, buffer: *mut u8, buffer_size: usize) -> usize;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/DataCell.zig (1036 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      comptime tag params demoted to runtime; parseBinary split per-type; SQLDataCell field/variant names + WTFStringImpl accessor are guesses for Phase B; from_utf8 on network bytes flagged for Phase B byte-parser swap
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/DataCell.zig

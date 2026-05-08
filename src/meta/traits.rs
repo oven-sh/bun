@@ -213,10 +213,4 @@ pub const fn is_indexable<T: IsIndexable>() -> bool {
     true
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/meta/traits.zig (89 lines)
-//   confidence: low
-//   todos:      4
-//   notes:      pure @typeInfo reflection helpers; reshaped to marker traits — Phase B must rewrite each call site to use trait bounds (no bool-returning generic fn is sound on stable Rust without specialization)
-// ──────────────────────────────────────────────────────────────────────────────
+// ported from: src/meta/traits.zig

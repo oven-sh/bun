@@ -370,10 +370,4 @@ impl Arg {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/G.zig (232 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      AST arena crate — '<ast> lifetimes cascade from LIFETIMES.tsv (Property.class_static_block); Flags::Property/Function path & ExprData variant names need Phase B fixup; `string` fields kept as raw *const [u8] per arena-slice rule.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/G.zig

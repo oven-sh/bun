@@ -86,9 +86,4 @@ pub extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
 
 // Zig `comptime { _ = Bun__... }` force-reference block dropped — Rust links what's `pub`.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSCScheduler.zig (50 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSCScheduler.zig

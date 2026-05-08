@@ -1513,10 +1513,4 @@ fn is_input_absolute<C: PathUnit>(input: &[C]) -> bool {
     false
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/paths/Path.zig (973 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      Heavy comptime type-returning fn → const-generic struct; needs adt_const_params or trait-per-option lowering. ResultFn collapsed to Result<T,E>. Buf.pooled is ManuallyDrop<Box<Buffer>> with manual pool put-back in Drop — swap to bun_paths RAII guard once generic over unit. anytype dispatch (append/appendJoin/convert) faked with TypeId; replace with sealed trait. slice_z/buf/basename_z/restore reshaped to &mut self for borrowck.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/paths/Path.zig

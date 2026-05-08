@@ -564,10 +564,4 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css_jsc/color_js.zig (441 lines)
-//   confidence: medium
-//   todos:      see TODO(b2-blocked) markers
-//   notes:      OutputColorFormat + ansi256 compile for real (ansi256::from takes (r,g,b) directly to avoid bun_css::values dep); js_function_color body gated on bun_jsc JSValue methods + bun_css color/parser types.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css_jsc/color_js.zig

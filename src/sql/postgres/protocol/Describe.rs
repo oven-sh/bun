@@ -21,20 +21,10 @@ impl<'a> Describe<'a> {
         Ok(())
     }
 
-    // Zig: `pub const write = WriteWrap(@This(), writeInternal).write;`
-    // TODO(port): WriteWrap is a comptime type-factory `fn(comptime T: type, comptime fn) type`
-    // that produces a `.write` decl wrapping `write_internal`. Model in Phase B as a trait
-    // (e.g. `impl WriteWrap for Describe { fn write_internal(...) }` providing default `write`),
-    // or as a macro. Placeholder delegates through WriteWrap for now.
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
         self.write_internal(writer)
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/Describe.zig (26 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      WriteWrap comptime-fn pattern needs trait/macro modeling; NewWriter<Context> generic bound TBD
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/Describe.zig

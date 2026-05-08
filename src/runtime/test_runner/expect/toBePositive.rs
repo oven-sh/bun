@@ -55,10 +55,4 @@ pub fn to_be_positive(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBePositive.zig (42 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      scopeguard wraps &mut Expect for defer post_match; ConsoleFormatter init uses ..Default — verify field set in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBePositive.zig

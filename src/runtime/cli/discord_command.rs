@@ -12,10 +12,4 @@ impl DiscordCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/discord_command.zig (10 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      allocator param dropped; open_url signature (&str vs &[u8]) to be confirmed in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/discord_command.zig

@@ -104,10 +104,4 @@ impl<'a> ReaderContext for StackReader<'a> {
     fn set_offset_from_start(self, offset: usize) { Self::set_offset_from_start(&self, offset) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/StackReader.zig (78 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      *usize fields modeled as &Cell<usize> (no LIFETIMES.tsv entry); Data/NewReader shapes assumed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/StackReader.zig

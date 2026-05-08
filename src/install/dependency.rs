@@ -1690,10 +1690,4 @@ fn hgi_to_tag(info: &hosted_git_info::HostedGitInfo) -> Tag {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/dependency.zig (1340 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      Value is untagged union (ManuallyDrop fields); Value::clone body missing in source; allocator params dropped; *_jsc aliases removed; Behavior.set renamed to with(); Version::zeroed is fn() not const
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/dependency.zig

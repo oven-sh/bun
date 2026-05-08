@@ -811,10 +811,4 @@ impl SizeHandler {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/size.zig (607 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      Heavy comptime reflection (@field/@unionInit/@tagName, ComptimeStringMap case-insensitive) replaced with macro_rules! + explicit matches; css::Result/Printer/Property variant names assumed; implement_deep_clone/EnumProperty trait stubs need Phase-B wiring.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/size.zig

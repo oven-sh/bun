@@ -55,10 +55,4 @@ pub fn to_js(this: &NoticeResponse, global_object: &JSGlobalObject) -> JSValue {
     ZigString::init(&b.allocated_slice()[0..len]).to_js(global_object)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/protocol/notice_response_jsc.zig (28 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      `inline else` switches collapsed to local field_message_payload() helper (variants share utf8_byte_length/to_utf8); Phase B may wrap as NoticeResponseJsc ext trait.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/protocol/notice_response_jsc.zig

@@ -19,11 +19,4 @@ impl Default for HTTPCertError {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/HTTPCertError.zig (3 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      file-level struct; [:0]const u8 fields default to "" so mapped to &'static ZStr,
-//               but CertificateInfo.deinit frees them (heap-owned in some paths) — ownership TBD
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/HTTPCertError.zig

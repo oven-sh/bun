@@ -44,8 +44,7 @@ impl PrepareOK {
         Ok(())
     }
 
-    // TODO(port): `decoderWrap(PrepareOK, decodeInternal).decode` is a comptime type-generator
-    // that only auto-wraps a bare context into NewReader; arg is already wrapped, forward directly.
+    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<C: ReaderContext>(&mut self, reader: NewReader<C>) -> Result<(), bun_core::Error> {
         self.decode_internal(reader)
     }
@@ -156,17 +155,10 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // TODO(port): `writeWrap(Execute, writeInternal).write` — writeWrap only auto-wraps a bare
-    // context; arg is already wrapped, so forward directly (matches Query::Execute).
+    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
     pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), any_mysql_error::Error> {
         self.write_internal(writer)
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/PreparedStatement.zig (118 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      decoder_wrap/write_wrap comptime type-generators stubbed; param_types lifetime needs Phase B; NewReader/NewWriter passed by value (may need &mut)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/PreparedStatement.zig

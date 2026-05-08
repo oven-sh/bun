@@ -117,10 +117,4 @@ pub fn to_have_been_last_called_with(
     this.throw(global, signature, format_args!("\n\n{}\n", diff_format))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveBeenLastCalledWith.zig (91 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `defer this.postMatch` reshaped via scopeguard::guard(this, ..) + DerefMut re-borrow (no raw ptr); `bun.cpp.JSMockFunction__getCalls` → super::mock::JSMockFunction__getCalls; get_signature assumed const fn.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveBeenLastCalledWith.zig

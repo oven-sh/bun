@@ -1337,10 +1337,4 @@ pub fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {
 
 pub use _impl::{create_node_crypto_binding_zig, timing_safe_equal};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_crypto_binding.zig (815 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      extern_crypto_job! needs paste!/proc-macro for link_name/export_name concat; Scrypt::from_js return-type unified across IS_ASYNC; global.ERR(.CODE, ..) mapped to err_<code>(format_args!); CryptoJob deinit kept as explicit unsafe fn (intrusive @fieldParentPtr + Box::from_raw, not Drop); pbkdf2_sync returns Node Buffer via JSValue::create_buffer_from_length (JSBuffer__bufferFromLength → JSBufferSubclassStructure); scrypt_sync/random_bytes via alloc::<ArrayBuffer> (Bun__allocArrayBufferForCopy → JSBufferSubclassStructure); random_fill{,_sync} keep size:usize on default branch to avoid >4 GiB u32 truncation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_crypto_binding.zig

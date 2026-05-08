@@ -263,10 +263,4 @@ unsafe extern "C" {
     fn us_udp_packet_buffer_truncated(buf: *mut PacketBuffer, index: c_int) -> c_int;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/udp.zig (118 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      thin FFI wrappers; sockaddr_storage sourced from libc (verify vs bun_sys in Phase B)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/udp.zig

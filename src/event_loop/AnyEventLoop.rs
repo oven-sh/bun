@@ -741,12 +741,4 @@ pub unsafe fn __bun_io_pipe_read_buffer(ev: bun_io::EventLoopHandle) -> *mut [u8
     unsafe { io_ev(ev) }.pipe_read_buffer()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/AnyEventLoop.zig (123 lines)
-//               src/jsc/EventLoopHandle.zig (179 lines) — MOVE-IN per CYCLEBREAK
-//   confidence: medium
-//   todos:      6
-//   notes:      Js variant borrow may need &mut; `loop` keyword collision; FieldEnum reflection deferred.
-//               EventLoopHandle Js arm dispatches via link-time `extern "Rust"` shims defined in bun_jsc::event_loop.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/AnyEventLoop.zig

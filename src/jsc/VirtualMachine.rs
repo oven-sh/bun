@@ -6404,17 +6404,4 @@ pub fn plugin_runner_on_resolve_jsc(
     Ok(Some(ErrorableString::ok(out)))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/VirtualMachine.zig (~3840 lines)
-//   confidence: low
-//   todos:      30+
-//   notes:      Keystone-C un-gate. Core struct + VMHolder + accessors real.
-//               init / init_with_main / reload_entry_point / load_entry_point /
-//               wait_for_promise / drain_queues_if_needed un-gated; the
-//               bun_runtime-typed steps (Timer::All, ServerEntryPoint,
-//               configureDebugger, autoTick) dispatch through `RuntimeHooks`
-//               per §Dispatch (cold-path vtable). Field types from
-//               bun_runtime/webcore/ipc/hot_reloader/gc_controller remain
-//               opaque + TODO(b2-cycle). Full Phase-A draft @ 5410a51d85^.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/VirtualMachine.zig

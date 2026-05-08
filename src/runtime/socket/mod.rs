@@ -169,10 +169,4 @@ impl<const SSL: bool> uws_handlers::SocketEvents<SSL> for NewSocket<SSL> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/socket.zig
-//   confidence: medium
-//   notes:      type surface re-exported from real submodules; SocketEvents
-//               trait bridged to socket_body::NewSocket inherent methods.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/socket.zig

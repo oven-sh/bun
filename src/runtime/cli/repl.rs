@@ -2333,10 +2333,4 @@ pub fn exec(ctx: crate::cli::Command::Context) -> Result<(), bun_core::Error> {
 
 const VERSION: &str = Environment::VERSION_STRING;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/repl.zig (2058 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      defer self.disableSignalsDuringWait() reshaped to explicit calls (borrowck); transform_for_repl mutates vm.transpiler through & borrow; sigaction/tty wrappers assumed in bun_sys
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/repl.zig

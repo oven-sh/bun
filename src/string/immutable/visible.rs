@@ -1565,10 +1565,4 @@ pub(super) extern "C" fn Bun__isEmojiPresentation(cp: u32) -> bool {
     unsafe { icu_hasBinaryProperty(cp, 57) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/immutable/visible.zig (1434 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      core::simd (portable_simd) is nightly; scan_lane_* generic wrapping_sub needs a Phase-B trait bound; PackedState unpacked (u10 saturation preserved via .min(1023)); `defer prev=cp` hoisted (verified body never reads prev).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/immutable/visible.zig

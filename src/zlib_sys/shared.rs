@@ -63,10 +63,4 @@ pub enum FlushValue {
 // enum yields a c_int-sized discriminant, matching Zig's `enum(c_int)`.
 const _: c_int = 0;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/zlib_sys/shared.zig (52 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      #[repr(C)] gives c_int discriminant matching Zig enum(c_int); FFI-safe for zlib
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/zlib_sys/shared.zig

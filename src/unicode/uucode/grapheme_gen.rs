@@ -131,10 +131,4 @@ pub fn main() -> Result<(), bun_core::Error> {
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/unicode/uucode/grapheme_gen.zig (97 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      build-time generator binary; `uucode` dep needs FFI/replacement and output must be retargeted to emit .rs not .zig
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/unicode/uucode/grapheme_gen.zig

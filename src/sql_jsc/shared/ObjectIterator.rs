@@ -93,10 +93,4 @@ impl<'a> ObjectIterator<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/shared/ObjectIterator.zig (67 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Zig field defaults dropped (no Default — global_object has none); defer lowered to labeled block; index widths normalised to u32 for JSObject::get_index.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/shared/ObjectIterator.zig

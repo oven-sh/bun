@@ -2048,10 +2048,4 @@ fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavi
         .with(dependency::Behavior::WORKSPACE, workspace)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/yarn.zig (1719 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      Entry/YarnLock given <'a> borrowing input data (no LIFETIMES.tsv rows); ParsedGitUrl.owned_url ownership and process_deps borrowck conflict need Phase B rework; Lockfile/MultiArrayList/JSON AST accessor names guessed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/yarn.zig

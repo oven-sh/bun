@@ -245,10 +245,4 @@ unsafe extern "C" fn on_stream_close(s: *mut quic::Stream) {
     unsafe { (*stream.session).deliver(stream, true) };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h3_client/callbacks.zig (151 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      ext<T>() is &mut Option<NonNull<T>>; pending items are *mut Stream.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h3_client/callbacks.zig

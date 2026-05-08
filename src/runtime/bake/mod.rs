@@ -670,10 +670,4 @@ pub mod production {
 pub mod dev_server;
 pub use dev_server as DevServer;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/bake.zig
-//   confidence: medium (B-2 keystone-L un-gate: structs + vtable wired)
-//   notes:      method bodies remain in gated drafts; blocked on bun_jsc +
-//               bun_bundler::BundleV2 field access.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/bake.zig

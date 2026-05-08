@@ -2397,10 +2397,4 @@ impl<'a> PackageInstall<'a> {
 // Walker: src/sys/walker_skippable.zig
 type Walker = walker_skippable::Walker;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageInstall.zig (1515 lines)
-//   confidence: medium
-//   todos:      17
-//   notes:      Heavy std.fs.Dir usage mapped to bun_sys::Dir; self-aliasing buf+slice fields and Windows WStr building need borrowck reshaping in Phase B; Result renamed InstallResult to avoid std clash. InstallDirState cleanup on init failure relies on caller's Drop (Dir::close on invalid must be no-op).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageInstall.zig

@@ -658,10 +658,4 @@ pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 // alias to keep callsites parallel with the Zig `c.options.output_format`.
 use crate::options::Format as OutputFormat;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/computeCrossChunkDependencies.zig (459 lines)
-//   confidence: medium
-//   todos:      21
-//   notes:      heavy borrowck reshaping (index-based loops), Chunk::Content tagged-union checks via matches!/javascript_mut(), parallel `walk` aliasing needs UnsafeCell, AST node allocs via c.arena() (&'bump Bump) — thread 'bump in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/computeCrossChunkDependencies.zig

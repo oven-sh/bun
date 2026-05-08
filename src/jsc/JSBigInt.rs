@@ -85,10 +85,4 @@ impl JSBigInt {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSBigInt.zig (44 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      from_js_host_call_generic shape guessed; from_js() lifetime is GC-bound not 'static
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSBigInt.zig

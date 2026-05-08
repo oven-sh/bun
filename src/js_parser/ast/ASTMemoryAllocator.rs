@@ -162,10 +162,4 @@ impl<'a> Drop for Scope<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/ASTMemoryAllocator.zig (94 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      SFA+vtable+fallback fields collapsed to one bun_alloc::Arena; Store threadlocal accessors (memory_allocator/set/begin) assumed — Phase B must define them on expr::data::Store / stmt::data::Store.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/ASTMemoryAllocator.zig

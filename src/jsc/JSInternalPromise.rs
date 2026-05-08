@@ -3,10 +3,4 @@
 // existing Rust callers continue to compile.
 pub use crate::JSPromise as JSInternalPromise;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSInternalPromise.zig (4 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export alias; sibling module path may need snake_case in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSInternalPromise.zig

@@ -2865,10 +2865,4 @@ pub struct ParseBindingOptions {
     pub is_using_statement: bool,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/parser.zig (1277 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      Prefill mutable statics, generated_symbol_name comptime hash, NewParser! type aliases, and JSXTag::parse parser-trait bound need Phase B design; arena ('bump) threaded through ScopeOrderList/LocList/StmtList/new_lazy_export_ast; many opts structs gained <'a> for arena/source slices.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/parser.zig

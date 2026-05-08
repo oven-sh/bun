@@ -73,13 +73,7 @@ unsafe extern "C" {
     fn JSC__JSCell__getType(this: *const JSCell) -> u8;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSCell.zig (64 lines)
-//   confidence: high
-//   todos:      4
-//   notes:      get_type: Zig had @enumFromInt with u8 return — verify intended JSType return; markMemberBinding markers dropped
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSCell.zig
 
 // ════════════════════════════════════════════════════════════════════════════
 // JsCell<T> — single-JS-thread interior mutability

@@ -1162,17 +1162,4 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler_jsc/JSBundleCompletionTask.zig (621 lines)
-//   confidence: medium
-//   notes:      LAYERING MOVE from bun_bundler_jsc — struct depends on
-//               bun_runtime types (Config/Plugin/HTMLBundleRoute). All Zig
-//               bodies now ported: configureBundler split across
-//               create_and_configure_transpiler (Transpiler::init call) +
-//               configure_bundler (post-init option wiring); init_and_run
-//               wraps BundleV2::init + run_from_js_in_new_thread +
-//               wait-group drain + deinit_without_freeing_arena;
-//               do_compilation drives StandaloneModuleGraph.to_executable +
-//               sourcemap side-file writes via NodeFS.write_file_with_path_buffer.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler_jsc/JSBundleCompletionTask.zig

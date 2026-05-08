@@ -634,10 +634,4 @@ where
     lines
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/assert/myers_diff.zig (629 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      comptime type-switch on Line + comptime fn-ptr eql folded into a `Line` trait; Options sizing fields dropped (stack-fallback removed); inherent assoc type `LineType` needs nightly or removal in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/assert/myers_diff.zig

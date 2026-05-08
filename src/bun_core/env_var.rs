@@ -1048,10 +1048,4 @@ macro_rules! new_feature_flag {
 }
 pub(crate) use new_feature_flag;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_core/env_var.zig (722 lines)
-//   confidence: low
-//   todos:      10
-//   notes:      Heavy comptime type-generator → macro_rules! emitting per-var modules; opts parsing covers only shapes used here; ReturnType nullability collapsed to Option; @compileError platform checks downgraded to debug_assert; unsigned Cache stores ip at runtime instead of comptime; unsigned deser now byte-parses base-10 directly (no &str round-trip).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_core/env_var.zig

@@ -458,10 +458,4 @@ impl KnownGlobal {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/KnownGlobal.zig (361 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `_bump` arg retained for call-site parity (Phase-A Vec uses global arena).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/KnownGlobal.zig

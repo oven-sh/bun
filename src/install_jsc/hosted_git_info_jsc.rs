@@ -134,10 +134,4 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
     parsed.to_js(go)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_jsc/hosted_git_info_jsc.zig (109 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      hostedGitInfoToJS ported as HostedGitInfoJsc extension trait; Utf8Slice mut-bytes accessor name unverified
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_jsc/hosted_git_info_jsc.zig

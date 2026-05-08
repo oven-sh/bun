@@ -149,9 +149,4 @@ pub fn find_option_by_short_name(short_name: &String, options: &[OptionDefinitio
     long_option_index
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/util/parse_args_utils.zig (92 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/util/parse_args_utils.zig

@@ -135,10 +135,4 @@ pub fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
     unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/RegularExpression.zig (57 lines)
-//   confidence: high
-//   todos:      3
-//   notes:      search_rev arg mismatch mirrors Zig bug; init returns raw *mut (FFI-owned)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/RegularExpression.zig

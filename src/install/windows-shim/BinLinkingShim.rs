@@ -509,10 +509,4 @@ fn reinterpret_slice_u16(bytes: &[u8]) -> &[u16] {
     unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/windows-shim/BinLinkingShim.zig (311 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      packed struct(u16) Flags hand-bitpacked; StaticStringMap → match on &[u16]; tokenizeScalar `.rest()` reshaped inline; verify simdutf/reinterpret_slice paths in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/windows-shim/BinLinkingShim.zig

@@ -149,10 +149,4 @@ pub mod property_mixin {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/properties_impl.zig (109 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      VendorPrefix needs `FIELDS: &[Self]` const + `contains()`; mixin mods may become inherent `impl PropertyId`/`impl Property` blocks in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/properties_impl.zig

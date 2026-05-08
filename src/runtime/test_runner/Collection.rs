@@ -269,10 +269,4 @@ impl Collection {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/Collection.zig (170 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      QueuedDescribe is self-referential into root_scope tree — uses NonNull (not &) so active_scope_mut() does not alias; group.begin/end/log debug-tracing API shape guessed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/Collection.zig

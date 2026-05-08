@@ -1140,14 +1140,4 @@ enum HeaderResult {
     Finished,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h2_client/ClientSession.zig (814 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      heavy raw-ptr back-refs (ctx/client/stream); ref()/deref()
-//               RAII via SessionRefGuard (ref_scope); HTTPClient/
-//               HTTPContext methods routed through h2_* bridge stubs until
-//               lib.rs the gated draft block (now dissolved) un-gates; u31/u24 aliased to u32;
-//               parse_frames borrows read_buffer via raw slice
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h2_client/ClientSession.zig

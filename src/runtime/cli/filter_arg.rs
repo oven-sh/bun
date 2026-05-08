@@ -387,10 +387,4 @@ impl Drop for PackageFilterIterator {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/filter_arg.zig (285 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      GlobWalker generic shape + self-referential iter.walker need Phase-B redesign; patterns/root_dir stored raw pending struct lifetime decision.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/filter_arg.zig

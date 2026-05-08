@@ -448,10 +448,4 @@ const _: () = {
     }
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/keyframes.zig (303 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      structs/enums un-gated (data-only); ArrayList=Vec + DeclarationBlock<'static> until 'bump threaded; parse/to_css/deep_clone + parser-trait impls gated on css_parser trait surface, Printer.css_module/write_ident, DeriveParse, DeepClone derive
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/keyframes.zig

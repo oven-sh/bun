@@ -1683,10 +1683,4 @@ pub mod node {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/ThreadPool.zig (1055 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      packed Sync(u32) hand-bitpacked; each_impl comptime as_ptr → EachCall trait (ByValue/ByPtr); .raw/.unordered → Relaxed; std::thread used for spawn; Queue.cache written via raw ptr under IS_CONSUMING
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/ThreadPool.zig

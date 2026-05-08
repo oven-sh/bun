@@ -349,10 +349,4 @@ unsafe extern "C" {
     ) -> usize;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSPropertyIterator.zig (153 lines)
-//   confidence: high
-//   notes:      comptime-options struct demoted to runtime flag set (PERF(port));
-//               TopExceptionScope plumbing routed through from_js_host_call_generic.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSPropertyIterator.zig

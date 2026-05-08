@@ -954,18 +954,4 @@ type _AssertImports = (
     bun_install::package_manifest_map::CacheBehavior,
 );
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/outdated_command.zig (714 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Full bodies ported against the stub `bun_install::PackageManager`
-//               surface. Upstream stubs forward to `package_manager_real` once
-//               that un-gates (reconciler-6): `CommandLineArguments::parse`,
-//               `PackageManager::init`, `populate_manifest_cache`,
-//               `Lockfile::load_from_cwd`, `PackageManifestMap::
-//               by_name_allow_expired`. Borrow-checker reshaping: `Scope`
-//               cloned per lookup (Zig aliases `*PackageManager` freely);
-//               `pm` routed as `*mut` to keep field-disjoint borrows on
-//               `lockfile` / `options` / `manifests`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/outdated_command.zig

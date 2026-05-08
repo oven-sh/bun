@@ -22,10 +22,4 @@ impl TransactionStatusIndicator {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/TransactionStatusIndicator.zig (12 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      non-exhaustive enum(u8) → #[repr(transparent)] u8 newtype + assoc consts
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/TransactionStatusIndicator.zig

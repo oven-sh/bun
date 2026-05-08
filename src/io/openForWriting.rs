@@ -185,10 +185,4 @@ where
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/io/openForWriting.zig (139 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      anytype type-switch on input_path modeled as OpenForWritingInput trait; comptime fn-ptr params (Ctx/onForceSyncOrIsaTTY/isPollable/openat) flattened to plain fn pointers
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/io/openForWriting.zig

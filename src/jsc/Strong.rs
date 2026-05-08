@@ -230,10 +230,4 @@ unsafe extern "C" {
 
 pub use crate::deprecated_strong as deprecated;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/Strong.zig (153 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      field `impl` renamed to `handle` (Rust keyword); deinit→Drop; Impl::deinit→unsafe destroy (FFI); mark_binding! assumed macro
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/Strong.zig

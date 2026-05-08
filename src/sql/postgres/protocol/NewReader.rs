@@ -180,10 +180,4 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 // The trait bound on `NewReaderWrap` already enforces the method set, so this is a plain alias.
 pub type NewReader<Context> = NewReaderWrap<Context>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/NewReader.zig (120 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime fn-ptr params folded into ReaderContext trait; ProtocolInt trait stands in for @sizeOf/@byteSwap; string() borrow-vs-drop ordering needs Phase B audit
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/NewReader.zig

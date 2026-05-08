@@ -42,10 +42,4 @@ impl FileRange {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/parallel/FileRange.zig (32 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      plain POD struct; defer in pop_front reshaped to local + post-increment
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/parallel/FileRange.zig

@@ -505,12 +505,4 @@ const NAN_VAL: js_ast::E::Number = js_ast::E::Number { value: f64::NAN };
 // In Rust: `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their
 // contents automatically; `Box<Define>` frees `self`. No explicit Drop needed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/defines.zig (429 lines)
-//   confidence: medium
-//   notes:      B-3 — type defs moved DOWN to bun_js_parser::defines; this file
-//               keeps the table-backed init + json-parse + dotenv vtable that
-//               need higher-tier deps. `for_identifier` table fallback wired
-//               via PURE_GLOBAL_IDENTIFIER_LOOKUP hook.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/defines.zig

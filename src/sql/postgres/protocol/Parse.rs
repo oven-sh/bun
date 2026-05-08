@@ -51,10 +51,7 @@ impl<'a> Parse<'a> {
         Ok(())
     }
 
-    // Zig: `pub const write = WriteWrap(@This(), writeInternal).write;`
-    // `WriteWrap` is a `fn(comptime T: type, comptime f) type` generic that adapts
-    // `write_internal` to the public `write` entry point.
-    // TODO(port): express `WriteWrap(@This(), writeInternal).write` once WriteWrap.rs lands
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -63,10 +60,4 @@ impl<'a> Parse<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/Parse.zig (45 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      slice fields borrowed (deinit no-op) so struct carries <'a>; WriteWrap/Int32 shapes assumed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/Parse.zig

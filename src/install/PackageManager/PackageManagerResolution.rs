@@ -427,10 +427,4 @@ impl PackageManager {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/PackageManagerResolution.zig (243 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      MultiArrayList field accessors (.items(.field)) ported as items_<field>(); FolderResolution/Dependency variant paths fixed; arena/stack-fallback dropped per guide; manifests lookup uses disjoint by_name_hash_in_memory (no aliased &mut pm).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/PackageManagerResolution.zig

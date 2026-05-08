@@ -687,10 +687,4 @@ fn return_address() -> usize {
     0
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/allocation_scope.zig (561 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      StdAllocator/AllocatorVTable shape + `A == StdAllocator` specialization deferred; `if(enabled) T else void` mapped to cfg(feature="alloc_scopes"); anytype ptr/slice params narrowed to *const u8 / &[u8]; LockedState mutators take &mut self (no raw-ptr borrowck escape)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/allocation_scope.zig

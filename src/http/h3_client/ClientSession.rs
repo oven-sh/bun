@@ -427,11 +427,4 @@ enum HeaderResult {
     Finished,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h3_client/ClientSession.zig (268 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      intrusive RefCount + raw *mut Stream backrefs; lifetime erase
-//               on pending_response (Zig had no lifetimes); see SAFETY notes.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h3_client/ClientSession.zig

@@ -51,10 +51,4 @@ pub fn to_be_defined(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeDefined.zig (37 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Expect::throw assumed to take (global, signature, fmt::Arguments) — Zig's separate template+tuple merged into format_args!; Expect::get_signature assumed const fn.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeDefined.zig

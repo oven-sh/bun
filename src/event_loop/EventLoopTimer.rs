@@ -357,10 +357,4 @@ impl TimerFlags {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/EventLoopTimer.zig (245 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      `inline else`/`Tag.Type()` comptime dispatch hand-expanded; many cross-crate runtime imports guessed; intrusive @fieldParentPtr kept as raw-ptr container_of! macro.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/EventLoopTimer.zig

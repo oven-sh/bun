@@ -99,10 +99,4 @@ pub fn compile_target_from_slice(
     Ok(target_parsed)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler_jsc/options_jsc.zig (70 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ComptimeStringMap.fromJS inlined as phf::Map::get over to_slice_or_null
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler_jsc/options_jsc.zig

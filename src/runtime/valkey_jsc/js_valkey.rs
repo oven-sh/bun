@@ -2124,10 +2124,4 @@ impl Options {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/valkey_jsc/js_valkey.zig (1674 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Holder.ctx is BACKREF (raw *mut + intrusive ref/deref) — LIFETIMES.tsv needs SHARED→BACKREF update.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/valkey_jsc/js_valkey.zig

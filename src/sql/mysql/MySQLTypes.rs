@@ -330,10 +330,4 @@ pub type Int3 = u32;
 pub type Int4 = u32;
 pub type Int8 = u64;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/MySQLTypes.zig (305 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      both enums are non-exhaustive (`_`) in Zig — Rust #[repr(u8)] enum is UB for unnamed discriminants; int3=u24 aliased to u32; *_jsc re-exports dropped per guide
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/MySQLTypes.zig

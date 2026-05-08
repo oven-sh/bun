@@ -69,12 +69,4 @@ unsafe extern "C" fn __jsc_host_bun_test_done_callback(
     bun_jsc::to_js_host_fn_result(global, BunTest::bun_test_done_callback(global, callframe))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/DoneCallback.zig (46 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      groupLog begin/end mapped to group_begin!() RAII GroupGuard;
-//               toJSHostFn comptime wrap → explicit extern "C" thunk +
-//               to_js_host_fn_result
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/DoneCallback.zig

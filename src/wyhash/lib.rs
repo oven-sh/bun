@@ -672,11 +672,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/wyhash/wyhash.zig (Wyhash11), vendor/zig/lib/std/hash/wyhash.zig (Wyhash)
-//   confidence: high
-//   todos:      0
-//   notes:      `final` renamed `final_` (Rust keyword); `Wyhash` matches upstream
-//               final4 test vectors + SMHasher 0xBD5E840C
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/wyhash/wyhash.zig

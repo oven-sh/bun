@@ -2101,10 +2101,4 @@ fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) 
     drop(old);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/fetch.zig (1526 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      url_proxy_buffer/ZigURL self-ref handled by box-then-reparse; signal/FetchHeaders defers → RAII guards; Response ownership → make_maybe_pooled; S3 upload_stream credentials dupe()'d to heap; upstream typo at fetch.zig:1373 fixed (copy_from_slice would panic)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/fetch.zig

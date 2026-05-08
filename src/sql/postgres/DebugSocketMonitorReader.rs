@@ -38,10 +38,4 @@ pub fn write(data: &[u8]) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/DebugSocketMonitorReader.zig (23 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      static-mut File + Once replaces Zig module vars; bun_sys::File::create signature needs Phase B verification; ENABLED is AtomicBool (callers must .load())
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/DebugSocketMonitorReader.zig

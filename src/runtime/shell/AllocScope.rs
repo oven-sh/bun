@@ -83,10 +83,4 @@ impl AllocScope {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/AllocScope.zig (43 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      debug-only alloc tracker; whole type may be redundant under global-allocator model
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/AllocScope.zig

@@ -150,10 +150,4 @@ pub fn postgres_error_to_js(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/error_jsc.zig (92 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `inline for` over PostgresErrorOptions fields expanded by hand; AnyPostgresError variant names kept verbatim for @errorName compat.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/error_jsc.zig

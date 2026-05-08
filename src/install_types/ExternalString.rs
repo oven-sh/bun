@@ -72,10 +72,4 @@ impl ExternalString {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_types/ExternalString.zig (51 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      `String.Formatter` return type path is a guess; depends on bun_semver layout
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_types/ExternalString.zig

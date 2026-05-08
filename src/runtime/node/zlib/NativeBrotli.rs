@@ -704,10 +704,4 @@ crate::__compression_stream_mixin_reexports!(NativeBrotli);
 
 pub use _impl::NativeBrotli;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/zlib/NativeBrotli.zig (282 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      CompressionStream mixin → trait impl; code_for_error needs generated static table; brotli C fn signatures/enum reprs need verification in bun_brotli
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/zlib/NativeBrotli.zig

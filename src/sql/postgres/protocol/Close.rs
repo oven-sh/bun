@@ -38,9 +38,7 @@ impl<'a> Close<'a> {
         Ok(())
     }
 
-    // Zig: `pub const write = WriteWrap(@This(), writeInternal);`
-    // TODO(port): WriteWrap is a comptime fn-wrapper (super::write_wrap). Phase B should
-    // resolve whether this becomes a trait impl or macro; for now forward directly.
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -49,10 +47,4 @@ impl<'a> Close<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/Close.zig (37 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      WriteWrap comptime wrapper stubbed; header concat reshaped to to_be_bytes buffer
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/Close.zig

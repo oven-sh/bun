@@ -381,10 +381,4 @@ impl_get_errno_libc!(i32, u32, isize, i64);
 // c_int == i32 on all our targets; Zig listed both explicitly but Rust impl coherence forbids the duplicate.
 // may need to drop one or cfg-gate it. Zig listed both explicitly.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/errno/linux_errno.zig (253 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      get_errno uses a trait to emulate @TypeOf switch; c_int/i32 impl overlap needs cfg-gating; uv_e::_2BIG renamed (no leading-digit idents); Mode/E/S re-export paths assumed in crate::posix
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/errno/linux_errno.zig

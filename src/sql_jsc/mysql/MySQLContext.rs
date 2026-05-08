@@ -19,10 +19,4 @@ pub fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
     JSValue::UNDEFINED
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/MySQLContext.zig (19 lines)
-//   confidence: high
-//   todos:      see TODO(b2-blocked)
-//   notes:      host_fn export-name attr syntax assumed; verify in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/MySQLContext.zig

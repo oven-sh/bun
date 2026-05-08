@@ -1060,11 +1060,4 @@ impl Default for FSWatchTaskPosix {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_fs_watcher.zig (713 lines)
-//   confidence: medium
-//   notes:      .classes.ts payload; defer-based close()/emit_abort() reshaped;
-//               EventPathString cfg-split needs Phase B review; Mutex uses
-//               manual lock/unlock in close()
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_fs_watcher.zig

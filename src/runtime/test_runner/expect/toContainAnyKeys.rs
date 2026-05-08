@@ -100,10 +100,4 @@ pub fn to_contain_any_keys(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainAnyKeys.zig (72 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      `defer post_match` needs borrowck reshape; `throw` fmt-tuple plumbing and comptime get_signature deferred to Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainAnyKeys.zig

@@ -384,11 +384,4 @@ fn generate_client_reference_proxy(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/ServerComponentParseTask.zig (247 lines)
-//   confidence: medium
-//   notes:      Event-loop dispatch (`EventLoop::Js`/`::Mini`) follows the
-//               crate-wide pattern shared with ParseTask.rs / bundle_v2.rs;
-//               resolves once `ungate_support::EventLoop` becomes a real enum.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/ServerComponentParseTask.zig

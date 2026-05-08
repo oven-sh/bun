@@ -194,10 +194,4 @@ pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
 #[cfg(windows)]
 use bun_sys::windows::{CONTEXT, EXCEPTION_RECORD};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/harness/recover.zig (131 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      setjmp/longjmp across Rust frames is UB-adjacent; comptime ExtErrType/ReturnType dropped (bun_core::Error subsumes); generic call() reshaped to FnOnce closure; musl jmp_buf layout + Rust panic-hook wiring deferred to Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/harness/recover.zig

@@ -6634,16 +6634,4 @@ impl PropertyId {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/properties_generated.zig (10362 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      249-variant Property/PropertyId/PropertyIdTag enums are
-//               real; parse/value_to_css per-variant dispatch un-gated
-//               (depends on generic::parse_with_options + Unparsed/Custom
-//               Property::parse from sibling modules); deep_clone stubbed until
-//               every leaf value type implements Parse/ToCss/DeepClone;
-//               from_name_and_prefix is a linear scan (Zig used a comptime
-//               perfect-hash map). Module is -gated in mod.rs.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/properties_generated.zig

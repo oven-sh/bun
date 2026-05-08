@@ -280,10 +280,4 @@ fn write_string32(data: &[u8], w: &mut Writer) {
 //     @panic("TODO");
 // }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/DevServer/SerializedFailure.zig (216 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      IncrementalGraph<const Side>::FileIndex spelling + std.hash.int mapping need Phase B; ArrayHash context structs may need to impl bun_collections trait instead of inherent fns
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/DevServer/SerializedFailure.zig

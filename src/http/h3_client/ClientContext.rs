@@ -192,12 +192,4 @@ impl ClientContext {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h3_client/ClientContext.zig (117 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      mutable global INSTANCE uses RacyCell (HTTP-thread-only);
-//               ConnectResult payloads are raw *mut per FFI; ClientSession
-//               registry storage stays raw *mut (FFI ext-slot back-ref).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h3_client/ClientContext.zig

@@ -100,15 +100,7 @@ impl HandshakeV10 {
     }
 }
 
-// TODO(port): `pub const decode = decoderWrap(HandshakeV10, decodeInternal).decode;`
-// `decoderWrap` is a comptime type-generator in NewReader.zig that wraps `decode_internal`
-// with packet framing. Phase B: express via trait/macro in new_reader.rs.
+// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
 pub use self::HandshakeV10 as _DecoderWrapTarget;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/HandshakeV10.zig (82 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      decoderWrap re-export needs Phase B macro/trait; Capabilities assumed bitflags!.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/HandshakeV10.zig

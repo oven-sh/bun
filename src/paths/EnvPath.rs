@@ -129,10 +129,4 @@ impl<'a> PathComponentBuilder<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/paths/EnvPath.zig (92 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Dropped vacuous comptime `opts` generic; `append(anytype)` modeled via `EnvPathInput` trait; `AbsPath` const-generic spelling pending.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/paths/EnvPath.zig

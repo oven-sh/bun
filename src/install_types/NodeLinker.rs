@@ -27,13 +27,7 @@ impl NodeLinker {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_types/NodeLinker.zig (25 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      variant names PascalCased; if @tagName is used elsewhere add #[derive(strum::IntoStaticStr)] with serialize attrs
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_types/NodeLinker.zig
 
 // ══════════════════════════════════════════════════════════════════════════
 // MOVE-IN (CYCLEBREAK b0): npm::Registry constants
@@ -417,13 +411,4 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
     Ok(Matcher { pattern: Pattern::Regex(regex), is_exclude })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS (move-in additions)
-//   source:     src/install/PnpmMatcher.zig (204 lines)
-//               src/install/npm.zig (Registry.default_url / default_url_hash)
-//   confidence: medium
-//   todos:      2
-//   notes:      jsc::RegularExpression erased behind link-time extern
-//               (`__bun_regex_*` defined in bun_jsc).
-//               from_expr() un-gated (B-2): bun_logger::ast::ExprData landed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PnpmMatcher.zig

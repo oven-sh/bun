@@ -176,10 +176,4 @@ macro_rules! impl_string_to_js {
 impl_string_to_js!(string_to_js, E::String);
 impl_string_to_js!(value_string_to_js, bun_logger::js_ast::E::EString);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser_jsc/expr_jsc.zig (112 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      allocator params dropped per non-AST-crate rule; protect/unprotect via JSValue::protected RAII; resolveRopeIfNeeded debug-asserted (no bump arena in scope — macro callers feed resolved literals).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser_jsc/expr_jsc.zig

@@ -469,10 +469,4 @@ impl Drop for WorkerPipe {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/parallel/Worker.zig (245 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      BACKREF *const fields (coord, worker) are mutated through — Phase B needs *mut or interior mutability; Arc<Process> mutation; nested Windows errdefer left as TODO (cannot scopeguard while outer guard holds &mut *this).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/parallel/Worker.zig

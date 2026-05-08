@@ -638,10 +638,4 @@ impl JSMySQLQuery {
 
 pub use js::{from_js, from_js_direct, to_js};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/JSMySQLQuery.zig (402 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      intrusive RefCount + defer/errdefer modeled via scopeguard over *mut Self; vm/global stored as NonNull (no LIFETIMES.tsv rows); verify host_fn export name for create_instance
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/JSMySQLQuery.zig

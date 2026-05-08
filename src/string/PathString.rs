@@ -170,10 +170,4 @@ const _: () = {
     }
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/PathString.zig (64 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      packed-struct → repr(transparent) over PathStringBackingInt with shift accessors; comptime u64/u128 backing-type selection mapped via cfg(target_os) (macOS → u64, others → u128)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/PathString.zig

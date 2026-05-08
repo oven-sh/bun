@@ -871,10 +871,4 @@ abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefgh";
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_core/deprecated.zig (649 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      BufferedReader needs a real Read trait + GenericReader port; auto_format_label is comptime-reflection and stubbed; intrusive lists use raw *mut Node per LIFETIMES.tsv (all ops are unsafe fn).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_core/deprecated.zig

@@ -44,10 +44,4 @@ impl NotificationResponse {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/NotificationResponse.zig (30 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DecoderWrap comptime-fn pattern needs trait/macro in Phase B; Vec<u8> must impl Drop.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/NotificationResponse.zig

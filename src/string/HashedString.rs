@@ -53,10 +53,4 @@ impl HashedString {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/HashedString.zig (44 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      anytype eql split into eql/eql_bytes; raw *const u8 kept (caller owns buf lifetime)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/HashedString.zig

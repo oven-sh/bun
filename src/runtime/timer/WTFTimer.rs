@@ -306,13 +306,4 @@ unsafe extern "C" {
     fn WTFTimer__fire(this: *mut RunLoopTimer);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/WTFTimer.zig (151 lines)
-//   confidence: medium
-//   notes:      `vm.timer.{remove,update}` resolved via
-//               `jsc_hooks::runtime_state()` (b2-cycle — `bun_jsc::
-//               VirtualMachine.timer` is `()`); `imminent` is the low-tier
-//               `AtomicPtr<()>` (PORTING.md §Dispatch) — `self` is cast to
-//               `*mut ()` at each cmpxchg.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/WTFTimer.zig

@@ -1973,10 +1973,4 @@ pub fn append_envp_from_js(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/js_bun_spawn_bindings.zig (1204 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      arena dropped per non-AST rule — argv/env *const c_char point into ZBoxes owned by `cstr_storage: Vec<ZBox>` (freed at fn exit, matching Zig's arena.deinit()); memfd-close + abort/terminal `defer`s reshaped via scopeguard re-borrows; `comptime is_sync` → const generic with void types collapsed to Option; Subprocess/IPC/Terminal cross-crate paths guessed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/js_bun_spawn_bindings.zig

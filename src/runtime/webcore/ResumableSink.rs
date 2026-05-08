@@ -691,10 +691,4 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/ResumableSink.zig (372 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      comptime js/Context params modeled as traits; codegen accessors wired via bun_jsc::generated; intrusive refcount hand-rolled (raw-ptr deref_) to match RefCount semantics
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/ResumableSink.zig

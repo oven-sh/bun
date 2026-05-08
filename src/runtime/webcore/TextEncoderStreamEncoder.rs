@@ -265,10 +265,4 @@ impl TextEncoderStreamEncoder {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/TextEncoderStreamEncoder.zig (211 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      OOM throws became aborts; simdutf module paths guessed; spare_capacity_mut + set_len for unusedCapacitySlice writes
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/TextEncoderStreamEncoder.zig

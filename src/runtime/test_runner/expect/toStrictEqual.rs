@@ -63,10 +63,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toStrictEqual.zig (44 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      defer post_match needs borrowck reshape; arguments_old slice accessor TBD
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toStrictEqual.zig

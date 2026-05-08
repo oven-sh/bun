@@ -317,10 +317,4 @@ fn parse_int_c_int(s: &[u8]) -> Option<c_int> {
     core::str::from_utf8(s).ok()?.parse::<c_int>().ok()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/GarbageCollectionController.zig (190 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      LIFETIMES.tsv had no rows; *uws.Timer fields kept raw (FFI). update_gc_repeat_timer demoted comptime enum-literal to runtime enum. Timer.set/as API surface guessed from Zig usage.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/GarbageCollectionController.zig

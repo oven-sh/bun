@@ -517,9 +517,4 @@ impl TextDecoder {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/TextDecoder.zig (376 lines)
-//   confidence: high
-//   notes:      ZigString::to_external_u16 ownership transfer matches Zig (mimalloc-backed Vec leaked to JSC, freed via free_global_string). UTF-8 joined-buffer path reshaped for borrowck.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/TextDecoder.zig

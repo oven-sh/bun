@@ -67,10 +67,4 @@ pub mod impl_ {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/selectors/ (selector.zig + parser.zig + builder.zig)
-//   confidence: medium
-//   todos:      0
-//   notes:      hub un-gated (B-2 round 5): parser.rs/selector.rs/builder.rs compile for real; impl_::Selectors marker lives in mod.rs to anchor the parser↔selector cycle; concrete Component/Selector/SelectorList instantiate over impl_::Selectors
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/selectors/

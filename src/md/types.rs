@@ -535,10 +535,4 @@ pub fn is_task_checked(task_mark: u8) -> bool {
     task_mark != 0 && task_mark != b' '
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/types.zig (387 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Renderer collapsed to &mut dyn RendererImpl per LIFETIMES.tsv; Attribute/SpanDetail/RefDef given <'a> for borrowed parser buffers (Phase B: confirm vs arena/Cow).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/types.zig

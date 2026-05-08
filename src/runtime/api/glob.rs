@@ -478,10 +478,4 @@ impl Glob {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/glob.zig (397 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      arena ownership flows into bun_glob::BunGlobWalker; WalkTask<'_> escapes via Box::into_raw (referents kept alive by hasPendingActivity GC root + VM-lifetime global).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/glob.zig

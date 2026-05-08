@@ -389,11 +389,4 @@ impl<R> ContainerRule<R> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/container.zig
-//   confidence: high
-//   todos:      0
-//   notes:      Vec<T> kept over bumpalo Vec (PERF-tagged) — arena vs global
-//               decision is crate-wide and revisited when bumpalo lands.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/container.zig

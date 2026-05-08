@@ -784,12 +784,4 @@ pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h2_client/dispatch.zig (583 lines)
-//   confidence: medium-high
-//   todos:      1
-//   notes:      streams map holds *mut Stream (raw); decoded_headers stores
-//               raw-ptr slices into decoded_bytes; FrameType/SettingsType
-//               dispatched on raw u8/u16 to avoid UB on unknown discriminants
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h2_client/dispatch.zig

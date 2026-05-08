@@ -1016,10 +1016,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/StaticHashMap.zig (781 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      StaticHashMap inline-array size needs generic_const_exprs (or 2nd const param); mixin modeled as trait w/ K:Copy,V:Copy bounds; AutoContext hasher needs wyhash parity check; probe-count lines in SortedHashMap reference dead fields (kept commented).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/StaticHashMap.zig

@@ -353,10 +353,4 @@ unsafe extern "C" {
     ) -> bool;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/wtf.zig (272 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      StringImplAllocator vtable trick needs redesign around ZigStringSlice ownership; ref/deref use r#ref raw ident; utf8_byte_length reaches into bun_runtime::webcore.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/wtf.zig

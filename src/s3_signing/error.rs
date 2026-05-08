@@ -46,10 +46,4 @@ pub struct S3Error<'a> {
     // implemented as extension-trait methods in the `*_jsc` crate.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/s3_signing/error.zig (36 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      S3Error field ownership uncertain (no deinit here); jsc re-exports dropped per guide
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/s3_signing/error.zig

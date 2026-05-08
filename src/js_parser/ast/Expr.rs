@@ -3290,10 +3290,4 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     unsafe { JSC__jsToNumber(str.as_ptr(), str.len()) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/Expr.zig (3247 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      `*const mut` payloads break `Copy` on Data/Expr — Phase B likely needs raw arena ptrs; comptime-type init/allocate collapsed to IntoExprData trait; toJS aliases deleted per *_jsc rule; get_path_may_be_index now takes &Bump (Zig used default_allocator).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/Expr.zig

@@ -138,10 +138,4 @@ impl StringArrayJsc for [BunString] {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/resolver_jsc.zig (88 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      splitBackwardsScalar hand-rolled; verify bun_string::String FFI ownership & create_format/to_js_array signatures
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/resolver_jsc.zig

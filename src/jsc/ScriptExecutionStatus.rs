@@ -6,10 +6,4 @@ pub enum ScriptExecutionStatus {
     Stopped = 2,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ScriptExecutionStatus.zig (5 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      trivial #[repr(i32)] enum; mirrors JSC::ScriptExecutionStatus
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ScriptExecutionStatus.zig

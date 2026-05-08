@@ -7,10 +7,4 @@
 // Source of truth: src/runtime/webcore/s3/multipart_options.zig
 pub use bun_s3_signing::MultiPartUploadOptions;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/s3/multipart_options.zig (22 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      body lives in bun_s3_signing (CYCLEBREAK move-down); re-exported here
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/s3/multipart_options.zig

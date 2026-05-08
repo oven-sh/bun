@@ -164,10 +164,4 @@ fn rd32(b: &[u8], off: usize, big: bool) -> Option<u32> {
     Some(if big { u32::from_be_bytes(bytes) } else { u32::from_le_bytes(bytes) })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/exif.zig (124 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      anonymous return struct in transform() → named `Transform`; pure byte parsing, no allocators/FFI
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/exif.zig

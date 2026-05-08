@@ -1852,10 +1852,4 @@ pub struct FILE {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/libarchive_sys/bindings.zig (1506 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      EntryACL ported as newtype (duplicate discriminants); std.fs.File.Kind→bun_core::FileKind; Iterator.deinit→close(self) (returns value, consumes); Block.bytes is raw *const [u8]
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/libarchive_sys/bindings.zig

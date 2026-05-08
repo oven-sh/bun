@@ -858,10 +858,4 @@ impl TimerObjectInternals {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/TimerObjectInternals.zig (549 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      packed Flags(u32) hand-coded; heavy @fieldParentPtr usage kept raw; defer in fire()/run() linearized — verify no early-return paths skip deref; deinit() reshaped to unsafe fn destroy(*mut Self) (parent IntrusiveRc owns teardown — callers in {Timeout,Immediate}Object.rs need s/deinit/destroy/); KindBig and codegen JSTimeout/JSImmediate accessors resolved via crate::jsc::generated; vm.timer resolved via jsc_hooks::runtime_state() (b2-cycle)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/TimerObjectInternals.zig

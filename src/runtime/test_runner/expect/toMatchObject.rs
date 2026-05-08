@@ -80,10 +80,4 @@ pub fn to_match_object(
     this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toMatchObject.zig (68 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      get_signature must be const fn; defer postMatch reshaped via scopeguard DerefMut wrapper
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toMatchObject.zig

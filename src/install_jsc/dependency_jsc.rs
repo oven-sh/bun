@@ -209,11 +209,4 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     version_to_js(&dep, buf, global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_jsc/dependency_jsc.zig (136 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Version is tag+bare-union (`DependencyVersionValue` in
-//               `bun_install_types`); per-arm reads are tag-guarded `unsafe`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_jsc/dependency_jsc.zig

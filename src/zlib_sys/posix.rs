@@ -99,10 +99,4 @@ pub unsafe fn inflate_back_init(strm: z_streamp, window_bits: c_int, window: *mu
     unsafe { inflateBackInit_(strm, window_bits, window, zlibVersion(), core::mem::size_of::<z_stream>() as c_int) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/zlib_sys/posix.zig (80 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      anytype params on init wrappers concretized to z_streamp/c_int (zlib.h macro semantics)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/zlib_sys/posix.zig

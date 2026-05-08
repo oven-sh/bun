@@ -518,10 +518,4 @@ const _: () = {
     }
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/page.zig (384 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      structs/enums un-gated (data-only); ArrayList=Vec + DeclarationBlock<'static> + name:&'static [u8] until 'bump threaded; parse/to_css/deep_clone + parser-trait impls gated on css_parser trait surface + enum_property_util/EnumProperty derive + DeepClone
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/page.zig

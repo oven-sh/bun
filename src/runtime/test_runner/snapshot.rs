@@ -955,10 +955,4 @@ impl<'a> Snapshots<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/snapshot.zig (581 lines)
-//   confidence: medium
-//   todos:      17
-//   notes:      values keyed u64/Box<[u8]> (overrides TSV per §Strings); counts uses StringHashMap::get_or_put (needs (&K,&mut V,bool) API); snapshot_dir_path is NonNull<[u8]> backref; write_inline_snapshots wraps log+file in scopeguards (success via Cell); js_parser/lexer arena threading deferred.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/snapshot.zig

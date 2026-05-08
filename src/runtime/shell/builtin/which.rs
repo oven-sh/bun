@@ -219,9 +219,4 @@ impl Which {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/which.zig (156 lines)
-//   confidence: medium (NodeId style; resolve() stubbed on bun_core::which)
-//   blocked_on: bun_core::which, IOWriter::enqueue body
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/which.zig

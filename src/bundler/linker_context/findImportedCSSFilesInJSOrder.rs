@@ -106,10 +106,4 @@ pub fn find_imported_css_files_in_js_order(
 
 pub type BitSet = DynamicBitSet;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/findImportedCSSFilesInJSOrder.zig (103 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      MultiArrayList `.items(.field)` accessor + `Part.List` path need Phase B wiring; arena threaded for Vec push
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/findImportedCSSFilesInJSOrder.zig

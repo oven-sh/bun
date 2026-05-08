@@ -95,10 +95,4 @@ pub fn as_int<T: Bits>(value: T) -> T::Int {
     value.as_int()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/meta/bits.zig (60 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      packed-struct generics modeled via `Bits` trait; bitflags! types should impl it
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/meta/bits.zig

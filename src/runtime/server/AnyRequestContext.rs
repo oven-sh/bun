@@ -240,10 +240,4 @@ impl AnyRequestContext {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/AnyRequestContext.zig (171 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      dispatch() inline-for over type_map → macro_rules!; six RequestContext monomorphization aliases & TaggedPtrUnion API are placeholders pending server.zig/RequestContext.zig port
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/AnyRequestContext.zig

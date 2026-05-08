@@ -455,10 +455,4 @@ const LABELS: [&[u8]; 7] = [
     b"Blake3",
 ];
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sha_hmac/sha.zig (199 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      NewHasher/NewEVP comptime type-ctors → macro_rules! (fn-value generics + @field reflection not expressible as Rust generics); `Digest` assoc type alias dropped (inherent_associated_types is nightly) — callers use `[u8; T::DIGEST]`; FFI calls hoisted out of debug_assert! so they run in release; private comptime type-list benchmark arrays dropped.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sha_hmac/sha.zig

@@ -1926,10 +1926,4 @@ impl<'a> Drop for PipelineTask<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/Image.zig (1288 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      .classes.ts payload; <'a> on PipelineTask/BlobReadChain per LIFETIMES.tsv may need *const for cross-thread Box; Input borrows via raw ptrs; owned [:0]u8 path type unresolved; then() needs borrowck reshape (destructure Box<Self>); encode_for_body stack task is ManuallyDrop (Zig never deinit()s it).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/Image.zig

@@ -36,9 +36,7 @@ impl LocalInfileRequest {
         Ok(())
     }
 
-    // Zig: `pub const decode = decoderWrap(LocalInfileRequest, decodeInternal).decode;`
-    // TODO(port): `decoderWrap` is a comptime type-returning wrapper in NewReader.zig.
-    // Phase B should express it as a trait/macro; for now forward through the helper.
+    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<Context: ReaderContext>(
         &mut self,
         context: Context,
@@ -47,10 +45,4 @@ impl LocalInfileRequest {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/LocalInfileRequest.zig (22 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      u24 → u32; decoderWrap shape guessed — fix once NewReader.rs lands.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/LocalInfileRequest.zig

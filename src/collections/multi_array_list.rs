@@ -1299,13 +1299,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/multi_array_list.zig (647 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `@typeInfo`/`@field` reflection now backed by nightly
-//               `core::mem::type_info`; column accessors take a
-//               `const NAME: &'static str` generic and check both name and
-//               TypeId at compile time, eliminating the derive macro.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/multi_array_list.zig

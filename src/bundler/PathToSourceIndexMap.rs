@@ -88,10 +88,4 @@ impl PathToSourceIndexMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/PathToSourceIndexMap.zig (46 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      dropped arena params (StringHashMapUnmanaged→StringHashMap); keys are arena-borrowed bytes per Zig doc comment; GetOrPutResult API needs bun_collections support
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/PathToSourceIndexMap.zig

@@ -64,10 +64,4 @@ impl StatusFlags {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/StatusFlags.zig (66 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Zig format() is a comptime no-op (iterates bool fields, none exist); ported as no-op Display
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/StatusFlags.zig

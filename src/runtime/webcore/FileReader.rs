@@ -1060,10 +1060,4 @@ impl AllocatedSlice for Vec<u8> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/FileReader.zig (682 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      heavy defer/borrowck reshaping in on_read_chunk/on_pull; pending_view & ReadDuringJSOnPullResult use &'static slices as BACKREF placeholders; Arc<Store> needs interior mutability; Source vtable becomes trait impl
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/FileReader.zig

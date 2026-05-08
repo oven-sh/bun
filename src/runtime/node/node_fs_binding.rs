@@ -428,13 +428,4 @@ pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> J
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_fs_binding.zig (240 lines)
-//   confidence: medium-high
-//   notes:      Zig comptime `@field`/`@typeInfo` reflection replaced by the
-//               (FsArgument, FsReturn, NodeFS::dispatch, async_::*) quadruple
-//               already established in node_fs.rs; cp/readdir/watch/watchFile/
-//               unwatchFile hand-written because they fall outside
-//               NodeFSFunctionEnum or take borrowed-lifetime args.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_fs_binding.zig

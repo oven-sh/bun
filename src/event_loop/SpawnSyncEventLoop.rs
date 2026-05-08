@@ -478,10 +478,4 @@ impl SpawnSyncEventLoop {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/SpawnSyncEventLoop.zig (199 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      Self-referential init (event_loop addr stored in uws_loop) via MaybeUninit out-param; @FieldType reflection on VirtualMachine.event_loop_handle stubbed as platform-conditional alias; Drop order of event_loop vs uws_loop inverted from Zig (see PORT NOTE); heavy raw-ptr FFI on Windows libuv path.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/SpawnSyncEventLoop.zig

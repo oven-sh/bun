@@ -477,12 +477,4 @@ pub fn to_throw(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toThrow.zig (319 lines)
-//   confidence: high
-//   notes:      Zig `globalThis.throwPretty(signature ++ tail, args)` ported as
-//               inherent `JSGlobalObject::throw_pretty(format_args!("{signature}{tail}", ..))`;
-//               Zig `this.throw(..)` ported as `Expect::throw` (custom_label-aware).
-//               `defer postMatch` reshaped via scopeguard owning &mut Expect.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toThrow.zig

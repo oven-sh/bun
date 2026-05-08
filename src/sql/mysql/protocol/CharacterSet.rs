@@ -272,10 +272,4 @@ impl Default for CharacterSet {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/CharacterSet.zig (236 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      Zig enum is non-exhaustive (`_`); Rust repr(u8) enum cannot hold unnamed values — verify construction sites guard wire bytes.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/CharacterSet.zig

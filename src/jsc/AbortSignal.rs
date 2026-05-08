@@ -465,12 +465,4 @@ pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     unsafe { Timeout::deinit(this, VirtualMachine::get_mut_ptr()) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/AbortSignal.zig (255 lines)
-//   confidence: high
-//   notes:      Timeout.signal kept as *mut AbortSignal (intrusive C++
-//               refcount; Arc invalid across FFI). listen() reshaped to trait
-//               (no const fn-ptr generics). vm.timer.{insert,remove} routed
-//               through RuntimeHooks (Timer::All lives in bun_runtime).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/AbortSignal.zig

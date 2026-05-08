@@ -94,10 +94,4 @@ impl Stream {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/quic/Stream.zig (48 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      opaque FFI handle + thin wrappers; Header/Socket assumed at super::
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/quic/Stream.zig

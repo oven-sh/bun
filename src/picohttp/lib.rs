@@ -765,10 +765,4 @@ pub use c::phr_parse_headers;
 pub use c::phr_decode_chunked;
 pub use c::phr_decode_chunked_is_in_data;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/picohttp/picohttp.zig (386 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Header is #[repr(C)] ptr+len (must match phr_header); Request/Response/Headers carry <'a> borrowing the input buffer; pretty_fmt! is bun_core's passthrough stub until proc-macro lands; debug! call uses output::debug fn-form (macro-form broken upstream).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/picohttp/picohttp.zig

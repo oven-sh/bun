@@ -8,9 +8,6 @@ use std::borrow::Cow;
 use bun_logger::{self as logger, Data, Level, Location, Log, Metadata, Msg};
 use bun_string::ZigString;
 
-// B-2: `bun_jsc` is now green; the local Track-A shadow stubs are gone and we
-// link against the real crate's stub surface. PORTING.md §JSC: `bun.JSError!T`
-// → `bun_jsc::JsResult<T>`.
 use bun_jsc::{
     self as jsc, comptime_string_map_jsc, BuildMessage, JSGlobalObject, JSValue, JsError, JsResult,
     ResolveMessage,
@@ -105,13 +102,4 @@ pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue>
     Ok(arr)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/logger_jsc/logger_jsc.zig (93 lines)
-//   confidence: medium
-//   notes:      B-2 un-gated (6/6). Compiles against real `bun_jsc` —
-//               `ZigException` now has its `#[repr(C)]` field surface
-//               (`.message`), so `msg_from_js` is fully ported (both
-//               branches). `Data.text` lifetime resolved via
-//               `Cow<'static, [u8]>` + `to_owned_slice()`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/logger_jsc/logger_jsc.zig

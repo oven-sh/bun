@@ -775,13 +775,4 @@ js_class_module!(JSSHA384     = "SHA384"     {});
 js_class_module!(JSSHA512     = "SHA512"     {});
 js_class_module!(JSSHA512_256 = "SHA512_256" {});
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     build/*/codegen/bindgen_generated/{socket_config*,ssl_config*}.zig
-//               + ZigGeneratedClasses.zig (`JS${T}` modules)
-//   confidence: medium (hand-ported codegen output; ABI matched against
-//               `src/jsc/bindgen.zig` extern-type rules)
-//   todos:      `Gen{ArrayBuffer,Blob}` need `ExternalShared` Drop;
-//               replace this file with a `.rs` backend in
-//               `src/codegen/{bindgen.ts,generate-classes.ts}`
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: build/*/codegen/bindgen_generated/{socket_config*,ssl_config*}.zig

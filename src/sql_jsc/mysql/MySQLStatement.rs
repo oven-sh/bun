@@ -292,10 +292,4 @@ struct ParamUnused {
     flags: ColumnFlags,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/MySQLStatement.zig (185 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      IntrusiveRc refcount; ExecutionFlags as bitflags w/ non-zero Default; structure() returns &CachedStructure instead of by-value; DataCellFlags via bitflags insert().
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/MySQLStatement.zig

@@ -52,10 +52,4 @@ unsafe extern "C" {
     fn Bun__ttySetMode(fd: c_int, mode: c_int) -> c_int;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_core/tty.zig (11 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      #[repr(C)] enum gives c_int discriminant matching Zig's enum(c_int)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_core/tty.zig

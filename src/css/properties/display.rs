@@ -298,10 +298,4 @@ impl DisplayInside {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/display.zig (287 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DefineEnumProperty/Parse/ToCss are placeholder derives; phf maps need ASCII-case-insensitive lookup in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/display.zig

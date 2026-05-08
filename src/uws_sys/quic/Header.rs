@@ -143,10 +143,4 @@ static MAP: phf::Map<&'static [u8], Class> = phf::phf_map! {
     b"x-forwarded-for" => Class::idx(b"x-forwarded-for", Qpack::XForwardedFor),
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/quic/Header.zig (120 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Zig enum is non-exhaustive (`_`).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/quic/Header.zig

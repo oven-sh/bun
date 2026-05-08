@@ -1206,10 +1206,4 @@ pub fn js_password_object_verify_sync(
 const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str =
     "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/crypto/PasswordObject.zig (759 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      std.crypto.pwhash has no Rust mapping — needs bun_crypto::pwhash shim; sync hash/verify copy slice into Box (Zig borrowed); freeSensitive→secure_zero placeholder; ZigString→phf lookup may need UTF-16 handling.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/crypto/PasswordObject.zig

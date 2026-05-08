@@ -147,10 +147,4 @@ impl Data {
 // Zig file ends with `pub const Class = G.Class;` — re-export.
 pub use crate::ast::g::Class;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/TS.zig (139 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      'arena lifetime threaded through TSNamespaceMember/Map/Scope for &'arena EString (per LIFETIMES.tsv); exported_members/namespace kept as *mut per TSV (shared across sibling scopes)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/TS.zig

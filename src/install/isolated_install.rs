@@ -2538,10 +2538,4 @@ fn hex_lower(bytes: &[u8]) -> impl core::fmt::Display + '_ {
 use crate::dependency::VersionTag;
 use crate::resolution::Tag as ResolutionTag;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/isolated_install.zig (1957 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      single 1.9k-line fn; MultiArrayList .items(.field) modeled as .items().field; inline-else switch demoted to runtime tag; AutoRelPath save/restore + Progress.Node init need Phase B attention
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/isolated_install.zig

@@ -338,10 +338,4 @@ pub fn index_of_space_or_newline_or_non_ascii(haystack: &[u8]) -> Option<usize> 
     Some(result)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/highway/highway.zig (307 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      copy_u16_to_u8 loses align(1) on input slice; expose raw extern if unaligned callers exist
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/highway/highway.zig

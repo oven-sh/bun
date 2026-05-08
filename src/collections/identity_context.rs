@@ -93,10 +93,4 @@ impl crate::array_hash_map::ArrayHashContext<u64> for ArrayIdentityContext {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/identity_context.zig (37 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      @typeInfo dispatch mapped to IdentityHash trait; inherent assoc type (U64) needs nightly or flatten in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/identity_context.zig

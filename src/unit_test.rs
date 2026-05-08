@@ -18,10 +18,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/unit_test.zig (17 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      test-only entry point; force-ref imports dropped, Phase B must ensure those crates' tests are wired
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/unit_test.zig

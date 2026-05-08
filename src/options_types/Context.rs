@@ -537,10 +537,4 @@ impl Default for RuntimeOptions {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/options_types/Context.zig (237 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      []const u8 fields ported as Box<[u8]> (proc-lifetime, no deinit); `create` alias and `Context` type alias need Phase-B layering review; test_filter_regex now pulls in bun_jsc per LIFETIMES.tsv.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/options_types/Context.zig

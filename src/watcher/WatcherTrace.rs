@@ -198,10 +198,4 @@ pub fn deinit() {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/watcher/WatcherTrace.zig (112 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      static-mut global → parking_lot::Mutex (PORTING.md §Concurrency); bitflags iter_names() replaces comptime field reflection over Op; flush-error name uses io::ErrorKind Display until io::Error→bun_sys::Error helper lands
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/watcher/WatcherTrace.zig

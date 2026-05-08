@@ -118,10 +118,4 @@ impl Meta {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/Package/Meta.zig (81 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      comptime StringBuilderType param resolved to concrete Lockfile.StringBuilder; inline anon enum hoisted to HasInstallScript
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/Package/Meta.zig

@@ -205,10 +205,4 @@ mod cpp {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/SecureContext.zig (147 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      .classes.ts payload — to_js/from_js via JsClass derive; ssl_ctx_cache reached via crate::jsc_hooks::runtime_state() (cycle-break, see PORT NOTE in create_with_digest)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/SecureContext.zig

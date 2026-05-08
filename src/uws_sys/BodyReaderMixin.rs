@@ -216,10 +216,4 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/BodyReaderMixin.zig (94 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      comptime type-fn + fn-pointer params + @fieldParentPtr reshaped into trait BodyReaderHandler with MIXIN_OFFSET const; uws Response generic bound left for Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/BodyReaderMixin.zig

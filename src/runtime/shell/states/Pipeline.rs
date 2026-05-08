@@ -371,9 +371,4 @@ impl Pipeline {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Pipeline.zig (388 lines)
-//   confidence: medium (NodeId conversion; pipe-setup + dupe wired)
-//   blocked_on: IOWriter/IOReader async write/read body (bun_io::Buffered*)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Pipeline.zig

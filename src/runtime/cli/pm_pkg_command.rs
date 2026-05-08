@@ -993,10 +993,4 @@ fn parse_f64(s: &[u8]) -> Option<f64> {
     core::str::from_utf8(s).ok()?.parse::<f64>().ok()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/pm_pkg_command.zig (782 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Expr/ExprData accessor surface (as_e_object_mut, get, init) assumed; Zig path[0]="" ownership-transfer writes deleted (Drop handles it) — set_nested re-get now uses original key per Zig value-copy semantics; std.fs.writeFile mapped to bun_sys::File::write_file.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/pm_pkg_command.zig

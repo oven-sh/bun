@@ -1337,10 +1337,4 @@ pub use testing_apis as testing_ap_is;
 
 pub use subproc::ShellSubprocess;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/shell.zig (4706 lines)
-//   confidence: medium
-//   todos:      53
-//   notes:      Arena ('bump) lifetimes threaded through AST/Parser/Lexer; Lexer<const ENCODING> uses runtime Src enum (Zig comptime type-switch); SmolList uses MaybeUninit; lex() control-flow models Zig `break :escaped`+trailing-`continue` via fell_through flag; sublexer/subparser ArrayList copy-by-value reshaped to mem::replace; Vec<JSValue> sites all dual-rooted in MarkedArgumentBuffer; several jsc/WebCore/json APIs stubbed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/shell.zig

@@ -57,10 +57,4 @@ impl<'a> WriterContext for ArrayListCtx<'a> {
 
 pub type Writer<'a> = NewWriter<ArrayListCtx<'a>>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/ArrayList.zig (19 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Zig methods took `@This()` by value (Copy ptr); reshaped to `&mut self`. NewWriter<T> assumed to be a generic struct (Phase B: verify trait bounds).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/ArrayList.zig

@@ -1089,10 +1089,4 @@ use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::BakeExtra;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/generateChunksInParallel.zig (820 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      const-generic return-type unified to Vec<OutputFile>; allocatorForSize matched-dealloc deferred; heavy borrowck reshaping needed in Phase B (chunks aliased as &mut + & simultaneously)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/generateChunksInParallel.zig

@@ -1056,12 +1056,4 @@ impl InitialStatTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_fs_stat_watcher.zig (577 lines)
-//   confidence: medium
-//   notes:      `vm.timer` (Zig value field) reached via `runtime_state().timer`
-//               (b2-cycle: `Timer::All` lives in this crate, not `bun_jsc`).
-//               JSC_BORROW fields stored as raw `*mut` so `&mut`-taking VM
-//               methods (`rare_data()`, `enqueue_task_concurrent`) stay sound.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_fs_stat_watcher.zig

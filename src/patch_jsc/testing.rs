@@ -222,10 +222,4 @@ pub fn patch_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     TestingAPIs::parse(global, frame)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/patch_jsc/testing.zig (147 lines)
-//   confidence: medium (all bodies un-gated and compiling)
-//   notes:      ApplyArgs reshaped to own Vec<u8> + reparse (avoids
-//               self-reference forbidden by PORTING.md §Pointers/§Forbidden).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/patch_jsc/testing.zig

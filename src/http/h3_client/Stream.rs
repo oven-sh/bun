@@ -79,10 +79,4 @@ impl Drop for Stream {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h3_client/Stream.zig (46 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      pointer fields had no LIFETIMES.tsv rows — session/client/qstream classified by hand; pending_body lifetime needs Phase-B review
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h3_client/Stream.zig

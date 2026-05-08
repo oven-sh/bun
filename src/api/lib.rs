@@ -107,14 +107,4 @@ pub mod npm_registry {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/options_types/schema.zig  api.{NpmRegistry, NpmRegistryMap,
-//               BunInstall} + inline `ca` union (lines ~2807–3070)
-//   confidence: high (data shapes re-exported + npm_registry::Parser url-string path)
-//   todos:      1
-//   notes:      Data shapes deduplicated against `bun_options_types::schema::api`
-//               (single canonical type). `decode`/`encode` stay stubbed pending
-//               the schema Reader/Writer trait. Full peechy `.rs` codegen
-//               targets `bun_options_types::schema::api` when it lands.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/options_types/schema.zig

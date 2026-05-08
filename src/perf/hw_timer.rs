@@ -287,10 +287,4 @@ unsafe extern "C" {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/perf/hw_timer.zig (171 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      OnceLock CALIBRATION; bun_sys::CLOCK_* / bun_core::Timespec / windows QPC wrappers assumed; cpuid uses core intrinsic (rbx reserved in Rust asm)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/perf/hw_timer.zig

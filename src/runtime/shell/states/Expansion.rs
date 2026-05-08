@@ -393,10 +393,4 @@ impl Expansion {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Expansion.zig (1015 lines)
-//   confidence: low-medium — no-IO atom walk + command substitution ported;
-//               brace + glob expansion still TODO
-//   blocked_on: bun_glob::GlobWalker
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Expansion.zig

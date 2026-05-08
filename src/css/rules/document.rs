@@ -39,10 +39,4 @@ impl<R> MozDocumentRule<R> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/document.zig (39 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      struct un-gated; to_css/deep_clone gated on CssRuleList::to_css + DeepClone trait
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/document.zig

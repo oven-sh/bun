@@ -1524,13 +1524,4 @@ fn strip_parent_refs(path: &[u8]) -> &[u8] {
     result
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/MetafileBuilder.zig (1085 lines)
-//   confidence: medium
-//   notes:      JSON re-parse uses an in-module `std.json.Value`-shaped tree
-//               (no `serde_json` dep in this crate). MultiArrayList SoA
-//               accessors via derive-generated `*ListExt` traits. Aliased
-//               `&chunks[0]` / `chunks` arg to `code()` replaced with a
-//               fresh dummy `Chunk` to avoid aliased-&mut UB.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/MetafileBuilder.zig

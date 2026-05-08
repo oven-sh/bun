@@ -122,13 +122,4 @@ impl ScanCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/scan_command.zig (76 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `load_from_cwd` borrow split via raw-ptr projections from the
-//               PackageManager singleton (Zig holds `lockfile: *Lockfile`, so
-//               the aliasing is a Rust-shape artifact; `load_from_cwd` never
-//               touches `manager.lockfile` through the `manager` arg).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/scan_command.zig

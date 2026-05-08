@@ -42,10 +42,4 @@ impl MethodJsc for Method {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/method_jsc.zig (10 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Zig `pub const toJS = extern_fn` reshaped to extension trait per §Idiom map (*_jsc pattern)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/method_jsc.zig

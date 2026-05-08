@@ -731,10 +731,4 @@ impl fmt::Display for CompileTarget {
 // `fromJS` / `fromSlice` re-exports from bundler_jsc deleted — see PORTING.md §Idiom map.
 // In Rust these are extension-trait methods living in bun_bundler_jsc.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/options_types/CompileTarget.zig (506 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      download_to_path has heavy cross-crate I/O (http/zlib/libarchive/fs); define_values comptime table approximated with macro — verify os.nameString() literals
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/options_types/CompileTarget.zig

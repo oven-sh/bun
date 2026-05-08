@@ -2267,10 +2267,4 @@ pub type NewHttpUpgradeClient<const SSL: bool> = HTTPClient<SSL>;
 pub type HttpUpgradeClient = HTTPClient<false>;
 pub type HttpsUpgradeClient = HTTPClient<true>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/websocket_client/WebSocketUpgradeClient.zig (1560 lines)
-//   confidence: medium
-//   todos:      19
-//   notes:      intrusive RefCount + many `defer this.deref()` hand-placed; `to_send` reshaped to suffix-len; Headers8Bit reshaped to avoid self-ref; remain_buf copies added (PERF); extern "C" export macro needs paste!; SslCtxRef/SSLConfig/base64/sha1 crate paths guessed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/websocket_client/WebSocketUpgradeClient.zig

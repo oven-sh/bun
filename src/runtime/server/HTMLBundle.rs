@@ -839,14 +839,4 @@ impl PendingResponse {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/HTMLBundle.zig (539 lines)
-//   confidence: medium
-//   notes:      JSBundleCompletionTask moved to bun_runtime::api (layering —
-//               type depends on Config/Plugin/Route which live here).
-//               State.html switched from Rc<StaticRoute> to *mut StaticRoute
-//               (intrusive count, matches StaticRoute::ref_/deref_ surface).
-//               on_any_request takes `*mut Self` (uws-callback receiver) so
-//               the body can re-enter via DevServer without a `&mut` alias.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/HTMLBundle.zig

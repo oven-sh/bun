@@ -1471,10 +1471,4 @@ fn offset_of_ref_count_ts<T: ThreadSafeRefCounted, Rc>() -> usize {
 #[allow(non_upper_case_globals)]
 bun_core::declare_scope!(ref_count, hidden);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/ref_count.zig (629 lines)
-//   confidence: low
-//   todos:      23
-//   notes:      Heavy comptime mixin → trait reshaping; DebugData.allocation_scope stored as raw NonNull (TSV says BORROW_PARAM but borrow can't outlive param); AnyRefCounted blanket-impl overlap (RefCounted vs ThreadSafeRefCounted) unresolved; rc_deref unimplemented for non-unit DestructorCtx; @returnAddress/@fieldParentPtr stubbed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/ref_count.zig

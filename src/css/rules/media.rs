@@ -53,10 +53,4 @@ impl<R> MediaRule<R> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/media.zig (51 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      struct + to_css un-gated; minify lives in rules/mod.rs; deep_clone gated on DeepClone derive.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/media.zig

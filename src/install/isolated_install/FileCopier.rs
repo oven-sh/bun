@@ -293,10 +293,4 @@ impl FileCopier {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/isolated_install/FileCopier.zig (180 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      AbsPath/Path comptime-config types stubbed; save()/restore() RAII guard needs borrowck-safe shape; anyerror→errno chain uses bun_core::err! interned consts
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/isolated_install/FileCopier.zig

@@ -467,10 +467,4 @@ pub const BROTLI_DEFAULT_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;
 pub const BROTLI_DEFAULT_MODE: c_int = BROTLI_MODE_GENERIC;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/brotli_sys/brotli_c.zig (334 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `BrotliEncoder::Operation` flattened to module-level `Operation` alias (inherent assoc types unstable). get_error_code transmute is UB if brotli returns 0..3 (non-error) — matches Zig behavior. CompressionResult carries lifetime `'a` borrowing the encoder's internal buffer.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/brotli_sys/brotli_c.zig

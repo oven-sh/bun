@@ -14,10 +14,4 @@ impl SemverStringJsc for SemverString {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/semver_jsc/SemverString_jsc.zig (9 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      extension-trait pattern; create_utf8_for_js via bun_jsc::bun_string_jsc
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/semver_jsc/SemverString_jsc.zig

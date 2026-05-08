@@ -1181,13 +1181,4 @@ fn print_summary(
     ));
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/build_command.zig (813 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Output::pretty* shapes adapted to single-arg fn forms;
-//               output_files lifetime restructured to own Vec then borrow as
-//               slice; resolver.opts re-sync deferred (subset type);
-//               bun.cli.start_time mapped to cli_start_time().
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/build_command.zig

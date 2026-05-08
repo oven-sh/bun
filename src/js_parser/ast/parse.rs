@@ -1638,13 +1638,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/parse.zig (1407 lines)
-//   confidence: medium
-//   notes:      comptime mixin → inherent impl on P<'a, TS, J, SCAN_ONLY>; sibling re-exports
-//               dropped (each parseX file impls on P directly); 'a/'static lifetime widening on
-//               arena-owned slices via unsafe transmute (Phase B threads 'bump explicitly);
-//               parse_arrow_body callers pass empty ExprNodeList until parseFn.rs round-D body
-//               lands with the &mut [G::Arg] signature.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/parse.zig

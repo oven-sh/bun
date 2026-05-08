@@ -1274,11 +1274,4 @@ impl<T: VersionInt> Default for ParseResult<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/semver/Version.zig (995 lines)
-//   confidence: high
-//   notes:      Tag is non-generic (layout-identical for u32/u64); order_pre
-//               hardcodes u64 — only the u64 instantiation is reachable at
-//               runtime (OldV2Version is migration-only).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/semver/Version.zig

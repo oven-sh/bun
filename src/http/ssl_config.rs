@@ -554,13 +554,4 @@ pub mod global_registry {
 
 pub use global_registry as GlobalRegistry;
 
-// ──────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/SSLConfig.zig (577 lines)
-//   moved-in:   MOVE_DOWN bun_runtime → bun_http
-//   confidence: medium
-//   omitted:    from_js / from_generated / read_from_blob / handle_* —
-//               jsc/webcore-dependent; stay in bun_runtime (Pass C)
-//   notes:      GlobalRegistry uses linear content scan instead of
-//               custom-context ArrayHashMap; SharedPtr is Arc newtype.
-// ──────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/SSLConfig.zig

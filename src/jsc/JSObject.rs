@@ -358,10 +358,4 @@ pub trait JSValueFields {
     fn put_fields(&self, put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>) -> JsResult<()>;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSObject.zig (172 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      @typeInfo field reflection replaced by PojoFields/JSValueFields callback traits (need derive macros); putRecord checks has_exception() post-call (mirrors codegen wrapper); raw extern return type still unverified
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSObject.zig

@@ -106,10 +106,4 @@ impl RefString {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/RefString.zig (62 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      intrusive WTF::StringImpl refcount + self-destroy kept as explicit `unsafe fn destroy`; xxhash32 / IdentityHasher / StringImpl import paths need Phase-B wiring
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/RefString.zig

@@ -1234,10 +1234,4 @@ pub fn readable_stream(
     Ok(readable_value)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/s3/client.zig (745 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      fn-ptr @ptrCast → transmute needs ABI review; MultiPartUpload Rc vs IntrusiveRc mismatch (LIFETIMES.tsv says Rc but type uses bun.ptr.RefCount); JsTerminated error type assumed; `http: undefined` fields zeroed pending MaybeUninit reshape
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/s3/client.zig

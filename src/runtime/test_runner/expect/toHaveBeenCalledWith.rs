@@ -150,10 +150,4 @@ pub fn to_have_been_called_with(
     result
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveBeenCalledWith.zig (127 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Output.prettyFmt comptime color dispatch collapsed to single call pending pretty_fmt! macro; defer post_match reshaped as IIFE; this.throw assumed to take fmt::Arguments
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveBeenCalledWith.zig

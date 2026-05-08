@@ -76,10 +76,4 @@ impl Drop for WebSocketProxy {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/websocket_client/WebSocketProxy.zig (71 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      tunnel field uses raw NonNull (intrusive refcount); revisit once WebSocketProxyTunnel ownership model is settled
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/websocket_client/WebSocketProxy.zig

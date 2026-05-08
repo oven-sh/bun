@@ -58,10 +58,4 @@ pub fn decompress(compressed_data: &[u8], output: &mut MutableString) -> Result<
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/zlib.zig (34 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      ObjectPool comptime fn-param + intrusive @fieldParentPtr pool node need Phase-B API design; allocator params dropped (non-AST crate).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/zlib.zig

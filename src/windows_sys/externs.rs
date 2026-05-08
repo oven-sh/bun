@@ -1254,15 +1254,4 @@ unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/windows_sys/externs.zig + MOVE_DOWN from src/sys/windows/windows.zig
-//   confidence: high
-//   todos:      0
-//   notes:      callconv(.winapi) → extern "system"; Win32 typedefs + Win32Error/NTSTATUS
-//               owned locally (crate root). `translate_ntstatus_to_errno` /
-//               `wsa_get_last_error` / `Win32Error::to_system_errno` intentionally
-//               NOT moved here — they return `errno::{E,SystemErrno}` (T1) and would
-//               create a back-edge. Raw building blocks (RtlNtStatusToDosError,
-//               WSAGetLastError, Win32Error::get/from_ntstatus) are provided instead.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/windows_sys/externs.zig

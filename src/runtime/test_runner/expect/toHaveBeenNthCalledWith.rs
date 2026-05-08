@@ -138,10 +138,4 @@ pub fn to_have_been_nth_called_with(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveBeenNthCalledWith.zig (105 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match wrapped via scopeguard for borrowck; bun.cpp/Formatter/throw signatures may need fixup
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveBeenNthCalledWith.zig

@@ -494,10 +494,4 @@ pub type Queue = bun_collections::linear_fifo::LinearFifo<
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/PostgresRequest.zig (416 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      NewWriter<Context> kept by-value (Copy); .String→bun_string; protocol write_internal returns bun_core::Error so AnyPostgresError gained From<bun_core::Error>.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/PostgresRequest.zig

@@ -152,10 +152,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContain.zig (106 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match() borrows &mut self across whole fn — needs borrowck reshape; Formatter construction/to_fmt signatures guessed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContain.zig

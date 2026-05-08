@@ -344,10 +344,4 @@ fn clamp8(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0) as u8
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/thumbhash.zig (260 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      160KB stack arrays kept (parity with Zig)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/thumbhash.zig

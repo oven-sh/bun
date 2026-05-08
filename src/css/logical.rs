@@ -26,10 +26,4 @@ pub enum LogicalGroup {
     MaxSize,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/logical.zig (26 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      pure enums + re-exports; css_parser module path may need adjusting in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/logical.zig

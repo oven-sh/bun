@@ -780,10 +780,4 @@ fn slice_to_nul(buf: &[u8]) -> &[u8] {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/exe_format/elf.zig (534 lines)
-//   confidence: medium-high
-//   todos:      3
-//   notes:      ELF structs/consts defined locally (Zig used std.elf); bun_sys/bun_io/env_var APIs assumed; borrowck reshapes in normalize_interpreter/update_interp_section_size; u64→usize narrowing uses checked try_from
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/exe_format/elf.zig

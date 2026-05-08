@@ -282,10 +282,4 @@ impl ByteBlobLoader {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/ByteBlobLoader.zig (202 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Source/NewSource callback wiring needs trait; content_type borrowed-vs-owned collapsed to Box; deinit kept as method (parent owns self)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/ByteBlobLoader.zig

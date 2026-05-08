@@ -1039,10 +1039,4 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/WindowsNamedPipe.zig (614 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Windows-only; StreamingWriter callback binding + SslWrapper::Handlers shape modeled via trait/trampolines; on_connect's `defer deref()` reshaped to explicit calls; vm.timer resolved via runtime_state() (b2-cycle); deinit→Drop via private release_resources().
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/WindowsNamedPipe.zig

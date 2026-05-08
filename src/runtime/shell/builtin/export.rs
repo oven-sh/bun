@@ -74,9 +74,4 @@ impl Export {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/export.zig (153 lines)
-//   confidence: medium
-//   blocked_on: IOWriter::enqueue, EnvMap iteration formatting
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/export.zig

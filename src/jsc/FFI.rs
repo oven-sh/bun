@@ -230,10 +230,4 @@ pub const MAX_INT32: i64 = 2147483648;
 pub const MAX_INT52: i64 = 9007199254740991;
 pub const NUMBER_TAG: c_ulonglong = 0xfffe_0000_0000_0000;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/FFI.zig (530 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      translate-c output; ~390 lines of clang predef-macro noise dropped intentionally; union field reads wrapped in unsafe; JSValue::as_encoded()/from_*_no_truncate assumed on bun_jsc::JSValue
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/FFI.zig

@@ -198,10 +198,4 @@ pub enum FormDataEntry<'a, B> {
     },
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/DOMFormData.zig (130 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      comptime ctx+callback pairs reshaped to FnMut closures with generic extern "C" trampolines; from_js lifetime is unbounded placeholder
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/DOMFormData.zig

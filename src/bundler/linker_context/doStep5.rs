@@ -627,11 +627,4 @@ impl LinkerContext<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/doStep5.zig (509 lines)
-//   confidence: medium
-//   notes:      heavy overlapping &mut into self.graph (MultiArrayList SoA)
-//               handled via raw column pointers; Stmt.Batcher hand-rolled with
-//               MaybeUninit slab since Batcher<T> requires T: Default.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/doStep5.zig

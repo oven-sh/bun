@@ -44,10 +44,4 @@ impl AlphaValue {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/alpha.zig (45 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      eql/hash/deep_clone were comptime-reflection helpers; likely become derives/traits in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/alpha.zig

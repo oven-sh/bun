@@ -66,10 +66,4 @@ impl<'a> SlicedString<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_types/SlicedString.zig (53 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      added <'a> lifetime (borrowed view struct); Phase B verify vs raw *const [u8]
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_types/SlicedString.zig

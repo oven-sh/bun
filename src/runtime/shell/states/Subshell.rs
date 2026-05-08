@@ -148,9 +148,4 @@ impl Subshell {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Subshell.zig (210 lines)
-//   confidence: medium (NodeId conversion + dupe wired; redirects still gated)
-//   blocked_on: IOWriter redirect open
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Subshell.zig

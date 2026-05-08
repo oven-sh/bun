@@ -345,10 +345,4 @@ pub fn write<W: Write + ?Sized>(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/HTMLImportManifest.zig (276 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Writer abstraction switched to bun_io::Write (byte-level) so paths flow as &[u8]; @tagName(loader) routed through strum::IntoStaticStr (case mismatch — TODO); @fieldParentPtr(graph) ported via offset_of! + raw-ptr arithmetic.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/HTMLImportManifest.zig

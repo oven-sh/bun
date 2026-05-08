@@ -256,17 +256,4 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/unlink_command.zig (158 lines)
-//   confidence: medium
-//   notes:      Typed against `package_manager_real::PackageManager` (the
-//               canonical struct). `Package::parse` is currently declared
-//               against the legacy `crate::PackageManager` stub; this file
-//               (like `process_dependency_list.rs`) passes the real struct,
-//               anticipating the reconciler-6 unification of the two
-//               `PackageManager` types. `bin::Linker` requires disjoint
-//               `&`/`&mut` `AbsPath` borrows, so the fd path is resolved
-//               twice instead of aliasing one buffer (Zig allowed `*const` +
-//               `*mut` to overlap).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/unlink_command.zig

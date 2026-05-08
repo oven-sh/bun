@@ -323,10 +323,4 @@ impl DataUrlBuf for CountingBuf {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolver/data_url.zig (236 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      DataURL gets <'a> (mime_type/data borrow input url); base64 fallback in encode_string_as_shortest_data_url ported faithfully but looks buggy upstream (writes raw text, not base64)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolver/data_url.zig

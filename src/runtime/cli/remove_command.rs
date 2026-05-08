@@ -12,10 +12,4 @@ impl RemoveCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/remove_command.zig (11 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      thin wrapper; Subcommand enum variant name (.remove) assumed from bun_install
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/remove_command.zig

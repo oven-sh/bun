@@ -757,10 +757,4 @@ fn writev_const(fd: Fd, bufs: &[PlatformIOVecConst]) -> Result<usize> {
     pwritev(fd, bufs, -1)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/sys_uv.zig (575 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      uv::fs_t assumed to impl Drop (calls uv_fs_req_cleanup); Error::new/with_path/with_fd/with_dest builder API assumed; PlatformIOVec/PlatformIOVecConst alias uv_buf_t on Windows — Phase B should unify; @returnAddress() stubbed as null.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/sys_uv.zig

@@ -47,10 +47,4 @@ pub fn post_process_html_chunk(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/postProcessHTMLChunk.zig (35 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      worker.arena is a per-worker arena — thread `&'bump Bump` to StringJoiner in Phase B; default_allocator arg to j.push dropped
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/postProcessHTMLChunk.zig

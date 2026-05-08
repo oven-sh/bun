@@ -2244,10 +2244,4 @@ pub type StreamingWriter<P> = PosixStreamingWriter<P>;
 #[cfg(not(unix))]
 pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/io/PipeWriter.zig (1576 lines)
-//   confidence: medium
-//   todos:      17
-//   notes:      comptime vtable+mixin pattern → traits; heavy borrowck reshaping around self-referential buffers (raw-ptr escapes flagged for Phase B restructure); writeInternal/writeOrFallback fn-ptr-identity dispatch reworked to WriteKind enum; MovableIfWindowsFd overloads stubbed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/io/PipeWriter.zig

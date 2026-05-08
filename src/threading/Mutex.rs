@@ -371,10 +371,4 @@ pub extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
 #[unsafe(no_mangle)]
 pub static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/Mutex.zig (226 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      inherent `type` aliases need feature(inherent_associated_types) or hoisting; thread-id helper + darwin externs need wiring in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/Mutex.zig

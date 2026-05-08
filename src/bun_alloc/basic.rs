@@ -207,10 +207,4 @@ pub fn free_without_size(ptr: *mut c_void) {
     unsafe { mimalloc::mi_free(ptr) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/basic.zig (154 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Zig Allocator.VTable struct kept literally; Phase B may reshape to `impl Allocator for MimallocAllocator/ZAllocator` trait impls. `static` items with raw-ptr fields need `unsafe impl Sync` on Allocator/AllocatorVTable.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/basic.zig

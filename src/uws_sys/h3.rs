@@ -815,15 +815,4 @@ mod c {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/h3.zig (434 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      `comptime handler: fn(...)` wrappers ported via the ZST-handler
-//               pattern (generic `H: Fn(..) + Copy`, compile-time `size_of::<H>() == 0`
-//               assert, `mem::zeroed::<H>()` inside the `extern "C"` trampoline) —
-//               same shape as Response.rs so AnyResponse can dispatch uniformly.
-//               `date_for_header` reaches into bun_jsc/bun_str — routed through
-//               link-time `extern "Rust"` `__bun_uws_parse_date`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/h3.zig

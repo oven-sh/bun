@@ -40,10 +40,4 @@ pub fn to_js<T: JsonToJs>(
     value.json_to_js(global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/types/json.zig (27 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `parse_result.AnyPostgresError()` was a Zig-side typo for `.isAnyError()`; deinit-on-borrowed-param reshaped to rely on Drop
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/types/json.zig

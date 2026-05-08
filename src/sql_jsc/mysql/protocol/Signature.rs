@@ -110,10 +110,4 @@ impl Signature {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/protocol/Signature.zig (86 lines)
-//   confidence: medium
-//   todos:      see TODO(b2-blocked)
-//   notes:      ColumnFlags assumed bitflags! port; bufPrint reshaped to direct append; deinit folded into Drop-by-field.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/protocol/Signature.zig

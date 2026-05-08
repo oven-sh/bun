@@ -313,10 +313,4 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     // callsite of `.call(...)` needs to be rewritten in Phase B.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/tagged_pointer.zig (238 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      comptime type-tuple reflection replaced by TypeList/UnionMember traits + impl_tagged_ptr_union! macro; `call()` left unported (needs per-callsite trait dispatch); inherent assoc type `pub type Tag` requires nightly or hoist to module level in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/tagged_pointer.zig

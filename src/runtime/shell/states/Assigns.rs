@@ -87,9 +87,4 @@ impl Assigns {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Assigns.zig (236 lines)
-//   confidence: medium (NodeId conversion; expansion loop body gated)
-//   blocked_on: ast::Assign, EnvStr/EnvMap set_var
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Assigns.zig

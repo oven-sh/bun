@@ -21,10 +21,4 @@ impl Status {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/QueryStatus.zig (18 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      simple #[repr(u8)] enum + ordinal-range check
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/QueryStatus.zig

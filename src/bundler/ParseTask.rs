@@ -2710,18 +2710,4 @@ pub use bun_js_parser::ast::Ref;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/ParseTask.zig (1496 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      `parse_worker` module fully un-gated. TYPE_ONLY mirrors
-//               (jsx::Pragma, AllowUnresolved, Framework) bridged via
-//               `From`/re-export (options.rs). Zig errdefers (.zig:1123/1148)
-//               reshaped into explicit Err-match cleanup. CSS-module symbols
-//               bridged field-by-field (css_symbols_to_parser_symbols) until
-//               `bun_logger::Symbol`/`bun_js_parser::Symbol` unify. Arena
-//               lifetimes for &[u8] fields placeholdered as &'static.
-//               OnBeforeParseResultWrapper.check field layout differs in
-//               release.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/ParseTask.zig

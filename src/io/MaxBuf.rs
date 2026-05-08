@@ -158,10 +158,4 @@ pub enum Kind {
     Stderr,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/io/MaxBuf.zig (86 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      manual dual-ownership via raw NonNull (BACKREF to Subprocess); LIFETIMES.tsv says caller fields are Option<Arc<MaxBuf>> — reconcile in Phase B; Subprocess access now via MaxBufOwnerVTable (CYCLEBREAK)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/io/MaxBuf.zig

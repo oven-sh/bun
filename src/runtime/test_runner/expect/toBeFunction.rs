@@ -49,10 +49,4 @@ pub fn to_be_function(
     result
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeFunction.zig (35 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      defer postMatch reshaped as IIFE+tail call (no raw ptr); get_signature assumed const fn (was comptime call)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeFunction.zig

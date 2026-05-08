@@ -745,12 +745,4 @@ fn translate_to_err_int<Er: IntoErrInt>(err: Er) -> u16 {
     err.into_err_int()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node.zig (367 lines)
-//   notes:      Maybe<R,E> is now `type = Result<R,E>`; Zig inherent helpers
-//               moved to MaybeExt/MaybeSysExt/MaybeBoolExt/MaybeToJsExt
-//               extension traits. @hasDecl/@typeInfo dispatch replaced with
-//               MaybeErrorRetry/MaybeErrorTodo/MaybeToJs/SyscallRc/IntoErrInt
-//               traits. All node/ submodules wired.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node.zig

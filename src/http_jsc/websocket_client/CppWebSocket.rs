@@ -209,10 +209,4 @@ impl Drop for CppWebSocketRef {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/websocket_client/CppWebSocket.zig (96 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      enter()/exit() inlined (no error path between them); `ref` uses raw ident r#ref.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/websocket_client/CppWebSocket.zig

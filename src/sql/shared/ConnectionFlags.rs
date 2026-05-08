@@ -17,10 +17,4 @@ impl Default for ConnectionFlags {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/shared/ConnectionFlags.zig (7 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      packed struct of bools → bitflags!; Zig field defaults (all false) → Default::empty()
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/shared/ConnectionFlags.zig

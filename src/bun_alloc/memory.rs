@@ -130,10 +130,4 @@ pub fn drop_sentinel(mut buf: Vec<u8>) -> Result<Box<[u8]>, AllocError> {
     Ok(buf.into_boxed_slice())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/memory.zig (210 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      create/destroy/init_default collapse to Box/Default; generic @typeInfo-driven deinit dropped (Rust Drop covers it); drop_sentinel specialized to [:0]u8.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/memory.zig

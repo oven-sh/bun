@@ -3695,10 +3695,4 @@ pub mod bindings {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/pack_command.zig (2840 lines)
-//   confidence: medium
-//   todos:      38
-//   notes:      heavy fs/Dir usage mapped to bun_sys::Dir (RAII pending); pack() comptime return-type variance modeled with Option; Output::prettyln fmt-arg shape and Expr.data matching need Phase B fixup; PriorityQueue assumed in bun_collections.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/pack_command.zig

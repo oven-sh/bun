@@ -160,10 +160,4 @@ where
     write_fn(this, NewWriterWrap { wrapped: context })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/NewWriter.zig (132 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime fn-ptr params → WriterContext trait; NewWriter/writeWrap @hasDecl reflection flattened — verify call sites in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/NewWriter.zig

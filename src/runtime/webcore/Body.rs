@@ -2576,9 +2576,4 @@ pub extern "C" fn Bun__BodyValueBufferer__onRejectStream(
     jsc::to_js_host_fn_result(global, ValueBufferer::on_reject_stream(global, callframe))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/Body.zig (1833 lines)
-//   confidence: medium
-//   notes:      Mixin reshaped to trait (BodyMixin + BodyOwnerJs); WTFStringImpl held as raw `*mut WTFStringImplStruct` with explicit intrusive ref/deref (no Arc); several borrowck reshapes around &mut self in match arms; deinit() renamed reset() (in-place state transition, not Drop); ValueBufferer callback receives ref-bumped ValueError dupes (Zig passed bitwise copies — ownership audited).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/Body.zig

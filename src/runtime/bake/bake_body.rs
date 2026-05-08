@@ -1702,10 +1702,4 @@ pub fn print_warning() {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/bake.zig (1008 lines)
-//   confidence: medium
-//   todos:      22
-//   notes:      `&'static [u8]` fields are arena/StringRefList-backed (self-referential with UserOptions.arena); Phase B must thread `'bump` lifetimes. include_bytes!/cfg! branches need #[cfg] split. Heavy bun_jsc usage may need *_jsc crate split.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/bake.zig

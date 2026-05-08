@@ -50,10 +50,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeNull.zig (37 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      get_signature must be const fn; throw() takes fmt::Arguments; scopeguard wraps &mut self for post_match defer
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeNull.zig

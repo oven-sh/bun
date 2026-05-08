@@ -176,10 +176,4 @@ impl StatFS {
     // `to_js` on `StatFSBig`/`StatFSSmall` directly.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/StatFS.zig (141 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime-bool type-generator expressed as macro_rules! (stable Rust cannot pick field type from const-generic bool); from_js_host_call wrapper shape needs Phase-B confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/StatFS.zig

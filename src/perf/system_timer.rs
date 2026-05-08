@@ -59,10 +59,4 @@ impl Timer {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/perf/system_timer.zig (27 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Zig's lazy @compileError on WASM stubs mapped to unreachable!(); non-WASM reimplements std.time.Timer over std::time::Instant
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/perf/system_timer.zig

@@ -36,11 +36,4 @@ pub use bun_event_loop::any_event_loop::{
     EnteredEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/EventLoopHandle.zig (180 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      MOVE-DOWN to bun_event_loop::any_event_loop (CYCLEBREAK — see
-//               module doc). This file is a re-export shim only.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/EventLoopHandle.zig

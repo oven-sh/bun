@@ -2966,13 +2966,4 @@ pub struct ServeResult {
     pub mime_type: bun_http_types::MimeType::MimeType,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/transpiler.zig (1461 lines)
-//   confidence: medium
-//   notes:      `transform` / `enqueueEntryPoints` / `processResolveQueue` /
-//               `buildWithResolveResultEager` ported for the legacy
-//               single-file CLI path (`bun build --no-bundle`). CSS branch
-//               of buildWithResolveResultEager falls back to file-copy until
-//               the `css` cargo feature is wired to this crate's default set.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/transpiler.zig

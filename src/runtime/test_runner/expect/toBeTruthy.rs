@@ -55,10 +55,4 @@ pub fn to_be_truthy(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeTruthy.zig (40 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer postMatch needs borrowck reshape; get_signature assumed const fn
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeTruthy.zig

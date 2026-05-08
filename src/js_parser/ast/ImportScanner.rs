@@ -764,10 +764,4 @@ impl<'a> ImportScanner<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/ImportScanner.zig (530 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      generic P concrete (AstBuilder path TODO); record &mut split via raw ptr macro for borrowck; HMR ctx Option-wrapped; Stmt copy semantics; ClauseItem compaction via ptr copy
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/ImportScanner.zig

@@ -73,10 +73,4 @@ impl<'a> HTTPRequestBody<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/HTTPRequestBody.zig (38 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      Bytes payload borrowed (not freed in Zig deinit); revisit lifetime in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/HTTPRequestBody.zig

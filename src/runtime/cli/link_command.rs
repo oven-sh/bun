@@ -315,8 +315,4 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/link_command.zig (217 lines)
-//   confidence: medium
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/link_command.zig

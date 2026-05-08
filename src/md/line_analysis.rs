@@ -750,10 +750,4 @@ impl Parser<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/line_analysis.zig (527 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Anonymous-struct returns mapped to named result structs; assumes OFF is an integer offset (cast to usize for indexing); Align enum / Container fields assumed from types.zig.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/line_analysis.zig

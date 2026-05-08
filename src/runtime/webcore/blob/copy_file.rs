@@ -1757,10 +1757,4 @@ pub type CopyFilePromiseTask<'a> = jsc::concurrent_promise_task::ConcurrentPromi
 // path depends on bun_jsc::ConcurrentPromiseTask shape; using `jsc::EventLoopTask` for now.
 pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/blob/copy_file.zig (1286 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      JSC_BORROW lifetimes (`&JSGlobalObject`/`&EventLoop` fields) are unsound for heap-allocated async tasks; ReadWriteLoop self-borrow uses raw-ptr split (flagged TODO(port) — restructure in Phase B); CopyFileWindows::destroy is the FFI self-free path (Box::from_raw).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/blob/copy_file.zig

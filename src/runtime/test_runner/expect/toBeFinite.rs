@@ -57,10 +57,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeFinite.zig (42 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      scopeguard wraps `this` for post_match defer; get_signature assumed const fn → &'static str; Formatter struct-init path may need a ::new() in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeFinite.zig

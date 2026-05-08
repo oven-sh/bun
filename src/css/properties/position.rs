@@ -96,10 +96,4 @@ impl Position {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/position.zig (82 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      eql/deepClone collapsed to derives.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/position.zig

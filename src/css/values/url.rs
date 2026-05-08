@@ -179,10 +179,4 @@ impl Url {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/url.zig (141 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      implement_deep_clone/implement_hash are @typeInfo reflection helpers; to_css scratch buffers need a WriteAll Vec impl + ImportRecord tag/flags shape fix; parse is real (expect_url + add_import_record).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/url.zig

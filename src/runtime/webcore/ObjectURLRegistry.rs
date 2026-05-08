@@ -212,9 +212,4 @@ pub fn is_blob_url(url: &[u8]) -> bool {
     url.len() >= SPECIFIER_LEN && strings::strings::has_prefix_comptime(url, b"blob:")
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/ObjectURLRegistry.zig (176 lines)
-//   confidence: high
-//   notes:      lock+map merged into Guarded<HashMap>; export names attached via #[unsafe(export_name)]
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/ObjectURLRegistry.zig

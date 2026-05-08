@@ -41,10 +41,4 @@ impl EOFPacket {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/EOFPacket.zig (21 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      decoder_wrap shape (macro vs generic) and NewReader<Context> trait bound resolved in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/EOFPacket.zig

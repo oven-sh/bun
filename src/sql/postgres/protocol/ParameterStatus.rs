@@ -27,18 +27,10 @@ impl ParameterStatus {
         })
     }
 
-    // Zig: `pub const decode = DecoderWrap(ParameterStatus, decodeInternal).decode;`
-    // TODO(port): `DecoderWrap` is a comptime type-returning fn; Phase B should
-    // expose this via whatever trait/wrapper `decoder_wrap` lands on.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/ParameterStatus.zig (26 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `decode` delegation depends on DecoderWrap's Rust shape; decode_internal reshaped to return Self
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/ParameterStatus.zig

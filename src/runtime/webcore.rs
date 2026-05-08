@@ -444,10 +444,4 @@ pub enum Lifetime {
     Temporary,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore.zig (129 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Mostly thin re-exports → `pub mod`/`pub use`. `Pipe.Wrap` reshaped to a trait (no comptime-fn generics in Rust); ObjectPool/Vec<u8> crate paths guessed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore.zig

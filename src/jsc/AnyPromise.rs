@@ -219,10 +219,4 @@ unsafe extern "C" {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/AnyPromise.zig (109 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `wrap` reshaped from comptime ArgsTuple to FnOnce closure (Rust lacks fn-signature reflection); variants hold *mut (Zig *T) — GC-managed cells, not Rust borrows
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/AnyPromise.zig

@@ -1355,4 +1355,3 @@ pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
     writer.write_all(b".map")?;
     Ok(())
 }
-

@@ -629,10 +629,4 @@ impl Default for Opts {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/mv.zig (526 lines)
-//   confidence: high — full state machine; renameat/openat ported via
-//               shell_openat + bun_sys::renameat; err_path_owned dropped
-//               (bun_sys::Error::path is owned `Box<[u8]>`).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/mv.zig

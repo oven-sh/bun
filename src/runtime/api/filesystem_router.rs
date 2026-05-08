@@ -1047,10 +1047,4 @@ thread_local! {
         const { core::cell::RefCell::new([0u8; MAX_PATH_BYTES * 2]) };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/filesystem_router.zig (709 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Arena ownership + self-ref `route` ptr need Phase B borrowck work; RefString held as *mut.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/filesystem_router.zig

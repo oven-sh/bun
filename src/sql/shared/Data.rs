@@ -131,10 +131,4 @@ impl Data {
 // already frees on drop, so an explicit `impl Drop for Data` is redundant (and
 // would prevent moving fields out in `to_owned`). The other variants own no heap.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/shared/Data.zig (94 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      `Temporary` stored as raw `*const [u8]` (self-borrowing via `substring`); Vec<u8>/BoundedArray API surface assumed; `bun.freeSensitive` mapped to `bun_alloc::free_sensitive`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/shared/Data.zig

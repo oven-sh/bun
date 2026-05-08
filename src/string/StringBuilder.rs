@@ -363,10 +363,4 @@ impl fmt::Write for SliceWriter<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/StringBuilder.zig (253 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      append* return slices aliasing &mut self — Phase B must pick lifetime/Cell strategy; simdutf/StringPointer crate paths guessed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/StringBuilder.zig

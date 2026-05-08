@@ -2436,11 +2436,4 @@ where
 
 // `from_u32_const` folded into `CodePointZero` trait above.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/immutable/unicode.zig (2042 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      SIMD @Vector paths replaced with SWAR fallback (PERF-tagged); generic CodePointType modeled via CodePointZero/FromU32 traits; simdutf allocatedSlice() vs spare_capacity semantics need Phase B review; SENTINEL u16 returns Vec<u16> not WStr.
-// ──────────────────────────────────────────────────────────────────────────
-
+// ported from: src/string/immutable/unicode.zig

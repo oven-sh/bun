@@ -124,10 +124,4 @@ impl SourceProvider for BakeSourceProvider {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap_jsc/source_provider.zig (48 lines)
-//   confidence: high
-//   notes:      PerThread field access hoisted to bun_runtime via the
-//               RuntimeHooks cold-path vtable (PORTING.md §Dispatch).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap_jsc/source_provider.zig

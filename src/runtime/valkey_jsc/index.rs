@@ -21,10 +21,4 @@ pub use super::valkey::Options;
 // ValkeyCommand.zig is a file-as-struct; in Rust the module itself is the namespace.
 pub use super::valkey_command as Command;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/valkey_jsc/index.zig (21 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      thin re-export module; sibling module paths (super::*) and bun_valkey crate name to be wired in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/valkey_jsc/index.zig

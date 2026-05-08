@@ -164,10 +164,4 @@ pub const fn __pad<const N: usize>(s: &[u8]) -> [u8; N] {
     out
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/immutable/exact_size_matcher.zig (72 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      comptime int-type derivation modeled via ExactSizeInt trait; u96→u128 for N=12; `case` const-fn may need macro fallback in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/immutable/exact_size_matcher.zig

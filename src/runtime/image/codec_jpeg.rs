@@ -317,10 +317,4 @@ pub fn encode(rgba: &[u8], w: u32, ht: u32, quality: u8, progressive: bool, icc_
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/codec_jpeg.zig (176 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      extern fns left inline pending *_sys crate.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/codec_jpeg.zig

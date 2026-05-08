@@ -991,10 +991,4 @@ pub mod posix_spawn {
 
 use crate::spawn_process as process;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/spawn.zig (566 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      Action is #[repr(C)] but LIFETIMES.tsv mandates Option<CString> for .path — ABI-incompatible with posix_spawn_bun; Phase B must marshal or revert to *const c_char. std.posix wrappers (errno/to_posix_path/system) referenced via bun_sys placeholders. spawn_z platform branches cfg-gated but linux/freebsd fall-through reachability needs Phase B restructure.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/spawn.zig

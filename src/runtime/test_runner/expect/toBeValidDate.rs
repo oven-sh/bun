@@ -51,10 +51,4 @@ pub fn to_be_valid_date(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeValidDate.zig (37 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      `defer post_match` needs RAII guard pattern shared across all matchers; get_signature assumed const fn
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeValidDate.zig

@@ -137,10 +137,4 @@ impl<'a> Reader<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/parallel/Frame.zig (93 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      Reader<'a> carries a lifetime for the borrowed payload cursor; revisit if Phase B forbids struct lifetimes here.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/parallel/Frame.zig

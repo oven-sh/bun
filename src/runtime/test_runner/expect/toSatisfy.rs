@@ -87,10 +87,4 @@ pub fn to_satisfy(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toSatisfy.zig (62 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match() vs &mut this borrowck needs Phase B reshape; get_signature was comptime
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toSatisfy.zig

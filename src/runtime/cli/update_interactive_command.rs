@@ -2598,20 +2598,4 @@ fn preserve_version_prefix(
     Ok(Box::from(new_version))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/update_interactive_command.zig (2062 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Layering: `Expr`/`E` retargeted to `bun_logger::js_ast`
-//               (matches `WorkspacePackageJsonCacheEntry.root`), not the
-//               higher-tier `bun_js_parser::ast`. Catalog-edit fns reshaped
-//               to mutate `StoreRef<E::Object>` in place (Rust `Vec<T>`
-//               has Drop, so Zig's struct-copy `e_object.*` would
-//               double-free). `defer/errdefer` in `process_multi_select`
-//               reshaped to inline macro. `manager.log` is `*mut Log` —
-//               reborrowed via `unsafe { &mut *manager.log }` at use sites.
-//               `EString.data` (`&'static [u8]`) requires leaked dups
-//               pending Phase-B `'bump` threading (mirrors
-//               PackageJSONEditor.rs).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/update_interactive_command.zig

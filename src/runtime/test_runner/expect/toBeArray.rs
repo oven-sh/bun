@@ -46,10 +46,4 @@ pub fn to_be_array(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame
     result
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeArray.zig (35 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      defer post_match reshaped to IIFE + tail call; throw() assumed to take fmt::Arguments
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeArray.zig

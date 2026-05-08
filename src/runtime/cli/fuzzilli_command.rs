@@ -116,11 +116,4 @@ impl FuzzilliCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/fuzzilli_command.zig (74 lines)
-//   confidence: medium
-//   notes:      Environment.enable_fuzzilli mapped to bun_core::Environment::ENABLE_FUZZILLI
-//               (matching cli/mod.rs / cli_body.rs); body always compiles, gated
-//               at runtime by the dispatch caller.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/fuzzilli_command.zig

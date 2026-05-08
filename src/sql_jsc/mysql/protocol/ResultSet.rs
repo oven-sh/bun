@@ -325,9 +325,7 @@ impl<'a> Row<'a> {
         Ok(())
     }
 
-    // TODO(port): `pub const decode = decoderWrap(Row, decodeInternal).decodeAllocator;`
-    // decoderWrap is a comptime type-returning fn that wraps decode_internal with allocator
-    // injection. In Rust the allocator param is dropped, so this collapses to a direct call.
+    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
         self.decode_internal(reader)
     }
@@ -364,10 +362,4 @@ fn parse_int<T: core::str::FromStr>(bytes: &[u8]) -> Option<T> {
     core::str::from_utf8(bytes).ok()?.parse::<T>().ok()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/protocol/ResultSet.zig (276 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      SQLDataCell struct-literal shape (tag/value union/free_value) and decoderWrap collapse need Phase-B verification; ColumnFlags/NameOrIndex/FieldType import paths are best-guess.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/protocol/ResultSet.zig

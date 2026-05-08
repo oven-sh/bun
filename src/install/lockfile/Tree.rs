@@ -1100,10 +1100,4 @@ pub struct FillItem {
 pub type TreeFiller =
     bun_collections::LinearFifo<FillItem, bun_collections::linear_fifo::DynamicBuffer<FillItem>>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/Tree.zig (813 lines)
-//   confidence: high
-//   todos:      4
-//   notes:      hoist_dependency reshaped to take self_id and re-derive read-only views from builder.list (no overlapping &mut); conditional void fields collapsed to Option.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/Tree.zig

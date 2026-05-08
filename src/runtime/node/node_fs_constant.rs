@@ -161,10 +161,4 @@ pub const UV_FS_O_FILEMAP: i32 = 536870912;
 // from bun.O / std.posix.S; Phase B should align with bun_sys's actual repr
 // (u32 vs i32) once that crate lands.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_fs_constant.zig (143 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      dropped comptime `get()` reflection helper; constants reference bun_sys::O / bun_sys::posix directly
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_fs_constant.zig

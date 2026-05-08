@@ -17,10 +17,4 @@ pub struct AlphaValue {
     pub v: f32,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/shape.zig (15 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      FillRule is a @compileError placeholder in Zig; ported as empty enum stub.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/shape.zig

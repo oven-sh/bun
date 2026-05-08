@@ -512,10 +512,4 @@ impl DepIndex {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/DevServer/DirectoryWatchStore.zig (313 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      @fieldParentPtr owner() aliasing + ArrayHashMap key sub-slice ownership need Phase B redesign; errdefer chain in insert() reshaped with scopeguard but borrowck overlap likely.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/DevServer/DirectoryWatchStore.zig

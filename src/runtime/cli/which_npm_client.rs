@@ -24,10 +24,4 @@ impl From<Tag> for &'static str {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/which_npm_client.zig (12 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      `bin: []const u8` field has no deinit; mapped to &'static [u8]
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/which_npm_client.zig

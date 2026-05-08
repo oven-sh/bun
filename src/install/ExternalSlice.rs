@@ -8,10 +8,4 @@ pub use bun_install_types::resolver_hooks::{
     VersionSlice,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/ExternalSlice.zig (73 lines)
-//   confidence: high
-//   notes:      MOVE_DOWN to bun_install_types; this module is now a
-//               re-export shim.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/ExternalSlice.zig

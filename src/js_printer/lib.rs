@@ -7245,10 +7245,4 @@ pub fn serialize_module_info(module_info: Option<&mut analyze_transpiled_module:
     Some(buf.into_boxed_slice())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_printer/js_printer.zig (6419 lines)
-//   confidence: low
-//   todos:      38
-//   notes:      Huge comptime-generic printer; ws() needs const-eval macro, NewWriter→trait reshape, several arena-mutation sites & callback thunks stubbed; defer-if-wrap reshaped manually in printRequireOrImportExpr; print_stmt's `defer prev_stmt_tag = ...` expanded to per-return assignments for borrowck.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_printer/js_printer.zig

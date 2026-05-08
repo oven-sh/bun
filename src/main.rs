@@ -137,10 +137,4 @@ pub fn eql_bytes(src: &[u8], dest: &[u8]) -> bool {
 }
 // -- End Zig Standard Library Additions --
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/main.zig (100 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Zig root-module hooks (panic/std_options/io_mode, std.mem overrides) have no Rust equivalent — crash_handler::init() must subsume them; verify in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/main.zig

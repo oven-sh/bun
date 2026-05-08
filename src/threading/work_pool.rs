@@ -73,10 +73,4 @@ impl WorkPool {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/work_pool.zig (58 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      bun.once → std::sync::OnceLock (§Concurrency); comptime fn param stored as runtime field
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/work_pool.zig

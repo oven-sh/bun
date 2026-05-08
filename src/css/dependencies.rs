@@ -198,10 +198,4 @@ impl SourceRange {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/dependencies.zig (151 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      All `[]const u8` struct fields are arena-borrowed → raw `*const [u8]` per guide; Phase B may unify on `&'bump [u8]`. `css_modules::hash` / `to_css::string` signatures assumed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/dependencies.zig

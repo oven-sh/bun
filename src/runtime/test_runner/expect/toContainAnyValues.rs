@@ -103,10 +103,4 @@ pub fn to_contain_any_values(
     result
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainAnyValues.zig (73 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      defer post_match reshaped via inner closure; Expect.throw assumed to take fmt::Arguments
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainAnyValues.zig

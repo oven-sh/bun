@@ -268,10 +268,4 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     Ok(obj)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_util_binding.zig (237 lines)
-//   confidence: high
-//   notes:      split() reshaped for u8/u16 type dispatch; UV_E::@"2BIG" → _2BIG;
-//               comptime EncodingNonAscii demoted to runtime arg (no adt_const_params)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_util_binding.zig

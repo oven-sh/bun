@@ -34,10 +34,4 @@ pub extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     BunString::clone_utf8(out_slice)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/resolve_path_jsc.zig (33 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      extern "C" export name preserved verbatim for PathInlines.h linkage; field path bun_vm().transpiler.fs.top_level_dir routed via FileSystem singleton
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/resolve_path_jsc.zig

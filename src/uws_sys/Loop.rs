@@ -575,10 +575,4 @@ mod c {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/Loop.zig (372 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      comptime fn-param trampolines (nextTick/NewHandler) reshaped to take extern "C" callbacks directly; field-level align(16) needs static-assert; get()/create() return raw *mut Loop for sys-crate; bun_core::Timespec path is a guess
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/Loop.zig

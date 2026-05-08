@@ -91,11 +91,4 @@ pub fn report_error_or_terminate(
 // every arm names a `bun_runtime`/`bun_shell`/`bun_s3` type and so cannot
 // compile at this tier. See git history of this file for the verbatim draft.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/Task.zig (679 lines)
-//   confidence: high (struct + tag + hook); match hoisted to bun_runtime
-//   todos:      1 (unify RUN_TASK_HOOK with event_loop::TICK_QUEUE_HOOK)
-//   notes:      §Dispatch hot-path — low tier stores (tag,ptr), high tier
-//               owns the match. Taskable trait replaces comptime type-list.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/Task.zig

@@ -1233,11 +1233,4 @@ impl LifecycleAgent {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/Debugger.zig (535 lines)
-//               src/runtime/server/InspectorBunFrontendDevServerAgent.zig
-//   confidence: high
-//   notes:      retroactivelyReportDiscoveredTests dispatched through
-//               RuntimeHooks (Jest runner lives in bun_runtime — cycle).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/Debugger.zig

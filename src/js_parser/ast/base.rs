@@ -275,10 +275,4 @@ pub trait JsonWriter {
     fn write(&mut self, v: &[u32; 2]) -> Result<(), Self::Error>;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/base.zig (235 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Ref re-exported from bun_logger (unified type); getSymbol anytype → SymbolTable trait + RefExt; json_stringify writer protocol stubbed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/base.zig

@@ -1106,10 +1106,4 @@ fn grow_capacity(current: u32, minimum: u32) -> u32 {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/small_list.zig (672 lines)
-//   confidence: medium
-//   todos:      19
-//   notes:      Allocator params dropped (global mimalloc) — css is an AST crate so Phase B must reconcile arena vs realloc (see TODO at impl block). getFallbacks split into trait + 2 free fns (was @hasDecl/@TypeOf comptime dispatch). triple_mut returns raw ptrs to dodge borrowck on self-referential len ptr. Drop matches Zig deinit (frees buffer only, not elements).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/small_list.zig

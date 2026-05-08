@@ -128,12 +128,4 @@ pub mod Classes {
     pub use bun_sourcemap_jsc::JSSourceMap as SourceMap;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/generated_classes_list.zig (104 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      forward-dep alias hub → mounted in bun_runtime (not bun_jsc)
-//               per LAYERING; Rust codegen also bypasses this via
-//               rustModuleResolver, so this list is reference-only.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/generated_classes_list.zig

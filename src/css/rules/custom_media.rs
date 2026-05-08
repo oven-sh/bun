@@ -35,10 +35,4 @@ impl CustomMediaRule {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/custom_media.zig (38 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      arena param threaded as &bun_alloc::Arena; DashedIdentFns kept as free-fn namespace
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/custom_media.zig

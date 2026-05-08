@@ -471,10 +471,4 @@ impl Features {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/targets.zig (349 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      BROWSER_DEFAULT uses LazyLock (Zig comptime); labeled-block borrow of entries_buf may need reshaping for borrowck; local parse_ascii_u* helpers stand in for bun_str::strings::parse_int
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/targets.zig

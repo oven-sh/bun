@@ -37,16 +37,6 @@ impl RowDescription {
     }
 }
 
-// pub const decode = DecoderWrap(RowDescription, decodeInternal).decode;
-// TODO(port): `DecoderWrap(T, decodeInternal)` is a comptime `fn(type, fn) -> type`
-// generator that produces a `.decode` wrapper. In Rust this becomes a trait impl
-// (e.g. `impl Decode for RowDescription`) or a `decoder_wrap!` macro once
-// `decoder_wrap.rs` lands in Phase B.
+// Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/RowDescription.zig (43 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      decode_internal reshaped (out-param→Result); DecoderWrap left as TODO for trait/macro in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/RowDescription.zig

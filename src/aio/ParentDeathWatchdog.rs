@@ -770,10 +770,4 @@ fn parse_pid(s: &[u8]) -> Option<libc::pid_t> {
     core::str::from_utf8(s).ok()?.parse().ok()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/aio/ParentDeathWatchdog.zig (501 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      RacyCell globals mirror Zig vars (racy by design); FilePoll::init/register + bun_sys::Result/Fd-Drop API shapes need Phase-B verification; added buf_print_z/parse_pid helpers for std.fmt.bufPrintZ/parseInt
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/aio/ParentDeathWatchdog.zig

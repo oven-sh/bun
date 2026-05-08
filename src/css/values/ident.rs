@@ -551,10 +551,4 @@ impl CustomIdent {
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub type CustomIdentList = SmallList<CustomIdent, 1>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/ident.zig (324 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) hoisted to free alias; debug_ident is debug-only (no release stub — Rust compile_error! is eager). DashedIdentReference::{parse_with_options,to_css} un-gated; to_css pre-resolves import-record path for reference_dashed (borrowck reshape).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/ident.zig

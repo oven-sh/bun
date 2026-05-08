@@ -189,10 +189,4 @@ type _BindingTagHost = Binding;
 
 pub use crate::ast::g::Class;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/B.zig (104 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      arena lifetimes <'a> per LIFETIMES.tsv; nested type aliases (Object::Property, Array::Item) dropped pending inherent-assoc-types; symbol_table anytype left as unbounded generic; Default impls dropped (Zig structs not `.{}`-constructible)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/B.zig

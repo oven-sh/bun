@@ -45,10 +45,4 @@ pub fn decode<C: Copy, R: ReaderContext>(
 
 pub const NULL_INT4: u32 = 4294967295;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/DataRow.zig (31 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      NewReader<R> method sigs assumed (length/short/int4/bytes)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/DataRow.zig

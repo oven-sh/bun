@@ -44,10 +44,4 @@ pub fn to_be_date(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame)
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeDate.zig (35 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match via scopeguard will fight borrowck; get_signature assumed const-ish; throw() takes format_args!
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeDate.zig

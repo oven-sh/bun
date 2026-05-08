@@ -149,11 +149,4 @@ pub use css::prefix_test as css_jsc_css_internals_prefix_test;
 pub use css::_test as css_jsc_css_internals__test;
 pub use css::attr_test as css_jsc_css_internals_attr_test;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     generated_js2native.rs out-of-crate dispatch arms
-//   notes:      pure re-export landing pad; every entry forwards to the
-//               hand-ported body in its owning `*_jsc` crate. The codegen
-//               emits the `JS2Zig__*` C-ABI thunk; this file only provides
-//               the Rust path it calls.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: generated_js2native.rs

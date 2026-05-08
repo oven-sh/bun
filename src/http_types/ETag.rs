@@ -225,10 +225,4 @@ pub mod wtf {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_types/ETag.zig (65 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      strings::trim/trim_left assumed in bun_str
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_types/ETag.zig

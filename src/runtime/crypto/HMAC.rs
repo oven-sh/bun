@@ -86,10 +86,4 @@ impl Drop for HMAC {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/crypto/HMAC.zig (57 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      HMAC_CTX moved by value into Box (matches Zig); verify not self-referential in Phase B. evp::Algorithm path may need adjustment.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/crypto/HMAC.zig

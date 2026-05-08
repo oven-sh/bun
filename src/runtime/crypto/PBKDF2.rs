@@ -428,9 +428,4 @@ pub fn pbkdf2<'a>(
     Some(output)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/crypto/PBKDF2.zig (262 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/crypto/PBKDF2.zig

@@ -78,10 +78,4 @@ impl From<FieldType> for u8 {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/FieldType.zig (57 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      non-exhaustive enum(u8) ported as transparent u8 newtype + consts; callers matching on variants must use `_` arm for unknown bytes
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/FieldType.zig

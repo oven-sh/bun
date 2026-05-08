@@ -117,10 +117,4 @@ impl<'a> StaticRouteVisitor<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/StaticRouteVisitor.zig (93 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      SoA columns via derived `*ListExt` traits; parse_graph deref'd as raw backref
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/StaticRouteVisitor.zig

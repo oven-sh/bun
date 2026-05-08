@@ -94,10 +94,4 @@ impl InternalLoopData {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/InternalLoopData.zig (73 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      #[repr(C)] mirror of C us_internal_loop_data_t; mutex field type and EventLoopHandle variant payload shapes need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/InternalLoopData.zig

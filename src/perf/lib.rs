@@ -244,10 +244,4 @@ unsafe extern "C" {
     fn Bun__linux_trace_emit(event_name: *const c_char, duration_ns: i64) -> c_int;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/perf/perf.zig (159 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      trace() now takes PerfEvent (not comptime str); verify bun.timespec/OSLog paths; @tagName NUL-termination handled via PerfEvent::as_cstr()
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/perf/perf.zig

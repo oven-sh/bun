@@ -5889,10 +5889,4 @@ impl H2FrameParser {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/h2_frame_parser.zig (4879 lines)
-//   confidence: low
-//   todos:      23
-//   notes:      Heavy borrowck reshaping (raw *mut Stream / *mut Self, every block SAFETY-annotated); FrameHeader packed-u72 wire layout decoded from a stack [u8;9]; HiveArray.Fallback pool wired (drop_in_place + put on deinit); StreamResumableIterator snapshots stream IDs (std::HashMap has no stable bucket index); native fast-path attaches NativeCallbacks::H2(IntrusiveRc<Self>) — type now unified with socket_body.rs; read_buffer.reset() vs Payload aliasing audited (data_ptr via Vec::as_mut_ptr so SB-valid across clear()).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/h2_frame_parser.zig

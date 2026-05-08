@@ -122,10 +122,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeWithin.zig (68 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard wraps `this` for post_match defer; Formatter ctor + Expect::throw/get_signature signatures need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeWithin.zig

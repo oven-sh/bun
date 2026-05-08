@@ -122,10 +122,4 @@ fn from_now() -> TimeLike {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/time_like.zig (106 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      TimeLike maps to libc::timespec on unix (tv_sec/tv_nsec vs Zig sec/nsec); Windows from_now() needs nano_timestamp source
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/time_like.zig

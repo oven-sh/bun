@@ -93,10 +93,4 @@ impl TextCodec {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/TextCodec.zig (46 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      mark_binding! macro assumed in bun_jsc; destroy kept as explicit unsafe fn (FFI-owned opaque)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/TextCodec.zig

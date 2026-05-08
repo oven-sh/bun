@@ -2771,10 +2771,4 @@ impl PathChar for u16 {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/paths/resolve_path.zig (2119 lines)
-//   confidence: medium
-//   todos:      30
-//   notes:      heavy comptime → const-generics reshaping; thread-local buffer accessors return raw &mut (unsound in safe Rust, matches Zig semantics — Phase B should guard); `parts: anytype` collapsed to &[&[u8]]; PathChar trait introduced for u8/u16 generics; many return-lifetimes need unification.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/paths/resolve_path.zig

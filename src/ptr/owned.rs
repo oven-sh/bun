@@ -307,10 +307,4 @@ pub fn into_raw<T>(boxed: Box<T>) -> *mut T {
 #[allow(unused_imports)]
 use {AddConst as _, AllocError as _, ManuallyDrop as _, PointerInfo as _};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/owned.zig (428 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Owned/OwnedIn/Dynamic/Unmanaged all collapse to Box<T> per crate map; @typeInfo dispatch on pointer kind has no Rust analogue so slice/optional shapes use Box<[T]>/Option<Box<T>> directly at call sites. Phase B: delete this module once callers are migrated, or keep as doc-only.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/owned.zig

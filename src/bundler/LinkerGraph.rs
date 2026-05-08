@@ -846,16 +846,4 @@ bun_collections::multi_array_columns! {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/LinkerGraph.zig (563 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      load/take_ast_ownership/propagate_async_dependencies un-gated
-//               (B-3). load() reshaped for borrowck via Slice::items_raw on
-//               disjoint MultiArrayList columns; symbols clone spelled out as
-//               ptr::copy (Symbol lacks Clone). generate_symbol_import_and_use
-//               and load() take crate::Index (bun_options_types) to match
-//               LinkerContext callers; Dependency still bridges to
-//               bun_js_parser::Index. Send+Sync asserted for worker-pool fanout.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/LinkerGraph.zig

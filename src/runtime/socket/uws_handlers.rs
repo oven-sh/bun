@@ -741,10 +741,4 @@ impl VHandler for SpawnIPC {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/uws_handlers.zig (330 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      @hasDecl/@typeInfo reflection → SocketEvents/NsSocketEvents traits with default no-ops; inherent `pub type Ext = ...` hoisted into vtable::Handler trait impls (stable Rust); cross-crate paths resolved (http_context::Handler, postgres_sql_connection::SocketHandler, js_my_sql_connection::SocketHandler).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/uws_handlers.zig

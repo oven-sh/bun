@@ -411,10 +411,4 @@ unsafe fn byte_swap_same_size<T: Copy>(val: T) -> T {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/types/Tag.zig (267 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Non-exhaustive enum(short) → transparent newtype + assoc consts; byteArrayType/pgArrayType (comptime type return) dropped — callers name PostgresBinarySingleDimensionArray<T> directly; generic byte-swap stubbed via transmute_copy.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/types/Tag.zig

@@ -89,10 +89,4 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     Ok(object)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_jsc/update_request_jsc.zig (61 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      arena+stackfallback dropped; positionals reshaped to Vec<Box<[u8]>> + view; confirm Subcommand::Add path and JSValue::to_slice_clone return type
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_jsc/update_request_jsc.zig

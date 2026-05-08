@@ -96,10 +96,4 @@ where
 #[allow(unused_imports)]
 use {CSSNumberFns as _, LengthPercentage as _};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/size.zig (76 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime `switch (T)` collapsed to trait bounds; f32/LengthPercentage need Parse/ToCss/Eql impls; eql() compares a↔b only (preserved verbatim, looks like upstream bug)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/size.zig

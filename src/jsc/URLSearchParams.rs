@@ -63,10 +63,4 @@ impl URLSearchParams {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/URLSearchParams.zig (46 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      to_string reshaped (comptime callback → stack-packed fn ptr); from_js returns NonNull pending lifetime decision
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/URLSearchParams.zig

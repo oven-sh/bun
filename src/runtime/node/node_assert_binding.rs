@@ -96,9 +96,4 @@ pub fn generate(global: &JSGlobalObject) -> JSValue {
     exports
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_assert_binding.zig (85 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_assert_binding.zig

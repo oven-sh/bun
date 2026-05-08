@@ -357,10 +357,4 @@ pub static TABLE: Table = Table(LazyLock::new(|| {
     }
 }));
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/Op.zig (291 lines)
-//   confidence: high
-//   todos:      3
-//   notes:      TABLE moved from comptime to LazyLock; TableType ported as type alias (was `undefined` value); json_stringify writer trait may need adjustment
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/Op.zig

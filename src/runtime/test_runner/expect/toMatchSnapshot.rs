@@ -105,10 +105,4 @@ pub fn to_match_snapshot(
     Expect::snapshot(&mut **this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toMatchSnapshot.zig (68 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `defer this.postMatch` expressed via scopeguard wrapping `&mut Expect`; `get_signature` assumed const-evaluable in Phase B; `frame.arguments_old::<2>()` shape (ptr/len) may need adjustment.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toMatchSnapshot.zig

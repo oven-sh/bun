@@ -427,9 +427,4 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css_jsc/css_internals.zig (341 lines)
-//   confidence: medium
-//   notes:      const-generic comptime enums lowered to runtime params (adt_const_params unstable); host_fn attribute removed pending proc-macro; bodies un-gated against bun_css::stylesheet_impl (StyleSheet/StyleAttribute parse·minify·to_css).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css_jsc/css_internals.zig

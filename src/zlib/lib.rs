@@ -1128,10 +1128,4 @@ mod internal {
     pub(super) use bun_zlib_sys::win32::{zStream_struct, DataType};
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/zlib/zlib.zig (966 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      ArrayList header-aliasing reshaped to &mut Vec; defer epilogues implemented as IIFE+manual-epilogue; zlib-internal module path is a guess; Writer trait bound on generic ZlibReader needs definition.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/zlib/zlib.zig

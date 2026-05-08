@@ -52,12 +52,4 @@ create_simple_error!(
     "Child closed before reply received"
 );
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_error_binding.zig (25 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      comptime fn-generator → macro_rules!; `JS2NativeFunctionType` and
-//               `create*ErrorInstanceWithCode` no longer exist upstream — bodies
-//               inlined per their historical impl (createErrorInstance + put "code").
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_error_binding.zig

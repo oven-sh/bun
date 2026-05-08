@@ -264,10 +264,4 @@ impl<Id> ComptimeClap<Id> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/clap/comptime.zig (199 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      type-generator over comptime param slice → Vec-backed runtime struct; Phase-B proc-macro can restore fixed arrays + compile-time name lookup
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/clap/comptime.zig

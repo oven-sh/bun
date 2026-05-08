@@ -254,10 +254,4 @@ impl<H: Handler> Trampolines<H> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/vtable.zig (118 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      @hasDecl reflection replaced with Handler trait + HAS_* consts; no-ext path duplicated as *_no_ext methods since Rust can't vary trait method arity by const
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/vtable.zig

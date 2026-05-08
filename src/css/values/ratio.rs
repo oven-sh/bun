@@ -50,10 +50,4 @@ impl Ratio {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/ratio.zig (58 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Result/Printer/CSSNumberFns import paths may need adjusting; try_parse closure shape assumed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/ratio.zig

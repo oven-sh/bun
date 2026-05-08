@@ -781,10 +781,4 @@ impl JsonWriter for WriteStream {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/lockfile_json_stringify_for_debugging.zig (427 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      JsonWriter trait is a placeholder; defer-endObject reshaped (see PORT NOTE); Behavior/Scripts field reflection via NAMED_FLAGS/FIELD_NAMES tables.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/lockfile_json_stringify_for_debugging.zig

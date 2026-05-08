@@ -869,10 +869,4 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/MySQLValue.zig (645 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      ZigStringSlice/Data variant ownership + validate_*_range API shape need Phase-B fixup; to_js() preserves a Zig callsite bug (missing globalObject arg)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/MySQLValue.zig

@@ -157,12 +157,4 @@ pub fn update_package_json_and_install(
     update_package_json_and_install_and_cli(ctx, subcommand, cli)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/updatePackageJSONAndInstall.zig (L489-730)
-//   confidence: medium
-//   notes:      MOVE_UP host for the `--analyze` branch and `Cli.log_` access of
-//               `updatePackageJSONAndInstall{,CatchError}`. The body that does
-//               not touch `bun_bundler`/`bun_runtime` remains in
-//               `bun_install::package_manager::update_package_json_and_install_and_cli`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/updatePackageJSONAndInstall.zig

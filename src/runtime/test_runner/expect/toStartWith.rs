@@ -105,10 +105,4 @@ pub fn to_start_with(
     // `this` (scopeguard) drops here → post_match(global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toStartWith.zig (64 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      scopeguard for postMatch + dual &mut Formatter borrow need Phase-B reshaping; concat! inlines fmt literals (Rust can't splice const &str).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toStartWith.zig

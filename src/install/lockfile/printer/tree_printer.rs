@@ -621,10 +621,4 @@ where
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/printer/tree_printer.zig (486 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      Output.prettyFmt is comptime ANSI-template expansion — needs a Rust macro/const-fn equivalent; MultiArrayList column accessors (.items(.field)) → derive-generated items_<field>(); PackageUpdatePrintInfo carries a borrowed &[u8] (lifetime added despite Phase-A rule, see TODO).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/printer/tree_printer.zig

@@ -527,10 +527,4 @@ pub extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buf
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/us_socket_t.zig (350 lines)
-//   confidence: medium-high
-//   todos:      6
-//   notes:      adopt/adopt_tls return NonNull (self invalidated); errno_to_err mapping & local StreamBuffer mirror need Phase B verification; all unsafe blocks SAFETY-annotated
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/us_socket_t.zig

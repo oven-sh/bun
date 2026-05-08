@@ -1581,19 +1581,4 @@ pub fn try_parse_color_token(
     None
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/custom.zig (1554 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      module un-gated; all data types real; eql/hash/deep_clone via
-//               #[derive(CssEql/CssHash/DeepClone)] (Token impls hand-written
-//               here). parse/to_css real (leaf calls into still-gated
-//               values/{url,ident}.rs inlined under `mod ext`). Remaining
-//               gates: get_fallback chain (CssColor::get_fallback shape),
-//               UnresolvedColor::parse rgb/hsl arms (values::color::
-//               gated_full_impl::ComponentParser), AnimationName::to_css
-//               (properties::animation gated_prop! stub). Allocator params
-//               dropped (Vec/global mimalloc per LIFETIMES.tsv — Phase B
-//               revisit for arena); Zig closure structs collapsed to closures.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/custom.zig

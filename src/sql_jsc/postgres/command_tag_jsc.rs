@@ -38,10 +38,4 @@ impl<'a> CommandTagJsc for CommandTag<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/command_tag_jsc.zig (30 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `inline else` expanded by hand; create_utf8_for_js via crate::jsc shim until bun_jsc compiles.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/command_tag_jsc.zig

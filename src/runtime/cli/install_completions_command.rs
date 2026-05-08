@@ -717,10 +717,4 @@ fn buf_print_z<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a ZSt
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/install_completions_command.zig (550 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      Heavy std.fs usage mapped to bun_sys placeholders (open_dir_absolute, create_file_z, open_file_absolute_z, File::create_w); Output::pretty_errorln fmt-string vs args calling convention needs Phase B reconciliation; resolve_path::join_abs_string returns threadlocal-buffer slices — borrowck across iterations may need owned copies.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/install_completions_command.zig

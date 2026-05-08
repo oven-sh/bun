@@ -157,12 +157,4 @@ impl ShellGlobTask {
 /// for the verbose-write bounce-back.
 pub use crate::shell::builtins::rm::DirTask as ShellRmDirTask;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/interpreter.zig (ShellAsyncSubprocessDone,
-//               AsyncDeinitReader/Writer, ShellGlobTask, ShellCondExprStatTask,
-//               ShellRmTask.DirTask) + src/jsc/Task.zig dispatch arms
-//   confidence: medium — shapes match the Zig structs; entry-point bodies
-//               forward to the NodeId-arena state methods, several of which
-//               are still `// TODO(port)` in their owning modules.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/interpreter.zig

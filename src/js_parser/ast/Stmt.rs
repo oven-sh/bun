@@ -875,10 +875,4 @@ impl Stmt {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/Stmt.zig (423 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      comptime type-switch tables folded into StatementData trait + macro; Data.tag() and StoredData need real impls; Store thread-locals use NonNull (ownership TBD)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/Stmt.zig

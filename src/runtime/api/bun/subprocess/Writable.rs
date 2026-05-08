@@ -516,10 +516,4 @@ impl<'a> SignalHandler for Subprocess<'a> {
     fn on_start(&mut self) {}
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/subprocess/Writable.zig (341 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Pipe holds NonNull<FileSink> (intrusive refcount, manual deref) and Buffer holds RefPtr<StaticPipeWriter>. @fieldParentPtr reshaped: SignalHandler is on Subprocess; on_close/finalize take *mut Subprocess and raw-project stdin.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/subprocess/Writable.zig

@@ -165,10 +165,4 @@ pub fn __bun_jsc_generate_cached_bytecode(
     Some(owned)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/CachedBytecode.zig (76 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      allocator()/is_instance() ported via Allocator::type_id() identity (matches bun_alloc::is_default / MaxHeapAllocator pattern); Zig free→deref slot replaced by direct deref() at call sites.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/CachedBytecode.zig

@@ -461,10 +461,4 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler_jsc/analyze_jsc.zig (148 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      RecordKind/RequestedModuleValue/StringID::STAR_NAMESPACE assumed from bun_bundler::analyze_transpiled_module; scopeguard mirrors `defer identifiers.destroy()`; extern blocks should move to bundler_jsc_sys in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler_jsc/analyze_jsc.zig

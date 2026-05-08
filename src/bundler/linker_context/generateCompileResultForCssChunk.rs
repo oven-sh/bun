@@ -292,10 +292,4 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/generateCompileResultForCssChunk.zig (178 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      @fieldParentPtr intrusive recovery kept raw (parent=BundleV2 per Worker::get sig); allocating_writer→Vec<u8>; ctx.c/ctx.chunk treated as raw ptrs per BACKREF semantics; files_with_parts_in_chunk atomic-rmw via *usize→*AtomicUsize cast (matches JS chunk)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/generateCompileResultForCssChunk.zig

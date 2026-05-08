@@ -912,10 +912,4 @@ impl protocol::IsCompatible for Angle {
     #[inline] fn is_compatible(&self, _: Browsers) -> bool { true }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/length.zig (797 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Heavy comptime-reflection collapsed into define_length_units! macro; Calc Sum-branch try_add now clones Box children (Zig aliased) — revisit if arena-backed; DeriveParse/DeriveToCss left as TODO derives.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/length.zig

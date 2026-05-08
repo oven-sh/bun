@@ -2225,10 +2225,4 @@ impl<'a> PackageInstaller<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageInstaller.zig (1555 lines)
-//   confidence: medium
-//   todos:      29
-//   notes:      Heavy borrowck reshaping needed: cached slice fields alias &mut Lockfile; defer save/restore of node_modules; *const Resolution raw ptrs to dodge &mut self overlap. std.fs.Dir mapped to bun_sys::Dir.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageInstaller.zig

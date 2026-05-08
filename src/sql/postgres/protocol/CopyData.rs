@@ -22,11 +22,7 @@ impl CopyData {
         Ok(Self { data })
     }
 
-    // Zig: pub const decode = DecoderWrap(CopyData, decodeInternal).decode;
-    // TODO(port): DecoderWrap is a comptime type-generator that wraps decode_internal;
-    // Phase B decides macro vs trait-default-method. Placeholder delegates directly.
-    // TODO(port): in-place init — DecoderWrap trait currently takes `&mut self`;
-    // reconcile with the `-> Result<Self, _>` constructor reshape in Phase B.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
         mut reader: NewReader<Container>,
@@ -51,9 +47,7 @@ impl CopyData {
         Ok(())
     }
 
-    // Zig: pub const write = WriteWrap(@This(), writeInternal).write;
-    // TODO(port): WriteWrap is a comptime type-generator that wraps write_internal;
-    // Phase B decides macro vs trait-default-method. Placeholder delegates directly.
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
@@ -62,11 +56,4 @@ impl CopyData {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/CopyData.zig (39 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      DecoderWrap/WriteWrap comptime fn-wrappers stubbed as delegating calls; Phase B picks macro/trait shape.
-//              decode_internal reshaped to out-param-constructor → Result<Self, _>; DecoderWrap &mut self reconciliation deferred.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/CopyData.zig

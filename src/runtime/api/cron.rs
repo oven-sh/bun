@@ -2835,10 +2835,4 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Result<&'
     Ok(unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/cron.zig (1772 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      finish() consumes Box<Self> via raw ptr (Zig destroyed self mid-method); SpawnCmdTarget trait abstracts the comptime mixin; ZString assumed as owned [:0]u8; rare_data.cron_jobs assumed Vec<*mut CronJob> with interior mutability in Phase B; calendar/task-xml error enums now impl From<_> for bun_core::Error; cron_to_calendar_interval parses ints from raw bytes (no from_utf8).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/cron.zig

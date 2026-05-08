@@ -535,10 +535,4 @@ impl VerticalPositionKeyword {
 pub type HorizontalPosition = PositionComponent<HorizontalPositionKeyword>;
 pub type VerticalPosition = PositionComponent<VerticalPositionKeyword>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/position.zig (429 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      to_css if-else chain reshaped to if-let cascade for borrowck; PositionComponent<S> bounded on css::Parse+ToCss (trait names need Phase B confirm); implement_deep_clone is comptime reflection — needs DeepClone trait/derive in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/position.zig

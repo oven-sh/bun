@@ -303,10 +303,4 @@ impl fmt::Display for ComparatorFormatter<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/semver/SemverRange.zig (260 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Range's direct Display impl mirrors Zig path that formats Comparator without a buffer (likely dead upstream); Wildcard import path needs verification in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/semver/SemverRange.zig

@@ -53,10 +53,4 @@ fn trim_sp_tab(s: &[u8]) -> &[u8] {
     &s[start..end]
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/HeaderValueIterator.zig (18 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      TokenIterator field replaced with &[u8] + inline tokenize (closure type unnameable)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/HeaderValueIterator.zig

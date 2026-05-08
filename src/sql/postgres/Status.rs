@@ -9,10 +9,4 @@ pub enum Status {
     Failed,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/Status.zig (9 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      plain enum; no explicit repr in Zig source
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/Status.zig

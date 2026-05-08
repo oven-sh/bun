@@ -1070,10 +1070,4 @@ pub mod inet {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/SocketAddress.zig (693 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      .classes.ts payload; std.net IP parsing needs bun_net replacement; sockaddr const init may need const fn; common_strings()."127.0.0.1"/"::"/ipv4/ipv6 method names guessed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/SocketAddress.zig

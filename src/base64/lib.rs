@@ -953,10 +953,4 @@ pub fn wyhash_url_safe<'a>(
     &slice_to_write[0..base64_encoded_hash_len]
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/base64/base64.zig (558 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      comptime Codecs/mixed_decoder use LazyLock; SIMDUTFResult/Vec field/ctor names guessed; defer-write reshaped to direct *wrote mutation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/base64/base64.zig

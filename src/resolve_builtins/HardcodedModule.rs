@@ -614,10 +614,4 @@ impl Alias {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolve_builtins/HardcodedModule.zig (427 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ComptimeStringMap concat (common++extra) needs phf_codegen build.rs; Alias.path is &'static ZStr via bun_str::zstr! (verify macro accepts concat! exprs); `static` inside `impl` is unstable — Phase B may need to hoist MAP to module scope.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolve_builtins/HardcodedModule.zig

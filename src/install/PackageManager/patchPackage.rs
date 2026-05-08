@@ -1279,11 +1279,4 @@ impl PatchArgKind {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/patchPackage.zig (1070 lines)
-//   confidence: medium
-//   notes:      heavy borrow reshaping around labeled blocks; node_modules
-//               folder helpers return owned Vec<u8> (Polonius case);
-//               Output template/args merged into single format_args!.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/patchPackage.zig

@@ -1717,17 +1717,4 @@ mod __css_validation {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/scanImportsAndExports.zig (1261 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Un-gated B-2. SoA columns accessed via cached `Slice::items_raw`
-//               raw ptrs (Zig had ~20 simultaneous mutable column borrows +
-//               interleaved &mut LinkerContext calls). CSS composes validation
-//               gated behind `feature = "css"` (BundlerStyleSheet fields not yet
-//               real). Calls into still-gated LinkerContext/LinkerGraph methods
-//               (generate_code_for_lazy_export, match_imports_with_exports_for_file,
-//               create_wrapper_for_file, do_step5, generate_symbol_import_and_use,
-//               add_part_to_file, take_ast_ownership) — un-gates with those.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/scanImportsAndExports.zig

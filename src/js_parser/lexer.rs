@@ -4370,10 +4370,4 @@ impl fmt::Display for InvalidEscapeSequenceFormatter {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/lexer.zig (3401 lines)
-//   confidence: medium
-//   todos:      34
-//   notes:      8-way const-generic LexerType; 'a lifetime for log+source borrows is approximate (raw()/identifier alias source.contents); snapshot()/restore() use a Copy LexerSnapshot POD (Zig by-value struct copy is impossible here due to &mut Log); SIMD multiline-comment scanner is scalar fallback; arena arena routing needs Phase B audit; FakeArrayList16 dropped (dead in Zig source).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/lexer.zig

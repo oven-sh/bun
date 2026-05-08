@@ -926,10 +926,4 @@ impl NetworkTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/NetworkTask.zig (505 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      package_manager BACKREF is *const per TSV but mutated through; url_buf ownership is mixed (owned vs aliased); HTTPClientResult::Callback comptime thunk needs Phase-B trampoline design
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/NetworkTask.zig

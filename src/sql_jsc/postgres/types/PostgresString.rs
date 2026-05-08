@@ -57,10 +57,4 @@ pub fn to_js<T: ToJsWithType>(
     value.to_js_with_type(global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/types/PostgresString.zig (50 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime type-switch ported as trait; Zig `toJS` body looks broken upstream (calls .deinit/.toJS on JSValue) — ported as forward
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/types/PostgresString.zig

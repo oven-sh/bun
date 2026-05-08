@@ -1602,9 +1602,4 @@ fn extract_to_disk_filtered(
     Ok(count)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/Archive.zig (1146 lines)
-//   confidence: medium
-//   notes:      AsyncTask @typeInfo reflection collapsed into TaskContext trait; Arc<BlobStore> used per LIFETIMES.tsv but BlobStore is intrusive-refcounted in Zig — verify; libarchive Archive handle treated as &mut via FFI guards; start_write_task store-ref moved to caller (Arc::clone into WriteData::Store).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/Archive.zig

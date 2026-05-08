@@ -483,10 +483,4 @@ pub enum HTTPHeaderName {
     XXSSProtection,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/FetchHeaders.zig (457 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      opaque C++ handle; constructors return NonNull (refcounted via deref) — Phase B may want an RAII wrapper; from_js_host_call_generic helper assumed in bun_jsc
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/FetchHeaders.zig

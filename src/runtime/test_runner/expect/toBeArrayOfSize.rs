@@ -69,10 +69,4 @@ pub fn to_be_array_of_size(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeArrayOfSize.zig (50 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match needs borrowck-safe RAII guard; throw/format_args plumbing TBD in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeArrayOfSize.zig

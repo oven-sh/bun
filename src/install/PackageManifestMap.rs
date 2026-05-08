@@ -292,11 +292,4 @@ impl PackageManifestMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManifestMap.zig (124 lines)
-//   confidence: high
-//   notes:      getOrPut reshaped to Entry API; `pm` parameter hoisted into
-//               by-value `DiskCacheCtx` so callers can split `&mut pm.manifests`
-//               from sibling field borrows in safe Rust.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManifestMap.zig

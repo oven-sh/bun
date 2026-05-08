@@ -321,10 +321,4 @@ pub type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
 // TODO(b2-blocked): bun_jsc — un-gate `super::pbkdf2` and swap to `pub use super::pbkdf2 as PBKDF2;`.
 pub use super::pbkdf2;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/crypto/EVP.zig (222 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Algorithm enum lowered to bun_sha_hmac (re-exported here); higher-tier helpers live on AlgorithmExt; case-insensitive phf lookup + NUL-terminated @tagName for EVP_get_digestbyname need Phase B fixes; names() moved from comptime EnumArray to OnceLock<[BunString; N]>; `final` renamed to r#final (reserved keyword)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/crypto/EVP.zig

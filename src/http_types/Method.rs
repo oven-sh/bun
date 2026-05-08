@@ -346,10 +346,4 @@ pub enum HeaderName {
     XXSSProtection,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_types/Method.zig (192 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      EnumSetType vs #[repr(u8)] interaction + const-eval of Set::all()/.remove() need Phase-B verification; from_js/to_js moved to bun_http_jsc extension trait.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_types/Method.zig

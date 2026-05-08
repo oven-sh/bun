@@ -95,10 +95,4 @@ impl ChunkedEncodingState {
     pub const CHUNKED_IN_TRAILERS_LINE_MIDDLE: Self = Self(5);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/picohttp_sys/picohttpparser.zig (30 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ChunkedEncodingState ported as transparent u8 newtype (Zig enum was non-exhaustive `_`); raw FFI bindings only
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/picohttp_sys/picohttpparser.zig

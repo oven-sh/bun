@@ -2173,10 +2173,4 @@ static ENTITY_MAP: &[Entity] = &[
     Entity { name: b"&zwnj;", codepoints: [8204, 0] },
 ];
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/entity.zig (2164 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Zig u21 codepoints widened to u32; static data table mechanically transformed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/entity.zig

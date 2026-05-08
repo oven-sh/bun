@@ -1104,15 +1104,4 @@ pub static JSC_PARSER_CACHE_VTABLE: bun_js_parser::RuntimeTranspilerCacheVTable 
         is_disabled: RuntimeTranspilerCache::is_disabled,
     };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/RuntimeTranspilerCache.zig (706 lines)
-//   confidence: medium
-//   notes:      Disk-I/O paths un-gated (B-2): Entry::{save,load},
-//               from_file*, to_file, get_cache_dir/get_cache_file_path,
-//               really_get_cache_dir now real over bun_sys::{File::pread_all,
-//               Tmpfile, pwritev, PlatformIoVecConst, Dir::make_open_path}.
-//               Allocator fields dropped per §Allocators; threadlocal cache-dir
-//               reshaped to store len instead of slice. `String::encoding()`
-//               inlined via is_utf8/is_utf16 until bun_string grows it.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/RuntimeTranspilerCache.zig

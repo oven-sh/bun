@@ -733,15 +733,4 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/visitBinaryExpression.zig (598 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Outer CreateBinaryExpressionVisitor wrapper flattened into const-generic struct;
-//               `in` field renamed `in_`. `Data::eql` shimmed locally — `require.main === module`
-//               arm is live (side-effects on ref usage), constant-folding arms TODO(port) until
-//               Expr.rs:2883 un-gates. `join_with_comma` dropped its arena arg (Rust port
-//               uses the global Store). Tail return re-wraps the arena `*E.Binary` as `StoreRef`
-//               (verified same slot as Zig).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/visitBinaryExpression.zig

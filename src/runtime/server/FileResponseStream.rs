@@ -661,11 +661,4 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/FileResponseStream.zig (411 lines)
-//   confidence: high
-//   notes:      intrusive RC + uWS callback aliasing means &mut self is reentrant
-//               via raw ptr; DerefOnDrop holds *mut Self (not &self) so deref's
-//               Box::from_raw retains write provenance.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/FileResponseStream.zig

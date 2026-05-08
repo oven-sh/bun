@@ -115,10 +115,4 @@ impl FieldMessage {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/FieldMessage.zig (85 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      FieldType is non-exhaustive enum(u8) in Zig; Rust port needs from_raw(u8) that tolerates unknown values (no transmute). NewReader<Context> API (int<u8>, read_z) assumed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/FieldMessage.zig

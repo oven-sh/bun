@@ -608,10 +608,4 @@ fn is_name_codepoint(c: u8) -> bool {
         || c >= 0x80 // codepoints larger than ascii
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/grid.zig (540 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      DeriveParse/DeriveToCss need proc-macro; arena slice lifetimes for GridTemplateAreas tokens; Zig original has closure-capture bugs (outer `input` in nested blocks) noted inline
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/grid.zig

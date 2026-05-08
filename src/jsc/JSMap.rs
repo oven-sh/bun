@@ -107,10 +107,4 @@ impl JSMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSMap.zig (39 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      extern fn signatures inferred from names (bun.cpp aliases); verify against headers.zig in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSMap.zig

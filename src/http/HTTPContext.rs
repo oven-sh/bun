@@ -1342,13 +1342,4 @@ fn get_cert_error_from_no(error_no: i32) -> Error {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/HTTPContext.zig (859 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      const-generic <SSL> monomorphization; raw NonNull used per
-//               LIFETIMES.tsv (H2/ProxyTunnel are intrusive-refcounted across
-//               FFI); HiveArray returns *mut T so all slot access is unsafe;
-//               dispatch_deps bridge stubs delete once lib.rs/H2Client un-gate.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/HTTPContext.zig

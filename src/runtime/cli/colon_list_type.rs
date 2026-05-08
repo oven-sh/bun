@@ -93,10 +93,4 @@ impl<T: ColonListValue> ColonListType<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/colon_list_type.zig (62 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime (T, resolver_fn) collapsed into ColonListValue trait; keys borrow argv as &'static
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/colon_list_type.zig

@@ -35,10 +35,4 @@ impl CachedStructure {
 //     → handled by `Drop` on `Box<[ExternColumnIdentifier]>` (each element drops itself)
 // so no explicit `impl Drop` body is needed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/shared/CachedStructure.zig (32 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ExternColumnIdentifier / StrongOptional via crate::jsc shim until bun_jsc compiles; deinit collapsed into field Drops
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/shared/CachedStructure.zig

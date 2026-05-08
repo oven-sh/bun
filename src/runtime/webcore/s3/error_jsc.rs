@@ -155,10 +155,4 @@ impl S3ErrorJsc for S3Error<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/s3/error_jsc.zig (74 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ERR() builder API + jsc.conv extern ABI need Phase B wiring; S3Error field types (code/message) assumed &[u8]-coercible
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/s3/error_jsc.zig

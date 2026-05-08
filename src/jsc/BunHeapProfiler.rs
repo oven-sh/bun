@@ -154,8 +154,4 @@ fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<
     Ok(&buf.as_slice()[..written])
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/BunHeapProfiler.zig (110 lines)
-//   confidence: high
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/BunHeapProfiler.zig

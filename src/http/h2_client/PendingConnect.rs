@@ -71,10 +71,4 @@ impl PendingConnect {
     // No explicit `Drop` impl needed.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h2_client/PendingConnect.zig (39 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      ssl_config/waiters kept as NonNull (borrowed); deinit folded into Drop of Box<Self>
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h2_client/PendingConnect.zig

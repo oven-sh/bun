@@ -709,10 +709,4 @@ pub use crate::ThreadPool;
 use crate::chunk;
 use crate::options::{Loader, Target};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/computeChunks.zig (503 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      Heavy borrowck reshaping needed in Phase B (MultiArrayList .items() borrows overlap with &mut this); arena-keyed ArrayHashMap<&[u8],_> lifetimes; sorted_chunks Vec ownership for return value; chunk.unique_key slices borrow `this.unique_key_buf` (BACKREF, same single-buffer model as Zig).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/computeChunks.zig

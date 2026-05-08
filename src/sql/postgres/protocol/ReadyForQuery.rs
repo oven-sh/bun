@@ -26,17 +26,10 @@ impl ReadyForQuery {
         })
     }
 
-    // TODO(port): `DecoderWrap(ReadyForQuery, decodeInternal).decode` — Zig comptime type-generator
-    // wrapping decode_internal. Direct delegate; revisit as trait impl.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/ReadyForQuery.zig (19 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DecoderWrap const-fn binding needs Phase B trait shape; out-param ctor reshaped to -> Result<Self>.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/ReadyForQuery.zig

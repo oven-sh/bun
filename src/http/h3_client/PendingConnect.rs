@@ -162,10 +162,4 @@ static RESOLVED_MUTEX: bun_threading::Mutex = bun_threading::Mutex::new();
 // accesses use Relaxed because the mutex provides synchronization.
 static RESOLVED_HEAD: AtomicPtr<PendingConnect> = AtomicPtr::new(ptr::null_mut());
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h3_client/PendingConnect.zig (95 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ptr fields classified INTRUSIVE/FFI/BACKREF as raw *mut. `ref`/`loop` keyword collisions handled as ref_()/r#loop. resolved_head as AtomicPtr (mutex-guarded, Relaxed).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h3_client/PendingConnect.zig

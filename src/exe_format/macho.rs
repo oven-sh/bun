@@ -806,10 +806,4 @@ fn as_bytes<T>(v: &T) -> &[u8] {
     unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), size_of::<T>()) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/exe_format/macho.zig (621 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      depends on a Rust port of Zig's std.macho types (crate::macho_types); heavy unaligned in-place struct mutation via raw ptrs mirrors Zig *align(1); Shifter.shift comptime-field-loop ported as shift_fields! macro; SHA256/feature_flag crate paths need Phase-B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/exe_format/macho.zig

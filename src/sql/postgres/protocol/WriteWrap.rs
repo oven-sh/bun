@@ -32,10 +32,4 @@ impl<Container, F: WriteFn<Container>> WriteWrap<Container, F> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/WriteWrap.zig (12 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      comptime-fn-value param modeled as ZST trait `WriteFn<Container>` to keep `write(this, context)` 2-arg; Phase B should check call sites and may flatten to a trait on Container
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/WriteWrap.zig

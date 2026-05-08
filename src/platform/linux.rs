@@ -155,11 +155,4 @@ pub extern "C" fn sys_epoll_pwait2(
     encode_raw_errno(rc)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/platform/linux.zig (93 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      libc::syscall result re-encoded to raw-kernel -errno convention so
-//               getErrno(usize) and the C epoll loop see the real error codes.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/platform/linux.zig

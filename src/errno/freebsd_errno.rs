@@ -347,10 +347,4 @@ macro_rules! impl_get_errno_libc {
 }
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/errno/freebsd_errno.zig (210 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      get_errno needs trait-based signedness dispatch; std.posix/{E,S,mode_t} and std.c._errno paths need verification in bun_sys
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/errno/freebsd_errno.zig

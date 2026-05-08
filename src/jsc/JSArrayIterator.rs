@@ -70,10 +70,4 @@ unsafe extern "C" {
     ) -> bool;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSArrayIterator.zig (52 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      stack-only iterator (bare JSValue field OK); externs to jsc_sys
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSArrayIterator.zig

@@ -145,10 +145,4 @@ impl Signature {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/Signature.zig (112 lines)
-//   confidence: medium
-//   todos:      see TODO(b2-blocked)
-//   notes:      Tag::from_js lives in bun_sql (base crate) but takes &JSGlobalObject — may need *_jsc ext trait; error set mixes JSError+OOM+InvalidQueryBinding
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/Signature.zig

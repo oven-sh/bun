@@ -793,10 +793,4 @@ pub fn error_in_ci(global_object: &JSGlobalObject, message: &[u8]) -> JsResult<(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/jest.zig (519 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      TestRunner<'a> from LIFETIMES.tsv; Jest as module w/ RacyCell RUNNER; extern JSMock__* fns need jsc.conv ABI; bun_test sibling-module API names guessed (ScopeFunctions/HookKind/StateData).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/jest.zig

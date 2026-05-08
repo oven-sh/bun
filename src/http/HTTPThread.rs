@@ -1069,13 +1069,4 @@ pub fn init(opts: &InitOpts) {
     _event_loop_draft::init(opts)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/HTTPThread.zig (741 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      FixedBufferAllocator/StackFallback self-referential buffers
-//               need Phase B redesign;
-//               const-generic context() uses transmute; init/on_start/
-//               process_events stay gated on bun_event_loop tier boundary.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/HTTPThread.zig

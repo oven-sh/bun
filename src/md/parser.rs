@@ -361,10 +361,4 @@ pub fn render_with_renderer<'a>(
     p.process_doc()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/parser.zig (285 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      block_bytes needs 4-byte alignment; method re-exports become sibling `impl Parser` blocks; struct carries <'a> for input text borrow
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/parser.zig

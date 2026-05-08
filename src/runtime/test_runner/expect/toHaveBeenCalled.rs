@@ -82,10 +82,4 @@ pub fn to_have_been_called(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveBeenCalled.zig (46 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      defer post_match needs borrowck reshape; bun.cpp extern path + comptime get_signature need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveBeenCalled.zig

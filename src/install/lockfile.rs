@@ -3290,10 +3290,4 @@ impl PatchedDep {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile.zig (2217 lines)
-//   confidence: medium
-//   todos:      44
-//   notes:      Heavy borrowck reshaping needed (StringBuilder/Cloner hold &mut Lockfile while callers also mutate buffers); MultiArrayList column accessors stubbed as items_*(); default-trusted-dependencies needs build.rs codegen; clean_with_logger return should become Box<Lockfile>.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile.zig

@@ -208,10 +208,4 @@ pub trait Decode: Sized {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/NewReader.zig (129 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      comptime fn-param type-generator collapsed into ReaderContext trait + NewReader<C>; peek() lifetime and ReadableInt impls need Phase B attention
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/NewReader.zig

@@ -172,10 +172,4 @@ impl Iterator {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSString.zig (103 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      allocator params dropped from to_slice*; to_slice_clone/to_slice_z cfg-gated until bun_string ports the owning/NUL-terminated variants
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSString.zig

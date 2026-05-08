@@ -471,10 +471,4 @@ fn kernel_at_least(major: u32, minor: u32) -> bool {
 #[inline]
 pub fn copy_file_error_convert(e: crate::Error) -> bun_core::Error { e.into() }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/copy_file.zig (324 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      raw syscall bindings (fcopyfile/copy_file_range/sendfile/CopyFileW), errno_sys helper, and Platform::kernel_version compare API need wiring; LinuxCopyFileState reshaped to bitflags
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/copy_file.zig

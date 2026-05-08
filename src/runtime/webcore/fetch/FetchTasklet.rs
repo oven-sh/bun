@@ -1941,10 +1941,4 @@ impl Default for FetchOptions {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/fetch/FetchTasklet.zig (1512 lines)
-//   confidence: medium
-//   todos:      16
-//   notes:      Intrusive atomic refcount kept manual (raw *mut + Box::from_raw); on_body_received buffer-reset defer now a raw-ptr scopeguard (covers `?` paths); defer→explicit-cleanup reshaping in on_progress_update/callback; self-referential url_proxy_buffer borrow in get(); native_response Arc<Response> vs intrusive ref mismatch; FetchOptions consumed-by-move despite &FetchOptions param.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/fetch/FetchTasklet.zig

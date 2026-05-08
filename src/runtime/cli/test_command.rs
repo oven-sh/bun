@@ -2804,10 +2804,4 @@ pub fn export() {
     // export lives here vs in Scanner module.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test_command.zig (2276 lines)
-//   confidence: low-medium
-//   todos:      39
-//   notes:      Writers retyped to bun_io::Write (byte sink) — escape_xml/print_test_line/handle_test_completed write raw bytes; comptime prettyFmt literals inlined via const DIM branch; borrowck conflicts in run()/run_all_tests guards; test_files/all_test_files ownership needs reshape; lcov_state Option-tuple replaces comptime void; const-generic Reporters split into <TEXT,LCOV>.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test_command.zig

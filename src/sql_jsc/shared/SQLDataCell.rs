@@ -377,10 +377,4 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/shared/SQLDataCell.zig (187 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      #[repr(C)] FFI layout forced raw ptrs over LIFETIMES.tsv types (Vec/&[u8]/RefPtr); ownership enforced in deinit() instead. Phase B: confirm RefPtr<WTFStringImpl> niche-optimizes to thin ptr inside union, and map ci_assert feature.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/shared/SQLDataCell.zig

@@ -125,13 +125,4 @@ impl AutoFlusher {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/AutoFlusher.zig (26 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      duck-typed `this.auto_flusher`/`Type.onAutoFlush` modeled as
-//               HasAutoFlusher trait; callback erased via extern "C"
-//               trampoline (DeferredRepeatingTask is C-ABI). Higher-tier
-//               `vm`-taking wrapper lives in bun_runtime::webcore::AutoFlusher.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/AutoFlusher.zig

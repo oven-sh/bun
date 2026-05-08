@@ -7,10 +7,4 @@ pub enum SourceType {
     WebAssembly = 2,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/SourceType.zig (6 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      trivial #[repr(u8)] enum mirroring JSC SourceProvider.h
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/SourceType.zig

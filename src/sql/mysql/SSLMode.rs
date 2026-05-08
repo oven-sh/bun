@@ -8,10 +8,4 @@ pub enum SSLMode {
     VerifyFull = 4,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/SSLMode.zig (7 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      plain #[repr(u8)] enum; variant names PascalCased from Zig snake_case
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/SSLMode.zig

@@ -63,10 +63,4 @@ pub struct Reporters {
     pub lcov: bool,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/options_types/CodeCoverageOptions.zig (26 lines)
-//   confidence: high
-//   todos:      3
-//   notes:      slice fields use &'static (no deinit in Zig); allow_assert mapped to debug_assertions
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/options_types/CodeCoverageOptions.zig

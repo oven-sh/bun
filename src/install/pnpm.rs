@@ -2058,13 +2058,4 @@ fn update_package_json_after_migration(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/pnpm.zig (1585 lines)
-//   notes:      Borrowck reshaping via per-append `sbuf!` (Zig holds one
-//               `lockfile.stringBuf()` for the whole function). Operates on
-//               the T2 `logger::js_ast::Expr` end-to-end (YAML output and the
-//               package.json cache both live there); the only T4 hop is
-//               `print_json`, lifted via `.into()`. `JsonExprView` lets
-//               `Bin::parse_append` / `Negatable::from_json` accept either.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/pnpm.zig

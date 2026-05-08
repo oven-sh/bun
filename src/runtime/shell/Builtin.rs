@@ -1078,11 +1078,4 @@ impl Builtin {
 // already decrements the refcount. So `deinit` is fully covered by `Drop` on
 // `Box<Builtin>` (called from `Cmd::deinit`). No explicit body needed.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/Builtin.zig
-//   confidence: medium-high (NodeId dispatch; init_redirections ported;
-//               BuiltinIO Output/Input full variant set; coreutils error map)
-//   notes:      `.buf` flush folded into write_no_io (intentional reshape);
-//               refcounts via Arc::clone (== Zig dupeRef).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/Builtin.zig

@@ -286,10 +286,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/hive_array.zig (187 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      CAPACITY widened u16→usize for array/bitset const-generic; Fallback un-nested; try_get needs fallible alloc helper
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/hive_array.zig

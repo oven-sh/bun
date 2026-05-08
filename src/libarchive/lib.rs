@@ -2063,13 +2063,4 @@ fn slice_to_nul(s: &[u8]) -> &[u8] {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/libarchive/libarchive.zig (688 lines)
-//   confidence: medium
-//   todos:      see TODO(b2-blocked) markers above
-//   notes:      std.fs.Dir ops mapped to bun_sys placeholders; @hasDecl
-//               duck-typing → ArchiveAppender trait; tokenizer.rest()
-//               hand-rolled; defer-close of file_handle uses awkward
-//               scopeguard — restructure in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/libarchive/libarchive.zig

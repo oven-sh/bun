@@ -275,10 +275,4 @@ fn clone_utf8_wtf_impl(slice: &[u8]) -> bun_string::WTFStringImpl {
     bun_string::String::clone_utf8(slice).leak_wtf_impl()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/protocol/DecodeBinaryValue.zig (214 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      SQLDataCell tag/value union field names guessed; u24/i24 reader methods need NewReader support; labeled-block bufPrint reshaped for borrowck
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/protocol/DecodeBinaryValue.zig

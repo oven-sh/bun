@@ -207,10 +207,4 @@ impl Optional {
 #[allow(unused_macros)]
 const _: bool = enable_safety!();
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/DeprecatedStrong.zig (95 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      deinit→Drop (unref zeroes self in debug to neutralize Drop; release-mode ref/unref+Drop overlap needs Phase-B audit); ci_assert→debug_assertions proxy; assumes JSValue::{from_encoded,encoded,protect,unprotect,is_cell,is_empty,ZERO}
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/DeprecatedStrong.zig

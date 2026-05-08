@@ -1003,10 +1003,4 @@ pub fn close_and_wait() {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/fs_events.zig (659 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      macOS-only; heavy raw-pointer FFI + cross-thread shared mut state — Phase B should audit mutex-hold ordering in register/unregister (reshaped for borrowck) and pin down bun_sys::dlopen / bun_threading::{Mutex,Thread,Semaphore,UnboundedQueue} signatures
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/fs_events.zig

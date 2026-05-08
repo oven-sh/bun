@@ -467,10 +467,4 @@ pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8]
     bun_base64::wyhash_url_safe(bump, args, at_start)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/css_modules.zig (430 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      arena crate — threaded 'a bump lifetime through all structs; ArrayHashMap get_or_put/put API and SmallList::init_inlined need Phase B verification; LIFETIMES.tsv `Vec<String>` for sources kept verbatim (TSV wins per §Type map) but conflicts with §Strings bytes rule — fix TSV in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/css_modules.zig

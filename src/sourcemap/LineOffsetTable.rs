@@ -261,10 +261,4 @@ impl LineOffsetTable {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap/LineOffsetTable.zig (232 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      generate() now takes &'bump Arena and threads it into MultiArrayList/Vec (arena API assumed — wire in Phase B); stack-fallback scratch replaced by reusable Vec + bump.alloc_slice_copy (PERF-tagged); verify decode_wtf8_rune_t signature
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap/LineOffsetTable.zig

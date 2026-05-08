@@ -113,10 +113,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeGreaterThan.zig (69 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match + dual &mut Formatter borrow need Phase B reshape; get_signature assumed const fn
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeGreaterThan.zig

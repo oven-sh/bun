@@ -118,10 +118,4 @@ pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNo
     WorkPool::schedule(unsafe { &raw mut (*cpp).workpool_task });
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/CppTask.zig (61 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Bun__performTask error-ABI unclear; WorkPoolTask shape assumed {callback}; mark_binding! assumed macro; VM lifetime treated as 'static
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/CppTask.zig

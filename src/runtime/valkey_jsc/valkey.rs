@@ -1615,10 +1615,4 @@ impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/valkey_jsc/valkey.zig (1228 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      self-referential connection_strings borrows → Box<[u8]>; Queue type assumed from valkey_command; handle_response widened to JsResult<()> (callers no longer wrap in fail()); ref/deref scopeguards replaced with bracketing for borrowck
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/valkey_jsc/valkey.zig

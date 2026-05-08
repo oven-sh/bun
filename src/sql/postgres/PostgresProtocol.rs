@@ -83,10 +83,4 @@ pub use crate::postgres::protocol::new_writer::{NewWriter, WriterContext};
 pub use crate::postgres::protocol::portal_or_prepared_statement::PortalOrPreparedStatement;
 pub use crate::postgres::protocol::write_wrap::WriteWrap;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/PostgresProtocol.zig (62 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Int32 is fn(anytype)->[4]u8 over int4=u32 (not an i32 newtype) — to_bytes is identity on its result; const names SCREAMING_SNAKE; whole-file @imports re-exported as ::Name (Phase B may need module aliases)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/PostgresProtocol.zig

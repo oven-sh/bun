@@ -137,10 +137,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveReturned.zig (90 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      comptime enum param lowered to runtime arg (adt_const_params unstable); scopeguard owns &mut Expect for `defer post_match`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveReturned.zig

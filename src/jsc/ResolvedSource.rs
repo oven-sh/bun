@@ -74,12 +74,4 @@ impl Default for ResolvedSource {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ResolvedSource.zig (44 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Tag = crate::resolved_source_tag::ResolvedSourceTag (transparent
-//               u32 newtype + PHF name→id table mirroring
-//               build/*/codegen/ResolvedSourceTag.zig).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ResolvedSource.zig

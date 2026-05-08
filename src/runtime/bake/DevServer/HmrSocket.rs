@@ -405,10 +405,4 @@ impl HmrSocket {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/DevServer/HmrSocket.zig (295 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `dev` backref kept as NonNull (no LIFETIMES.tsv row); inline-for over HmrTopic fields lowered to HmrTopic::ALL/from_u8 helpers; line-96 dead else-if ported verbatim (upstream bug?); on_close takes *mut Self for Box::from_raw self-destroy.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/DevServer/HmrSocket.zig

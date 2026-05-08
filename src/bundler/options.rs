@@ -3169,10 +3169,4 @@ impl From<PathTemplateConst> for PathTemplate {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/options.zig (2654 lines)
-//   confidence: medium
-//   todos:      34
-//   notes:      string_hash_map_from_arrays is a stub (callers inlined); JSX.Pragma factory/fragment ownership needs Cow; several &'static [&'static [u8]] fields should become Box/Cow; PathTemplate::print uses bun_io::Write — callers expecting Display must adapt; std.fs.Dir → bun_sys::Dir pending.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/options.zig

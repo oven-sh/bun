@@ -265,9 +265,4 @@ impl WorkspacePackageJSONCache {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/WorkspacePackageJSONCache.zig (161 lines)
-//   confidence: high
-//   notes:      get_or_put/remove borrow conflict reshaped to contains_key→insert-on-success (same net map state); StringHashMap owns its key (no key_ptr write needed); File::toSource MOVE_DOWN to bun_logger::to_source; Indentation unified via bun_js_printer re-export of bun_logger::js_printer::Indentation.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/WorkspacePackageJSONCache.zig

@@ -37,10 +37,4 @@ impl PendingConnect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/quic/PendingConnect.zig (19 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      opaque FFI handle + 3 extern wrappers; Socket = crate::quic::Socket
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/quic/PendingConnect.zig

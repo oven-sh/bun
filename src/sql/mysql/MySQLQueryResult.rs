@@ -5,10 +5,4 @@ pub struct MySQLQueryResult {
     pub is_last_result: bool,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/MySQLQueryResult.zig (4 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      file-level struct with 4 POD fields; no methods, no imports
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/MySQLQueryResult.zig

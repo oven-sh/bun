@@ -1112,10 +1112,4 @@ impl TransformHandler {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/transform.zig (1299 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      css.Result/Printer/Parser API shapes assumed; DefineEnumProperty/DeriveParse/DeriveToCss need crate-wide derives; deep_clone uses Clone (arena-aware DeepClone trait TBD); 'bump threading on TransformList/TransformHandler may need adjustment in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/transform.zig

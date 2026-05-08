@@ -349,10 +349,4 @@ impl<'a> fmt::Display for VlqsFmt<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap/ParsedSourceMap.zig (192 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      IntrusiveArc + packed u64 SourceContentPtr; write_vlqs needs bun_io::Write w/ splat_byte_all; conditional Drop of `internal` may need ManuallyDrop
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap/ParsedSourceMap.zig

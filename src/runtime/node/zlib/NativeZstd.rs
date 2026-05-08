@@ -520,9 +520,4 @@ impl CompressionStreamImpl for NativeZstd {
 crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/zlib/NativeZstd.zig (281 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/zlib/NativeZstd.zig

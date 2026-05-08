@@ -38,10 +38,4 @@ pub enum CommonAbortReason {
     ConnectionClosed = 3,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_types/FetchRedirect.zig (14 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      MAP hoisted to module-level static (Rust associated statics not allowed); toJS alias dropped per *_jsc rule
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_types/FetchRedirect.zig

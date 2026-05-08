@@ -177,10 +177,4 @@ impl RouteBundle {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/DevServer/RouteBundle.zig (169 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      GenericIndex/u30 newtypes, IncrementalGraph(.client).FileIndex, RefPtr mapping, and RNG call need Phase-B reconciliation; deinit folded into Drop.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/DevServer/RouteBundle.zig

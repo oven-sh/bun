@@ -6562,10 +6562,4 @@ pub use bun_jsc::bindgen::BindgenBlob;
 
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/Blob.zig (5155 lines)
-//   confidence: low
-//   todos:      45
-//   notes:      Huge JSC class; comptime-fn dispatch (do_read_file/lifetime_wrap), content_type dual-ownership, S3 locked-body upload paths, FileSink open branches, and Windows libuv FileOpener all need Phase B attention. Store refcount is intrusive via StoreRef (NonNull<Store> + ref_/deref). fromJS stack uses on-stack ArrayVec<JSValue,128> for GC safety (Zig spilled to heap past 128).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/Blob.zig

@@ -49,10 +49,4 @@ pub fn to_be_empty_object(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeEmptyObject.zig (36 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      defer postMatch via scopeguard+DerefMut; get_signature assumed const fn; throw() takes fmt::Arguments
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeEmptyObject.zig

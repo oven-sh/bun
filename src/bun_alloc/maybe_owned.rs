@@ -85,10 +85,4 @@ impl<A> MaybeOwned<A> {
 // `_parent: Option<A>`, so no explicit `Drop` impl — keeping one would also forbid
 // moving `self._parent` out in `into_parent(self)`.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/maybe_owned.zig (112 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Nullable<A>/Borrowed<A> adaptors dropped (PORTING.md §Allocators — generic allocator threading collapses under #[global_allocator]); `allocator()` accessor dropped (no callers — would need `StdAllocator` plumbing). Associated `Borrowed` type alias hoisted to free `MaybeOwnedBorrowed`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/maybe_owned.zig

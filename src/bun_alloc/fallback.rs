@@ -94,10 +94,4 @@ pub fn free_without_size(ptr: *mut c_void) {
     unsafe { libc::free(ptr) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/fallback.zig (9 lines)
-//   confidence: medium
-//   notes:      c_allocator → `CAllocator` ZST with inherent raw_* methods
-//               (Zig std.heap.c_allocator vtable). z_allocator re-exported.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/fallback.zig

@@ -441,12 +441,10 @@ impl Drop for SocketAddress {
 }
 
 impl SocketAddress {
-    pub fn finalize(this: *mut SocketAddress) {
+    pub fn finalize(self: Box<Self>) {
         bun_jsc::mark_binding!();
-        // SAFETY: called from JSC finalizer on the mutator thread; `this` is the
-        // m_ctx payload allocated via `Box::new` in `SocketAddress::new`.
         // Box drop runs `<SocketAddress as Drop>::drop` (releases `_presentation`).
-        unsafe { drop(bun_core::heap::take(this)); }
+        drop(self);
     }
 }
 

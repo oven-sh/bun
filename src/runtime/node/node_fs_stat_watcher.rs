@@ -610,16 +610,14 @@ impl StatWatcher {
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(mut self: Box<Self>) {
         log!("Finalize\n");
-        // SAFETY: finalize runs on the mutator thread during lazy sweep; `this`
-        // is the m_ctx payload.
-        let this_ref = unsafe { &mut *this };
-        this_ref.this_value.finalize();
-        this_ref.closed = true;
-        this_ref.scheduler.deref();
-        // but don't deinit until the scheduler drops its reference
-        Self::deref(this);
+        self.this_value.finalize();
+        self.closed = true;
+        self.scheduler.deref();
+        // but don't deinit until the scheduler drops its reference —
+        // refcounted: hand ownership back to the raw refcount.
+        Self::deref(Box::into_raw(self));
     }
 
     pub fn initial_stat_success_on_main_thread(

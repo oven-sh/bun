@@ -793,11 +793,9 @@ impl fmt::Display for ScopeFunctions {
 
 impl ScopeFunctions {
     /// `.classes.ts` `finalize: true` — runs on mutator thread during lazy sweep.
-    pub extern "C" fn finalize(this: *mut ScopeFunctions) {
+    pub fn finalize(self: Box<Self>) {
         let _g = group_log::begin();
-        // SAFETY: `this` was heap-allocated in `create_unbound`; codegen guarantees
-        // finalize is called exactly once with that pointer.
-        drop(unsafe { bun_core::heap::take(this) });
+        drop(self);
     }
 }
 

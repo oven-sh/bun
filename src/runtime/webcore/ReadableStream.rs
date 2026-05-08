@@ -1074,10 +1074,11 @@ impl<C: SourceContext> NewSource<C> {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called from the JSC GC finalizer on the mutator thread; `this`
-        // is the heap `m_ctx` pointer originally produced by [`Self::new`].
-        let this = unsafe { &mut *this };
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: `decrement_count` releases the JS wrapper's +1; allocation
+        // may outlive this call if other refs remain, so hand ownership back to
+        // the raw refcount.
+        let this = Box::leak(self);
         this.this_jsvalue = JSValue::ZERO;
         let _ = this.decrement_count();
     }

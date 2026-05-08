@@ -89,13 +89,9 @@ impl FSWatcher {
 
     /// `pub const finalize = deinit;` — codegen `finalize: true` entry point.
     /// Runs on the mutator thread during lazy sweep.
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: codegen guarantees `this` is the m_ctx payload, uniquely owned here.
-        let this_ref = unsafe { &mut *this };
+    pub fn finalize(mut self: Box<Self>) {
         // stop all managers and signals
-        this_ref.detach();
-        // SAFETY: allocated via heap::alloc in `init`; finalize owns teardown.
-        drop(unsafe { bun_core::heap::take(this) });
+        self.detach();
     }
 }
 
@@ -1011,8 +1007,9 @@ impl FSWatcher {
             match r {
                 Ok(r) => Some(r),
                 Err(err) => {
-                    // SAFETY: ctx is the only owner; finalize frees the Box.
-                    FSWatcher::finalize(ctx);
+                    // SAFETY: `ctx` was produced by `heap::into_raw` above and
+                    // never handed to a JS wrapper; reclaim ownership.
+                    FSWatcher::finalize(unsafe { Box::from_raw(ctx) });
                     return Err(bun_sys::Error {
                         errno: err.errno,
                         syscall: bun_sys::Tag::watch,

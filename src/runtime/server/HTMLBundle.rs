@@ -147,9 +147,11 @@ impl HTMLBundle {
     }
 
     /// `.classes.ts` finalize: true — runs on mutator thread during lazy sweep.
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` is the m_ctx payload of the JS wrapper; valid until this returns.
-        unsafe { RefCount::<HTMLBundle>::deref(this) };
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        // SAFETY: `self` is the live m_ctx payload; `deref` frees on count==0.
+        unsafe { RefCount::<HTMLBundle>::deref(Box::into_raw(self)) };
     }
 
     // Zig `deinit`: only `allocator.free(this.path)` + `bun.destroy(this)`.

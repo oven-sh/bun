@@ -2451,10 +2451,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called from JSC finalizer; `this` is the m_ctx payload.
-        let this_ref = unsafe { &mut *this };
-        log!("finalize() {}", this as usize);
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: the trailing `deref()` releases the JS wrapper's +1;
+        // allocation may outlive this call if other refs remain, so hand
+        // ownership back to the raw refcount.
+        let this_ref = Box::leak(self);
+        log!("finalize() {}", core::ptr::from_mut(this_ref) as usize);
         this_ref.flags.insert(Flags::FINALIZING);
         this_ref.this_value.finalize();
         if !this_ref.socket.is_closed() {

@@ -1815,12 +1815,13 @@ impl Terminal {
     }
 
     /// Finalize - called by GC when object is collected
-    pub extern "C" fn finalize(this: *mut Terminal) {
+    pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
-        // SAFETY: codegen guarantees `this` is the live m_ctx pointer; runs on
-        // the mutator thread during lazy sweep.
-        let this = unsafe { &mut *this };
+        // Refcounted: the trailing `deref_()` releases the JS wrapper's +1;
+        // allocation may outlive this call if other refs remain, so hand
+        // ownership back to the raw refcount.
+        let this = Box::leak(self);
         this.this_value.finalize();
         this.flags.insert(Flags::FINALIZED);
         this.close_internal();

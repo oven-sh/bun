@@ -439,15 +439,13 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(mut self: Box<Self>) {
         bun_core::scoped_log!(MySQLConnection, "finalize");
-        // SAFETY: called on mutator thread during lazy sweep; `this` is the
-        // m_ctx ptr from `heap::alloc`. Stays raw-pointer-shaped end-to-end
-        // so no `&mut Self` dangles past the potential free in `deref()`.
-        unsafe {
-            (*this).js_value.finalize();
-            Self::deref(this);
-        }
+        self.js_value.finalize();
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        // SAFETY: `self` is the live m_ctx allocation; `deref` frees on count==0.
+        unsafe { Self::deref(Box::into_raw(self)) };
     }
 
     fn update_reference_type(&mut self) {

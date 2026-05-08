@@ -532,18 +532,24 @@ pub fn host_fn_internal_props<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global, this_value))
 }
 
-/// Finalizer: `fn(*mut T)`. The user impl receives the raw pointer (not
-/// `&mut`) so it may `heap::take` / `drop_in_place` without an outstanding
-/// borrow. This wrapper exists to provide the panic barrier; user impls are
-/// safe `pub fn finalize(this: *mut Self)` with an internal
-/// `unsafe { Box::from_raw }` so the generated thunk body contains zero
-/// `unsafe` tokens.
+/// Finalizer: `fn(Box<T>)`. The user impl receives owned `Box<Self>` —
+/// ownership is transferred from the C++ JSCell wrapper's `m_ctx` slot, so
+/// the impl is genuinely safe (`self: Box<Self>` drops at scope end, or can
+/// be `Box::into_raw`'d for refcounted types that release one of N refs).
+/// This wrapper provides the panic barrier and the single `Box::from_raw`
+/// for the entire generated-classes finalize surface, so the generated thunk
+/// body contains zero `unsafe` tokens and user impls need no
+/// soundness-laundering `unsafe { heap::take(this) }`.
 #[inline]
-pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(*mut T)) {
+pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
+    // SAFETY: `this` is the unique GC-owned `m_ctx` pointer, valid and not
+    // aliased — `JS${T}::~JS${T}` is the only caller, and it was produced by
+    // `Box::into_raw` in the construct path (`IntoHostConstructReturn`).
+    let boxed = unsafe { alloc::boxed::Box::from_raw(this) };
     // No `JSGlobalObject` in scope to surface the panic as a JS exception, but
     // unwinding through the C++ GC finalizer path is still UB — swallow it.
     // The panic hook (crash_handler) has already logged the message.
-    let _ = catch_panic(|| f(this));
+    let _ = catch_panic(|| f(boxed));
 }
 
 /// Codegen thunk entry for prototype setters.

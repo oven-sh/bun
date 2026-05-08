@@ -183,10 +183,11 @@ impl ImmediateObject {
 
     /// `.classes.ts` `finalize: true` — runs on the mutator thread during lazy sweep.
     /// Do not touch any `JSValue`/`Strong` content here.
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called by codegen'd C++ `JSImmediate::~JSImmediate` finalizer with the
-        // `m_ctx` pointer; the wrapper guarantees `this` is valid.
-        unsafe { (*this).internals.finalize() }
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted via `internals`: `internals.finalize()` derefs the
+        // intrusive count; allocation may outlive this call if other refs
+        // remain, so hand ownership back to the raw refcount.
+        Box::leak(self).internals.finalize()
     }
 
     #[bun_jsc::host_fn(getter)]

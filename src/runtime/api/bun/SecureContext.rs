@@ -176,13 +176,9 @@ impl SecureContext {
         self.ctx
     }
 
-    pub fn finalize(this: *mut SecureContext) {
-        unsafe {
-            // SAFETY: `this` is the m_ctx payload allocated via Box::new in
-            // create_with_digest; finalize runs once on the mutator thread.
-            boringssl::SSL_CTX_free((*this).ctx);
-            drop(bun_core::heap::take(this));
-        }
+    pub fn finalize(self: Box<Self>) {
+        // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
+        unsafe { boringssl::SSL_CTX_free(self.ctx) };
     }
 
     pub fn memory_cost(&self) -> usize {

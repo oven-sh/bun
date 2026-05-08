@@ -875,18 +875,18 @@ impl Request {
         self.internal_event_callback = InternalJSEventCallback::default();
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called by codegen finalize on the mutator thread; `this` is the m_ctx payload.
-        let this_ref = unsafe { &mut *this };
-        this_ref.js_ref.finalize();
-        this_ref.finalize_without_deinit();
+    pub fn finalize(mut self: Box<Self>) {
+        self.js_ref.finalize();
+        self.finalize_without_deinit();
         // SAFETY: `body` is a +1 ref handed out by `body::hive_alloc` /
         // `HiveRef::ref_()`; release it. Slot returns to the pool when the
         // count hits zero (drops the payload in place).
-        unsafe { (*this_ref.body.as_ptr()).unref() };
-        if this_ref.weak_ptr_data.on_finalize() {
-            // SAFETY: m_ctx was allocated via heap::alloc in Request::new
-            drop(unsafe { bun_core::heap::take(this) });
+        unsafe { (*self.body.as_ptr()).unref() };
+        if self.weak_ptr_data.on_finalize() {
+            drop(self);
+        } else {
+            // weak_ptr_data still has outstanding refs — keep allocation alive.
+            let _ = Box::leak(self);
         }
     }
 

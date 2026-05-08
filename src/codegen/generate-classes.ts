@@ -2869,16 +2869,14 @@ function generateRust(
   }
 
   if (finalize) {
-    // `finalize` receives the raw `*mut Self` (not `&mut`) so the impl may
-    // `Box::from_raw` / `drop_in_place` without an outstanding mutable borrow.
-    // User impls are safe `pub fn finalize(this: *mut Self)` with an internal
-    // `unsafe { Box::from_raw }`. SAFETY: `this` is the unique GC-owned
-    // `m_ctx` pointer, valid and not aliased — `JS${T}::~JS${T}` is the only
-    // caller.
+    // `host_fn_finalize` does the single `Box::from_raw(this)` and hands the
+    // user impl an owned `Box<Self>` — genuinely safe (ownership transferred).
+    // SAFETY: `this` is the unique GC-owned `m_ctx` pointer, valid and not
+    // aliased — `JS${T}::~JS${T}` is the only caller.
     thunk(
       classSymbolName(typeName, "finalize"),
       `(this: *mut ${T})`,
-      `    host_fn::host_fn_finalize(this, |t| ${T}::finalize(t))`,
+      `    host_fn::host_fn_finalize(this, |b| ${T}::finalize(b))`,
     );
   }
 

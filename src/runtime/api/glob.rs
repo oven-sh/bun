@@ -358,11 +358,8 @@ impl Glob {
         }))
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called once by JSC codegen on the mutator thread during sweep;
-        // `this` was produced via heap::alloc at construction.
-        let _ = unsafe { bun_core::heap::take(this) };
-        // `pattern: Box<[u8]>` freed by Drop (was `bun.default_allocator.free(this.pattern)`).
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 
     /// Called on the GC thread concurrently with the mutator. Reads only the

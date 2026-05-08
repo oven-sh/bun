@@ -2034,10 +2034,8 @@ impl JSFrameworkRouter {
         Ok(obj)
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called once by JSC sweep on the mutator thread; `this` is the m_ctx payload.
-        let this = unsafe { bun_core::heap::take(this) };
-        drop(this);
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
         // files, router, stored_parse_errors freed by Drop.
     }
 

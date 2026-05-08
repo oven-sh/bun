@@ -93,19 +93,15 @@ impl ParsedShellScript {
 
     /// Called from the generated C++ wrapper's `finalize()`. Runs on the mutator
     /// thread during lazy sweep — must not touch live JS cells.
-    pub fn finalize(this: *mut ParsedShellScript) {
-        // SAFETY: `this` was produced by `heap::alloc` in `create_parsed_shell_script_impl`
-        // and is uniquely owned by the JS wrapper that is now being finalized.
-        let mut this = unsafe { bun_core::heap::take(this) };
+    pub fn finalize(mut self: Box<Self>) {
         // Per PORTING.md §JSC: flip the self-wrapper ref to `.Finalized` first; other
         // cells may already be swept so the weak JSValue must not be touched again.
-        this.this_jsvalue.finalize();
+        self.this_jsvalue.finalize();
         // `export_env`/`args` have `Drop` impls; `cwd: Option<BunString>` does not
         // (`bun.String` is `Copy` for FFI), so deref it explicitly.
-        if let Some(cwd) = this.cwd.as_ref() {
+        if let Some(cwd) = self.cwd.as_ref() {
             cwd.deref();
         }
-        drop(this);
     }
 
     #[bun_jsc::host_fn(method)]

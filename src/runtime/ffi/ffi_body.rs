@@ -327,7 +327,9 @@ impl Default for FFI {
 }
 
 impl FFI {
-    pub fn finalize(_this: *mut FFI) {}
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
+    }
 
     /// `.classes.ts` declares `noConstructor: true`; the `JsClass` macro still
     /// requires the symbol to exist.

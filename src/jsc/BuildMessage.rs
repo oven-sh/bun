@@ -188,13 +188,8 @@ impl BuildMessage {
         Ok(ZigString::init(self.msg.kind.string()).to_js(global))
     }
 
-    pub fn finalize(this: *mut BuildMessage) {
-        // SAFETY: `this` was allocated via `Box::new` in `JsClass::to_js` and
-        // handed to the C++ JSCell wrapper as `m_ctx`; finalize is called
-        // exactly once on the mutator thread during lazy sweep. Dropping the
-        // Box runs `msg`'s Drop. (Mirrors the macro-generated
-        // `BuildMessageClass__finalize`; kept for parity with the Zig source.)
-        unsafe { drop(bun_core::heap::take(this)) };
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 }
 

@@ -3516,9 +3516,11 @@ impl Resolver {
         bun_core::heap::into_raw(Box::new(Self::setup(vm)))
     }
 
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` is the heap allocation from `init`; JSC finalizer holds the last JS ref.
-        unsafe { Self::deref(this) };
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        // SAFETY: `self` is the heap allocation from `init`; `deref` frees on count==0.
+        unsafe { Self::deref(Box::into_raw(self)) };
     }
 
     fn deinit(this: *mut Self) {

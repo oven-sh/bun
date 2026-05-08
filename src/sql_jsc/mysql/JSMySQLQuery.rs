@@ -87,14 +87,12 @@ impl JSMySQLQuery {
         }
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(mut self: Box<Self>) {
         debug!("MySQLQuery finalize");
-
-        // SAFETY: finalize runs on the mutator thread during lazy sweep; `this` is valid.
-        unsafe {
-            (*this).this_value.finalize();
-            (*this).deref();
-        }
+        self.this_value.finalize();
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        Box::leak(self).deref();
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLQuery__createInstance")]

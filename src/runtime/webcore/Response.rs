@@ -933,12 +933,11 @@ impl Response {
         }
     }
 
-    pub fn finalize(this: *mut Response) {
-        // SAFETY: called by JSC codegen on mutator thread during lazy sweep
-        unsafe {
-            (*this).js_ref.finalize();
-        }
-        Self::unref(this);
+    pub fn finalize(mut self: Box<Self>) {
+        self.js_ref.finalize();
+        // Refcounted: release the JS wrapper's +1; allocation may outlive this
+        // call if other refs remain, so hand ownership back to the raw refcount.
+        Self::unref(Box::into_raw(self));
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]

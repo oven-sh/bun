@@ -256,13 +256,8 @@ impl HTMLRewriter {
         Ok(call_frame.this())
     }
 
-    pub fn finalize(this: *mut HTMLRewriter) {
-        // SAFETY: called by JSC codegen finalize on the mutator thread; `this`
-        // is the m_ctx payload allocated in `constructor`.
-        unsafe {
-            (*this).finalize_without_destroy();
-            drop(bun_core::heap::take(this));
-        }
+    pub fn finalize(mut self: Box<Self>) {
+        self.finalize_without_destroy();
     }
 
     pub fn finalize_without_destroy(&mut self) {
@@ -322,9 +317,9 @@ impl HTMLRewriter {
             )));
             // defer resp.finalize();
             let _resp_guard = scopeguard::guard(resp, |r| {
-                // SAFETY: r is the heap::alloc allocation from above; finalize
-                // takes ownership and frees it exactly once.
-                unsafe { Response::finalize(r) }
+                // SAFETY: `r` is the `heap::into_raw` allocation from just
+                // above; finalize takes ownership and frees it exactly once.
+                Response::finalize(unsafe { Box::from_raw(r) })
             });
 
             let out_response_value = self.begin_transform(global, resp)?;
@@ -349,8 +344,9 @@ impl HTMLRewriter {
                 // and finalized exactly once.
                 unsafe {
                     let _ = bun_jsc::generated::JSResponse::dangerously_set_ptr(v, core::ptr::null_mut());
-                    // Manually invoke the finalizer to ensure it does what we want
-                    Response::finalize(r);
+                    // Manually invoke the finalizer to ensure it does what we want.
+                    // SAFETY: `r` is the detached `m_ctx` pointer, sole owner here.
+                    Response::finalize(Box::from_raw(r));
                 }
             });
 
@@ -777,9 +773,9 @@ impl BufferOutputSink {
             (*sink).rewriter = match built {
                 Ok(r) => r,
                 Err(_) => {
-                    // SAFETY: result was heap-allocated above and never handed to
-                    // JS; finalize takes ownership and frees it once.
-                    Response::finalize(result);
+                    // SAFETY: `result` was heap-allocated above and never handed
+                    // to JS; reclaim ownership and finalize once.
+                    Response::finalize(Box::from_raw(result));
                     return Ok(create_lolhtml_error(global));
                 }
             };
@@ -1605,8 +1601,9 @@ impl TextChunk {
         JSValue::from(unsafe { lolhtml::TextChunk::is_last_in_text_node(self.text_chunk) })
     }
 
-    pub fn finalize(this: *mut TextChunk) {
-        Self::deref(this);
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1.
+        Self::deref(Box::into_raw(self));
     }
 }
 
@@ -1645,8 +1642,9 @@ impl DocType {
         }
     }
 
-    pub fn finalize(this: *mut DocType) {
-        Self::deref(this);
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1.
+        Self::deref(Box::into_raw(self));
     }
 
     pub fn init(doctype: *mut lolhtml::DocType) -> *mut DocType {
@@ -1810,8 +1808,9 @@ impl DocEnd {
         Ok(self.append_(call_frame, global, content, opts))
     }
 
-    pub fn finalize(this: *mut DocEnd) {
-        Self::deref(this);
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1.
+        Self::deref(Box::into_raw(self));
     }
 }
 
@@ -1979,8 +1978,9 @@ impl Comment {
         JSValue::from(unsafe { lolhtml::Comment::is_removed(self.comment) })
     }
 
-    pub fn finalize(this: *mut Comment) {
-        Self::deref(this);
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1.
+        Self::deref(Box::into_raw(self));
     }
 }
 
@@ -2055,8 +2055,9 @@ impl EndTag {
         }))
     }
 
-    pub fn finalize(this: *mut EndTag) {
-        Self::deref(this);
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1.
+        Self::deref(Box::into_raw(self));
     }
 
     fn content_handler(
@@ -2224,11 +2225,10 @@ impl AttributeIterator {
         }
     }
 
-    pub fn finalize(this: *mut AttributeIterator) {
-        // SAFETY: called by JSC codegen finalize on the mutator thread; `this`
-        // is the live m_ctx payload.
-        unsafe { (*this).detach() };
-        Self::deref(this);
+    pub fn finalize(mut self: Box<Self>) {
+        self.detach();
+        // Refcounted: release the JS wrapper's +1.
+        Self::deref(Box::into_raw(self));
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2320,8 +2320,9 @@ impl Element {
         }))
     }
 
-    pub fn finalize(this: *mut Element) {
-        Self::deref(this);
+    pub fn finalize(self: Box<Self>) {
+        // Refcounted: release the JS wrapper's +1.
+        Self::deref(Box::into_raw(self));
     }
 
     /// Detach every `AttributeIterator` we handed to JS. Called when the

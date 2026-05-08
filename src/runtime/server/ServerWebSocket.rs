@@ -522,12 +522,10 @@ impl ServerWebSocket {
         Err(global_object.throw(format_args!("Cannot construct ServerWebSocket")))
     }
 
-    pub fn finalize(this: *mut Self) {
+    pub fn finalize(mut self: Box<Self>) {
         bun_output::scoped_log!(WebSocketServer, "finalize");
-        // SAFETY: called once by JSC finalizer on the mutator thread; `this` is the m_ctx payload
-        let this_ref = unsafe { &mut *this };
-        this_ref.this_value.finalize();
-        if let Some(signal) = this_ref.signal.take() {
+        self.this_value.finalize();
+        if let Some(signal) = self.signal.take() {
             // SAFETY: `signal` was stored with a +1 ref by the upgrade caller;
             // it stays live until this paired unref.
             unsafe {
@@ -535,8 +533,6 @@ impl ServerWebSocket {
                 signal.as_ref().unref();
             }
         }
-        // SAFETY: allocated via heap::alloc in `init`
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(method)]

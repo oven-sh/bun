@@ -326,11 +326,8 @@ impl JSSourceMap {
     }
 
     /// Called by the GC sweeper (mutator thread). Do not touch JS values here.
-    pub fn finalize(this: *mut JSSourceMap) {
-        // Zig `deinit` body: deref each source/name, free slices, deref sourcemap, destroy self.
-        // All of that is handled by Drop on Box<[bun_str::String]> and Arc<ParsedSourceMap>.
-        // SAFETY: `this` was allocated via heap::alloc by codegen/to_js and is uniquely owned here.
-        drop(unsafe { bun_core::heap::take(this) });
+    pub fn finalize(self: Box<Self>) {
+        drop(self);
     }
 }
 

@@ -2723,6 +2723,23 @@ impl ShellTask {
         }
     }
 
+    /// Install the per-`C` trampoline and hand the intrusive task to
+    /// [`WorkPool`] WITHOUT a `keep_alive.ref` — for tasks that the Zig spec
+    /// schedules via raw `WorkPool.schedule(&this.task)` (e.g. ls.zig
+    /// `ShellLsTask.schedule`, called recursively from a worker thread where
+    /// no JS-thread VM thread-local exists).
+    ///
+    /// SAFETY: same as [`Self::schedule`].
+    pub unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
+        use bun_threading::work_pool::WorkPool;
+        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
+        unsafe {
+            let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
+            (*this).task.callback = shell_task_trampoline::<C>;
+            WorkPool::schedule(&raw mut (*this).task);
+        }
+    }
+
     /// Spec: interpreter.zig `InnerShellTask.onFinish`. Called from the worker
     /// thread once `C::run_from_thread_pool` returns; enqueues the embedded
     /// concurrent task so the main thread re-enters via

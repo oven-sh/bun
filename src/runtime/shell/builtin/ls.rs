@@ -438,10 +438,12 @@ impl ShellLsTask {
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
         // outlives every in-flight task (see `next`).
         unsafe { (*self.task_count).fetch_add(1, Ordering::Relaxed) };
-        // SAFETY: freshly Box::into_raw'd.
+        // SAFETY: freshly Box::into_raw'd. Spec ls.zig `enqueue` calls
+        // `subtask.schedule()` = raw `WorkPool.schedule` (no keep-alive ref);
+        // this runs on a worker thread with no JS-VM thread-local.
         unsafe {
             (*subtask).print_directory = true;
-            ShellTask::schedule::<ShellLsTask>(subtask);
+            ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
         }
     }
 

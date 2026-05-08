@@ -511,12 +511,19 @@ impl<T> StoreSlice<T> {
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// Re-borrow as `&mut [T]`. Unsafe: caller must guarantee no aliasing
-    /// `&`/`&mut` is outstanding for this slice (the arena hands out unique
-    /// allocations, but `StoreSlice` is `Copy`, so this cannot be checked).
-    /// Mirrors the pre-existing `from_raw_parts_mut` pattern at visit sites.
+    /// Re-borrow as `&mut [T]`. Same `StoreRef` contract as [`slice`]: the
+    /// pointee lives until arena reset, and the single-threaded parser/visitor
+    /// pass holds at most one live `&mut` per node (mirrors `StoreRef`'s safe
+    /// `DerefMut`, which already encodes this invariant). The arena hands out
+    /// unique allocations and `StoreSlice` is `Copy`, so aliasing cannot be
+    /// *statically* checked — but neither can `StoreRef::deref_mut`'s, and the
+    /// two share one safety story. Callers must not overlap a `slice_mut()`
+    /// borrow with another `slice()`/`slice_mut()` of the same allocation.
     #[inline]
-    pub unsafe fn slice_mut<'a>(self) -> &'a mut [T] {
+    pub fn slice_mut<'a>(self) -> &'a mut [T] {
+        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
+        // initialized `T` valid for the arena lifetime; uniqueness is upheld
+        // by the single-threaded visitor contract (same as `StoreRef::DerefMut`).
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
@@ -1450,10 +1457,9 @@ impl<T> Batcher<T> {
     }
 
     pub fn eat1(&mut self, value: T) -> StoreSlice<T> {
-        // SAFETY: `head` is a valid arena slice with at least 1 element remaining
-        // (caller contract — Zig would panic on bounds); `Batcher` holds the
-        // unique view of the underlying arena allocation.
-        let head = unsafe { self.head.slice_mut() };
+        // `head` has at least 1 element remaining (caller contract — Zig would
+        // panic on bounds); `Batcher` holds the unique view of the allocation.
+        let head = self.head.slice_mut();
         let (prev, rest) = head.split_at_mut(1);
         prev[0] = value;
         self.head = StoreSlice::new_mut(rest);
@@ -1461,9 +1467,8 @@ impl<T> Batcher<T> {
     }
 
     pub fn next<const N: usize>(&mut self, values: [T; N]) -> StoreSlice<T> {
-        // SAFETY: `head` is a valid arena slice with at least N elements remaining;
-        // see `eat1` for the uniqueness invariant.
-        let head = unsafe { self.head.slice_mut() };
+        // `head` has at least N elements remaining; see `eat1`.
+        let head = self.head.slice_mut();
         let (prev, rest) = head.split_at_mut(N);
         for (dst, src) in prev.iter_mut().zip(values) {
             *dst = src;
@@ -2217,8 +2222,7 @@ pub mod defines_full_draft {
             J::EUndefined(_) => expr::Data::EUndefined(E::Undefined {}),
             J::EMissing(_) => expr::Data::EMissing(E::Missing {}),
             J::EString(s) => {
-                // SAFETY: `s` is a live arena `StoreRef` from `parse_env_json`.
-                let src = unsafe { &*s.as_ptr() };
+                let src = s.get();
                 let item = bump.alloc(E::String {
                     data: src.data.into(),
                     is_utf16: src.is_utf16,
@@ -2227,8 +2231,7 @@ pub mod defines_full_draft {
                 expr::Data::EString(StoreRef::from_bump(item))
             }
             J::EArray(a) => {
-                // SAFETY: `a` is a live arena `StoreRef` from `parse_env_json`.
-                let src = unsafe { &*a.as_ptr() };
+                let src = a.get();
                 let mut items =
                     Vec::<expr::Expr>::init_capacity(src.items.len_u32() as usize)?;
                 for it in src.items.slice() {
@@ -2248,8 +2251,7 @@ pub mod defines_full_draft {
                 expr::Data::EArray(StoreRef::from_bump(item))
             }
             J::EObject(o) => {
-                // SAFETY: `o` is a live arena `StoreRef` from `parse_env_json`.
-                let src = unsafe { &*o.as_ptr() };
+                let src = o.get();
                 let mut properties = Vec::<G::Property>::init_capacity(
                     src.properties.len_u32() as usize,
                 )?;

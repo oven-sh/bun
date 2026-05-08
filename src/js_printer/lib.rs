@@ -735,8 +735,8 @@ where
     let mut i: usize = 0;
     let n = str.len().min(1024);
     while i < n {
-        // SAFETY: loop invariant `i < n ≤ str.len()`.
-        match unsafe { *str.get_unchecked(i) }.into() {
+        // Loop invariant `i < n ≤ str.len()`; LLVM elides the bounds check.
+        match str[i].into() {
             0x27 /* ' */ => single_cost += 1,
             0x22 /* " */ => double_cost += 1,
             0x60 /* ` */ => backtick_cost += 1,
@@ -1082,9 +1082,8 @@ impl<'a> SourceMapHandler<'a> {
             unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
         }
         SourceMapHandler {
-            // SAFETY: `ctx` is a live `&mut T` so the pointer is non-null; type-erased to `*mut ()`
-            // and cast back to `*mut T` inside the thunk before dereference.
-            ctx: unsafe { NonNull::new_unchecked(std::ptr::from_mut::<T>(ctx).cast::<()>()) },
+            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
+            ctx: NonNull::from(ctx).cast::<()>(),
             callback: thunk::<T>,
             _marker: core::marker::PhantomData,
         }
@@ -1292,9 +1291,8 @@ impl RequireOrImportMetaCallback {
             unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
         }
         Self {
-            // SAFETY: `ctx` is `&mut T` so the pointer is non-null; type-erased to `*mut ()`
-            // and cast back to `*mut T` inside the thunk before dereference.
-            ctx: Some(unsafe { NonNull::new_unchecked(std::ptr::from_mut::<T>(ctx).cast::<()>()) }),
+            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
+            ctx: Some(NonNull::from(ctx).cast::<()>()),
             callback: thunk::<T>,
         }
     }
@@ -1402,8 +1400,7 @@ impl ImportVariant {
             }
         }
 
-        // SAFETY: `items` is an arena-owned slice; the AST arena outlives the printer.
-        if unsafe { (&*s_import.items).len() } > 0 {
+        if !s_import.items.is_empty() {
             variant = variant.has_items();
         }
 
@@ -1806,6 +1803,19 @@ where
 
     pub fn print_buffer(&mut self, str: &[u8]) {
         self.writer.print_slice(str);
+    }
+
+    /// Fixed-size raw write into pre-reserved space (mirrors Zig's
+    /// `p.writer.reserve(N) ...; p.writer.advance(N)` open-code on the
+    /// number/identifier hot path). Skips the short-write/error bookkeeping
+    /// in `print_slice`.
+    #[inline(always)]
+    fn print_reserved_n<const N: usize>(&mut self, bytes: &[u8; N]) {
+        let buf = self.writer.reserve(N as u64).expect("unreachable");
+        // SAFETY: `reserve(N)` returned a writable region of at least `N` bytes
+        // disjoint from `bytes` (writer-owned vs. caller stack).
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, N); }
+        self.writer.advance(N as u64);
     }
 
     /// Polymorphic print: bytes or single char.
@@ -2332,8 +2342,7 @@ where
             if item.kind == G::PropertyKind::ClassStaticBlock {
                 self.print(b"static");
                 self.print_space();
-                // SAFETY: arena-owned ClassStaticBlock; outlives the print pass.
-                let csb = unsafe { item.class_static_block.as_ref().unwrap().as_ref() };
+                let csb = item.class_static_block_ref().unwrap();
                 self.print_block(csb.loc, csb.stmts.slice(), None, TopLevel::init(IsTopLevel::No));
                 self.print_newline();
                 continue;
@@ -2393,30 +2402,21 @@ where
                 }
                 10 => self.print(b"10"),
                 11..=99 => {
-                    let buf = self.writer.reserve(2).expect("unreachable");
                     let mut tmp = [0u8; 2];
                     format_unsigned_integer_between::<2>(&mut tmp, val);
-                    // SAFETY: reserved 2 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 2); }
-                    self.writer.advance(2);
+                    self.print_reserved_n(&tmp);
                 }
                 100 => self.print(b"100"),
                 101..=999 => {
-                    let buf = self.writer.reserve(3).expect("unreachable");
                     let mut tmp = [0u8; 3];
                     format_unsigned_integer_between::<3>(&mut tmp, val);
-                    // SAFETY: reserved 3 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 3); }
-                    self.writer.advance(3);
+                    self.print_reserved_n(&tmp);
                 }
                 1000 => self.print(b"1000"),
                 1001..=9999 => {
-                    let buf = self.writer.reserve(4).expect("unreachable");
                     let mut tmp = [0u8; 4];
                     format_unsigned_integer_between::<4>(&mut tmp, val);
-                    // SAFETY: reserved 4 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 4); }
-                    self.writer.advance(4);
+                    self.print_reserved_n(&tmp);
                 }
                 10000 => self.print(b"1e4"),
                 100000 => self.print(b"1e5"),
@@ -2425,52 +2425,34 @@ where
                 100000000 => self.print(b"1e8"),
                 1000000000 => self.print(b"1e9"),
                 10001..=99999 => {
-                    let buf = self.writer.reserve(5).expect("unreachable");
                     let mut tmp = [0u8; 5];
                     format_unsigned_integer_between::<5>(&mut tmp, val);
-                    // SAFETY: reserved 5 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 5); }
-                    self.writer.advance(5);
+                    self.print_reserved_n(&tmp);
                 }
                 100001..=999999 => {
-                    let buf = self.writer.reserve(6).expect("unreachable");
                     let mut tmp = [0u8; 6];
                     format_unsigned_integer_between::<6>(&mut tmp, val);
-                    // SAFETY: reserved 6 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 6); }
-                    self.writer.advance(6);
+                    self.print_reserved_n(&tmp);
                 }
                 1_000_001..=9_999_999 => {
-                    let buf = self.writer.reserve(7).expect("unreachable");
                     let mut tmp = [0u8; 7];
                     format_unsigned_integer_between::<7>(&mut tmp, val);
-                    // SAFETY: reserved 7 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 7); }
-                    self.writer.advance(7);
+                    self.print_reserved_n(&tmp);
                 }
                 10_000_001..=99_999_999 => {
-                    let buf = self.writer.reserve(8).expect("unreachable");
                     let mut tmp = [0u8; 8];
                     format_unsigned_integer_between::<8>(&mut tmp, val);
-                    // SAFETY: reserved 8 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 8); }
-                    self.writer.advance(8);
+                    self.print_reserved_n(&tmp);
                 }
                 100_000_001..=999_999_999 => {
-                    let buf = self.writer.reserve(9).expect("unreachable");
                     let mut tmp = [0u8; 9];
                     format_unsigned_integer_between::<9>(&mut tmp, val);
-                    // SAFETY: reserved 9 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 9); }
-                    self.writer.advance(9);
+                    self.print_reserved_n(&tmp);
                 }
                 1_000_000_001..=9_999_999_999 => {
-                    let buf = self.writer.reserve(10).expect("unreachable");
                     let mut tmp = [0u8; 10];
                     format_unsigned_integer_between::<10>(&mut tmp, val);
-                    // SAFETY: reserved 10 bytes
-                    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, 10); }
-                    self.writer.advance(10);
+                    self.print_reserved_n(&tmp);
                 }
                 _ => { let _ = self.fmt(format_args!("{}", val)); }
             }
@@ -4437,8 +4419,7 @@ where
         match &binding.data {
             BindingData::BMissing(_) => {}
             BindingData::BIdentifier(b) => {
-                // SAFETY: arena-owned; outlives the print pass.
-                let b = unsafe { &**b };
+                let b = b.get();
                 self.print_space_before_identifier();
                 self.add_source_mapping(binding.loc);
                 self.print_symbol(b.r#ref);
@@ -4453,8 +4434,7 @@ where
                 }
             }
             BindingData::BArray(b) => {
-                // SAFETY: arena-owned; outlives the print pass.
-                let b = unsafe { &**b };
+                let b = b.get();
                 let items = slice_of(b.items);
                 self.print(b"[");
                 if !items.is_empty() {
@@ -4494,8 +4474,7 @@ where
                 self.print(b"]");
             }
             BindingData::BObject(b) => {
-                // SAFETY: arena-owned; outlives the print pass.
-                let b = unsafe { &**b };
+                let b = b.get();
                 let properties = slice_of(b.properties);
                 self.print(b"{");
                 if !properties.is_empty() {
@@ -4538,8 +4517,7 @@ where
 
                                             // Use a shorthand property if the names are the same
                                             if let BindingData::BIdentifier(id) = &property.value.data {
-                                                // SAFETY: arena-owned.
-                                                let id = unsafe { &**id };
+                                                let id = id.get();
                                                 if str.slice8() == self.name_for_symbol(id.r#ref) {
                                                     if Self::MAY_HAVE_MODULE_INFO {
                                                         if let Some(mi) = self.module_info() {
@@ -4561,8 +4539,7 @@ where
 
                                         // Use a shorthand property if the names are the same
                                         if let BindingData::BIdentifier(id) = &property.value.data {
-                                            // SAFETY: arena-owned.
-                                            let id = unsafe { &**id };
+                                            let id = id.get();
                                             if strings::utf16_eql_string(str.slice16(), self.name_for_symbol(id.r#ref)) {
                                                 if Self::MAY_HAVE_MODULE_INFO {
                                                     // PORT NOTE: reshaped for borrowck — bump access first.
@@ -5969,8 +5946,7 @@ where
 
                 match &decl.binding.data {
                     BindingData::BIdentifier(ident) => {
-                        // SAFETY: arena-owned; outlives the print pass.
-                        let ident = unsafe { &**ident };
+                        let ident = ident.get();
                         self.print(b"{");
                         self.print_space();
                         self.print_symbol(ident.r#ref);
@@ -5979,14 +5955,12 @@ where
                         self.print(b") }");
                     }
                     BindingData::BObject(obj) => {
-                        // SAFETY: arena-owned; outlives the print pass.
-                        let obj = unsafe { &**obj };
+                        let obj = obj.get();
                         self.print(b"{");
                         self.print_space();
                         for prop in slice_of(obj.properties).iter() {
                             if let BindingData::BIdentifier(ident) = &prop.value.data {
-                                // SAFETY: arena-owned; outlives the print pass.
-                                let ident = unsafe { &**ident };
+                                let ident = ident.get();
                                 self.print_symbol(ident.r#ref);
                                 if self.options.minify_whitespace { self.print(b":()=>("); } else { self.print(b": () => ("); }
                                 self.print_symbol(ident.r#ref);
@@ -6073,7 +6047,7 @@ where
                         let buf_ptr = self.writer.reserve(4).expect("unreachable");
                         let mut tmp = [0u8; 4];
                         let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                        // SAFETY: reserved 4 bytes
+                        // SAFETY: reserved 4 bytes; `len <= 4`; `tmp` is stack-local.
                         unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf_ptr, len); }
                         self.writer.advance(len as u64);
                     }
@@ -6085,7 +6059,7 @@ where
                 let buf_ptr = self.writer.reserve(4).expect("unreachable");
                 let mut tmp = [0u8; 4];
                 let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                // SAFETY: reserved 4 bytes
+                // SAFETY: reserved 4 bytes; `len <= 4`; `tmp` is stack-local.
                 unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf_ptr, len); }
                 self.writer.advance(len as u64);
             }

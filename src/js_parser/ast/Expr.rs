@@ -308,9 +308,7 @@ impl Expr {
                 if array.items.len_u32() == 0 {
                     return None;
                 }
-                // SAFETY: StoreRef points into the AST arena; deref to an unbounded
-                // ('static) borrow so the iterator is decoupled from the local.
-                Some(ArrayIterator { array: unsafe { &*array.as_ptr() }, index: 0 })
+                Some(ArrayIterator { array: array.get(), index: 0 })
             }
             _ => None,
         }
@@ -678,9 +676,7 @@ impl Expr {
         if let Some(existing) = self.get(&rope.head.data.as_e_string().unwrap().data) {
             match &existing.data {
                 Data::EArray(array) => {
-                    if !rope.next.is_null() {
-                        // SAFETY: `rope.next` is a non-null arena-owned `*mut Rope`.
-                        let next: &E::Rope = unsafe { &*rope.next };
+                    if let Some(next) = rope.next_ref() {
                         let mut array = *array;
                         if let Some(end) = array.items.last() {
                             return end.get_rope(next);
@@ -689,9 +685,7 @@ impl Expr {
                     return Some(E::RopeQuery { expr: existing, rope });
                 }
                 Data::EObject(_) => {
-                    if !rope.next.is_null() {
-                        // SAFETY: `rope.next` is a non-null arena-owned `*mut Rope`.
-                        let next: &E::Rope = unsafe { &*rope.next };
+                    if let Some(next) = rope.next_ref() {
                         if let Some(end) = existing.get_rope(next) {
                             return Some(end);
                         }
@@ -971,17 +965,15 @@ impl Expr {
         left: &Data,
         right: &Data,
         bump: &Bump,
-    ) -> Option<[*mut E::String; 2]> {
-        let l_string = Data::extract_string_value(*left)?;
-        let r_string = Data::extract_string_value(*right)?;
-        // SAFETY: `extract_string_value` returns a live arena pointer (StoreRef::as_ptr).
-        unsafe {
-            (*l_string).resolve_rope_if_needed(bump);
-            (*r_string).resolve_rope_if_needed(bump);
+    ) -> Option<[crate::ast::StoreRef<E::String>; 2]> {
+        let mut l_string = Data::extract_string_value(*left)?;
+        let mut r_string = Data::extract_string_value(*right)?;
+        // `extract_string_value` returns the arena `StoreRef`; mutate via DerefMut.
+        l_string.resolve_rope_if_needed(bump);
+        r_string.resolve_rope_if_needed(bump);
 
-            if (*l_string).is_utf8() != (*r_string).is_utf8() {
-                return None;
-            }
+        if l_string.is_utf8() != r_string.is_utf8() {
+            return None;
         }
 
         Some([l_string, r_string])
@@ -1043,8 +1035,7 @@ macro_rules! impl_into_expr_data_boxed {
             impl IntoExprData for E::$ty {
                 #[inline]
                 fn into_data_store(self) -> Data {
-                    // SAFETY: Store::append never returns null.
-                    Data::$variant(unsafe { StoreRef::from_raw(data::Store::append(self)) })
+                    Data::$variant(data::Store::append(self))
                 }
                 #[inline]
                 fn into_data_alloc(self, bump: &Bump) -> Data {
@@ -1156,8 +1147,7 @@ impl IntoExprData for E::EString {
                 debug_assert!(self.data.as_ptr() as usize > 0);
             }
         }
-        // SAFETY: Store::append never returns null.
-        Data::EString(unsafe { StoreRef::from_raw(data::Store::append(self)) })
+        Data::EString(data::Store::append(self))
     }
     fn into_data_alloc(self, bump: &Bump) -> Data {
         #[cfg(debug_assertions)]
@@ -1176,7 +1166,7 @@ impl IntoExprData for E::EString {
 impl IntoExprData for &E::EString {
     #[inline]
     fn into_data_store(self) -> Data {
-        Data::EString(unsafe { StoreRef::from_raw(data::Store::append(self.shallow_clone())) })
+        Data::EString(data::Store::append(self.shallow_clone()))
     }
     #[inline]
     fn into_data_alloc(self, bump: &Bump) -> Data {
@@ -2939,11 +2929,11 @@ impl Data {
         }
     }
 
-    pub fn extract_string_value(data: Data) -> Option<*mut E::String> {
+    pub fn extract_string_value(data: Data) -> Option<crate::ast::StoreRef<E::String>> {
         match data {
-            Data::EString(s) => Some(s.as_ptr()),
+            Data::EString(s) => Some(s),
             Data::EInlinedEnum(inlined) => match inlined.value.data {
-                Data::EString(str) => Some(str.as_ptr()),
+                Data::EString(str) => Some(str),
                 _ => None,
             },
             _ => None,
@@ -3290,16 +3280,16 @@ pub mod data {
         }
 
         #[inline]
-        pub fn append<T>(value: T) -> *mut T {
+        pub fn append<T>(value: T) -> crate::ast::StoreRef<T> {
             let ma = memory_allocator();
             if !ma.is_null() {
                 // SAFETY: ASTMemoryAllocator is set by the owning scope and outlives this call.
-                return unsafe { &*ma }.append(value).as_ptr();
+                return unsafe { &*ma }.append(value);
             }
             Disabler::assert();
             // SAFETY: assert() guarantees instance is non-null on this thread; slab
             // returns stable addresses until reset().
-            Backing::append(unsafe { &mut *instance() }, value).as_ptr()
+            crate::ast::StoreRef::from_non_null(Backing::append(unsafe { &mut *instance() }, value))
         }
     }
 }

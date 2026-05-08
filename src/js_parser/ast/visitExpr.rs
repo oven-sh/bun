@@ -496,18 +496,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // function jsxDEV(type, config, maybeKey, source, self) {
                 else if runtime == options::JSX::Runtime::Automatic {
                     // --- These must be done in all cases --
-                    // PORT NOTE: Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
-                    // a spread object's properties via raw arena pointer. Track as a raw ptr here.
-                    let mut props: *mut G::PropertyList = &raw mut e_.properties;
-
                     let maybe_key_value: Option<ExprNodeIndex> = if e_.key_prop_index > -1 {
-                        // SAFETY: `props` points at the live `e_.properties` (arena-owned).
-                        unsafe { &mut *props }
-                            .ordered_remove(e_.key_prop_index as u32 as usize)
-                            .value
+                        let idx = e_.key_prop_index as u32 as usize;
+                        e_.properties.ordered_remove(idx).value
                     } else {
                         None
                     };
+
+                    // PORT NOTE: Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
+                    // a spread object's properties via raw arena pointer. Track as a raw ptr here.
+                    let mut props: *mut G::PropertyList = &raw mut e_.properties;
 
                     // arguments needs to be like
                     // {
@@ -548,18 +546,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // ->
                     // <div {{...foo}} />
                     // jsx("div", {...foo})
-                    // SAFETY: `props` is a live arena ptr at every step (either `&mut e_.properties`
-                    // or `&mut <spread object>.properties` deeper in the same arena).
-                    while unsafe { &*props }.len_u32() == 1
-                        && unsafe { &*props }.slice()[0].kind == G::PropertyKind::Spread
-                        && matches!(
-                            unsafe { &*props }.slice()[0].value.unwrap().data,
-                            Data::EObject(..)
-                        )
-                    {
-                        // PORT NOTE: reshaped for borrowck — Zig reassigns `props` to point inside
-                        // the spread object's properties; do the same via raw access.
-                        let inner = unsafe { &mut *props }.slice_mut()[0]
+                    loop {
+                        // SAFETY: `props` is a live arena ptr at every step (either
+                        // `&mut e_.properties` or `&mut <spread object>.properties`
+                        // deeper in the same arena).
+                        let props_ref = unsafe { &mut *props };
+                        if !(props_ref.len_u32() == 1
+                            && props_ref.slice()[0].kind == G::PropertyKind::Spread
+                            && matches!(
+                                props_ref.slice()[0].value.unwrap().data,
+                                Data::EObject(..)
+                            ))
+                        {
+                            break;
+                        }
+                        // PORT NOTE: reshaped for borrowck — Zig reassigns `props` to point
+                        // inside the spread object's properties; do the same via raw access.
+                        let inner = props_ref.slice_mut()[0]
                             .value
                             .as_mut()
                             .unwrap()
@@ -568,6 +571,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .unwrap();
                         props = &raw mut inner.properties;
                     }
+                    // SAFETY: `props` is the final arena ptr from the walk above; no
+                    // aliasing `&mut` outstanding for the remainder of this arm.
+                    let props = unsafe { &mut *props };
 
                     // Typescript defines static jsx as children.len > 1 or single spread
                     // https://github.com/microsoft/TypeScript/blob/d4fbc9b57d9aa7d02faac9b1e9bb7b37c687f6e9/src/compiler/transformers/jsx.ts#L340
@@ -579,8 +585,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // Capture before `mem::take` zeroes `e_.children.len` (struct-literal
                         // fields evaluate in written order; spec reads original len).
                         let children_single_line = e_.children.len_u32() < 2;
-                        // SAFETY: `props` arena-ptr; see note above.
-                        unsafe { &mut *props }.push(G::Property {
+                        props.push(G::Property {
                             key: Some(children_key),
                             value: Some(p.new_expr(
                                 E::Array {
@@ -593,8 +598,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             ..Default::default()
                         });
                     } else if e_.children.len_u32() == 1 {
-                        // SAFETY: `props` arena-ptr; see note above.
-                        unsafe { &mut *props }.push(G::Property {
+                        props.push(G::Property {
                             key: Some(children_key),
                             value: Some(e_.children.slice()[0]),
                             ..Default::default()
@@ -614,8 +618,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     VecExt::append(&mut args, p.new_expr(
                         E::Object {
-                            // SAFETY: `props` arena-ptr; see note above. Consume by move.
-                            properties: core::mem::take(unsafe { &mut *props }),
+                            properties: core::mem::take(props),
                             ..Default::default()
                         },
                         expr.loc,
@@ -2338,8 +2341,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PERF(port): was arena dupe — profile in Phase B
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
 
-        // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
-        let args_mut: &mut [G::Arg] = unsafe { e_.args.slice_mut() };
+        let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
             args_mut,
             VisitArgsOpts {

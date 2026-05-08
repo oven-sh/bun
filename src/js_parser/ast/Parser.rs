@@ -564,8 +564,7 @@ impl<'a> Parser<'a> {
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
             let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| expr);
-            // SAFETY: arena slice outlives the returned `Ast`; Vec::Borrowed → no-op Drop.
-            let args = unsafe { Vec::from_bump_slice(args_slice) };
+            let args = Vec::from_bump_slice(args_slice);
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }
 
@@ -1367,12 +1366,11 @@ impl<'a> Parser<'a> {
                                 if let Some(id) = redirect_import_record_index {
                                     part.symbol_uses = Default::default();
                                     return Ok(js_ast::Result::Ast(js_ast::Ast {
-                                        // SAFETY: borrow the arena/Vec-backed records as a
-                                        // Vec view (matches `P::to_ast`); `p` is dropped
-                                        // immediately after this return so no double-ownership.
-                                        import_records: unsafe {
-                                            Vec::from_bump_slice(p.import_records.items_mut())
-                                        },
+                                        // Borrow the arena/Vec-backed records as a Vec view
+                                        // (matches `P::to_ast`); `p` is dropped immediately
+                                        // after this return so no double-ownership.
+                                        import_records:
+                                            Vec::from_bump_slice(p.import_records.items_mut()),
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),
@@ -1401,9 +1399,9 @@ impl<'a> Parser<'a> {
                     // An example is react-dom/index.js, which does a DCE check.
                     // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
                     // arena slice doesn't conflict with the `part.stmts = …` rewrite
-                    // below. SAFETY: arena-owned slice valid for 'a.
+                    // below.
                     let part_stmts_ss = part.stmts;
-                    let part_stmts: &mut [Stmt] = unsafe { part_stmts_ss.slice_mut() };
+                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
                     if part_stmts.len() > 1 {
                         break;
                     }
@@ -1553,10 +1551,9 @@ impl<'a> Parser<'a> {
                     if let Some(star) = export_star_redirect {
                         return Ok(js_ast::Result::Ast(js_ast::Ast {
                             // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
-                            // SAFETY: see note on the matching arm above.
-                            import_records: unsafe {
-                                Vec::from_bump_slice(p.import_records.items_mut())
-                            },
+                            // See note on the matching arm above re double-ownership.
+                            import_records:
+                                Vec::from_bump_slice(p.import_records.items_mut()),
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),
                             named_exports: core::mem::take(&mut p.named_exports),

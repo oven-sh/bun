@@ -286,9 +286,9 @@ impl<'a> Snapshots<'a> {
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
         for part in ast.parts.slice_mut() {
-            // SAFETY: `part.stmts` is an arena-owned `StoreSlice<Stmt>`. Arena outlives this
-            // loop; unique access — `ast` is owned here, no other `&`/`&mut` to this slice.
-            for stmt in unsafe { part.stmts.slice_mut() } {
+            // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
+            // loop and `ast` is owned here, so unique access is upheld.
+            for stmt in part.stmts.slice_mut() {
                 match &mut stmt.data {
                     js_ast::StmtData::SExpr(expr) => {
                         if let js_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {

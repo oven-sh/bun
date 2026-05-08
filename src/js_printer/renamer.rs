@@ -252,9 +252,7 @@ impl MinifyRenamer {
 
     pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
         let ref_ = self.symbols.follow(ref_);
-        // SAFETY: `Map::get` returns an arena-backed `*mut Symbol` valid for the
-        // life of the symbol table, which outlives this borrow.
-        let symbol: &Symbol = unsafe { &*self.symbols.get(ref_).unwrap() };
+        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
 
         let ns = symbol.slot_namespace();
         if ns == SlotNamespace::MustNotBeRenamed {
@@ -306,9 +304,7 @@ impl MinifyRenamer {
         stable_source_indices: &[u32],
     ) -> Result<(), bun_alloc::AllocError> {
         let mut ref_ = self.symbols.follow(ref_);
-        // SAFETY: `Map::get` yields an arena-backed `*mut Symbol` valid for the
-        // life of the symbol table.
-        let mut symbol: &Symbol = unsafe { &*self.symbols.get(ref_).unwrap() };
+        let mut symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
 
         while let Some(alias) = &symbol.namespace_alias {
             let new_ref = self.symbols.follow(alias.namespace_ref);
@@ -316,8 +312,7 @@ impl MinifyRenamer {
                 break;
             }
             ref_ = new_ref;
-            // SAFETY: as above.
-            symbol = unsafe { &*self.symbols.get(new_ref).unwrap() };
+            symbol = self.symbols.get_const(new_ref).unwrap();
         }
 
         let ns = symbol.slot_namespace();
@@ -347,8 +342,7 @@ impl MinifyRenamer {
         top_level_symbols: &[StableSymbolCount],
     ) -> Result<(), bun_alloc::AllocError> {
         for stable in top_level_symbols {
-            // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
-            let symbol: &Symbol = unsafe { &*self.symbols.get(stable.ref_).unwrap() };
+            let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
             // PORT NOTE: reshaped for borrowck — capture symbol fields before mut-borrowing slots
             let ns = symbol.slot_namespace();
             let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx;
@@ -385,16 +379,10 @@ impl MinifyRenamer {
         for &ns in SLOT_NAMESPACES.iter() {
             let slots = &mut self.slots[ns];
             sorted.clear();
-            sorted.reserve(slots.len().saturating_sub(sorted.len()));
-            // SAFETY: SlotAndCount is POD; we overwrite every element below.
-            unsafe { sorted.set_len(slots.len()) };
-
-            for (i, (elem, slot)) in sorted.iter_mut().zip(slots.iter()).enumerate() {
-                *elem = SlotAndCount {
-                    slot: u32::try_from(i).expect("int cast"),
-                    count: slot.count,
-                };
-            }
+            sorted.extend(slots.iter().enumerate().map(|(i, slot)| SlotAndCount {
+                slot: u32::try_from(i).expect("int cast"),
+                count: slot.count,
+            }));
             sorted.sort_unstable_by(SlotAndCount::less_than);
 
             let mut next_name: isize = 0;
@@ -498,16 +486,8 @@ pub fn assign_nested_scope_slots_helper(
     // Sort member map keys for determinism
     {
         sorted_members.clear();
-        sorted_members
-            .reserve(scope.members.count().saturating_sub(sorted_members.len()));
-        // SAFETY: u32 is POD; every element is written below before read.
-        unsafe { sorted_members.set_len(scope.members.count()) };
+        sorted_members.extend(scope.members.values().map(|m| m.ref_.inner_index()));
         let sorted_members_buf = sorted_members.as_mut_slice();
-        let mut i: usize = 0;
-        for member in scope.members.values() {
-            sorted_members_buf[i] = member.ref_.inner_index();
-            i += 1;
-        }
         sorted_members_buf.sort_unstable();
 
         // Assign slots for this scope's symbols. Only do this if the slot is
@@ -650,8 +630,7 @@ impl NumberRenamer {
         }
 
         // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
-        // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
-        let symbol: &Symbol = unsafe { &*self.symbols.get(ref_).unwrap() };
+        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
         if symbol.slot_namespace() != SlotNamespace::Default {
             return;
         }
@@ -735,18 +714,11 @@ impl NumberRenamer {
     ) {
         {
             sorted.clear();
-            sorted.reserve(scope.members.count().saturating_sub(sorted.len()));
-            // SAFETY: u32 is POD; every slot written before read.
-            unsafe { sorted.set_len(scope.members.count()) };
-            let mut remaining: &mut [u32] = sorted.as_mut_slice();
-            for value_ref in scope.members.values() {
-                #[cfg(debug_assertions)]
+            sorted.extend(scope.members.values().map(|value_ref| {
                 debug_assert!(!value_ref.ref_.is_source_contents_slice());
-
-                remaining[0] = value_ref.ref_.inner_index();
-                remaining = &mut remaining[1..];
-            }
-            debug_assert!(remaining.is_empty());
+                value_ref.ref_.inner_index()
+            }));
+            debug_assert_eq!(sorted.len(), scope.members.count());
             sorted.sort_unstable();
 
             for &inner_index in sorted.iter() {
@@ -1185,8 +1157,7 @@ pub fn compute_reserved_names_for_scope(
     // In Rust we mutate through &mut directly.
 
     for member in scope.members.values() {
-        // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
-        let symbol: &Symbol = unsafe { &*symbols.get(member.ref_).unwrap() };
+        let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
             // SAFETY: `original_name` is an AST-arena slice.
             names
@@ -1196,8 +1167,7 @@ pub fn compute_reserved_names_for_scope(
     }
 
     for ref_ in scope.generated.slice() {
-        // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
-        let symbol: &Symbol = unsafe { &*symbols.get(*ref_).unwrap() };
+        let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
             // SAFETY: `original_name` is an AST-arena slice.
             names

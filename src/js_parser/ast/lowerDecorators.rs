@@ -146,8 +146,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn call_rt(&mut self, l: logger::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
-        // SAFETY: `a` is a fresh bump slice valid for 'a; never grown.
-        let list = unsafe { ExprNodeList::from_bump_slice(a) };
+        let list = ExprNodeList::from_bump_slice(a);
         self.call_runtime(l, name, list)
     }
 
@@ -215,8 +214,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let bump = self.arena;
         let stmt = self.s(S::SExpr { value: expr, ..Default::default() }, l);
         let stmts = bump.alloc_slice_copy(&[stmt]);
-        // SAFETY: bump slice valid for 'a.
-        let stmts_list = unsafe { Vec::<Stmt>::from_bump_slice(stmts) };
+        let stmts_list = Vec::<Stmt>::from_bump_slice(stmts);
         let sb = bump.alloc(G::ClassStaticBlock { loc: l, stmts: stmts_list });
         Property {
             kind: PropertyKind::ClassStaticBlock,
@@ -401,13 +399,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
             js_ast::ExprData::EArrow(e) => {
-                let stmts = unsafe { e.body.stmts.slice_mut() };
+                let stmts = e.body.stmts.slice_mut();
                 self.rewrite_stmts(stmts, kind);
             }
             js_ast::ExprData::EFunction(e) => match kind {
                 RewriteKind::ReplaceThis { .. } => {}
                 RewriteKind::ReplaceRef { .. } => {
-                    let stmts = unsafe { e.func.body.stmts.slice_mut() };
+                    let stmts = e.func.body.stmts.slice_mut();
                     if !stmts.is_empty() {
                         self.rewrite_stmts(stmts, kind);
                     }
@@ -458,7 +456,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
                 js_ast::StmtData::SBlock(data) => {
-                    let stmts = unsafe { data.stmts.slice_mut() };
+                    let stmts = data.stmts.slice_mut();
                     self.rewrite_stmts(stmts, kind);
                 }
                 js_ast::StmtData::SFor(data) => {
@@ -511,24 +509,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut t = data.test_;
                     self.rewrite_expr(&mut t, kind);
                     data.test_ = t;
-                    let cases = unsafe { data.cases.slice_mut() };
+                    let cases = data.cases.slice_mut();
                     for case in cases.iter_mut() {
                         if let Some(v) = &mut case.value {
                             self.rewrite_expr(v, kind);
                         }
-                        let body = unsafe { case.body.slice_mut() };
+                        let body = case.body.slice_mut();
                         self.rewrite_stmts(body, kind);
                     }
                 }
                 js_ast::StmtData::STry(data) => {
-                    let body = unsafe { data.body.slice_mut() };
+                    let body = data.body.slice_mut();
                     self.rewrite_stmts(body, kind);
                     if let Some(c) = &mut data.catch_ {
-                        let cb = unsafe { c.body.slice_mut() };
+                        let cb = c.body.slice_mut();
                         self.rewrite_stmts(cb, kind);
                     }
                     if let Some(f) = &mut data.finally {
-                        let fb = unsafe { f.stmts.slice_mut() };
+                        let fb = f.stmts.slice_mut();
                         self.rewrite_stmts(fb, kind);
                     }
                 }
@@ -665,10 +663,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 new_args.push(*arg);
                             }
                             e.target = call_target;
-                            // SAFETY: bump slice valid for 'a.
-                            e.args = unsafe {
-                                ExprNodeList::from_bump_slice(new_args.into_bump_slice_mut())
-                            };
+                            e.args =
+                                ExprNodeList::from_bump_slice(new_args.into_bump_slice_mut());
                             return;
                         }
                     }
@@ -741,11 +737,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
             js_ast::ExprData::EFunction(e) => {
-                let stmts = unsafe { e.func.body.stmts.slice_mut() };
+                let stmts = e.func.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
             }
             js_ast::ExprData::EArrow(e) => {
-                let stmts = unsafe { e.body.stmts.slice_mut() };
+                let stmts = e.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
             }
             _ => {}
@@ -785,7 +781,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
                 js_ast::StmtData::SBlock(data) => {
-                    let stmts = unsafe { data.stmts.slice_mut() };
+                    let stmts = data.stmts.slice_mut();
                     self.rewrite_private_accesses_in_stmts(stmts, map);
                 }
                 js_ast::StmtData::SFor(data) => {
@@ -838,24 +834,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut t = data.test_;
                     self.rewrite_private_accesses_in_expr(&mut t, map);
                     data.test_ = t;
-                    let cases = unsafe { data.cases.slice_mut() };
+                    let cases = data.cases.slice_mut();
                     for case in cases.iter_mut() {
                         if let Some(v) = &mut case.value {
                             self.rewrite_private_accesses_in_expr(v, map);
                         }
-                        let body = unsafe { case.body.slice_mut() };
+                        let body = case.body.slice_mut();
                         self.rewrite_private_accesses_in_stmts(body, map);
                     }
                 }
                 js_ast::StmtData::STry(data) => {
-                    let body = unsafe { data.body.slice_mut() };
+                    let body = data.body.slice_mut();
                     self.rewrite_private_accesses_in_stmts(body, map);
                     if let Some(c) = &mut data.catch_ {
-                        let cb = unsafe { c.body.slice_mut() };
+                        let cb = c.body.slice_mut();
                         self.rewrite_private_accesses_in_stmts(cb, map);
                     }
                     if let Some(f) = &mut data.finally {
-                        let fb = unsafe { f.stmts.slice_mut() };
+                        let fb = f.stmts.slice_mut();
                         self.rewrite_private_accesses_in_stmts(fb, map);
                     }
                 }
@@ -1025,8 +1021,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut pre_eval_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut computed_key_counter: usize = 0;
 
-        // SAFETY: arena-owned slice valid for 'a.
-        let props_slice: &mut [Property] = unsafe { class.properties.slice_mut() };
+        let props_slice: &mut [Property] = class.properties.slice_mut();
         for (prop_idx, prop) in props_slice.iter_mut().enumerate() {
             if prop.kind == PropertyKind::ClassStaticBlock {
                 continue;
@@ -1183,8 +1178,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        // SAFETY: same arena slice.
-        let props_slice2: &mut [Property] = unsafe { class.properties.slice_mut() };
+        let props_slice2: &mut [Property] = class.properties.slice_mut();
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
             if prop.ts_decorators.len_u32() == 0 {
                 // ── Non-decorated property ──
@@ -1558,9 +1552,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            // SAFETY: bump slice for 'a.
             let dec_args_list =
-                unsafe { ExprNodeList::from_bump_slice(dec_args.into_bump_slice_mut()) };
+                ExprNodeList::from_bump_slice(dec_args.into_bump_slice_mut());
             let raw_element = p.call_runtime(loc, b"__decorateElement", dec_args_list);
             let element = if let Some(fn_ref) = private_method_fn_ref {
                 p.assign_to(fn_ref, raw_element, loc)
@@ -1648,9 +1641,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
                 }
-                if let Some(mut sb) = nprop.class_static_block {
-                    // SAFETY: arena-owned.
-                    let sb = unsafe { sb.as_mut() };
+                if let Some(sb) = nprop.class_static_block_mut() {
                     p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
                 }
             }
@@ -1734,9 +1725,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 )
             });
 
-            // SAFETY: bump slice for 'a.
             let cls_dec_list =
-                unsafe { ExprNodeList::from_bump_slice(cls_dec_args.into_bump_slice_mut()) };
+                ExprNodeList::from_bump_slice(cls_dec_args.into_bump_slice_mut());
             let dec_call = p.call_runtime(loc, b"__decorateElement", cls_dec_list);
             suffix_exprs.push(p.assign_to(class_name_ref, dec_call, class_name_loc));
         }
@@ -1817,10 +1807,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if let Some(init_val) = entry.prop.initializer {
                             run_args.push(init_val);
                         }
-                        // SAFETY: bump slice for 'a.
-                        let run_args_list = unsafe {
-                            ExprNodeList::from_bump_slice(run_args.into_bump_slice_mut())
-                        };
+                        let run_args_list =
+                            ExprNodeList::from_bump_slice(run_args.into_bump_slice_mut());
                         let run_init_call =
                             p.call_runtime(loc, b"__runInitializers", run_args_list);
 
@@ -1901,9 +1889,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let Some(init_val) = entry.prop.initializer {
                     run_args.push(init_val);
                 }
-                // SAFETY: bump slice for 'a.
                 let run_args_list =
-                    unsafe { ExprNodeList::from_bump_slice(run_args.into_bump_slice_mut()) };
+                    ExprNodeList::from_bump_slice(run_args.into_bump_slice_mut());
                 let run_init_call = p.call_runtime(loc, b"__runInitializers", run_args_list);
 
                 if entry.is_accessor || entry.is_private {
@@ -1991,9 +1978,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     );
                     let spread = p.new_expr(E::Spread { value: inner }, loc);
                     let arg_slice = bump.alloc_slice_copy(&[spread]);
-                    // SAFETY: bump slice for 'a.
                     let call_args =
-                        unsafe { ExprNodeList::from_bump_slice(arg_slice) };
+                        ExprNodeList::from_bump_slice(arg_slice);
                     let call = p.new_expr(
                         E::Call { target, args: call_args, ..Default::default() },
                         loc,
@@ -2063,10 +2049,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         js_ast::StmtData::SLocal(local) => {
                             for decl_item in local.decls.slice() {
                                 let ref_ = match decl_item.binding.data {
-                                    js_ast::b::B::BIdentifier(b) => {
-                                        // SAFETY: arena-owned.
-                                        unsafe { (*b).r#ref }
-                                    }
+                                    js_ast::b::B::BIdentifier(b) => b.r#ref,
                                     _ => unreachable!(),
                                 };
                                 let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
@@ -2114,8 +2097,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Emit var declarations
             if !expr_var_decls.is_empty() {
                 let decls_slice = expr_var_decls.into_bump_slice_mut();
-                // SAFETY: bump slice for 'a.
-                let decls = unsafe { DeclList::from_bump_slice(decls_slice) };
+                let decls = DeclList::from_bump_slice(decls_slice);
                 let var_decl_stmt = p.s(S::Local { decls, ..Default::default() }, loc);
                 if let Some(mut stmt_list) = p.nearest_stmt_list {
                     // SAFETY: arena-owned BumpVec valid for 'a; exclusive during visit.

@@ -128,8 +128,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
-        // SAFETY: arena-owned slice valid for 'a; exclusive via `&mut func`.
-        let args: &mut [G::Arg] = unsafe { func.args.slice_mut() };
+        let args: &mut [G::Arg] = func.args.slice_mut();
         self.visit_args(
             args,
             VisitArgsOpts {
@@ -273,8 +272,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let mut replacement: Option<*const crate::parser::Runtime::ReplaceableExport> = None;
                 if IS_POSSIBLY_DECL_TO_REMOVE {
                     if let BData::BIdentifier(id) = decl.binding.data {
-                        // SAFETY: arena-owned B::Identifier valid for 'a.
-                        let id_ref = unsafe { (*id).r#ref };
+                        let id_ref = id.r#ref;
                         let name = self.load_name_from_ref(id_ref);
                         let found = self
                             .options
@@ -310,8 +308,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if let ExprData::EClass(e_class) = &val.data {
                         if e_class.should_lower_standard_decorators {
                             if let BData::BIdentifier(id) = decl.binding.data {
-                                // SAFETY: arena-owned B::Identifier valid for 'a.
-                                let id = unsafe { &*id };
+                                let id = id.get();
                                 self.decorator_class_name = Some(self.load_name_from_ref(id.r#ref));
                             }
                         }
@@ -358,8 +355,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if self.should_unwrap_common_js_to_esm() {
                     if prev_require_to_convert_count < self.imports_to_convert_from_require.len() {
                         if let BData::BIdentifier(id) = decl.binding.data {
-                            // SAFETY: arena-owned B::Identifier valid for 'a.
-                            let ref_ = unsafe { (*id).r#ref };
+                            let ref_ = id.r#ref;
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
                                     if req.unwrapped_id != u32::MAX {
@@ -409,8 +405,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 );
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
                 if let BData::BIdentifier(id) = decl.binding.data {
-                    // SAFETY: arena-owned B::Identifier valid for 'a.
-                    let id_ref = unsafe { (*id).r#ref };
+                    let id_ref = id.r#ref;
                     let name = self.load_name_from_ref(id_ref);
                     if let Some(_ptr) = self
                         .options
@@ -456,8 +451,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
         match binding.data {
             BData::BObject(bound_object) => {
-                // SAFETY: arena-owned B::Object valid for 'a.
-                let bound_object = unsafe { &*bound_object };
+                let bound_object = bound_object.get();
                 if let ExprData::EObject(mut object) = expr.data {
                     if object.was_originally_macro {
                         for property in bound_object.properties() {
@@ -479,8 +473,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         _ => {
                                             if self.options.features.inlining {
                                                 if let BData::BIdentifier(id) = property.value.data {
-                                                    // SAFETY: arena-owned B::Identifier valid for 'a.
-                                                    let id = unsafe { &*id };
                                                     self.const_values
                                                         .put(id.r#ref, query.expr)
                                                         .expect("oom");
@@ -509,8 +501,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
             BData::BArray(bound_array) => {
-                // SAFETY: arena-owned B::Array valid for 'a.
-                let bound_array = unsafe { &*bound_array };
+                let bound_array = bound_array.get();
                 if let ExprData::EArray(mut array) = expr.data {
                     if array.was_originally_macro && !bound_array.has_spread {
                         let bound_items = bound_array.items();
@@ -532,8 +523,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
             BData::BIdentifier(id) => {
                 if self.options.features.inlining {
-                    // SAFETY: arena-owned B::Identifier valid for 'a.
-                    let id = unsafe { &*id };
                     self.const_values.put(id.r#ref, expr).expect("oom");
                 }
             }
@@ -551,8 +540,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
-                // SAFETY: arena-owned B::Identifier valid for 'a.
-                let id_ref = unsafe { (*id).r#ref };
+                let id_ref = id.r#ref;
                 if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
@@ -624,8 +612,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         match binding.data {
             BData::BMissing(_) => {}
             BData::BIdentifier(bind) => {
-                // SAFETY: arena-owned B::Identifier valid for 'a.
-                let bind = unsafe { &*bind };
+                let bind = bind.get();
                 self.record_declared_symbol(bind.r#ref);
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let name: &'a [u8] =
@@ -664,8 +651,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if let ExprData::EClass(e_class) = &default_value.data {
                                 if e_class.should_lower_standard_decorators {
                                     if let BData::BIdentifier(id) = item.binding.data {
-                                        // SAFETY: arena-owned B::Identifier valid for 'a.
-                                        let id = unsafe { &*id };
+                                        let id = id.get();
                                         self.decorator_class_name =
                                             Some(self.load_name_from_ref(id.r#ref));
                                     }
@@ -676,8 +662,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         self.decorator_class_name = prev_decorator_class_name2;
 
                         if let BData::BIdentifier(bind_) = item.binding.data {
-                            // SAFETY: arena-owned B::Identifier valid for 'a.
-                            let bind_ = unsafe { &*bind_ };
+                            let bind_ = bind_.get();
                             let name: &'a [u8] =
                                 self.symbols[bind_.r#ref.inner_index() as usize].original_name.slice();
                             item.default_value = Some(self.maybe_keep_expr_symbol_name(
@@ -704,8 +689,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if let ExprData::EClass(e_class) = &default_value.data {
                                 if e_class.should_lower_standard_decorators {
                                     if let BData::BIdentifier(id) = property.value.data {
-                                        // SAFETY: arena-owned B::Identifier valid for 'a.
-                                        let id = unsafe { &*id };
+                                        let id = id.get();
                                         self.decorator_class_name =
                                             Some(self.load_name_from_ref(id.r#ref));
                                     }
@@ -716,8 +700,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         self.decorator_class_name = prev_decorator_class_name3;
 
                         if let BData::BIdentifier(bind_) = property.value.data {
-                            // SAFETY: arena-owned B::Identifier valid for 'a.
-                            let bind_ = unsafe { &*bind_ };
+                            let bind_ = bind_.get();
                             let name: &'a [u8] =
                                 self.symbols[bind_.r#ref.inner_index() as usize].original_name.slice();
                             property.default_value = Some(self.maybe_keep_expr_symbol_name(
@@ -892,9 +875,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // defer { p.pop_scope(); p.enclosing_class_keyword = old_enclosing_class_keyword; }
             // — manual restore at block end below; no early returns in this block.
 
-            let mut constructor_function: Option<*mut E::Function> = None;
-            // SAFETY: arena-owned slice valid for 'a; exclusive during visit pass.
-            let properties: &mut [G::Property] = unsafe { class.properties.slice_mut() };
+            let mut constructor_function: Option<crate::ast::StoreRef<E::Function>> = None;
+            let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
                     let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
@@ -910,9 +892,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         should_replace_this_with_class_name_ref: false,
                         ..Default::default()
                     };
-                    // SAFETY: class_static_block is `Some(NonNull<ClassStaticBlock>)` here
-                    // (PropertyKind::ClassStaticBlock guarantees it); arena-owned for 'a.
-                    let csb = unsafe { property.class_static_block.unwrap().as_mut() };
+                    // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
+                    let csb = property.class_static_block_mut().unwrap();
                     self.push_scope_for_visit_pass(ScopeKind::ClassStaticInit, csb.loc)
                         .expect("unreachable");
 
@@ -924,10 +905,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.arena);
                     list.extend_from_slice(csb_stmts);
                     self.visit_stmts(&mut list, StmtsKind::FnBody).expect("unreachable");
-                    // SAFETY: bump-arena slice; Vec marked Borrowed (no growth, no free).
-                    csb.stmts = unsafe {
-                        Vec::from_bump_slice(list.into_bump_slice_mut())
-                    };
+                    csb.stmts =
+                        Vec::from_bump_slice(list.into_bump_slice_mut());
                     self.pop_scope();
 
                     self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
@@ -972,7 +951,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.
 
-                let mut constructor_function_: Option<*mut E::Function> = None;
+                let mut constructor_function_: Option<crate::ast::StoreRef<E::Function>> = None;
 
                 let mut name_to_keep: Option<&'a [u8]> = None;
                 if is_private {
@@ -988,14 +967,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 } else if property.flags.contains(flags::Property::IsMethod) {
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if let (Some(value), Some(key)) = (property.value, property.key) {
-                            if let (ExprData::EFunction(mut e_func), ExprData::EString(e_str)) =
+                            if let (ExprData::EFunction(e_func), ExprData::EString(e_str)) =
                                 (value.data, key.data)
                             {
                                 if e_str.eql_comptime(b"constructor") {
                                     // PORT NOTE: Zig keeps a `*E.Function` into property.value's
-                                    // arena slot, then re-reads it after visit_expr overwrites the
-                                    // value below. We mirror via raw ptr.
-                                    constructor_function_ = Some(&raw mut *e_func);
+                                    // arena slot, then re-reads it after visit_expr overwrites
+                                    // the value below. `StoreRef` carries the same arena pointer.
+                                    constructor_function_ = Some(e_func);
                                     constructor_function = constructor_function_;
                                 }
                             }
@@ -1026,8 +1005,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if constructor_function_.is_some() {
                             if let Some(value) = property.value {
-                                if let ExprData::EFunction(mut e_func) = value.data {
-                                    constructor_function = Some(&raw mut *e_func);
+                                if let ExprData::EFunction(e_func) = value.data {
+                                    constructor_function = Some(e_func);
                                 }
                             }
                         }
@@ -1064,13 +1043,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // note: our version assumes useDefineForClassFields is true
             if Self::IS_TYPESCRIPT_ENABLED {
-                if let Some(constructor) = constructor_function {
-                    // SAFETY: `constructor` is a `StoreRef<E::Function>` arena slot captured
-                    // from `class.properties[i].value.data` above; arena-owned for 'a, and the
+                if let Some(mut constructor) = constructor_function {
+                    // `constructor` is a `StoreRef<E::Function>` arena slot captured from
+                    // `class.properties[i].value.data` above; arena-owned for 'a, and the
                     // per-property `&mut [Property]` borrow has been released. Moving the
                     // `Property` structs below does not invalidate this pointer (it points to
                     // a separate Store allocation, not into the Property slice itself).
-                    let func_args: crate::StoreSlice<G::Arg> = unsafe { (*constructor).func.args };
+                    let func_args: crate::StoreSlice<G::Arg> = constructor.func.args;
                     let mut to_add: usize = 0;
                     for arg in func_args.iter() {
                         if arg.is_typescript_ctor_field
@@ -1083,8 +1062,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // if this is an expression, we can move statements after super() because there will be 0 decorators
                     let mut super_index: Option<usize> = None;
                     if class.extends.is_some() {
-                        // SAFETY: see `constructor` SAFETY note above.
-                        let body_stmts = unsafe { (*constructor).func.body.stmts }.slice();
+                        let body_stmts = constructor.func.body.stmts.slice();
                         for (index, stmt) in body_stmts.iter().enumerate() {
                             let is_super = match &stmt.data {
                                 StmtData::SExpr(se) => match &se.value.data {
@@ -1105,8 +1083,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     if to_add > 0 {
                         // to match typescript behavior, we also must prepend to the class body
-                        // SAFETY: see `constructor` SAFETY note above.
-                        let old_body: &[Stmt] = unsafe { (*constructor).func.body.stmts }.slice();
+                        let old_body: &[Stmt] = constructor.func.body.stmts.slice();
                         let mut stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_body.len() + to_add,
                             self.arena,
@@ -1142,10 +1119,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     continue;
                                 }
                                 match arg.binding.data {
-                                    BData::BIdentifier(id) => {
-                                        // SAFETY: arena-owned b::Identifier.
-                                        (unsafe { (*id).r#ref }, arg.binding.loc)
-                                    }
+                                    BData::BIdentifier(id) => (id.r#ref, arg.binding.loc),
                                     _ => continue,
                                 }
                             };
@@ -1198,10 +1172,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         class.properties = crate::StoreSlice::from_bump(class_body);
-                        // SAFETY: see `constructor` SAFETY note at top of this block.
-                        unsafe {
-                            (*constructor).func.body.stmts = crate::StoreSlice::from_bump(stmts);
-                        }
+                        constructor.func.body.stmts = crate::StoreSlice::from_bump(stmts);
                     }
                 }
             }
@@ -1322,9 +1293,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
             // `&mut`) so the pointer shares the local's base tag and survives the
             // direct `&mut before` reborrows in the loop below (Stacked Borrows).
-            // SAFETY: `before` is a live local; address is non-null.
-            p.nearest_stmt_list =
-                Some(unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!(before)) });
+            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
 
             let mut preprocessed_enum_i: usize = 0;
 
@@ -1455,10 +1424,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 );
 
                 if let_decls.len() > 0 {
-                    // SAFETY: BumpVec → Vec. `into_bump_slice_mut` leaks into the arena;
-                    // Vec::Borrowed origin makes Drop a no-op.
                     let decls =
-                        unsafe { G::DeclList::from_bump_slice(let_decls.into_bump_slice_mut()) };
+                        G::DeclList::from_bump_slice(let_decls.into_bump_slice_mut());
                     let loc = decls.at(0).value.unwrap().loc;
                     before.push(p.s(
                         S::Local { kind: LocalKind::KLet, decls, ..Default::default() },
@@ -1474,10 +1441,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             before.push(new);
                         }
                     } else {
-                        // SAFETY: see let_decls note above.
-                        let decls = unsafe {
-                            G::DeclList::from_bump_slice(var_decls.into_bump_slice_mut())
-                        };
+                        let decls =
+                            G::DeclList::from_bump_slice(var_decls.into_bump_slice_mut());
                         let loc = decls.at(0).value.unwrap().loc;
                         before.push(p.s(
                             S::Local { kind: LocalKind::KVar, decls, ..Default::default() },
@@ -1580,8 +1545,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 let mut end: usize = 0;
                                 for idx in 0..decls.len() {
                                     if let BData::BIdentifier(id_ptr) = decls[idx].binding.data {
-                                        // SAFETY: arena-owned `*mut B::Identifier` valid for 'a.
-                                        let id_ref = unsafe { (*id_ptr).r#ref };
+                                        let id_ref = id_ptr.r#ref;
                                         if p.const_values.contains(&id_ref) {
                                             any_decl_in_const_values = true;
                                             let symbol =
@@ -1698,8 +1662,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // Destructuring bindings could potentially execute side-effecting
                     // code which would invalidate reordering.
                     let BData::BIdentifier(ident_ptr) = last.binding.data else { break };
-                    // SAFETY: arena-owned `*mut B::Identifier` valid for 'a.
-                    let id = unsafe { (*ident_ptr).r#ref };
+                    let id = ident_ptr.r#ref;
 
                     let symbol: &Symbol = &p.symbols[id.inner_index() as usize];
 
@@ -1806,8 +1769,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         let mut prev_local = prev_local;
                                         let decl = &mut prev_local.decls.slice_mut()[0];
                                         if let BData::BIdentifier(bid_ptr) = decl.binding.data {
-                                            // SAFETY: arena-owned `*mut B::Identifier`.
-                                            let bid_ref = unsafe { (*bid_ptr).r#ref };
+                                            let bid_ref = bid_ptr.r#ref;
                                             if bid_ref.eql(left_id.ref_)
                                                 // If the value was assigned, we shouldn't merge it incase it was used in the current statement
                                                 // https://github.com/oven-sh/bun/issues/2948

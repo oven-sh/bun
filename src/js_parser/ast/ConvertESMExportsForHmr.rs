@@ -100,8 +100,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         B::B::BMissing(_) => {}
 
                         B::B::BIdentifier(id) => {
-                            // SAFETY: arena-owned Identifier ptr valid for the parse.
-                            let id_ref = unsafe { (*id).r#ref };
+                            let id_ref = id.r#ref;
                             let symbol = &p.symbols[id_ref.inner_index() as usize];
 
                             // if the symbol is not used, we don't need to preserve
@@ -307,8 +306,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 break 'stmt stmt;
             }
             js_ast::StmtData::SExportClause(st) => {
-                // SAFETY: arena-owned items slice valid for the parse.
-                for item in unsafe { (*st.items).iter() } {
+                for item in st.items.iter() {
                     let ref_ = item.name.ref_.expect("infallible: ref bound");
                     self.visit_ref_to_export(p, ref_, Some(item.alias), item.name.loc, false)?;
                 }
@@ -325,8 +323,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     None,
                     stmt.loc,
                 )?;
-                // SAFETY: arena-owned items slice valid for the parse.
-                for item in unsafe { st.items.slice_mut() }.iter_mut() {
+                for item in st.items.slice_mut().iter_mut() {
                     let ref_ = item.name.ref_.expect("infallible: ref bound");
                     let symbol = &mut p.symbols[ref_.inner_index() as usize];
                     // Always set the namespace alias using the deduplicated import
@@ -540,19 +537,15 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         match binding.data {
             B::B::BMissing(_) => {}
             B::B::BIdentifier(id) => {
-                // SAFETY: arena-owned Identifier ptr valid for the parse.
-                let id = unsafe { &*id };
                 self.visit_ref_to_export(p, id.r#ref, None, binding.loc, false)?;
             }
             B::B::BArray(array) => {
-                // SAFETY: arena-owned Array + items slice valid for the parse.
-                for item in unsafe { (*(*array).items).iter() } {
+                for item in array.items.iter() {
                     self.visit_binding_to_export(p, item.binding)?;
                 }
             }
             B::B::BObject(object) => {
-                // SAFETY: arena-owned Object + properties slice valid for the parse.
-                for item in unsafe { (*(*object).properties).iter() } {
+                for item in object.properties.iter() {
                     self.visit_binding_to_export(p, item.value)?;
                 }
             }

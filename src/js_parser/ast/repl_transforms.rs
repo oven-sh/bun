@@ -105,10 +105,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     }
 
                     if !hoisted_decl_list.is_empty() {
-                        // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
-                        let decls = unsafe {
-                            G::DeclList::from_bump_slice(hoisted_decl_list.into_bump_slice_mut())
-                        };
+                        let decls =
+                            G::DeclList::from_bump_slice(hoisted_decl_list.into_bump_slice_mut());
                         hoisted_stmts.push(self.s(
                             S::Local { kind, decls, ..Default::default() },
                             stmt.loc,
@@ -565,23 +563,17 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
     ) -> Result<(), bun_alloc::AllocError> {
         match binding.data {
             B::B::BIdentifier(ident) => {
-                // SAFETY: arena-owned `*mut Identifier` valid for 'a.
-                let ident = unsafe { &*ident };
                 decls.push(G::Decl {
                     binding: self.b(B::Identifier { r#ref: ident.r#ref }, binding.loc),
                     value: None,
                 });
             }
             B::B::BArray(arr) => {
-                // SAFETY: arena-owned `*mut Array` valid for 'a.
-                let arr = unsafe { &*arr };
                 for item in arr.items().iter() {
                     self.repl_extract_identifiers_from_binding(item.binding, decls)?;
                 }
             }
             B::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` valid for 'a.
-                let obj = unsafe { &*obj };
                 for prop in obj.properties().iter() {
                     self.repl_extract_identifiers_from_binding(prop.value, decls)?;
                 }
@@ -614,9 +606,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             value: Some(expr),
             ..Default::default()
         });
-        // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
         let prop_list =
-            unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
+            G::PropertyList::from_bump_slice(properties.into_bump_slice_mut());
         self.new_expr(E::Object { properties: prop_list, ..Default::default() }, expr.loc)
     }
 
@@ -629,8 +620,6 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
     ) -> Expr {
         match binding.data {
             B::B::BIdentifier(ident) => {
-                // SAFETY: arena-owned `*mut Identifier` valid for 'a.
-                let ident = unsafe { &*ident };
                 let left = self.new_expr(
                     E::Identifier { ref_: ident.r#ref, ..Default::default() },
                     binding.loc,
@@ -672,16 +661,13 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
     ) -> Expr {
         match binding.data {
             B::B::BIdentifier(ident) => {
-                // SAFETY: arena-owned `*mut Identifier` valid for 'a.
-                let ident = unsafe { &*ident };
                 self.new_expr(
                     E::Identifier { ref_: ident.r#ref, ..Default::default() },
                     binding.loc,
                 )
             }
             B::B::BArray(arr) => {
-                // SAFETY: arena-owned `*mut Array` valid for 'a.
-                let arr = unsafe { &*arr };
+                let arr = arr.get();
                 let arr_items = arr.items();
                 // PERF(port): was bun.handleOom(arena.alloc(Expr, n))
                 let mut items = BumpVec::with_capacity_in(arr_items.len(), bump);
@@ -703,9 +689,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         items.push(expr);
                     }
                 }
-                // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
                 let item_list =
-                    unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
+                    ExprNodeList::from_bump_slice(items.into_bump_slice_mut());
                 self.new_expr(
                     E::Array {
                         items: item_list,
@@ -716,8 +701,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 )
             }
             B::B::BObject(obj) => {
-                // SAFETY: arena-owned `*mut Object` valid for 'a.
-                let obj = unsafe { &*obj };
+                let obj = obj.get();
                 let obj_props = obj.properties();
                 // PERF(port): was bun.handleOom(arena.alloc(G.Property, n))
                 let mut properties = BumpVec::with_capacity_in(obj_props.len(), bump);
@@ -736,9 +720,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         ..Default::default()
                     });
                 }
-                // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
                 let prop_list =
-                    unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
+                    G::PropertyList::from_bump_slice(properties.into_bump_slice_mut());
                 self.new_expr(
                     E::Object {
                         properties: prop_list,
@@ -758,8 +741,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     let slice: &mut [G::Decl] =
         bump.alloc_slice_fill_with(1, |_| G::Decl { binding, value: None });
-    // SAFETY: bump-owned slice handed to Vec::Borrowed; never grown.
-    unsafe { G::DeclList::from_bump_slice(slice) }
+    G::DeclList::from_bump_slice(slice)
 }
 
 // ported from: src/js_parser/ast/repl_transforms.zig

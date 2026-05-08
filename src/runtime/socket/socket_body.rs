@@ -1665,11 +1665,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(address_bytes) = this.socket.local_address(&mut buf) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // TODO(port): Zig used `std.net.Address.initIp4/6`; `format_ip` only
-        // needs `Display`, so use `std::net::IpAddr`.
-        let address: std::net::IpAddr = match address_bytes.len() {
-            4 => std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()).into(),
-            16 => std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()).into(),
+        // `format_ip` expects `addr:port` / `[addr]:port` shape (it strips
+        // `:port` and brackets), so pass a `SocketAddr` like Zig's
+        // `std.net.Address.initIp{4,6}(.., 0)` — bare `IpAddr` corrupts IPv6.
+        let address: std::net::SocketAddr = match address_bytes.len() {
+            4 => std::net::SocketAddrV4::new(
+                std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()),
+                0,
+            )
+            .into(),
+            16 => std::net::SocketAddrV6::new(
+                std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()),
+                0,
+                0,
+                0,
+            )
+            .into(),
             _ => return Ok(JSValue::UNDEFINED),
         };
 
@@ -1715,9 +1726,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(address_bytes) = this.socket.remote_address(&mut buf) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let address: std::net::IpAddr = match address_bytes.len() {
-            4 => std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()).into(),
-            16 => std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()).into(),
+        let address: std::net::SocketAddr = match address_bytes.len() {
+            4 => std::net::SocketAddrV4::new(
+                std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()),
+                0,
+            )
+            .into(),
+            16 => std::net::SocketAddrV6::new(
+                std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()),
+                0,
+                0,
+                0,
+            )
+            .into(),
             _ => return Ok(JSValue::UNDEFINED),
         };
 

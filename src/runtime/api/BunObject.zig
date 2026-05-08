@@ -1215,7 +1215,7 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     var offset: usize = 0;
     var map_size: ?usize = null;
 
-    if (args.nextEat()) |opts| {
+    if (args.nextEat()) |opts| if (opts.isObject()) {
         flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
             .SHARED
         else
@@ -1244,7 +1244,7 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
             offset = @intCast(offset_value);
             offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
         }
-    }
+    };
 
     const map = switch (bun.sys.mmapFile(buf_z, flags, map_size, offset)) {
         .result => |map| map,

@@ -1226,13 +1226,18 @@ pub fn init() {
         unsafe {
             // SAFETY: ABI-identical — `*mut EXCEPTION_POINTERS` vs the
             // type-erased `*mut c_void` in the kernel32 binding.
-            WINDOWS_SEGFAULT_HANDLE.write(Some(bun_sys::windows::kernel32::AddVectoredExceptionHandler(
+            let handle = bun_sys::windows::kernel32::AddVectoredExceptionHandler(
                 0,
                 core::mem::transmute::<
                     extern "system" fn(*mut bun_sys::windows::EXCEPTION_POINTERS) -> c_long,
                     unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
                 >(handle_segfault_windows),
-            )));
+            );
+            WINDOWS_SEGFAULT_HANDLE.write(Some(handle));
+            // Publish to T0 storage so `bun_core::raise_ignoring_panic_handler`
+            // can remove the VEH before re-raising without an upward dep.
+            bun_core::WINDOWS_SEGFAULT_HANDLE
+                .store(handle as *mut core::ffi::c_void, Ordering::Relaxed);
         }
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]

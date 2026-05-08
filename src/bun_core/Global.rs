@@ -41,6 +41,13 @@ pub fn top_level_dir() -> &'static [u8] {
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
+/// VEH handle returned by `AddVectoredExceptionHandler`, written by
+/// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
+/// removes it before re-raising so the signal goes to the OS default.
+#[cfg(windows)]
+pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<c_void> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
 unsafe extern "Rust" {
     /// `bun.jsc.Node.FSEvents.closeAndWait()` — flush the macOS FSEvents
     /// CFRunLoop thread before process exit (spec `Global.zig:220`). Body is
@@ -147,14 +154,14 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     }
 }
 
-/// Capture and dump the current call stack. Uses `std::backtrace` so the
-/// output is symbolicated when debug info is available, without needing
-/// `bun_crash_handler` (the rich llvm-symbolizer path lives there for crash
-/// reports specifically).
+/// Capture and dump the current call stack. Captures into a `StoredTrace`
+/// (honoring `first_address`) and prints via `dump_stack_trace` so
+/// `limits.frame_count` applies — keeping the two T0 dump entry points
+/// consistent. The rich llvm-symbolizer path lives in `bun_crash_handler`
+/// for crash reports specifically.
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
-    crate::output::flush();
-    let _ = (first_address, limits);
-    eprintln!("{}", std::backtrace::Backtrace::force_capture());
+    let stored = StoredTrace::capture(first_address);
+    dump_stack_trace(&stored.trace(), limits);
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────
@@ -606,9 +613,11 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     // Clear the crash handler's segfault hooks so the re-raised signal goes to
     // SIG_DFL instead of recursing into the panic handler. Storage moved down
     // from `bun_crash_handler` — it sets `CRASH_HANDLER_INSTALLED` on init and
-    // we do the libc reset ourselves (no fn-ptr hook).
+    // we do the libc reset ourselves (no fn-ptr hook). Mirrors
+    // `crash_handler.zig::resetSegfaultHandler`: skip when ASAN owns the
+    // signals (we never installed over them); on Windows remove the VEH.
     #[cfg(unix)]
-    if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+    if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
         // SAFETY: zeroed sigaction with SIG_DFL is a valid disposition.
         unsafe {
             let mut act: libc::sigaction = core::mem::zeroed();
@@ -617,6 +626,17 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             for &s in &[libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
                 let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
             }
+        }
+    }
+    #[cfg(windows)]
+    if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
+        let handle = WINDOWS_SEGFAULT_HANDLE.swap(core::ptr::null_mut(), Ordering::Relaxed);
+        if !handle.is_null() {
+            unsafe extern "system" {
+                fn RemoveVectoredExceptionHandler(handle: *mut c_void) -> u32;
+            }
+            // SAFETY: `handle` came from `AddVectoredExceptionHandler`.
+            let _ = unsafe { RemoveVectoredExceptionHandler(handle) };
         }
     }
 

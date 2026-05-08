@@ -395,13 +395,14 @@ impl FileSystem {
             }
         };
 
-        // Publish to T0 storage so `bun_sys` / display paths can read the cwd
-        // without an upward dep on the resolver.
-        bun_core::set_top_level_dir(top_level_dir);
-
         // SAFETY: matches Zig global singleton init pattern
         unsafe {
             if !INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire) || FORCE {
+                // Publish to T0 storage so `bun_sys` / display paths can read
+                // the cwd without an upward dep on the resolver. Kept inside
+                // the FORCE/first-init guard so a no-op re-init doesn't
+                // desync `bun_core::top_level_dir()` from the singleton.
+                bun_core::set_top_level_dir(top_level_dir);
                 (*INSTANCE.get()).write(FileSystem {
                     top_level_dir,
                     top_level_dir_buf: PathBuffer::uninit(),

@@ -11,7 +11,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 // MOVE_DOWN(b0): was bun_crash_handler::StoredTrace — type moves to bun_core.
 use bun_core::StoredTrace;
@@ -45,16 +45,15 @@ type ArrayHashMap<K, V> = HashMap<K, V>;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-fn dump_stack_hook(trace: *const StoredTrace, ret_addr: usize) {
-    if trace.is_null() {
-        bun_core::dump_current_stack_trace(
+fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
+    match trace {
+        None => bun_core::dump_current_stack_trace(
             if ret_addr == 0 { None } else { Some(ret_addr) },
             bun_core::DumpStackTraceOptions::default(),
-        );
-    } else {
-        // SAFETY: caller passes a live `StoredTrace`.
-        let stored = unsafe { &*trace };
-        bun_core::dump_stack_trace(&stored.trace(), bun_core::DumpStackTraceOptions::default());
+        ),
+        Some(stored) => {
+            bun_core::dump_stack_trace(&stored.trace(), bun_core::DumpStackTraceOptions::default())
+        }
     }
 }
 
@@ -248,7 +247,7 @@ impl<T: RefCounted> RefCount<T> {
         );
         if DEBUG_STACK_TRACE {
             // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
-            dump_stack_hook(core::ptr::null(), return_address());
+            dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
         count.raw_count.set(count.raw_count.get() + 1);
@@ -282,7 +281,7 @@ impl<T: RefCounted> RefCount<T> {
         );
         if DEBUG_STACK_TRACE {
             // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
-            dump_stack_hook(core::ptr::null(), return_address());
+            dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
         count.raw_count.set(count.raw_count.get() - 1);
@@ -1414,7 +1413,7 @@ fn generic_dump(
     for (_, entry) in map.iter() {
         bun_core::pretty_error!("<b>RefPtr acquired at:<r>\n");
         // TODO(b0-genuine): was dump_stack_trace(trace, AllocationScope::TRACE_LIMITS)
-        dump_stack_hook(&raw const entry.acquired_at, 0);
+        dump_stack_hook(Some(&entry.acquired_at), 0);
         i += 1;
         if i >= 3 {
             bun_core::pretty_error!("  {} omitted ...\n", map.len() - i);

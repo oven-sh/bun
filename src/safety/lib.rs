@@ -13,29 +13,63 @@ pub use thread_lock::ThreadLock;
 pub mod thread_id;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Debug-hook registration (CYCLEBREAK §Debug-hook, pattern 3).
+// Allocator-identity registry (storage moved DOWN — data, not fn-ptrs).
 //
-// Low-tier `bun_safety` cannot name `bun_crash_handler` / `bun_bundler` /
-// `bun_runtime::allocators` directly (upward edges). Instead we expose
-// AtomicPtr<()> slots that `bun_runtime::init()` populates with erased
-// fn-ptrs at startup. Calls through an unset hook are no-ops.
+// Low-tier `bun_safety` cannot name higher-tier allocator types
+// (`MimallocArena`, `allocation_scope`, `LinuxMemFdAllocator`,
+// `MaxHeapAllocator`, `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`)
+// directly. Instead of an erased fn-ptr hook, those crates push their
+// `&'static AllocatorVTable` addresses here at init; `alloc::has_ptr` then
+// does a plain pointer-equality scan. This is the same predicate Zig's
+// `is_instance` checks compute (vtable identity), just with the *data* moved
+// down rather than the *code* called up.
 // ──────────────────────────────────────────────────────────────────────────
 
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-/// Erased signature: `unsafe fn(alloc: bun_alloc::StdAllocator) -> bool`.
-///
-/// Provider (registered by `bun_runtime::init()`) folds the higher-tier
-/// `is_instance` checks that `bun_safety` cannot name directly:
-/// `std.heap.ArenaAllocator` vtable, `allocation_scope`, `LinuxMemFdAllocator`,
-/// `MaxHeapAllocator`, `MimallocArena`, `CachedBytecode`,
-/// `bundle_v2::allocator_has_pointer`, `heap_breakdown::Zone`.
-pub static ALLOC_HAS_PTR: AtomicPtr<()> = AtomicPtr::new(null_mut());
+/// Erased `*const AllocatorVTable`. `*const ()` is `!Sync`, so wrap.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct VTablePtr(pub *const ());
+// SAFETY: vtable addresses are immutable `'static` data.
+unsafe impl Send for VTablePtr {}
+// SAFETY: vtable addresses are immutable `'static` data.
+unsafe impl Sync for VTablePtr {}
 
-/// Erased signature: `unsafe fn(alloc: bun_alloc::StdAllocator) -> bool`.
-/// Provider: `bun_runtime::allocators::mimalloc_arena::is_instance`.
-pub static IS_MIMALLOC_ARENA: AtomicPtr<()> = AtomicPtr::new(null_mut());
+/// Vtable addresses of allocators whose `StdAllocator.ptr` is meaningful
+/// (i.e. distinct instances have distinct `.ptr`). Registered by higher-tier
+/// crates at startup via [`register_alloc_vtable`].
+static KNOWN_ALLOC_VTABLES: parking_lot::RwLock<Vec<VTablePtr>> =
+    parking_lot::RwLock::new(Vec::new());
+
+/// Vtable address of `MimallocArena`'s allocator. Set once by
+/// `bun_runtime::allocators::mimalloc_arena` at init.
+static MIMALLOC_ARENA_VTABLE: AtomicPtr<()> = AtomicPtr::new(null_mut());
+
+/// Register a higher-tier allocator's vtable so `alloc::has_ptr` recognizes it.
+pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
+    KNOWN_ALLOC_VTABLES
+        .write()
+        .push(VTablePtr(vtable as *const _ as *const ()));
+}
+
+/// Record the `MimallocArena` allocator vtable (single distinguished entry).
+pub fn register_mimalloc_arena_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
+    MIMALLOC_ARENA_VTABLE.store(vtable as *const _ as *mut (), Ordering::Relaxed);
+}
+
+#[inline]
+pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
+    let needle = VTablePtr(alloc.vtable as *const _ as *const ());
+    KNOWN_ALLOC_VTABLES.read().contains(&needle)
+}
+
+#[inline]
+pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
+    let v = MIMALLOC_ARENA_VTABLE.load(Ordering::Relaxed);
+    !v.is_null() && core::ptr::eq(alloc.vtable as *const _ as *const (), v)
+}
 
 /// Dump a captured trace via the T0 fallback (raw addresses / std::backtrace).
 /// Crash-report symbolication lives in `bun_crash_handler` and is invoked
@@ -46,18 +80,6 @@ pub fn dump_stored_trace(trace: &bun_core::StoredTrace) {
         &trace.trace(),
         bun_core::DumpStackTraceOptions { frame_count: 10, stop_at_jsc_llint: true, ..Default::default() },
     );
-}
-
-/// Call through an allocator-predicate hook if registered; `false` otherwise.
-#[inline]
-pub(crate) fn call_alloc_predicate(hook: &AtomicPtr<()>, alloc: bun_alloc::StdAllocator) -> bool {
-    let p = hook.load(Ordering::Relaxed);
-    if p.is_null() {
-        return false;
-    }
-    // SAFETY: `bun_runtime::init()` stores a fn ptr with this exact signature.
-    let f: unsafe fn(bun_alloc::StdAllocator) -> bool = unsafe { core::mem::transmute(p) };
-    unsafe { f(alloc) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

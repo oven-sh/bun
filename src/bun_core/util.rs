@@ -3054,28 +3054,118 @@ impl core::fmt::Display for f16 {
 }
 
 // ── perf ──────────────────────────────────────────────────────────────────
-// Port of `bun.perf` (src/perf/perf.zig). T0 ships the `Disabled` arm only so
-// `let _tracer = bun_core::perf::trace("X")` compiles and is a zero-cost
-// no-op. Callers that need real signpost/ftrace spans use the `bun_perf`
-// crate's enum-based `trace(PerfEvent::X)` directly — that crate owns the
-// platform backends (OSLog/ftrace) without any T0 hook indirection.
+// Port of `bun.perf` (src/perf/perf.zig). The Linux ftrace backend is
+// libc-only, so it folds in directly and `bun_core::perf::trace("X")` is real
+// instrumentation on Linux. The macOS `os_signpost` backend depends on
+// `bun_sys::darwin::OSLog` (above T0); it stays in the `bun_perf` crate and
+// the T0 path is a no-op there. Windows/other platforms are no-ops in Zig too.
 pub mod perf {
-    /// Opaque per-span state returned by `trace()`. `end()` is idempotent;
-    /// `Drop` calls it so `let _t = trace("x");` works as a scope guard.
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Once;
+
+    /// Per-span state returned by `trace()`. `end()` is idempotent; `Drop`
+    /// calls it so `let _t = trace("x");` works as a scope guard.
     #[must_use = "bind to a local (`let _t = perf::trace(..)`) so the span has nonzero duration"]
-    pub struct Ctx(());
-    impl Ctx {
-        pub const DISABLED: Ctx = Ctx(());
-        #[inline] pub fn end(&mut self) {}
+    pub struct Ctx {
+        #[cfg(target_os = "linux")]
+        linux: Option<Linux>,
     }
-    impl Drop for Ctx { #[inline] fn drop(&mut self) {} }
+    impl Ctx {
+        pub const DISABLED: Ctx = Ctx {
+            #[cfg(target_os = "linux")]
+            linux: None,
+        };
+        #[inline]
+        pub fn end(&mut self) {
+            #[cfg(target_os = "linux")]
+            if let Some(l) = self.linux.take() { l.end(); }
+        }
+    }
+    impl Drop for Ctx { #[inline] fn drop(&mut self) { self.end(); } }
 
-    #[inline] pub fn is_enabled() -> bool { false }
+    static IS_ENABLED_ONCE: Once = Once::new();
+    static IS_ENABLED: AtomicBool = AtomicBool::new(false);
 
-    /// `bun.perf.trace("Event.name")`. T0 callers get a no-op span; real
-    /// instrumentation lives in `bun_perf::trace(PerfEvent)`.
+    fn is_enabled_once() {
+        #[cfg(target_os = "linux")]
+        if crate::env_var::feature_flag::BUN_TRACE.get().unwrap_or(false) && Linux::is_supported() {
+            IS_ENABLED.store(true, Ordering::SeqCst);
+        }
+        // macOS: os_signpost requires `bun_sys::darwin::OSLog` (above T0); the
+        // `bun_perf` crate owns that path. T0 reports disabled on macOS.
+    }
+
     #[inline]
-    pub fn trace(_name: &'static str) -> Ctx { Ctx::DISABLED }
+    pub fn is_enabled() -> bool {
+        IS_ENABLED_ONCE.call_once(is_enabled_once);
+        IS_ENABLED.load(Ordering::SeqCst)
+    }
+
+    /// `bun.perf.trace("Event.name")`. Emits an ftrace span on Linux when
+    /// `BUN_TRACE=1`; no-op elsewhere (macOS signposts live in `bun_perf`).
+    #[inline]
+    pub fn trace(name: &'static str) -> Ctx {
+        if !is_enabled() {
+            let _ = name;
+            return Ctx::DISABLED;
+        }
+        #[cfg(target_os = "linux")]
+        { return Ctx { linux: Some(Linux::init(name)) }; }
+        #[allow(unreachable_code)]
+        { let _ = name; Ctx::DISABLED }
+    }
+
+    // ── Linux ftrace backend (folded from src/perf/lib.rs) ────────────────
+    #[cfg(target_os = "linux")]
+    struct Linux { start_time: u64, name: &'static str }
+
+    #[cfg(target_os = "linux")]
+    impl Linux {
+        fn is_supported() -> bool {
+            static INIT_ONCE: Once = Once::new();
+            static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
+            INIT_ONCE.call_once(|| {
+                // SAFETY: FFI; Bun__linux_trace_init has no preconditions.
+                let r = unsafe { Bun__linux_trace_init() };
+                IS_INITIALIZED.store(r != 0, Ordering::Relaxed);
+            });
+            IS_INITIALIZED.load(Ordering::Relaxed)
+        }
+        #[inline]
+        fn init(name: &'static str) -> Self {
+            Self {
+                start_time: crate::Timespec::now(crate::TimespecMockMode::ForceRealTime).ns(),
+                name,
+            }
+        }
+        fn end(self) {
+            if !Self::is_supported() { return; }
+            let duration = crate::Timespec::now(crate::TimespecMockMode::ForceRealTime)
+                .ns()
+                .saturating_sub(self.start_time);
+            // Zig passed `@tagName(event).ptr` (NUL-terminated). Build a small
+            // stack CString from the &'static str literal.
+            let mut buf = [0u8; 96];
+            let n = self.name.len().min(buf.len() - 1);
+            buf[..n].copy_from_slice(&self.name.as_bytes()[..n]);
+            // SAFETY: FFI; pointer is NUL-terminated within `buf`.
+            let _ = unsafe {
+                Bun__linux_trace_emit(
+                    buf.as_ptr() as *const core::ffi::c_char,
+                    i64::try_from(duration).unwrap_or(i64::MAX),
+                )
+            };
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe extern "C" {
+        fn Bun__linux_trace_init() -> core::ffi::c_int;
+        fn Bun__linux_trace_emit(
+            event_name: *const core::ffi::c_char,
+            duration_ns: i64,
+        ) -> core::ffi::c_int;
+    }
 }
 
 // ── form_data ─────────────────────────────────────────────────────────────

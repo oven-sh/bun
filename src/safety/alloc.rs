@@ -8,9 +8,10 @@
 //!
 //! Higher-tier `is_instance` checks (`MimallocArena`, `allocation_scope`,
 //! `LinuxMemFdAllocator`, `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`,
-//! arena vtable) live in crates above `bun_safety` in the dep graph and are
-//! reached via the [`crate::ALLOC_HAS_PTR`] / [`crate::IS_MIMALLOC_ARENA`]
-//! AtomicPtr hooks (CYCLEBREAK §Debug-hook).
+//! arena vtable) live in crates above `bun_safety` in the dep graph; they
+//! register their vtable addresses via [`crate::register_alloc_vtable`] /
+//! [`crate::register_mimalloc_arena_vtable`] at init (data moved down, no
+//! fn-ptr hook).
 
 use core::fmt;
 
@@ -23,11 +24,11 @@ fn has_ptr(alloc: StdAllocator) -> bool {
     core::ptr::eq(alloc.vtable, basic::C_ALLOCATOR.vtable)
         || core::ptr::eq(alloc.vtable, basic::Z_ALLOCATOR.vtable)
         || bun_alloc::String::is_wtf_allocator(alloc)
-        // Higher-tier checks (arena, allocation_scope, LinuxMemFdAllocator,
+        // Higher-tier allocators (arena, allocation_scope, LinuxMemFdAllocator,
         // MaxHeapAllocator, MimallocArena, CachedBytecode, bundle_v2,
-        // heap_breakdown::Zone) are folded into a single hook the runtime
-        // registers at init. Unset hook ⇒ `false` (safe under-approximation).
-        || crate::call_alloc_predicate(&crate::ALLOC_HAS_PTR, alloc)
+        // heap_breakdown::Zone) push their vtable addresses into the registry
+        // at init. Empty registry ⇒ `false` (safe under-approximation).
+        || crate::known_alloc_vtable(alloc)
 }
 
 /// Returns true if the allocators are definitely different.
@@ -193,7 +194,7 @@ impl CheckedAllocator {
                 *self = Self::init(new_std);
                 return;
             };
-            if crate::call_alloc_predicate(&crate::IS_MIMALLOC_ARENA, old_allocator) {
+            if crate::is_mimalloc_arena(old_allocator) {
                 *self = Self::init(new_std);
                 return;
             }

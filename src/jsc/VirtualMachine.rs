@@ -3687,12 +3687,7 @@ impl VirtualMachine {
             // `transpile_source_code` call below; `TranspileExtra` declares
             // `'static` only because it crosses the §Dispatch boundary as
             // `*mut c_void` — the hook never retains the borrow.
-            path: unsafe {
-                core::mem::transmute::<
-                    bun_resolver::fs::Path<'_>,
-                    bun_resolver::fs::Path<'static>,
-                >(lr.path)
-            },
+            path: unsafe { lr.path.into_static() },
             loader: lr.loader.unwrap_or(if lr.is_main {
                 bun_bundler::options::Loader::Js
             } else {

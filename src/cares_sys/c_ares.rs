@@ -1851,19 +1851,19 @@ impl Error {
             return Self::get(ARES_ENOTFOUND);
         }
 
-        match rc {
-            0 => None,
-            1..=ARES_ENOSERVER => {
-                // SAFETY: rc is in [1, ARES_ENOSERVER]; Error is #[repr(i32)] with
-                // contiguous discriminants 1..=ARES_ENOSERVER.
-                Some(unsafe { core::mem::transmute::<i32, Error>(rc) })
-            }
-            n if (-ARES_ENOSERVER..=-1).contains(&n) => {
-                // SAFETY: -rc is in [1, ARES_ENOSERVER].
-                Some(unsafe { core::mem::transmute::<i32, Error>(-rc) })
-            }
-            _ => unreachable!(),
+        if rc == 0 {
+            return None;
         }
+        // c-ares returns positive ARES_* codes; Node's wrapper sometimes negates.
+        // `unsigned_abs` avoids the i32::MIN overflow that `.abs()` would hit.
+        let n = rc.unsigned_abs();
+        assert!(
+            (1..=ARES_ENOSERVER as u32).contains(&n),
+            "c-ares status {rc} out of range",
+        );
+        // SAFETY: `n` is in `1..=ARES_ENOSERVER`; `Error` is `#[repr(i32)]` with
+        // contiguous discriminants `1..=ARES_ENOSERVER`.
+        Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
     }
 }
 

@@ -377,12 +377,10 @@ fn apply_headers(
     // borrowed header slice is deep-copied synchronously by `clone_metadata`
     // inside the same lsquic callback before lsquic frees the hset, so no
     // dangling read occurs (matches Zig semantics).
-    client.state.pending_response =
-        Some(unsafe { core::mem::transmute::<picohttp::Response<'_>, picohttp::Response<'static>>(response) });
+    client.state.pending_response = Some(unsafe { response.detach_lifetime() });
     let should_continue = client.handle_response_metadata(&mut response)?;
     // SAFETY: same lifetime erase as above.
-    client.state.pending_response =
-        Some(unsafe { core::mem::transmute::<picohttp::Response<'_>, picohttp::Response<'static>>(response) });
+    client.state.pending_response = Some(unsafe { response.detach_lifetime() });
     client.state.transfer_encoding = Encoding::Identity;
     if client.state.response_stage == HTTPStage::BodyChunk {
         client.state.response_stage = HTTPStage::Body;

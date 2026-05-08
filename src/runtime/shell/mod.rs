@@ -244,9 +244,9 @@ pub fn needs_escape_utf16(str: &[u16]) -> bool {
 // lifetime on `bun_shell_parser::ast::*<'arena>` carries no information the
 // interpreter can use — threading it through `Interpreter`/`Node`/every state
 // struct would be pure noise. Instead we erase it to `'static` here and store
-// raw pointers; `Interpreter::parse` performs the single lifetime-widening
-// transmute (`Script<'a>` → `Script<'static>`, identical layout) at the
-// arena/state-machine boundary.
+// raw pointers; `ShellArgs::set_script_ast` performs the single
+// lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
+// layout) at the arena/state-machine boundary.
 pub mod ast {
     use bun_shell_parser::parse::ast as p;
     pub use bun_shell_parser::parse::SmolList;

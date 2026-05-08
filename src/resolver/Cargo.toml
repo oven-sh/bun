@@ -32,6 +32,7 @@ bun_glob.workspace = true
 bun_http_types.workspace = true
 bun_install_types.workspace = true
 bun_interchange.workspace = true
+bun_ptr.workspace = true
 bun_resolve_builtins.workspace = true
 bun_js_parser.workspace = true
 bun_logger.workspace = true

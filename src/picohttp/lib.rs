@@ -389,6 +389,27 @@ impl<'a> Request<'a> {
         }
     }
 
+    /// Widen the borrowed slices to `'static` for self-referential storage.
+    ///
+    /// Field-by-field move (no bitwise reinterpret). Used when the request's
+    /// `method`/`path`/`headers` borrow thread-local static buffers
+    /// (`SHARED_REQUEST_HEADERS_BUF`) or a sibling field on the same
+    /// heap-stable owner.
+    ///
+    /// # Safety
+    /// Caller guarantees every borrowed slice outlives the returned value.
+    #[inline]
+    pub unsafe fn detach_lifetime(self) -> Request<'static> {
+        Request {
+            // SAFETY: caller contract.
+            method: unsafe { &*core::ptr::from_ref::<[u8]>(self.method) },
+            path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
+            minor_version: self.minor_version,
+            headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
+            bytes_read: self.bytes_read,
+        }
+    }
+
     pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Request<'a>, ParseRequestError> {
         let mut method_ptr: *const u8 = core::ptr::null();
         let mut method_len: usize = 0;
@@ -590,6 +611,26 @@ impl<'a> Default for Response<'a> {
 }
 
 impl<'a> Response<'a> {
+    /// Widen `status`/`headers` to `'static` for self-referential storage.
+    /// Field-by-field move (no bitwise reinterpret).
+    ///
+    /// # Safety
+    /// Caller guarantees the response buffer / header storage the slices borrow
+    /// outlives every read through the returned value.
+    #[inline]
+    pub unsafe fn detach_lifetime(self) -> Response<'static> {
+        Response {
+            minor_version: self.minor_version,
+            status_code: self.status_code,
+            // SAFETY: caller contract.
+            status: unsafe { &*core::ptr::from_ref::<[u8]>(self.status) },
+            headers: HeaderList {
+                list: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers.list) },
+            },
+            bytes_read: self.bytes_read,
+        }
+    }
+
     pub fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.status);
 

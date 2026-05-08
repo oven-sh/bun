@@ -53,7 +53,7 @@ impl MarkedArgumentBuffer {
         unsafe {
             MarkedArgumentBuffer__run(
                 std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
-                core::mem::transmute::<
+                bun_ptr::cast_fn_ptr::<
                     extern "C" fn(*mut T, *mut MarkedArgumentBuffer),
                     extern "C" fn(*mut c_void, *mut c_void),
                 >(func),

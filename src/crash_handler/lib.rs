@@ -1233,11 +1233,12 @@ pub fn init() {
     {
         // SAFETY: AddVectoredExceptionHandler is a valid Win32 call
         unsafe {
-            // SAFETY: ABI-identical — `*mut EXCEPTION_POINTERS` vs the
-            // type-erased `*mut c_void` in the kernel32 binding.
+            // SAFETY: ABI-identical `extern "system" fn(*mut _) -> i32` —
+            // `*mut EXCEPTION_POINTERS` vs the type-erased `*mut c_void` in
+            // the kernel32 binding, `c_long` == `i32` on Win64.
             let handle = bun_sys::windows::kernel32::AddVectoredExceptionHandler(
                 0,
-                core::mem::transmute::<
+                bun_ptr::cast_fn_ptr::<
                     extern "system" fn(*mut bun_sys::windows::EXCEPTION_POINTERS) -> c_long,
                     unsafe extern "system" fn(*mut core::ffi::c_void) -> i32,
                 >(handle_segfault_windows),

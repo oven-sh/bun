@@ -417,6 +417,24 @@ pub mod api {
         md = 21,
     }
 
+    impl Loader {
+        /// Zig `@enumFromInt` for the schema `Loader` (open `enum(u8)` in Zig).
+        /// Unknown discriminants fall back to `_none`, matching how
+        /// `BundleEnums::Loader::from_api` already guards the open tail.
+        #[inline]
+        pub const fn from_raw(n: u8) -> Loader {
+            match n {
+                1 => Loader::jsx, 2 => Loader::js, 3 => Loader::ts, 4 => Loader::tsx,
+                5 => Loader::css, 6 => Loader::file, 7 => Loader::json, 8 => Loader::jsonc,
+                9 => Loader::toml, 10 => Loader::wasm, 11 => Loader::napi, 12 => Loader::base64,
+                13 => Loader::dataurl, 14 => Loader::text, 15 => Loader::bunsh,
+                16 => Loader::sqlite, 17 => Loader::sqlite_embedded, 18 => Loader::html,
+                19 => Loader::yaml, 20 => Loader::json5, 21 => Loader::md,
+                _ => Loader::_none,
+            }
+        }
+    }
+
     /// schema.zig:2200 — `enum(u8)` (open). Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

@@ -255,9 +255,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         })?;
 
-        // SAFETY: every element of `out` was written in the loop above (loop runs exactly N times)
-        Ok(unsafe { core::mem::transmute_copy::<_, [Expr; N]>(&out) })
-        // TODO(port): use `MaybeUninit::array_assume_init` once stable
+        // SAFETY: every element of `out` was written in the loop above (loop
+        // runs exactly N times). `Expr` is `Copy`, so by-value `assume_init`
+        // per element is equivalent to `MaybeUninit::array_assume_init`.
+        Ok(out.map(|e| unsafe { e.assume_init() }))
     }
 
     pub fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
@@ -282,7 +283,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ref_)
     }
 
-    pub fn to_bundled_ast(&mut self, target: options::Target) -> Result<js_ast::BundledAst<'_>, OOM> {
+    // PORT NOTE: returns `BundledAst<'static>` (== `JSAst`) directly. The only
+    // `'arena`-carrying field, `url_for_css`, is always set to `b""` here, and
+    // every other field stores arena data via raw pointers / `StoreSlice`, so
+    // nothing borrows `&mut self` past this call.
+    pub fn to_bundled_ast(&mut self, target: options::Target) -> Result<js_ast::BundledAst<'static>, OOM> {
         // TODO: missing import scanner
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;

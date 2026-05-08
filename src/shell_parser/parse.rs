@@ -22,7 +22,8 @@ type CodepointCursor = strings::Cursor;
 /// Opaque stand-in for `bun_jsc::JSValue` — the parser only *stores* the
 /// jsobjs slice (never inspects it), so the lower-tier crate can stay
 /// JSC-free. `bun_jsc::JSValue` is `#[repr(transparent)] usize`, so callers
-/// in `bun_runtime` may safely transmute `&mut [JSValue]` ↔ `&mut [JSValueRaw]`.
+/// in `bun_runtime` may safely reinterpret `&mut [JSValue]` ↔ `&mut [JSValueRaw]`
+/// via a typed pointer cast.
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct JSValueRaw(pub usize);

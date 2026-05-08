@@ -251,12 +251,10 @@ pub(super) mod dc {
     pub fn decl_handler_static<'a>(
         h: &'a mut crate::DeclarationHandler<'_>,
     ) -> &'a mut crate::DeclarationHandler<'static> {
-        unsafe {
-            core::mem::transmute::<
-                &'a mut crate::DeclarationHandler<'_>,
-                &'a mut crate::DeclarationHandler<'static>,
-            >(h)
-        }
+        // Inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
+        // and `DeclarationHandler<'static>` share layout; only the borrowck tag
+        // on the arena handle differs. See SAFETY note above.
+        unsafe { &mut *core::ptr::from_mut(h).cast::<crate::DeclarationHandler<'static>>() }
     }
 
     /// `MediaList::deep_clone` — routes to the real arena-aware impl in

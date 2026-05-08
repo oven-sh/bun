@@ -1458,6 +1458,46 @@ impl<'a> Match<'a> {
         unsafe { &mut *self.params }
     }
 
+    /// Widen all borrowed slices to `'static` for self-referential storage.
+    ///
+    /// Field-by-field move (no bitwise reinterpret). Used by `MatchedRoute`
+    /// (bun_runtime), which moves the backing `pathname_backing` buffer into
+    /// the same heap-stable `Box` that holds this `Match` — see the SAFETY
+    /// note at that call site for the full invariant.
+    ///
+    /// # Safety
+    /// Caller guarantees every borrowed slice (and `*params`' element slices)
+    /// outlives the returned value.
+    #[inline]
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn detach_lifetime(self) -> Match<'static> {
+        // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
+        // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
+        // so the direct call sites below need no per-line `unsafe { }`. The
+        // `.map` closure body is not an unsafe context, so that one site spells
+        // `unsafe { d(s) }` explicitly.
+        #[inline(always)]
+        unsafe fn d(s: &[u8]) -> &'static [u8] {
+            // SAFETY: caller contract on `detach_lifetime` — every borrowed
+            // slice outlives the returned `Match<'static>`.
+            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
+        }
+        Match {
+            path: d(self.path),
+            pathname: d(self.pathname),
+            file_path: d(self.file_path),
+            name: d(self.name),
+            client_framework_enabled: self.client_framework_enabled,
+            basename: d(self.basename),
+            hash: self.hash,
+            // Raw pointer; lifetime parameter on the pointee is phantom for the
+            // pointer value itself.
+            params: self.params.cast::<route_param::List<'static>>(),
+            redirect_path: self.redirect_path.map(|s| unsafe { d(s) }),
+            query_string: d(self.query_string),
+        }
+    }
+
     #[inline]
     pub fn has_params(&self) -> bool {
         // SAFETY: producers (`Routes::match_page*`) always set `params` to a

@@ -356,8 +356,7 @@ impl IdentOrRef {
     }
 
     pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
-        // SAFETY: Ref is #[repr(transparent)] over u64 (bun_logger::Ref / js_ast Ref).
-        let len: u64 = unsafe { core::mem::transmute::<Ref, u64>(r) };
+        let len: u64 = r.to_raw_bits();
         #[allow(unused_mut)]
         let mut this = Self::pack(0, true, len);
 
@@ -403,9 +402,8 @@ impl IdentOrRef {
     #[inline]
     pub fn as_ref(self) -> Option<Ref> {
         if self.ref_bit() {
-            // SAFETY: len_bits stores the exact u64 bit pattern written by from_ref
-            let out: Ref = unsafe { core::mem::transmute::<u64, Ref>(self.len_bits()) };
-            return Some(out);
+            // len_bits stores the exact u64 bit pattern written by from_ref
+            return Some(Ref::from_raw_bits(self.len_bits()));
         }
         None
     }

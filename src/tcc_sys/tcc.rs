@@ -229,10 +229,11 @@ impl State {
         error_opaque: Option<*mut Context>,
         error_func: ErrorFunc<Context>,
     ) {
-        // SAFETY: ErrorFunc<Context> is ABI-identical to the untyped TCCErrorFunc inner fn;
-        // mirrors Zig `@ptrCast(errorFunc)`.
+        // SAFETY: ErrorFunc<Context> is ABI-identical to the untyped TCCErrorFunc inner fn
+        // (both `extern "C" fn(*mut _, *const c_char)`, differing only in the opaque
+        // pointee type); mirrors Zig `@ptrCast(errorFunc)`.
         let erased: TCCErrorFunc = Some(unsafe {
-            core::mem::transmute::<ErrorFunc<Context>, unsafe extern "C" fn(*mut c_void, *const c_char)>(
+            bun_ptr::cast_fn_ptr::<ErrorFunc<Context>, unsafe extern "C" fn(*mut c_void, *const c_char)>(
                 error_func,
             )
         });
@@ -486,7 +487,7 @@ impl State {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param); mirrors Zig's implicit ptrcast.
         let erased = symbol_cb.map(|f| unsafe {
-            core::mem::transmute::<SymbolCallback, unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void)>(f)
+            bun_ptr::cast_fn_ptr::<SymbolCallback, unsafe extern "C" fn(*mut c_void, *const c_char, *const c_void)>(f)
         });
         // SAFETY: self is a valid *mut TCCState.
         unsafe { tcc_list_symbols(self, ctx, erased) }

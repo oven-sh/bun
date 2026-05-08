@@ -78,11 +78,14 @@ impl Flags {
     }
     #[inline]
     fn result_mode(self) -> SQLQueryResultMode {
-        // SAFETY: result_mode bits were written from a valid SQLQueryResultMode discriminant.
-        unsafe {
-            core::mem::transmute::<u8, SQLQueryResultMode>(
-                (self.0 & Self::RESULT_MODE_MASK) >> Self::RESULT_MODE_SHIFT,
-            )
+        // result_mode bits were written from a valid SQLQueryResultMode
+        // discriminant (`set_result_mode`); the unreachable 4th bit-state
+        // traps (matches Zig's safety-checked `@enumFromInt`).
+        match (self.0 & Self::RESULT_MODE_MASK) >> Self::RESULT_MODE_SHIFT {
+            0 => SQLQueryResultMode::Objects,
+            1 => SQLQueryResultMode::Values,
+            2 => SQLQueryResultMode::Raw,
+            n => unreachable!("invalid SQLQueryResultMode {n}"),
         }
     }
     #[inline]

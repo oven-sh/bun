@@ -135,17 +135,17 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
 impl From<ZigString> for bun_string::ZigString {
     #[inline]
     fn from(z: ZigString) -> Self {
-        // SAFETY: both are `#[repr(C)] struct { *const u8, usize }` with identical
-        // pointer-tag encoding (see `bun_string::ZigString` and the struct above).
-        unsafe { core::mem::transmute::<ZigString, bun_string::ZigString>(z) }
+        // Both are `#[repr(C)] struct { *const u8, usize }` with identical
+        // pointer-tag encoding; move the tagged pointer through verbatim.
+        bun_string::ZigString::from_tagged_ptr(z._unsafe_ptr_do_not_use, z.len)
     }
 }
 impl From<bun_string::ZigString> for ZigString {
     #[inline]
     fn from(z: bun_string::ZigString) -> Self {
-        // SAFETY: both are `#[repr(C)] struct { *const u8, usize }` with identical
-        // pointer-tag encoding (see `bun_string::ZigString` and the struct above).
-        unsafe { core::mem::transmute::<bun_string::ZigString, ZigString>(z) }
+        // Both are `#[repr(C)] struct { *const u8, usize }` with identical
+        // pointer-tag encoding; move the tagged pointer through verbatim.
+        ZigString { _unsafe_ptr_do_not_use: z.tagged_ptr(), len: z.len }
     }
 }
 impl From<ZigString> for bun_string::String {

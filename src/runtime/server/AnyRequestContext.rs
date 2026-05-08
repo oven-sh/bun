@@ -215,9 +215,9 @@ impl AnyRequestContext {
         // SAFETY: server backref outlives any AnyRequestContext (held only for
         // the duration of a request callback). `self` is a by-value tagged
         // pointer, so there is no input lifetime to tie the borrow to.
-        dispatch!(self, None, |_T, ctx| unsafe {
-            core::mem::transmute::<Option<&_>, Option<&'static _>>(ctx.dev_server())
-        })
+        dispatch!(self, None, |_T, ctx| ctx
+            .dev_server()
+            .map(|r| unsafe { bun_ptr::detach_lifetime_ref(r) }))
     }
 
     /// Mutable access to the attached DevServer. Zig passed `*DevServer`

@@ -948,10 +948,10 @@ fn debug_css_order_impl(
         let arena = bun_alloc::Arena::new();
         let parse_graph = this.parse_graph();
         let ast_urls_for_css = parse_graph.ast.items_url_for_css();
-        // SAFETY: `Box<[u8]>` and `&[u8]` are both `(ptr, len)` fat pointers with identical
-        // layout; the column slice is reinterpreted read-only for the duration of `to_css`.
+        // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
+        // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
         let unique_keys: &[&[u8]] = unsafe {
-            core::mem::transmute::<&[Box<[u8]>], &[&[u8]]>(
+            bun_ptr::boxed_slices_as_borrowed(
                 parse_graph.input_files.items_unique_key_for_additional_file(),
             )
         };

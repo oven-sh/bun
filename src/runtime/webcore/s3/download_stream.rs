@@ -26,7 +26,7 @@ pub struct S3HttpDownloadStreamingTask {
     pub headers: Headers,
     pub callback_context: NonNull<()>,
     /// this transfers ownership from the chunk
-    pub callback: fn(chunk: MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut ()),
+    pub callback: fn(chunk: MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
     pub has_schedule_callback: AtomicBool,
     pub signal_store: bun_http::signals::Store,
     pub signals: Signals,
@@ -318,12 +318,14 @@ impl S3HttpDownloadStreamingTask {
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
     pub fn http_callback(
         this: *mut Self,
-        async_http: &mut AsyncHTTP<'static>,
+        async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult,
     ) {
         // SAFETY: `this` is live for the duration of the HTTP request; HTTPThread holds the only
         // concurrent reference and `mutex` serializes against `on_response`.
         let self_ = unsafe { &mut *this };
+        // SAFETY: `async_http` is the live HTTP-thread copy; non-null for the callback's duration.
+        let async_http = unsafe { &mut *async_http };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
             let task = std::ptr::from_mut::<ConcurrentTask>(self_

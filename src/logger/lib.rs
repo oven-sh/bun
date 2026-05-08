@@ -381,6 +381,19 @@ impl Ref {
     /// Represents a null state without using an extra bit.
     pub const NONE: Ref = Ref(0); // tag=Invalid, inner=0, src=0
 
+    /// Raw 64-bit representation **including** user bits. For round-tripping
+    /// through external pointer-packed storage (e.g. css `IdentOrRef`). Differs
+    /// from [`Self::as_u64`], which masks user bits for hashing/equality.
+    #[inline]
+    pub const fn to_raw_bits(self) -> u64 {
+        self.0
+    }
+    /// Reconstruct from a value previously returned by [`Self::to_raw_bits`].
+    #[inline]
+    pub const fn from_raw_bits(bits: u64) -> Ref {
+        Ref(bits)
+    }
+
     /// General constructor exposing all three packed fields. Prefer `init` for
     /// the common source-contents/allocated-name case; this exists for callers
     /// that need to set `tag` explicitly (e.g. `RefTag::Symbol`).

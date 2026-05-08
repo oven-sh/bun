@@ -208,7 +208,13 @@ impl String {
         // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` at comptime.
         struct AssertPtrSized<C>(core::marker::PhantomData<C>);
         impl<C> AssertPtrSized<C> {
-            const OK: () = assert!(core::mem::size_of::<C>() == core::mem::size_of::<*mut c_void>());
+            const OK: () = {
+                assert!(core::mem::size_of::<C>() == core::mem::size_of::<*mut c_void>());
+                // The bit-reinterpret below reads `*mut c_void` out of a stack
+                // slot aligned for `Ctx`; rule out a `Ctx` like `[u8; 8]`
+                // (align 1) which would make that read under-aligned.
+                assert!(core::mem::align_of::<C>() >= core::mem::align_of::<*mut c_void>());
+            };
         }
         let () = AssertPtrSized::<Ctx>::OK;
         debug_assert!(!bytes.is_empty());
@@ -216,18 +222,19 @@ impl String {
             callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len() as u32);
             return Self::DEAD;
         }
-        // SAFETY: Ctx is pointer-sized (asserted); the C ABI for the callback
-        // is identical with Ctx erased to *mut c_void.
-        let ctx_erased: *mut c_void = unsafe { core::mem::transmute_copy(&ctx) };
         // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` (raw pointer, no
         // destructor). The Rust const-assert only checks size, so an owning
         // pointer-sized `Ctx` (e.g. `Box<T>`) would otherwise be dropped here
         // and later double-freed by the WTF finalizer. Ownership transfers to
         // the external string; suppress the local drop.
-        core::mem::forget(ctx);
+        let ctx = core::mem::ManuallyDrop::new(ctx);
+        // SAFETY: Ctx is pointer-sized and pointer-aligned (const-asserted
+        // above); read the bits as `*mut c_void`.
+        let ctx_erased: *mut c_void =
+            unsafe { core::ptr::from_ref::<Ctx>(&*ctx).cast::<*mut c_void>().read() };
         let cb_erased: Option<extern "C" fn(*mut c_void, *mut c_void, u32)> =
             // SAFETY: same ABI; first param erased per the const-assert above.
-            Some(unsafe { core::mem::transmute::<
+            Some(unsafe { bun_ptr::cast_fn_ptr::<
                 ExternalStringImplFreeFunction<Ctx>,
                 extern "C" fn(*mut c_void, *mut c_void, u32),
             >(callback) });
@@ -1228,6 +1235,19 @@ impl ZigString {
 
     #[inline]
     pub const fn is_empty(&self) -> bool { self.len == 0 }
+
+    /// Construct from an already-tagged pointer + length pair. Exists so the
+    /// `bun_jsc::ZigString` mirror (identical `#[repr(C)] { *const u8, usize }`,
+    /// same tag-bit scheme) can convert field-by-field instead of `transmute`.
+    /// `ptr` is stored verbatim — tag bits are not touched.
+    #[inline]
+    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
+        Self { ptr, len }
+    }
+    /// Raw tagged pointer (top-bit flags intact). Pair with
+    /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
+    #[inline]
+    pub const fn tagged_ptr(&self) -> *const u8 { self.ptr }
 
     #[inline]
     pub const fn init(s: &[u8]) -> Self {

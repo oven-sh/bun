@@ -50,10 +50,30 @@ impl Context {
         }
 
         let uu_gb = uucode::get(uucode::Field::GraphemeBreakNoControl, cp);
-        // SAFETY: GraphemeBreakNoControl has the same discriminants as the
-        // uucode grapheme_break_no_control enum (asserted by the doc comment
-        // "Must be kept in sync").
-        Ok(unsafe { core::mem::transmute::<u8, GraphemeBreakNoControl>(uu_gb as u8) })
+        // GraphemeBreakNoControl has the same discriminants as the uucode
+        // grapheme_break_no_control enum (asserted by the doc comment
+        // "Must be kept in sync"); decode by exhaustive match so a divergence
+        // panics here instead of producing an invalid discriminant.
+        Ok(match uu_gb as u8 {
+            0 => GraphemeBreakNoControl::Other,
+            1 => GraphemeBreakNoControl::Prepend,
+            2 => GraphemeBreakNoControl::RegionalIndicator,
+            3 => GraphemeBreakNoControl::SpacingMark,
+            4 => GraphemeBreakNoControl::L,
+            5 => GraphemeBreakNoControl::V,
+            6 => GraphemeBreakNoControl::T,
+            7 => GraphemeBreakNoControl::Lv,
+            8 => GraphemeBreakNoControl::Lvt,
+            9 => GraphemeBreakNoControl::Zwj,
+            10 => GraphemeBreakNoControl::Zwnj,
+            11 => GraphemeBreakNoControl::ExtendedPictographic,
+            12 => GraphemeBreakNoControl::EmojiModifierBase,
+            13 => GraphemeBreakNoControl::EmojiModifier,
+            14 => GraphemeBreakNoControl::IndicConjunctBreakExtend,
+            15 => GraphemeBreakNoControl::IndicConjunctBreakLinker,
+            16 => GraphemeBreakNoControl::IndicConjunctBreakConsonant,
+            n => unreachable!("invalid GraphemeBreakNoControl {n}"),
+        })
     }
 
     pub fn eql(&self, a: GraphemeBreakNoControl, b: GraphemeBreakNoControl) -> bool {

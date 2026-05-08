@@ -4382,15 +4382,13 @@ impl<C> ResolveWatcher<C> {
         Self { on_watch, _marker: core::marker::PhantomData }
     }
     pub fn init(self, ctx: *mut C) -> AnyResolveWatcher {
-        unsafe fn erase<C>(_: unsafe fn(*mut C, &[u8], FD)) {}
-        let _ = erase::<C>; // monomorphization witness
         AnyResolveWatcher {
             context: ctx.cast(),
             // SAFETY: `unsafe fn(*mut C, ..)` and `unsafe fn(*mut (), ..)` are
             // ABI-identical; the `wrap` shim in Zig did the same erase. The
             // callback's safety contract is preserved (still `unsafe fn`).
             callback: unsafe {
-                core::mem::transmute::<unsafe fn(*mut C, &[u8], FD), unsafe fn(*mut (), &[u8], FD)>(
+                bun_ptr::cast_fn_ptr::<unsafe fn(*mut C, &[u8], FD), unsafe fn(*mut (), &[u8], FD)>(
                     self.on_watch,
                 )
             },

@@ -45,9 +45,20 @@ fn create_external_globally_allocated_utf16(bytes: Vec<u16>) -> BunString {
 /// discriminants `0..=8`). Local because the enum lives in `bun_string`.
 #[inline(always)]
 const fn encoding_from_u8(n: u8) -> Encoding {
-    debug_assert!(n <= Encoding::Buffer as u8);
-    // SAFETY: Encoding is #[repr(u8)] with contiguous discriminants 0..=8.
-    unsafe { core::mem::transmute::<u8, Encoding>(n) }
+    // `n` is always a monomorphized `const ENCODING: u8` from the `enc::*`
+    // table below, so the optimizer folds this match away entirely.
+    match n {
+        0 => Encoding::Utf8,
+        1 => Encoding::Ucs2,
+        2 => Encoding::Utf16le,
+        3 => Encoding::Latin1,
+        4 => Encoding::Ascii,
+        5 => Encoding::Base64,
+        6 => Encoding::Base64url,
+        7 => Encoding::Hex,
+        8 => Encoding::Buffer,
+        _ => unreachable!(),
+    }
 }
 
 /// `Encoding` discriminants as `u8` consts for use in `const ENCODING: u8`

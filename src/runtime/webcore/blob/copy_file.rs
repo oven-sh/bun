@@ -1511,13 +1511,13 @@ impl<'a> CopyFileWindows<'a> {
                     Some(on_chmod),
                 );
 
-                if let Some(errno) = rc.errno() {
-                    // chmod failed to start - reject the promise to report the error
-                    let mut err = bun_sys::Error::from_code(
-                        // SAFETY: errno is a valid SystemErrno discriminant
-                        unsafe { core::mem::transmute::<c_int, bun_sys::SystemErrno>(errno) },
-                        bun_sys::Tag::chmod,
-                    );
+                // chmod failed to start - reject the promise to report the error.
+                // PORT NOTE: previously `transmute::<c_int, SystemErrno>(errno)` — wrong on
+                // two counts: `errno` is `u16` (size mismatch with `c_int`), and libuv
+                // negative codes are NOT `SystemErrno` discriminants on Windows. Route
+                // through `Error::from_uv_rc` so `from_libuv` is set and translation is
+                // deferred to display, matching the other libuv error paths in this file.
+                if let Some(mut err) = bun_sys::Error::from_uv_rc(rc, bun_sys::Tag::chmod) {
                     let destination = &self.destination_file_store.data.as_file();
                     if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
                         err = err.with_path(p.slice());

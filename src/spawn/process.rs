@@ -787,13 +787,7 @@ impl Status {
             Status::Exited(exit) => exit.signal,
             _ => return None,
         };
-        if raw > 0 && raw <= bun_core::SignalCode::SIGSYS as u8 {
-            // SAFETY: range-checked 1..=31; SignalCode is #[repr(u8)] with exactly
-            // those discriminants.
-            Some(unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(raw) })
-        } else {
-            None
-        }
+        bun_core::SignalCode::from_raw(raw)
     }
 }
 

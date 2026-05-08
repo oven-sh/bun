@@ -65,8 +65,8 @@ pub use super::dev_server_body::{
     Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch, TestingBatchEvents,
 };
 
-/// `DevServer.FileKind` — must match `bun_bundler::bake_types::CacheKind`
-/// discriminants exactly (the vtable boundary transmutes between them).
+/// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
+/// (the vtable boundary maps between them via an exhaustive match).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FileKind {
@@ -1098,9 +1098,16 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             // Vtable slot already passes `bake_types::Graph` (DevServer.zig:2128
             // takes `bake.Graph`); no widening needed.
             dev.is_file_cached(abs_path, side).map(|e| {
+                use bun_bundler::bake_types::CacheKind;
                 bun_bundler::bake_types::CacheEntry {
-                    // SAFETY: FileKind/CacheKind have identical #[repr(u8)] discriminants.
-                    kind: unsafe { core::mem::transmute::<FileKind, _>(e.kind) },
+                    // FileKind/CacheKind have identical #[repr(u8)] discriminants;
+                    // map explicitly so the optimizer collapses to the identity move.
+                    kind: match e.kind {
+                        FileKind::Unknown => CacheKind::Unknown,
+                        FileKind::Js => CacheKind::Js,
+                        FileKind::Asset => CacheKind::Asset,
+                        FileKind::Css => CacheKind::Css,
+                    },
                 }
             })
         },

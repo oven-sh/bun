@@ -119,7 +119,7 @@ impl<T, C> New<T, C> {
             // ABI (single code pointer, two pointer-sized args). This is the moral
             // equivalent of Zig's `wrap` thunk that `@ptrCast`/`@alignCast`s the args.
             callback: unsafe {
-                core::mem::transmute::<fn(*mut T, *mut C), fn(*mut (), *mut ())>(callback)
+                bun_ptr::cast_fn_ptr::<fn(*mut T, *mut C), fn(*mut (), *mut ())>(callback)
             },
             ctx: NonNull::new(ctx.cast::<()>()),
             next: core::ptr::null_mut(),

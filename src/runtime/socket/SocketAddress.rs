@@ -592,9 +592,8 @@ impl SocketAddress {
     /// - [RFC 6437](https://tools.ietf.org/html/rfc6437)
     pub fn flow_label(&self) -> Option<u32> {
         if self.family() == AF::INET6 {
-            // SAFETY: family() == INET6 guarantees sin6 variant is active; same-size POD bitcast
-            let in6: inet::sockaddr_in6 = unsafe { mem::transmute_copy(&self._addr) };
-            Some(in6.flowinfo)
+            // SAFETY: family() == INET6 guarantees the `sin6` union variant is active.
+            Some(unsafe { self._addr.sin6 }.flowinfo)
         } else {
             None
         }

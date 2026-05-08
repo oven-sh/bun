@@ -258,6 +258,83 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
 /// slightly different names; both are kept so callers from either land cleanly.
 pub use detach_lifetime_ref as detach_ref;
 
+/// Reinterpret `&[Box<[T]>]` as `&[&[T]]` for read-only fan-out.
+///
+/// `Box<[T]>` and `&[T]` are both `(NonNull<T>, len: usize)` fat pointers with
+/// identical layout (guaranteed by the unsized-pointer ABI), so a column of
+/// owned boxed slices can be viewed as a column of borrows without copying.
+/// Used by the bundler's SoA columns (`items_unique_key_for_additional_file`)
+/// where the printer API wants `&[&[u8]]`.
+///
+/// The returned borrows are valid for the input borrow `'a` only — the boxes
+/// are not moved or dropped while the view is live.
+///
+/// # Safety
+/// Relies on `Box<[T]>` and `&[T]` having identical fat-pointer **field
+/// order** (data-ptr then len). This is de-facto stable on every supported
+/// rustc but is not a language guarantee — the const block below proves only
+/// size/align. `unsafe` + `#[doc(hidden)]` so the layout assumption stays
+/// visible at each call site rather than inviting new callers; do not use
+/// outside the bundler SoA-column read-only fan-out it was written for.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
+    const {
+        assert!(core::mem::size_of::<Box<[T]>>() == core::mem::size_of::<&[T]>());
+        assert!(core::mem::align_of::<Box<[T]>>() == core::mem::align_of::<&[T]>());
+    }
+    // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
+    // element is a valid non-null `(ptr, len)` pair, which is exactly the
+    // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
+    let view: &[&[T]] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
+    // Fat-pointer field order (ptr-then-len) is de-facto stable but not
+    // language-guaranteed; spot-check first+last in debug so an ABI flip
+    // would trip here rather than silently misbehaving downstream. (Checking
+    // every element is O(n) per call and the bundler passes thousands of
+    // entries inside per-chunk loops; first/last is sufficient to detect a
+    // field-order swap since it would affect every element uniformly.)
+    #[cfg(debug_assertions)]
+    if let (Some(bf), Some(bl)) = (s.first(), s.last()) {
+        let (vf, vl) = (view[0], view[view.len() - 1]);
+        debug_assert!(bf.as_ptr() == vf.as_ptr() && bf.len() == vf.len());
+        debug_assert!(bl.as_ptr() == vl.as_ptr() && bl.len() == vl.len());
+    }
+    view
+}
+
+/// Reinterpret a fn pointer between two ABI-identical signatures.
+///
+/// Rust forbids `as`-casting between fn-pointer types even when the only
+/// difference is the pointee type of a `*mut T` parameter, so the Zig
+/// `@ptrCast` of a comptime fn item has no direct safe spelling. This is the
+/// single audited bit-cast for that pattern; callers state the source and
+/// destination signatures explicitly. The const-assert below catches a
+/// non-pointer-sized `F`/`G` at compile time — it does **not** verify that
+/// `F`/`G` are fn-pointer types or that their arity/ABI match (all fn
+/// pointers are pointer-sized regardless of arity); those remain caller
+/// contract.
+///
+/// # Safety
+/// `F` and `G` must be fn-pointer types with the **same calling convention,
+/// arity, and ABI** — they may differ only in the nominal pointee type of
+/// thin-pointer parameters that the callee casts back before use.
+#[inline(always)]
+pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
+    const {
+        assert!(core::mem::size_of::<F>() == core::mem::size_of::<fn()>());
+        assert!(core::mem::size_of::<G>() == core::mem::size_of::<fn()>());
+        // `read` below pulls a `G` out of a stack slot aligned for `F`; rule
+        // out under-alignment so the bitcast stays defined even if a caller
+        // smuggles in a non-fn-ptr `Copy` type.
+        assert!(core::mem::align_of::<F>() == core::mem::align_of::<fn()>());
+        assert!(core::mem::align_of::<G>() == core::mem::align_of::<fn()>());
+    }
+    // SAFETY: caller contract — `F` and `G` are ABI-identical fn pointers.
+    // `read` of a pointer-sized `Copy` value through a same-size cast is the
+    // bitwise reinterpretation `@ptrCast` performs.
+    unsafe { (&raw const f).cast::<G>().read() }
+}
+
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
 /// Runtime sibling of `bun_js_parser::StoreSlice<T>` for `*const [T]` struct

@@ -22,9 +22,9 @@ impl ApiLoader {
     /// contract (headers-handwritten.h keeps the discriminants in sync).
     fn to_schema(self) -> api::Loader {
         debug_assert_ne!(self, Self::NONE);
-        // SAFETY: `api::Loader` is `#[repr(u8)]` and the C++ caller passes a
-        // valid `BunLoaderType` discriminant per headers-handwritten.h.
-        unsafe { core::mem::transmute::<u8, api::Loader>(self.0) }
+        // C++ caller passes a valid `BunLoaderType` discriminant per
+        // headers-handwritten.h; `from_raw` maps unknowns to `_none`.
+        api::Loader::from_raw(self.0)
     }
 }
 

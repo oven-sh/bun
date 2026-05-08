@@ -226,6 +226,26 @@ pub enum SignalCode {
 impl SignalCode {
     pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
 
+    /// Zig `@enumFromInt` for the closed `1..=31` range. Returns `None` for
+    /// `0` or any out-of-range value (the open Zig enum's `_` tail).
+    #[inline]
+    pub const fn from_raw(n: u8) -> Option<SignalCode> {
+        match n {
+            1 => Some(Self::SIGHUP), 2 => Some(Self::SIGINT), 3 => Some(Self::SIGQUIT),
+            4 => Some(Self::SIGILL), 5 => Some(Self::SIGTRAP), 6 => Some(Self::SIGABRT),
+            7 => Some(Self::SIGBUS), 8 => Some(Self::SIGFPE), 9 => Some(Self::SIGKILL),
+            10 => Some(Self::SIGUSR1), 11 => Some(Self::SIGSEGV), 12 => Some(Self::SIGUSR2),
+            13 => Some(Self::SIGPIPE), 14 => Some(Self::SIGALRM), 15 => Some(Self::SIGTERM),
+            16 => Some(Self::SIG16), 17 => Some(Self::SIGCHLD), 18 => Some(Self::SIGCONT),
+            19 => Some(Self::SIGSTOP), 20 => Some(Self::SIGTSTP), 21 => Some(Self::SIGTTIN),
+            22 => Some(Self::SIGTTOU), 23 => Some(Self::SIGURG), 24 => Some(Self::SIGXCPU),
+            25 => Some(Self::SIGXFSZ), 26 => Some(Self::SIGVTALRM), 27 => Some(Self::SIGPROF),
+            28 => Some(Self::SIGWINCH), 29 => Some(Self::SIGIO), 30 => Some(Self::SIGPWR),
+            31 => Some(Self::SIGSYS),
+            _ => None,
+        }
+    }
+
     /// Zig: `SignalCode.name(self) ?[]const u8` — maps a signal to its
     /// canonical `"SIGxxx"` name. The bun_core enum is exhaustive (1..=31),
     /// so every variant has a name; the `Option` in bun_sys exists only for

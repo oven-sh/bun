@@ -340,8 +340,16 @@ pub mod ssl_wrapper {
 
         #[inline]
         pub fn handshake_state(&self) -> HandshakeState {
-            // SAFETY: bits 0-1 are always written via set_handshake_state with a valid #[repr(u8)] discriminant in range 0..=2.
-            unsafe { core::mem::transmute::<u8, HandshakeState>(self.0 & Self::HANDSHAKE_MASK) }
+            // bits 0-1 are always written via set_handshake_state with a valid
+            // discriminant in range 0..=2; the 4th bit-state traps (matches
+            // Zig's safety-checked `@enumFromInt`) rather than silently
+            // folding bitfield corruption to a valid variant.
+            match self.0 & Self::HANDSHAKE_MASK {
+                0 => HandshakeState::HandshakePending,
+                1 => HandshakeState::HandshakeCompleted,
+                2 => HandshakeState::HandshakeRenegotiationPending,
+                n => unreachable!("invalid HandshakeState {n}"),
+            }
         }
         #[inline]
         pub fn set_handshake_state(&mut self, s: HandshakeState) {
@@ -1311,6 +1319,16 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
     #[inline]
     pub const fn assume_tcp(self) -> NewSocketHandler<false> {
         debug_assert!(!SSL);
+        NewSocketHandler { socket: self.socket }
+    }
+
+    /// Reinterpret the const-generic discriminant to an arbitrary `NEW_SSL`.
+    /// Generic counterpart of [`Self::assume_ssl`]/[`Self::assume_tcp`] for
+    /// callers inside an `if IS_SSL { ... }` arm that need to widen a concrete
+    /// `NewSocketHandler<true>` back to the surrounding `NewSocketHandler<IS_SSL>`.
+    #[inline]
+    pub const fn cast_ssl<const NEW_SSL: bool>(self) -> NewSocketHandler<NEW_SSL> {
+        debug_assert!(SSL == NEW_SSL);
         NewSocketHandler { socket: self.socket }
     }
 

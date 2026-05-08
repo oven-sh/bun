@@ -725,10 +725,7 @@ fn send_sync_callback(
     // response buffer, which is the caller's buffer — outlives the read in
     // `send_sync`.
     unsafe {
-        (*this).write_item(core::mem::transmute::<
-            HTTPClientResult<'_>,
-            HTTPClientResult<'static>,
-        >(result));
+        (*this).write_item(result.detach_lifetime());
     }
 }
 
@@ -1001,8 +998,16 @@ impl AtomicState {
         self.0.store(s as u32, order);
     }
     pub fn load(&self, order: Ordering) -> State {
-        // SAFETY: only ever stored via `store` above with valid `State` discriminants.
-        unsafe { core::mem::transmute::<u32, State>(self.0.load(order)) }
+        // Only ever stored via `store` above with valid discriminants; the
+        // wildcard arm is statically unreachable but keeps the match safe.
+        match self.0.load(order) {
+            0 => State::Pending,
+            1 => State::Scheduled,
+            2 => State::Sending,
+            3 => State::Success,
+            4 => State::Fail,
+            _ => unreachable!("invalid AsyncHTTP::State discriminant"),
+        }
     }
 }
 

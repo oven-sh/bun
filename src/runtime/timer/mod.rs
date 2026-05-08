@@ -780,8 +780,14 @@ impl Default for ID {
 impl ID {
     #[inline]
     pub fn async_id(self) -> u64 {
-        // SAFETY: ID is #[repr(C)] {i32, u32-repr enum} = 8 bytes
-        unsafe { core::mem::transmute::<ID, u64>(self) }
+        // Zig `@bitCast(extern struct { i32, u32 })`: 8 bytes, field order
+        // `id` then `kind`. Reassemble via native-endian byte concat so the
+        // value matches the prior bitcast on every supported target without
+        // relying on struct-layout reinterpretation.
+        let mut bytes = [0u8; 8];
+        bytes[..4].copy_from_slice(&self.id.to_ne_bytes());
+        bytes[4..].copy_from_slice(&(self.kind as u32).to_ne_bytes());
+        u64::from_ne_bytes(bytes)
     }
     #[inline]
     pub fn repeats(self) -> bool {

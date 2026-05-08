@@ -1780,17 +1780,23 @@ impl TestCommand {
 
         // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
         // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
-        // backing `Vec`s live in `ctx` for the process lifetime.
-        let concurrent_test_glob_view: Option<Vec<&[u8]>> = ctx
+        // backing `Vec`s live in `ctx` for the process lifetime, so each element
+        // is detached to `&'static [u8]` up front (lets the outer view detach to
+        // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
+        let concurrent_test_glob_view: Option<Vec<&'static [u8]>> = ctx
             .test_options
             .concurrent_test_glob
             .as_ref()
-            .map(|v| v.iter().map(|b| &**b).collect());
-        let path_ignore_patterns_view: Vec<&[u8]> = ctx
+            .map(|v| {
+                v.iter()
+                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+                    .collect()
+            });
+        let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
             .test_options
             .path_ignore_patterns
             .iter()
-            .map(|b| &**b)
+            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
             .collect();
 
         // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
@@ -1808,7 +1814,7 @@ impl TestCommand {
                 // in this never-returning frame.
                 concurrent_test_glob: concurrent_test_glob_view
                     .as_deref()
-                    .map(|s| unsafe { core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(s) }),
+                    .map(|s| unsafe { bun_ptr::detach_lifetime(s) }),
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
@@ -1979,9 +1985,8 @@ impl TestCommand {
         let mut scanner = Scanner::init(&mut vm.transpiler, ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
         // frame, underlying bytes live in `ctx` (process-lifetime).
-        scanner.path_ignore_patterns = unsafe {
-            core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(&path_ignore_patterns_view[..])
-        };
+        scanner.path_ignore_patterns =
+            unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2022,11 +2027,18 @@ impl TestCommand {
             }
         } else {
             // Treat arguments as filters and scan the codebase
-            let filter_names_owned: Vec<&[u8]> = if ctx.positionals.is_empty() {
+            // SAFETY: bytes live in `ctx` (process-lifetime) and this frame
+            // never returns; detach the inner lifetime once at construction so
+            // POSIX can borrow this Vec directly without a second allocation.
+            let filter_names_owned: Vec<&'static [u8]> = if ctx.positionals.is_empty() {
                 Vec::new()
             } else {
-                ctx.positionals[1..].iter().map(|b| &**b).collect()
+                ctx.positionals[1..]
+                    .iter()
+                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(&**b) })
+                    .collect()
             };
+            #[cfg(windows)]
             let filter_names: &[&[u8]] = &filter_names_owned;
 
             // PORT NOTE: on Windows the Zig duped+mutated each filter to swap
@@ -2046,20 +2058,26 @@ impl TestCommand {
                 normalized
             };
             #[cfg(windows)]
-            let filter_names_normalized: Vec<&[u8]> = filter_names_normalized_storage
+            let filter_names_normalized: Vec<&'static [u8]> = filter_names_normalized_storage
                 .iter()
-                .map(|b| &**b)
+                // SAFETY: the rewritten bytes are NOT `'static` — they live in
+                // `filter_names_normalized_storage`, a local `Vec<Box<[u8]>>`
+                // in this frame. Sound only because this frame never returns
+                // (every exit path is `global_exit()`), so the storage Vec is
+                // never dropped while `scanner.filter_names` is observed.
+                .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
                 .collect();
             #[cfg(not(windows))]
-            let filter_names_normalized = filter_names;
-            // PORT NOTE: defer free on Windows handled by Drop of Vec<Box<[u8]>>.
-            // SAFETY: lifetime-erase; the view vec and (on Windows) its
-            // backing storage live in this never-returning frame, and the
-            // underlying bytes are either in `ctx` (process-lifetime) or in
-            // `filter_names_normalized_storage` above.
-            scanner.filter_names = unsafe {
-                core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(&filter_names_normalized[..])
-            };
+            let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
+            // PORT NOTE: Zig's `defer free` on Windows maps to Drop of the
+            // `Vec<Box<[u8]>>` storage above — but Drop never actually runs
+            // here (frame never returns); the storage simply outlives use.
+            // SAFETY: lifetime-erase the outer borrow; the view vec and (on
+            // Windows) its backing storage live in this never-returning frame,
+            // and the underlying bytes are either in `ctx` (process-lifetime)
+            // or in `filter_names_normalized_storage` above.
+            scanner.filter_names =
+                unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
 
             // PORT NOTE: Zig used `vm.allocator.dupe` (arena-scoped). PORTING.md
             // §Forbidden bans leaking to satisfy a borrow — own the joined

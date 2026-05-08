@@ -1024,11 +1024,11 @@ pub fn marked_argument_buffer_run<Ctx>(
     f: extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer),
 ) {
     // SAFETY: `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to
-    // `f`; both params are thin pointers so the transmute is ABI-identical.
+    // `f`; both params are thin pointers so the cast is ABI-identical.
     unsafe {
         MarkedArgumentBuffer__run(
             ctx,
-            core::mem::transmute::<
+            bun_ptr::cast_fn_ptr::<
                 extern "C" fn(*mut Ctx, *mut MarkedArgumentBuffer),
                 extern "C" fn(*mut c_void, *mut c_void),
             >(f),

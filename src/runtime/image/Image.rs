@@ -755,9 +755,13 @@ impl Image {
 
 impl Image {
     pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: PropertyName) -> JsResult<JSValue> {
-        // SAFETY: `BACKEND` only ever stores a valid `Backend as u8` discriminant.
-        let b: codecs::Backend = unsafe {
-            core::mem::transmute(codecs::BACKEND.load(core::sync::atomic::Ordering::Relaxed))
+        // `BACKEND` only ever stores a valid `Backend as u8` discriminant
+        // (`set_backend` round-trips through `Backend`); any other value is
+        // corruption — trap (matches Zig's safety-checked `@enumFromInt`).
+        let b = match codecs::BACKEND.load(core::sync::atomic::Ordering::Relaxed) {
+            0 => codecs::Backend::System,
+            1 => codecs::Backend::Bun,
+            n => unreachable!("invalid image Backend {n}"),
         };
         bun_str::String::static_(<&'static str>::from(&b)).to_js(global)
     }

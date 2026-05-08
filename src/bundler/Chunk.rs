@@ -1131,6 +1131,16 @@ pub struct CssChunk {
     pub asts: Box<[bun_css::BundlerStyleSheet]>,
 }
 
+impl Drop for CssChunk {
+    fn drop(&mut self) {
+        // Zig `asts: []BundlerStyleSheet` is an arena slice of bitwise shallow
+        // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
+        // alias the same source AST's heap buffers when a file is imported more
+        // than once, so element-wise drop would double-free.
+        core::mem::forget(core::mem::take(&mut self.asts));
+    }
+}
+
 /// Zig: `const CssImportKind = enum { source_index, external_path, import_layers }` is the
 /// (private) tag enum for `CssImportOrder.kind: union(enum) { ... }`. In Rust the tagged
 /// union is `CssImportOrderKind`; callers that switch on `css_import.kind` reference it via

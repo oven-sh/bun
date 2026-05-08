@@ -122,6 +122,38 @@ pub struct ClientSession {
 /// RAII guard alias — bumps on construction, derefs on Drop.
 type SessionRefGuard = bun_ptr::ScopedRef<ClientSession>;
 
+/// Upgrade a `*mut Stream` from `self.streams` to `&mut Stream`.
+///
+/// INVARIANT: stream pointers stored in `ClientSession.streams` are
+/// `heap::alloc`-boxed allocations owned by the session, valid until removed
+/// via `remove_stream`/`on_close`/`Drop`. They are independent heap
+/// allocations, so `&mut Stream` is disjoint from `&mut ClientSession`.
+/// HTTP-thread-only.
+#[inline(always)]
+pub(super) fn stream_mut<'a>(ptr: *mut Stream) -> &'a mut Stream {
+    // SAFETY: see INVARIANT above.
+    unsafe { &mut *ptr }
+}
+
+/// Shared variant of [`stream_mut`].
+#[inline(always)]
+pub(super) fn stream_ref<'a>(ptr: *const Stream) -> &'a Stream {
+    // SAFETY: see [`stream_mut`] INVARIANT.
+    unsafe { &*ptr }
+}
+
+/// Upgrade a `*mut HTTPClient` from `pending_attach` to `&mut HTTPClient`.
+///
+/// INVARIANT: `pending_attach` entries are back-refs registered via
+/// `enqueue`/`adopt`; each points at a live `HTTPClient` embedded in its
+/// `AsyncHTTP`, alive until its terminal callback (which removes it from the
+/// queue first). Disjoint allocation from `ClientSession`. HTTP-thread-only.
+#[inline(always)]
+fn pending_client_mut<'a>(ptr: *mut HTTPClient<'static>) -> &'a mut HTTPClient<'static> {
+    // SAFETY: see INVARIANT above.
+    unsafe { &mut *ptr }
+}
+
 impl ClientSession {
     /// Bump the refcount and return a guard that releases it on Drop, so
     /// reentrant callbacks (delivering bodies, failing clients) cannot free
@@ -285,8 +317,7 @@ impl ClientSession {
         }
         let waiters = core::mem::take(&mut self.pending_attach);
         for client_ptr in waiters {
-            // SAFETY: pending_attach entries are live HTTPClient back-refs registered via enqueue/adopt.
-            let client = unsafe { &mut *client_ptr };
+            let client = pending_client_mut(client_ptr);
             if let Some(err) = self.fatal_error {
                 client.h2_fail(err);
             } else if client.signals.get(signals::Field::Aborted) {
@@ -352,11 +383,9 @@ impl ClientSession {
         ));
         super::live_streams.fetch_add(1, Ordering::Relaxed);
         self.next_stream_id = self.next_stream_id.saturating_add(2);
-        // SAFETY: `stream` was just allocated and is non-null.
-        let stream_ref = unsafe { &mut *stream };
+        let stream_ref = stream_mut(stream);
         let _ = self.streams.put(stream_ref.id, stream);
-        // SAFETY: stream is non-null.
-        client.h2 = Some(unsafe { NonNull::new_unchecked(stream) });
+        client.h2 = NonNull::new(stream);
         client.flags.protocol = Protocol::Http2;
         client.allow_retry = false;
 
@@ -383,8 +412,7 @@ impl ClientSession {
             // and let maybeRelease() drop the registration so the next fetch
             // opens a fresh connection instead of waiting for idle-timeout.
             for c in core::mem::take(&mut self.pending_attach) {
-                // SAFETY: pending_attach entries are live HTTPClient back-refs.
-                unsafe { (*c).h2_retry_after_coalesce() };
+                pending_client_mut(c).h2_retry_after_coalesce();
             }
             let _ = self.flush();
             // Do NOT maybeRelease() here: attach() runs from drainPending()
@@ -426,8 +454,7 @@ impl ClientSession {
     /// frames decode against the full block — otherwise HPACK-decoding the
     /// suffix alone desyncs the dynamic table for every sibling stream.
     fn remove_stream(&mut self, stream: *mut Stream) {
-        // SAFETY: caller guarantees `stream` is a live entry in `self.streams`.
-        let s = unsafe { &mut *stream };
+        let s = stream_mut(stream);
         if self.expecting_continuation == s.id {
             self.orphan_header_block = core::mem::take(&mut s.header_block);
         }
@@ -439,21 +466,18 @@ impl ClientSession {
     /// Remove `stream` from the session, RST it, and fail its client. The
     /// session and socket stay up for siblings.
     pub fn detach_with_failure(&mut self, stream: *mut Stream, err: Error) {
-        // SAFETY: caller guarantees `stream` is a live entry in `self.streams`;
-        // the Stream is a disjoint heap allocation so `&mut Stream` does not
-        // overlap `&mut self`.
-        let s = unsafe { &mut *stream };
+        let s = stream_mut(stream);
         self.rst_stream(s, wire::ErrorCode::CANCEL);
         let _ = self.flush();
         let client = s.client.take();
-        if let Some(c) = client {
+        if let Some(mut c) = client {
             // SAFETY: stream.client is a live HTTPClient back-ref while set.
-            unsafe { (*c.as_ptr()).h2 = None };
+            unsafe { c.as_mut() }.h2 = None;
         }
         self.remove_stream(stream);
-        if let Some(c) = client {
+        if let Some(mut c) = client {
             // SAFETY: same as above.
-            unsafe { (*c.as_ptr()).h2_fail(err) };
+            unsafe { c.as_mut() }.h2_fail(err);
         }
     }
 
@@ -465,18 +489,15 @@ impl ClientSession {
     /// so the session disarms only when *every* attached client opted out.
     fn rearm_timeout(&mut self) {
         let want = 'blk: {
-            for s in self.streams.values() {
-                // SAFETY: streams values are live Stream pointers owned by this session.
-                let s = unsafe { &**s };
-                let Some(c) = s.client else { continue };
-                // SAFETY: stream.client is a live back-ref while set.
-                if !unsafe { (*c.as_ptr()).flags.disable_timeout } {
-                    break 'blk true;
+            for &s in self.streams.values() {
+                if let Some(c) = stream_ref(s).client_ref() {
+                    if !c.flags.disable_timeout {
+                        break 'blk true;
+                    }
                 }
             }
-            for c in &self.pending_attach {
-                // SAFETY: pending_attach entries are live back-refs.
-                if !unsafe { (**c).flags.disable_timeout } {
+            for &c in &self.pending_attach {
+                if !pending_client_mut(c).flags.disable_timeout {
                     break 'blk true;
                 }
             }
@@ -492,14 +513,7 @@ impl ClientSession {
     pub fn drain_response_body_by_http_id(&mut self, async_http_id: u32) {
         let _guard = self.ref_scope();
         for &stream in self.streams.values() {
-            // SAFETY: owned live Stream pointer (disjoint heap alloc). Shared
-            // borrow only — we read the `client` backref, never mutate the
-            // Stream, so no `&mut` is materialised.
-            let stream = unsafe { &*stream };
-            let Some(mut client) = stream.client else { continue };
-            // SAFETY: stream.client is a live HTTPClient back-ref while set;
-            // disjoint allocation, sole `&mut` at this point.
-            let client = unsafe { client.as_mut() };
+            let Some(client) = stream_mut(stream).client_mut() else { continue };
             if client.async_http_id != async_http_id {
                 continue;
             }
@@ -515,14 +529,7 @@ impl ClientSession {
         // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
         let mut target: Option<*mut Stream> = None;
         for &stream in self.streams.values() {
-            // SAFETY: owned live Stream pointer (disjoint heap alloc). Shared
-            // borrow only — we read the `client` backref, never mutate the
-            // Stream itself in this scan loop.
-            let s = unsafe { &*stream };
-            let Some(mut client_ptr) = s.client else { continue };
-            // SAFETY: stream.client is a live HTTPClient back-ref while set;
-            // disjoint allocation, sole `&mut` at this point.
-            let client = unsafe { client_ptr.as_mut() };
+            let Some(client) = stream_mut(stream).client_mut() else { continue };
             if client.async_http_id != async_http_id {
                 continue;
             }
@@ -537,8 +544,7 @@ impl ClientSession {
         }
         if let Some(stream) = target {
             self.rearm_timeout();
-            // SAFETY: stream is a live entry in self.streams.
-            encode::drain_send_body(self, unsafe { &mut *stream }, usize::MAX);
+            encode::drain_send_body(self, stream_mut(stream), usize::MAX);
             if let Err(err) = self.flush() {
                 self.fail_all(err);
             }
@@ -559,8 +565,7 @@ impl ClientSession {
         // PORT NOTE: reshaped for borrowck — collect (id, unacked) pairs before mutating self.
         let mut updates: Vec<(u32, u32)> = Vec::new();
         for &s in self.streams.values() {
-            // SAFETY: owned live Stream pointer.
-            let s = unsafe { &mut *s };
+            let s = stream_mut(s);
             if s.unacked_bytes >= threshold && !s.remote_closed() {
                 updates.push((s.id, s.unacked_bytes));
                 s.unacked_bytes = 0;
@@ -660,9 +665,7 @@ impl ClientSession {
         while i < self.streams.count() {
             let stream = self.streams.values()[i];
             if self.deliver_stream(stream) {
-                // SAFETY: stream is a live entry in self.streams; disjoint
-                // heap alloc so `&mut Stream` does not overlap `&mut self`.
-                let s = unsafe { &mut *stream };
+                let s = stream_mut(stream);
                 // Any detach that leaves the stream open from the server's
                 // perspective (we never sent END_STREAM, *or* the server
                 // never did and hasn't RST'd) must signal abandonment so the
@@ -748,22 +751,19 @@ impl ClientSession {
         // aliased `&mut NewHTTPContext` via autoref.
         unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, std::ptr::from_ref(self)) };
         for client in core::mem::take(&mut self.pending_attach) {
-            // SAFETY: pending_attach entries are live back-refs.
-            unsafe { (*client).h2_fail(err) };
+            pending_client_mut(client).h2_fail(err);
         }
         for &e in self.streams.values() {
-            // SAFETY: owned live Stream pointer.
-            let stream = unsafe { &mut *e };
-            let client = stream.client.take();
-            if let Some(c) = client {
-                // SAFETY: live back-ref.
-                unsafe { (*c.as_ptr()).h2 = None };
+            let client = stream_mut(e).client.take();
+            if let Some(mut c) = client {
+                // SAFETY: live back-ref while set; disjoint allocation.
+                unsafe { c.as_mut() }.h2 = None;
             }
             // SAFETY: stream was heap-allocated in attach(); sole owner here.
             unsafe { drop(bun_core::heap::take(e)) };
-            if let Some(c) = client {
+            if let Some(mut c) = client {
                 // SAFETY: live back-ref.
-                unsafe { (*c.as_ptr()).h2_fail(err) };
+                unsafe { c.as_mut() }.h2_fail(err);
             }
         }
         self.streams.clear_retaining_capacity();
@@ -795,15 +795,13 @@ impl ClientSession {
         // PORT NOTE: reshaped for borrowck — find index via raw-ptr field read
         // first, then swap_remove, so no `&mut HTTPClient` is held across the
         // Vec mutation and no `&mut` is materialised during iteration.
-        let found = self.pending_attach.iter().position(|&c| {
-            // SAFETY: pending_attach entries are live HTTPClient back-refs.
-            unsafe { (*c).async_http_id == async_http_id }
-        });
+        let found = self
+            .pending_attach
+            .iter()
+            .position(|&c| pending_client_mut(c).async_http_id == async_http_id);
         if let Some(i) = found {
             let client = self.pending_attach.swap_remove(i);
-            // SAFETY: pending_attach entries are live HTTPClient back-refs;
-            // sole access at this point.
-            unsafe { (*client).h2_fail(err!(Aborted)) };
+            pending_client_mut(client).h2_fail(err!(Aborted));
             self.rearm_timeout();
             self.maybe_release();
             return;
@@ -811,11 +809,10 @@ impl ClientSession {
         // PORT NOTE: reshaped for borrowck — find target before detaching.
         let mut target: Option<*mut Stream> = None;
         for &e in self.streams.values() {
-            // SAFETY: owned live Stream pointer.
-            let stream = unsafe { &*e };
-            let Some(client) = stream.client else { continue };
-            // SAFETY: live back-ref.
-            if unsafe { client.as_ref() }.async_http_id == async_http_id {
+            if stream_ref(e)
+                .client_ref()
+                .is_some_and(|c| c.async_http_id == async_http_id)
+            {
                 target = Some(e);
                 break;
             }
@@ -831,14 +828,14 @@ impl ClientSession {
         let mut i: usize = 0;
         while i < self.streams.count() {
             let stream = self.streams.values()[i];
-            // SAFETY: owned live Stream pointer.
-            let s = unsafe { &*stream };
-            let Some(client) = s.client else {
-                i += 1;
-                continue;
+            let aborted = match stream_ref(stream).client_ref() {
+                Some(c) => c.signals.get(signals::Field::Aborted),
+                None => {
+                    i += 1;
+                    continue;
+                }
             };
-            // SAFETY: live back-ref.
-            if unsafe { client.as_ref() }.signals.get(signals::Field::Aborted) {
+            if aborted {
                 self.detach_with_failure(stream, err!(Aborted));
             } else {
                 i += 1;
@@ -900,12 +897,13 @@ impl ClientSession {
     /// After a true return, neither `stream.client` nor the client's memory
     /// may be touched.
     fn deliver_stream(&mut self, stream_ptr: *mut Stream) -> bool {
-        // SAFETY: caller passes a live entry from self.streams.
-        let stream = unsafe { &mut *stream_ptr };
+        let stream = stream_mut(stream_ptr);
         let Some(mut client_ptr) = stream.client else {
             return true;
         };
-        // SAFETY: stream.client is a live back-ref while set.
+        // SAFETY: stream.client is a live back-ref while set; the client is a
+        // disjoint allocation from `stream`, so `&mut HTTPClient` here does not
+        // overlap the `&mut Stream` above.
         let client = unsafe { client_ptr.as_mut() };
 
         if client.signals.get(signals::Field::Aborted) {

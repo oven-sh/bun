@@ -242,6 +242,50 @@ impl HTTPRequestBody {
 }
 
 impl FetchTasklet {
+    // ───── raw-ptr field accessors (centralised unsafe) ───────────────────
+    //
+    // `signal` / `sink` / `native_response` are intrusive-refcounted heap
+    // objects that this tasklet holds one strong ref on while the field is
+    // `Some`. They are never reborrowed through any other path on the JS
+    // thread, so a single `&` / `&mut` derived here is the sole live borrow.
+
+    /// `Some(&AbortSignal)` while we hold a strong ref on the C++-owned
+    /// `WebCore::AbortSignal*` (taken in `queue`, released in
+    /// `clear_abort_signal`).
+    #[inline]
+    fn abort_signal(&self) -> Option<&AbortSignal> {
+        // SAFETY: see block comment above. AbortSignal methods take `&self`
+        // (FFI pass-through); shared borrow is sufficient.
+        self.signal.map(|p| unsafe { &*p })
+    }
+
+    /// True iff an attached AbortSignal has fired.
+    #[inline]
+    fn signal_aborted(&self) -> bool {
+        self.abort_signal().is_some_and(|s| s.aborted())
+    }
+
+    /// Mutable access to the request-body sink while `self.sink` is `Some`
+    /// (one strong ref held from `init_exact_refs` until `clear_sink`).
+    #[inline]
+    fn sink_mut(&mut self) -> Option<&mut ResumableSink> {
+        // SAFETY: see block comment above. JS-thread-only.
+        self.sink.map(|p| unsafe { &mut *p })
+    }
+
+    /// Upgrade a `Source::Bytes` raw pointer (from `ReadableStreamTag__tagged`)
+    /// to `&mut ByteStream`. The pointee is owned by the JSC ReadableStream and
+    /// is valid while the stream's Strong ref is held; every call site here is
+    /// inside a `readable_stream_ref.get()` scope, so the stream is alive.
+    #[inline]
+    fn bytes_mut<'a>(ptr: readable_stream::Source) -> Option<&'a mut crate::webcore::ByteStream> {
+        match ptr {
+            // SAFETY: see doc comment.
+            readable_stream::Source::Bytes(b) => Some(unsafe { &mut *b }),
+            _ => None,
+        }
+    }
+
     pub fn ref_(&self) {
         let count = self.ref_count.fetch_add(1, Ordering::Relaxed);
         debug_assert!(count > 0);
@@ -395,12 +439,9 @@ impl FetchTasklet {
             return;
         };
         if let Some(stream) = stream_ref.get(&self.global_this) {
-            if let Some(signal) = self.signal {
-                // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
-                if unsafe { (*signal).aborted() } {
-                    stream.abort(&self.global_this);
-                    return;
-                }
+            if self.signal_aborted() {
+                stream.abort(&self.global_this);
+                return;
             }
 
             let global_this = self.global_this;
@@ -439,20 +480,18 @@ impl FetchTasklet {
             let mut js_err = JSValue::ZERO;
             // if we are streaming update with error
             if let Some(readable) = self.readable_stream_ref.get(&global_this) {
-                if let readable_stream::Source::Bytes(bytes) = readable.ptr {
+                if let Some(bytes) = Self::bytes_mut(readable.ptr) {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
-                    // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                    unsafe { (*bytes).on_data(StreamResult::Err(StreamError::JSValue(js_err)))? };
+                    bytes.on_data(StreamResult::Err(StreamError::JSValue(js_err)))?;
                 }
             }
-            if let Some(sink) = self.sink {
+            if let Some(sink) = self.sink_mut() {
                 if js_err.is_empty() {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
                 }
-                // SAFETY: sink alive while self.sink is Some
-                unsafe { (*sink).cancel(js_err) };
+                sink.cancel(js_err);
                 return Ok(());
             }
             // if we are buffering resolve the promise
@@ -471,9 +510,7 @@ impl FetchTasklet {
 
         if let Some(readable) = self.readable_stream_ref.get(&global_this) {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
-            if let readable_stream::Source::Bytes(bytes) = readable.ptr {
-                // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                let bytes = unsafe { &mut *bytes };
+            if let Some(bytes) = Self::bytes_mut(readable.ptr) {
                 bytes.size_hint = self.get_size_hint();
                 // body can be marked as used but we still need to pipe the data
                 if self.result.has_more {
@@ -507,9 +544,7 @@ impl FetchTasklet {
             response.set_size_hint(size_hint);
             if let Some(readable) = response.get_body_readable_stream(&global_this) {
                 bun_output::scoped_log!(FetchTasklet, "onBodyReceived CurrentResponse BodyReadableStream");
-                if let readable_stream::Source::Bytes(bytes) = readable.ptr {
-                    // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                    let bytes = unsafe { &mut *bytes };
+                if let Some(bytes) = Self::bytes_mut(readable.ptr) {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
@@ -720,9 +755,8 @@ impl FetchTasklet {
             // in this case we wanna a jsc.Strong.Optional so we just convert it
             let mut value = self.on_reject();
             let err_js = value.to_js(&global_this);
-            if let Some(sink) = self.sink {
-                // SAFETY: sink alive while self.sink is Some
-                unsafe { (*sink).cancel(err_js) };
+            if let Some(sink) = self.sink_mut() {
+                sink.cancel(err_js);
             }
             // `to_js` leaves `value` in the `JSValue(Strong)` state (Body.rs:547). Move
             // that Strong out (Zig: `break :brk value.JSValue`) instead of allocating a
@@ -915,9 +949,8 @@ impl FetchTasklet {
             return Some(BodyValueError::JSValue(out));
         }
 
-        if let Some(signal) = self.signal {
-            // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
-            if let Some(reason) = unsafe { (*signal).reason_if_aborted(&self.global_this) } {
+        if let Some(signal) = self.abort_signal() {
+            if let Some(reason) = signal.reason_if_aborted(&self.global_this) {
                 // PORT NOTE: `AbortReason::to_body_value_error` lives in bun_jsc but
                 // would forward-depend on bun_runtime; reconstruct the trivial
                 // mapping at the call site (per AbortSignal.rs note).
@@ -1148,9 +1181,8 @@ impl FetchTasklet {
     /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
     fn clear_stream_cancel_handler(&mut self) {
         if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
-            if let readable_stream::Source::Bytes(bytes) = readable.ptr {
-                // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                let source = unsafe { (*bytes).parent() };
+            if let Some(bytes) = Self::bytes_mut(readable.ptr) {
+                let source = bytes.parent();
                 source.cancel_handler = None;
                 source.cancel_ctx = None;
             }
@@ -1496,9 +1528,8 @@ impl FetchTasklet {
         reason.ensure_still_alive();
         this.abort_reason.set(&this.global_this, reason);
         this.abort_task();
-        if let Some(sink) = this.sink {
-            // SAFETY: sink alive while this.sink is Some
-            unsafe { (*sink).cancel(reason) };
+        if let Some(sink) = this.sink_mut() {
+            sink.cancel(reason);
             return;
         }
         // Abort fired before the HTTP thread asked for the body, so the
@@ -1540,16 +1571,12 @@ impl FetchTasklet {
         let this_ref = unsafe { &mut *this };
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
         let result = (|| {
-            if let Some(sink) = this_ref.sink {
-                if let Some(signal) = this_ref.signal {
-                    // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
-                    if unsafe { (*signal).aborted() } {
-                        // already aborted; nothing to drain
-                        return;
-                    }
-                }
-                // SAFETY: sink alive while this_ref.sink is Some
-                unsafe { (*sink).drain() };
+            if this_ref.signal_aborted() {
+                // already aborted; nothing to drain
+                return;
+            }
+            if let Some(sink) = this_ref.sink_mut() {
+                sink.drain();
             }
         })();
         // deref when done because we ref inside onWriteRequestDataDrain
@@ -1570,12 +1597,16 @@ impl FetchTasklet {
 
     pub fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
-        if let Some(signal) = self.signal {
-            // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
-            if unsafe { (*signal).aborted() } {
-                return ResumableSinkBackpressure::Done;
-            }
+        if self.signal_aborted() {
+            return ResumableSinkBackpressure::Done;
         }
+        // PORT NOTE: reshaped for borrowck — read sink HWM (Copy) before
+        // borrowing the stream buffer so `self` is unborrowed during the
+        // mutex critical section below.
+        let high_water_mark: usize = match self.sink_mut() {
+            Some(sink) => sink.high_water_mark() as usize,
+            None => 16384,
+        };
         let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer else {
             return ResumableSinkBackpressure::Done;
         };
@@ -1583,12 +1614,6 @@ impl FetchTasklet {
         // SAFETY: intrusive-refcounted heap allocation; this side holds a ref. Mutex
         // guards `buffer` against the HTTP thread; released when `stream_buffer` drops.
         let mut stream_buffer = unsafe { (*thread_safe_stream_buffer).lock() };
-        // SAFETY: sink alive while self.sink is Some (guaranteed by the
-        // `ReadableStream` request-body path that reaches here).
-        let high_water_mark: usize = match self.sink {
-            Some(sink) => (unsafe { (*sink).high_water_mark() }) as usize,
-            None => 16384,
-        };
 
         let mut needs_schedule = false;
 

@@ -5,6 +5,19 @@
 
 pub const CLIENT_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
+/// View a `#[repr(C, packed)]` integer-only POD struct as a mutable byte slice
+/// for wire-format `copy_from_slice`. Centralises the per-`from()` cast that
+/// the Zig parser did via `@ptrCast`.
+///
+/// SAFETY: only invoked on the three packed frame structs below, each composed
+/// solely of `uN`/`[u8; N]` fields with no padding and no niches; every byte
+/// pattern is a valid value.
+#[inline(always)]
+fn packed_bytes_mut<T>(v: &mut T) -> &mut [u8] {
+    // SAFETY: see doc comment.
+    unsafe { core::slice::from_raw_parts_mut((v as *mut T).cast::<u8>(), core::mem::size_of::<T>()) }
+}
+
 pub const MAX_WINDOW_SIZE: u32 = i32::MAX as u32;
 pub const MAX_HEADER_TABLE_SIZE: u32 = u32::MAX;
 pub const MAX_STREAM_ID: u32 = i32::MAX as u32;
@@ -171,17 +184,12 @@ impl StreamPriority {
 
     #[inline]
     pub fn from(dst: &mut StreamPriority, src: &[u8]) {
-        // SAFETY: StreamPriority is #[repr(C, packed)] POD with size == BYTE_SIZE.
-        let bytes = unsafe {
-            bun_core::ffi::slice_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
-        };
-        bytes.copy_from_slice(src);
+        packed_bytes_mut(dst).copy_from_slice(src);
         // std.mem.byteSwapAllFields(StreamPriority, dst)
-        // SAFETY: packed field — use unaligned read/write.
-        unsafe {
-            let p = core::ptr::addr_of_mut!(dst.stream_identifier);
-            p.write_unaligned(p.read_unaligned().swap_bytes());
-        }
+        // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy
+        // (rustc emits `read_unaligned`), and assignment to a packed field is
+        // an unaligned store — no `unsafe` required.
+        dst.stream_identifier = u32::swap_bytes({ dst.stream_identifier });
         // weight: u8 — byte swap is a no-op.
     }
 }
@@ -220,20 +228,12 @@ impl FrameHeader {
 
     #[inline]
     pub fn from<const END: bool>(dst: &mut FrameHeader, src: &[u8], offset: usize) {
-        // SAFETY: FrameHeader is #[repr(C, packed)] POD with size == BYTE_SIZE.
-        let bytes = unsafe {
-            bun_core::ffi::slice_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
-        };
-        bytes[offset..src.len() + offset].copy_from_slice(src);
+        packed_bytes_mut(dst)[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // std.mem.byteSwapAllFields(FrameHeader, dst)
             dst.length.reverse(); // u24 byte swap
             // r#type, flags: u8 — no-op
-            // SAFETY: packed field — use unaligned read/write.
-            unsafe {
-                let p = core::ptr::addr_of_mut!(dst.stream_identifier);
-                p.write_unaligned(p.read_unaligned().swap_bytes());
-            }
+            dst.stream_identifier = u32::swap_bytes({ dst.stream_identifier });
         }
     }
 }
@@ -251,20 +251,11 @@ impl SettingsPayloadUnit {
 
     #[inline]
     pub fn from<const END: bool>(dst: &mut SettingsPayloadUnit, src: &[u8], offset: usize) {
-        // SAFETY: SettingsPayloadUnit is #[repr(C, packed)] POD with size == BYTE_SIZE.
-        let bytes = unsafe {
-            bun_core::ffi::slice_mut(std::ptr::from_mut::<Self>(dst).cast::<u8>(), Self::BYTE_SIZE)
-        };
-        bytes[offset..src.len() + offset].copy_from_slice(src);
+        packed_bytes_mut(dst)[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // std.mem.byteSwapAllFields(SettingsPayloadUnit, dst)
-            // SAFETY: packed fields — use unaligned read/write.
-            unsafe {
-                let tp = core::ptr::addr_of_mut!(dst.r#type);
-                tp.write_unaligned(tp.read_unaligned().swap_bytes());
-                let vp = core::ptr::addr_of_mut!(dst.value);
-                vp.write_unaligned(vp.read_unaligned().swap_bytes());
-            }
+            dst.r#type = u16::swap_bytes({ dst.r#type });
+            dst.value = u32::swap_bytes({ dst.value });
         }
     }
 

@@ -361,8 +361,7 @@ pub fn drain_send_bodies(session: &mut ClientSession) {
         let mut i = 0usize;
         while i < session.streams.count() {
             let stream = session.streams.values()[i];
-            // SAFETY: stream is a live entry in session.streams.
-            let s = unsafe { &mut *stream };
+            let s = super::client_session::stream_mut(stream);
             i += 1;
             if s.local_closed() || s.send_window <= 0 {
                 continue;

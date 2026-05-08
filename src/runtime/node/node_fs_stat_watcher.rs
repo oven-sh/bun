@@ -614,7 +614,7 @@ impl StatWatcher {
         log!("Finalize\n");
         // Refcounted: hand ownership back to the raw refcount FIRST so a panic
         // in the work below leaks instead of UAF-ing the scheduler's alias.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         this.this_value.finalize();
         this.closed = true;
         this.scheduler.deref();

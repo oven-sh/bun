@@ -625,9 +625,10 @@ where
             tracker: AsyncTaskTracker::init(vm),
         });
         // Transfer ownership to libuv: the box outlives the async request and is
-        // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `Box::leak`
-        // is the safe spelling of this paired `into_raw`/`from_raw` hand-off.
-        let task: &mut Self = Box::leak(task);
+        // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
+        // names that hand-off — it is `Box::leak` under the hood; the reclaim
+        // happens in `destroy()`, not in this scope.
+        let task: &mut Self = bun_core::heap::release(task);
         // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
         // event loop is the only one that owns AsyncFSTask/UVFSRequest.
         task.r#ref.ref_(js_event_loop_ctx());
@@ -1083,7 +1084,7 @@ where
         let _ = vm;
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();
-        WorkPool::schedule(&raw mut Box::leak(task).task);
+        WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
         promise
     }
 
@@ -1356,7 +1357,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         if !IS_SHELL { task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop)); }
         task.tracker.did_schedule(global_object);
 
-        let raw = Box::leak(task);
+        let raw = bun_core::heap::release(task);
         WorkPool::schedule(&raw mut raw.task);
         raw
     }
@@ -1386,7 +1387,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         });
         if !IS_SHELL { task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop)); }
 
-        let raw = Box::leak(task);
+        let raw = bun_core::heap::release(task);
         WorkPool::schedule(&raw mut raw.task);
         raw
     }
@@ -2055,7 +2056,7 @@ impl AsyncReaddirRecursiveTask {
         task.r#ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();
-        WorkPool::schedule(&raw mut Box::leak(task).task);
+        WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
         promise
     }
 

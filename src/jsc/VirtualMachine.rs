@@ -2432,7 +2432,7 @@ pub fn process_fetch_log(
             // C++ `Zig::toString` does `createWithoutCopying`, so the buffer
             // must outlive the AggregateError. Mark it global so JSC adopts it
             // as an ExternalStringImpl and frees it via `free_global_string`.
-            let message_text: &'static mut [u8] = Box::leak(
+            let message_text: &'static mut [u8] = bun_core::heap::release(
                 format!("{} errors building \"{specifier}\"", errors.len())
                     .into_bytes()
                     .into_boxed_slice(),

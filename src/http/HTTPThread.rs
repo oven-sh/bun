@@ -420,7 +420,7 @@ impl HttpThread {
 
                 // Cache miss - create new SSL context
                 // TODO(port): Zig used allocator.create + manual destroy on error.
-                let custom_context = Box::leak(Box::new(NewHttpContext::<true> {
+                let custom_context = bun_core::heap::release(Box::new(NewHttpContext::<true> {
                     ref_count: Cell::new(1),
                     pending_sockets: bun_collections::HiveArray::init(),
                     group: uws::SocketGroup::default(),
@@ -891,7 +891,7 @@ fn start_queued_task(http: *mut AsyncHttp) {
     // PORT NOTE: Zig used struct copy `http.*`; AsyncHttp is byte-copied here
     // since the original stays valid (real owner is `http`, copy is the
     // HTTP-thread working set).
-    let cloned = Box::leak(cloned);
+    let cloned = bun_core::heap::release(cloned);
     cloned.async_http.real = NonNull::new(http);
     // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
     // which may point to other AsyncHTTP structs that could be freed before the callback

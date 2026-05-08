@@ -878,7 +878,7 @@ impl Request {
         // weak_ptr_data may have outstanding refs aliasing this allocation;
         // hand ownership back to the raw pointer FIRST so a panic in the work
         // below leaks instead of Box-drop UAF-ing those weak holders.
-        let this = Box::leak(self);
+        let this = bun_core::heap::release(self);
         this.js_ref.finalize();
         this.finalize_without_deinit();
         // SAFETY: `body` is a +1 ref handed out by `body::hive_alloc` /

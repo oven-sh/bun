@@ -30,16 +30,18 @@ pub struct EditOptions {
     pub before_install: bool,
 }
 
-/// Leak a freshly-allocated byte buffer to obtain a `'static` slice for
-/// storage in `E::EString.data`. Mirrors Zig's `allocator.dupe(u8, ...)`
-/// against the leaked-singleton `manager.allocator`.
+/// Allocate a `'static` byte buffer for storage in `E::EString.data`. Zig's
+/// equivalent (`allocator.dupe(u8, ...)`) used `manager.allocator`, a
+/// process-lifetime arena that is never reset during a `bun pm pkg`/`bun add`
+/// invocation — so this ownership is parked for the rest of the command, not
+/// reclaimed. `heap::release` is the named spelling of that hand-off.
 #[inline]
 fn leak_str(bytes: Vec<u8>) -> &'static [u8] {
-    Box::leak(bytes.into_boxed_slice())
+    bun_core::heap::release(bytes.into_boxed_slice())
 }
 #[inline]
 fn leak_dup(bytes: &[u8]) -> &'static [u8] {
-    Box::leak(Box::<[u8]>::from(bytes))
+    bun_core::heap::release(Box::<[u8]>::from(bytes))
 }
 
 /// Shallow-copy a `G::Property` for the JSON-editing path. Only `key`/`value`

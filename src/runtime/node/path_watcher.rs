@@ -116,9 +116,15 @@ impl PathWatcherManager {
             }
         }
 
-        let m = Box::leak(Box::new(PathWatcherManager::default()));
+        // Process-lifetime singleton (Zig: `var default_manager`). Hand the
+        // allocation off via `heap::release`; it is published into
+        // `DEFAULT_MANAGER` below and lives until process exit — except on the
+        // `Platform::init` error path, which is the one place it is reclaimed.
+        let m: &'static mut PathWatcherManager =
+            bun_core::heap::release(Box::new(PathWatcherManager::default()));
         if let Err(e) = Platform::init(m) {
-            // SAFETY: `m` was just leaked from a Box and not yet published.
+            // SAFETY: `m` came from `release(Box::new(..))` above and has not
+            // been published — reclaim it so the failed init isn't a leak.
             unsafe { drop(bun_core::heap::take(std::ptr::from_mut::<PathWatcherManager>(m))) };
             return Err(e);
         }

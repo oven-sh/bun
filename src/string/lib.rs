@@ -1303,14 +1303,18 @@ impl ZigString {
     /// so JSC frees it via mimalloc.
     pub fn dupe_for_js(utf8: &[u8]) -> Result<ZigString, strings::ToUTF16Error> {
         if let Some(utf16) = strings::to_utf16_alloc(utf8, false, false)? {
-            // PERF(port): leaks Box<[u16]> into raw for global ownership — matches Zig semantics
-            let leaked: &'static [u16] = Box::leak(utf16.into_boxed_slice());
+            // Ownership transferred to JSC: `mark_global()` tags the buffer so
+            // `Zig::toString*` adopts it into a WTF string and `mi_free`s it on
+            // string death. `heap::release` is the hand-off-to-foreign-owner
+            // spelling (Zig `ZigString.dupeForJS` never frees `utf16` locally).
+            let leaked: &'static mut [u16] = bun_core::heap::release(utf16.into_boxed_slice());
             let mut out = ZigString::init_utf16(leaked);
             out.mark_global();
             out.mark_utf16();
             Ok(out)
         } else {
-            let duped: &'static [u8] = Box::leak(Box::<[u8]>::from(utf8));
+            // Same hand-off: JSC owns the bytes, freed via `mi_free` on string death.
+            let duped: &'static mut [u8] = bun_core::heap::release(Box::<[u8]>::from(utf8));
             let mut out = ZigString::init(duped);
             out.mark_global();
             Ok(out)

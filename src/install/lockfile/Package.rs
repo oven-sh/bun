@@ -2309,15 +2309,21 @@ impl Package<u64> {
             );
         }
 
-        // SAFETY: capacity reserved above; slots are written before read.
-        unsafe { lockfile.buffers.dependencies.set_len(total_len) };
-        let package_dependencies = &mut lockfile.buffers.dependencies[off..total_len];
-        // PORT NOTE: reshaped for borrowck — `package_dependencies` borrows
-        // `lockfile.buffers.dependencies` mutably; subsequent uses of `lockfile` below
-        // re-borrow as needed.
-        // TODO(port): the original Zig holds `package_dependencies` as a raw slice into the
-        // dependencies buffer while also mutating `lockfile.buffers.string_bytes` etc. Phase B
-        // may need to thread raw pointers here for borrowck.
+        // PORT NOTE: Zig slices `lockfile.buffers.dependencies.items.ptr[off..total_len]`
+        // — i.e. into reserved-but-uncommitted capacity *without* bumping `items.len`.
+        // Mirroring that here matters: `parse_dependency` can return early with an error
+        // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
+        // may swallow it and re-enter for the next package. If we eagerly `set_len(total_len)`
+        // and then bail, `dependencies.len() != resolutions.len()` on the next call and the
+        // debug_assert above trips. Slots are only read after being written below.
+        // SAFETY: capacity reserved above; no realloc occurs until both lengths are
+        // committed at the end of this function.
+        let package_dependencies = unsafe {
+            core::slice::from_raw_parts_mut(
+                lockfile.buffers.dependencies.as_mut_ptr().add(off),
+                total_len - off,
+            )
+        };
 
         'name: {
             if R::IS_GIT_RESOLVER {

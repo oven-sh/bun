@@ -1055,11 +1055,9 @@ impl ReadWriteLoop {
 extern "C" fn on_read(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
-        &mut *req.cast::<u8>()
-            .sub(offset_of!(CopyFileWindows, io_request))
-            .cast::<CopyFileWindows>()
+        &mut *bun_core::from_field_ptr!(CopyFileWindows, io_request, req)
     };
-    // SAFETY: req points to a live CopyFileWindows.io_request (recovered above via @fieldParentPtr).
+    // SAFETY: req points to a live CopyFileWindows.io_request.
     debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
 
     let source_fd = this.read_write_loop.source_fd;
@@ -1115,11 +1113,9 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 extern "C" fn on_write(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
-        &mut *req.cast::<u8>()
-            .sub(offset_of!(CopyFileWindows, io_request))
-            .cast::<CopyFileWindows>()
+        &mut *bun_core::from_field_ptr!(CopyFileWindows, io_request, req)
     };
-    // SAFETY: req points to a live CopyFileWindows.io_request (recovered above via @fieldParentPtr).
+    // SAFETY: req points to a live CopyFileWindows.io_request.
     debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
     let buf_len = this.read_write_loop.read_buf.len();
 
@@ -1623,11 +1619,9 @@ impl<'a> CopyFileWindows<'a> {
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
-        &mut *req.cast::<u8>()
-            .sub(offset_of!(CopyFileWindows, io_request))
-            .cast::<CopyFileWindows>()
+        &mut *bun_core::from_field_ptr!(CopyFileWindows, io_request, req)
     };
-    // SAFETY: req points to a live CopyFileWindows.io_request (recovered above via @fieldParentPtr).
+    // SAFETY: req points to a live CopyFileWindows.io_request.
     debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
 
     let event_loop = this.event_loop;
@@ -1678,11 +1672,9 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     // SAFETY: req points to CopyFileWindows.io_request
     let this: &mut CopyFileWindows = unsafe {
-        &mut *req.cast::<u8>()
-            .sub(offset_of!(CopyFileWindows, io_request))
-            .cast::<CopyFileWindows>()
+        &mut *bun_core::from_field_ptr!(CopyFileWindows, io_request, req)
     };
-    // SAFETY: req points to a live CopyFileWindows.io_request (recovered above via @fieldParentPtr).
+    // SAFETY: req points to a live CopyFileWindows.io_request.
     debug_assert!(unsafe { (*req).data } == core::ptr::from_mut(this).cast::<c_void>());
 
     let event_loop = this.event_loop;

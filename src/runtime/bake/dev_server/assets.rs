@@ -49,16 +49,13 @@ pub struct Assets {
 }
 
 impl Assets {
-    /// `@fieldParentPtr("assets", self)` — intrusive backref.
+    /// Intrusive backref: intrusive backref.
     #[inline]
     pub(super) fn owner(&self) -> &DevServer {
         // SAFETY: `Assets` is only ever constructed as the `assets` field of
         // `DevServer` (which is `Box`-allocated and never moved post-init).
         unsafe {
-            &*std::ptr::from_ref::<Self>(self)
-                .cast::<u8>()
-                .sub(offset_of!(DevServer, assets))
-                .cast::<DevServer>()
+            &*bun_core::from_field_ptr!(DevServer, assets, std::ptr::from_ref::<Self>(self))
         }
     }
 
@@ -70,10 +67,7 @@ impl Assets {
     fn owner_mut(&mut self) -> *mut DevServer {
         // SAFETY: see `owner`. Pointer arithmetic only; no reference is formed here.
         unsafe {
-            std::ptr::from_mut::<Self>(self)
-                .cast::<u8>()
-                .sub(offset_of!(DevServer, assets))
-                .cast::<DevServer>()
+            bun_core::from_field_ptr!(DevServer, assets, std::ptr::from_mut::<Self>(self))
         }
     }
 

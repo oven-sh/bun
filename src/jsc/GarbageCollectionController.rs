@@ -145,11 +145,9 @@ impl GarbageCollectionController {
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
         // SAFETY: self is the `gc_controller` field embedded in a VirtualMachine
-        // (Zig: `@alignCast(@fieldParentPtr("gc_controller", this))`).
+        //.
         unsafe {
-            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(offset_of!(VirtualMachine, gc_controller))
-                .cast::<VirtualMachine>()
+            &mut *bun_core::from_field_ptr!(VirtualMachine, gc_controller, std::ptr::from_mut::<Self>(self))
         }
     }
 

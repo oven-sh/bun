@@ -552,11 +552,10 @@ impl CompressionStreamImpl for NativeBrotli {
     }
 
     unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self {
-        // Zig `@fieldParentPtr("task", task)` — recover the owning NativeBrotli.
+        // Intrusive parent recovery: recover the owning NativeBrotli.
         // SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
         unsafe {
-            task.byte_sub(core::mem::offset_of!(NativeBrotli, task))
-                .cast::<Self>()
+            bun_core::from_field_ptr!(NativeBrotli, task, task)
         }
     }
 

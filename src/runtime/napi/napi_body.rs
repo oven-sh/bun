@@ -1638,9 +1638,7 @@ impl napi_async_work {
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to napi_async_work.task; recover parent via offset_of.
         let this: &mut napi_async_work = unsafe {
-            &mut *task.cast::<u8>()
-                .sub(core::mem::offset_of!(napi_async_work, task))
-                .cast::<napi_async_work>()
+            &mut *bun_core::from_field_ptr!(napi_async_work, task, task)
         };
         this.run();
     }

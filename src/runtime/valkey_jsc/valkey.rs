@@ -1517,11 +1517,9 @@ impl ValkeyClient {
 
     #[inline]
     fn parent(&mut self) -> &mut JSValkeyClient {
-        // SAFETY: self points to JSValkeyClient.client (intrusive embed via @fieldParentPtr).
+        // SAFETY: self points to JSValkeyClient.client (intrusive embed via `container_of`).
         unsafe {
-            &mut *(std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(offset_of!(JSValkeyClient, client))
-                .cast::<JSValkeyClient>())
+            &mut *(bun_core::from_field_ptr!(JSValkeyClient, client, std::ptr::from_mut::<Self>(self)))
         }
     }
 

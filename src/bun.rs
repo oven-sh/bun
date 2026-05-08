@@ -365,9 +365,7 @@ impl<T: Default + 'static> ThreadlocalBuffers<T> {
         }
         // SAFETY: node points to Storage.node (offset 0 because #[repr(C)])
         unsafe {
-            let s = node.cast::<u8>()
-                .sub(core::mem::offset_of!(Storage<T>, node))
-                .cast::<Storage<T>>();
+            let s = bun_core::from_field_ptr!(Storage<T>, node, node);
             drop(bun_core::heap::take(s));
         }
         // TODO(port): clear per-type thread_local instance pointer

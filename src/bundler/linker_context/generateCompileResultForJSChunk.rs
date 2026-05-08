@@ -24,9 +24,7 @@ use super::generate_code_for_file_in_chunk_js::{generate_code_for_file_in_chunk_
 pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task is the `task` field embedded in a PendingPartRange (intrusive task node).
     let part_range: &PendingPartRange = unsafe {
-        &*task.cast::<u8>()
-            .sub(offset_of!(PendingPartRange, task))
-            .cast::<PendingPartRange>()
+        &*bun_core::from_field_ptr!(PendingPartRange, task, task)
     };
     let ctx = part_range.ctx;
     // SAFETY: `GenerateChunkCtx.{c, chunk}` are stored as `&mut T`, but `ctx` is held by
@@ -43,13 +41,11 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     let chunk_ptr: *mut Chunk = unsafe { *core::ptr::addr_of!(ctx.chunk).cast::<*mut Chunk>() };
 
     // SAFETY: `c_ptr` addresses the `linker` field embedded in `BundleV2`
-    // (`bundle_v2.zig:linker`); Zig `@fieldParentPtr("linker", ctx.c)` recovers `*BundleV2`.
+    // (`bundle_v2.zig:linker`).
     // `Worker::get` only needs `&BundleV2` (it reads `graph.pool` and serializes via mutex),
     // so no mutable reference is materialized here.
     let bv2: &BundleV2 = unsafe {
-        &*c_ptr.cast::<u8>()
-            .sub(offset_of!(BundleV2, linker))
-            .cast::<BundleV2>()
+        &*bun_core::from_field_ptr!(BundleV2, linker, c_ptr)
     };
     let worker = Worker::get(bv2);
     // `defer worker.unget()` — explicit; Worker::get returns the thread-local worker.

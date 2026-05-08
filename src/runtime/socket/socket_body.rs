@@ -258,7 +258,7 @@ pub struct NewSocket<const SSL: bool> {
     //
     // OWNERSHIP: in **server** mode this points at `&mut listener.handlers`
     // (the embedded `Listener.handlers` field — Listener.rs:34) so
-    // `@fieldParentPtr`-style offset arithmetic in `get_listener` and
+    // `container_of`-style offset arithmetic in `get_listener` and
     // `Handlers::mark_inactive` can recover the parent `Listener`. In
     // **client** mode it is `heap::alloc(Box::new(Handlers))` and
     // `Handlers::mark_inactive` frees it via `heap::take` once the last
@@ -779,7 +779,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// per field access (or re-derive after every reentrant call) instead.
     ///
     /// Server-mode: the returned pointer addresses the embedded
-    /// `Listener.handlers` field, so `@fieldParentPtr` arithmetic on it is
+    /// `Listener.handlers` field, so `container_of` arithmetic on it is
     /// valid. Client-mode: the pointer is a `heap::alloc` allocation that
     /// `Handlers::mark_inactive` may free — callers null `self.handlers` when
     /// `mark_inactive`/`scope.exit()` returns `true`.
@@ -1010,7 +1010,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let handlers = self.get_handlers();
             // SAFETY: server-mode `handlers` points at the embedded
             // `Listener.handlers` field, so `mark_inactive`'s
-            // `@fieldParentPtr` arithmetic is valid; client-mode it is the
+            // `container_of` arithmetic is valid; client-mode it is the
             // `heap::alloc` allocation `mark_inactive` frees in place.
             if unsafe { (*handlers).mark_inactive() } {
                 // Client-mode handlers are allocated per-connection and
@@ -1516,9 +1516,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: server-mode invariant (checked above) guarantees `handlers`
         // addresses `Listener.handlers`.
         let l: &Listener = unsafe {
-            &*handlers.cast::<u8>()
-                .sub(core::mem::offset_of!(Listener, handlers))
-                .cast::<Listener>()
+            &*bun_core::from_field_ptr!(Listener, handlers, handlers)
         };
         l.strong_self.get().unwrap_or(JSValue::UNDEFINED)
     }

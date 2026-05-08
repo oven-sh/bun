@@ -165,7 +165,7 @@ impl ProcessExitHandler {
 }
 
 // bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
-// via @fieldParentPtr in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
+// via `container_of` in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
 // keep the embedded count; the derive emits `ThreadSafeRefCounted` +
 // `AnyRefCounted`. Default `destructor` (`heap::take`) applies — `Drop` below
 // handles `poller.deinit()`.

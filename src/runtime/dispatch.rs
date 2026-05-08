@@ -729,17 +729,9 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 use crate::webcore::blob::read_file::ReadFile;
 use crate::webcore::blob::write_file::WriteFile;
 
-/// Recover the `ReadFile`/`WriteFile` parent from its embedded `io_poll` field.
-/// SAFETY: `poll` must be `&parent.io_poll` of a live `T`.
-#[inline]
-unsafe fn container_of_io_poll<T>(poll: *mut bun_io::Poll, off: usize) -> *mut T {
-    // SAFETY: per fn contract — `poll` is interior; `off` is `offset_of!(T, io_poll)`.
-    unsafe { poll.cast::<u8>().sub(off).cast::<T>() }
-}
-
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
-/// `bun_io`. Spec `io.zig:626`: `inline else => |t| { var this:
-/// *Pollable.Tag.Type(t) = @fieldParentPtr("io_poll", poll); this.onReady(); }`.
+/// `bun_io`. Spec `io.zig:626`: `inline else => |t| this.onReady()` where
+/// `this` is recovered from the embedded `io_poll` field.
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
@@ -748,16 +740,12 @@ pub unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bu
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
-            let this = unsafe {
-                &mut *container_of_io_poll::<ReadFile>(poll, core::mem::offset_of!(ReadFile, io_poll))
-            };
+            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
             this.on_ready();
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
-            let this = unsafe {
-                &mut *container_of_io_poll::<WriteFile>(poll, core::mem::offset_of!(WriteFile, io_poll))
-            };
+            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
             this.on_ready();
         }
         bun_io::PollableTag::Empty => {
@@ -781,16 +769,12 @@ pub unsafe fn __bun_io_pollable_on_io_error(
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
-            let this = unsafe {
-                &mut *container_of_io_poll::<ReadFile>(poll, core::mem::offset_of!(ReadFile, io_poll))
-            };
+            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
             this.on_io_error(err);
         }
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
-            let this = unsafe {
-                container_of_io_poll::<WriteFile>(poll, core::mem::offset_of!(WriteFile, io_poll))
-            };
+            let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
             // PORT NOTE: WriteFile::on_io_error already takes `*mut ()` (it
             // self-recovers via the io_request path elsewhere); reuse that
             // shape rather than reborrowing `&mut`.
@@ -854,7 +838,7 @@ pub unsafe fn __bun_run_wtf_timer(
 // EventLoopTimer dispatch (src/event_loop/EventLoopTimer.zig `fire` switch)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `__bun_fire_timer` body — the tag→`@fieldParentPtr` match for
+/// `__bun_fire_timer` body — the tag→`container_of` match for
 /// [`EventLoopTimer::fire`]. Spec EventLoopTimer.zig:170-223.
 ///
 /// Reached from [`crate::timer::All::drain_timers`] (every due heap timer) and
@@ -867,16 +851,15 @@ pub unsafe fn __bun_run_wtf_timer(
 /// `t` after the per-arm call returns.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
-    use core::mem::offset_of;
     use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
 
-    /// `@fieldParentPtr("$field", t)` — recover the embedding container.
-    macro_rules! container_of {
+    /// Recover the embedding container from `t` (the popped timer slot).
+    macro_rules! owner {
         ($ty:ty, $field:ident) => {{
             // SAFETY: §Dispatch — `t.tag` was set together with the container
             // at construction; tag uniquely identifies the embedding type and
             // `$field` is the `EventLoopTimer` slot `t` points into.
-            unsafe { t.cast::<u8>().sub(offset_of!($ty, $field)).cast::<$ty>() }
+            unsafe { bun_core::from_field_ptr!($ty, $field, t) }
         }};
     }
 
@@ -886,7 +869,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
     match tag {
         // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
         EventLoopTimerTag::TimeoutObject => {
-            let container = container_of!(TimeoutObject, event_loop_timer);
+            let container = owner!(TimeoutObject, event_loop_timer);
             // SAFETY: container derived from a live `TimeoutObject`; do NOT
             // form `&mut *container` — `internals.fire` may `deref()` and free.
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
@@ -895,61 +878,61 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             unsafe { (*internals).fire(&*now, vm) };
         }
         EventLoopTimerTag::ImmediateObject => {
-            let container = container_of!(ImmediateObject, event_loop_timer);
+            let container = owner!(ImmediateObject, event_loop_timer);
             // SAFETY: see TimeoutObject arm.
             let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
             // SAFETY: see TimeoutObject arm.
             unsafe { (*internals).fire(&*now, vm) };
         }
         EventLoopTimerTag::TimerCallback => {
-            let container = container_of!(TimerCallback, event_loop_timer);
+            let container = owner!(TimerCallback, event_loop_timer);
             // SAFETY: container derived from a live `TimerCallback`; the
             // callback fn-ptr was set together with the tag at construction.
             // Spec `inline else` fallthrough: `container.callback(container)`.
             unsafe { ((*container).callback)(container) };
         }
         EventLoopTimerTag::WTFTimer => {
-            let container = container_of!(WTFTimer, event_loop_timer);
+            let container = owner!(WTFTimer, event_loop_timer);
             // SAFETY: container derived from a live `WTFTimer`; `now` is the
             // snapshot from `All::next`; `vm` is the per-thread VM. `fire` may
             // re-enter `(*runtime_state()).timer` — no `&mut` held here.
             unsafe { WTFTimer::fire(container, &*now, vm) };
         }
         EventLoopTimerTag::AbortSignalTimeout => {
-            let container = container_of!(AbortSignalTimeout, event_loop_timer);
+            let container = owner!(AbortSignalTimeout, event_loop_timer);
             // SAFETY: per fn contract; `run` may free `container` (re-entrant
             // `signal` → `~AbortSignal` → `Timeout::deinit`).
             unsafe { AbortSignalTimeout::run(container, vm) };
         }
         EventLoopTimerTag::DateHeaderTimer => {
-            let container = container_of!(DateHeaderTimer, event_loop_timer);
+            let container = owner!(DateHeaderTimer, event_loop_timer);
             // SAFETY: per fn contract.
             unsafe { (*container).run(&mut *vm) };
         }
         EventLoopTimerTag::EventLoopDelayMonitor => {
-            let container = container_of!(EventLoopDelayMonitor, event_loop_timer);
+            let container = owner!(EventLoopDelayMonitor, event_loop_timer);
             // SAFETY: per fn contract.
             unsafe { (*container).on_fire(&mut *vm, &*now) };
         }
         EventLoopTimerTag::StatWatcherScheduler => {
-            let container = container_of!(StatWatcherScheduler, event_loop_timer);
+            let container = owner!(StatWatcherScheduler, event_loop_timer);
             // SAFETY: per fn contract.
             unsafe { (*container).timer_callback() };
         }
         EventLoopTimerTag::UpgradedDuplex => {
-            let container = container_of!(UpgradedDuplex, event_loop_timer);
+            let container = owner!(UpgradedDuplex, event_loop_timer);
             // SAFETY: per fn contract.
             unsafe { (*container).on_timeout() };
         }
         EventLoopTimerTag::DNSResolver => {
-            let container = container_of!(DNSResolver, event_loop_timer);
+            let container = owner!(DNSResolver, event_loop_timer);
             // SAFETY: per fn contract.
             unsafe { (*container).check_timeouts(&*now, &*vm) };
         }
         EventLoopTimerTag::WindowsNamedPipe => {
             #[cfg(windows)]
             {
-                let container = container_of!(WindowsNamedPipe, event_loop_timer);
+                let container = owner!(WindowsNamedPipe, event_loop_timer);
                 // SAFETY: per fn contract.
                 unsafe { (*container).on_timeout() };
             }
@@ -987,17 +970,17 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             unsafe { (*container).on_max_lifetime_timeout() };
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
-            let container = container_of!(Valkey, timer);
+            let container = owner!(Valkey, timer);
             // SAFETY: per fn contract.
             unsafe { (*container).on_connection_timeout() };
         }
         EventLoopTimerTag::ValkeyConnectionReconnect => {
-            let container = container_of!(Valkey, reconnect_timer);
+            let container = owner!(Valkey, reconnect_timer);
             // SAFETY: per fn contract.
             unsafe { (*container).on_reconnect_timer() };
         }
         EventLoopTimerTag::SubprocessTimeout => {
-            let container = container_of!(Subprocess<'_>, event_loop_timer);
+            let container = owner!(Subprocess<'_>, event_loop_timer);
             // SAFETY: per fn contract.
             unsafe { (*container).timeout_callback() };
         }
@@ -1016,7 +999,7 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // Spec: `BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self))`
             // — bumps the Rc refcount around the callback so the timer can
             // safely re-enter `BunTest::run`.
-            let container = container_of!(BunTest, timer);
+            let container = owner!(BunTest, timer);
             // SAFETY: container is the payload of a live `Rc<BunTestCell>`; the
             // strong count is ≥1 (held by `Jest.active_file`).
             // `BunTestCell` is a `UnsafeCell<BunTest>` newtype — same
@@ -1038,14 +1021,14 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             BunTest::bun_test_timeout_callback(strong, &now_core, unsafe { &*vm });
         }
         EventLoopTimerTag::CronJob => {
-            let container = container_of!(CronJob, event_loop_timer);
+            let container = owner!(CronJob, event_loop_timer);
             // SAFETY: per fn contract.
             CronJob::on_timer_fire(container, unsafe { &*vm });
         }
     }
 }
 
-/// `__bun_js_timer_epoch` body — the tag→`@fieldParentPtr` read for
+/// `__bun_js_timer_epoch` body — the tag→`container_of` read for
 /// [`EventLoopTimer::js_timer_epoch`]. Spec EventLoopTimer.zig
 /// `jsTimerInternalsFlags` (returns `internals.flags.epoch` for the three
 /// JS-timer container types, else null). Sits on the heap-compare hot path
@@ -1061,21 +1044,15 @@ pub unsafe fn __bun_js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTi
     // field of the named container (set at construction; never re-tagged).
     match tag {
         EventLoopTimerTag::TimeoutObject => unsafe {
-            let parent = t.cast::<u8>()
-                .sub(offset_of!(TimeoutObject, event_loop_timer))
-                .cast::<TimeoutObject>();
+            let parent = bun_core::from_field_ptr!(TimeoutObject, event_loop_timer, t);
             Some((*parent).internals.flags.epoch())
         },
         EventLoopTimerTag::ImmediateObject => unsafe {
-            let parent = t.cast::<u8>()
-                .sub(offset_of!(ImmediateObject, event_loop_timer))
-                .cast::<ImmediateObject>();
+            let parent = bun_core::from_field_ptr!(ImmediateObject, event_loop_timer, t);
             Some((*parent).internals.flags.epoch())
         },
         EventLoopTimerTag::AbortSignalTimeout => unsafe {
-            let parent = t.cast::<u8>()
-                .sub(offset_of!(AbortSignalTimeout, event_loop_timer))
-                .cast::<AbortSignalTimeout>();
+            let parent = bun_core::from_field_ptr!(AbortSignalTimeout, event_loop_timer, t);
             Some((*parent).flags.epoch())
         },
         _ => None,

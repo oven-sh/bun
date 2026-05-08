@@ -126,9 +126,7 @@ impl FileCloser for WriteFile {
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *(std::ptr::from_mut::<io::Request>(request).cast::<u8>()
-                .sub(offset_of!(WriteFile, io_request))
-                .cast::<WriteFile>())
+            &mut *(bun_core::from_field_ptr!(WriteFile, io_request, std::ptr::from_mut::<io::Request>(request)))
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut WriteFile` set below.
@@ -151,7 +149,7 @@ impl FileCloser for WriteFile {
     unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: task is &mut self.task (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *(task.cast::<u8>().sub(offset_of!(WriteFile, task)).cast::<WriteFile>())
+            &mut *(bun_core::from_field_ptr!(WriteFile, task, task))
         };
         this.close_after_io = false;
         WriteFile::update(this);
@@ -167,9 +165,7 @@ impl WriteFile {
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request
         let this: &mut WriteFile = unsafe {
-            &mut *std::ptr::from_mut::<io::Request>(request).cast::<u8>()
-                .sub(offset_of!(WriteFile, io_request))
-                .cast::<WriteFile>()
+            &mut *bun_core::from_field_ptr!(WriteFile, io_request, std::ptr::from_mut::<io::Request>(request))
         };
         this.on_ready();
     }
@@ -195,9 +191,7 @@ impl WriteFile {
         request.scheduled = false;
         // SAFETY: request points to WriteFile.io_request (intrusive); recover parent.
         let this: &mut WriteFile = unsafe {
-            &mut *std::ptr::from_mut::<io::Request>(request).cast::<u8>()
-                .sub(offset_of!(WriteFile, io_request))
-                .cast::<WriteFile>()
+            &mut *bun_core::from_field_ptr!(WriteFile, io_request, std::ptr::from_mut::<io::Request>(request))
         };
         io::Action::Writable(io::FileAction {
             on_error: Self::on_io_error,
@@ -463,9 +457,7 @@ impl WriteFile {
     unsafe fn do_write_loop_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to WriteFile.task
         let this: &mut WriteFile = unsafe {
-            &mut *task.cast::<u8>()
-                .sub(offset_of!(WriteFile, task))
-                .cast::<WriteFile>()
+            &mut *bun_core::from_field_ptr!(WriteFile, task, task)
         };
         // On macOS, we use one-shot mode, so we don't need to unregister.
         #[cfg(target_os = "macos")]
@@ -714,9 +706,7 @@ mod windows_impl {
         pub extern "C" fn on_open(req: *mut uv::fs_t) {
             // SAFETY: req points to WriteFileWindows.io_request
             let this: &mut WriteFileWindows = unsafe {
-                &mut *req.cast::<u8>()
-                    .sub(offset_of!(WriteFileWindows, io_request))
-                    .cast::<WriteFileWindows>()
+                &mut *bun_core::from_field_ptr!(WriteFileWindows, io_request, req)
             };
             debug_assert!(core::ptr::eq(
                 this,
@@ -856,9 +846,7 @@ mod windows_impl {
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
             // SAFETY: req points to WriteFileWindows.io_request
             let this: &mut WriteFileWindows = unsafe {
-                &mut *req.cast::<u8>()
-                    .sub(offset_of!(WriteFileWindows, io_request))
-                    .cast::<WriteFileWindows>()
+                &mut *bun_core::from_field_ptr!(WriteFileWindows, io_request, req)
             };
             debug_assert!(core::ptr::eq(
                 this,

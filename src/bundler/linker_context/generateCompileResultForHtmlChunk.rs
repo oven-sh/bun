@@ -59,9 +59,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // the `ctx` field — and the `&mut` pointers stored inside it — does not go
     // through a shared reborrow that would strip write provenance.
     let part_range: *const PendingPartRange = unsafe {
-        task.cast::<u8>()
-            .sub(offset_of!(PendingPartRange, task))
-            .cast::<PendingPartRange>()
+        bun_core::from_field_ptr!(PendingPartRange, task, task)
     };
     let i = unsafe { (*part_range).i } as usize;
     // SAFETY: read the stored ctx reference's bits as a raw pointer. `&T` and
@@ -78,9 +76,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
         *core::ptr::addr_of!((*ctx).c).cast::<*const LinkerContext>()
     };
     let bv2: &BundleV2 = unsafe {
-        &*c.cast::<u8>()
-            .sub(offset_of!(BundleV2, linker))
-            .cast::<BundleV2>()
+        &*bun_core::from_field_ptr!(BundleV2, linker, c)
     };
     let worker = Worker::get(bv2);
     let _unget = scopeguard::guard(&mut *worker, |w| w.unget());

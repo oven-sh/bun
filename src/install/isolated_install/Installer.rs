@@ -1857,9 +1857,7 @@ impl Task {
     pub fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
         let this: &mut Task = unsafe {
-            &mut *task.cast::<u8>()
-                .sub(core::mem::offset_of!(Task, task))
-                .cast::<Task>()
+            &mut *bun_core::from_field_ptr!(Task, task, task)
         };
 
         let res = match this.run() {

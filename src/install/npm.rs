@@ -1171,9 +1171,7 @@ pub mod package_manifest {
 
                     // SAFETY: task points to SaveTask.task
                     let save_task: *mut SaveTask<'_> = unsafe {
-                        task.cast::<u8>()
-                            .sub(core::mem::offset_of!(SaveTask<'_>, task))
-                            .cast()
+                        bun_core::from_field_ptr!(SaveTask<'_>, task, task)
                     };
                     // SAFETY: allocated via heap::alloc in save_async
                     let save_task = unsafe { bun_core::heap::take(save_task) };

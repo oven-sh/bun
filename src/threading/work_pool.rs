@@ -131,7 +131,7 @@ impl WorkPool {
     /// Schedule a heap-allocated task by value. The pool takes ownership of
     /// the `Box`; [`OwnedTask::run`] receives it back on a worker thread.
     /// Replaces the open-coded `Box::into_raw` + `&raw mut (*p).task` +
-    /// `@fieldParentPtr`-in-callback pattern.
+    /// `container_of`-in-callback pattern.
     pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
         // Install the monomorphized shim via the safe accessor — no raw
         // byte-offset write. `node` is left as the caller initialized it
@@ -171,9 +171,7 @@ impl WorkPool {
             // SAFETY: `task` points to the `task` field of a `TaskType<C>` allocated below
             // via Box::into_raw; recover the parent pointer, run the user fn, then free.
             unsafe {
-                let this_task = task.cast::<u8>()
-                    .sub(core::mem::offset_of!(TaskType<C>, task))
-                    .cast::<TaskType<C>>();
+                let this_task = bun_core::from_field_ptr!(TaskType<C>, task, task);
                 let this_task = Box::from_raw(this_task);
                 (this_task.function)(this_task.context);
             }

@@ -38,7 +38,7 @@ use super::frame;
 /// callbacks the Zig called as `owner().onChannelFrame` / `onChannelDone`.
 pub trait ChannelOwner: Sized {
     /// `offset_of!(Self, <channel field>)` — used to recover `&mut Self` from
-    /// `&mut Channel<Self>` in platform callbacks (Zig: `@fieldParentPtr`).
+    /// `&mut Channel<Self>` in platform callbacks.
     const CHANNEL_OFFSET: usize;
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
@@ -487,7 +487,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // `owner()` would re-borrow `*self` mutably. Capture the owner raw
             // pointer *before* forming `rd` (so the `&mut *self` reborrow ends
             // immediately), then recover `&mut Owner` from it after. Same
-            // `@fieldParentPtr` arithmetic as `owner()`. The callback never
+            // `container_of` arithmetic as `owner()`. The callback never
             // touches `self.r#in` (it only reads `rd` and may write other
             // channel fields / call `send()`), so the aliasing is sound.
             let owner_ptr: *mut Owner = std::ptr::from_mut::<Self>(self)

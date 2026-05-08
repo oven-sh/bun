@@ -82,9 +82,7 @@ impl TimerObjectInternals {
                 // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals`
                 // field of a live `ImmediateObject` (set in `init()`).
                 let parent = unsafe {
-                    std::ptr::from_mut::<Self>(self).cast::<u8>()
-                        .sub(offset_of!(ImmediateObject, internals))
-                        .cast::<ImmediateObject>()
+                    bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self))
                 };
                 // SAFETY: `parent` derived from a live container per above.
                 unsafe { core::ptr::addr_of_mut!((*parent).event_loop_timer) }
@@ -93,9 +91,7 @@ impl TimerObjectInternals {
                 // SAFETY: `kind ∈ {SetTimeout, SetInterval}` ⇒ `self` is the
                 // `internals` field of a live `TimeoutObject`.
                 let parent = unsafe {
-                    std::ptr::from_mut::<Self>(self).cast::<u8>()
-                        .sub(offset_of!(TimeoutObject, internals))
-                        .cast::<TimeoutObject>()
+                    bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_mut::<Self>(self))
                 };
                 // SAFETY: `parent` derived from a live container per above.
                 unsafe { core::ptr::addr_of_mut!((*parent).event_loop_timer) }
@@ -106,20 +102,16 @@ impl TimerObjectInternals {
     /// Increment the parent container's intrusive refcount.
     fn ref_(&mut self) {
         match self.flags.kind() {
-            // SAFETY: see `event_loop_timer` — same `@fieldParentPtr` invariant.
+            // SAFETY: see `event_loop_timer` — same `container_of` invariant.
             Kind::SetImmediate => unsafe {
                 ImmediateObject::ref_(
-                    std::ptr::from_mut::<Self>(self).cast::<u8>()
-                        .sub(offset_of!(ImmediateObject, internals))
-                        .cast::<ImmediateObject>(),
+                    bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self)),
                 )
             },
             // SAFETY: see `event_loop_timer`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
                 TimeoutObject::ref_(
-                    std::ptr::from_mut::<Self>(self).cast::<u8>()
-                        .sub(offset_of!(TimeoutObject, internals))
-                        .cast::<TimeoutObject>(),
+                    bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_mut::<Self>(self)),
                 )
             },
         }
@@ -132,17 +124,13 @@ impl TimerObjectInternals {
             // SAFETY: see `event_loop_timer`.
             Kind::SetImmediate => unsafe {
                 ImmediateObject::deref(
-                    std::ptr::from_mut::<Self>(self).cast::<u8>()
-                        .sub(offset_of!(ImmediateObject, internals))
-                        .cast::<ImmediateObject>(),
+                    bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self)),
                 )
             },
             // SAFETY: see `event_loop_timer`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
                 TimeoutObject::deref(
-                    std::ptr::from_mut::<Self>(self).cast::<u8>()
-                        .sub(offset_of!(TimeoutObject, internals))
-                        .cast::<TimeoutObject>(),
+                    bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_mut::<Self>(self)),
                 )
             },
         }
@@ -231,7 +219,7 @@ impl TimerObjectInternals {
 
     /// Spec TimerObjectInternals.zig `init` — out-param constructor; `self` is
     /// the embedded `internals` field of a freshly `heap::alloc`'d
-    /// `ImmediateObject`/`TimeoutObject` (Zig: `@fieldParentPtr`). Cannot be
+    /// `ImmediateObject`/`TimeoutObject`. Cannot be
     /// reshaped to `-> Self` because the body needs the parent pointer to
     /// enqueue/reschedule before returning.
     ///
@@ -275,9 +263,7 @@ impl TimerObjectInternals {
             // of a live `ImmediateObject` (caller contract — see
             // `ImmediateObject::init`).
             let parent = unsafe {
-                std::ptr::from_mut::<Self>(self).cast::<u8>()
-                    .sub(offset_of!(ImmediateObject, internals))
-                    .cast::<ImmediateObject>()
+                bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self))
             };
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
             // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
@@ -779,24 +765,20 @@ impl TimerObjectInternals {
 // `TimeoutObject.rs` / `ImmediateObject.rs` host-fn shims.
 // ──────────────────────────────────────────────────────────────────────────
 impl TimerObjectInternals {
-    /// Read-only `@fieldParentPtr` to the owning `EventLoopTimer.state`.
+    /// Read-only `container_of` to the owning `EventLoopTimer.state`.
     /// Mirror of [`Self::event_loop_timer`] for `&self` callers (`get_destroyed`).
     fn event_loop_timer_state(&self) -> EventLoopTimerState {
         match self.flags.kind() {
             // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
             // of a live `ImmediateObject` (set in `init()`); read-only deref.
             Kind::SetImmediate => unsafe {
-                (*std::ptr::from_ref::<Self>(self).cast::<u8>()
-                    .sub(offset_of!(ImmediateObject, internals))
-                    .cast::<ImmediateObject>())
+                (*bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_ref::<Self>(self)))
                 .event_loop_timer
                 .state
             },
             // SAFETY: as above for `TimeoutObject`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
-                (*std::ptr::from_ref::<Self>(self).cast::<u8>()
-                    .sub(offset_of!(TimeoutObject, internals))
-                    .cast::<TimeoutObject>())
+                (*bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_ref::<Self>(self)))
                 .event_loop_timer
                 .state
             },

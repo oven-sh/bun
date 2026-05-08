@@ -1740,11 +1740,9 @@ pub mod closer {
 
         extern "C" fn on_close(req: *mut uv::fs_t) {
             // SAFETY: req points to Closer.io_request (set in `close` above);
-            // recover the parent via offset_of (Zig: @fieldParentPtr).
+            // recover the parent via offset_of.
             let closer: *mut Closer = unsafe {
-                req.cast::<u8>()
-                    .sub(core::mem::offset_of!(Closer, io_request))
-                    .cast::<Closer>()
+                bun_core::from_field_ptr!(Closer, io_request, req)
             };
             // SAFETY: req.data was set to `closer` in `close`; both valid for the callback.
             unsafe {

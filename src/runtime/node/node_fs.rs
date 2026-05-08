@@ -516,7 +516,7 @@ pub mod async_ {
         pub fn work_pool_callback(task: *mut WorkPoolTask) {
             // SAFETY: task points to AsyncMkdirp.task
             let this: &mut AsyncMkdirp = unsafe {
-                &mut *(task.cast::<u8>().sub(offset_of!(AsyncMkdirp, task)).cast::<AsyncMkdirp>())
+                &mut *(bun_core::from_field_ptr!(AsyncMkdirp, task, task))
             };
 
             let mut node_fs = NodeFS::default();
@@ -1081,7 +1081,7 @@ where
     fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: task points to Self.task; container_of via offset_of
         let this: &mut Self = unsafe {
-            &mut *(task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>())
+            &mut *(bun_core::from_field_ptr!(Self, task, task))
         };
 
         let mut node_fs = NodeFS::default();
@@ -1387,7 +1387,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // may spawn subtasks that hold `&Self` to the same allocation while
         // this call is still on the stack, so we must not form `&mut Self` here.
         let this: *mut Self = unsafe {
-            task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>()
+            bun_core::from_field_ptr!(Self, task, task)
         };
         let mut node_fs = NodeFS::default();
         Self::cp_async(&mut node_fs, this);
@@ -2089,7 +2089,7 @@ impl AsyncReaddirRecursiveTask {
     fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: task points to Self.task; container_of via offset_of
         let this: &mut Self = unsafe {
-            &mut *(task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>())
+            &mut *(bun_core::from_field_ptr!(Self, task, task))
         };
         let mut buf = PathBuffer::uninit();
         let root_path = this.root_path;

@@ -208,9 +208,7 @@ impl<'a> Task<'a> {
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
         let this: *mut Task<'a> = unsafe {
-            task.cast::<u8>()
-                .sub(core::mem::offset_of!(Task, threadpool_task))
-                .cast::<Task>()
+            bun_core::from_field_ptr!(Task, threadpool_task, task)
         };
         // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
         // owns. Kept as a raw `*mut` for the whole function: this callback runs

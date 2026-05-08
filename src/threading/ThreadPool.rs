@@ -27,7 +27,6 @@
 //   SOFTWARE.
 
 use core::cell::Cell;
-use core::mem::offset_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{
     AtomicBool, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering,
@@ -332,7 +331,7 @@ impl Task {
     #[inline]
     unsafe fn from_node(node: *mut Node) -> *mut Task {
         // SAFETY: caller guarantees `node` points to the `node` field of a `Task`.
-        unsafe { node.cast::<u8>().sub(offset_of!(Task, node)).cast::<Task>() }
+        unsafe { bun_core::from_field_ptr!(Task, node, node) }
     }
 }
 
@@ -501,9 +500,7 @@ impl ThreadPool {
         unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
             // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
             let runner_task = unsafe {
-                &mut *task.cast::<u8>()
-                    .sub(offset_of!(RunnerTask<Ctx, V, F>, task))
-                    .cast::<RunnerTask<Ctx, V, F>>()
+                &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task)
             };
             let i = runner_task.i;
             // SAFETY: ctx points to a stack-local WaitContext kept alive by wait_for_all().

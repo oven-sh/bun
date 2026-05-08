@@ -173,9 +173,7 @@ impl TimerObjectInternals {
             Kind::SetImmediate => {
                 // SAFETY: self points to ImmediateObject.internals
                 let parent = unsafe {
-                    &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                        .sub(offset_of!(ImmediateObject, internals))
-                        .cast::<ImmediateObject>()
+                    &mut *bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self))
                 };
                 debug_assert!(parent.event_loop_timer.tag == EventLoopTimerTag::ImmediateObject);
                 &mut parent.event_loop_timer
@@ -183,9 +181,7 @@ impl TimerObjectInternals {
             Kind::SetTimeout | Kind::SetInterval => {
                 // SAFETY: self points to TimeoutObject.internals
                 let parent = unsafe {
-                    &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                        .sub(offset_of!(TimeoutObject, internals))
-                        .cast::<TimeoutObject>()
+                    &mut *bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_mut::<Self>(self))
                 };
                 debug_assert!(parent.event_loop_timer.tag == EventLoopTimerTag::TimeoutObject);
                 &mut parent.event_loop_timer
@@ -201,9 +197,7 @@ impl TimerObjectInternals {
                 // reaches here.
                 unsafe {
                     ImmediateObject::ref_(
-                        std::ptr::from_mut::<Self>(self).cast::<u8>()
-                            .sub(offset_of!(ImmediateObject, internals))
-                            .cast::<ImmediateObject>(),
+                        bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self)),
                     )
                 }
             }
@@ -211,9 +205,7 @@ impl TimerObjectInternals {
                 // SAFETY: self points to TimeoutObject.internals
                 unsafe {
                     TimeoutObject::ref_(
-                        std::ptr::from_mut::<Self>(self).cast::<u8>()
-                            .sub(offset_of!(TimeoutObject, internals))
-                            .cast::<TimeoutObject>(),
+                        bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_mut::<Self>(self)),
                     )
                 }
             }
@@ -227,9 +219,7 @@ impl TimerObjectInternals {
                 // the parent — caller must not touch `self` after a final deref.
                 unsafe {
                     ImmediateObject::deref(
-                        std::ptr::from_mut::<Self>(self).cast::<u8>()
-                            .sub(offset_of!(ImmediateObject, internals))
-                            .cast::<ImmediateObject>(),
+                        bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self)),
                     )
                 }
             }
@@ -237,9 +227,7 @@ impl TimerObjectInternals {
                 // SAFETY: self points to TimeoutObject.internals
                 unsafe {
                     TimeoutObject::deref(
-                        std::ptr::from_mut::<Self>(self).cast::<u8>()
-                            .sub(offset_of!(TimeoutObject, internals))
-                            .cast::<TimeoutObject>(),
+                        bun_core::from_field_ptr!(TimeoutObject, internals, std::ptr::from_mut::<Self>(self)),
                     )
                 }
             }
@@ -576,9 +564,7 @@ impl TimerObjectInternals {
             JSImmediate::callback_set_cached(timer, global, callback);
             // SAFETY: self points to ImmediateObject.internals
             let parent = unsafe {
-                std::ptr::from_mut::<Self>(self).cast::<u8>()
-                    .sub(offset_of!(ImmediateObject, internals))
-                    .cast::<ImmediateObject>()
+                bun_core::from_field_ptr!(ImmediateObject, internals, std::ptr::from_mut::<Self>(self))
             };
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
             // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
@@ -837,9 +823,7 @@ impl TimerObjectInternals {
             Kind::SetImmediate => {
                 // SAFETY: `this` points to ImmediateObject.internals
                 let rc = unsafe {
-                    &(*this.cast::<u8>()
-                        .sub(offset_of!(ImmediateObject, internals))
-                        .cast::<ImmediateObject>())
+                    &(*bun_core::from_field_ptr!(ImmediateObject, internals, this))
                     .ref_count
                 };
                 debug_assert_eq!(rc.get(), 0, "ImmediateObject ref_count not zero at destroy");
@@ -847,9 +831,7 @@ impl TimerObjectInternals {
             Kind::SetTimeout | Kind::SetInterval => {
                 // SAFETY: `this` points to TimeoutObject.internals
                 let rc = unsafe {
-                    &(*this.cast::<u8>()
-                        .sub(offset_of!(TimeoutObject, internals))
-                        .cast::<TimeoutObject>())
+                    &(*bun_core::from_field_ptr!(TimeoutObject, internals, this))
                     .ref_count
                 };
                 debug_assert_eq!(rc.get(), 0, "TimeoutObject ref_count not zero at destroy");

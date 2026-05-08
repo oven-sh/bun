@@ -316,9 +316,7 @@ impl StatWatcherScheduler {
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: `task` points to `StatWatcherScheduler.task`; recover parent via offset_of.
         let this: *mut StatWatcherScheduler = unsafe {
-            task.cast::<u8>()
-                .sub(core::mem::offset_of!(StatWatcherScheduler, task))
-                .cast::<StatWatcherScheduler>()
+            bun_core::from_field_ptr!(StatWatcherScheduler, task, task)
         };
         // ref'd when the timer was scheduled
         // SAFETY: `this` is live; one ref (taken in `set_interval`) is owned by

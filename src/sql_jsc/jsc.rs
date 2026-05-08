@@ -407,7 +407,7 @@ impl EventLoopSqlExt for EventLoop {
 //
 // The intrusive `EventLoopTimer` node + `Tag`/`State` enums are the canonical
 // `bun_event_loop` types (lower tier — also what `bun_runtime::dispatch::
-// fire_timer` reads via `container_of!`). The previous local `#[repr(C)]`
+// fire_timer` reads via `from_field_ptr!`). The previous local `#[repr(C)]`
 // stub diverged on layout (`[usize;3]` heap, no `in_heap`) *and* discriminants
 // (Tag::PostgresSQLConnectionTimeout=1 vs canonical 8, State::FIRED/CANCELLED
 // swapped), so insertion into the real pairing-heap was UB and tag dispatch

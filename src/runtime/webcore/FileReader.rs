@@ -502,9 +502,7 @@ impl FileReader {
         // a tight `unsafe { (*ptr).method() }` scope and never hold the
         // resulting `&mut Source` across other `self.*` accesses.
         unsafe {
-            std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(mem::offset_of!(Source, context))
-                .cast::<Source>()
+            bun_core::from_field_ptr!(Source, context, std::ptr::from_mut::<Self>(self))
         }
     }
 

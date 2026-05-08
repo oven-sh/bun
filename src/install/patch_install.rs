@@ -193,9 +193,7 @@ impl PatchTask {
     pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: `task` points to the `task` field of a live `PatchTask` (set at construction).
         let patch_task: &mut PatchTask = unsafe {
-            &mut *task.cast::<u8>()
-                .sub(offset_of!(PatchTask, task))
-                .cast::<PatchTask>()
+            &mut *bun_core::from_field_ptr!(PatchTask, task, task)
         };
         patch_task.run_from_thread_pool_impl();
     }

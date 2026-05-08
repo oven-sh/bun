@@ -108,7 +108,7 @@ pub struct Queue {
 }
 
 impl Queue {
-    /// `@fieldParentPtr("modules", this)` — recover the owning VM.
+    /// Intrusive backref: recover the owning VM.
     ///
     /// SAFETY: `self` must point to `VirtualMachine.modules`; Queue is only
     /// ever constructed in place as that field. Gated until
@@ -116,9 +116,7 @@ impl Queue {
 
     pub fn vm(&mut self) -> &mut VirtualMachine {
         unsafe {
-            &mut *(std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(core::mem::offset_of!(VirtualMachine, modules))
-                .cast::<VirtualMachine>())
+            &mut *(bun_core::from_field_ptr!(VirtualMachine, modules, std::ptr::from_mut::<Self>(self)))
         }
     }
 
@@ -358,7 +356,7 @@ impl Queue {
                     continue;
                 }
                 let import_record_id = pending.import_record_id;
-                // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
+                // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
                 let vm = unsafe { &mut *vm_ptr };
                 // PORT NOTE: reshaped for borrowck — `lockfile.str()` ties the
                 // returned slice to `&vm`, which conflicts with passing
@@ -389,7 +387,7 @@ impl Queue {
         // SAFETY: ctx was registered as *Queue when installing this callback.
         let this: &mut Queue = unsafe { &mut *ctx.cast::<Queue>() };
         // PORT NOTE: reshaped for borrowck — `vm()` derives a `&mut
-        // VirtualMachine` from `&mut *this` via `@fieldParentPtr`, which
+        // VirtualMachine` from `&mut *this` via `container_of`, which
         // overlaps the `*mut Queue` payload of the concurrent task. Build the
         // task first (it stores only the raw pointer), then enqueue.
         let task = ConcurrentTaskItem::create_from(std::ptr::from_mut::<Queue>(this));
@@ -409,7 +407,7 @@ impl Queue {
         // `&mut PackageManager` and `&mut Queue`; recover the disjoint
         // package-manager borrow via raw ptr so neither aliases the other.
         let vm: *mut VirtualMachine = self.vm();
-        // SAFETY: `vm` derived via `@fieldParentPtr`; `package_manager()`
+        // SAFETY: `vm` derived via `container_of`; `package_manager()`
         // returns a borrow disjoint from `vm.modules` (= `self`).
         let pm = unsafe { (*vm).package_manager() };
 
@@ -449,7 +447,7 @@ impl Queue {
                     let version = pending.dependency.clone();
                     let import_record_id = pending.import_record_id;
 
-                    // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
+                    // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
                     let vm = unsafe { &mut *vm_ptr };
                     module
                         .resolve_error(
@@ -505,7 +503,7 @@ impl Queue {
                     continue;
                 }
                 let import_record_id = pending.import_record_id;
-                // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
+                // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
                 let vm = unsafe { &mut *vm_ptr };
                 module
                     .download_error(
@@ -527,7 +525,7 @@ impl Queue {
 
     pub fn poll_modules(&mut self) {
         let vm_ptr: *mut VirtualMachine = self.vm();
-        // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
+        // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
         let pm = unsafe { (*vm_ptr).package_manager() };
         if pm.pending_tasks.load(Ordering::Relaxed) > 0 {
             return;
@@ -622,7 +620,7 @@ impl Queue {
 
             if done_count == tags_len {
                 let module = self.map.remove(i);
-                // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
+                // SAFETY: vm_ptr derived via `container_of`; valid for the lifetime of self.
                 module.done(unsafe { &mut *vm_ptr });
             } else {
                 i += 1;

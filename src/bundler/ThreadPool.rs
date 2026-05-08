@@ -508,9 +508,7 @@ impl Worker {
         bun_core::scoped_log!(ThreadPool, "Worker.deinit()");
         // SAFETY: task points to Worker.deinit_task; offset_of recovers the parent.
         let this: *mut Worker = unsafe {
-            task.cast::<u8>()
-                .sub(core::mem::offset_of!(Worker, deinit_task))
-                .cast::<Worker>()
+            bun_core::from_field_ptr!(Worker, deinit_task, task)
         };
         // SAFETY: deinit_callback is only scheduled via `deinit_soon` on a live
         // heap-allocated Worker; we hold exclusive ownership on this idle task.

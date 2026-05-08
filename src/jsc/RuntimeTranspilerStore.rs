@@ -528,9 +528,7 @@ impl TranspilerJob {
     pub unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: work_task points to TranspilerJob.work_task; recover parent via offset_of!
         let this = unsafe {
-            &mut *work_task.cast::<u8>()
-                .sub(offset_of!(TranspilerJob, work_task))
-                .cast::<TranspilerJob>()
+            &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task)
         };
         this.run();
     }

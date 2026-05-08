@@ -2669,7 +2669,7 @@ pub type WorkPoolTask = bun_threading::work_pool::Task;
 pub struct ShellTask {
     /// Intrusive thread-pool node. MUST be the first field so the
     /// `*mut WorkPoolTask` → `*mut ShellTask` cast in the trampoline is a
-    /// no-op (Zig: `@fieldParentPtr("task", task)`).
+    /// no-op`).
     pub task: WorkPoolTask,
     pub event_loop: EventLoopHandle,
     pub keep_alive: bun_aio::KeepAlive,
@@ -2808,7 +2808,7 @@ impl ShellTask {
 /// intrusive `*WorkPoolTask`, run the user body, then post back to main.
 unsafe fn shell_task_trampoline<C: ShellTaskCtx>(task: *mut WorkPoolTask) {
     // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which is
-    // embedded in `C` at `TASK_OFFSET` (Zig: two `@fieldParentPtr` hops).
+    // embedded in `C` at `TASK_OFFSET` (Zig: two `container_of` hops).
     let ctx = unsafe { task.cast::<u8>().sub(C::TASK_OFFSET).cast::<C>() };
     C::run_from_thread_pool(ctx);
     // SAFETY: `ctx` is still the live heap allocation handed to `schedule`.

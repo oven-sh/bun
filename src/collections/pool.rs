@@ -448,9 +448,7 @@ where
     pub fn release_value(value: *mut T) {
         // SAFETY: `value` points to the `data` field of a live `Node<T>`
         let node = unsafe {
-            value.cast::<u8>()
-                .sub(offset_of!(Node<T>, data))
-                .cast::<Node<T>>()
+            bun_core::from_field_ptr!(Node<T>, data, value)
         };
         Self::release(node);
     }

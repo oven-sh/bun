@@ -187,9 +187,7 @@ impl PathWatcher {
         }
         // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
         let this: *mut PathWatcher = unsafe {
-            event.cast::<u8>()
-                .sub(core::mem::offset_of!(PathWatcher, handle))
-                .cast::<PathWatcher>()
+            bun_core::from_field_ptr!(PathWatcher, handle, event)
         };
         // SAFETY: `this` was heap-allocated in `init` and is kept alive until uv_close fires.
         let this = unsafe { &mut *this };

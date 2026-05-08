@@ -3227,7 +3227,7 @@ impl UvDnsPoll {
     pub fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
         // SAFETY: poll points to UvDnsPoll.poll
         unsafe {
-            poll.cast::<u8>().sub(offset_of!(UvDnsPoll, poll)).cast::<UvDnsPoll>()
+            bun_core::from_field_ptr!(UvDnsPoll, poll, poll)
         }
     }
 }

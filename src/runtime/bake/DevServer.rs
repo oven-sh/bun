@@ -317,7 +317,7 @@ pub struct NextBundle {
 
 // PORT NOTE: this is the **canonical** `DevServer` struct. `dev_server/mod.rs`
 // re-exports it (`pub use super::dev_server_body::DevServer`) so the
-// `@fieldParentPtr` submodules (`incremental_graph`, `assets`, …) and the
+// `container_of` submodules (`incremental_graph`, `assets`, …) and the
 // 4.8 kL of method bodies in this file all name the same type. The
 // `Transpiler<'static>` / `BundleV2<'static>` lifetime is the DevServer-self
 // lifetime stand-in: those borrows point at fields stored inline in the
@@ -772,10 +772,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let dev_ptr: *mut DevServer = &raw mut *dev;
 
     // PORT NOTE: Zig asserted `*.owner() == dev` (intrusive parent-ptr derived
-    // via `@fieldParentPtr`). The Rust port stores these by value; `owner()`
+    // via `container_of`). The Rust port stores these by value; `owner()`
     // is provided on `IncrementalGraph` via `offset_of!` so the invariant is
     // structural. Retain the field touches so the addresses are stable for
-    // `@fieldParentPtr` consumers below.
+    // `container_of` consumers below.
     let _ = (&dev.server_graph, &dev.client_graph, &dev.directory_watchers);
 
     let _unlock = dev.graph_safety_lock.guard();
@@ -2880,7 +2880,7 @@ impl DeferredRequest {
     fn __free(&mut self) {
         // SAFETY: self is the .data field of a Node in deferred_request_pool
         let node = unsafe {
-            &mut *std::ptr::from_mut(self).cast::<u8>().sub(offset_of!(deferred_request::Node, data)).cast::<deferred_request::Node>()
+            &mut *bun_core::from_field_ptr!(deferred_request::Node, data, std::ptr::from_mut(self))
         };
         // SAFETY: dev backref is valid while the pool entry exists
         unsafe { &mut *self.dev.cast_mut() }
@@ -5277,8 +5277,7 @@ impl DevServer {
         }
         // SAFETY: timer is the .memory_visualizer_timer field of DevServer
         let dev: &mut DevServer = unsafe {
-            &mut *std::ptr::from_mut(timer).cast::<u8>()
-                .sub(offset_of!(DevServer, memory_visualizer_timer)).cast::<DevServer>()
+            &mut *bun_core::from_field_ptr!(DevServer, memory_visualizer_timer, std::ptr::from_mut(timer))
         };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();

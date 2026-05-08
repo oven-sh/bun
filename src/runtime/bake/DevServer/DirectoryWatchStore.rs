@@ -71,13 +71,11 @@ impl From<InsertError> for bun_core::Error {
 impl DirectoryWatchStore {
     pub fn owner(&mut self) -> &mut DevServer {
         // SAFETY: `self` is always the `directory_watchers` field of a `DevServer`.
-        // TODO(port): @fieldParentPtr aliasing — returning &mut DevServer while
+        // TODO(port): `container_of` aliasing — returning &mut DevServer while
         // &mut self is live is unsound under stacked borrows; Phase B may need
         // to return *mut DevServer or restructure access.
         unsafe {
-            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(offset_of!(DevServer, directory_watchers))
-                .cast::<DevServer>()
+            &mut *bun_core::from_field_ptr!(DevServer, directory_watchers, std::ptr::from_mut::<Self>(self))
         }
     }
 

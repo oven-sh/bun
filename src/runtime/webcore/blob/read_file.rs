@@ -226,9 +226,7 @@ impl FileCloser for ReadFile {
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
         let this: &mut ReadFile = unsafe {
-            &mut *(std::ptr::from_mut::<io::Request>(request).cast::<u8>()
-                .sub(offset_of!(ReadFile, io_request))
-                .cast::<ReadFile>())
+            &mut *(bun_core::from_field_ptr!(ReadFile, io_request, std::ptr::from_mut::<io::Request>(request)))
         };
         fn on_done(ctx: *mut ()) {
             // SAFETY: ctx is `self as *mut ReadFile` set below.
@@ -251,7 +249,7 @@ impl FileCloser for ReadFile {
     unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: task is &mut self.task (intrusive); recover parent.
         let this: &mut ReadFile = unsafe {
-            &mut *(task.cast::<u8>().sub(offset_of!(ReadFile, task)).cast::<ReadFile>())
+            &mut *(bun_core::from_field_ptr!(ReadFile, task, task))
         };
         this.close_after_io = false;
         ReadFile::update(this);
@@ -350,9 +348,7 @@ impl ReadFile {
     pub fn on_readable(request: *mut io::Request) {
         // SAFETY: request points to ReadFile.io_request (intrusive field).
         let this: &mut ReadFile = unsafe {
-            &mut *(request.cast::<u8>()
-                .sub(offset_of!(ReadFile, io_request))
-                .cast::<ReadFile>())
+            &mut *(bun_core::from_field_ptr!(ReadFile, io_request, request))
         };
         this.on_ready();
     }
@@ -399,9 +395,7 @@ impl ReadFile {
         request.scheduled = false;
         // SAFETY: request points to ReadFile.io_request (intrusive field); recover parent via offset_of.
         let this: &mut ReadFile = unsafe {
-            &mut *(std::ptr::from_mut::<io::Request>(request).cast::<u8>()
-                .sub(offset_of!(ReadFile, io_request))
-                .cast::<ReadFile>())
+            &mut *(bun_core::from_field_ptr!(ReadFile, io_request, std::ptr::from_mut::<io::Request>(request)))
         };
         io::Action::Readable(FileAction {
             on_error: Self::on_io_error_thunk,
@@ -722,9 +716,7 @@ impl ReadFile {
     unsafe fn do_read_loop_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to ReadFile.task (intrusive field).
         let this: &mut ReadFile = unsafe {
-            &mut *(task.cast::<u8>()
-                .sub(offset_of!(ReadFile, task))
-                .cast::<ReadFile>())
+            &mut *(bun_core::from_field_ptr!(ReadFile, task, task))
         };
 
         this.update();

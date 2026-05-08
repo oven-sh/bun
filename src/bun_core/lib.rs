@@ -159,6 +159,59 @@ pub use result::*;
 pub use Global::*;
 pub use tty::Winsize;
 
+// ── intrusive-container parent recovery ───────────────────────────────────
+//
+// Port of Zig's parent-from-field intrinsic. Intrusive data structures (task
+// queues, timer heaps, linked lists) hand callbacks a `*mut Field` and expect
+// the callee to walk back to the owning `*mut Parent`. Phase-A open-coded this
+// at ~150 sites as `ptr.cast::<u8>().sub(offset_of!(P, f)).cast::<P>()`; the
+// helpers below are the single canonical spelling. Re-exported from `bun_ptr`.
+
+/// Recover `*mut P` from a pointer to one of its fields.
+///
+/// Accepts `*const F` so both `*mut` and `*const` field pointers coerce in;
+/// returns `*mut P` (which itself coerces to `*const P` at the binding site)
+/// so callers pick mutability at the use, not here.
+///
+/// Prefer the [`from_field_ptr!`] macro, which computes `offset` via
+/// `core::mem::offset_of!` so the field name is type-checked.
+///
+/// # Safety
+/// - `field` must have been derived from a live `P` via
+///   `addr_of!((*p).field)` / `addr_of_mut!` (or equivalent), so its
+///   provenance covers the entire `P` allocation — a `&mut field` reborrow
+///   does **not** suffice.
+/// - `offset` must equal `offset_of!(P, <that field>)`.
+#[inline(always)]
+pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P {
+    // SAFETY: per fn contract — `field` is interior to a `P`; `byte_sub`
+    // preserves provenance and yields the allocation base.
+    unsafe { field.byte_sub(offset).cast::<P>().cast_mut() }
+}
+
+/// `*const`-out variant of [`container_of`]. Same safety contract.
+#[inline(always)]
+pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
+    // SAFETY: per fn contract.
+    unsafe { field.byte_sub(offset).cast::<P>() }
+}
+
+/// `from_field_ptr!(Parent, field, ptr)` → `*mut Parent`.
+///
+/// Type-checked wrapper over [`container_of`]: expands to
+/// `container_of::<Parent, _>(ptr, offset_of!(Parent, field))`. The call is
+/// `unsafe` (caller asserts `ptr` points at `Parent.field` with whole-`Parent`
+/// provenance) and must appear inside an `unsafe` block.
+#[macro_export]
+macro_rules! from_field_ptr {
+    ($Parent:ty, $field:ident, $ptr:expr $(,)?) => {
+        $crate::container_of::<$Parent, _>(
+            $ptr,
+            ::core::mem::offset_of!($Parent, $field),
+        )
+    };
+}
+
 /// `bun_core::OOM` per PORTING.md type map (`OOM!T` → `Result<T, OOM>`).
 pub type OOM = AllocError;
 

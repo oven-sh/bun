@@ -21,7 +21,7 @@ pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 // `dns_body` is the real port of `dns.zig` (c-ares channel, request types,
 // Resolver method bodies, `internal` cache). The earlier B-2 erased
 // "type-surface" duplicates that lived here have been dissolved — there is one
-// `Resolver`, and `dispatch.rs`'s `container_of!`/`owner_as!` casts now resolve
+// `Resolver`, and `dispatch.rs`'s `from_field_ptr!`/`owner_as!` casts now resolve
 // to the same allocation `dns_body::Resolver::init` produces.
 
 pub use dns_body::{

@@ -200,7 +200,7 @@ impl<'a> Printer<'a> {
     }
 
     // Zig checked vtable identity against std.Io.Writer.Allocating and recovered the
-    // backing buffer length via @fieldParentPtr; in Rust the trait exposes `written_len()`
+    // backing buffer length via `container_of`; in Rust the trait exposes `written_len()`
     // directly (Vec<u8> / MutableString / counting sinks override it, others panic — same
     // contract as Zig's `@panic("css: got bad writer type")` fallthrough).
     #[inline]

@@ -225,7 +225,7 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn pending_reset_mut(&mut self) -> &mut bool;
     fn closed_mut(&mut self) -> &mut bool;
 
-    /// Recover `*mut Self` from the embedded `WorkPoolTask` (Zig `@fieldParentPtr`).
+    /// Recover `*mut Self` from the embedded `WorkPoolTask`.
     /// SAFETY: caller guarantees `task` points at the `task` field of a live `Self`.
     unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self;
 

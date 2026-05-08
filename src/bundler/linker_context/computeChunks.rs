@@ -552,9 +552,7 @@ pub fn compute_chunks(
     // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
     // slices below hold disjoint immutable borrows into `this.graph`.
     let bv2: &mut BundleV2 = unsafe {
-        &mut *(this_ptr.cast::<u8>()
-            .sub(offset_of!(BundleV2, linker))
-            .cast::<BundleV2>())
+        &mut *(bun_core::from_field_ptr!(BundleV2, linker, this_ptr))
     };
     let kinds = this.graph.files.items_entry_point_kind();
     let output_paths = this.graph.entry_points.items_output_path();

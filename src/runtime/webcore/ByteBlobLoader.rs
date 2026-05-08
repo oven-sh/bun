@@ -77,9 +77,7 @@ impl ByteBlobLoader {
         // SAFETY: self is the `context` field embedded inside a `Source`; callers only invoke
         // this on a `ByteBlobLoader` that was constructed as `Source.context`.
         unsafe {
-            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(offset_of!(Source, context))
-                .cast::<Source>()
+            &mut *bun_core::from_field_ptr!(Source, context, std::ptr::from_mut::<Self>(self))
         }
     }
 

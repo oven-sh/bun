@@ -39,7 +39,7 @@ use crate::chunk::{Content, CssImportOrderKind};
 
 // PORT NOTE: Zig stores `*Chunk` / `*LinkerContext` (freely-aliasing mutable
 // pointers). We mirror that with raw pointers rather than `&mut` / `&` so that
-// (a) the container_of `@fieldParentPtr` recovery of `*mut BundleV2` from
+// (a) the container_of `container_of` recovery of `*mut BundleV2` from
 // `linker` retains write provenance over the whole bundle, and (b) multiple
 // tasks may hold pointers to the same `LinkerContext` concurrently without
 // materializing aliased Rust references.
@@ -71,9 +71,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // duration. We only read the two raw-pointer fields, matching Zig's
     // `*const PrepareCssAstTask`.
     let prepare_css_asts: &PrepareCssAstTask = unsafe {
-        &*task.cast::<u8>()
-            .sub(offset_of!(PrepareCssAstTask, task))
-            .cast::<PrepareCssAstTask>()
+        &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task)
     };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
     let chunk: *mut Chunk = prepare_css_asts.chunk;
@@ -84,9 +82,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // avoid aliasing.
     let worker = {
         let bundle_v2: &BundleV2 = unsafe {
-            &*linker.cast::<u8>()
-                .sub(offset_of!(BundleV2, linker))
-                .cast::<BundleV2>()
+            &*bun_core::from_field_ptr!(BundleV2, linker, linker)
         };
         ThreadPool::Worker::get(bundle_v2)
     };

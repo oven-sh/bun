@@ -43,10 +43,7 @@ impl DeferredBatchTask {
         // this struct is never instantiated standalone. Lifetime erased to 'static
         // (mirrors Zig raw `*BundleV2`); callers must not outlive the owning bundle.
         unsafe {
-            &mut *std::ptr::from_mut::<Self>(self)
-                .cast::<u8>()
-                .sub(offset_of!(BundleV2<'static>, drain_defer_task))
-                .cast::<BundleV2<'static>>()
+            &mut *bun_core::from_field_ptr!(BundleV2<'static>, drain_defer_task, std::ptr::from_mut::<Self>(self))
         }
     }
 

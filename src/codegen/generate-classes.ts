@@ -2593,39 +2593,65 @@ function rustSnakeIdent(name: string): string {
 
 // ── Rust module-path resolver ────────────────────────────────────────────────
 // Walks the `pub mod` tree rooted at `src/runtime/lib.rs` (the `bun_runtime`
-// crate), honouring `#[path = "…"]` attributes, to build a map of absolute
-// `.rs` file path → `crate::…` module path. Then scans every reachable file
-// for `pub struct <Name>` so each generated class can `pub use` its real
-// backing type instead of an opaque placeholder. A missing struct (or method)
-// is a compile error in `cargo check` — that's the point: surface unported
-// surface area at build time, not as a runtime `unimplemented!()` panic.
+// crate), honouring `#[path = "…"]` attributes, to build a map of public type
+// name → shortest `crate::…` path at which that name is visible. Indexes both
+// `pub struct`/`pub type` definitions *and* `pub use …::Name` re-exports so a
+// type defined in a private `_body` module but re-exported one level up is
+// addressed by its public path (e.g. `crate::ffi::FFI`, not
+// `crate::ffi::ffi_body::FFI`). A missing struct (or method) on the resolved
+// path is a compile error in `cargo check` — that's the point: surface
+// unported surface area at build time, not as a runtime `unimplemented!()`.
+//
+// Classes whose JS name doesn't match any Rust type name (e.g. `Immediate` →
+// `ImmediateObject`, the `*InternalReadableStreamSource` family → three
+// distinct `Source` structs) MUST set `rustPath` explicitly in their
+// `.classes.ts` definition; this resolver is name-based and can't infer those.
 const rustModuleResolver = (() => {
   const runtimeRoot = path.resolve(import.meta.dir, "../runtime");
   const fileToMod = new Map<string, string>(); // abs .rs path → crate::a::b
-  const structToPath = new Map<string, string>(); // StructName → crate::a::b::StructName
-  // `(?:#[path = "…"]\s*)? (?:#[...]\s*)* (?:pub\s+)? mod NAME ;`
-  const modRe = /(?:#\[path\s*=\s*"([^"]+)"\]\s*)?(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g;
+  const structToPath = new Map<string, string>(); // StructName → crate::a::b::StructName (shortest)
+  // `(?:#[path = "…"]\s*)? (?:#[...]\s*)* pub mod NAME ;` — pub-only: a private
+  // `mod foo_body;` makes `crate::…::foo_body::T` unnameable from generated
+  // code, so don't descend into it.
+  const modRe = /(?:#\[path\s*=\s*"([^"]+)"\]\s*)?(?:#\[[^\]]*\]\s*)*pub(?:\([^)]*\))?\s+mod\s+(\w+)\s*;/g;
   // Index both `pub struct Name` and `pub type Name = …` — several JS classes
   // (HTTPServer/HTTPSServer/MD4/MD5/…) are generic instantiations exposed as
   // type aliases; the thunks call `Name::method` either way.
   const structRe = /\bpub\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
+  // `pub use a::b::{Name, Name as Alias};` — only the *exported* identifier is
+  // indexed, at the current module path.
+  const pubUseRe = /\bpub\s+use\s+((?:\w+::)*)\{?([^;{}]+?)\}?\s*;/g;
 
-  // ── Prior-output cache ────────────────────────────────────────────────
-  // Some classes don't map 1:1 to a `pub struct`/`pub type` of the same name
-  // (e.g. `Immediate` → `crate::timer::ImmediateObject`, the three
-  // `*InternalReadableStreamSource` classes → distinct `Source` structs).
-  // The walk can't derive those; they're encoded as `rustPath` overrides or
-  // were hand-tuned in the committed output. Seed the index from the
-  // existing `generated_classes.rs` so a regeneration preserves them
-  // instead of falling through to a broken `.classes.ts`-derived guess.
-  // Walk-discovered paths still win (set after this block).
-  const priorPath = new Map<string, string>();
-  try {
-    const prior = readFileSync(`${outBase}/generated_classes.rs`, "utf8");
-    for (const m of prior.matchAll(/^pub use (\S+) as (\w+);$/gm)) {
-      priorPath.set(m[2], m[1]);
+  const segs = (p: string) => p.split("::").length;
+  function register(name: string, fullPath: string) {
+    const cur = structToPath.get(name);
+    if (!cur || segs(fullPath) < segs(cur)) structToPath.set(name, fullPath);
+  }
+
+  // Inline-module depth at byte index `i`. Only `mod foo { … }` bodies change
+  // the addressable path of nested items; macro invocations like
+  // `cfg_if! { pub mod foo; }` emit at the *parent* scope and must stay
+  // transparent. So count only `{` braces immediately preceded by
+  // `mod <ident>`, and their matching `}`. Items at modDepth 0 are addressable
+  // at this file's `modPath`; deeper ones are not.
+  function modDepthTable(src: string): Int32Array {
+    const depth = new Int32Array(src.length + 1);
+    const stack: boolean[] = []; // true = this `{` opened an inline `mod`
+    let d = 0;
+    for (let j = 0; j < src.length; j++) {
+      depth[j] = d;
+      const c = src.charCodeAt(j);
+      if (c === 123 /* { */) {
+        const isMod = /\bmod\s+\w+\s*$/.test(src.slice(Math.max(0, j - 64), j));
+        stack.push(isMod);
+        if (isMod) d++;
+      } else if (c === 125 /* } */) {
+        if (stack.pop()) d--;
+      }
     }
-  } catch {}
+    depth[src.length] = d;
+    return depth;
+  }
 
   function walk(file: string, modPath: string) {
     const abs = path.resolve(file);
@@ -2636,16 +2662,41 @@ const rustModuleResolver = (() => {
     } catch {
       return;
     }
+    // Blank out `//` line comments so commented-out items and brace characters
+    // in doc text don't pollute regex matches / depth tracking. Preserve
+    // length so `m.index` ↔ depth lookup stays aligned.
+    src = src.replace(/\/\/[^\n]*/g, m => " ".repeat(m.length));
     fileToMod.set(abs, modPath);
+    const modDepth = modDepthTable(src);
 
     for (const m of src.matchAll(structRe)) {
-      const name = m[1];
-      // First definition wins; prefer files under src/runtime/ over re-exports.
-      if (!structToPath.has(name)) structToPath.set(name, `${modPath}::${name}`);
+      if (modDepth[m.index!] !== 0) continue;
+      register(m[1], `${modPath}::${m[1]}`);
+    }
+
+    for (const m of src.matchAll(pubUseRe)) {
+      if (modDepth[m.index!] !== 0) continue;
+      for (let item of m[2].split(",")) {
+        item = item.trim();
+        if (!item || item === "*" || item === "self") continue;
+        // `Name as Alias` → exported = Alias, source = Name
+        // `Name`          → exported = source = Name
+        const asMatch = item.match(/^(\S+)\s+as\s+(\w+)$/);
+        const source = asMatch ? asMatch[1] : item;
+        const exported = asMatch ? asMatch[2] : item;
+        // Skip module re-exports: `pub use foo::glob as Glob` re-exports a
+        // *module* (lowercase source leaf), not a type — `crate::api::Glob`
+        // wouldn't name a struct.
+        const sourceLeaf = source.split("::").pop()!;
+        if (!/^[A-Z]/.test(sourceLeaf)) continue;
+        if (!/^[A-Z]\w*$/.test(exported)) continue;
+        register(exported, `${modPath}::${exported}`);
+      }
     }
 
     const dir = path.dirname(abs);
     for (const m of src.matchAll(modRe)) {
+      if (modDepth[m.index!] !== 0) continue;
       const [, pathAttr, modName] = m;
       let child: string | null = null;
       if (pathAttr) {
@@ -2664,14 +2715,6 @@ const rustModuleResolver = (() => {
   return {
     /** Resolve a class name to its `crate::…::Name` path, or a derived guess. */
     resolveStruct(name: string, classesFile?: string): string {
-      // Prior-output cache wins: it's the known-compiling mapping. The walk
-      // is a heuristic that doesn't see `pub use` re-exports, so it can
-      // return a path through a private module (e.g.
-      // `crate::socket::socket_body::TCPSocket` instead of the re-exported
-      // `crate::socket::TCPSocket`). When a class genuinely moves, the stale
-      // path fails to compile and the fix is updating `rustPath` in the
-      // `.classes.ts` — same as before.
-      if (priorPath.has(name)) return priorPath.get(name)!;
       if (structToPath.has(name)) return structToPath.get(name)!;
       // Fallback: derive from the .classes.ts location → sibling .rs module.
       // src/runtime/webcore/response.classes.ts → crate::webcore::response::Name

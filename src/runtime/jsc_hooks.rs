@@ -1254,41 +1254,49 @@ mod vm_loader_vtable {
     use crate::webcore::Blob;
     use crate::webcore::blob::BlobExt as _;
 
-    /// Recover the erased VM as a shared reference. The vtable contract erases
-    /// the borrow to `'static`; the caller is the same VM, so every returned
-    /// borrow lives at most as long as the VM.
+    /// Recover the erased VM as a **raw pointer** (not `&VirtualMachine`).
     ///
-    /// PORT NOTE: returns `&'static VirtualMachine` (NOT `&mut`) — JS that runs
-    /// inside `read_dir_info` (re-entrant resolver) also recovers the VM as a
-    /// shared `&`, so minting `&mut` here would alias it. The one slot that
-    /// genuinely needs `&mut` (`read_dir_info_package_json`) re-derives from
-    /// the raw pointer for the brief, non-re-entrant call.
+    /// Returning a raw `*const` keeps every accessor below a raw place
+    /// projection — `(*vm(p)).field` — so no `&VirtualMachine` retag is
+    /// materialized for the simple field reads. This matters because
+    /// [`read_dir_info_package_json`] holds a live `&mut transpiler.resolver`
+    /// across a re-entrant `read_dir_info` that can call back into these hooks;
+    /// a `&VirtualMachine` formed here would alias that `&mut` (SB/TB UB). The
+    /// two accessors that call `&self` methods (`main`, `blob_loader`) form a
+    /// transient `&VirtualMachine` scoped to the single call, which never spans
+    /// the re-entrant path.
+    ///
+    /// # Safety
+    /// `p` is the live per-thread VM erased by the caller.
     #[inline]
-    unsafe fn vm(p: *const ()) -> &'static VirtualMachine {
-        // SAFETY: `p` is the live per-thread VM erased by the caller.
-        unsafe { &*p.cast::<VirtualMachine>() }
+    unsafe fn vm(p: *const ()) -> *const VirtualMachine {
+        p.cast::<VirtualMachine>()
     }
 
     unsafe fn origin_host(p: *const ()) -> &'static [u8] {
-        unsafe { vm(p) }.origin.host
+        // SAFETY: raw place projection — no `&VirtualMachine` formed.
+        unsafe { (*vm(p)).origin.host }
     }
     unsafe fn origin_path(p: *const ()) -> &'static [u8] {
-        unsafe { vm(p) }.origin.path
+        // SAFETY: see `origin_host`.
+        unsafe { (*vm(p)).origin.path }
     }
     unsafe fn loaders(p: *const ()) -> *const StringArrayHashMap<Loader> {
-        &raw const unsafe { vm(p) }.transpiler.options.loaders
+        // SAFETY: `&raw const` over a raw place — no reference formed.
+        unsafe { &raw const (*vm(p)).transpiler.options.loaders }
     }
     unsafe fn eval_source(p: *const ()) -> Option<*const bun_logger::Source> {
-        unsafe { vm(p) }
-            .module_loader
-            .eval_source
-            .as_deref()
+        // SAFETY: `.as_deref()` autorefs only the `eval_source` field, not the VM.
+        unsafe { (*vm(p)).module_loader.eval_source.as_deref() }
             .map(|s| std::ptr::from_ref::<bun_logger::Source>(s))
     }
     unsafe fn main(p: *const ()) -> &'static [u8] {
-        // `main()` borrows VM-lifetime storage; the hook contract erases that
-        // to `'static` (caller is the same VM).
-        unsafe { &*std::ptr::from_ref::<[u8]>(vm(p).main()) }
+        // `main()` is a `&self` method, so a transient `&VirtualMachine` is
+        // formed here — scoped to this single call, it never spans the
+        // re-entrant `read_dir_info` path. The returned slice borrows
+        // VM-lifetime storage; the hook contract erases it to `'static`.
+        // SAFETY: `p` is the live per-thread VM.
+        unsafe { &*std::ptr::from_ref::<[u8]>((*vm(p)).main()) }
     }
     unsafe fn read_dir_info_package_json(p: *const (), dir: &[u8]) -> Option<*const PackageJSON> {
         // SAFETY: `p` is the live per-thread VM; `read_dir_info` is re-entrant
@@ -1330,7 +1338,9 @@ mod vm_loader_vtable {
     }
     unsafe fn blob_loader(b: OpaqueBlob, p: *const ()) -> Option<Loader> {
         // SAFETY: `b` was produced by `resolve_blob` above; `p` is the live VM.
-        unsafe { blob(b) }.get_loader(unsafe { vm(p) })
+        // A transient `&VirtualMachine` is formed for `get_loader` only — not
+        // on the re-entrant `read_dir_info` path.
+        unsafe { blob(b) }.get_loader(unsafe { &*vm(p) })
     }
     unsafe fn blob_file_name(b: OpaqueBlob) -> Option<&'static [u8]> {
         // The returned slice borrows the blob's heap-owned name buffer, which

@@ -2308,6 +2308,51 @@ pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*
     }
 }
 
+/// `std.c.ucontext_t` on `.linux` forwards to `std.os.linux.<arch>.ucontext_t`,
+/// which is the glibc/musl layout: a 1024-bit (128-byte) `sigmask` between
+/// `uc_mcontext` and `fpregs_mem`. bionic x86_64's `ucontext_t`
+/// (`<sys/ucontext.h>`) puts only a bare `union { sigset_t; sigset64_t; }` —
+/// one `c_ulong`, 8 bytes — in that slot, so `__fpregs_mem` starts 120 bytes
+/// earlier than the Zig stdlib expects. aarch64 bionic happens to match the
+/// glibc layout because it explicitly pads `uc_sigmask` back out to 128 bytes
+/// (`char __padding[128 - sizeof(sigset_t)]`).
+///
+/// Nothing dereferences the signal handler's `ucontext_t*` today, but this
+/// type exists so that if the crash handler ever starts reading register
+/// state (e.g. `uc_mcontext.gregs[REG_RIP]`) it does so from the correct
+/// offsets on x86_64 Android. Use this instead of `std.posix.ucontext_t`.
+pub const ucontext_t = if (Environment.isAndroid and Environment.isX64) extern struct {
+    flags: c_ulong,
+    link: ?*@This(),
+    stack: std.c.stack_t,
+    // bionic's x86_64 `mcontext_t` (`{gregset_t, fpregset_t, __reserved1[8]}`)
+    // is byte-identical to glibc's, so reuse the stdlib definition.
+    mcontext: std.os.linux.mcontext_t,
+    // bionic LP64: `sigset_t` and `sigset64_t` are both `unsigned long`
+    // (see `bun.sys.sigset_t` above); the anonymous union collapses to a
+    // single `c_ulong` with no padding.
+    sigmask: sigset_t,
+    // bionic `struct _libc_fpstate` — 512 bytes, same as the glibc
+    // `fpregs_mem` backing store. Accessed via `mcontext.fpregs`.
+    fpregs_mem: [64]usize,
+
+    comptime {
+        bun.assert(@sizeOf(usize) == 8);
+        // Offsets from bionic `<sys/ucontext.h>` for `__x86_64__`:
+        //   uc_flags @0, uc_link @8, uc_stack @16, uc_mcontext @40,
+        //   uc_sigmask @296, __fpregs_mem @304, sizeof == 816.
+        bun.assert(@offsetOf(@This(), "mcontext") == 40);
+        bun.assert(@offsetOf(@This(), "sigmask") == 296);
+        bun.assert(@offsetOf(@This(), "fpregs_mem") == 304);
+        bun.assert(@sizeOf(@This()) == 816);
+        // Trip when the Zig stdlib gains a bionic `ucontext_t` so this
+        // workaround can be dropped. The glibc-shaped struct std currently
+        // uses is 936 bytes (128-byte sigmask); bionic's is 816.
+        if (@sizeOf(std.c.ucontext_t) == @sizeOf(@This()))
+            @compileError("std.c.ucontext_t now matches bionic x86_64; remove the bun.sys.ucontext_t workaround");
+    }
+} else posix.ucontext_t;
+
 pub fn recv(fd: bun.FD, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
     const debug_timer = bun.Output.DebugTimer.start();

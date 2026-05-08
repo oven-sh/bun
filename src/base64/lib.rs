@@ -915,7 +915,7 @@ pub fn wyhash_url_safe<'a>(
     use std::io::Write as _;
 
     // PERF(port): was stack-fallback alloc (StackFallbackAllocator 128B) — profile in Phase B
-    let mut hasher = bun_wyhash::Wyhash::init(0);
+    let mut hasher = bun_wyhash::Wyhash11::init(0);
     // PORT NOTE: std.fmt.count + allocPrint collapsed; write into a scratch
     // Vec then hash. Freed immediately (Zig used stack-fallback for this).
     let mut fmt_str: Vec<u8> = Vec::with_capacity(128);

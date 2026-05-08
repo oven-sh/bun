@@ -87,7 +87,9 @@ pub struct PostgresSQLConnection {
     // ref()/deref() forward to this. When it hits 0, `deinit` runs and frees the Box.
     pub socket: Socket,
     pub status: Status,
-    pub ref_count: Cell<u32>,
+    // Private — intrusive refcount invariant; reach via `ref_()`/`deref()`
+    // (provided by `impl_cell_ref_counted!` below).
+    ref_count: Cell<u32>,
 
     pub write_buffer: OffsetByteList,
     // `read_buffer` / `last_message_start` are wrapped in interior-mutability cells
@@ -97,8 +99,10 @@ pub struct PostgresSQLConnection {
     // for `UnsafeCell` bytes, so the Reader's raw-derived access stays valid.
     // `write_buffer` does NOT need this: every `self.writer()` call site consumes
     // the Writer before `self` is reborrowed again.
-    pub read_buffer: UnsafeCell<OffsetByteList>,
-    pub last_message_start: Cell<u32>,
+    // Private — `UnsafeCell` aliasing invariant; only `Reader` and `on_data`
+    // touch these (both in this module).
+    read_buffer: UnsafeCell<OffsetByteList>,
+    last_message_start: Cell<u32>,
     pub requests: PostgresRequest::Queue,
     /// number of pipelined requests (Bind/Execute/Prepared statements)
     pub pipelined_requests: u32,
@@ -125,12 +129,14 @@ pub struct PostgresSQLConnection {
     // slices into `options_buf` (built via StringBuilder in `call`). Struct is Box-allocated
     // and never moves (intrusive refcount), so raw fat pointers are sound. Phase B: consider
     // (offset,len) pairs or a dedicated borrowed-slice newtype.
-    pub database: *const [u8],
-    pub user: *const [u8],
-    pub password: *const [u8],
-    pub path: *const [u8],
-    pub options: *const [u8],
-    pub options_buf: Box<[u8]>,
+    // Private — self-referential invariant; reassigning `options_buf` is UAF.
+    // Reach via `database()`/`user()`/`password()`/`path()`/`options()`.
+    database: *const [u8],
+    user: *const [u8],
+    password: *const [u8],
+    path: *const [u8],
+    options: *const [u8],
+    options_buf: Box<[u8]>,
 
     pub authentication_state: AuthenticationState,
 
@@ -148,14 +154,46 @@ pub struct PostgresSQLConnection {
 
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
-    pub timer: EventLoopTimer,
+    // Private — intrusive heap node; cross-crate `@fieldParentPtr` goes through
+    // [`Self::from_timer_ptr`] instead of `offset_of!` on the field.
+    timer: EventLoopTimer,
 
     /// This timer controls the maximum lifetime of a connection.
     /// It starts when the connection successfully starts (i.e. after handshake is complete).
     /// It stops when the connection is closed.
     pub max_lifetime_interval_ms: u32,
-    pub max_lifetime_timer: EventLoopTimer,
+    // Private — see `timer`; recovered via [`Self::from_max_lifetime_timer_ptr`].
+    max_lifetime_timer: EventLoopTimer,
     pub auto_flusher: AutoFlusher,
+}
+
+impl PostgresSQLConnection {
+    /// `@fieldParentPtr("timer", t)` — recover the embedding connection from a
+    /// pointer to its intrusive `timer` node. Exposed so the cross-crate
+    /// `bun_runtime` timer dispatch (`__bun_fire_timer`) does not need
+    /// field-level visibility into this struct.
+    ///
+    /// # Safety
+    /// `t` must point at the `timer` field of a live `PostgresSQLConnection`
+    /// (i.e. the timer's tag is `PostgresSQLConnectionTimeout`).
+    #[inline]
+    pub unsafe fn from_timer_ptr(t: *mut EventLoopTimer) -> *mut Self {
+        // SAFETY: caller contract.
+        unsafe { t.cast::<u8>().sub(core::mem::offset_of!(Self, timer)).cast::<Self>() }
+    }
+
+    /// `@fieldParentPtr("max_lifetime_timer", t)` — see [`Self::from_timer_ptr`].
+    ///
+    /// # Safety
+    /// `t` must point at the `max_lifetime_timer` field of a live
+    /// `PostgresSQLConnection` (tag `PostgresSQLConnectionMaxLifetime`).
+    #[inline]
+    pub unsafe fn from_max_lifetime_timer_ptr(t: *mut EventLoopTimer) -> *mut Self {
+        // SAFETY: caller contract.
+        unsafe {
+            t.cast::<u8>().sub(core::mem::offset_of!(Self, max_lifetime_timer)).cast::<Self>()
+        }
+    }
 }
 
 // pub const ref = RefCount.ref; pub const deref = RefCount.deref;

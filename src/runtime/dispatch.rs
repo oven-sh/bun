@@ -969,22 +969,27 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             }
         }
         EventLoopTimerTag::PostgresSQLConnectionTimeout => {
-            let container = container_of!(PostgresSQLConnection, timer);
+            // SAFETY: §Dispatch — tag set together with the container at
+            // construction; `t` is the connection's `timer` field.
+            let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
             unsafe { (*container).on_connection_timeout() };
         }
         EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
-            let container = container_of!(PostgresSQLConnection, max_lifetime_timer);
+            // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
+            let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
             unsafe { (*container).on_max_lifetime_timeout() };
         }
         EventLoopTimerTag::MySQLConnectionTimeout => {
-            let container = container_of!(MySQLConnection, timer);
+            // SAFETY: §Dispatch — `t` is the connection's `timer` field.
+            let container = unsafe { MySQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
             unsafe { (*container).on_connection_timeout() };
         }
         EventLoopTimerTag::MySQLConnectionMaxLifetime => {
-            let container = container_of!(MySQLConnection, max_lifetime_timer);
+            // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
+            let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
             unsafe { (*container).on_max_lifetime_timeout() };
         }

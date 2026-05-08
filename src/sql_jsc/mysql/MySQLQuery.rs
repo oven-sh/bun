@@ -391,7 +391,7 @@ impl MySQLQuery {
                 stmt.signature = signature;
                 stmt.status = my_sql_statement::Status::Pending;
                 stmt.statement_id = 0;
-                stmt.ref_count = core::cell::Cell::new(2);
+                stmt.init_exact_refs(2);
                 let stmt = Box::into_raw(stmt);
                 self.statement = stmt;
                 *entry.value_ptr = stmt;

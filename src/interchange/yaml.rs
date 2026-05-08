@@ -845,7 +845,8 @@ pub struct StringBuilder<'a, Enc: Encoding> {
     // borrow lifetime to Parser's input lifetime (invariant under &mut), which
     // both fails borrowck at `string_builder()` and is exactly the aliasing the
     // Zig already had. Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
-    pub parser: *mut Parser<'a, Enc>,
+    // Private — invariant-bearing raw backref; reach via `parser()`/`parser_mut()`.
+    parser: *mut Parser<'a, Enc>,
     pub str: YamlString<Enc>,
 }
 
@@ -1094,7 +1095,9 @@ pub struct ScalarResolverCtx<'i, Enc: Encoding> {
     pub scalar: Option<NodeScalar<Enc>>,
     pub tag: NodeTag,
 
-    pub parser: *mut Parser<'i, Enc>,
+    // Private — invariant-bearing raw backref (same pointer as
+    // `str_builder.parser`); never reassign independently.
+    parser: *mut Parser<'i, Enc>,
 
     pub resolved_scalar_len: usize,
 

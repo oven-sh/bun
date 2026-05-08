@@ -129,23 +129,20 @@ pub mod strings {
     /// Zig: `copyUTF16IntoUTF8`. Scalar fallback; bun_str overrides with SIMD.
     pub fn copy_utf16_into_utf8(dst: &mut [u8], src: &[u16]) -> EncodeResult {
         let mut r = 0usize; let mut w = 0usize;
+        let mut tmp = [0u8; 4];
         while r < src.len() {
-            let c = src[r] as u32;
-            // TODO(port): surrogate-pair handling — bun_str owns the correct impl.
-            if c < 0x80 {
-                if w >= dst.len() { break; }
-                dst[w] = c as u8; w += 1;
-            } else if c < 0x800 {
-                if w + 2 > dst.len() { break; }
-                dst[w] = 0xC0 | (c >> 6) as u8;
-                dst[w+1] = 0x80 | (c & 0x3F) as u8; w += 2;
-            } else {
-                if w + 3 > dst.len() { break; }
-                dst[w] = 0xE0 | (c >> 12) as u8;
-                dst[w+1] = 0x80 | ((c >> 6) & 0x3F) as u8;
-                dst[w+2] = 0x80 | (c & 0x3F) as u8; w += 3;
-            }
-            r += 1;
+            let unit = src[r] as u32;
+            let (cp, adv) = if (0xD800..=0xDBFF).contains(&unit) && r + 1 < src.len() {
+                let lo = src[r + 1] as u32;
+                if (0xDC00..=0xDFFF).contains(&lo) {
+                    (0x10000 + ((unit - 0xD800) << 10) + (lo - 0xDC00), 2)
+                } else { (unit, 1) }
+            } else { (unit, 1) };
+            let n = encode_wtf8_rune(&mut tmp, cp);
+            if w + n > dst.len() { break; }
+            dst[w..w + n].copy_from_slice(&tmp[..n]);
+            w += n;
+            r += adv;
         }
         EncodeResult { read: r, written: w }
     }

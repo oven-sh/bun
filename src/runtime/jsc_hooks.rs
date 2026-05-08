@@ -380,20 +380,7 @@ unsafe fn generate_entry_point(
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn load_preloads(vm: *mut VirtualMachine) -> *mut JSInternalPromise {
-    // PORT NOTE: the `RuntimeHooks::load_preloads` slot has no error channel
-    // (`unsafe fn(vm) -> *mut JSInternalPromise`); Zig's `try this.loadPreloads()`
-    // bubbles into `reloadEntryPoint`, which surfaces it via `vm.log`. The
-    // resolver/import error paths in `load_preloads_inner` already wrote to
-    // `vm.log`, so on `Err` return null (caller treats null as "no rejected
-    // promise" and proceeds to format `vm.log`).
-    match unsafe { load_preloads_inner(vm) } {
-        Ok(p) => p,
-        Err(_) => ptr::null_mut(),
-    }
-}
-
-unsafe fn load_preloads_inner(
+unsafe fn load_preloads(
     vm: *mut VirtualMachine,
 ) -> Result<*mut JSInternalPromise, bun_core::Error> {
     // PORT NOTE: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`

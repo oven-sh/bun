@@ -1426,9 +1426,11 @@ pub struct RuntimeHooks {
     /// (error already logged into `vm.log`).
     pub generate_entry_point:
         unsafe fn(vm: *mut VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
-    /// `loadPreloads()` — runs `--preload` scripts. Returns the in-flight
-    /// promise if a preload is async, else null.
-    pub load_preloads: unsafe fn(vm: *mut VirtualMachine) -> *mut JSInternalPromise,
+    /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
+    /// preload promise if any, else null. Errors propagate like Zig's
+    /// `try this.loadPreloads()` (resolver failures / `ModuleNotFound`).
+    pub load_preloads:
+        unsafe fn(vm: *mut VirtualMachine) -> Result<*mut JSInternalPromise, bun_core::Error>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -2110,7 +2112,7 @@ impl VirtualMachine {
             if !self.preload.is_empty() {
                 if let Some(hooks) = hooks {
                     // SAFETY: hook contract.
-                    let p = unsafe { (hooks.load_preloads)(self) };
+                    let p = unsafe { (hooks.load_preloads)(self) }?;
                     if !p.is_null() {
                         JSValue::from_cell(p).ensure_still_alive();
                         JSValue::from_cell(p).protect();
@@ -4243,7 +4245,7 @@ impl VirtualMachine {
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract.
-                let p = unsafe { (hooks.load_preloads)(self) };
+                let p = unsafe { (hooks.load_preloads)(self) }?;
                 if !p.is_null() {
                     JSValue::from_cell(p).ensure_still_alive();
                     self.pending_internal_promise = Some(p);

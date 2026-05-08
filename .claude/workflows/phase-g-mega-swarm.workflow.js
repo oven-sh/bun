@@ -97,7 +97,7 @@ const HARD = `**HARD RULES:** Work in /root/bun-5 on branch claude/phase-a-port.
 **FFI unsafe goes in ONE place.** If you add an \`extern "Rust"/"C"\` function, wrap it in ONE safe inline fn that does \`unsafe { extern_fn(...) }\`; call sites use the wrapper. Adding \`unsafe {}\` at N>2 call sites for the same extern is wrong.
 **NO JUSTIFICATION COMMENTS.** Do NOT add \`// PORT NOTE: reshaped for borrowck\` / \`// TODO(port):\` / long \`// SAFETY:\` essays explaining why a workaround is OK. If you need a paragraph to justify it, the code is wrong — fix the code instead. A good fix needs at most a one-line "why" that a Rust dev would write, not a port history.
 
-Never git reset/checkout/stash/rebase/pull. **Commit explicit paths ONLY:** \`git -c core.hooksPath=/dev/null add <exact files you edited> && git commit -q -m "..."\` (not \`add 'src/'\` — only YOUR files). NO push.`;
+Never git reset/checkout/stash/rebase/pull. **Commit explicit paths ONLY:** \`git -c core.hooksPath=/dev/null add <exact files you edited> && git commit -q -m "..."\` (not \`add 'src/'\` — only YOUR files). NO push. **NEVER --allow-empty. Commit message ≤ 80 chars** — describe WHAT changed, not your analysis.`;
 
 let history = [];
 
@@ -126,7 +126,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const survey = await agent(
     `Survey ALL tests in /root/bun-5. Round ${round}.
 
-\`mkdir -p ${DIAG} ${GDIAG}\`. **Cap at ${FILE_CAP} files**: \`ls ${TEST_GLOB} | sort | shuf --random-source=/dev/zero | head -${FILE_CAP} > ${GDIAG}/all.txt\` (deterministic shuf for cache stability).
+\`mkdir -p ${DIAG} ${GDIAG}; touch ${GDIAG}/triaged-slow.txt\`. **Cap at ${FILE_CAP} files, EXCLUDING triaged-slow**: \`ls ${TEST_GLOB} | sort | grep -vxFf ${GDIAG}/triaged-slow.txt | shuf --random-source=/dev/zero | head -${FILE_CAP} > ${GDIAG}/all.txt\`.
 
 **Baseline (cache, only first time):** \`cat ${GDIAG}/all.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); test -f ${DIAG}/\$slug.baseline || USE_SYSTEM_BUN=1 timeout 15 bun test {} > ${DIAG}/\$slug.baseline 2>&1'\`
 
@@ -155,6 +155,8 @@ Return {passing:N, failing:[{file,diag:"${DIAG}/<slug>.log",kind,summary}], tota
 
 **Diagnostic:** \`cat ${f.diag}\` (test output) and \`cat ${f.diag.replace(".log", ".baseline")}\` (system-bun baseline) — your ONLY runtime evidence.
 ${f.summary}
+
+**If the diagnostic shows passing assertions but timeout (kind:hang) AND siblings prove the code path works:** this is debug-slowness, NOT a port bug. Do NOT commit. Return \`{file, root_cause:"debug-slow: <one-line why>", src_edited:[], commit:"NONE", confidence:"high"}\` and append the file to \`${GDIAG}/triaged-slow.txt\` so it's excluded from future rounds. **NEVER \`git commit --allow-empty\`. NEVER write analysis essays in commit messages.**
 
 1. Read diagnostic → which test(s) fail, what assertion says.
 2. Read test file → expected behavior.
@@ -220,7 +222,6 @@ Return {accept, corrections:[{src,what,fix,severity}], new_unsafe}.`,
   await agent(`Push: \`git -C /root/bun-5 push origin claude/phase-a-port 2>&1 | tail -1\`. Return ok.`, {
     label: `push-r${round}`,
     phase: "Apply",
-   
   });
   history.push({ round, passing: survey.passing, total: survey.total, fixed: targets.length });
 }

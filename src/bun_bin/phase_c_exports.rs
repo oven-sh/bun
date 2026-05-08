@@ -35,10 +35,6 @@ use core::ffi::{c_int, c_long, c_void};
 type JSGlobalObject = c_void;
 type JSValue = i64; // JSC::EncodedJSValue
 type VirtualMachine = c_void;
-type Blob = c_void;
-type BlockList = c_void;
-
-type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
 
 // ════════════════════════════════════════════════════════════════════════════
 // Exported variables (Zig: `export var` / `@export(&var, …)`)

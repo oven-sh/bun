@@ -794,12 +794,12 @@ fn enableSignalsDuringWait(self: *Repl) void {
         _ = bun.tty.setMode(0, .normal);
 
         // Install SIGINT handler
-        const act = std.posix.Sigaction{
+        const act = bun.sys.Sigaction{
             .handler = .{ .handler = sigintHandler },
-            .mask = std.posix.sigemptyset(),
+            .mask = bun.sys.sigemptyset(),
             .flags = 0,
         };
-        std.posix.sigaction(std.posix.SIG.INT, &act, null);
+        bun.sys.sigaction(std.posix.SIG.INT, &act, null);
     }
     // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
 }
@@ -814,12 +814,12 @@ fn disableSignalsDuringWait(self: *Repl) void {
         _ = bun.tty.setMode(0, .raw);
 
         // Restore default SIGINT handling
-        const act = std.posix.Sigaction{
+        const act = bun.sys.Sigaction{
             .handler = .{ .handler = std.posix.SIG.DFL },
-            .mask = std.posix.sigemptyset(),
+            .mask = bun.sys.sigemptyset(),
             .flags = 0,
         };
-        std.posix.sigaction(std.posix.SIG.INT, &act, null);
+        bun.sys.sigaction(std.posix.SIG.INT, &act, null);
     }
 }
 

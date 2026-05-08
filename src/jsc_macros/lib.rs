@@ -295,12 +295,16 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
         let set_ext = format_ident!("__{snake}_set_cached_value");
 
         out.extend(quote! {
+            // `safe fn` to match the `safe fn …GetCachedValue` /
+            // `…SetCachedValue` declarations `generate-classes.ts` emits in
+            // `generated_classes.rs` (otherwise `clashing_extern_declarations`
+            // fires — the only difference was the call-safety qualifier).
             #[cfg(all(windows, target_arch = "x86_64"))]
             unsafe extern "sysv64" {
                 #[link_name = #get_sym]
-                fn #get_ext(this_value: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+                safe fn #get_ext(this_value: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
                 #[link_name = #set_sym]
-                fn #set_ext(
+                safe fn #set_ext(
                     this_value: ::bun_jsc::JSValue,
                     global: *mut ::bun_jsc::JSGlobalObject,
                     value: ::bun_jsc::JSValue,
@@ -309,9 +313,9 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             unsafe extern "C" {
                 #[link_name = #get_sym]
-                fn #get_ext(this_value: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+                safe fn #get_ext(this_value: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
                 #[link_name = #set_sym]
-                fn #set_ext(
+                safe fn #set_ext(
                     this_value: ::bun_jsc::JSValue,
                     global: *mut ::bun_jsc::JSGlobalObject,
                     value: ::bun_jsc::JSValue,
@@ -321,9 +325,9 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
             /// `JSC::WriteBarrier` slot read — `None` if never assigned.
             #[inline]
             pub fn #get_fn(this_value: ::bun_jsc::JSValue) -> ::core::option::Option<::bun_jsc::JSValue> {
-                // SAFETY: pure FFI read of a `WriteBarrier<Unknown>` slot on the
+                // Pure FFI read of a `WriteBarrier<Unknown>` slot on the
                 // C++ wrapper; `this_value` must be the codegen'd JSCell.
-                let result = unsafe { #get_ext(this_value) };
+                let result = #get_ext(this_value);
                 if result == ::bun_jsc::JSValue::ZERO { None } else { Some(result) }
             }
 
@@ -334,11 +338,11 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
                 global: &::bun_jsc::JSGlobalObject,
                 value: ::bun_jsc::JSValue,
             ) {
-                // SAFETY: `global` is live; FFI does `m_${prop}.set(vm, this, value)`.
-                // `as_mut_ptr` derives `*mut` via the `UnsafeCell` interior, so the
-                // C++ write barrier mutating VM/heap state is sound under Stacked
+                // FFI does `m_${prop}.set(vm, this, value)`. `as_mut_ptr`
+                // derives `*mut` via the `UnsafeCell` interior, so the C++
+                // write barrier mutating VM/heap state is sound under Stacked
                 // Borrows (a `&T as *const T as *mut T` cast would not be).
-                unsafe { #set_ext(this_value, global.as_mut_ptr(), value) }
+                #set_ext(this_value, global.as_mut_ptr(), value)
             }
         });
     }
@@ -545,17 +549,20 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
         (quote! {}, quote! {})
     } else {
         (
+            // `safe fn` + `*mut JSGlobalObject` to match the signature
+            // `generate-classes.ts` emits in `generated_classes.rs` (the lint
+            // `clashing_extern_declarations` compares the two by symbol).
             quote! {
                 #[link_name = #get_ctor_lit]
-                fn __get_constructor(global: *mut ::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue;
+                safe fn __get_constructor(global: *mut ::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue;
             },
             quote! {
                 fn get_constructor(global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
-                    // SAFETY: `global` is live; C++ side returns the cached
-                    // constructor (`WebCore::clientSubspaceFor*`-registered).
-                    // `as_mut_ptr` derives `*mut` via `UnsafeCell` — the lazy
-                    // init may mutate the global's constructor cache.
-                    unsafe { __get_constructor(global.as_mut_ptr()) }
+                    // C++ side returns the cached constructor
+                    // (`WebCore::clientSubspaceFor*`-registered). `as_mut_ptr`
+                    // derives `*mut` via `UnsafeCell` — the lazy init may
+                    // mutate the global's constructor cache.
+                    __get_constructor(global.as_mut_ptr())
                 }
             },
         )
@@ -563,14 +570,19 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 
     let trait_impl = quote! {
         const _: () = {
+            // `safe fn` (not bare `fn`) so these match the `safe fn`
+            // declarations `generate-classes.ts` emits in
+            // `generated_classes.rs` — otherwise `clashing_extern_declarations`
+            // fires for every codegen'd class (the only difference was the
+            // call-safety qualifier).
             #[cfg(all(windows, target_arch = "x86_64"))]
             unsafe extern "sysv64" {
                 #[link_name = #from_js_lit]
-                fn __from_js(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
+                safe fn __from_js(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
                 #[link_name = #from_js_direct_lit]
-                fn __from_js_direct(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
+                safe fn __from_js_direct(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
                 #[link_name = #create_lit]
-                fn __create(
+                safe fn __create(
                     global: *mut ::bun_jsc::JSGlobalObject,
                     ptr: *mut #rust_ty,
                 ) -> ::bun_jsc::JSValue;
@@ -579,11 +591,11 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             unsafe extern "C" {
                 #[link_name = #from_js_lit]
-                fn __from_js(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
+                safe fn __from_js(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
                 #[link_name = #from_js_direct_lit]
-                fn __from_js_direct(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
+                safe fn __from_js_direct(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
                 #[link_name = #create_lit]
-                fn __create(
+                safe fn __create(
                     global: *mut ::bun_jsc::JSGlobalObject,
                     ptr: *mut #rust_ty,
                 ) -> ::bun_jsc::JSValue;
@@ -608,9 +620,9 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     ptr: *mut Self,
                     global: &::bun_jsc::JSGlobalObject,
                 ) -> ::bun_jsc::JSValue {
-                    // SAFETY: caller contract — `ptr` is a fresh heap payload;
+                    // Caller contract — `ptr` is a fresh heap payload;
                     // ownership transfers to the C++ wrapper. See `to_js`.
-                    unsafe { __create(global.as_mut_ptr(), ptr) }
+                    __create(global.as_mut_ptr(), ptr)
                 }
 
                 /// Wrap an owned `Box<Self>` in a JS object. Typed sibling of
@@ -621,29 +633,28 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     this: ::std::boxed::Box<Self>,
                     global: &::bun_jsc::JSGlobalObject,
                 ) -> ::bun_jsc::JSValue {
-                    // SAFETY: ownership transfers to the C++ wrapper; see `to_js`.
-                    unsafe { __create(global.as_mut_ptr(), ::bun_jsc::heap::into_raw(this)) }
+                    // Ownership transfers to the C++ wrapper; see `to_js`.
+                    __create(global.as_mut_ptr(), ::bun_jsc::heap::into_raw(this))
                 }
             }
 
             impl ::bun_jsc::JsClass for #rust_ty {
                 fn to_js(self, global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
                     let ptr = ::bun_jsc::heap::alloc(self);
-                    // SAFETY: `global` is live; `ptr` ownership transfers to the
-                    // C++ wrapper (freed via `${T}Class__finalize`). `as_mut_ptr`
-                    // derives `*mut` via `UnsafeCell` so C++ allocating on the
-                    // GC heap through this pointer is sound (no read-only
-                    // provenance from `&JSGlobalObject`).
-                    unsafe { __create(global.as_mut_ptr(), ptr) }
+                    // `ptr` ownership transfers to the C++ wrapper (freed via
+                    // `${T}Class__finalize`). `as_mut_ptr` derives `*mut` via
+                    // `UnsafeCell` so C++ allocating on the GC heap through this
+                    // pointer is sound (no read-only provenance from `&JSGlobalObject`).
+                    __create(global.as_mut_ptr(), ptr)
                 }
                 fn from_js(value: ::bun_jsc::JSValue) -> ::core::option::Option<*mut Self> {
-                    // SAFETY: pure FFI downcast; returns null on type mismatch.
-                    let p = unsafe { __from_js(value) };
+                    // Pure FFI downcast; returns null on type mismatch.
+                    let p = __from_js(value);
                     if p.is_null() { None } else { Some(p) }
                 }
                 fn from_js_direct(value: ::bun_jsc::JSValue) -> ::core::option::Option<*mut Self> {
-                    // SAFETY: pure FFI downcast; returns null on type mismatch.
-                    let p = unsafe { __from_js_direct(value) };
+                    // Pure FFI downcast; returns null on type mismatch.
+                    let p = __from_js_direct(value);
                     if p.is_null() { None } else { Some(p) }
                 }
                 #get_ctor_impl

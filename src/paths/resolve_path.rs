@@ -1245,11 +1245,14 @@ pub mod platform {
 }
 
 impl Platform {
+    // Match the `platform::Auto` type alias above: pick by `windows`/`unix`/else
+    // rather than enumerating OSes, so a new POSIX target (e.g. Android) doesn't
+    // silently leave `Platform::AUTO` undefined.
     #[cfg(windows)]
     pub const AUTO: Platform = Platform::Windows;
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+    #[cfg(unix)]
     pub const AUTO: Platform = Platform::Posix;
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(not(windows), not(unix)))]
     pub const AUTO: Platform = Platform::Loose;
 
     pub fn is_absolute(self, path: &[u8]) -> bool {

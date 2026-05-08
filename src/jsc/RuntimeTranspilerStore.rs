@@ -674,10 +674,9 @@ impl TranspilerJob {
                         } else {
                             None
                         };
-                        // SAFETY: column `PackageJson` is `Option<&'static PackageJSON>` per WatchItem layout.
-                        package_json = unsafe {
-                            watchlist.items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
-                        };
+                        // column `PackageJson` is `Option<&'static PackageJSON>` per WatchItem layout.
+                        package_json =
+                            watchlist.items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize];
                     }
                 }
             }

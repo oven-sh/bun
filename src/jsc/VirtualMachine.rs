@@ -4155,7 +4155,7 @@ impl VirtualMachine {
                 // thread); `old_log` outlives the VM (Box::leak in `init`).
                 let jsc_vm = unsafe { &mut *self.vm };
                 jsc_vm.log = Some(self.old_log);
-                jsc_vm.transpiler.resolver.log = unsafe { &raw mut *self.old_log.as_ptr() };
+                jsc_vm.transpiler.resolver.log = &raw mut *self.old_log.as_ptr();
             }
         }
         let _restore = RestoreLog { vm: jsc_vm_ptr, old_log };

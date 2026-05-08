@@ -515,11 +515,13 @@ impl UDPSocket {
         // opaque `void*` (stored verbatim in `m_ctx`), so layout is irrelevant.
         #[allow(improper_ctypes)]
         unsafe extern "C" {
+            // `safe fn` to match the declaration `#[bun_jsc::JsClass]` emits
+            // for the same `link_name` (avoids `clashing_extern_declarations`).
             #[link_name = "UDPSocket__create"]
-            fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut UDPSocket) -> JSValue;
+            safe fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut UDPSocket) -> JSValue;
         }
-        // SAFETY: `global_this` is live; `this_ptr` ownership transfers to the C++ wrapper.
-        let this_value = unsafe { udp_socket_create(global_this.as_mut_ptr(), this_ptr) };
+        // `global_this` is live; `this_ptr` ownership transfers to the C++ wrapper.
+        let this_value = udp_socket_create(global_this.as_mut_ptr(), this_ptr);
         this_value.ensure_still_alive();
         this.this_value.set_strong(this_value, global_this);
 

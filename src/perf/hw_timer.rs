@@ -215,8 +215,8 @@ struct CpuidResult {
 fn cpuid(leaf: u32, subleaf: u32) -> CpuidResult {
     // PORT NOTE: Rust inline asm reserves `rbx` (LLVM PIC base), so we use the
     // std intrinsic which handles the xchg dance internally instead of raw asm.
-    // SAFETY: cpuid is always available on x86_64.
-    let r = unsafe { core::arch::x86_64::__cpuid_count(leaf, subleaf) };
+    // (`__cpuid_count` is a safe fn on x86_64 — cpuid is baseline.)
+    let r = core::arch::x86_64::__cpuid_count(leaf, subleaf);
     CpuidResult { eax: r.eax, ebx: r.ebx, ecx: r.ecx, edx: r.edx }
 }
 

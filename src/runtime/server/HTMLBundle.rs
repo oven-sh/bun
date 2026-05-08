@@ -57,6 +57,8 @@ const _: () = {
     // `*mut HTMLBundle` is opaque to C++ (linked by symbol name only); the
     // pointee's Rust layout is irrelevant to the FFI boundary, but HTMLBundle
     // lacks `#[repr(C)]` so rustc lints anyway.
+    // `safe fn` to match `generated_classes.rs` / the `#[bun_jsc::JsClass]`
+    // macro (avoids `clashing_extern_declarations`).
     #[allow(improper_ctypes)]
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
@@ -65,7 +67,7 @@ const _: () = {
         #[link_name = "HTMLBundle__fromJSDirect"]
         safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
         #[link_name = "HTMLBundle__create"]
-        fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
+        safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
     }
     #[allow(improper_ctypes)]
     #[cfg(not(all(windows, target_arch = "x86_64")))]
@@ -75,7 +77,7 @@ const _: () = {
         #[link_name = "HTMLBundle__fromJSDirect"]
         safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
         #[link_name = "HTMLBundle__create"]
-        fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
+        safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
     }
 
     impl bun_jsc::JsClass for HTMLBundle {
@@ -106,10 +108,10 @@ const _: () = {
         /// refcounted allocation. The JS wrapper takes one ref (released in
         /// `finalize`), so callers must have already accounted for that ref.
         pub fn to_js(this: *mut HTMLBundle, global: &JSGlobalObject) -> JSValue {
-            // SAFETY: `this` is a live `IntrusiveRc::new`-boxed allocation;
-            // ownership of one ref transfers to the C++ wrapper (deref'd via
+            // `this` is a live `IntrusiveRc::new`-boxed allocation; ownership
+            // of one ref transfers to the C++ wrapper (deref'd via
             // `HTMLBundleClass__finalize` → `finalize()`).
-            unsafe { __create(global.as_ptr(), this) }
+            __create(global.as_ptr(), this)
         }
     }
 };

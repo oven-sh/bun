@@ -5879,15 +5879,15 @@ pub mod net {
     // both through a private `sock` shim so the body below is target-agnostic.
     #[cfg(unix)]
     mod sock {
-        pub use libc::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage, AF_INET, AF_INET6};
+        pub(super) use libc::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage, AF_INET, AF_INET6};
     }
     #[cfg(windows)]
     mod sock {
         // Same nominal types as `bun_sys::posix::sockaddr*` (see comment there)
         // so `Address::init_posix` accepts pointers callers cast through that
         // path. AF_* values come from ws2def.h.
-        pub use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
-        pub use bun_windows_sys::ws2_32::{AF_INET, AF_INET6};
+        pub(super) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+        pub(super) use bun_windows_sys::ws2_32::{AF_INET, AF_INET6};
     }
     use sock::*;
 

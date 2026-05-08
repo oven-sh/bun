@@ -24,7 +24,8 @@
  * the dynamic-list / NAPI surface (no inbound static ref) are retained too.
  */
 
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import type { Ninja } from "./ninja.ts";
@@ -115,6 +116,28 @@ export const allRustTargets = [
   "aarch64-linux-android",
 ] as const;
 
+/**
+ * Tier 3 targets — rustup ships no prebuilt `rust-std` for these, so
+ * `rustup target add` would fail and cargo needs `-Zbuild-std` (which in turn
+ * needs the `rust-src` component). As of nightly-2026-05, the only Tier 3
+ * triple in CI's matrix is aarch64-freebsd.
+ */
+function rustTargetIsTier3(triple: string): boolean {
+  return triple === "aarch64-unknown-freebsd";
+}
+
+/**
+ * Path to the `rustup` binary that owns `cfg.cargo`, or `undefined` if
+ * `cfg.cargo` isn't a rustup proxy (a distro/Homebrew cargo, say).
+ * `rustup target add` is only meaningful when rustup is the toolchain
+ * manager — `rust_build_cross` requires it; everyone else gets `rust_build`.
+ */
+function findRustup(cfg: Config): string | undefined {
+  if (cfg.cargo === undefined) return undefined;
+  const rustup = join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`);
+  return existsSync(rustup) ? rustup : undefined;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
@@ -157,6 +180,31 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     pool: "console",
     restat: true,
   });
+
+  // Variant that ensures `rust-std` for `$rust_target` is installed before
+  // building. CI agents pin the toolchain via `RUSTUP_TOOLCHAIN`, which
+  // bypasses `rust-toolchain.toml`'s `targets`/`components` install list — so
+  // a freshly bumped `channel` can have rustc/cargo present (rustup proxies
+  // auto-install those) but no `rust-std-<triple>`, which surfaces as
+  // `error[E0463]: can't find crate for core`. `rustup target add` is
+  // idempotent and a fast no-op when the component is already there. Same
+  // shape as `dep_cargo_cross` in source.ts — see the comment there.
+  //
+  // Only registered when `cfg.cargo` is a rustup proxy (otherwise there's no
+  // `rustup` to call and target install is the user's problem). Tier 3 targets
+  // (no prebuilt std) also skip this rule; emitRust() routes both through
+  // `rust_build`, with `-Zbuild-std` for Tier 3.
+  const rustup = findRustup(cfg);
+  if (rustup !== undefined) {
+    n.rule("rust_build_cross", {
+      command:
+        `${stream} $env ${q(rustup)} target add $rust_target && ` +
+        `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
+      description: "cargo bun_bin → $label ($rust_target)",
+      pool: "console",
+      restat: true,
+    });
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -211,6 +259,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   const hostWin = cfg.host.os === "windows";
   const targetDir = rustTargetDir(cfg);
   const triple = rustTarget(cfg);
+  const tier3 = rustTargetIsTier3(triple);
   const profile = cargoProfile(cfg);
   const lib = rustLibPath(cfg);
 
@@ -226,6 +275,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     "--profile",
     profile.name,
   ];
+  if (tier3) {
+    // No prebuilt `rust-std`; build it from source. The workspace is
+    // `panic = "unwind"` (host_fn / bundler thread `catch_unwind` boundaries
+    // — see Cargo.toml), so build `panic_unwind` not `panic_abort`. `proc_macro`
+    // is needed because `cargo build --target` still resolves proc-macro crates
+    // for the host through the same `-Zbuild-std` flag set. Requires the
+    // `rust-src` component, which `rust-toolchain.toml` requests and CI images
+    // preinstall (Dockerfile / bootstrap.sh `rustup component add rust-src`).
+    args.push("-Zbuild-std=core,alloc,std,proc_macro,panic_unwind");
+  }
 
   // ─── rustflags ───
   // CARGO_ENCODED_RUSTFLAGS: U+001F-separated so multi-arg flags survive.
@@ -269,7 +328,13 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // the config-file `rustflags` rather than merging, so the config entry was
   // dead for any ninja build. Push it unconditionally so the ninja build's
   // behavior doesn't depend on the generated `.cargo/config.toml` at all.
-  rustflags.push(`-Clink-arg=-fuse-ld=lld`);
+  //
+  // Not on Windows: the per-target linker there is `link.exe` / `lld-link.exe`
+  // (see `CARGO_TARGET_*_LINKER` below), which take `/X` args, not the GCC/clang
+  // `-fuse-ld=`. RUSTFLAGS only reach *target* crates when `--target` is given,
+  // and the `bun_bin` staticlib has no link step, so it's normally dead — but
+  // if a target cdylib ever appears it'd fail with "could not open '-fuse-ld=lld'".
+  if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   if (cfg.lto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
     // so the final lld `-flto=full` link sees through Rust↔C++ call edges.
@@ -333,7 +398,25 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     CC: cfg.cc,
     CXX: cfg.cxx,
     AR: cfg.ar,
-    [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: cfg.cxx,
+    // Per-target linker. The `bun_bin` artifact is a staticlib (no link step);
+    // what actually gets linked are HOST executables/dylibs in the dep graph
+    // (build scripts, proc-macros) — and on a native build, `--target` is the
+    // host triple, so this env var sets *their* linker too.
+    //
+    // Non-Windows: `cfg.cxx` (clang++) drives lld with the same flag dialect
+    // the C++ side uses. `-Clink-arg=-fuse-ld=lld` (pushed into rustflags
+    // below) selects lld for any rustc-driven cdylib link.
+    //
+    // Windows: rustc's `*-msvc` linker flavor passes `link.exe`-style args
+    // directly (`/NOLOGO`, `/OUT:`, `/NATVIS:`, `/PDBALTPATH:`, …). `clang-cl`
+    // is a *compiler driver*, not a linker — it reads `/N…` args as input
+    // filenames ("no such file or directory: '/NOLOGO'") and never reaches the
+    // underlying linker. Use the discovered MSVC `link.exe` (matches what
+    // `dep_cargo` sets for vendored crates — see source.ts), falling back to
+    // `lld-link.exe` (`cfg.ld`); both speak the `/X` dialect rustc emits.
+    [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: cfg.windows
+      ? (cfg.msvcLinker ?? cfg.ld)
+      : cfg.cxx,
   };
   if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;
@@ -354,9 +437,17 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   // ─── Emit build node ───
+  // Tier 1/2 targets go through `rust_build_cross` (when rustup is present),
+  // which does `rustup target add $rust_target` before cargo. That makes the
+  // first build after a `rust-toolchain.toml` channel bump self-heal: rustup
+  // proxies auto-install rustc/cargo for a new pinned channel, but NOT
+  // `rust-std`, and `RUSTUP_TOOLCHAIN` (set above) bypasses the toolchain.toml's
+  // `targets`/`components` install list entirely. Tier 3 (no prebuilt std)
+  // would fail `target add`, so they use plain `rust_build` + `-Zbuild-std`.
+  const useCrossRule = !tier3 && findRustup(cfg) !== undefined;
   n.build({
     outputs: [lib],
-    rule: "rust_build",
+    rule: useCrossRule ? "rust_build_cross" : "rust_build",
     inputs: [],
     // Cargo binary itself + every .rs/Cargo.toml so editing one re-invokes
     // (cargo's own fingerprinting then decides what to actually recompile).
@@ -369,6 +460,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     vars: {
       cwd: cfg.cwd,
       args: quoteArgs(args, hostWin),
+      rust_target: triple,
       label: `${cfg.libPrefix}bun_rust${cfg.libSuffix}`,
       env: Object.entries(env)
         .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)

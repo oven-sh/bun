@@ -1233,7 +1233,6 @@ pub use self::js_promise::Unwrapped as PromiseResult;
 // `ZigString` → JS bridges used by the `ZigStringJsc` extension trait below
 // (the rest of the `JSGlobalObject` extern surface lives in `JSGlobalObject.rs`).
 unsafe extern "C" {
-    fn JSC__JSGlobalObject__vm(this: *const JSGlobalObject) -> *mut VM;
     fn ZigString__toErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toTypeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toSyntaxErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;

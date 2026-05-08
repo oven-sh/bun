@@ -256,6 +256,9 @@ impl Target {
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
+// Zig field names are lower_snake — `@tagName` is exposed to JS (HTMLImportManifest
+// `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
+#[strum(serialize_all = "snake_case")]
 pub enum Loader {
     Jsx = 0,
     Js = 1,

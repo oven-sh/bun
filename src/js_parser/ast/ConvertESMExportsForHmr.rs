@@ -337,7 +337,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // the now-unused record, so we must update it.
                     symbol.namespace_alias = Some(G::NamespaceAlias {
                         namespace_ref: deduped.namespace_ref,
-                        alias: js_ast::StoreStr::new(item.original_name.slice()),
+                        alias: item.original_name,
                         import_record_index: deduped.import_record_index,
                         ..Default::default()
                     });

@@ -1275,7 +1275,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BArray(array) => {
                 // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let array = unsafe { &*array };
-                for item in unsafe { &*array.items } {
+                for item in array.items.slice() {
                     if self.is_binding_used(item.binding, default_export_ref) {
                         return true;
                     }
@@ -1285,7 +1285,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BObject(obj) => {
                 // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let obj = unsafe { &*obj };
-                for prop in unsafe { &*obj.properties } {
+                for prop in obj.properties.slice() {
                     if self.is_binding_used(prop.value, default_export_ref) {
                         return true;
                     }
@@ -1550,14 +1550,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BArray(array) => {
                 // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let array = unsafe { &*array };
-                for prop in unsafe { &*array.items } {
+                for prop in array.items.slice() {
                     self.record_exported_binding(prop.binding);
                 }
             }
             js_ast::b::B::BObject(obj) => {
                 // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let obj = unsafe { &*obj };
-                for prop in unsafe { &*obj.properties } {
+                for prop in obj.properties.slice() {
                     self.record_exported_binding(prop.value);
                 }
             }
@@ -3457,7 +3457,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
 
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-            for item in unsafe { &*stmt.items }.iter() {
+            for item in stmt.items.iter() {
                 let name = self.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                 self.is_import_item.insert(r#ref, ());
@@ -3476,7 +3476,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a;
             // loop body only reads from `item`, so a shared borrow suffices and
             // avoids holding a unique borrow across `&mut self` method calls.
-            for item in unsafe { &*stmt.items }.iter() {
+            for item in stmt.items.iter() {
                 // In ClauseItem from parseImportClause:
                 // - alias is the name from the source module ("feature")
                 // - original_name is the local binding name
@@ -3548,7 +3548,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let mut item_refs = ImportItemForNamespaceMap::new();
         // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
         let count_excluding_namespace =
-            u16::try_from(unsafe { &*stmt.items }.len()).expect("int cast") + u16::from(stmt.default_name.is_some());
+            u16::try_from(stmt.items.len()).expect("int cast") + u16::from(stmt.default_name.is_some());
 
         item_refs.ensure_unused_capacity(count_excluding_namespace as usize)?;
         // Even though we allocate ahead of time here
@@ -3683,7 +3683,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // i.e. import {graphql} "react-relay"
 
         // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-        if remap_count > 0 && unsafe { &*stmt.items }.is_empty() && stmt.default_name.is_none() {
+        if remap_count > 0 && stmt.items.is_empty() && stmt.default_name.is_none() {
             self.import_records.items_mut()[stmt.import_record_index as usize].path.namespace = js_ast::Macro::NAMESPACE;
             self.import_records.items_mut()[stmt.import_record_index as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
 
@@ -3695,7 +3695,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             return Ok(self.s(S::Empty {}, loc));
         } else if remap_count > 0 {
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-            item_refs.shrink_and_free(unsafe { &*stmt.items }.len() + usize::from(stmt.default_name.is_some()));
+            item_refs.shrink_and_free(stmt.items.len() + usize::from(stmt.default_name.is_some()));
         }
 
         if path.import_tag != bun_options_types::ImportRecordTag::None || path.loader.is_some() {
@@ -3715,7 +3715,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-                for item in unsafe { &*stmt.items }.iter() {
+                for item in stmt.items.iter() {
                     // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
                     let alias: &[u8] = item.alias.slice();
                     if !(alias == b"default" || alias == b"db") {
@@ -3729,7 +3729,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
             } else if loader == options::Loader::File || loader == options::Loader::Text {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
-                for item in unsafe { &*stmt.items }.iter() {
+                for item in stmt.items.iter() {
                     // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
                     if item.alias.slice() != b"default" {
                         self.log().add_error(
@@ -3865,14 +3865,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BObject(obj) => {
                 // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let obj = unsafe { &*obj };
-                for prop in unsafe { &*obj.properties } {
+                for prop in obj.properties.slice() {
                     self.define_exported_namespace_binding(exported_members, prop.value)?;
                 }
             }
             js_ast::b::B::BArray(obj) => {
                 // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let obj = unsafe { &*obj };
-                for prop in unsafe { &*obj.items } {
+                for prop in obj.items.slice() {
                     self.define_exported_namespace_binding(exported_members, prop.binding)?;
                 }
             }
@@ -4695,7 +4695,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BArray(bi) => {
                 // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let bi = unsafe { &*bi };
-                for item in unsafe { &*bi.items } {
+                for item in bi.items.slice() {
                     if !self.binding_can_be_removed_if_unused_without_dce_check(item.binding) {
                         return false;
                     }
@@ -4709,7 +4709,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BObject(bi) => {
                 // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let bi = unsafe { &*bi };
-                for property in unsafe { &*bi.properties } {
+                for property in bi.properties.slice() {
                     if !property.flags.contains(Flags::Property::IsSpread)
                         && !self.expr_can_be_removed_if_unused_without_dce_check(&property.key)
                     {
@@ -4790,12 +4790,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 js_ast::StmtData::STry(try_) => {
-                    // SAFETY: arena-owned `StoreSlice<Stmt>` valid for parser 'a; no aliasing &mut outstanding
-                    if !self.stmts_can_be_removed_if_unused_without_dce_check(unsafe { &*try_.body })
+                    // arena-owned `StoreSlice<Stmt>` valid for parser 'a; no aliasing &mut outstanding
+                    if !self.stmts_can_be_removed_if_unused_without_dce_check(try_.body.slice())
                         || (try_.finally.is_some()
-                            && !self.stmts_can_be_removed_if_unused_without_dce_check(unsafe {
-                                &*try_.finally.as_ref().unwrap().stmts
-                            }))
+                            && !self.stmts_can_be_removed_if_unused_without_dce_check(
+                                try_.finally.as_ref().unwrap().stmts.slice(),
+                            ))
                     {
                         return false;
                     }
@@ -4987,8 +4987,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
         }
 
-        // SAFETY: arena-owned `StoreSlice<Property>` valid for parser 'a; no aliasing &mut outstanding
-        for property in unsafe { &*class.properties } {
+        // arena-owned `StoreSlice<Property>` valid for parser 'a; no aliasing &mut outstanding
+        for property in class.properties.iter() {
             if property.kind == js_ast::g::PropertyKind::ClassStaticBlock {
                 // SAFETY: arena-owned ClassStaticBlock valid for 'a.
                 let csb = unsafe { property.class_static_block.unwrap().as_ref() };
@@ -5539,8 +5539,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         body: Stmt,
     ) -> Result<(), bun_core::Error> {
         if let js_ast::StmtData::SBlock(block) = &body.data {
-            // SAFETY: `S::Block.stmts` is `StoreSlice<Stmt>` arena-owned for parser 'a; no aliasing &mut.
-            let block_stmts: &[Stmt] = unsafe { &*block.stmts };
+            // `S::Block.stmts` is `StoreSlice<Stmt>` arena-owned for parser 'a; no aliasing &mut.
+            let block_stmts: &[Stmt] = block.stmts.slice();
             let mut keep_block = false;
             for stmt in block_stmts {
                 if statement_cares_about_scope(stmt) {
@@ -5579,14 +5579,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BArray(array) => {
                 // SAFETY: arena-owned `*mut Array` valid for parser 'a.
                 let array = unsafe { &*array };
-                for item in unsafe { &*array.items } {
+                for item in array.items.slice() {
                     self.mark_exported_binding_inside_namespace(r#ref, item.binding);
                 }
             }
             js_ast::b::B::BObject(obj) => {
                 // SAFETY: arena-owned `*mut Object` valid for parser 'a.
                 let obj = unsafe { &*obj };
-                for item in unsafe { &*obj.properties } {
+                for item in obj.properties.slice() {
                     self.mark_exported_binding_inside_namespace(r#ref, item.value);
                 }
             }
@@ -5660,8 +5660,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let left = self.new_expr(
                         E::Dot {
                             target: Expr::init_identifier(namespace, name_loc),
-                            // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
-                            name: unsafe { (&*name).into() },
+                            // `Symbol.original_name` is already `StoreStr` (= `E::Str`); plain copy.
+                            name,
                             name_loc,
                             ..Default::default()
                         },
@@ -6005,7 +6005,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     }
 
                                     // arena-owned `StoreSlice<Arg>` valid for parser 'a.
-                                    for (i, arg) in unsafe { &*func.func.args }.iter().enumerate() {
+                                    for (i, arg) in func.func.args.iter().enumerate() {
                                         for arg_decorator in arg.ts_decorators.slice() {
                                             let arg0 = self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc);
                                             let args = self.arena.alloc_slice_copy(&[arg0, *arg_decorator]);
@@ -6201,8 +6201,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     } else {
                         // SAFETY: arena-owned E.Function node valid for 'a.
                         let cf = unsafe { &mut *constructor_function.unwrap() };
-                        // SAFETY: `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
-                        let old_stmts: &[Stmt] = unsafe { &*cf.func.body.stmts };
+                        // `body.stmts` is an arena-owned `StoreSlice<Stmt>`.
+                        let old_stmts: &[Stmt] = cf.func.body.stmts.slice();
                         let mut constructor_stmts =
                             BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + instance_members.len(), self.arena);
                         constructor_stmts.extend_from_slice(old_stmts);
@@ -6247,7 +6247,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if let Some(cf) = constructor_function {
                             // design:paramtypes
                             // SAFETY: arena-owned E.Function node valid for 'a.
-                            let constructor_args: &[G::Arg] = unsafe { &*(*cf).func.args };
+                            let constructor_args: &[G::Arg] = unsafe { &*cf }.func.args.slice();
                             let args1 = if !constructor_args.is_empty() {
                                 let param_array = self.arena.alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
@@ -6328,7 +6328,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     if let Some(prop_value) = prop.value {
                         let func = prop_value.data.e_function().expect("infallible: variant checked");
                         // arena-owned `StoreSlice<Arg>` valid for parser 'a.
-                        let method_args: &[G::Arg] = unsafe { &*func.func.args };
+                        let method_args: &[G::Arg] = func.func.args.slice();
                         {
                             let args_array = self.arena.alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
@@ -6370,7 +6370,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     if let Some(prop_value) = prop.value {
                         let func = prop_value.data.e_function().expect("infallible: variant checked");
                         // arena-owned `StoreSlice<Arg>` valid for parser 'a.
-                        let method_args: &[G::Arg] = unsafe { &*func.func.args };
+                        let method_args: &[G::Arg] = func.func.args.slice();
                         {
                             let args_array = self.arena.alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
@@ -7696,8 +7696,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     fn needs_wrapper_ref(&self, parts: &[js_ast::Part]) -> bool {
         debug_assert!(self.options.bundle);
         for part in parts {
-            // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-            for stmt in unsafe { &*part.stmts }.iter() {
+            // Part.stmts is an arena-owned slice valid for 'a.
+            for stmt in part.stmts.iter() {
                 match &stmt.data {
                     js_ast::StmtData::SFunction(_) => {}
                     js_ast::StmtData::SClass(class) => {
@@ -8083,10 +8083,10 @@ impl LowerUsingDeclarationsContext {
                     // Merge export clauses together.
                     // PORT NOTE: ClauseItem isn't `Clone` (POD-only fields, no derive);
                     // shallow-copy via ptr::read to mirror Zig `appendSlice`.
-                    // SAFETY: arena-owned `StoreSlice<ClauseItem>` valid for 'a; the
-                    // source slot is never read again (this whole stmt is dropped via
-                    // the `continue` below).
-                    let items = unsafe { &*data.items };
+                    // arena-owned `StoreSlice<ClauseItem>` valid for 'a; the source
+                    // slot is never read again (this whole stmt is dropped via the
+                    // `continue` below) — safe to `ptr::read` each item.
+                    let items = data.items.slice();
                     exports.reserve(items.len());
                     for item in items {
                         exports.push(unsafe { core::ptr::read(item) });

@@ -3340,7 +3340,6 @@ impl<'a> LinkerContext<'a> {
                     unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
-                            // SAFETY: `result.alias` is an arena-owned `*const [u8]` valid for the link pass.
                             alias: result.alias,
                             ..Default::default()
                         });
@@ -3365,7 +3364,6 @@ impl<'a> LinkerContext<'a> {
                     unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
-                            // SAFETY: `result.alias` is an arena-owned `*const [u8]` valid for the link pass.
                             alias: result.alias,
                             ..Default::default()
                         });

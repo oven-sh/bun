@@ -487,7 +487,7 @@ impl<'a> ImportScanner<'a> {
                                 let original_name = symbol.original_name.slice();
                                 symbol.namespace_alias = Some(G::NamespaceAlias {
                                     namespace_ref,
-                                    alias: js_ast::StoreStr::new(item.alias.slice()),
+                                    alias: item.alias,
                                     import_record_index: st.import_record_index,
                                     was_originally_property_access: st.star_name_loc.is_some()
                                         && existing_items

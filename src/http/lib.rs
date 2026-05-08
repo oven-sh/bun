@@ -1295,11 +1295,16 @@ impl<'a> HTTPClient<'a> {
         let callback = self.result_callback;
         // PORT NOTE: reshaped for borrowck — `to_result()`'s `body` field is a
         // `&mut MutableString` derived from a NonNull (caller-owned, disjoint
-        // from `self`), but its lifetime is tied to `&mut self`. Detach so the
-        // `state.reset()` reborrow below does not alias it.
+        // from `self`'s storage), but its lifetime is tied to `&mut self`.
+        // Detach so the `state.reset()` reborrow below compiles.
         // SAFETY: `body_out_str` points at the caller-owned MutableString that
-        // outlives this client; `to_result()` produces no other borrows of
-        // `self` (every other field is owned/Copy and moved out).
+        // outlives this client. NOTE: `state.reset()` below DOES write through
+        // that same allocation (`(*body_out_str).reset()`, InternalState.rs)
+        // while `result.body` is a live `&'static mut` to it — this overlap is
+        // pre-existing (the old open-coded `(*this_ptr).state.reset()` did the
+        // same) and matches the Zig sequencing; the callback observes the
+        // post-reset (empty) buffer. Do not read this comment as asserting
+        // `result.body` and `state.reset()` are disjoint.
         let result = unsafe { self.to_result().detach_lifetime() };
         self.state.reset();
         if clear_proxy_tunneling {

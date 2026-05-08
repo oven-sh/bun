@@ -149,13 +149,18 @@ impl ProxyTunnel {
     /// Read the inner-TLS `SSL*` from `wrapper`.
     ///
     /// NOTE: unlike the other accessors this DOES read through the `wrapper`
-    /// field, which the in-flight callback's caller holds `&mut` on. The read
-    /// is a single-statement raw place expression of a `Copy` value (no
-    /// `&SSLWrapper` is materialised), matching the original Zig pointer read.
+    /// field, which the in-flight callback's caller holds `&mut` on. The
+    /// `.as_ref()` call DOES materialise a transient `&SSLWrapper` (autoref of
+    /// the `Option` field) — there is no way to read `Option<SSLWrapper>.ssl`
+    /// without one. This is the same shared-read-of-a-Copy-field-while-a-
+    /// `&mut SSLWrapper`-is-live pattern the pre-refactor inline call sites
+    /// used: read-only, single-threaded, never retained past this expression.
+    /// The Zig original (`proxy.wrapper.?.ssl`) has no exclusive-alias rule so
+    /// this was never modelled there.
     #[inline]
     fn wrapper_ssl(this: NonNull<Self>) -> Option<NonNull<bun_boringssl_sys::SSL>> {
-        // SAFETY: `this` is live; raw place read of a Copy value, no shared
-        // borrow of `wrapper` is formed.
+        // SAFETY: `this` is live; transient shared read of a Copy field. See
+        // doc note above re: overlap with the caller's `&mut SSLWrapper`.
         unsafe { (*this.as_ptr()).wrapper.as_ref().and_then(|w| w.ssl) }
     }
 }
@@ -372,8 +377,13 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
             }
 
             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
+            // Zig: `const ssl_ptr = proxy.wrapper.?.ssl orelse return;` —
+            // `.?` asserts wrapper-is-Some; `orelse return` silently bails if
+            // ssl is None. Mirror that split: assert the wrapper, then return
+            // (no debug_assert) on the ssl-None sub-case.
+            // SAFETY: `proxy_nn` is live (ref-guarded above); read-only field check.
+            debug_assert!(unsafe { (*proxy_nn.as_ptr()).wrapper.is_some() });
             let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) else {
-                debug_assert!(false, "wrapper present but ssl missing");
                 return;
             };
 

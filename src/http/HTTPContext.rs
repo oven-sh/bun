@@ -839,15 +839,19 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 client.allow_retry = true;
                 if let Some(mut session) = found.h2_session {
                     if SSL {
-                        // SAFETY: session strong ref transferred from pool;
-                        // unique access until `adopt` returns.
-                        let s = unsafe { session.as_mut() };
                         // PORT NOTE: `session.socket = sock` — direct field
                         // write; ClientSession.socket is `HTTPSocket<true>`.
-                        s.socket = sock.assume_ssl();
+                        // SAFETY: session strong ref transferred from pool.
+                        // Re-derive `&mut` from the raw pointer at each step
+                        // rather than holding one `&mut` across `register_h2`
+                        // — that fn forms a fresh `&*session`, which under
+                        // Stacked Borrows would invalidate a spanning Unique.
+                        unsafe { session.as_mut() }.socket = sock.assume_ssl();
                         Self::tag_as_h2(sock, session.as_ptr());
                         self.register_h2(session.as_ptr());
-                        s.adopt(client);
+                        // SAFETY: session still live; fresh `&mut` after
+                        // register_h2's shared borrow has ended.
+                        unsafe { session.as_mut() }.adopt(client);
                     } else {
                         unreachable!();
                     }

@@ -9,12 +9,14 @@ pub const CLIENT_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 /// for wire-format `copy_from_slice`. Centralises the per-`from()` cast that
 /// the Zig parser did via `@ptrCast`.
 ///
-/// SAFETY: only invoked on the three packed frame structs below, each composed
-/// solely of `uN`/`[u8; N]` fields with no padding and no niches; every byte
-/// pattern is a valid value.
+/// # Safety
+/// `T` MUST be `#[repr(C, packed)]` with no padding bytes and no niches, i.e.
+/// every byte pattern is a valid `T`. The only intended `T`s are the three
+/// packed frame structs in this module (`StreamPriority`, `FrameHeader`,
+/// `SettingsPayloadUnit`).
 #[inline(always)]
-fn packed_bytes_mut<T>(v: &mut T) -> &mut [u8] {
-    // SAFETY: see doc comment.
+unsafe fn packed_bytes_mut<T>(v: &mut T) -> &mut [u8] {
+    // SAFETY: caller contract above.
     unsafe { core::slice::from_raw_parts_mut((v as *mut T).cast::<u8>(), core::mem::size_of::<T>()) }
 }
 
@@ -184,7 +186,8 @@ impl StreamPriority {
 
     #[inline]
     pub fn from(dst: &mut StreamPriority, src: &[u8]) {
-        packed_bytes_mut(dst).copy_from_slice(src);
+        // SAFETY: StreamPriority is #[repr(C, packed)] u32+u8, no padding/niches.
+        unsafe { packed_bytes_mut(dst) }.copy_from_slice(src);
         // std.mem.byteSwapAllFields(StreamPriority, dst)
         // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy
         // (rustc emits `read_unaligned`), and assignment to a packed field is
@@ -228,7 +231,9 @@ impl FrameHeader {
 
     #[inline]
     pub fn from<const END: bool>(dst: &mut FrameHeader, src: &[u8], offset: usize) {
-        packed_bytes_mut(dst)[offset..src.len() + offset].copy_from_slice(src);
+        // SAFETY: FrameHeader is #[repr(C, packed)] [u8;3]+u8+u8+u32, no padding/niches.
+        let bytes = unsafe { packed_bytes_mut(dst) };
+        bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // std.mem.byteSwapAllFields(FrameHeader, dst)
             dst.length.reverse(); // u24 byte swap
@@ -251,7 +256,9 @@ impl SettingsPayloadUnit {
 
     #[inline]
     pub fn from<const END: bool>(dst: &mut SettingsPayloadUnit, src: &[u8], offset: usize) {
-        packed_bytes_mut(dst)[offset..src.len() + offset].copy_from_slice(src);
+        // SAFETY: SettingsPayloadUnit is #[repr(C, packed)] u16+u32, no padding/niches.
+        let bytes = unsafe { packed_bytes_mut(dst) };
+        bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // std.mem.byteSwapAllFields(SettingsPayloadUnit, dst)
             dst.r#type = u16::swap_bytes({ dst.r#type });

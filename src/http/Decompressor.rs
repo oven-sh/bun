@@ -27,16 +27,17 @@ pub enum Decompressor {
 /// Erase the lifetimes of an `(input, output)` pair to `'static` for storage
 /// in a `*ReaderArrayList` variant.
 ///
-/// MODULE INVARIANT (single point of unsafe): the `Decompressor` is owned by
-/// the surrounding `HTTPClient` request lifecycle and is dropped (or reset to
-/// `None`) in `InternalState::deinit` *before* either `compressed_body` or
-/// `body_out_str` is freed. Every call site in [`Decompressor::update_buffers`]
-/// passes exactly that pair, so the erased borrows never dangle. The output
-/// `Vec` is uniquely borrowed by the active reader (the only other access is
-/// the immediate re-seat on the next chunk, which overwrites `list_ptr`).
+/// # Safety
+/// MODULE INVARIANT: the `Decompressor` is owned by the surrounding
+/// `HTTPClient` request lifecycle and is dropped (or reset to `None`) in
+/// `InternalState::deinit` *before* either `compressed_body` or `body_out_str`
+/// is freed. Callers MUST pass exactly that pair so the erased borrows never
+/// dangle. The output `Vec` MUST be uniquely borrowed by the active reader
+/// (the only other access is the immediate re-seat on the next chunk, which
+/// overwrites `list_ptr`).
 #[inline(always)]
-fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'static mut Vec<u8>) {
-    // SAFETY: see MODULE INVARIANT above.
+unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'static mut Vec<u8>) {
+    // SAFETY: caller contract above.
     unsafe { (bun_ptr::detach_lifetime(input), &mut *(out as *mut Vec<u8>)) }
 }
 
@@ -58,7 +59,9 @@ impl Decompressor {
         }
 
         if matches!(self, Decompressor::None) {
-            let (input, out) = seat(buffer, &mut body_out_str.list);
+            // SAFETY: `buffer`/`body_out_str` are the request's compressed_body
+            // and caller-owned output; both outlive `self` (see `seat` contract).
+            let (input, out) = unsafe { seat(buffer, &mut body_out_str.list) };
             match encoding {
                 Encoding::Gzip | Encoding::Deflate => {
                     let reader = ZlibReaderArrayList::init_with_options_and_list_allocator(
@@ -135,7 +138,8 @@ impl Decompressor {
                 // `body_out_str.list`) — taking a fresh `&mut body_out_str.list`
                 // would invalidate the just-stored `&'static mut` under stacked
                 // borrows.
-                let (_, out) = seat(buffer, &mut body_out_str.list);
+                // SAFETY: see `seat` contract — same buffer pair as initial seat.
+                let (_, out) = unsafe { seat(buffer, &mut body_out_str.list) };
                 reader.list_ptr = out;
                 // expandToCapacity:
                 // SAFETY: capacity bytes are allocated; zlib initializes
@@ -152,7 +156,8 @@ impl Decompressor {
             }
             Decompressor::Brotli(reader) => {
                 let initial = body_out_str.list.len();
-                let (input, out) = seat(buffer, &mut body_out_str.list);
+                // SAFETY: see `seat` contract — same buffer pair as initial seat.
+                let (input, out) = unsafe { seat(buffer, &mut body_out_str.list) };
                 reader.input = input;
                 reader.total_in = 0;
                 // PORT NOTE: Zig aliased the ArrayList header; re-seat list_ptr instead.
@@ -161,7 +166,8 @@ impl Decompressor {
             }
             Decompressor::Zstd(reader) => {
                 let initial = body_out_str.list.len();
-                let (input, out) = seat(buffer, &mut body_out_str.list);
+                // SAFETY: see `seat` contract — same buffer pair as initial seat.
+                let (input, out) = unsafe { seat(buffer, &mut body_out_str.list) };
                 reader.input = input;
                 reader.total_in = 0;
                 // PORT NOTE: Zig aliased the ArrayList header; re-seat list_ptr instead.

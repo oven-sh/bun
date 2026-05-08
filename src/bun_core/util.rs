@@ -3007,17 +3007,42 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
         let cargs: Vec<ZBox> = argv.iter().map(|a| ZBox::from_vec_with_nul(a.as_ref().to_vec())).collect();
         let mut ptrs: Vec<*const core::ffi::c_char> = cargs.iter().map(|z| z.as_ptr()).collect();
         ptrs.push(core::ptr::null());
-        let mut pid: libc::pid_t = 0;
-        unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
-        let rc = libc::posix_spawnp(
-            &raw mut pid,
-            ptrs[0],
-            core::ptr::null(),
-            core::ptr::null(),
-            ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
-            environ.cast::<*mut core::ffi::c_char>(),
-        );
-        if rc != 0 { return Err(crate::Error::from_errno(rc)); }
+
+        // posix_spawnp on every libc that exposes it (glibc/musl/macOS/BSD);
+        // bionic only added it at API 28 and the `libc` crate doesn't bind it
+        // for `target_os = "android"` at all, so fall back to fork+execvp there.
+        #[cfg(not(target_os = "android"))]
+        let pid: libc::pid_t = {
+            let mut pid: libc::pid_t = 0;
+            unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
+            let rc = libc::posix_spawnp(
+                &raw mut pid,
+                ptrs[0],
+                core::ptr::null(),
+                core::ptr::null(),
+                ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
+                environ.cast::<*mut core::ffi::c_char>(),
+            );
+            if rc != 0 { return Err(crate::Error::from_errno(rc)); }
+            pid
+        };
+        #[cfg(target_os = "android")]
+        let pid: libc::pid_t = {
+            let pid = libc::fork();
+            if pid < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+                return Err(crate::Error::from_errno(e));
+            }
+            if pid == 0 {
+                // Child. execvp inherits stdio + environ, which is exactly the
+                // "inherit" contract this helper promises. On failure, _exit
+                // (no destructors / atexit hooks in a forked child).
+                libc::execvp(ptrs[0], ptrs.as_ptr());
+                libc::_exit(127);
+            }
+            pid
+        };
+
         let mut status: i32 = 0;
         loop {
             let r = libc::waitpid(pid, &raw mut status, 0);

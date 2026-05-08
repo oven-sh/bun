@@ -30,7 +30,12 @@ pub const IS_WINDOWS: bool = cfg!(windows);
 pub const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 pub const IS_DEBUG: bool = cfg!(debug_assertions);
 pub const IS_TEST: bool = cfg!(test);
-pub const IS_LINUX: bool = cfg!(target_os = "linux");
+// Zig's `Environment.isLinux` is `builtin.target.os.tag == .linux`, which is
+// TRUE on Android (Zig models Android as `os.tag == .linux, abi == .android`).
+// Rust splits them into two `target_os` values, so this const has to OR them
+// to keep the Zig semantics — otherwise `OS` (below) panics at const-eval on
+// the `*-linux-android` cross targets and Linux-only code paths are skipped.
+pub const IS_LINUX: bool = cfg!(any(target_os = "linux", target_os = "android"));
 pub const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
 pub const IS_KQUEUE: bool = IS_MAC || IS_FREEBSD;

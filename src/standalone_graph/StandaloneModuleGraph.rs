@@ -25,7 +25,7 @@ use bun_paths::fs as bun_fs;
 /// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
 #[repr(C)]
 pub struct Blob {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

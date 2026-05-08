@@ -5,4 +5,4 @@ pub use tcc::{
     Config, ConfigErr, Error, ErrorFunc, OutputFormat, State, Symbol, SymbolCallback, TCCErrorFunc,
     TCCState,
 };
-#[repr(C)] pub struct Opaque { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+#[repr(C)] pub struct Opaque { _p: core::cell::UnsafeCell<[u8; 0]>, _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }

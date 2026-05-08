@@ -193,7 +193,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 
 #[repr(C)]
 pub struct VariableEnvironment {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 unsafe extern "C" {
@@ -214,7 +214,7 @@ impl VariableEnvironment {
 
 #[repr(C)]
 pub struct IdentifierArray {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 unsafe extern "C" {
@@ -250,13 +250,13 @@ impl IdentifierArray {
 
 #[repr(C)]
 pub struct SourceCode {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 #[repr(C)]
 pub struct JSModuleRecord {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 unsafe extern "C" {

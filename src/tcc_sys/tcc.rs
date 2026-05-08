@@ -114,7 +114,7 @@ impl Default for OutputFormat {
 /// allowing for interop with other APIs taking `*mut c_void` pointers.
 #[repr(C)]
 pub struct Symbol {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -124,7 +124,7 @@ pub type SymbolCallback = unsafe extern "C" fn(ctx: *mut c_void, name: *const c_
 /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
 #[repr(C)]
 pub struct State {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

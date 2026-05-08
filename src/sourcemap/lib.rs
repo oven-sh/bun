@@ -46,7 +46,7 @@ pub use internal_source_map::InternalSourceMap;
 /// only ever sees it as a pointer.
 #[repr(C)]
 pub struct BakeSourceProvider {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 impl BakeSourceProvider {
@@ -362,25 +362,22 @@ impl core::fmt::Display for DebugIDFormatter {
 /// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
 #[repr(C)]
 pub struct SourceProviderMap {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    // C++ side only reads (`provider->source()`); declare `*const` so we never
-    // launder a `&self` borrow into a `*mut` (const→mut cast is UB if written
-    // through, and the foreign side owns all mutable state behind this opaque
-    // handle anyway — Rust holds zero bytes of it).
-    fn ZigSourceProvider__getSourceSlice(this: *const SourceProviderMap) -> bun_str::String;
+    // `SourceProviderMap` is an UnsafeCell-backed opaque ZST (Rust holds zero
+    // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
+    // the foreign side owns all state behind the handle and may mutate it. The
+    // only param is that handle reference, so this is a `safe fn`.
+    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_str::String;
 }
 
 impl SourceProviderMap {
     pub fn get_source_slice(&self) -> bun_str::String {
-        // SAFETY: `self` is an opaque FFI handle (ZST marker) whose backing
-        // storage lives entirely in C++; we only pass its address. The callee
-        // does not write through Rust-visible memory.
-        unsafe { ZigSourceProvider__getSourceSlice(self) }
+        ZigSourceProvider__getSourceSlice(self)
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {
@@ -409,7 +406,7 @@ impl SourceProvider for SourceProviderMap {
 
 #[repr(C)]
 pub struct DevServerSourceProvider {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

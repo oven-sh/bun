@@ -92,12 +92,6 @@ impl Request {
             Some(unsafe { core::slice::from_raw_parts(p, n) })
         }
     }
-    pub fn date_for_header(&mut self, name: &[u8]) -> Option<u64> {
-        // Cycle-break: parsing an HTTP date requires `bun_str::String` +
-        // `jsc::VirtualMachine` (tier > 0). Low tier calls a link-time
-        // `extern "Rust"` defined in `bun_runtime::jsc_hooks`.
-        self.header(name).and_then(crate::request::parse_date_via_hook)
-    }
     pub fn query(&mut self, name: &[u8]) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
@@ -824,6 +818,6 @@ mod c {
 //               pattern (generic `H: Fn(..) + Copy`, compile-time `size_of::<H>() == 0`
 //               assert, `mem::zeroed::<H>()` inside the `extern "C"` trampoline) —
 //               same shape as Response.rs so AnyResponse can dispatch uniformly.
-//               `date_for_header` reaches into bun_jsc/bun_str — routed through
-//               link-time `extern "Rust"` `__bun_uws_parse_date`.
+//               `dateForHeader` not ported here — call site moved UP to
+//               `bun_runtime::server::FileRoute` (sole caller, T6).
 // ──────────────────────────────────────────────────────────────────────────

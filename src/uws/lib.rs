@@ -1905,8 +1905,8 @@ impl AnySocket {
 
 /// Transport-agnostic request handle. Static/file routes take this so the same
 /// handler body serves HTTP/1.1 and HTTP/3. Re-exported from `bun_uws_sys` —
-/// the sys-crate version already carries `header`/`method`/`url`/`set_yield`/
-/// `date_for_header`, so route handlers need no local extension trait.
+/// the sys-crate version already carries `header`/`method`/`url`/`set_yield`,
+/// so route handlers need no local extension trait.
 /// Variants: `H1(*mut Request)`, `H3(*mut H3::Request)` (same field types as
 /// the previous local enum — both crates name `bun_uws_sys::{Request, h3::Request}`).
 pub use bun_uws_sys::AnyRequest;

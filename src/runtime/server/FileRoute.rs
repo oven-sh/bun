@@ -444,11 +444,16 @@ impl FileRoute {
         // the handler bails with NO response written (the defer above closes
         // the fd and decrements the route ref, leaving the client hung until
         // timeout). That `catch return` is itself flagged as a TODO in the
-        // .zig. The Rust `__bun_uws_parse_date` instead maps a parse failure to
-        // `None`, so a malformed If-Modified-Since header degrades to "serve
-        // the file unconditionally" — the RFC 9110 §13.1.3-correct behaviour
-        // and what the Zig TODO is asking for. Kept divergent on purpose.
-        let input_if_modified_since_date: Option<u64> = req.date_for_header(b"if-modified-since");
+        // .zig. `parse_http_date` instead maps a parse failure to `None`, so a
+        // malformed If-Modified-Since header degrades to "serve the file
+        // unconditionally" — the RFC 9110 §13.1.3-correct behaviour and what
+        // the Zig TODO is asking for. Kept divergent on purpose.
+        //
+        // LAYERING: Zig's `req.dateForHeader` was a method on `uws.Request`;
+        // in Rust the parse step lives HERE (T6) because it needs `bun_jsc` —
+        // call site moved up so `bun_uws_sys` (T0) carries no upward hook.
+        let input_if_modified_since_date: Option<u64> =
+            req.header(b"if-modified-since").and_then(crate::jsc_hooks::parse_http_date);
 
         let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
@@ -663,6 +668,6 @@ bun_ptr::impl_cell_ref_counted! {
 //               borrow stays SB-valid; StatHash from bun_resolver::fs;
 //               Headers::from bridged via cycle-break vtable (FetchHeadersRef
 //               shared with StaticRoute, AnyBlobRef local for &Blob);
-//               date_for_header intentionally diverges from Zig's
+//               If-Modified-Since parse intentionally diverges from Zig's
 //               `catch return` (see PORT NOTE in on()).
 // ──────────────────────────────────────────────────────────────────────────

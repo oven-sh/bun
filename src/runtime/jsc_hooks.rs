@@ -4884,22 +4884,22 @@ pub fn __bun_get_vm_ctx(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
     }
 }
 
-/// `bun_uws_sys::__bun_uws_parse_date` body — declared `extern "Rust"` in
-/// `bun_uws_sys::request`. Spec `Request.zig:62` `dateForHeader`: wrap the
-/// header bytes in a `bun.String`, call `String.parseDate(&s, vm.global)`,
-/// return `@intFromFloat` if finite and non-negative, else `null`.
-#[unsafe(no_mangle)]
-pub fn __bun_uws_parse_date(value: &[u8]) -> Option<u64> {
+/// Spec `Request.zig:62` `dateForHeader`: wrap the header bytes in a
+/// `bun.String`, call `String.parseDate(&s, vm.global)`, return
+/// `@intFromFloat` if finite and non-negative, else `null`. The Zig method
+/// lived on `uws.Request`; in Rust the call site moved UP to this crate (sole
+/// caller is `server::FileRoute::on`) so `bun_uws_sys` (T0) has no upward
+/// hook into `bun_jsc`.
+pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives
-    // the VM; `date_for_header` is only reachable from a `Bun.serve` request
+    // the VM; `parse_http_date` is only reachable from a `Bun.serve` request
     // callback (JS thread, VM live).
     let global = unsafe { &*(*vm).global };
     let mut string = bun_string::String::init(value);
     // PORT NOTE: Zig `dateForHeader` returns `bun.JSError!?u64` and lets the
-    // caller propagate the throw. The Rust `AnyRequest::date_for_header`
-    // returns plain `Option<u64>` (the only callers — FileRoute / static
-    // routes — treat a throw the same as "header absent / unparsable"), so
+    // caller propagate the throw. The only callers — FileRoute / static
+    // routes — treat a throw the same as "header absent / unparsable", so
     // swallow `JsError` here and surface `None`.
     let date_f64 = match bun_jsc::bun_string_jsc::parse_date(&mut string, global) {
         Ok(v) => v,

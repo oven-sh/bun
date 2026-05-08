@@ -297,7 +297,11 @@ pub struct RareData {
 
     pub temp_pipe_read_buffer: Option<Box<[u8; 256 * 1024]>>,
 
-    pub aws_signature_cache: AWSSignatureCache,
+    // PORT NOTE: `aws_signature_cache` field dropped — storage moved DOWN to
+    // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static). The
+    // Zig code always reached it via `getMainThreadVM()`, so it was a
+    // singleton in practice; hosting it in the consumer crate removes the
+    // upward `s3_signing → jsc` hook.
 
     pub s3_default_client: Strong,
     pub default_csrf_secret: Box<[u8]>,
@@ -354,7 +358,6 @@ impl Default for RareData {
             fs_watchers_for_isolation: Vec::new(),
             stat_watchers_for_isolation: Vec::new(),
             temp_pipe_read_buffer: None,
-            aws_signature_cache: AWSSignatureCache::default(),
             s3_default_client: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
@@ -411,7 +414,6 @@ impl PathBuf {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type PipeReadBuffer = [u8; 256 * 1024];
-const DIGESTED_HMAC_256_LEN: usize = 32;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage
@@ -552,88 +554,10 @@ impl RefCountedEnvValue {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// AWSSignatureCache
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Per-VM memoised SigV4 signing key, keyed by `(numeric_day, region+service+secret)`.
-/// PORTING.md §Concurrency: lock owns the data — Zig had a sidecar `bun.Mutex`
-/// next to `cache`/`date`; here the mutex wraps both.
-#[derive(Default)]
-pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
-
-#[derive(Default)]
-struct AWSSignatureCacheInner {
-    cache: StringArrayHashMap<[u8; DIGESTED_HMAC_256_LEN]>,
-    date: u64,
-}
-
-impl AWSSignatureCache {
-    /// Returns the cached 32-byte derived signing key for `key` if it was set
-    /// for `numeric_day`.
-    ///
-    /// PORT NOTE: Zig returned `cache.getKey(key)` (a borrow into map storage)
-    /// past `lock.unlock()` — racy against a concurrent `set` rehashing the
-    /// map. Return the 32-byte *value* by copy instead; the only consumer
-    /// (`bun_s3_signing::credentials`, via `AwsCacheGetFn`) wants the digest,
-    /// and a fixed-size copy avoids handing out a guard.
-    pub fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
-        let inner = self.0.lock();
-        if inner.date == 0 || inner.date != numeric_day {
-            return None;
-        }
-        inner.cache.get(key).copied()
-    }
-
-    pub fn set(&self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
-        let mut inner = self.0.lock();
-        if inner.date == 0 {
-            inner.cache = StringArrayHashMap::new();
-        } else if inner.date != numeric_day {
-            // day changed so we clean the old cache
-            // PORT NOTE: Zig freed each key explicitly; StringArrayHashMap with
-            // owned Box<[u8]> keys drops them on clear.
-            inner.cache.clear();
-        }
-        inner.date = numeric_day;
-        bun_core::handle_oom(inner.cache.put(key, value));
-    }
-}
-
-// Drop: `StringArrayHashMap` drops its owned `Box<[u8]>` keys automatically;
-// Zig's `deinit { date = 0; clean(); cache.deinit() }` is fully covered.
-
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_s3_signing::credentials` extern impls — Zig credentials.zig:485
-// reached `jsc.VirtualMachine.getMainThreadVM() orelse get()).rareData()`
-// inline. Declared `extern "Rust"` in the lower-tier `bun_s3_signing` crate;
-// link-time resolved.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline(always)]
-fn s3_rare_data() -> *mut RareData {
-    let vm = VirtualMachine::get_main_thread_vm().unwrap_or_else(VirtualMachine::get_mut_ptr);
-    // SAFETY: `vm` is the live per-thread (or main-thread) VM.
-    unsafe { std::ptr::from_mut::<RareData>((*vm).rare_data()) }
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_s3_aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
-    // SAFETY: `s3_rare_data()` returns the live per-VM RareData.
-    unsafe { (*s3_rare_data()).aws_cache().get(day, key) }
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_s3_aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
-    // SAFETY: `s3_rare_data()` returns the live per-VM RareData.
-    unsafe { (*s3_rare_data()).aws_cache().set(day, key, digest) }
-}
-
-#[unsafe(no_mangle)]
-pub fn __bun_s3_boring_engine() -> *mut boring::ENGINE {
-    // SAFETY: `s3_rare_data()` returns the live per-VM RareData.
-    unsafe { (*s3_rare_data()).boring_engine() }
-}
+// `AWSSignatureCache` moved DOWN to `bun_s3_signing::credentials` (process
+// static). Re-exported for any out-of-tree callers that named the type via
+// `bun_jsc::rare_data::AWSSignatureCache`.
+pub use bun_s3_signing::credentials::AWSSignatureCache;
 
 // ──────────────────────────────────────────────────────────────────────────
 // RareData methods — simple accessors / lazy-init
@@ -662,10 +586,6 @@ macro_rules! for_each_socket_group {
 
 impl RareData {
     // ── trivial field accessors ────────────────────────────────────────────
-    #[inline]
-    pub fn aws_cache(&self) -> &AWSSignatureCache {
-        &self.aws_signature_cache
-    }
 
     /// Raw slot for the per-VM global DNS data. The lazy init + `&mut Resolver`
     /// accessor lives in `bun_runtime::dns_jsc::dns::global_resolver_mut` (the

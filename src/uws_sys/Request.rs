@@ -5,21 +5,11 @@ use core::marker::{PhantomData, PhantomPinned};
 // TODO(port): verify module path for H3 request opaque (h3.zig:19 — H3.Request = opaque{})
 use crate::h3::Request as H3Request;
 
-unsafe extern "Rust" {
-    /// Parse an HTTP date header into milliseconds-since-epoch. Spec
-    /// `Request.zig:67`: `bun.String.parseDate(&string,
-    /// bun.jsc.VirtualMachine.get().global)` then `@intFromFloat` if finite
-    /// and non-negative. `bun_uws_sys` (T0) cannot name `bun_jsc`/`bun_string`,
-    /// so the body is `#[no_mangle]` in `bun_runtime::jsc_hooks` and link-time
-    /// resolved. Returns `None` on parse failure / NaN / negative.
-    fn __bun_uws_parse_date(value: &[u8]) -> Option<u64>;
-}
-
-#[inline]
-pub(crate) fn parse_date_via_hook(value: &[u8]) -> Option<u64> {
-    // SAFETY: link-time extern; `value` borrowed for the call.
-    unsafe { __bun_uws_parse_date(value) }
-}
+// PORT NOTE: `dateForHeader` (Request.zig:62) is NOT ported here. Parsing an
+// HTTP date needs `bun_jsc::VirtualMachine` (T6); rather than hook upward, the
+// sole caller (`bun_runtime::server::FileRoute`) does
+// `req.header(name).and_then(parse_http_date)` itself — call site moved UP per
+// docs/PORTING.md §"Low crate needs to call high crate" option (a).
 
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
 /// take this so the same handler body serves HTTP/1.1 and HTTP/3 without
@@ -57,13 +47,6 @@ impl AnyRequest {
         match self {
             Self::H1(r) => unsafe { (&mut **r).set_yield(y) },
             Self::H3(r) => unsafe { (&mut **r).set_yield(y) },
-        }
-    }
-    pub fn date_for_header(&self, name: &[u8]) -> Option<u64> {
-        // SAFETY: see header()
-        match self {
-            Self::H1(r) => unsafe { (**r).date_for_header(name) },
-            Self::H3(r) => unsafe { (&mut **r).date_for_header(name) },
         }
     }
 }
@@ -119,12 +102,6 @@ impl Request {
         }
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
         Some(unsafe { core::slice::from_raw_parts(ptr, len) })
-    }
-    pub fn date_for_header(&self, name: &[u8]) -> Option<u64> {
-        // Cycle-break: parsing an HTTP date requires `bun_str::String` +
-        // `jsc::VirtualMachine` (tier > 0). Low tier calls through a hook
-        // registered at runtime init.
-        self.header(name).and_then(parse_date_via_hook)
     }
     pub fn query(&self, name: &[u8]) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();

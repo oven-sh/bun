@@ -7178,26 +7178,6 @@ pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
         read: |fd, buf| read(fd, buf).map_err(Into::into),
     };
 
-/// `bun_uws_sys::__bun_uws_stat_file` body — declared `extern "Rust"` in
-/// `bun_uws_sys::SocketContext` so the SSL-context cache key can fold cert-file
-/// `(mtime, size)` without depending on `bun_sys`. Spec
-/// `SocketContext.zig:81`: `bun.sys.stat(path)` → `[mt.sec, mt.nsec, st.size]`.
-#[unsafe(no_mangle)]
-pub fn __bun_uws_stat_file(path: &bun_core::ZStr) -> Option<[i64; 3]> {
-    match stat(path) {
-        Ok(st) => {
-            #[cfg(unix)]
-            {
-                // libc::stat exposes mtime as `st_mtime` (sec) +
-                // `st_mtime_nsec` (nsec) on Linux/BSD/macOS.
-                Some([st.st_mtime as i64, st.st_mtime_nsec as i64, st.st_size as i64])
-            }
-            #[cfg(windows)]
-            {
-                // uv_stat_t shape (Windows sys_uv path).
-                Some([st.mtim.sec as i64, st.mtim.nsec as i64, st.st_size as i64])
-            }
-        }
-        Err(_) => None,
-    }
-}
+// (former `__bun_uws_stat_file` provider deleted — body moved DOWN into
+// `bun_uws_sys::socket_context::stat_for_digest`, which calls `libc::stat`
+// directly. uws_sys already links libc; the cross-crate hook bought nothing.)

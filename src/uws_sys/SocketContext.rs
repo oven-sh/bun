@@ -10,14 +10,52 @@ use bun_boringssl_sys::SSL_CTX;
 
 use crate::create_bun_socket_error_t;
 
-unsafe extern "Rust" {
-    /// `bun.sys.stat(path)` → `[mtime_sec, mtime_nsec, size]` for the SSL
-    /// cache-key digest (spec `SocketContext.zig:81`). `bun_uws_sys` (T0)
-    /// cannot depend on `bun_sys`, so the body is `#[no_mangle]` in
-    /// `bun_sys` and link-time resolved. Returns `None` on stat failure
-    /// (digest feeds zeros — `create_ssl_context` will then fail on the same
-    /// path and the entry never reaches the cache).
-    fn __bun_uws_stat_file(path: &bun_core::ZStr) -> Option<[i64; 3]>;
+/// `[mtime_sec, mtime_nsec, size]` for the SSL cache-key digest (spec
+/// `SocketContext.zig:81`: `bun.sys.stat(path)` → `st.mtime() ++ st.size`).
+/// Body moved DOWN from `bun_sys` — it only needs `libc::stat`, which this
+/// crate already links, so the former link-time hook bought nothing. Returns
+/// `None` on stat failure (digest feeds zeros — `create_ssl_context` will then
+/// fail on the same path and the entry never reaches the cache).
+#[cfg(unix)]
+fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
+    // SAFETY: POD, zero-valid — `libc::stat` is all-integer; `stat(2)` writes it.
+    let mut st: libc::stat = unsafe { core::mem::zeroed() };
+    // SAFETY: `path` is NUL-terminated (ZStr invariant).
+    let rc = unsafe { libc::stat(path.as_ptr().cast::<c_char>(), &raw mut st) };
+    if rc != 0 {
+        return None;
+    }
+    // libc exposes mtime as `st_mtime` (sec) + `st_mtime_nsec` (nsec) on
+    // Linux/BSD/macOS. Widen to i64 (already i64 on LP64; cast is a no-op).
+    Some([st.st_mtime as i64, st.st_mtime_nsec as i64, st.st_size as i64])
+}
+
+#[cfg(windows)]
+fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
+    use bun_windows_sys::Win32::Storage::FileSystem as fs;
+    use bun_windows_sys::Win32::Foundation::FILETIME;
+    // Spec parity: `bun.sys.stat` on Windows goes through libuv → `_wstat64`-
+    // equivalent. For a cache-key digest we only need (mtime, size) to change
+    // when the file changes, so go straight to `GetFileAttributesExW` — same
+    // resolution as `uv_fs_stat`'s `ftLastWriteTime`, no event-loop dependency.
+    let mut wbuf = [0u16; bun_core::MAX_PATH_BYTES];
+    let wpath = bun_core::strings::to_w_path_normalized(&mut wbuf, path.as_bytes())?;
+    // SAFETY: POD, zero-valid.
+    let mut data: fs::WIN32_FILE_ATTRIBUTE_DATA = unsafe { core::mem::zeroed() };
+    // SAFETY: `wpath` is NUL-terminated; `data` is a valid out-ptr.
+    let ok = unsafe {
+        fs::GetFileAttributesExW(wpath.as_ptr(), fs::GetFileExInfoStandard, (&raw mut data).cast())
+    };
+    if ok == 0 {
+        return None;
+    }
+    let ft: FILETIME = data.ftLastWriteTime;
+    // FILETIME = 100ns ticks since 1601-01-01. Feed raw ticks as
+    // `[sec_field, nsec_field, size]` — the digest only needs *some*
+    // deterministic encoding of mtime, not the POSIX epoch split.
+    let ticks = (u64::from(ft.dwHighDateTime) << 32) | u64::from(ft.dwLowDateTime);
+    let size = (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow);
+    Some([(ticks / 10_000_000) as i64, (ticks % 10_000_000) as i64 * 100, size as i64])
 }
 
 #[repr(C)]
@@ -138,8 +176,7 @@ impl BunSocketContextOptions {
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {
-                    // SAFETY: link-time extern; `path` borrowed for the call.
-                    if let Some(m) = unsafe { __bun_uws_stat_file(path) } {
+                    if let Some(m) = stat_for_digest(path) {
                         meta = m;
                     }
                 }

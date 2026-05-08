@@ -567,6 +567,9 @@ pub const Framework = struct {
             var i: usize = 0;
             errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
             while (try it.next()) |fsr_opts| : (i += 1) {
+                if (!fsr_opts.isObject()) {
+                    return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is not an object", .{i});
+                }
                 const root = try getOptionalString(fsr_opts, global, "root", refs, arena) orelse {
                     return global.throwInvalidArguments("'fileSystemRouterTypes[{d}]' is missing 'root'", .{i});
                 };

@@ -2420,7 +2420,8 @@ pub mod formatter {
                                 // PORT NOTE: reshaped for borrowck — drop `writer` borrow before
                                 // recursing into `print_as` which takes `&mut self`.
                                 drop(writer);
-                                self.print_as::<{ Tag::String }, ENABLE_ANSI_COLORS>(
+                                self.print_as::<ENABLE_ANSI_COLORS>(
+                                    Tag::String,
                                     writer_,
                                     next_value,
                                     next_value.js_type(),
@@ -3216,8 +3217,9 @@ pub mod formatter {
 
     impl<'a> Formatter<'a> {
         #[inline(never)]
-        pub fn print_as<const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
+        pub fn print_as<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
+            format: Tag,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
@@ -3254,7 +3256,8 @@ pub mod formatter {
             // `self.failed` explicitly. `Err` exits skip propagation because
             // the JS exception aborts formatting before `self.failed` is read.
 
-            if FORMAT.can_have_circular_references() {
+            let can_circ = format.can_have_circular_references();
+            if can_circ {
                 if !self.stack_check.is_safe_to_recurse() {
                     self.failed = true;
                     if self.can_throw_stack_overflow {
@@ -3298,20 +3301,16 @@ pub mod formatter {
                 // SAFETY: `self.map` / `remove_before_recurse` outlive this
                 // guard; no other borrow is live at the drop point.
                 unsafe {
-                    if FORMAT.can_have_circular_references() && *rbr_ptr {
+                    if can_circ && *rbr_ptr {
                         let _ = (*map_ptr).remove(&value);
                     }
                 }
             }
 
             // Each arm is hoisted to its own `#[inline(never)]` helper so the
-            // `print_as` frame stays small. Zig's `comptime Format` switch
-            // compiles to a single arm per instantiation; Rust's debug builds
-            // do not DCE dead `match` arms on a const generic, so an inline
-            // body would reserve stack for every arm's locals in every
-            // recursive frame and trip the stack-safety check far earlier
-            // than the Zig original.
-            match FORMAT {
+            // `print_as` frame stays small enough to recurse 512 levels under
+            // debug/ASAN before the stack-safety check fires.
+            match format {
                 Tag::StringPossiblyFormatted => {
                     drop(writer);
                     return self.print_string_possibly_formatted::<ENABLE_ANSI_COLORS>(writer_, value);
@@ -3562,7 +3561,7 @@ pub mod formatter {
                 if str.is_utf16() {
                     if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_as::<{ Tag::JSON }, C>(writer_, value, jsc::JSType::StringObject)?;
+                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
                     if C {
                         let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
                     }
@@ -3588,7 +3587,7 @@ pub mod formatter {
                 if str.is_utf16() {
                     if writer.failed { self.failed = true; }
                     drop(writer);
-                    self.print_as::<{ Tag::JSON }, C>(writer_, value, jsc::JSType::StringObject)?;
+                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
@@ -4491,12 +4490,12 @@ pub mod formatter {
                     let result = to_json_function
                         .call(self.global_this, value, &[])
                         .unwrap_or_else(|err| self.global_this.take_exception(err));
-                    return self.print_as::<{ Tag::Object }, C>(writer_, result, jsc::JSType::Object);
+                    return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
                 }
 
                 // this case should never happen
                 return self
-                    .print_as::<{ Tag::Undefined }, C>(writer_, JSValue::UNDEFINED, jsc::JSType::Cell);
+                    .print_as::<C>(Tag::Undefined, writer_, JSValue::UNDEFINED, jsc::JSType::Cell);
             } else if js_type != jsc::JSType::DOMWrapper {
                 if *remove_before_recurse {
                     *remove_before_recurse = false;
@@ -4505,11 +4504,11 @@ pub mod formatter {
 
                 if value.is_callable() {
                     *remove_before_recurse = true;
-                    return self.print_as::<{ Tag::Function }, C>(writer_, value, js_type);
+                    return self.print_as::<C>(Tag::Function, writer_, value, js_type);
                 }
 
                 *remove_before_recurse = true;
-                return self.print_as::<{ Tag::Object }, C>(writer_, value, js_type);
+                return self.print_as::<C>(Tag::Object, writer_, value, js_type);
             }
             if *remove_before_recurse {
                 *remove_before_recurse = false;
@@ -4517,7 +4516,7 @@ pub mod formatter {
             }
 
             *remove_before_recurse = true;
-            self.print_as::<{ Tag::Object }, C>(writer_, value, jsc::JSType::Event)
+            self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event)
         }
 
         #[inline(never)]
@@ -4726,7 +4725,7 @@ pub mod formatter {
                     }
                     // We must potentially remove it again.
                     *remove_before_recurse = true;
-                    return self.print_as::<{ Tag::Object }, C>(writer_, value, jsc::JSType::Event);
+                    return self.print_as::<C>(Tag::Object, writer_, value, jsc::JSType::Event);
                 }
             };
 
@@ -5223,9 +5222,9 @@ pub mod formatter {
 
             if iter_i == 0 {
                 if value.is_class(self.global_this) {
-                    self.print_as::<{ Tag::Class }, C>(writer_, value, js_type)?;
+                    self.print_as::<C>(Tag::Class, writer_, value, js_type)?;
                 } else if value.is_callable() {
-                    self.print_as::<{ Tag::Function }, C>(writer_, value, js_type)?;
+                    self.print_as::<C>(Tag::Function, writer_, value, js_type)?;
                 } else {
                     if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");
@@ -5379,7 +5378,7 @@ pub mod formatter {
             }
         }
 
-        #[inline(never)]
+        #[inline(always)]
         pub fn format<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             result: TagResult,
@@ -5391,30 +5390,10 @@ pub mod formatter {
             let _restore = defer_restore!(self.global_this, prev_global_this);
             self.global_this = global_this;
 
-            // This looks incredibly redundant. We make the
-            // ConsoleObject.Formatter.Tag a comptime var so we have to repeat
-            // it here. The rationale there is it _should_ limit the stack usage
-            // because each version of the function will be relatively small.
-            macro_rules! dispatch {
-                ($($tag:ident),* $(,)?) => {
-                    match result.tag.tag() {
-                        $( Tag::$tag => self.print_as::<{ Tag::$tag }, ENABLE_ANSI_COLORS>(writer, value, result.cell), )*
-                        Tag::CustomFormattedObject => {
-                            if let TagPayload::CustomFormattedObject(obj) = result.tag {
-                                self.custom_formatted_object = obj;
-                            }
-                            self.print_as::<{ Tag::CustomFormattedObject }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-                        }
-                    }
-                };
+            if let TagPayload::CustomFormattedObject(obj) = result.tag {
+                self.custom_formatted_object = obj;
             }
-            dispatch!(
-                StringPossiblyFormatted, String, Undefined, Double, Integer, Null, Boolean,
-                Array, Object, Function, Class, Error, TypedArray, Map, MapIterator,
-                SetIterator, Set, BigInt, Symbol, GlobalObject, Private, Promise, JSON,
-                ToJSON, NativeCode, JSX, Event, GetterSetter, CustomGetterSetter, Proxy,
-                RevokedProxy,
-            )
+            self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
         }
     }
 

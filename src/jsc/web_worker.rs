@@ -408,11 +408,9 @@ impl WebWorker {
     /// `WorkerOptions` (kept alive by the owning `WebCore::Worker`).
     #[inline]
     pub fn argv(&self) -> &[WTFStringImpl] {
-        if self.argv_ptr.is_null() {
-            return &[];
-        }
         // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
         // (BACKREF — kept alive by the owning Worker for `self`'s lifetime).
+        // `(null, 0)` is tolerated by `ffi::slice`.
         unsafe { bun_core::ffi::slice(self.argv_ptr, self.argv_len) }
     }
 
@@ -423,9 +421,6 @@ impl WebWorker {
     pub fn exec_argv(&self) -> Option<&[WTFStringImpl]> {
         if self.inherit_exec_argv {
             return None;
-        }
-        if self.exec_argv_ptr.is_null() {
-            return Some(&[]);
         }
         // SAFETY: see `argv()`.
         Some(unsafe { bun_core::ffi::slice(self.exec_argv_ptr, self.exec_argv_len) })
@@ -480,12 +475,9 @@ impl WebWorker {
         });
         let (parent_ref, temp_log) = &mut *restore;
 
-        let preload_modules: &[BunString] = if preload_modules_ptr.is_null() {
-            &[]
-        } else {
-            // SAFETY: caller passed valid (ptr,len); slice borrowed from C++.
-            unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) }
-        };
+        // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
+        let preload_modules: &[BunString] =
+            unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
 
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
         for module in preload_modules {

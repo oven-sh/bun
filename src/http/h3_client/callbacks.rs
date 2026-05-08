@@ -209,11 +209,9 @@ unsafe extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: 
     let Some(stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; live until on_stream_close clears it.
     let stream = unsafe { &mut *stream.as_ptr() };
-    if len > 0 {
-        // SAFETY: lsquic guarantees `data` points to `len` valid bytes.
-        let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
-        stream.body_buffer.extend_from_slice(slice);
-    }
+    // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
+    let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
+    stream.body_buffer.extend_from_slice(slice);
     // SAFETY: stream.session is the live owning session.
     unsafe { (*stream.session).deliver(stream, fin != 0) };
 }

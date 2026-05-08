@@ -84,10 +84,8 @@ impl Default for Route {
 
 impl Route {
     pub fn params(&self) -> &[BunString] {
-        if self.param_names.is_null() {
-            return &[];
-        }
-        // SAFETY: param_names points to param_names_len contiguous BunString values
+        // SAFETY: param_names points to param_names_len contiguous BunString
+        // values (or is `(null, 0)`, which `ffi::slice` tolerates).
         unsafe { bun_core::ffi::slice(self.param_names, self.param_names_len) }
     }
 }

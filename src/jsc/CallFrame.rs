@@ -24,9 +24,12 @@ impl CallFrame {
     pub fn arguments(&self) -> &[JSValue] {
         // SAFETY: asUnsafeJSValueArray points at the JSC register file; offsets
         // OFFSET_FIRST_ARGUMENT..+argumentsCount() are valid JSValue slots per
-        // JSC CallFrame layout (see asUnsafeJSValueArray doc comment).
+        // JSC CallFrame layout (see asUnsafeJSValueArray doc comment). The base
+        // is derived from `&self` via pointer arithmetic, so it is provably
+        // non-null — use bare `from_raw_parts` to avoid a dead null-branch on
+        // the hottest per-JS-call path.
         unsafe {
-            bun_core::ffi::slice(
+            core::slice::from_raw_parts(
                 self.as_unsafe_js_value_array().add(OFFSET_FIRST_ARGUMENT),
                 self.arguments_count() as usize,
             )

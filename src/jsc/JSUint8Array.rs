@@ -37,14 +37,9 @@ impl JSUint8Array {
 
     pub fn slice(&mut self) -> &mut [u8] {
         // PORT NOTE: detached/empty JSUint8Array has ptr=null, len=0. Zig `ptr[0..0]` is
-        // valid for any ptr; Rust `from_raw_parts_mut` requires non-null even at len 0.
-        let p = self.ptr();
-        let n = self.len();
-        if n == 0 || p.is_null() {
-            return &mut [];
-        }
-        // SAFETY: JSC guarantees `p` is valid for `n` bytes while the cell is alive.
-        unsafe { bun_core::ffi::slice_mut(p, n) }
+        // valid for any ptr; `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.
+        // SAFETY: JSC guarantees `ptr()` is valid for `len()` bytes while the cell is alive.
+        unsafe { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
     }
 
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);

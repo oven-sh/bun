@@ -841,18 +841,26 @@ pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'sta
 pub mod ffi {
     /// Assemble `&[T]` from a raw `(ptr, len)` pair handed across the FFI
     /// boundary (C++ out-params, `extern "C"` callback args, `#[repr(C)]`
-    /// struct fields). Centralizes the one `from_raw_parts` so callers need
-    /// no per-site `unsafe` block, and — unlike a bare `from_raw_parts` —
-    /// tolerates the C convention of `(null, 0)` for an empty slice (Rust
-    /// requires a non-null, aligned pointer even at `len == 0`).
+    /// struct fields). Unlike a bare `from_raw_parts`, tolerates the C
+    /// convention of `(null, 0)` for an empty slice (Rust requires a
+    /// non-null, aligned pointer even at `len == 0`).
+    ///
+    /// Prefer bare `core::slice::from_raw_parts` at hot sites where `ptr` is
+    /// provably non-null (pointer-arith from `&self`, `NonNull::as_ptr()`).
     ///
     /// # Safety
-    /// When `len > 0`, `ptr` must be non-null, aligned, and point to `len`
-    /// initialized `T` valid for `'a`. `ptr` may be null only when `len == 0`.
+    /// Callers must still wrap the call in `unsafe` and uphold the
+    /// `from_raw_parts` contract: when `len > 0`, `ptr` must be non-null,
+    /// aligned, and point to `len` initialized `T` valid for `'a`. `ptr` may
+    /// be null only when `len == 0`.
     #[inline(always)]
     pub const unsafe fn slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
         if ptr.is_null() {
-            debug_assert!(len == 0);
+            // Hard assert: a `(null, N>0)` pair was UB under bare
+            // `from_raw_parts`; silently returning `&[]` here would mask the
+            // contract violation in release and let callers iterate 0 times
+            // when they expect N. Fail loudly instead.
+            assert!(len == 0, "ffi::slice: null ptr with non-zero len");
             // SAFETY: dangling is non-null + aligned; len 0 needs no backing.
             unsafe { core::slice::from_raw_parts(core::ptr::NonNull::dangling().as_ptr(), 0) }
         } else {
@@ -869,7 +877,7 @@ pub mod ffi {
     #[inline(always)]
     pub const unsafe fn slice_mut<'a, T>(ptr: *mut T, len: usize) -> &'a mut [T] {
         if ptr.is_null() {
-            debug_assert!(len == 0);
+            assert!(len == 0, "ffi::slice_mut: null ptr with non-zero len");
             // SAFETY: dangling is non-null + aligned; len 0 needs no backing.
             unsafe { core::slice::from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0) }
         } else {

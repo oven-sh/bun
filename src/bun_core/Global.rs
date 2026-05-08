@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{c_char, c_int, c_void};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 use const_format::{concatcp, formatcp};
 
@@ -147,14 +147,32 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     }
 }
 
-/// Capture and dump the current call stack. Captures into a `StoredTrace`
-/// (honoring `first_address`) and prints via `dump_stack_trace` so
-/// `limits.frame_count` applies — keeping the two T0 dump entry points
-/// consistent. The rich llvm-symbolizer path lives in `bun_crash_handler`
-/// for crash reports specifically.
+/// Capture and dump the current call stack. Uses `std::backtrace` so T0
+/// callers (ThreadLock-panic, FD-debug) still get symbolicated frames without
+/// reaching up to `bun_crash_handler`. `limits.frame_count` is honoured by
+/// truncating the rendered frame lines; the rich llvm-symbolizer path lives in
+/// `bun_crash_handler` for crash reports specifically.
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
-    let stored = StoredTrace::capture(first_address);
-    dump_stack_trace(&stored.trace(), limits);
+    let _ = first_address; // std::backtrace can't seed from an address.
+    crate::output::flush();
+    let bt = std::backtrace::Backtrace::force_capture();
+    let s = format!("{bt}");
+    // std backtraces render one frame per line (continuation lines like
+    // `             at file:line` are kept with their frame by counting only
+    // lines that look like a new frame index).
+    let mut frames = 0usize;
+    for line in s.lines() {
+        let starts_frame = line
+            .trim_start()
+            .as_bytes()
+            .first()
+            .is_some_and(|b| b.is_ascii_digit());
+        if starts_frame {
+            if frames >= limits.frame_count { break; }
+            frames += 1;
+        }
+        eprintln!("{line}");
+    }
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────
@@ -515,6 +533,17 @@ pub fn add_exit_callback(function: ExitFn) {
     Bun__atexit(function);
 }
 
+/// `bun.jsc.Node.FSEvents.closeAndWait()` slot. Spec `Global.zig:220` calls
+/// it BEFORE `runExitCallbacks()`, so it gets a dedicated slot rather than
+/// interleaving with `Bun__atexit` registrations. `fs_events::watch` writes
+/// this the first time an FSEvents loop is created; storage lives here so the
+/// dependency is forward (runtime → core).
+static FS_EVENTS_CLOSE: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+pub fn set_fs_events_close(f: ExitFn) {
+    FS_EVENTS_CLOSE.store(f as *mut (), Ordering::Relaxed);
+}
+
 pub fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
@@ -708,10 +737,14 @@ pub static Bun__userAgent: SyncCStr =
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {
-    // `bun.jsc.Node.FSEvents.closeAndWait()` (spec `Global.zig:220`) registers
-    // itself via `add_exit_callback` the first time an FSEvents loop is
-    // created — see `bun_runtime::node::fs_events::watch`. No cross-crate
-    // extern needed; storage (the exit-callback list) lives here.
+    // `bun.jsc.Node.FSEvents.closeAndWait()` (spec `Global.zig:220`) — runs
+    // BEFORE the generic exit-callback list, matching Zig ordering. The slot
+    // is filled by `bun_runtime::node::fs_events::watch` on first loop create.
+    let f = FS_EVENTS_CLOSE.load(Ordering::Relaxed);
+    if !f.is_null() {
+        // SAFETY: stored via `set_fs_events_close` from an `ExitFn`.
+        unsafe { core::mem::transmute::<*mut (), ExitFn>(f)() };
+    }
     run_exit_callbacks();
     Output::flush();
     core::hint::black_box(Bun__atexit as unsafe extern "C" fn(ExitFn));

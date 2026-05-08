@@ -26,49 +26,47 @@ pub mod thread_id;
 // ──────────────────────────────────────────────────────────────────────────
 
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicPtr, Ordering};
-
-/// Erased `*const AllocatorVTable`. `*const ()` is `!Sync`, so wrap.
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct VTablePtr(pub *const ());
-// SAFETY: vtable addresses are immutable `'static` data.
-unsafe impl Send for VTablePtr {}
-// SAFETY: vtable addresses are immutable `'static` data.
-unsafe impl Sync for VTablePtr {}
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 /// Vtable addresses of allocators whose `StdAllocator.ptr` is meaningful
 /// (i.e. distinct instances have distinct `.ptr`). Registered by higher-tier
 /// crates at startup via [`register_alloc_vtable`].
-static KNOWN_ALLOC_VTABLES: parking_lot::RwLock<Vec<VTablePtr>> =
-    parking_lot::RwLock::new(Vec::new());
-
-/// Vtable address of `MimallocArena`'s allocator. Set once by
-/// `bun_runtime::allocators::mimalloc_arena` at init.
-static MIMALLOC_ARENA_VTABLE: AtomicPtr<()> = AtomicPtr::new(null_mut());
+///
+/// Lock-free fixed-capacity array: writes happen once at init, reads sit on
+/// `has_ptr()` (called from `CheckedAllocator` on debug paths). The Zig spec
+/// is a chain of inline `ptr_eq` against compile-time-known vtable addresses,
+/// so a Relaxed scan over ≤16 words matches that cost profile.
+const KNOWN_ALLOC_CAP: usize = 16;
+static KNOWN_ALLOC_VTABLES: [AtomicPtr<()>; KNOWN_ALLOC_CAP] =
+    [const { AtomicPtr::new(null_mut()) }; KNOWN_ALLOC_CAP];
+static KNOWN_ALLOC_LEN: AtomicUsize = AtomicUsize::new(0);
 
 /// Register a higher-tier allocator's vtable so `alloc::has_ptr` recognizes it.
+/// Called from `bun_runtime::allocators::register_safety_vtables` (and any
+/// other crate that owns a `StdAllocator` vtable above this tier).
 pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
-    KNOWN_ALLOC_VTABLES
-        .write()
-        .push(VTablePtr(vtable as *const _ as *const ()));
-}
-
-/// Record the `MimallocArena` allocator vtable (single distinguished entry).
-pub fn register_mimalloc_arena_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
-    MIMALLOC_ARENA_VTABLE.store(vtable as *const _ as *mut (), Ordering::Relaxed);
+    let p = vtable as *const _ as *mut ();
+    let i = KNOWN_ALLOC_LEN.fetch_add(1, Ordering::Relaxed);
+    debug_assert!(i < KNOWN_ALLOC_CAP, "KNOWN_ALLOC_VTABLES overflow; bump KNOWN_ALLOC_CAP");
+    if i < KNOWN_ALLOC_CAP {
+        KNOWN_ALLOC_VTABLES[i].store(p, Ordering::Relaxed);
+    }
 }
 
 #[inline]
 pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
-    let needle = VTablePtr(alloc.vtable as *const _ as *const ());
-    KNOWN_ALLOC_VTABLES.read().contains(&needle)
+    let needle = alloc.vtable as *const _ as *mut ();
+    let n = KNOWN_ALLOC_LEN.load(Ordering::Relaxed).min(KNOWN_ALLOC_CAP);
+    KNOWN_ALLOC_VTABLES[..n]
+        .iter()
+        .any(|s| s.load(Ordering::Relaxed) == needle)
 }
 
+/// `MimallocArena.isInstance` — `bun_alloc` is below us, so call it directly
+/// (no registry needed for this one).
 #[inline]
 pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
-    let v = MIMALLOC_ARENA_VTABLE.load(Ordering::Relaxed);
-    !v.is_null() && core::ptr::eq(alloc.vtable as *const _ as *const (), v)
+    bun_alloc::MimallocArena::is_instance(&alloc)
 }
 
 /// Dump a captured trace via the T0 fallback (raw addresses / std::backtrace).

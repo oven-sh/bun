@@ -974,9 +974,10 @@ pub fn watch(
         if FSEVENTS_DEFAULT_LOOP.read().is_none() {
             FSEVENTS_DEFAULT_LOOP.write(NonNull::new(FSEventsLoop::init()?));
             // First loop ever created → arrange `close_and_wait` to run from
-            // `Bun__onExit` via the bun_core exit-callback list (storage lives
-            // there; no cross-crate extern). Spec `Global.zig:220`.
-            bun_core::Global::add_exit_callback(close_and_wait_on_exit);
+            // `Bun__onExit`. Spec `Global.zig:220` runs it BEFORE
+            // `runExitCallbacks()`, so use the dedicated slot rather than the
+            // generic atexit list (storage lives in bun_core; forward dep).
+            bun_core::Global::set_fs_events_close(close_and_wait_on_exit);
         }
         Ok(FSEventsWatcher::init(
             FSEVENTS_DEFAULT_LOOP.read().unwrap().as_ptr(),

@@ -10,3 +10,13 @@
 
 pub use allocation_scope::{AllocationScope, AllocationScopeIn};
 pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
+
+/// Push this crate's `StdAllocator` vtable addresses into the
+/// `bun_safety::alloc::has_ptr` registry so allocator-mismatch checks can
+/// distinguish instances (Zig: chain of inline `isInstance` calls in
+/// `safety/alloc.zig:hasPtr`). Idempotent enough — call once at startup.
+pub fn register_safety_vtables() {
+    bun_safety::register_alloc_vtable(allocation_scope::std_vtable());
+    bun_safety::register_alloc_vtable(linux_mem_fd_allocator::std_vtable());
+    bun_safety::register_alloc_vtable(mimalloc_arena::std_vtable());
+}

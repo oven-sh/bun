@@ -1095,34 +1095,41 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         }
         // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
         // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) };
-        if n == 0 || n as usize > cap { return -1; }
+        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
+        if n == 0 || n > cap { return -1; }
         // Strip the `\\?\` prefix if present so callers see a plain DOS path
         // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        // SAFETY: kernel32 wrote `n` u16s into buf.
-        let s = unsafe { core::slice::from_raw_parts_mut(buf, n as usize) };
-        let trimmed: &[u16] = if s.len() >= 4 && s[..4] == [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16] {
-            if s.len() >= 8
-                && (s[4] == b'U' as u16 || s[4] == b'u' as u16)
-                && (s[5] == b'N' as u16 || s[5] == b'n' as u16)
-                && (s[6] == b'C' as u16 || s[6] == b'c' as u16)
-                && s[7] == b'\\' as u16
+        // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
+        // or `&mut [u16]` over `buf` while the memmove runs, or the write through
+        // `buf` would invalidate that borrow's tag under Stacked Borrows.
+        // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
+        // bounds-checked against `n` first.
+        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
+        let bs = b'\\' as u16;
+        let off: usize = if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
+            if n >= 8
+                && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
+                && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
+                && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
+                && at(7) == bs
             {
                 // `\\?\UNC\server\share` → `\\server\share`
-                s[6] = b'\\' as u16;
-                &s[6..]
+                // SAFETY: index 6 < n (checked above).
+                unsafe { *buf.add(6) = bs };
+                6
             } else {
                 // `\\?\C:\...` → `C:\...`
-                &s[4..]
+                4
             }
         } else {
-            &s[..]
+            0
         };
-        let out_len = trimmed.len();
-        if trimmed.as_ptr() != buf {
-            // SAFETY: trimmed is a sub-slice of s (which aliases buf); copy
-            // forward (src > dst) is safe with copy.
-            unsafe { core::ptr::copy(trimmed.as_ptr(), buf, out_len) };
+        let out_len = n - off;
+        if off != 0 {
+            // SAFETY: src = buf+off and dst = buf both derive from the same
+            // raw `*mut u16` provenance (no intervening reference), src > dst,
+            // and `out_len` units fit within the `n` initialized units.
+            unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
         }
         return out_len as isize;
     }
@@ -3116,10 +3123,11 @@ pub mod mock_time {
 }
 
 impl Timespec {
-    /// Construct from a signed nanosecond count.
+    /// Construct from a signed nanosecond count. Euclidean division keeps
+    /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
     #[inline]
     pub const fn from_ns(ns: i64) -> Timespec {
-        Timespec { sec: ns / Self::NS_PER_S, nsec: ns % Self::NS_PER_S }
+        Timespec { sec: ns.div_euclid(Self::NS_PER_S), nsec: ns.rem_euclid(Self::NS_PER_S) }
     }
 }
 
@@ -3170,7 +3178,10 @@ impl core::fmt::Display for f16 {
 // `bun_sys::darwin::OSLog` (above T0); it stays in the `bun_perf` crate and
 // the T0 path is a no-op there. Windows/other platforms are no-ops in Zig too.
 pub mod perf {
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicU8, Ordering};
+    #[cfg(target_os = "linux")]
+    use core::sync::atomic::AtomicBool;
+    #[cfg(target_os = "linux")]
     use std::sync::Once;
 
     /// Per-span state returned by `trace()`. `end()` is idempotent; `Drop`
@@ -3193,22 +3204,34 @@ pub mod perf {
     }
     impl Drop for Ctx { #[inline] fn drop(&mut self) { self.end(); } }
 
-    static IS_ENABLED_ONCE: Once = Once::new();
-    static IS_ENABLED: AtomicBool = AtomicBool::new(false);
+    // Tri-state so the disabled fast path is a single Relaxed load (this sits
+    // on every `trace()` call across the bundler/parser hot paths). The flag
+    // is write-once-at-init so Relaxed is sufficient; a benign init race just
+    // re-runs the env probe.
+    const UNSET: u8 = 0;
+    const DISABLED: u8 = 1;
+    const ENABLED: u8 = 2;
+    static IS_ENABLED: AtomicU8 = AtomicU8::new(UNSET);
 
-    fn is_enabled_once() {
+    #[cold]
+    fn is_enabled_init() -> bool {
         #[cfg(target_os = "linux")]
-        if crate::env_var::feature_flag::BUN_TRACE.get().unwrap_or(false) && Linux::is_supported() {
-            IS_ENABLED.store(true, Ordering::SeqCst);
-        }
+        let on = crate::env_var::feature_flag::BUN_TRACE.get().unwrap_or(false) && Linux::is_supported();
         // macOS: os_signpost requires `bun_sys::darwin::OSLog` (above T0); the
         // `bun_perf` crate owns that path. T0 reports disabled on macOS.
+        #[cfg(not(target_os = "linux"))]
+        let on = false;
+        IS_ENABLED.store(if on { ENABLED } else { DISABLED }, Ordering::Relaxed);
+        on
     }
 
     #[inline]
     pub fn is_enabled() -> bool {
-        IS_ENABLED_ONCE.call_once(is_enabled_once);
-        IS_ENABLED.load(Ordering::SeqCst)
+        match IS_ENABLED.load(Ordering::Relaxed) {
+            DISABLED => false,
+            ENABLED => true,
+            _ => is_enabled_init(),
+        }
     }
 
     /// `bun.perf.trace("Event.name")`. Emits an ftrace span on Linux when

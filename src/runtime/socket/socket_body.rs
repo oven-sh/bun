@@ -545,46 +545,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             None => unreachable!("do_connect requires self.connection to be set"),
         }
-        // Resolved-DNS path attaches the `SSL*` synchronously inside
-        // `group.connect*`, so a caller (H2FrameParser) can `SSL_write` before
-        // `on_open` runs and bake a ClientHello without SNI/ALPN. Set them now;
-        // `on_open` redoes this idempotently for the async-DNS path.
-        self.prime_tls_client_hello();
         Ok(())
-    }
-
-    /// Apply per-socket SNI/ALPN to a freshly-attached client `SSL*`. No-op for
-    /// `Connecting`/`Detached` (SSL not yet attached) and after handshake start.
-    fn prime_tls_client_hello(&mut self) {
-        if !SSL || self.is_server() {
-            return;
-        }
-        // `ssl()` on `Connecting` returns the C sentinel `(void*)-1`; only the
-        // `Connected` arm has a real `SSL*`.
-        let uws::InternalSocket::Connected(_) = self.socket.socket else { return };
-        let Some(ssl_ptr) = self.socket.ssl() else { return };
-        // SAFETY: BoringSSL FFI; `ssl_ptr` is a live `*mut SSL` (Connected).
-        if unsafe { boringssl_sys::SSL_is_init_finished(ssl_ptr) } != 0 {
-            return;
-        }
-        let host: &[u8] = if let Some(server_name) = &self.server_name {
-            server_name.as_ref()
-        } else if let Some(super::listener::UnixOrHost::Host { host, .. }) = &self.connection {
-            host.as_ref()
-        } else {
-            &[]
-        };
-        if !host.is_empty() {
-            let host_z = bun_core::ZBox::from_bytes(host);
-            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
-            unsafe { boringssl_sys::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
-        }
-        if let Some(protos) = &self.protos {
-            // SAFETY: BoringSSL FFI.
-            unsafe {
-                boringssl_sys::SSL_set_alpn_protos(ssl_ptr, protos.as_ptr(), protos.len());
-            }
-        }
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn shim

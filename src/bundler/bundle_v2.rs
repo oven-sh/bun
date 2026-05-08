@@ -3750,7 +3750,7 @@ impl<'a> BundleV2<'a> {
             let self_ptr: *mut Self = self;
             let unique_key_for_additional_files = unsafe { (*self_ptr).graph.input_files.items_unique_key_for_additional_file() };
             let content_hashes_for_additional_files = unsafe { (*self_ptr).graph.input_files.items_content_hash_for_additional_file() };
-            let sources = unsafe { (*self_ptr).graph.input_files.items_source() };
+            let sources = unsafe { (*self_ptr).graph.input_files.items_source_mut() };
             let targets = unsafe { (*self_ptr).graph.ast.items_target() };
             let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
 
@@ -3778,7 +3778,7 @@ impl<'a> BundleV2<'a> {
                         template.data = asset_naming.clone();
                     }
 
-                    let source = &sources[index];
+                    let source = &mut sources[index];
 
                     let output_path: Box<[u8]> = {
                         // TODO: outbase
@@ -3809,12 +3809,22 @@ impl<'a> BundleV2<'a> {
 
                     let loader = loaders[index];
 
+                    // Zig hands the existing `source.contents` buffer to the
+                    // OutputFile (with its allocator) — no copy. Mirror that by
+                    // moving the contents out instead of `to_vec()`-cloning,
+                    // which is prohibitively expensive for large assets.
+                    let contents_len = source.contents.len();
+                    let contents = match core::mem::take(&mut source.contents) {
+                        std::borrow::Cow::Owned(v) => v.into_boxed_slice(),
+                        std::borrow::Cow::Borrowed(b) => Box::<[u8]>::from(b),
+                    };
+
                     additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
                         source_index: crate::output_file::IndexOptional::some(crate::output_file::Index(index as u32)),
                         data: crate::output_file::OptionsData::Buffer {
-                            data: source.contents.to_vec().into_boxed_slice(),
+                            data: contents,
                         },
-                        size: Some(source.contents.len()),
+                        size: Some(contents_len),
                         output_path,
                         input_path: source.path.text.to_vec().into_boxed_slice(),
                         input_loader: Loader::File,

@@ -13,11 +13,6 @@ unsafe extern "C" {
     fn JSMock__getCurrentUnixTimeMs() -> f64;
 }
 
-// TODO(port): bindgen_generated — codegen output; Phase B wires the generator to emit .rs
-mod bindgen_generated {
-    pub struct FakeTimersConfig;
-}
-
 pub struct FakeTimers {
     active: bool,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
@@ -351,11 +346,22 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     let args = frame.arguments_as_array::<1>();
     if args.len() > 0 && !args[0].is_undefined() {
         let options_value = args[0];
-        let _ = options_value;
-        // TODO(port): bindgen_generated::FakeTimersConfig::from_js — the bindgen
-        // .rs emitter is not wired yet; until then `now` config is ignored.
-        let _ = &mut js_now;
-        let _ = bindgen_generated::FakeTimersConfig;
+        if !options_value.is_object() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "useFakeTimers() expects an options object"
+            )));
+        }
+        if let Some(now) = options_value.get(global, "now")? {
+            if now.is_number() {
+                js_now = now.as_number();
+            } else if now.is_date() {
+                js_now = now.get_unix_timestamp();
+            } else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'now' must be a number or Date"
+                )));
+            }
+        }
     }
 
     {

@@ -836,7 +836,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// Extracts a matchable "shape" from a dynamic import argument.
     /// Template literals: static parts joined by \x00 placeholders.
     /// Everything else: empty string.
-     // blocked_on: E::Template::Head enum (TemplateContents in E.rs differs); options.allow_unresolved
     fn extract_dynamic_specifier_shape<'b>(
         &mut self,
         arg: Expr,
@@ -862,7 +861,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
             }
             return Ok(buf.as_slice());
-            // TODO(port): lifetime — Zig returned buf.items which borrows buf
         }
         Ok(b"")
     }
@@ -873,30 +871,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         loc: logger::Loc,
         kind: &'static str,
     ) -> Result<(), bun_core::Error> {
-        // Zig: `if (!p.options.bundle or p.options.allow_unresolved.* == .all) return;`
-        // `options::AllowUnresolved` is currently a unit-struct stub whose only
-        // value is the Zig default `.all`, so the second predicate is always true
-        // — collapse to the bundle check until AllowUnresolved is fleshed out.
-        // TODO(b2-blocked): restore `*self.options.allow_unresolved == AllowUnresolved::All`
-        // once `options::AllowUnresolved` becomes the real enum.
-        let _ = self.options.allow_unresolved;
-        if !self.options.bundle || /* allow_unresolved == .all */ true {
-            let _ = (arg, loc, kind);
+        if !self.options.bundle
+            || matches!(self.options.allow_unresolved, crate::parser::options::AllowUnresolved::All)
+        {
             return Ok(());
         }
 
-        // Unreachable while AllowUnresolved is the unit stub (the `|| true` above
-        // short-circuits). Body kept gated so it un-gates verbatim once the type
-        // lands; `extract_dynamic_specifier_shape` is gated for the same reason.
-         // blocked_on: extract_dynamic_specifier_shape; options::AllowUnresolved::{All, allows}
-        {
-            let mut shape_buf = BumpVec::new_in(self.arena);
-            let shape = self.extract_dynamic_specifier_shape(arg, &mut shape_buf)?;
-            // TODO(b2-blocked): `options::AllowUnresolved` is a unit-stub today; the
-            // real type's `allows()` lives in bun_options. Until it exists, treat
-            // all shapes as allowed (matches the early-return above).
-            let allowed = { let _ = &self.options.allow_unresolved; let _ = shape; true };
-            if !allowed {
+        let mut shape_buf = BumpVec::new_in(self.arena);
+        let shape = self.extract_dynamic_specifier_shape(arg, &mut shape_buf)?;
+        if !self.options.allow_unresolved.allows(shape) {
                 let r = js_lexer::range_of_identifier(self.source, loc);
                 if !shape.is_empty() {
                     // Print a human-readable shape: replace \x00 with *
@@ -934,9 +917,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         r,
                     )?;
                 }
-            }
         }
-        #[allow(unreachable_code)]
         Ok(())
     }
 

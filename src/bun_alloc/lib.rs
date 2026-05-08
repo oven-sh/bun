@@ -412,16 +412,33 @@ pub fn usable_size(ptr: *const u8) -> usize {
 // ── out_of_memory ─────────────────────────────────────────────────────────
 // Source: src/bun.zig `outOfMemory()` → `crash_handler.crashHandler(.out_of_memory, ..)`.
 //
-// PORTING.md §Forbidden: no fn-ptr hooks to break dep cycles. `bun_alloc` is
-// T0 and must not call up into `bun_crash_handler`, so the OOM path here is a
-// direct abort (Zig's `bun.outOfMemory()` is `noreturn` either way). The rich
-// crash report is produced by the platform's signal/SEH handler installed by
-// `bun_crash_handler` at process startup; aborting here triggers it.
+// `bun_alloc` is T0 and cannot depend on `bun_crash_handler`, so the upward
+// call is routed through a fn-ptr installed by `crash_handler::install_hooks()`
+// (same pattern as `bun_core::WINDOWS_SEGFAULT_HANDLE`). Before the hook is
+// installed (very early startup) the fallback is a direct abort.
+
+static OUT_OF_MEMORY_HANDLER: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Called once from `bun_crash_handler::install_hooks()` to route
+/// `out_of_memory()` through `crashHandler(.out_of_memory, ..)` so the
+/// trace-string + auto-report path runs (matching `src/bun.zig:outOfMemory`).
+pub fn set_out_of_memory_handler(handler: fn() -> !) {
+    OUT_OF_MEMORY_HANDLER.store(handler as *mut (), Ordering::Relaxed);
+}
 
 #[cold]
 #[inline(never)]
 pub fn out_of_memory() -> ! {
-    // Best-effort diagnostic before the abort handler takes over.
+    let handler = OUT_OF_MEMORY_HANDLER.load(Ordering::Relaxed);
+    if !handler.is_null() {
+        // SAFETY: only `set_out_of_memory_handler` writes this slot, and it
+        // stores a `fn() -> !` cast to `*mut ()`; the inverse cast recovers
+        // the original function pointer with identical ABI.
+        let handler: fn() -> ! = unsafe { core::mem::transmute(handler) };
+        handler();
+    }
+    // Fallback (hook not yet installed): best-effort diagnostic + abort.
     let _ = std::io::Write::write_all(&mut std::io::stderr(), b"bun: out of memory\n");
     std::process::abort()
 }

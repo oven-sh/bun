@@ -37,7 +37,13 @@ pub mod cpu_features;
 pub mod handle_oom;
 
 /// `bun.outOfMemory()` — callable from `handle_oom` and the crash path.
-pub use bun_alloc::out_of_memory;
+/// Mirrors `src/bun.zig:outOfMemory()` →
+/// `crash_handler.crashHandler(.out_of_memory, null, @returnAddress())`.
+#[cold]
+#[inline(never)]
+pub fn out_of_memory() -> ! {
+    draft::crash_handler(draft::CrashReason::OutOfMemory, None, None)
+}
 
 pub use draft::*;
 
@@ -1256,6 +1262,11 @@ pub fn init() {
 /// `raise_ignoring_panic_handler` does the SIG_DFL reset itself with libc.
 pub fn install_hooks() {
     bun_core::CRASH_HANDLER_INSTALLED.store(true, Ordering::Relaxed);
+    // Route T0 `bun_alloc::out_of_memory()` (re-exported as
+    // `bun_core::out_of_memory()`) through `crashHandler(.out_of_memory, ..)`
+    // so the trace-string + auto-report path runs — Zig's `bun.outOfMemory()`
+    // calls `crash_handler.crashHandler` directly.
+    bun_alloc::set_out_of_memory_handler(crate::out_of_memory);
 }
 
 pub fn reset_segfault_handler() {

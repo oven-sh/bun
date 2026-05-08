@@ -2324,12 +2324,6 @@ impl Argv {
     #[inline] pub fn iter(&self) -> ArgvIter { ArgvIter { inner: self.0, i: 0 } }
     /// Borrow the underlying `[&ZStr]` view (Zig: `bun.argv[..]`).
     #[inline] pub fn as_slice(&self) -> &'static [&'static ZStr] { self.0 }
-    /// Same view as `&[u8]` slices — `ZStr` is `#[repr(transparent)]` over
-    /// `[u8]`, so the fat-pointer slice has identical layout.
-    #[inline] pub fn as_byte_slices(&self) -> &'static [&'static [u8]] {
-        // SAFETY: `ZStr` is `#[repr(transparent)]` over `[u8]`.
-        unsafe { core::mem::transmute::<&'static [&'static ZStr], &'static [&'static [u8]]>(self.0) }
-    }
     /// Owned `Vec` copy of the view — used by call sites that need to append
     /// (e.g. `--compile` exec-argv splicing) before leaking + `set_argv`.
     #[inline] pub fn to_vec(&self) -> Vec<&'static ZStr> { self.0.to_vec() }

@@ -847,7 +847,9 @@ impl Task {
                                     InstallMethod::Hardlink => {
                                         let mut src =
                                             OsAutoAbsPath::init_top_level_dir_long_path();
-                                        let _ = src.append_join(pkg_res.folder().slice(string_buf)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                        if pkg_res.tag == ResolutionTag::Folder {
+                                            let _ = src.append_join(pkg_res.folder().slice(string_buf));
+                                        }
 
                                         let mut dest = OsAutoPath::init();
                                         installer.append_store_path(&mut dest, self.entry_id);

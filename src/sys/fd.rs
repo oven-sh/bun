@@ -266,10 +266,7 @@ impl FdExt for Fd {
     }
 
     fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error> {
-        // TODO(port): Zig calls `dir.stdDir().deleteTree(subpath)`. No std::fs allowed —
-        // route through bun_sys once a Rust deleteTree exists.
-        let _ = (self, subpath);
-        Err(bun_core::err!("Unimplemented"))
+        sys::Dir::from_fd(self).delete_tree(subpath)
     }
 
     #[inline]

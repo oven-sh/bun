@@ -58,7 +58,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
         // so writing through `.github` is correct for both tags.
         // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
         // `process_extracted_tarball_package`); both store a `Repository`.
-        let mut repo = *self.resolution.github();
+        let mut repo = *self.resolution.repository();
         repo.resolved = builder.append::<SemverString>(self.resolved);
         Ok(ResolutionType::init(match self.resolution.tag {
             ResolutionTag::Git => TaggedValue::Git(repo),

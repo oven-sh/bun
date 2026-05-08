@@ -2579,22 +2579,32 @@ impl Package<u64> {
                                     continue;
                                 }
                                 if strings::eql_long(&value.name, &entry.name, true) {
-                                    let note_abs_path = resolve_path::join_abs_string_z::<
-                                        path::platform::Auto,
-                                    >(
-                                        cwd, &[note_path, b"package.json"]
-                                    )
-                                    .as_bytes()
-                                    .to_vec()
-                                    .into_boxed_slice();
+                                    let note_abs_path = bun_core::ZBox::from_bytes(
+                                        resolve_path::join_abs_string_z::<
+                                            path::platform::Auto,
+                                        >(
+                                            cwd,
+                                            &[note_path, b"package.json"],
+                                        )
+                                        .as_bytes(),
+                                    );
 
-                                    // TODO(port): `File::to_source` is unavailable in T1;
-                                    // use an empty-file Source carrying just the path so
-                                    // the diagnostic still names the right file. Real read
-                                    // can be restored once a `to_source` shim lands.
-                                    let note_src =
-                                        logger::Source::init_empty_file(&note_abs_path[..]);
+                                    let note_src = match logger::to_source(
+                                        &note_abs_path,
+                                        Default::default(),
+                                    ) {
+                                        Ok(s) => s,
+                                        Err(_) => logger::Source::init_empty_file(
+                                            note_abs_path.as_bytes(),
+                                        ),
+                                    };
 
+                                    // `Location::init_or_null` borrows `file` from
+                                    // `note_src.path.text`, which itself borrows
+                                    // `note_abs_path`; both drop before the log is
+                                    // printed. `Location::clone` deep-copies `file`
+                                    // into a `Cow::Owned`, matching the Zig
+                                    // `allocator.dupeZ` lifetime.
                                     notes.push(logger::Data {
                                         text: b"Package name is also declared here"
                                             .to_vec()
@@ -2602,7 +2612,9 @@ impl Package<u64> {
                                         location: logger::Location::init_or_null(
                                             Some(&note_src),
                                             note_src.range_of_string(value.name_loc),
-                                        ),
+                                        )
+                                        .as_ref()
+                                        .cloned(),
                                         ..Default::default()
                                     });
                                     i += 1;
@@ -2612,13 +2624,18 @@ impl Package<u64> {
                             break 'notes notes;
                         };
 
-                        let abs_path = resolve_path::join_abs_string_z::<path::platform::Auto>(
-                            cwd,
-                            &[path_, b"package.json"],
+                        let abs_path = bun_core::ZBox::from_bytes(
+                            resolve_path::join_abs_string_z::<path::platform::Auto>(
+                                cwd,
+                                &[path_, b"package.json"],
+                            )
+                            .as_bytes(),
                         );
 
-                        // TODO(port): `File::to_source` shim — see note above.
-                        let src = logger::Source::init_empty_file(abs_path.as_bytes());
+                        let src = match logger::to_source(&abs_path, Default::default()) {
+                            Ok(s) => s,
+                            Err(_) => logger::Source::init_empty_file(abs_path.as_bytes()),
+                        };
 
                         let _ = log.add_range_error_fmt_with_notes(
                             Some(&src),

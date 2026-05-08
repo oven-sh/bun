@@ -162,15 +162,8 @@ impl<'a> Scanner<'a> {
                 let fd = entries.fd;
                 debug_assert!(fd != Fd::INVALID);
                 // Collect first so `self.next(…)` doesn't overlap the
-                // `entries.data` borrow, then sort: `EntryMap` is an unordered
-                // hash map, and Zig's open-addressed layout vs Rust's
-                // SwissTable disagree on iteration order even with the same
-                // wyhash. Sorting by basename keeps cached-cwd discovery
-                // deterministic so file order matches the live-readdir path.
-                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                // SAFETY: `EntryMap` stores `*mut Entry` into the
-                // process-static `EntryStore`; valid for `'static`.
-                entry_ptrs.sort_unstable_by(|&a, &b| unsafe { (*a).base_lowercase().cmp((*b).base_lowercase()) });
+                // `entries.data` borrow.
+                let entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.

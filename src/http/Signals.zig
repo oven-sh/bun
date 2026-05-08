@@ -16,7 +16,7 @@ aborted: ?*std.atomic.Value(bool) = null,
 cert_errors: ?*std.atomic.Value(bool) = null,
 upgraded: ?*std.atomic.Value(bool) = null,
 pub fn isEmpty(this: *const Signals) bool {
-    return this.aborted == null and this.response_body_streaming == null and this.header_progress == null and this.cert_errors == null and this.upgraded == null;
+    return this.aborted == null and this.response_body_streaming == null and this.body_consumption_tracked == null and this.header_progress == null and this.cert_errors == null and this.upgraded == null;
 }
 
 pub const Store = struct {

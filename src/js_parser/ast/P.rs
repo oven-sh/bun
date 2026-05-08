@@ -1806,7 +1806,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if let Some(name) = original_name {
             let result = self.find_symbol(loc, name).expect("unreachable");
             let mut id_clone = ident;
-            id_clone.ref_ = result.r#ref;
+            // Zig: `id_clone.ref = result.ref` — flags are separate fields and
+            // survive. Here they ride in `ref_`'s user-bit lane, so re-apply
+            // them across the identity write or the visitor's
+            // must_keep_due_to_with_stmt / can_be_removed_if_unused /
+            // call_can_be_unwrapped_if_unused hints would be silently dropped.
+            id_clone.ref_ = result.r#ref.with_user_bits_from(ident.ref_);
             return self.new_expr(id_clone, loc);
         }
 

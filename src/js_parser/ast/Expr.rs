@@ -1129,9 +1129,8 @@ impl IntoExprData for E::CommonJSExportIdentifier {
     }
     #[inline]
     fn into_data_alloc(self, _bump: &Bump) -> Data {
-        // Zig's allocate() variant only sets .ref; init() also sets .base.
-        // We follow init() semantics here (superset) — packed layout makes
-        // both a single-word copy regardless.
+        // Packed layout collapses Zig's init()/allocate() distinction — `base`
+        // rides inside `ref_`, so a single-word copy carries both regardless.
         Data::ECommonjsExportIdentifier(self)
     }
 }

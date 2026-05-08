@@ -420,7 +420,11 @@ impl Ref {
 
     #[inline]
     pub const fn is_empty(self) -> bool {
-        self.0 == 0
+        // Mask user bits so a flagged `Ref::NONE` (e.g. the define-template
+        // `E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true)`)
+        // still reports null — keeps `is_empty`/`is_null` consistent with
+        // `eq`/`hash`/`eql`/`as_u64`, which all ignore the user-bit lane.
+        (self.0 & !Self::USER_BITS_MASK) == 0
     }
     #[inline]
     pub const fn is_valid(self) -> bool {
@@ -494,6 +498,24 @@ impl Ref {
         let bit = 1u64 << (28 + n);
         self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
         self
+    }
+    /// Identity bits only (user/flag lane zeroed). Use when handing a
+    /// flag-carrying `E::Identifier.ref_` to a context that stores its own
+    /// flags in the same lane (e.g. `E::ImportIdentifier::new`), so stale
+    /// `can_be_removed_if_unused`/`call_can_be_unwrapped_if_unused` bits don't
+    /// leak across node kinds.
+    #[inline]
+    pub const fn without_user_bits(self) -> Ref {
+        Ref(self.0 & !Self::USER_BITS_MASK)
+    }
+    /// Replace the identity bits with those of `self` while keeping `src`'s
+    /// user-bit lane. Used by `handle_identifier`'s `id_clone.ref_ = result.ref`
+    /// port — in Zig the flags are separate struct fields and survive the ref
+    /// assignment; here they ride in `ref_` and would be silently zeroed by a
+    /// whole-word write.
+    #[inline]
+    pub const fn with_user_bits_from(self, src: Ref) -> Ref {
+        Ref((self.0 & !Self::USER_BITS_MASK) | (src.0 & Self::USER_BITS_MASK))
     }
     #[inline]
     pub fn hash(self) -> u32 {

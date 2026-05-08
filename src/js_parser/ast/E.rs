@@ -391,9 +391,13 @@ pub struct Function {
 ///
 /// `ref_` remains a public field so the ~100 existing `id.ref_` /
 /// `Identifier { ref_, ..Default::default() }` sites stay untouched; flag
-/// access goes through the accessor methods below. Assigning a fresh `Ref` to
-/// `ref_` clears the flags (intentional — the only writer, `visit_expr`'s
-/// `e_identifier`, sets `ref_` first then re-derives the flags).
+/// access goes through the accessor methods below.
+///
+/// **Hazard:** assigning a fresh `Ref` to `ref_` *clears the flags*. This is
+/// fine for `visit_expr`'s `e_identifier` (sets `ref_` first then re-derives
+/// the flags), but any port of Zig `id.ref = new_ref` that expects the
+/// surrounding bool fields to survive must instead write
+/// `id.ref_ = new_ref.with_user_bits_from(id.ref_)` — see `handle_identifier`.
 #[derive(Clone, Copy)]
 pub struct Identifier {
     pub ref_: Ref,
@@ -497,7 +501,10 @@ impl Default for ImportIdentifier {
 impl ImportIdentifier {
     #[inline]
     pub const fn new(ref_: Ref, was_originally_identifier: bool) -> Self {
-        Self { ref_: ref_.with_user_bit(0, was_originally_identifier) }
+        // Strip any incoming user bits (the caller may pass an
+        // `E::Identifier.ref_` carrying its own flags in bits 1/2) before
+        // applying ours, so foreign flags can't leak into this node.
+        Self { ref_: ref_.without_user_bits().with_user_bit(0, was_originally_identifier) }
     }
 
     /// If true, this was originally an identifier expression such as "foo". If
@@ -528,8 +535,10 @@ impl Default for CommonJSExportIdentifier {
 impl CommonJSExportIdentifier {
     #[inline]
     pub const fn new(ref_: Ref, base: CommonJSExportIdentifierBase) -> Self {
+        // Strip any incoming user bits before applying ours — see
+        // `ImportIdentifier::new`.
         Self {
-            ref_: ref_.with_user_bit(
+            ref_: ref_.without_user_bits().with_user_bit(
                 0,
                 matches!(base, CommonJSExportIdentifierBase::ModuleDotExports),
             ),

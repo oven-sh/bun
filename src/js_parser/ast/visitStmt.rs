@@ -1740,9 +1740,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // fn lowerUsingDeclarationInForOf()
                     let loc = data.init.loc;
                     let binding = init2.decls.at(0).binding;
-                    // SAFETY: arena-owned B::Identifier ptr, valid for 'a.
+                    // SAFETY: arena-owned B::Identifier ptr, valid for 'a. Go through
+                    // `as_ptr()` so the `&mut` borrow is rooted in the arena, not the
+                    // match-local `StoreRef` temporary (which drops at arm end).
                     let id: &mut B::Identifier = match binding.data {
-                        js_ast::binding::Data::BIdentifier(b) => unsafe { &mut *b },
+                        js_ast::binding::Data::BIdentifier(b) => unsafe { &mut *b.as_ptr() },
                         _ => unreachable!("for-of using must bind an identifier"),
                     };
                     let id_original_name =

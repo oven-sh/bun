@@ -2177,9 +2177,12 @@ where
                     };
                     // PORT NOTE: `Binding::init(*B.Object, loc)` is gated upstream;
                     // inline its body — it just tags the union and copies `loc`.
+                    // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
+                    // pointee is a stack local but `print_binding` only reads it and
+                    // returns before `b_object` is dropped (same as the prior `&raw mut`).
                     let binding = Binding {
                         loc: target_e_dot.target.loc,
-                        data: BindingData::BObject(&raw mut b_object),
+                        data: BindingData::BObject(js_ast::ast::StoreRef::from_bump(&mut b_object)),
                     };
                     self.print_binding(binding, tlm);
                     // Zig defer (js_printer.zig:1252): if recursion replaced

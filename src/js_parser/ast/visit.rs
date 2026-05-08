@@ -652,9 +652,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
             }
-            BData::BArray(bind) => {
-                // SAFETY: arena-owned B::Array valid for 'a; exclusive during visit pass.
-                let bind = unsafe { &mut *bind };
+            BData::BArray(mut bind) => {
+                // Arena-owned B::Array valid for 'a; exclusive during visit pass.
                 for item in bind.items_mut() {
                     self.visit_binding(item.binding, duplicate_arg_check.as_deref_mut());
                     if let Some(default_value) = item.default_value {
@@ -689,9 +688,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
             }
-            BData::BObject(bind) => {
-                // SAFETY: arena-owned B::Object valid for 'a; exclusive during visit pass.
-                let bind = unsafe { &mut *bind };
+            BData::BObject(mut bind) => {
+                // Arena-owned B::Object valid for 'a; exclusive during visit pass.
                 for property in bind.properties_mut() {
                     if !property.flags.contains(flags::Property::IsSpread) {
                         property.key = self.visit_expr(property.key);

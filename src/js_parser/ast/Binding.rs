@@ -6,6 +6,7 @@ use bun_logger as logger;
 
 use crate::ast::b::B;
 use crate::ast::base::Ref;
+use crate::ast::StoreRef;
 use crate::ast::expr::{Data as ExprData, Expr};
 use crate::ast::{e as E, g as G};
 use crate::{flags, ExprNodeList};
@@ -58,19 +59,19 @@ pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 pub trait BindingInit {
     fn into_b(self) -> B;
 }
-impl BindingInit for *mut crate::ast::b::Identifier {
+impl BindingInit for StoreRef<crate::ast::b::Identifier> {
     #[inline]
     fn into_b(self) -> B {
         B::BIdentifier(self)
     }
 }
-impl BindingInit for *mut crate::ast::b::Array {
+impl BindingInit for StoreRef<crate::ast::b::Array> {
     #[inline]
     fn into_b(self) -> B {
         B::BArray(self)
     }
 }
-impl BindingInit for *mut crate::ast::b::Object {
+impl BindingInit for StoreRef<crate::ast::b::Object> {
     #[inline]
     fn into_b(self) -> B {
         B::BObject(self)
@@ -89,19 +90,19 @@ pub trait BindingAlloc: Sized {
 impl BindingAlloc for crate::ast::b::Identifier {
     #[inline]
     fn alloc_into_b(self, bump: &Arena) -> B {
-        B::BIdentifier(bump.alloc(self))
+        B::BIdentifier(StoreRef::from_bump(bump.alloc(self)))
     }
 }
 impl BindingAlloc for crate::ast::b::Array {
     #[inline]
     fn alloc_into_b(self, bump: &Arena) -> B {
-        B::BArray(bump.alloc(self))
+        B::BArray(StoreRef::from_bump(bump.alloc(self)))
     }
 }
 impl BindingAlloc for crate::ast::b::Object {
     #[inline]
     fn alloc_into_b(self, bump: &Arena) -> B {
-        B::BObject(bump.alloc(self))
+        B::BObject(StoreRef::from_bump(bump.alloc(self)))
     }
 }
 impl BindingAlloc for crate::ast::b::Missing {

@@ -203,11 +203,8 @@ impl Which {
 
     /// Spec: which.zig — `bun.which(path_buf, PATH, cwd, arg)`.
     fn resolve(path_env: &[u8], cwd: &[u8], arg: &[u8]) -> Option<Vec<u8>> {
-        // TODO(b2-blocked): bun_core::which — full PATH search with cwd
-        // fallback. Stubbed: returns None so behaviour is "not found" until
-        // the helper is wired (matches Zig's failure path).
-        let _ = (path_env, cwd, arg);
-        None
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        bun_which::which(&mut *path_buf, path_env, cwd, arg).map(|z| z.as_bytes().to_vec())
     }
 
     #[inline]

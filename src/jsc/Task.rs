@@ -33,11 +33,10 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
     Task::init(ptr)
 }
 
-// ─── RUN_TASK_HOOK ───────────────────────────────────────────────────────────
-// One-shot registration mirroring `event_loop::TICK_QUEUE_HOOK` (keystone C).
-// `bun_runtime` writes the real `run_tasks` fn-ptr at init; until then, the
-// fallback drains without dispatching (unit-test / tool builds with no
-// runtime tier linked).
+// ─── run_tasks dispatch ─────────────────────────────────────────────────────
+// High-tier `run_tasks` body lives in `bun_runtime::dispatch`; resolved at
+// link time. Unit-test / tool builds without the runtime tier link a stub
+// that drains without dispatching.
 
 unsafe extern "Rust" {
     /// High-tier dispatcher: drain `el.tasks`, run each, drain microtasks per
@@ -94,8 +93,8 @@ pub fn report_error_or_terminate(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/Task.zig (679 lines)
-//   confidence: high (struct + tag + hook); match hoisted to bun_runtime
-//   todos:      1 (unify RUN_TASK_HOOK with event_loop::TICK_QUEUE_HOOK)
+//   confidence: high (struct + tag + dispatch); match hoisted to bun_runtime
+//   todos:      0
 //   notes:      §Dispatch hot-path — low tier stores (tag,ptr), high tier
 //               owns the match. Taskable trait replaces comptime type-list.
 // ──────────────────────────────────────────────────────────────────────────

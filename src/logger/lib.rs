@@ -3005,6 +3005,56 @@ macro_rules! alloc_print {
     };
 }
 
+/// `add_error_pretty!(log, source, loc, "<red>...<r>", args..)` — call-site form
+/// of Zig `addErrorFmt`: rewrites `<tag>` markup in the *literal* format string
+/// at compile time (via `bun_core::pretty_fmt!`) before interpolation, then
+/// calls `Log::add_error_fmt`. Use this instead of
+/// `add_error_fmt(.., format_args!("<red>..."))` so markup is converted/stripped
+/// rather than stored literally in the message text. Only one branch executes,
+/// so each `$arg` evaluates exactly once.
+#[macro_export]
+macro_rules! add_error_pretty {
+    ($log:expr, $src:expr, $loc:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
+            .load(::core::sync::atomic::Ordering::Relaxed)
+        {
+            $log.add_error_fmt(
+                $src,
+                $loc,
+                ::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*),
+            )
+        } else {
+            $log.add_error_fmt(
+                $src,
+                $loc,
+                ::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*),
+            )
+        }
+    };
+}
+
+/// Warning counterpart of [`add_error_pretty!`].
+#[macro_export]
+macro_rules! add_warning_pretty {
+    ($log:expr, $src:expr, $loc:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
+            .load(::core::sync::atomic::Ordering::Relaxed)
+        {
+            $log.add_warning_fmt(
+                $src,
+                $loc,
+                ::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*),
+            )
+        } else {
+            $log.add_warning_fmt(
+                $src,
+                $loc,
+                ::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*),
+            )
+        }
+    };
+}
+
 #[inline]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Cow<'static, [u8]>, AllocError> {
     // Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)` at

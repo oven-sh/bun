@@ -400,19 +400,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
-                            manager.log_mut()
-                                .add_warning_fmt(
-                                    None,
-                                    logger::Loc::EMPTY,
-                                    format_args!(
-                                        "{} downloading package manifest <b>{}<r>. Retry {}/{}...",
-                                        bstr::BStr::new(err.name().as_bytes()),
-                                        bstr::BStr::new(name),
-                                        task.retried,
-                                        manager.options.max_retry_count,
-                                    ),
-                                )
-                                .expect("unreachable");
+                            logger::add_warning_pretty!(
+                                manager.log_mut(),
+                                None,
+                                logger::Loc::EMPTY,
+                                "{} downloading package manifest <b>{}<r>. Retry {}/{}...",
+                                bstr::BStr::new(err.name().as_bytes()),
+                                bstr::BStr::new(name),
+                                task.retried,
+                                manager.options.max_retry_count,
+                            )
+                            .expect("unreachable");
                         }
 
                         continue;
@@ -433,24 +431,22 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     } else {
                         let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
-                            bun_core::handle_oom(manager.log_mut().add_error_fmt(
+                            bun_core::handle_oom(logger::add_error_pretty!(
+                                manager.log_mut(),
                                 None,
                                 logger::Loc::EMPTY,
-                                format_args!(
-                                    "{} downloading package manifest <b>{}<r>",
-                                    fmt_args.0,
-                                    bstr::BStr::new(fmt_args.1),
-                                ),
+                                "{} downloading package manifest <b>{}<r>",
+                                fmt_args.0,
+                                bstr::BStr::new(fmt_args.1),
                             ));
                         } else {
-                            bun_core::handle_oom(manager.log_mut().add_warning_fmt(
+                            bun_core::handle_oom(logger::add_warning_pretty!(
+                                manager.log_mut(),
                                 None,
                                 logger::Loc::EMPTY,
-                                format_args!(
-                                    "{} downloading package manifest <b>{}<r>",
-                                    fmt_args.0,
-                                    bstr::BStr::new(fmt_args.1),
-                                ),
+                                "{} downloading package manifest <b>{}<r>",
+                                fmt_args.0,
+                                bstr::BStr::new(fmt_args.1),
                             ));
                         }
 
@@ -493,28 +489,26 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if manager.is_network_task_required(task.task_id) {
-                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
+                        bun_core::handle_oom(logger::add_error_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                                // SAFETY: `metadata.url` borrows the `url_buf` we own
-                                // on this `task`; live for the whole arm.
-                                bstr::BStr::new(unsafe { &*metadata.url }),
-                                response.status_code,
-                            ),
+                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
+                            // SAFETY: `metadata.url` borrows the `url_buf` we own
+                            // on this `task`; live for the whole arm.
+                            bstr::BStr::new(unsafe { &*metadata.url }),
+                            response.status_code,
                         ));
                     } else {
-                        bun_core::handle_oom(manager.log_mut().add_warning_fmt(
+                        bun_core::handle_oom(logger::add_warning_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                                // SAFETY: `metadata.url` borrows the `url_buf` we own
-                                // on this `task`; live for the whole arm.
-                                bstr::BStr::new(unsafe { &*metadata.url }),
-                                response.status_code,
-                            ),
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
+                            // SAFETY: `metadata.url` borrows the `url_buf` we own
+                            // on this `task`; live for the whole arm.
+                            bstr::BStr::new(unsafe { &*metadata.url }),
+                            response.status_code,
                         ));
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -679,22 +673,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
-                            manager.log_mut().add_warning_fmt(
-                                    None,
-                                    logger::Loc::EMPTY,
-                                    format_args!(
-                                        "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
-                                        bstr::BStr::new(err.name().as_bytes()),
-                                        bstr::BStr::new(extract.name.slice()),
-                                        extract.resolution.fmt(
-                                            &manager.lockfile.buffers.string_bytes,
-                                            PathSep::Auto,
-                                        ),
-                                        task.retried,
-                                        manager.options.max_retry_count,
-                                    ),
-                                )
-                                .expect("unreachable");
+                            logger::add_warning_pretty!(
+                                manager.log_mut(),
+                                None,
+                                logger::Loc::EMPTY,
+                                "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                bstr::BStr::new(err.name().as_bytes()),
+                                bstr::BStr::new(extract.name.slice()),
+                                extract.resolution.fmt(
+                                    &manager.lockfile.buffers.string_bytes,
+                                    PathSep::Auto,
+                                ),
+                                task.retried,
+                                manager.options.max_retry_count,
+                            )
+                            .expect("unreachable");
                         }
 
                         continue;
@@ -756,31 +749,29 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
+                        bun_core::handle_oom(logger::add_error_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "{} downloading tarball <b>{}@{}<r>",
-                                err.name(),
-                                bstr::BStr::new(extract.name.slice()),
-                                extract.resolution.fmt(
-                                    &manager.lockfile.buffers.string_bytes,
-                                    PathSep::Auto,
-                                ),
+                            "{} downloading tarball <b>{}@{}<r>",
+                            err.name(),
+                            bstr::BStr::new(extract.name.slice()),
+                            extract.resolution.fmt(
+                                &manager.lockfile.buffers.string_bytes,
+                                PathSep::Auto,
                             ),
                         ));
                     } else {
-                        bun_core::handle_oom(manager.log_mut().add_warning_fmt(
+                        bun_core::handle_oom(logger::add_warning_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "{} downloading tarball <b>{}@{}<r>",
-                                err.name(),
-                                bstr::BStr::new(extract.name.slice()),
-                                extract.resolution.fmt(
-                                    &manager.lockfile.buffers.string_bytes,
-                                    PathSep::Auto,
-                                ),
+                            "{} downloading tarball <b>{}@{}<r>",
+                            err.name(),
+                            bstr::BStr::new(extract.name.slice()),
+                            extract.resolution.fmt(
+                                &manager.lockfile.buffers.string_bytes,
+                                PathSep::Auto,
                             ),
                         ));
                     }
@@ -852,28 +843,26 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
+                        bun_core::handle_oom(logger::add_error_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                                // SAFETY: `metadata.url` borrows the `url_buf` we own
-                                // on this `task`; live for the whole arm.
-                                bstr::BStr::new(unsafe { &*metadata.url }),
-                                response.status_code,
-                            ),
+                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
+                            // SAFETY: `metadata.url` borrows the `url_buf` we own
+                            // on this `task`; live for the whole arm.
+                            bstr::BStr::new(unsafe { &*metadata.url }),
+                            response.status_code,
                         ));
                     } else {
-                        bun_core::handle_oom(manager.log_mut().add_warning_fmt(
+                        bun_core::handle_oom(logger::add_warning_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                                // SAFETY: `metadata.url` borrows the `url_buf` we own
-                                // on this `task`; live for the whole arm.
-                                bstr::BStr::new(unsafe { &*metadata.url }),
-                                response.status_code,
-                            ),
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
+                            // SAFETY: `metadata.url` borrows the `url_buf` we own
+                            // on this `task`; live for the whole arm.
+                            bstr::BStr::new(unsafe { &*metadata.url }),
+                            response.status_code,
                         ));
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -1005,14 +994,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &(*req.network).url_buf },
                         );
                     } else {
-                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
+                        bun_core::handle_oom(logger::add_error_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "{} parsing package manifest for <b>{}<r>",
-                                err.name(),
-                                bstr::BStr::new(name),
-                            ),
+                            "{} parsing package manifest for <b>{}<r>",
+                            err.name(),
+                            bstr::BStr::new(name),
                         ));
                     }
 
@@ -1132,14 +1120,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    bun_core::handle_oom(manager.log_mut().add_error_fmt(
+                    bun_core::handle_oom(logger::add_error_pretty!(
+                        manager.log_mut(),
                         None,
                         logger::Loc::EMPTY,
-                        format_args!(
-                            "{} extracting tarball from <b>{}<r>",
-                            err.name(),
-                            bstr::BStr::new(alias),
-                        ),
+                        "{} extracting tarball from <b>{}<r>",
+                        err.name(),
+                        bstr::BStr::new(alias),
                     ));
 
                     // Void-callback fallback (resolve phase): drain the
@@ -1366,14 +1353,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
                     } else if log_level != Options::LogLevel::Silent {
-                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
+                        bun_core::handle_oom(logger::add_error_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "{} cloning repository for <b>{}<r>",
-                                err.name(),
-                                bstr::BStr::new(name),
-                            ),
+                            "{} cloning repository for <b>{}<r>",
+                            err.name(),
+                            bstr::BStr::new(name),
                         ));
                     }
                     continue;
@@ -1486,14 +1472,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             manager.lockfile.str(repo),
                         );
                     } else {
-                        bun_core::handle_oom(manager.log_mut().add_error_fmt(
+                        bun_core::handle_oom(logger::add_error_pretty!(
+                            manager.log_mut(),
                             None,
                             logger::Loc::EMPTY,
-                            format_args!(
-                                "{} checking out repository for <b>{}<r>",
-                                err.name(),
-                                bstr::BStr::new(alias.slice()),
-                            ),
+                            "{} checking out repository for <b>{}<r>",
+                            err.name(),
+                            bstr::BStr::new(alias.slice()),
                         ));
                     }
 

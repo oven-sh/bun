@@ -42,7 +42,7 @@ pub struct Worker {
     /// handled by the loop, so a busy worker writing thousands of `test_done`
     /// frames never truncates and the coordinator never blocks.
     // TODO(port): Zig `Channel(Worker, "ipc")` — second comptime arg is the
-    // field name for `@fieldParentPtr` recovery. Rust side likely uses
+    // field name for `container_of` recovery. Rust side likely uses
     // `offset_of!(Worker, ipc)` or an explicit owner-ptr; revisit in Phase B.
     pub ipc: Channel<Worker>,
     pub out: WorkerPipe,
@@ -79,7 +79,7 @@ impl Worker {
         let coord = unsafe { &*coord_ptr };
 
         // SAFETY: out/err are fields of self; setParent stores the raw parent
-        // pointer for later @fieldParentPtr-style callback recovery. The
+        // pointer for later `container_of`-style callback recovery. The
         // pointers remain valid as long as `self` is not moved (Coordinator
         // holds workers in a stable slice).
         unsafe {
@@ -346,7 +346,7 @@ static WORKER_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
 
 impl ChannelOwner for Worker {
     /// `offset_of!(Worker, ipc)` — recovers `&mut Worker` from `&mut Channel<Worker>`
-    /// in platform callbacks (Zig: `@fieldParentPtr("ipc", ...)`).
+    /// in platform callbacks`).
     const CHANNEL_OFFSET: usize = core::mem::offset_of!(Worker, ipc);
 
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {

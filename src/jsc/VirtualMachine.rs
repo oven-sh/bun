@@ -484,7 +484,7 @@ impl ExitHandler {
 
     /// PORT NOTE: spec calls `this.exit_handler.dispatchOnExit()` from a
     /// `*VirtualMachine`. Taking `&mut self: ExitHandler` and recovering the
-    /// parent via `@fieldParentPtr` is sound in Zig but in Rust would (a) form
+    /// parent via `container_of` is sound in Zig but in Rust would (a) form
     /// a `&mut VirtualMachine` aliased with the live `&mut ExitHandler`, and
     /// (b) escape the provenance of `&mut self` (which only covers the
     /// `ExitHandler` field). Callers pass the raw VM pointer instead.

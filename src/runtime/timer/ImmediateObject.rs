@@ -53,7 +53,7 @@ impl Default for ImmediateObject {
 impl ImmediateObject {
     // Zig: `pub const ref = RefCount.ref; pub const deref = RefCount.deref;`
     // — re-export the mixin's ops as inherent fns so `TimerObjectInternals`'s
-    // `@fieldParentPtr` dispatch (`ImmediateObject::ref_`/`::deref`) resolves.
+    // `container_of` dispatch (`ImmediateObject::ref_`/`::deref`) resolves.
 
     /// Increment the intrusive refcount.
     ///

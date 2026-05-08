@@ -376,9 +376,7 @@ impl Default for ParseTask {
 pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task points to ParseTask.io_task (intrusive field).
     let parse_task = unsafe {
-        &mut *task.cast::<u8>()
-            .sub(offset_of!(ParseTask, io_task))
-            .cast::<ParseTask>()
+        &mut *bun_core::from_field_ptr!(ParseTask, io_task, task)
     };
     parse_worker::run_from_thread_pool(parse_task);
 }
@@ -387,9 +385,7 @@ pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 pub unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task points to ParseTask.task (intrusive field).
     let parse_task = unsafe {
-        &mut *task.cast::<u8>()
-            .sub(offset_of!(ParseTask, task))
-            .cast::<ParseTask>()
+        &mut *bun_core::from_field_ptr!(ParseTask, task, task)
     };
     parse_worker::run_from_thread_pool(parse_task);
 }
@@ -1721,9 +1717,7 @@ impl OnBeforeParseResult {
         // SAFETY: result points to OnBeforeParseResultWrapper.result (always
         // constructed that way in `OnBeforeParsePlugin::run`).
         let wrapper = unsafe {
-            result.cast::<u8>()
-                .sub(offset_of!(OnBeforeParseResultWrapper, result))
-                .cast::<OnBeforeParseResultWrapper>()
+            bun_core::from_field_ptr!(OnBeforeParseResultWrapper, result, result)
         };
         #[cfg(debug_assertions)]
         // SAFETY: wrapper just computed via offset_of from valid result ptr.
@@ -1756,7 +1750,7 @@ pub extern "C" fn fetch_source_code(
 
     // SAFETY: `result_ptr` is the `.result` field of an
     // `OnBeforeParseResultWrapper` (see `OnBeforeParsePlugin::run`). Keep the
-    // raw pointer un-shadowed so `get_wrapper`'s `.sub(offset_of!)` walk-back
+    // raw pointer un-shadowed so `get_wrapper`'s `from_field_ptr!` walk-back
     // retains provenance over the enclosing wrapper; a `&mut *result_ptr` here
     // would shrink provenance to just the `OnBeforeParseResult` and make the
     // later offset-walk UB. The `&mut` reborrow below is scoped to end before
@@ -1804,7 +1798,7 @@ pub extern "C" fn fetch_source_code(
         result.free_user_context = None;
         result.user_context = core::ptr::null_mut();
         // SAFETY: result is always embedded in a wrapper. Write wrapper fields
-        // via raw pointer (mirrors Zig `@fieldParentPtr`) — `wrapper.result`
+        // via raw pointer — `wrapper.result`
         // *is* `*result_ptr`, so materializing `&mut *wrapper` here would
         // overlap the live `result` borrow above (aliased-`&mut` UB).
         let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
@@ -1823,10 +1817,10 @@ pub extern "C" fn fetch_source_code(
 #[unsafe(no_mangle)]
 pub extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
     // SAFETY: called from C++ with valid ptr embedded in wrapper. Operate on
-    // raw pointers throughout (mirrors Zig `@fieldParentPtr`): `wrapper.result`
+    // raw pointers throughout: `wrapper.result`
     // *is* `*this`, so materializing `&mut *this` alongside `&mut *wrapper`
     // would be aliased-`&mut` UB, and forming `&mut *this` first would shrink
-    // provenance so `.sub(offset_of!)` in `get_wrapper` walks out of bounds.
+    // provenance so `from_field_ptr!` in `get_wrapper` walks out of bounds.
     let wrapper = OnBeforeParseResult::get_wrapper(this);
     unsafe {
         (*this).loader = (*wrapper).loader;
@@ -1917,7 +1911,7 @@ impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
         // `get_wrapper`'s offset_of walk-back stays in-bounds. Never form
         // `&mut wrapper.result` while this must reach the wrapper — that
         // retags and shrinks provenance to the inner `OnBeforeParseResult`
-        // only, making `.sub(offset_of!)` in `get_wrapper` out-of-provenance
+        // only, making `from_field_ptr!` in `get_wrapper` out-of-provenance
         // UB (and pushes a Unique tag that invalidates this raw under SB).
         let result_ptr = core::ptr::addr_of_mut!(wrapper.result);
         let namespace_str;

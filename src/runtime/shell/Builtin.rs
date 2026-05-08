@@ -1,5 +1,5 @@
 //! A builtin command runs inside a `Cmd` state node. In Zig the builtin
-//! recovered its parent `*Cmd` via `@fieldParentPtr`; in the NodeId port the
+//! recovered its parent `*Cmd` via `container_of`; in the NodeId port the
 //! builtin stores the `NodeId` of its owning Cmd and every method takes
 //! `&mut Interpreter`.
 

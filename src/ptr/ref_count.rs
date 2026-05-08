@@ -315,7 +315,7 @@ impl<T: RefCounted> RefCount<T> {
     pub fn dump_active_refs(&mut self) {
         #[cfg(debug_assertions)]
         {
-            // SAFETY: self is the `ref_count` field of a live T (Zig: @fieldParentPtr)
+            // SAFETY: self is the `ref_count` field of a live T
             let ptr: *mut T = unsafe {
                 std::ptr::from_mut::<Self>(self).cast::<u8>()
                     .sub(offset_of_ref_count::<T, Self>())
@@ -503,7 +503,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     pub fn dump_active_refs(&mut self) {
         #[cfg(debug_assertions)]
         {
-            // SAFETY: self is the `ref_count` field of a live T (Zig: @fieldParentPtr)
+            // SAFETY: self is the `ref_count` field of a live T
             let ptr: *mut T = unsafe {
                 std::ptr::from_mut::<Self>(self).cast::<u8>()
                     .sub(offset_of_ref_count_ts::<T, Self>())

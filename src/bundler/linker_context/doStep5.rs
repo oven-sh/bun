@@ -63,13 +63,11 @@ impl LinkerContext<'_> {
         }
 
         // SAFETY: `this` points to `BundleV2.linker` (caller is the worker-pool
-        // dispatch from `scanImportsAndExports`); `@fieldParentPtr` shape.
+        // dispatch from `scanImportsAndExports`); `container_of` shape.
         // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
         // form `&mut BundleV2` here (concurrent tasks would alias it).
         let bundle_v2: &BundleV2<'_> = unsafe {
-            &*(this.cast_const().cast::<u8>()
-                .sub(offset_of!(BundleV2, linker))
-                .cast::<BundleV2>())
+            &*(bun_core::from_field_ptr!(BundleV2, linker, this.cast_const()))
         };
         let worker = ThreadPool::Worker::get(bundle_v2);
         // Zig: `defer worker.unget()`. `Worker::get` returns the thread-local worker

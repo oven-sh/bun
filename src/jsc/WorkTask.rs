@@ -101,11 +101,9 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
     /// created in `create_on_js_thread`.
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         crate::mark_binding();
-        // SAFETY: recover the parent via offset_of (Zig: `@fieldParentPtr`).
+        // SAFETY: recover the parent via offset_of.
         let this: *mut Self = unsafe {
-            task.cast::<u8>()
-                .sub(offset_of!(Self, task))
-                .cast::<Self>()
+            bun_core::from_field_ptr!(Self, task, task)
         };
         // SAFETY: `this` is alive for the duration of the thread-pool callback.
         Context::run(unsafe { (*this).ctx }, this);

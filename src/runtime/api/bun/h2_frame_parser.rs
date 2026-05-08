@@ -1333,7 +1333,7 @@ pub struct SignalRef {
     // TODO(port): wrap in a dedicated smart-pointer once AbortSignal grows one.
     signal: *mut AbortSignal,
     // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
-    // recovered via container_of! from the auto-flusher. It uses a hand-rolled
+    // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
     // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `IntrusiveRc`'s
     // `RefCounted` bound is unsatisfiable. Store the raw pointer and call
     // `ref_()/deref()` explicitly in `attach_signal` / `Drop` (mirrors Zig

@@ -830,9 +830,7 @@ impl<'a> LinkerContext<'a> {
         // (shared), so a `&` is sufficient and avoids aliasing.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
         let bundle: *const BundleV2 = unsafe {
-            ctx.c.cast_const().cast::<u8>()
-                .sub(offset_of!(BundleV2, linker))
-                .cast::<BundleV2>()
+            bun_core::from_field_ptr!(BundleV2, linker, ctx.c.cast_const())
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         let mut worker = scopeguard::guard(worker, |w| w.unget());
@@ -860,9 +858,7 @@ impl<'a> LinkerContext<'a> {
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
         let bundle: *const BundleV2 = unsafe {
-            ctx.c.cast_const().cast::<u8>()
-                .sub(offset_of!(BundleV2, linker))
-                .cast::<BundleV2>()
+            bun_core::from_field_ptr!(BundleV2, linker, ctx.c.cast_const())
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         let mut worker = scopeguard::guard(worker, |w| w.unget());
@@ -1194,9 +1190,7 @@ impl SourceMapDataTask {
     pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
-            &mut *(thread_task.cast::<u8>()
-                .sub(offset_of!(SourceMapDataTask, thread_task))
-                .cast::<SourceMapDataTask>())
+            &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
         };
         let ctx: *mut LinkerContext = task.ctx;
         scopeguard::defer! {
@@ -1214,7 +1208,7 @@ impl SourceMapDataTask {
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
         let bundle: *const BundleV2 = unsafe {
-            ctx.cast::<u8>().sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
+            bun_core::from_field_ptr!(BundleV2, linker, ctx)
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
@@ -1231,9 +1225,7 @@ impl SourceMapDataTask {
     pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
-            &mut *(thread_task.cast::<u8>()
-                .sub(offset_of!(SourceMapDataTask, thread_task))
-                .cast::<SourceMapDataTask>())
+            &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
         };
         let ctx: *mut LinkerContext = task.ctx;
         scopeguard::defer! {
@@ -1247,7 +1239,7 @@ impl SourceMapDataTask {
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
         let bundle: *const BundleV2 = unsafe {
-            ctx.cast::<u8>().sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
+            bun_core::from_field_ptr!(BundleV2, linker, ctx)
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 
@@ -1484,9 +1476,7 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
             // `transpiler_for_target` only reads `bundle.browser_transpiler`.
             let bundle = unsafe {
-                &mut *(std::ptr::from_mut::<LinkerContext>(self).cast::<u8>()
-                    .sub(offset_of!(BundleV2, linker))
-                    .cast::<BundleV2>())
+                &mut *(bun_core::from_field_ptr!(BundleV2, linker, std::ptr::from_mut::<LinkerContext>(self)))
             };
             &bundle.transpiler_for_target(Target::Browser).options.public_path
         } else {

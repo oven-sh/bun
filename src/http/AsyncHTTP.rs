@@ -858,9 +858,7 @@ impl<'a> AsyncHTTP<'a> {
                 // `ThreadlocalAsyncHTTP::new` (heap::alloc); recover the parent
                 // via field offset and reclaim the Box. This is the LAST access
                 // to `this`/`async_http`; only static state is touched afterward.
-                let threadlocal_http: *mut ThreadlocalAsyncHTTP = async_http.cast::<u8>()
-                    .sub(offset_of!(ThreadlocalAsyncHTTP, async_http))
-                    .cast::<ThreadlocalAsyncHTTP>();
+                let threadlocal_http: *mut ThreadlocalAsyncHTTP = bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
                 // PORT NOTE: Zig `defer threadlocal_http.deinit()` is
                 // `bun.TrivialDeinit` — it frees the heap slot WITHOUT running
                 // any field destructors. Reclaiming as `Box<_>` here would
@@ -910,9 +908,7 @@ impl<'a> AsyncHTTP<'a> {
 pub unsafe fn start_async_http(task: *mut Task) {
     // SAFETY: caller upholds the invariant above.
     let this: *mut AsyncHTTP<'static> = unsafe {
-        task.cast::<u8>()
-            .sub(offset_of!(AsyncHTTP<'static>, task))
-            .cast::<AsyncHTTP<'static>>()
+        bun_core::from_field_ptr!(AsyncHTTP<'static>, task, task)
     };
     unsafe { (*this).on_start() };
 }
@@ -970,9 +966,7 @@ impl HTTPChannelContext<'_> {
     pub fn callback(data: HTTPCallbackPair) {
         // SAFETY: `data.0` points to the `http` field of an `HTTPChannelContext`.
         let this: &mut HTTPChannelContext = unsafe {
-            &mut *(data.0.cast::<u8>()
-                .sub(offset_of!(HTTPChannelContext, http))
-                .cast::<HTTPChannelContext>())
+            &mut *(bun_core::from_field_ptr!(HTTPChannelContext, http, data.0))
         };
         let boxed = bun_core::heap::into_raw(Box::new(data));
         // SAFETY: channel is set by the owner before scheduling; Zig dereferenced unconditionally.

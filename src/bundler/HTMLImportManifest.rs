@@ -177,12 +177,9 @@ pub fn write<W: Write + ?Sized>(
     let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];
     let server_source_index = graph.html_imports.server_source_indices.slice()[index as usize];
     let sources: &[Source] = graph.input_files.items_source();
-    // SAFETY: graph points to BundleV2.graph (Zig: @fieldParentPtr).
+    // SAFETY: graph points to BundleV2.graph.
     let bv2: &BundleV2<'_> = unsafe {
-        &*std::ptr::from_ref::<Graph>(graph)
-            .cast::<u8>()
-            .sub(core::mem::offset_of!(BundleV2<'static>, graph))
-            .cast::<BundleV2<'_>>()
+        &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     // SAFETY: `bv2.transpiler` is always initialized before linking runs.
     let options = unsafe { &(*bv2.transpiler).options };

@@ -560,7 +560,7 @@ impl ShellCpTask {
     /// immediately (success path defers the post to `cp_on_finish`).
     unsafe fn work_pool_callback(task: *mut crate::shell::interpreter::WorkPoolTask) {
         // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
-        // is embedded in `ShellCpTask` at `TASK_OFFSET` (Zig: `@fieldParentPtr`).
+        // is embedded in `ShellCpTask` at `TASK_OFFSET`.
         let this = unsafe {
             task.cast::<u8>()
                 .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET).cast::<ShellCpTask>()

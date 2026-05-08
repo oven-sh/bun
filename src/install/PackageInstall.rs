@@ -466,9 +466,7 @@ impl HardLinkWindowsInstallTask {
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
         let self_: *mut Self = unsafe {
-            task.cast::<u8>()
-                .sub(core::mem::offset_of!(Self, task))
-                .cast::<Self>()
+            bun_core::from_field_ptr!(Self, task, task)
         };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
@@ -574,9 +572,7 @@ impl UninstallTask {
     fn run(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of an UninstallTask.
         let uninstall_task: *mut Self = unsafe {
-            task.cast::<u8>()
-                .sub(core::mem::offset_of!(Self, task))
-                .cast::<Self>()
+            bun_core::from_field_ptr!(Self, task, task)
         };
         // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
         let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };

@@ -67,9 +67,7 @@ impl SecretsJob {
         // SAFETY: task points to SecretsJob.task; SecretsJob was allocated via
         // heap::alloc in `create` and is alive until run_from_js drops it.
         let job: &mut SecretsJob = unsafe {
-            &mut *task.cast::<u8>()
-                .sub(offset_of!(SecretsJob, task))
-                .cast::<SecretsJob>()
+            &mut *bun_core::from_field_ptr!(SecretsJob, task, task)
         };
         let vm = job.vm;
         // PORT NOTE: reshaped for borrowck — Zig used `defer vm.enqueueTaskConcurrent(...)`;

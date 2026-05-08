@@ -63,7 +63,7 @@ pub struct JSMySQLConnection {
     pub connection_timeout_ms: u32,
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
-    // Private — intrusive heap node; cross-crate `@fieldParentPtr` goes through
+    // Private — intrusive heap node; cross-crate `container_of` goes through
     // [`Self::from_timer_ptr`] instead of `offset_of!` on the field.
     timer: EventLoopTimer,
 
@@ -76,7 +76,7 @@ pub struct JSMySQLConnection {
 }
 
 impl JSMySQLConnection {
-    /// `@fieldParentPtr("timer", t)` — recover the embedding connection from a
+    /// Intrusive backref: recover the embedding connection from a
     /// pointer to its intrusive `timer` node. Exposed so the cross-crate
     /// `bun_runtime` timer dispatch (`__bun_fire_timer`) does not need
     /// field-level visibility into this struct.
@@ -87,10 +87,10 @@ impl JSMySQLConnection {
     #[inline]
     pub unsafe fn from_timer_ptr(t: *mut EventLoopTimer) -> *mut Self {
         // SAFETY: caller contract.
-        unsafe { t.cast::<u8>().sub(core::mem::offset_of!(Self, timer)).cast::<Self>() }
+        unsafe { bun_core::from_field_ptr!(Self, timer, t) }
     }
 
-    /// `@fieldParentPtr("max_lifetime_timer", t)` — see [`Self::from_timer_ptr`].
+    /// Intrusive backref: see [`Self::from_timer_ptr`].
     ///
     /// # Safety
     /// `t` must point at the `max_lifetime_timer` field of a live
@@ -99,7 +99,7 @@ impl JSMySQLConnection {
     pub unsafe fn from_max_lifetime_timer_ptr(t: *mut EventLoopTimer) -> *mut Self {
         // SAFETY: caller contract.
         unsafe {
-            t.cast::<u8>().sub(core::mem::offset_of!(Self, max_lifetime_timer)).cast::<Self>()
+            bun_core::from_field_ptr!(Self, max_lifetime_timer, t)
         }
     }
 }

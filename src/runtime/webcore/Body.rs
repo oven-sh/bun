@@ -623,7 +623,7 @@ impl Value {
     /// `RequestContext.request_body` stores `NonNull<Value>` (the pooled
     /// payload), but the Zig field type is `?*Body.Value.HiveRef` — the slot
     /// header carries the refcount + pool back-pointer. Recover the parent via
-    /// `offset_of!` (Zig: `@fieldParentPtr("value", this)`) and forward.
+    /// `offset_of!``) and forward.
     ///
     /// # Safety
     /// `self` must be the `value` field of a live `HiveRef<Value, POOL_SIZE>`
@@ -631,9 +631,7 @@ impl Value {
     pub unsafe fn unref(&mut self) -> Option<&mut Self> {
         // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
         let parent = unsafe {
-            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(core::mem::offset_of!(HiveRef, value))
-                .cast::<HiveRef>()
+            &mut *bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self))
         };
         parent.unref().map(|h| &mut h.value)
     }
@@ -642,9 +640,7 @@ impl Value {
     pub unsafe fn ref_(&mut self) -> &mut Self {
         // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
         let parent = unsafe {
-            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(core::mem::offset_of!(HiveRef, value))
-                .cast::<HiveRef>()
+            &mut *bun_core::from_field_ptr!(HiveRef, value, std::ptr::from_mut::<Self>(self))
         };
         &mut parent.ref_().value
     }

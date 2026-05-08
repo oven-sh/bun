@@ -3526,16 +3526,14 @@ impl<'a> HTTPClient<'a> {
         );
     }
 
-    /// `@fieldParentPtr("client", this)` — recover the AsyncHTTP that embeds this
+    /// Intrusive backref: recover the AsyncHTTP that embeds this
     /// client. Returns the lifetime-erased pointer form expected by
     /// `HTTPClientResultCallback::run`.
     #[inline]
     fn parent_async_http(&mut self) -> *mut AsyncHTTP<'static> {
         // SAFETY: HTTPClient is always embedded as `client` field of AsyncHTTP
         unsafe {
-            std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(offset_of!(AsyncHTTP<'static>, client))
-                .cast::<AsyncHTTP<'static>>()
+            bun_core::from_field_ptr!(AsyncHTTP<'static>, client, std::ptr::from_mut::<Self>(self))
         }
     }
 

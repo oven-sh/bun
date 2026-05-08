@@ -3172,7 +3172,7 @@ type DoneChannel = bun_threading::Channel<u32, bun_collections::linear_fifo::Sta
 
 /// One pending remote-image download. Lives on the heap so its
 /// `async_http.task` (embedded in ThreadPool.Task) has a stable
-/// address — HTTPThread.schedule does @fieldParentPtr on that task,
+/// address — HTTPThread.schedule does `container_of` on that task,
 /// so moving the struct would break the worker's callback.
 struct RemoteImageDownload {
     // Assigned immediately after the struct literal in

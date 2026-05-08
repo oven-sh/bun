@@ -288,9 +288,7 @@ impl Job {
     pub fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: `task` points to the `task` field of a heap-allocated `Job` created in `create()`.
         let job: &mut Job = unsafe {
-            &mut *task.cast::<u8>()
-                .sub(offset_of!(Job, task))
-                .cast::<Job>()
+            &mut *bun_core::from_field_ptr!(Job, task, task)
         };
         let job_ptr: *mut Job = job;
         // PORT NOTE: reshaped for borrowck — Zig used `defer vm.enqueueTaskConcurrent(...)`;

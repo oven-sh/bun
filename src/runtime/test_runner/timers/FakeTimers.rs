@@ -129,9 +129,7 @@ impl FakeTimers {
         }
         // SAFETY: self points to the `fake_timers` field of `timer::All` (always embedded there)
         let owner: &timer::All = unsafe {
-            &*(std::ptr::from_ref::<Self>(self).cast::<u8>()
-                .sub(offset_of!(timer::All, fake_timers))
-                .cast::<timer::All>())
+            &*(bun_core::from_field_ptr!(timer::All, fake_timers, std::ptr::from_ref::<Self>(self)))
         };
         match mode {
             AssertMode::Locked => debug_assert!(owner.lock.try_lock() == false),

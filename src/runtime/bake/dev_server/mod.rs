@@ -56,7 +56,7 @@ pub type DebuggerId = jsc::DebuggerId;
 
 // LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as
 // `super::dev_server_body`). The struct definitions are owned there so impl
-// blocks and `@fieldParentPtr` submodules name a single type. Re-export so
+// blocks and `container_of` submodules name a single type. Re-export so
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
 pub use super::dev_server_body::{
@@ -977,7 +977,7 @@ pub struct DirectoryWatchStore {
     pub dependencies_free_list: Vec<u32>,
 }
 impl DirectoryWatchStore {
-    /// `@fieldParentPtr("directory_watchers", self)` — recover `*mut DevServer`.
+    /// Intrusive backref: recover `*mut DevServer`.
     /// Returns a raw ptr (not `&mut DevServer`) because `&mut self` is live;
     /// callers must scope their borrow of fields disjoint from
     /// `directory_watchers` to avoid aliasing UB.
@@ -986,10 +986,7 @@ impl DirectoryWatchStore {
         // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
         // field of a heap-allocated `DevServer` (never moved post-init).
         unsafe {
-            std::ptr::from_mut::<Self>(self)
-                .cast::<u8>()
-                .sub(core::mem::offset_of!(DevServer, directory_watchers))
-                .cast::<DevServer>()
+            bun_core::from_field_ptr!(DevServer, directory_watchers, std::ptr::from_mut::<Self>(self))
         }
     }
 

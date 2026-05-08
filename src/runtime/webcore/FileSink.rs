@@ -1284,9 +1284,7 @@ impl FlushPendingTask {
         unsafe { (*flush_pending).has = false };
         // SAFETY: `flush_pending` is the `run_pending_later` field of a `FileSink`.
         let this: *mut FileSink = unsafe {
-            flush_pending.cast::<u8>()
-                .sub(offset_of!(FileSink, run_pending_later))
-                .cast::<FileSink>()
+            bun_core::from_field_ptr!(FileSink, run_pending_later, flush_pending)
         };
         // SAFETY: balances the `ref_()` taken in `run_pending_later()` when
         // this task was enqueued; `this` is live for at least that ref.

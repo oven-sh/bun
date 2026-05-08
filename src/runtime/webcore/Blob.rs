@@ -6481,7 +6481,7 @@ pub trait FileCloser: Sized {
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
-    /// `@fieldParentPtr("io_request", request)` — Rust `offset_of!` cannot name
+    /// Intrusive backref: Rust `offset_of!` cannot name
     /// fields on a trait `Self`, so each concrete impl supplies its own
     /// container_of recovery (no default body).
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
@@ -6495,7 +6495,7 @@ pub trait FileCloser: Sized {
         bun_jsc::WorkPool::schedule(this.task());
     }
 
-    /// `@fieldParentPtr("task", task)` — concrete impl supplies its own
+    /// Intrusive backref: concrete impl supplies its own
     /// container_of recovery (no default body).
     unsafe fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
 

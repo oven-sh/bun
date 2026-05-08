@@ -172,9 +172,7 @@ macro_rules! new_store {
                     // SAFETY: `store` is always the `metadata` field of a `PreAlloc`
                     // (see `init()`); recover the parent via offset_of.
                     unsafe {
-                        let prealloc = core::ptr::from_mut::<Store>(store).cast::<u8>()
-                            .sub(offset_of!(PreAlloc, metadata))
-                            .cast::<PreAlloc>();
+                        let prealloc = bun_core::from_field_ptr!(PreAlloc, metadata, core::ptr::from_mut::<Store>(store));
                         &mut (*prealloc).first_block
                     }
                 }
@@ -194,7 +192,7 @@ macro_rules! new_store {
 
                 // PORT NOTE: not `impl Drop` — `Store` is a field inside the `PreAlloc`
                 // heap allocation and this frees that enclosing allocation via
-                // @fieldParentPtr-style recovery. The caller holds `*mut Store`, not
+                // `container_of`-style recovery. The caller holds `*mut Store`, not
                 // `Box<Store>`, so per PORTING.md this is the raw-pointer `destroy`
                 // escape hatch rather than `Drop`.
                 /// SAFETY: `store` must have been returned by `Store::init()` and not
@@ -224,9 +222,7 @@ macro_rules! new_store {
 
                     // SAFETY: `store` is the `metadata` field of a leaked `Box<PreAlloc>`.
                     let prealloc = unsafe {
-                        store.cast::<u8>()
-                            .sub(offset_of!(PreAlloc, metadata))
-                            .cast::<PreAlloc>()
+                        bun_core::from_field_ptr!(PreAlloc, metadata, store)
                     };
                     // TODO(port): Zig source asserts `&prealloc.first_block == store.head`
                     // but `Store` has no `head` field — lazy-compiled dead assertion

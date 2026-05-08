@@ -81,11 +81,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     /// SAFETY: `task` points to the `task` field of a heap-allocated `Self`
     /// created in [`create_on_js_thread`].
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: recover the parent via offset_of (Zig: `@fieldParentPtr`).
+        // SAFETY: recover the parent via offset_of.
         let this: *mut Self = unsafe {
-            task.cast::<u8>()
-                .sub(offset_of!(Self, task))
-                .cast::<Self>()
+            bun_core::from_field_ptr!(Self, task, task)
         };
         // SAFETY: `this` is alive for the duration of the thread-pool callback;
         // exclusively owned by the work pool at this point.

@@ -76,10 +76,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
     // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
     let task: &mut ServerComponentParseTask = unsafe {
-        &mut *(thread_pool_task
-            .cast::<u8>()
-            .sub(offset_of!(ServerComponentParseTask, task))
-            .cast::<ServerComponentParseTask>())
+        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask, task, thread_pool_task))
     };
 
     // SAFETY: `task.ctx` is a live BACKREF to the owning BundleV2.

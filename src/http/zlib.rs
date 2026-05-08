@@ -2,7 +2,7 @@ use bun_string::MutableString;
 use bun_zlib::{ZlibError, ZlibReaderArrayList};
 
 // PORT NOTE: Zig used `bun.ObjectPool(MutableString, initMutableString, false, 4)` and
-// recovered the node via `@fieldParentPtr`. `MutableString` is a foreign type so we
+// recovered the node via `container_of`. `MutableString` is a foreign type so we
 // cannot impl `ObjectPoolType` for it directly (orphan rule); a `#[repr(transparent)]`
 // newtype lets us cast `*mut PooledMutableString` ↔ `*mut MutableString` at the API
 // boundary.
@@ -36,7 +36,7 @@ mod buffer_pool {
 
     pub fn put(mutable: *mut MutableString) {
         // SAFETY: `mutable` was returned by `get()` above; #[repr(transparent)] cast is sound;
-        // `release_value` recovers the parent node via offset_of (mirrors @fieldParentPtr).
+        // `release_value` recovers the parent node via offset_of.
         unsafe {
             (*mutable).reset();
             BufferPool::release_value(mutable.cast::<PooledMutableString>());

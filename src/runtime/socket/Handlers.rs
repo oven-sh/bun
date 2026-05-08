@@ -154,9 +154,7 @@ impl Handlers {
             if self.mode == SocketMode::Server {
                 // SAFETY: self points to the `handlers` field of a Listener (server mode invariant)
                 let listen_socket: &mut SocketListener = unsafe {
-                    &mut *std::ptr::from_mut::<Handlers>(self).cast::<u8>()
-                        .sub(offset_of!(SocketListener, handlers))
-                        .cast::<SocketListener>()
+                    &mut *bun_core::from_field_ptr!(SocketListener, handlers, std::ptr::from_mut::<Handlers>(self))
                 };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if matches!(listen_socket.listener, ListenerType::None) {

@@ -321,9 +321,7 @@ impl All {
         debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
         // SAFETY: entry value points to TimeoutObject.event_loop_timer
         Some(unsafe {
-            value.cast::<u8>()
-                .sub(offset_of!(TimeoutObject, event_loop_timer))
-                .cast::<TimeoutObject>()
+            bun_core::from_field_ptr!(TimeoutObject, event_loop_timer, value)
         })
     }
 

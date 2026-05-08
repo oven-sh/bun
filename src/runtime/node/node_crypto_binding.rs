@@ -164,7 +164,7 @@ macro_rules! extern_crypto_job {
                     pub unsafe fn run_task(task: *mut WorkPoolTask) {
                         // SAFETY: `task` points to `Job.task`; recover parent via offset_of.
                         let job: *mut Job = unsafe {
-                            task.cast::<u8>().sub(offset_of!(Job, task)).cast::<Job>()
+                            bun_core::from_field_ptr!(Job, task, task)
                         };
                         // SAFETY: job is live for the duration of the work-pool task.
                         let job = unsafe { &mut *job };
@@ -351,7 +351,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub unsafe fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: `task` points to `Self.task`; recover parent via offset_of.
         let job: *mut Self =
-            unsafe { task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>() };
+            unsafe { bun_core::from_field_ptr!(Self, task, task) };
         // SAFETY: job is live for the duration of the work-pool task.
         let job = unsafe { &mut *job };
         let vm = job.vm;

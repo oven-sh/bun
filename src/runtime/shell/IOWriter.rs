@@ -61,7 +61,7 @@ impl ChildPtr {
     }
 
     /// Construct a `ChildPtr` targeting a `subproc::CapturedWriter` (lives
-    /// outside the NodeId arena, recovered via `@fieldParentPtr` in the Zig).
+    /// outside the NodeId arena, recovered via `container_of` in the Zig).
     #[inline]
     pub fn subproc_capture(cw: *mut core::ffi::c_void) -> ChildPtr {
         ChildPtr { node: NodeId::NONE, tag: WriterTag::Subproc, raw: cw }

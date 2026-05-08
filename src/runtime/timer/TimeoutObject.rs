@@ -70,7 +70,7 @@ impl Default for TimeoutObject {
 impl TimeoutObject {
     // Zig: `pub const ref = RefCount.ref; pub const deref = RefCount.deref;`
     // — re-export the mixin's ops as inherent fns so `TimerObjectInternals`'s
-    // `@fieldParentPtr` dispatch (`TimeoutObject::ref_`/`::deref`) resolves.
+    // `container_of` dispatch (`TimeoutObject::ref_`/`::deref`) resolves.
 
     /// Increment the intrusive refcount.
     ///

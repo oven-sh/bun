@@ -491,17 +491,14 @@ impl SourceMapStore {
     #[inline]
     pub fn empty() -> Self { Self::default() }
 
-    /// `@fieldParentPtr("source_maps", store)` — recover the owning DevServer.
+    /// Intrusive backref: recover the owning DevServer.
     ///
     /// SAFETY: caller must guarantee `self` is the `source_maps` field of a
     /// live, heap-allocated `DevServer` (always true for production use; the
     /// `Default::default()` instance must never call this).
     pub unsafe fn owner(&mut self) -> *mut DevServer {
         unsafe {
-            std::ptr::from_mut::<Self>(self)
-                .cast::<u8>()
-                .sub(offset_of!(DevServer, source_maps))
-                .cast::<DevServer>()
+            bun_core::from_field_ptr!(DevServer, source_maps, std::ptr::from_mut::<Self>(self))
         }
     }
 
@@ -678,9 +675,7 @@ impl SourceMapStore {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
         let store: &mut SourceMapStore = unsafe {
-            &mut *timer.cast::<u8>()
-                .sub(offset_of!(SourceMapStore, weak_ref_sweep_timer))
-                .cast::<SourceMapStore>()
+            &mut *bun_core::from_field_ptr!(SourceMapStore, weak_ref_sweep_timer, timer)
         };
         // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
         debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);

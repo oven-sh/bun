@@ -340,18 +340,14 @@ impl ByteStream {
         // SAFETY: `self` is always the `context` field of a `Source` (ReadableStream.NewSource);
         // ByteStream is never constructed standalone.
         unsafe {
-            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(offset_of!(Source, context))
-                .cast::<Source>()
+            &mut *bun_core::from_field_ptr!(Source, context, std::ptr::from_mut::<Self>(self))
         }
     }
 
     fn parent_const(&self) -> &Source {
         // SAFETY: same invariant as `parent` — `self` is the `context` field of a `Source`.
         unsafe {
-            &*std::ptr::from_ref::<Self>(self).cast::<u8>()
-                .sub(offset_of!(Source, context))
-                .cast::<Source>()
+            &*bun_core::from_field_ptr!(Source, context, std::ptr::from_ref::<Self>(self))
         }
     }
 

@@ -465,7 +465,7 @@ pub struct ShellMvBatchedTask {
     pub cmd: NodeId,
     /// Index into `MvState::Executing::tasks` so the main-thread completion
     /// can route to `Mv::batched_move_task_done` (Zig used `*ShellMvBatchedTask`
-    /// directly via `@fieldParentPtr`).
+    /// directly via `container_of`).
     pub idx: usize,
     pub sources: Vec<ZBox>,
     pub target: ZBox,

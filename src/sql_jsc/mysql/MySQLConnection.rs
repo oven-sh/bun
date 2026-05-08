@@ -1258,9 +1258,7 @@ impl MySQLConnection {
         // from `&self` (`*const`) would carry SharedReadOnly provenance and
         // make any subsequent write UB under Stacked Borrows.
         unsafe {
-            std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(offset_of!(JSMySQLConnection, connection))
-                .cast::<JSMySQLConnection>()
+            bun_core::from_field_ptr!(JSMySQLConnection, connection, std::ptr::from_mut::<Self>(self))
         }
         // TODO(port): JSMySQLConnection field name was `#connection` (private) in Zig; confirm Rust field name
     }

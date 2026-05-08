@@ -60,6 +60,11 @@ pub type IntrusiveArc<T> = RefPtr<T>;
 pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;
 
+// Intrusive parent-from-field recovery — canonical helpers live in `bun_core`
+// (lowest tier, every crate can reach them); re-exported here so callers can
+// spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.
+pub use bun_core::{container_of, container_of_const, from_field_ptr};
+
 pub mod meta; // small, used by other crates
 
 // ported from: src/ptr/ptr.zig

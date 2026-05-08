@@ -207,7 +207,7 @@ impl Yes {
 #[repr(C)]
 pub struct YesTask {
     /// Back-ref to the owning [`Interpreter`] (NodeId-arena port replaces
-    /// Zig's `@fieldParentPtr` chain).
+    /// Zig's `container_of` chain).
     pub interp: *mut Interpreter,
     pub cmd: NodeId,
     pub evtloop: EventLoopHandle,

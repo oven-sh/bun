@@ -197,7 +197,7 @@ impl TarballStream {
         );
 
         // bun.TrivialNew(@This()) → heap::alloc(Box::new(...)). Pointer is
-        // recovered via @fieldParentPtr from the thread-pool callback and
+        // recovered via `container_of` from the thread-pool callback and
         // freed in `finish()` via heap::take.
         bun_core::heap::into_raw(Box::new(TarballStream {
             mutex: Mutex::new(),
@@ -285,7 +285,7 @@ impl TarballStream {
             // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
             // pointer inherits `this`'s full-struct provenance: the
             // thread-pool callback recovers the parent `*mut TarballStream`
-            // via `offset_of!` (Zig: `@fieldParentPtr`), which is OOB for a
+            // via `offset_of!`, which is OOB for a
             // pointer whose provenance is limited to the `drain_task` field
             // bytes. See ThreadPool.rs:442 for the same pattern.
             (*(*this).package_manager)
@@ -1125,11 +1125,9 @@ impl Drop for TarballStream {
 
 unsafe fn drain_callback(task: *mut thread_pool::Task) {
     // SAFETY: `task` points to `TarballStream.drain_task`; recover the parent
-    // via offset_of (Zig: @fieldParentPtr("drain_task", task)).
+    // via offset_of).
     let this: *mut TarballStream = unsafe {
-        task.cast::<u8>()
-            .sub(offset_of!(TarballStream, drain_task))
-            .cast::<TarballStream>()
+        bun_core::from_field_ptr!(TarballStream, drain_task, task)
     };
     // SAFETY: the thread pool guarantees `task` is live for the duration of
     // the callback, and only one drain runs at a time (see `draining` flag).

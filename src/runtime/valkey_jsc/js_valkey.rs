@@ -131,9 +131,7 @@ impl SubscriptionCtx {
     fn parent(&mut self) -> &mut JSValkeyClient {
         // SAFETY: self points to JSValkeyClient._subscription_ctx (intrusive backref).
         unsafe {
-            &mut *(std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(offset_of!(JSValkeyClient, _subscription_ctx))
-                .cast::<JSValkeyClient>())
+            &mut *(bun_core::from_field_ptr!(JSValkeyClient, _subscription_ctx, std::ptr::from_mut::<Self>(self)))
         }
     }
 

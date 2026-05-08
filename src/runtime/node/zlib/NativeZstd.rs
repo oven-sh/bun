@@ -485,9 +485,8 @@ impl CompressionStreamImpl for NativeZstd {
 
     #[inline]
     unsafe fn from_task(task: *mut WorkPoolTask) -> *mut Self {
-        // Zig `@fieldParentPtr("task", task)`.
-        // SAFETY: caller guarantees `task` points at the `task` field of a live `NativeZstd`.
-        unsafe { task.byte_sub(mem::offset_of!(NativeZstd, task)).cast::<Self>() }
+        // Intrusive parent recovery.        // SAFETY: caller guarantees `task` points at the `task` field of a live `NativeZstd`.
+        unsafe { bun_core::from_field_ptr!(NativeZstd, task, task) }
     }
 
     fn ref_(&self) {

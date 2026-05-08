@@ -99,7 +99,7 @@ impl File {
     /// Get the File struct from an fs_t pointer using field offset.
     pub unsafe fn from_fs(fs: *mut uv::fs_t) -> *mut File {
         // SAFETY: fs points to File.fs; recover the parent via offset_of.
-        unsafe { fs.cast::<u8>().sub(offset_of!(File, fs)).cast::<File>() }
+        unsafe { bun_core::from_field_ptr!(File, fs, fs) }
     }
 
     /// Returns true if ready to start a new operation.

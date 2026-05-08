@@ -1041,7 +1041,7 @@ impl Writable {
     // never exposes its stdin Writable to JS.
 
     pub fn finalize(&mut self) {
-        // PORT NOTE: Zig recovered `*Subprocess` via @fieldParentPtr to gate on
+        // PORT NOTE: Zig recovered `*Subprocess` via `container_of` to gate on
         // `subprocess.this_jsvalue != .zero`. That field is never assigned on
         // ShellSubprocess (dead code path under Zig lazy compilation) and was
         // dropped from the port, so the parent-pointer recovery is unnecessary.
@@ -1490,7 +1490,7 @@ pub struct PipeReader {
     pub interp: *mut crate::shell::interpreter::Interpreter,
     // ref_count: handled by Arc<PipeReader> per LIFETIMES.tsv.
     // TODO(port): Zig uses intrusive bun.ptr.RefCount and recovers *PipeReader via
-    // @fieldParentPtr from CapturedWriter — incompatible with Arc's header layout.
+    // `container_of` from CapturedWriter — incompatible with Arc's header layout.
     // Phase B should switch to bun_ptr::IntrusiveRc<PipeReader> + Cell<u32> ref_count
     // and update Readable::Pipe accordingly.
 }
@@ -1604,9 +1604,7 @@ impl CapturedWriter {
         // SAFETY: `self` borrow ends before `run_yield` reborrows the parent
         // PipeReader; field-parent recovery is sound (single-threaded shell).
         let parent = unsafe {
-            &*std::ptr::from_mut(self).cast::<u8>()
-                .sub(offset_of!(PipeReader, captured_writer))
-                .cast::<PipeReader>()
+            &*bun_core::from_field_ptr!(PipeReader, captured_writer, std::ptr::from_mut(self))
         };
         parent.run_yield(y);
     }
@@ -1633,18 +1631,14 @@ impl CapturedWriter {
     pub fn parent(&self) -> &PipeReader {
         // SAFETY: self points to PipeReader.captured_writer (embedded field).
         unsafe {
-            &*std::ptr::from_ref(self).cast::<u8>()
-                .sub(offset_of!(PipeReader, captured_writer))
-                .cast::<PipeReader>()
+            &*bun_core::from_field_ptr!(PipeReader, captured_writer, std::ptr::from_ref(self))
         }
     }
 
     fn parent_mut(&mut self) -> &mut PipeReader {
         // SAFETY: self points to PipeReader.captured_writer (embedded field).
         unsafe {
-            &mut *std::ptr::from_mut(self).cast::<u8>()
-                .sub(offset_of!(PipeReader, captured_writer))
-                .cast::<PipeReader>()
+            &mut *bun_core::from_field_ptr!(PipeReader, captured_writer, std::ptr::from_mut(self))
         }
     }
 
@@ -1790,7 +1784,7 @@ impl PipeReader {
         interp: *mut crate::shell::interpreter::Interpreter,
     ) -> Arc<PipeReader> {
         // Allocate directly into the Arc so the address is stable BEFORE we
-        // hand it to `reader.set_parent` / @fieldParentPtr consumers.
+        // hand it to `reader.set_parent` / `container_of` consumers.
         // `Arc::from(Box<T>)` would reallocate into a new ArcInner and leave
         // every BufferedReader callback with a dangling parent pointer.
         let arc = Arc::new(PipeReader {

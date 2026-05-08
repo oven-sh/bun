@@ -114,9 +114,7 @@ impl Collection {
     fn bun_test(&mut self) -> &mut BunTest {
         // SAFETY: self points to BunTest.collection (Collection is only ever embedded there).
         unsafe {
-            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
-                .sub(core::mem::offset_of!(BunTest, collection))
-                .cast::<BunTest>()
+            &mut *bun_core::from_field_ptr!(BunTest, collection, std::ptr::from_mut::<Self>(self))
         }
     }
 

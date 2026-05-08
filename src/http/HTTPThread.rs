@@ -878,10 +878,7 @@ impl HttpThread {
             while let Some(task) = batch_.pop() {
                 // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
                 let http: *mut AsyncHttp = unsafe {
-                    task.as_ptr()
-                        .cast::<u8>()
-                        .sub(core::mem::offset_of!(AsyncHttp, task))
-                        .cast::<AsyncHttp>()
+                    bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr())
                 };
                 self.queued_tasks.push(http);
             }

@@ -92,9 +92,7 @@ pub fn write_output_files_to_disk(
     let mut pathbuf = PathBuffer::uninit();
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
     let bv2: &mut BundleV2 = unsafe {
-        &mut *(std::ptr::from_mut::<LinkerContext>(c).cast::<u8>()
-            .sub(offset_of!(BundleV2, linker))
-            .cast::<BundleV2>())
+        &mut *(bun_core::from_field_ptr!(BundleV2, linker, std::ptr::from_mut::<LinkerContext>(c)))
     };
 
     // PORT NOTE: Zig passes `chunk` (an element of `chunks`) and `chunks`

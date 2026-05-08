@@ -757,7 +757,7 @@ impl ShellRmTask {
     /// intrusive `*WorkPoolTask` and run the root DirTask.
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
-        // is embedded in `ShellRmTask` at `TASK_OFFSET` (Zig: `@fieldParentPtr`).
+        // is embedded in `ShellRmTask` at `TASK_OFFSET`.
         let this = unsafe {
             task.cast::<u8>()
                 .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET).cast::<ShellRmTask>()
@@ -1228,7 +1228,7 @@ impl DirTask {
     unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
         // SAFETY: `work_task` is at a fixed offset within DirTask.
         let this = unsafe {
-            task.cast::<u8>().sub(core::mem::offset_of!(DirTask, work_task)).cast::<DirTask>()
+            bun_core::from_field_ptr!(DirTask, work_task, task)
         };
         // SAFETY: `this` is a live DirTask; this worker thread owns it.
         unsafe { Self::run_from_thread_pool_impl(this) };

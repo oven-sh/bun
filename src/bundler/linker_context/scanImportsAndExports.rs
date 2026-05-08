@@ -62,43 +62,26 @@ impl From<ScanImportsAndExportsError> for bun_core::Error {
     }
 }
 
-/// Build a `*mut [T]` column pointer from a cached `MultiArrayList::Slice`.
+/// Short-lived `&mut [T]` deref of a `split_raw()` column pointer at a single
+/// use site.
 ///
-/// SoA columns are disjoint by construction; the backing buffer is never
-/// reallocated for the lifetime of the slice (no `append`/`resize` here),
-/// so dereferencing distinct columns simultaneously is sound.
-///
-/// PORT NOTE: this file deliberately keeps the raw `items_raw()` →
-/// `slice_from_raw_parts_mut` path (root/SharedRW provenance from `bytes`)
-/// rather than decaying `split_mut()`'s `&mut [T]` results, because steps 3–5
-/// interleave column accesses with `&mut LinkerContext` method calls that
-/// internally re-derive `&mut` column slices from the same allocation. Going
-/// through an intermediate `&mut [T]` would give the cached raw a child Unique
-/// tag that those calls invalidate under Stacked Borrows. Round 2 of
-/// RUST_IDIOMS_AUDIT.md §3 retires these once `generate_code_for_lazy_export`
-/// / `match_imports_with_exports_for_file` / `create_wrapper_for_file` /
-/// `do_step5` are reshaped to free fns over column slices and `split_mut`
-/// borrows can be held for the whole body.
-macro_rules! col_ptr {
-    ($slice:ident, $field:ident, $ty:ty) => {{
-        let len = $slice.len();
-        // SAFETY: `$ty` is exactly the column type for `$field`; the derive
-        // guarantees the field-enum ↔ type pairing.
-        let p: *mut $ty = unsafe { $slice.items_raw::<{ ::core::stringify!($field) }, $ty>() };
-        core::ptr::slice_from_raw_parts_mut(p, len)
-    }};
-}
-
-/// Short-lived `&mut [T]` deref of a column pointer at a single use site.
+/// SoA columns are physically disjoint (`COLUMN_OFFSET_PER_CAP`); the backing
+/// buffer is never reallocated inside this function (only column *element*
+/// contents grow, e.g. `Vec<Part>::append`). The pointers come from
+/// `split_raw()`, which derives them by raw `add` on the heap buffer base —
+/// root/SharedRW provenance, no `&mut` intermediate — so they survive the
+/// interleaved `&mut LinkerContext` method calls in steps 3-5 under Stacked
+/// Borrows. (Decaying `split_mut()`'s `&mut [T]` to raw would *not*: the child
+/// Unique tag is popped the first time another column accessor runs.)
 macro_rules! col {
     ($p:expr) => {
-        // SAFETY: see `col_ptr!`. Caller ensures no aliasing `&mut` to the
-        // same column is live across this deref.
+        // SAFETY: see module-level note. Caller ensures no aliasing `&mut` to
+        // the *same* column is live across this deref.
         unsafe { &mut *$p }
     };
 }
 
-/// Short-lived `&[T]` deref of a column pointer.
+/// Short-lived `&[T]` deref of a `split_raw()` column pointer.
 macro_rules! col_ref {
     ($p:expr) => {
         // SAFETY: see `col!`.
@@ -120,50 +103,43 @@ pub fn scan_imports_and_exports(
     // ── cache SoA column base pointers ────────────────────────────────────
     // `MultiArrayList` never reallocates inside this function (only column
     // *element* contents grow, e.g. `Vec<Part>::append`). So these raw
-    // column pointers are valid for the whole body.
-    let ast = this.graph.ast.slice();
-    let meta = this.graph.meta.slice();
-    let files = this.graph.files.slice();
+    // column pointers are valid for the whole body. `split_raw()` derives
+    // each `*mut [T]` directly from the buffer base (root provenance) — see
+    // the `col!` doc-comment for why `split_mut()` is not used here.
+    let ast = this.graph.ast.split_raw();
+    let meta = this.graph.meta.split_raw();
+    let files = this.graph.files.split_raw();
     // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the
     // lifetime of the link step. Read-only — this function never writes to it.
-    let parse_graph = unsafe { &*this.parse_graph };
-    let input = parse_graph.input_files.slice();
+    let input = unsafe { &*this.parse_graph }.input_files.split_raw();
 
     use bun_js_parser::ast::bundled_ast::CssCol;
-    let import_records_list: *mut [ImportRecordList] =
-        col_ptr!(ast, import_records, ImportRecordList);
-    let exports_kind: *mut [ExportsKind] = col_ptr!(ast, exports_kind, ExportsKind);
-    let entry_point_kinds: *mut [EntryPoint::Kind] =
-        col_ptr!(files, entry_point_kind, EntryPoint::Kind);
-    let named_imports: *mut [NamedImports] = col_ptr!(ast, named_imports, NamedImports);
-    let named_exports: *mut [NamedExports] = col_ptr!(ast, named_exports, NamedExports);
-    let flags: *mut [js_meta::Flags] = col_ptr!(meta, flags, js_meta::Flags);
-    let ast_flags_list: *mut [AstFlags] = col_ptr!(ast, flags, AstFlags);
-    let export_star_import_records: *mut [Box<[u32]>] =
-        col_ptr!(ast, export_star_import_records, Box<[u32]>);
-    let exports_refs: *mut [Ref] = col_ptr!(ast, exports_ref, Ref);
-    let module_refs: *mut [Ref] = col_ptr!(ast, module_ref, Ref);
-    let wrapper_refs: *mut [Ref] = col_ptr!(ast, wrapper_ref, Ref);
-    let parts_list: *mut [PartList] = col_ptr!(ast, parts, PartList);
+    let import_records_list: *mut [ImportRecordList] = ast.import_records;
+    let exports_kind: *mut [ExportsKind] = ast.exports_kind;
+    let entry_point_kinds: *mut [EntryPoint::Kind] = files.entry_point_kind;
+    let named_imports: *mut [NamedImports] = ast.named_imports;
+    let named_exports: *mut [NamedExports] = ast.named_exports;
+    let flags: *mut [js_meta::Flags] = meta.flags;
+    let ast_flags_list: *mut [AstFlags] = ast.flags;
+    let export_star_import_records: *mut [Box<[u32]>] = ast.export_star_import_records;
+    let exports_refs: *mut [Ref] = ast.exports_ref;
+    let module_refs: *mut [Ref] = ast.module_ref;
+    let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
+    let parts_list: *mut [PartList] = ast.parts;
     // Zig: `[]?*bun.css.BundlerStyleSheet` — element is a *mutable* nullable
     // pointer (matches `BundledAst.css: Option<*mut BundlerStyleSheet>`).
-    let css_asts: *mut [CssCol] = col_ptr!(ast, css, CssCol);
+    let css_asts: *mut [CssCol] = ast.css;
 
-    let input_files: *mut [Source] = col_ptr!(input, source, Source);
-    let loaders: *mut [Loader] = col_ptr!(input, loader, Loader);
+    let input_files: *mut [Source] = input.source;
+    let loaders: *mut [Loader] = input.loader;
 
-    let resolved_exports: *mut [ResolvedExports] =
-        col_ptr!(meta, resolved_exports, ResolvedExports);
-    let resolved_export_stars: *mut [ExportData] =
-        col_ptr!(meta, resolved_export_star, ExportData);
-    let imports_to_bind_list: *mut [RefImportData] =
-        col_ptr!(meta, imports_to_bind, RefImportData);
-    let wrapper_part_indices: *mut [Index] = col_ptr!(meta, wrapper_part_index, Index);
-    let sorted_aliases: *mut [Box<[Box<[u8]>]>] =
-        col_ptr!(meta, sorted_and_filtered_export_aliases, Box<[Box<[u8]>]>);
-    let cjs_export_copies: *mut [Box<[Ref]>] = col_ptr!(meta, cjs_export_copies, Box<[Ref]>);
-    let entry_point_part_indices: *mut [Index] =
-        col_ptr!(meta, entry_point_part_index, Index);
+    let resolved_exports: *mut [ResolvedExports] = meta.resolved_exports;
+    let resolved_export_stars: *mut [ExportData] = meta.resolved_export_star;
+    let imports_to_bind_list: *mut [RefImportData] = meta.imports_to_bind;
+    let wrapper_part_indices: *mut [Index] = meta.wrapper_part_index;
+    let sorted_aliases: *mut [Box<[Box<[u8]>]>] = meta.sorted_and_filtered_export_aliases;
+    let cjs_export_copies: *mut [Box<[Ref]>] = meta.cjs_export_copies;
+    let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
     // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
     // In Rust `this.graph.symbols` is the same storage, so no copy-back needed.
@@ -338,10 +314,11 @@ pub fn scan_imports_and_exports(
         {
             let _trace = perf::trace("Bundler.WrapDependencies");
             let mut dependency_wrapper = DependencyWrapper {
-                // SAFETY: `col_ptr!`-derived column ptrs carry root provenance
-                // from the `MultiArrayList` heap buffer; this block holds no
-                // other borrow into ast/meta/files and makes no `&mut this`
-                // calls, so the reborrows are exclusive for the block.
+                // SAFETY: `split_raw()`-derived column ptrs carry root
+                // provenance from the `MultiArrayList` heap buffer; this block
+                // holds no other borrow into ast/meta/files and makes no
+                // `&mut this` calls, so the reborrows are exclusive for the
+                // block.
                 flags: unsafe { &mut *flags },
                 import_records: unsafe { &*import_records_list },
                 exports_kind: unsafe { &mut *exports_kind },
@@ -1710,14 +1687,14 @@ mod __css_validation {
 
         // PERF(port): was stack-fallback arena (1024 bytes) — profile.
         // SAFETY: parse_graph backref valid for link step. Read-only.
-        let input = unsafe { &*this.parse_graph }.input_files.slice();
+        let input = unsafe { &*this.parse_graph }.input_files.split_raw();
         let mut visitor = Visitor {
             visited: ArrayHashMap::<logger::Ref, ()>::default(),
             properties: StringArrayHashMap::<PropertyInFile>::default(),
             all_import_records: import_records_list,
             all_css_asts,
             all_symbols: &this.graph.symbols,
-            all_sources: col_ptr!(input, source, Source),
+            all_sources: input.source,
             log: this.log,
         };
         for local in root_css_ast.local_scope.values() {

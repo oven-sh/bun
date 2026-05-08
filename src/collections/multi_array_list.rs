@@ -99,21 +99,48 @@ macro_rules! multi_array_columns {
                 pub __mal: ::core::marker::PhantomData<&'__mal mut $elem>,
             }
 
+            /// Raw `*mut [T]` view of every column. Returned by
+            /// [`split_raw`]($trait::split_raw). Unlike [`split_mut`], the
+            /// pointers are derived directly from the SoA buffer's raw `bytes`
+            /// base (root/SharedRW provenance) with **no `&mut` intermediate**,
+            /// so they remain valid under Stacked Borrows even when interleaved
+            /// with other column accessors on the same list — the use case
+            /// `split_mut` cannot serve. Dereferencing is the caller's
+            /// responsibility (per-site `unsafe`); columns are physically
+            /// disjoint by `COLUMN_OFFSET_PER_CAP`, so distinct-column derefs
+            /// never alias. Invalidated by any reallocation of the list.
+            #[allow(dead_code, non_snake_case)]
+            $vis struct [<$trait Raw>] <$($decl)*> {
+                $( pub $field: *mut [$ty], )*
+                #[doc(hidden)]
+                pub __mal: ::core::marker::PhantomData<*mut $elem>,
+            }
+            #[allow(dead_code, non_snake_case)]
+            impl <$($decl)*> ::core::marker::Copy for [<$trait Raw>] <$($use)*> {}
+            #[allow(dead_code, non_snake_case)]
+            impl <$($decl)*> ::core::clone::Clone for [<$trait Raw>] <$($use)*> {
+                #[inline] fn clone(&self) -> Self { *self }
+            }
+
             #[allow(dead_code, non_snake_case)]
             $vis trait $trait <$($decl)*> {
                 $( $crate::__mal_column_sig!($field : $ty); )*
                 /// Split-borrow every column at once.
                 fn split_mut(&mut self) -> [<$trait Mut>]<'_, $($use)*>;
+                /// Raw column pointers (root provenance, no `&mut` intermediate).
+                fn split_raw(&self) -> [<$trait Raw>]<$($use)*>;
             }
             #[allow(dead_code, non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::MultiArrayList<$elem> {
                 $( $crate::__mal_column_impl!($field : $ty); )*
                 $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
+                $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
             }
             #[allow(dead_code, non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::multi_array_list::Slice<$elem> {
                 $( $crate::__mal_column_impl!($field : $ty); )*
                 $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
+                $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
             }
         }
     };
@@ -150,6 +177,29 @@ macro_rules! __mal_split_mut_impl {
                     ), )*
                     __mal: ::core::marker::PhantomData,
                 }
+            }
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __mal_split_raw_impl {
+    ($struct:ident [$($use:tt)*] { $( $field:ident : $ty:ty, )* }) => {
+        #[inline]
+        fn split_raw(&self) -> $struct<$($use)*> {
+            let __len = self.len();
+            $struct {
+                $( $field: ::core::ptr::slice_from_raw_parts_mut(
+                    // SAFETY: `items_raw` is `unsafe` only as a lint on the
+                    // returned pointer's read/write contract; merely obtaining
+                    // it is always sound. The pointer is computed by raw `add`
+                    // on the heap buffer base — no `&`/`&mut` intermediate —
+                    // so it carries the allocation's root provenance.
+                    unsafe { self.items_raw::<{ ::core::stringify!($field) }, $ty>() },
+                    __len,
+                ), )*
+                __mal: ::core::marker::PhantomData,
             }
         }
     };

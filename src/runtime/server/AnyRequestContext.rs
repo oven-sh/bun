@@ -229,7 +229,7 @@ impl AnyRequestContext {
         dispatch!(self, None, |_T, ctx| {
             // SAFETY: server backref outlives this context; `dev_server` is a
             // `Box` field never moved while requests are in flight.
-            let server = ctx.server?.cast_mut();
+            let server = ctx.server?.as_ptr();
             let ds = unsafe { (*server).dev_server.as_deref_mut()? };
             Some(core::ptr::from_mut(ds))
         })

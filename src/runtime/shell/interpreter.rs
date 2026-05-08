@@ -2707,19 +2707,14 @@ impl ShellTask {
     /// SAFETY: `ctx` must be a live heap allocation that embeds this
     /// `ShellTask` at `C::TASK_OFFSET` and outlives the worker-thread call.
     pub unsafe fn schedule<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_threading::work_pool::WorkPool;
         log!("ShellTask schedule");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        // Stay on raw pointers: once `WorkPool::schedule` returns the worker
-        // thread may already be touching `*this`, so we must not hold a live
-        // `&mut ShellTask` across that call.
         unsafe {
             let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this).task.callback = shell_task_trampoline::<C>;
             (*this)
                 .keep_alive
                 .ref_((*this).event_loop.as_event_loop_ctx());
-            WorkPool::schedule(&raw mut (*this).task);
+            Self::schedule_no_ref::<C>(ctx);
         }
     }
 
@@ -2733,6 +2728,9 @@ impl ShellTask {
     pub unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
+        // Stay on raw pointers: once `WorkPool::schedule` returns the worker
+        // thread may already be touching `*this`, so we must not hold a live
+        // `&mut ShellTask` across that call.
         unsafe {
             let this = ctx.cast::<u8>().add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this).task.callback = shell_task_trampoline::<C>;

@@ -136,7 +136,7 @@ impl Ls {
                             // SAFETY: freshly Box::into_raw'd.
                             unsafe {
                                 (*task).print_directory = print_directory;
-                                ShellTask::schedule::<ShellLsTask>(task);
+                                ShellTask::schedule_no_ref::<ShellLsTask>(task);
                             }
                         }
                     } else {
@@ -145,7 +145,7 @@ impl Ls {
                             ZBox::from_bytes(b"."), evtloop, interp_ptr,
                         );
                         // SAFETY: freshly Box::into_raw'd.
-                        unsafe { ShellTask::schedule::<ShellLsTask>(task) };
+                        unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
                     }
                     return Yield::suspended();
                 }

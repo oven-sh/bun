@@ -10,11 +10,10 @@
 //!   * `getOrPut` hands back a stable `key_ptr` / `value_ptr` / `index` triple
 //!     so callers can fill the slot in-place after the lookup.
 //!
-//! Zig builds a separate `index_header` once `len > 8`; this port mirrors that
-//! with an open-addressed `hash → entry index` table built on first growth past
-//! the threshold and maintained incrementally on append. Operations that
-//! reorder or remove entries simply drop the index (linear scan over the
-//! cached `hashes` vec remains correct), and the next append rebuilds it.
+//! PERF(port): Zig builds a separate `index_header` once `len > 8`; this port
+//! stores `hashes: Vec<u32>` and does a hash-prefiltered linear scan for every
+//! lookup. Correct, deterministic, O(n). Phase C should add the index header
+//! when profiling shows it matters.
 
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
@@ -233,12 +232,6 @@ pub struct ArrayHashMap<K, V, C = AutoContext> {
     keys: Vec<K>,
     values: Vec<V>,
     hashes: Vec<u32>,
-    /// Open-addressed `hash → entry index + 1` table (`0` = empty slot). Length
-    /// is always 0 or a power of two; when empty, lookups fall back to a
-    /// hash-prefiltered linear scan of `hashes`. Appends maintain it
-    /// incrementally; any removal/reorder clears it and the next append
-    /// rebuilds. Mirrors Zig's `index_header` (built once `len > 8`).
-    index: Vec<u32>,
     ctx: C,
     // Zig `pointer_stability: std.debug.SafetyLock` — debug-only re-entrancy
     // guard around operations that may invalidate entry pointers.
@@ -259,7 +252,6 @@ impl<K: Clone, V: Clone, C: Default> ArrayHashMap<K, V, C> {
             keys: self.keys.clone(),
             values: self.values.clone(),
             hashes: self.hashes.clone(),
-            index: self.index.clone(),
             ctx: C::default(),
             #[cfg(debug_assertions)]
             pointer_stability: core::cell::Cell::new(false),
@@ -273,7 +265,6 @@ impl<K, V, C: Default> ArrayHashMap<K, V, C> {
             keys: Vec::new(),
             values: Vec::new(),
             hashes: Vec::new(),
-            index: Vec::new(),
             ctx: C::default(),
             #[cfg(debug_assertions)]
             pointer_stability: core::cell::Cell::new(false),

@@ -1528,15 +1528,39 @@ impl StackCheck {
     /// Zig: `> 256K` on Windows, `> 128K` elsewhere (bun.zig:3762).
     #[inline]
     pub fn is_safe_to_recurse(&self) -> bool {
-        // PORT NOTE: @frameAddress() → intrinsic; approximate with a stack local's addr.
-        let probe = 0u8;
-        let probe_addr = &raw const probe as usize;
         // Zig uses `-|` (saturating sub): if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
-        let remaining = probe_addr.saturating_sub(self.cached_stack_end);
+        let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
         let threshold: usize = if cfg!(windows) { 256 * 1024 } else { 128 * 1024 };
         remaining > threshold
+    }
+
+    /// Port of Zig `@frameAddress()`. Reads the frame-pointer register so the
+    /// result is on the real machine stack — taking the address of a local
+    /// lands on ASAN's heap-backed fake stack when use-after-return detection
+    /// is on, which makes the comparison against `cached_stack_end` useless.
+    #[inline(always)]
+    fn frame_address() -> usize {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let fp: usize;
+            // SAFETY: reading rbp is side-effect-free.
+            unsafe { core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags)) };
+            fp
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            let fp: usize;
+            // SAFETY: reading x29 (fp) is side-effect-free.
+            unsafe { core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags)) };
+            fp
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            let probe = 0u8;
+            core::ptr::from_ref::<u8>(&probe) as usize
+        }
     }
 }
 

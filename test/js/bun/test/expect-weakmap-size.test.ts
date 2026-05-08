@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("expect().toEqual() diff with WeakMap that has a user-set size property does not crash", () => {
   const wm = new WeakMap();

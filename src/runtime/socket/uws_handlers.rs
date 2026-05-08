@@ -191,19 +191,190 @@ where
     }
 }
 
+// ── RawSocketEvents / RawPtrHandler ─────────────────────────────────────────
+//
+// Some consumers' handlers may free or re-enter `*Self` mid-call (refcount
+// reaching zero, `tcp.close()` synchronously dispatching `on_close`, …) and
+// therefore take `*mut Self` rather than `&mut self`. Dispatching those
+// through `PtrHandler` would form a `&mut T` argument that outlives the
+// allocation it points to (Stacked-Borrows argument-protector UB), so they
+// get a raw-pointer twin of the trait/adapter pair.
+pub trait RawSocketEvents<const SSL: bool>: Sized {
+    const HAS_ON_OPEN: bool = false;
+
+    unsafe fn on_open(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
+    unsafe fn on_data(_this: *mut Self, _s: NewSocketHandler<SSL>, _data: &[u8]) {}
+    unsafe fn on_writable(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
+    unsafe fn on_close(_this: *mut Self, _s: NewSocketHandler<SSL>, _code: i32, _reason: *mut c_void) {}
+    unsafe fn on_timeout(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
+    unsafe fn on_long_timeout(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
+    unsafe fn on_end(_this: *mut Self, _s: NewSocketHandler<SSL>) {}
+    unsafe fn on_connect_error(_this: *mut Self, _s: NewSocketHandler<SSL>, _code: i32) {}
+    unsafe fn on_handshake(
+        _this: *mut Self,
+        _s: NewSocketHandler<SSL>,
+        _ok: i32,
+        _err: bun_uws::us_bun_verify_error_t,
+    ) {
+    }
+}
+
+pub struct RawPtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
+
+impl<T, const SSL: bool> VHandler for RawPtrHandler<T, SSL>
+where
+    T: RawSocketEvents<SSL> + 'static,
+{
+    type Ext = Option<NonNull<T>>;
+
+    const HAS_ON_OPEN: bool = T::HAS_ON_OPEN;
+    const HAS_ON_DATA: bool = true;
+    const HAS_ON_WRITABLE: bool = true;
+    const HAS_ON_CLOSE: bool = true;
+    const HAS_ON_TIMEOUT: bool = true;
+    const HAS_ON_LONG_TIMEOUT: bool = true;
+    const HAS_ON_END: bool = true;
+    const HAS_ON_CONNECT_ERROR: bool = true;
+    const HAS_ON_CONNECTING_ERROR: bool = true;
+    const HAS_ON_HANDSHAKE: bool = true;
+
+    fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+        let Some(this) = *ext else { return };
+        // SAFETY: ext slot holds the unique heap owner; single-threaded dispatch.
+        unsafe { T::on_open(this.as_ptr(), wrap::<SSL>(s)) };
+    }
+    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+        let Some(this) = *ext else { return };
+        // SAFETY: see `on_open`.
+        unsafe { T::on_data(this.as_ptr(), wrap::<SSL>(s), data) };
+    }
+    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(this) = *ext else { return };
+        // SAFETY: see `on_open`.
+        unsafe { T::on_writable(this.as_ptr(), wrap::<SSL>(s)) };
+    }
+    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+        let Some(this) = *ext else { return };
+        // SAFETY: see `on_open`.
+        unsafe { T::on_close(this.as_ptr(), wrap::<SSL>(s), code, reason.unwrap_or(core::ptr::null_mut())) };
+    }
+    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(this) = *ext else { return };
+        // SAFETY: see `on_open`.
+        unsafe { T::on_timeout(this.as_ptr(), wrap::<SSL>(s)) };
+    }
+    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(this) = *ext else { return };
+        // SAFETY: see `on_open`.
+        unsafe { T::on_long_timeout(this.as_ptr(), wrap::<SSL>(s)) };
+    }
+    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(this) = *ext else { return };
+        // SAFETY: see `on_open`.
+        unsafe { T::on_end(this.as_ptr(), wrap::<SSL>(s)) };
+    }
+    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
+        // Close first, then notify — see `PtrHandler::on_connect_error`.
+        let this = *ext;
+        // SAFETY: `s` is a live socket passed by the trampoline.
+        unsafe { (*s).close(CloseCode::failure) };
+        if let Some(t) = this {
+            // SAFETY: see `on_open`.
+            unsafe { T::on_connect_error(t.as_ptr(), wrap::<SSL>(s), code) };
+        }
+    }
+    fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
+        // SAFETY: `c` is a live connecting socket passed by the trampoline.
+        let Some(this) = (unsafe { *(*c).ext::<Option<NonNull<T>>>() }) else { return };
+        // SAFETY: see `on_open`.
+        unsafe { T::on_connect_error(this.as_ptr(), NewSocketHandler::<SSL>::from_connecting(c), code) };
+    }
+    fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+        let Some(this) = *ext else { return };
+        // SAFETY: see `on_open`.
+        unsafe { T::on_handshake(this.as_ptr(), wrap::<SSL>(s), ok as i32, to_uws_verify_err(err)) };
+    }
+}
+
+impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL> {
+    const HAS_ON_OPEN: bool = true;
+
+    unsafe fn on_open(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { Self::handle_open(this, s) }
+    }
+    unsafe fn on_data(this: *mut Self, s: NewSocketHandler<SSL>, data: &[u8]) {
+        unsafe { Self::handle_data(this, s, data) }
+    }
+    unsafe fn on_writable(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { Self::handle_writable(this, s) }
+    }
+    unsafe fn on_close(this: *mut Self, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
+        unsafe { Self::handle_close(this, s, code, reason) }
+    }
+    unsafe fn on_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { Self::handle_timeout(this, s) }
+    }
+    unsafe fn on_long_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { Self::handle_timeout(this, s) }
+    }
+    unsafe fn on_end(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { Self::handle_end(this, s) }
+    }
+    unsafe fn on_connect_error(this: *mut Self, s: NewSocketHandler<SSL>, code: i32) {
+        unsafe { Self::handle_connect_error(this, s, code) }
+    }
+    unsafe fn on_handshake(
+        this: *mut Self,
+        s: NewSocketHandler<SSL>,
+        ok: i32,
+        err: bun_uws::us_bun_verify_error_t,
+    ) {
+        unsafe { Self::handle_handshake(this, s, ok, err) }
+    }
+}
+
+impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> {
+    // Zig: no `onOpen` decl — adoption of an already-connected socket.
+
+    unsafe fn on_data(this: *mut Self, _s: NewSocketHandler<SSL>, data: &[u8]) {
+        unsafe { Self::handle_data(this, data) }
+    }
+    unsafe fn on_writable(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { (*this).handle_writable(s) }
+    }
+    unsafe fn on_close(this: *mut Self, s: NewSocketHandler<SSL>, code: i32, reason: *mut c_void) {
+        unsafe { (*this).handle_close(s, code, reason) }
+    }
+    unsafe fn on_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { (*this).handle_timeout(s) }
+    }
+    unsafe fn on_long_timeout(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { (*this).handle_timeout(s) }
+    }
+    unsafe fn on_end(this: *mut Self, s: NewSocketHandler<SSL>) {
+        unsafe { (*this).handle_end(s) }
+    }
+    unsafe fn on_connect_error(this: *mut Self, s: NewSocketHandler<SSL>, code: i32) {
+        unsafe { (*this).handle_connect_error(s, code) }
+    }
+    unsafe fn on_handshake(
+        this: *mut Self,
+        s: NewSocketHandler<SSL>,
+        ok: i32,
+        err: bun_uws::us_bun_verify_error_t,
+    ) {
+        unsafe { (*this).handle_handshake(s, ok, err) }
+    }
+}
+
 // ── SocketEvents / NsSocketEvents impls ─────────────────────────────────────
 //
 // In Zig the consumer types carry `onOpen`/`onData`/… as inherent decls and
 // `@hasDecl` filters at comptime. Rust expresses that as a trait with default
 // no-ops; each consumer type opts in with an `impl` that overrides only the
-// events it actually handles. The bodies are filled in by `socket_body.rs` /
-// the per-driver ports — the empty impls here just satisfy `vtable::make`'s
-// `Handler` bound so dispatch tables compile.
-// TODO(port): replace default no-ops with the real event bodies once consumer
-// crates are ported (websocket_client, sql drivers). `api::NewSocket`'s real
-// impl lives in `socket/mod.rs` (bridges to inherent methods).
-impl<const SSL: bool> SocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL> {}
-impl<const SSL: bool> SocketEvents<SSL> for websocket_client::WebSocket<SSL> {}
+// events it actually handles. `api::NewSocket`'s real impl lives in
+// `socket/mod.rs` (bridges to inherent methods).
+// TODO(port): SQL-driver event bodies.
 impl<const SSL: bool> NsSocketEvents<postgres::PostgresSQLConnection, SSL>
     for postgres::postgres_sql_connection::SocketHandler<SSL>
 {
@@ -515,8 +686,8 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
 
 // ── WebSocket client ────────────────────────────────────────────────────────
 pub type WSUpgrade<const SSL: bool> =
-    PtrHandler<websocket_upgrade_client::NewHttpUpgradeClient<SSL>, SSL>;
-pub type WSClient<const SSL: bool> = PtrHandler<websocket_client::WebSocket<SSL>, SSL>;
+    RawPtrHandler<websocket_upgrade_client::NewHttpUpgradeClient<SSL>, SSL>;
+pub type WSClient<const SSL: bool> = RawPtrHandler<websocket_client::WebSocket<SSL>, SSL>;
 
 // ── SQL drivers ─────────────────────────────────────────────────────────────
 pub type Postgres<const SSL: bool> = NsHandler<

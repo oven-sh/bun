@@ -613,7 +613,7 @@ fn parse_until_before<T, C>(
 
     // FIXME: have a special-purpose tokenizer method for this that does less work.
     loop {
-        if delimiters.contains(Delimiters::from_byte(parser.input.tokenizer.next_byte())) {
+        if delimiters.intersects(Delimiters::from_byte(parser.input.tokenizer.next_byte())) {
             break;
         }
         match parser.input.tokenizer.next() {
@@ -642,8 +642,8 @@ pub fn parse_until_after<T, C>(
         return result;
     }
     let next_byte = parser.input.tokenizer.next_byte();
-    if next_byte.is_some() && !parser.stop_before.contains(Delimiters::from_byte(next_byte)) {
-        debug_assert!(delimiters.contains(Delimiters::from_byte(next_byte)));
+    if next_byte.is_some() && !parser.stop_before.intersects(Delimiters::from_byte(next_byte)) {
+        debug_assert!(delimiters.intersects(Delimiters::from_byte(next_byte)));
         // We know this byte is ASCII.
         parser.input.tokenizer.advance(1);
         if next_byte == Some(b'{') {
@@ -3945,7 +3945,7 @@ impl<'a> Parser<'a> {
 
     pub fn next_byte(&self) -> Option<u8> {
         let byte = self.input.tokenizer.next_byte();
-        if self.stop_before.contains(Delimiters::from_byte(byte)) {
+        if self.stop_before.intersects(Delimiters::from_byte(byte)) {
             return None;
         }
         byte
@@ -3983,7 +3983,7 @@ impl<'a> Parser<'a> {
         }
 
         let byte = self.input.tokenizer.next_byte();
-        if self.stop_before.contains(Delimiters::from_byte(byte)) {
+        if self.stop_before.intersects(Delimiters::from_byte(byte)) {
             return Err(self.new_error(BasicParseErrorKind::end_of_input));
         }
 

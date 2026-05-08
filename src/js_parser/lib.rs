@@ -2157,11 +2157,9 @@ pub mod defines_full_draft {
                 let value = if value_is_undefined || value_str == b"undefined" {
                     expr::Data::EUndefined(E::Undefined {})
                 } else {
-                    expr::Data::EIdentifier(E::Identifier {
-                        ref_: Ref::NONE,
-                        can_be_removed_if_unused: true,
-                        ..Default::default()
-                    })
+                    expr::Data::EIdentifier(
+                        E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true),
+                    )
                 };
                 flags |= DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED;
                 return Ok(DefineData {

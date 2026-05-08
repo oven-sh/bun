@@ -389,11 +389,9 @@ impl DefineDataExt for DefineData {
             let value = if value_is_undefined || value_str == b"undefined" {
                 ExprData::EUndefined(js_ast::E::Undefined)
             } else {
-                ExprData::EIdentifier(js_ast::E::Identifier {
-                    ref_: Ref::NONE,
-                    can_be_removed_if_unused: true,
-                    ..Default::default()
-                })
+                ExprData::EIdentifier(
+                    js_ast::E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true),
+                )
             };
 
             return Ok(DefineData {

@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
+#[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_logger as logger;
@@ -112,7 +113,9 @@ impl Default for Stmt {
 const NONE: S::Empty = S::Empty {};
 
 // PORT NOTE: Zig `pub var icount: usize = 0;` is a plain mutable global (not
-// threadlocal). Use a relaxed atomic to keep safe Rust; this is a debug counter.
+// threadlocal), never read. Debug-only here so release doesn't pay a contended
+// `lock xadd` per Stmt across the bundler worker pool.
+#[cfg(debug_assertions)]
 pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Trait absorbing the Zig `switch (comptime StatementType)` tables in
@@ -132,7 +135,9 @@ pub trait StatementData: Sized {
 }
 
 impl Stmt {
+    #[inline]
     pub fn init<T: StatementData>(orig_data: StoreRef<T>, loc: logger::Loc) -> Stmt {
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Stmt {
             loc,
@@ -169,8 +174,10 @@ impl Stmt {
     // and is absorbed by `StatementData::wrap_ref`.
     // TODO(port): no direct equivalent; callers use the trait.
 
+    #[inline]
     pub fn alloc<T: StatementData>(orig_data: T, loc: logger::Loc) -> Stmt {
         data::Store::assert();
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Stmt::comptime_alloc(orig_data, loc)
     }
@@ -188,6 +195,7 @@ impl Stmt {
         loc: logger::Loc,
     ) -> Stmt {
         data::Store::assert();
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, Ordering::Relaxed);
         Stmt::allocate_data(bump, orig_data, loc)
     }
@@ -212,10 +220,13 @@ macro_rules! impl_statement_data {
       ; inline: $( ($ity:ty, $ivariant:ident) ),* $(,)? ) => {
         $(
             impl StatementData for $ty {
+                #[inline]
                 fn wrap_ref(ptr: StoreRef<Self>) -> Data { Data::$variant(ptr) }
+                #[inline]
                 fn store_alloc(self) -> Data {
                     Data::$variant(data::Store::append(self))
                 }
+                #[inline]
                 fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data {
                     // TODO(port): StoreRef vs &'bump — Phase B unify arena ref type
                     Data::$variant(StoreRef::from_bump(bump.alloc(self)))
@@ -224,8 +235,11 @@ macro_rules! impl_statement_data {
         )*
         $(
             impl StatementData for $ity {
+                #[inline]
                 fn wrap_ref(_ptr: StoreRef<Self>) -> Data { Data::$ivariant(<$ity>::default()) }
+                #[inline]
                 fn store_alloc(self) -> Data { Data::$ivariant(self) }
+                #[inline]
                 fn arena_alloc(self, _bump: &bun_alloc::Arena) -> Data { Data::$ivariant(self) }
             }
         )*
@@ -782,9 +796,11 @@ pub mod data {
             INSTANCE.with(|c| c.get())
         }
 
+        #[inline]
         pub fn memory_allocator() -> *mut ASTMemoryAllocator {
             MEMORY_ALLOCATOR.with(|c| c.get())
         }
+        #[inline]
         pub fn set_memory_allocator(p: *mut ASTMemoryAllocator) {
             MEMORY_ALLOCATOR.with(|c| c.set(p));
         }
@@ -848,6 +864,7 @@ pub mod data {
             }
         }
 
+        #[inline]
         pub fn append<T>(value: T) -> StoreRef<T> {
             let ma = memory_allocator();
             if !ma.is_null() {

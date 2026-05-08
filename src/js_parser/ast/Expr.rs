@@ -1008,7 +1008,13 @@ impl Expr {
 // Static state
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): icount is a global mutable usize — needs atomic or thread_local
+// Zig: `pub var icount: usize = 0;` — a plain non-atomic global, never read
+// (debug counter). Kept for parity but **debug-only**: in release the
+// `lock xadd` per node was a contended cache line bouncing across the bundler
+// worker pool on every Expr allocation. Zig's increment is a non-atomic store
+// (i.e. racy garbage under threads) so a debug-gated atomic is strictly more
+// faithful than the old unconditional one.
+#[cfg(debug_assertions)]
 pub static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 // We don't need to dynamically allocate booleans
@@ -1035,10 +1041,12 @@ macro_rules! impl_into_expr_data_boxed {
     ($($ty:ident => $variant:ident),* $(,)?) => {
         $(
             impl IntoExprData for E::$ty {
+                #[inline]
                 fn into_data_store(self) -> Data {
                     // SAFETY: Store::append never returns null.
                     Data::$variant(unsafe { StoreRef::from_raw(data::Store::append(self)) })
                 }
+                #[inline]
                 fn into_data_alloc(self, bump: &Bump) -> Data {
                     Data::$variant(StoreRef::from_bump(bump.alloc(self)))
                 }
@@ -1051,7 +1059,9 @@ macro_rules! impl_into_expr_data_inline {
     ($($ty:ident => $variant:ident),* $(,)?) => {
         $(
             impl IntoExprData for E::$ty {
+                #[inline]
                 fn into_data_store(self) -> Data { Data::$variant(self) }
+                #[inline]
                 fn into_data_alloc(self, _bump: &Bump) -> Data { Data::$variant(self) }
             }
         )*
@@ -1098,52 +1108,46 @@ impl_into_expr_data_inline! {
     RequireString => ERequireString,
 }
 
-// E::Identifier — Zig copies fields explicitly (normalization)
+// E::Identifier — Zig copies fields explicitly (normalization). With the
+// packed-flag layout the struct is a single `Ref`, so the copy is trivial.
 impl IntoExprData for E::Identifier {
+    #[inline]
     fn into_data_store(self) -> Data {
-        Data::EIdentifier(E::Identifier {
-            ref_: self.ref_,
-            must_keep_due_to_with_stmt: self.must_keep_due_to_with_stmt,
-            can_be_removed_if_unused: self.can_be_removed_if_unused,
-            call_can_be_unwrapped_if_unused: self.call_can_be_unwrapped_if_unused,
-        })
+        Data::EIdentifier(self)
     }
+    #[inline]
     fn into_data_alloc(self, _bump: &Bump) -> Data {
-        self.into_data_store()
+        Data::EIdentifier(self)
     }
 }
 
 impl IntoExprData for E::ImportIdentifier {
+    #[inline]
     fn into_data_store(self) -> Data {
-        Data::EImportIdentifier(E::ImportIdentifier {
-            ref_: self.ref_,
-            was_originally_identifier: self.was_originally_identifier,
-        })
+        Data::EImportIdentifier(self)
     }
+    #[inline]
     fn into_data_alloc(self, _bump: &Bump) -> Data {
-        self.into_data_store()
+        Data::EImportIdentifier(self)
     }
 }
 
 impl IntoExprData for E::CommonJSExportIdentifier {
+    #[inline]
     fn into_data_store(self) -> Data {
-        Data::ECommonjsExportIdentifier(E::CommonJSExportIdentifier {
-            ref_: self.ref_,
-            base: self.base,
-        })
+        Data::ECommonjsExportIdentifier(self)
     }
+    #[inline]
     fn into_data_alloc(self, _bump: &Bump) -> Data {
-        // Zig's allocate() variant only sets .ref; init() also sets .base.
-        // We follow init() semantics here (superset).
-        Data::ECommonjsExportIdentifier(E::CommonJSExportIdentifier {
-            ref_: self.ref_,
-            ..Default::default()
-        })
+        // Packed layout collapses Zig's init()/allocate() distinction — `base`
+        // rides inside `ref_`, so a single-word copy carries both regardless.
+        Data::ECommonjsExportIdentifier(self)
     }
 }
 
 // E::EString — special debug assert + boxed
 impl IntoExprData for E::EString {
+    #[inline]
     fn into_data_store(self) -> Data {
         #[cfg(debug_assertions)]
         {
@@ -1170,9 +1174,11 @@ impl IntoExprData for E::EString {
 // `Clone` (rope `next` ptr); Zig copies the struct bytes. Mirror with a
 // shallow field-copy.
 impl IntoExprData for &E::EString {
+    #[inline]
     fn into_data_store(self) -> Data {
         Data::EString(unsafe { StoreRef::from_raw(data::Store::append(self.shallow_clone())) })
     }
+    #[inline]
     fn into_data_alloc(self, bump: &Bump) -> Data {
         Data::EString(StoreRef::from_bump(bump.alloc(self.shallow_clone())))
     }
@@ -1307,13 +1313,17 @@ impl Expr {
     /// When the lifetime of an Expr.Data's pointer must exist longer than reset() is called, use this function.
     /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
+    #[inline]
     pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
         Expr { loc, data: st.into_data_alloc(bump) }
     }
 
+    #[inline]
     pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
+        #[cfg(debug_assertions)]
         ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         data::Store::assert();
         Expr { loc, data: st.into_data_store() }
@@ -1826,21 +1836,20 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// Zig: `bun.assert_eql(@sizeOf(Data), 24)` (Expr.zig:2189). The largest inline
-// payloads are `E::Identifier` / `E::ImportIdentifier` / `E::CommonJSExportIdentifier`
-// at 16 bytes (Ref u64 + bool flags); with the repr(Rust) discriminant that
-// rounds to 24. All `StoreRef<T>` variants are `#[repr(transparent)] NonNull<T>`
-// (8 bytes, niche-carrying), so the discriminant cannot grow the union past
-// the inline-identifier ceiling. `Expr` = `Data` (24, align 8) + `Loc` (i32) →
-// 28 → 32 after tail padding, matching Zig.
+// Zig: `bun.assert_eql(@sizeOf(Data), 24)` (Expr.zig:2189). Rust packs the
+// identifier-family flags into `Ref`'s spare bits (see `E::Identifier` doc),
+// so every inline payload is ≤ 8 bytes; with the repr(Rust) discriminant
+// that rounds to 16. `Expr` = `Data` (16, align 8) + `Loc` (i32) → 20 → 24
+// after tail padding — 25% smaller than the Zig layout, which is the
+// structural noalias-shrink win this port targets.
 //
 // The `Option<Data>` assert proves Rust's niche optimization fires: the enum
 // has spare discriminant values (47 variants < 256, and every pointer variant
 // contributes a NonNull niche), so `None` packs into an unused bit-pattern
 // rather than adding a word. If a future variant adds `#[repr(C)]`/`#[repr(u32)]`
 // or a nullable `*mut T` payload, this assert catches the size regression.
-const _: () = assert!(core::mem::size_of::<Data>() == 24); // Do not increase the size of Expr
-const _: () = assert!(core::mem::size_of::<Expr>() == 32);
+const _: () = assert!(core::mem::size_of::<Data>() == 16); // Do not increase the size of Expr
+const _: () = assert!(core::mem::size_of::<Expr>() == 24);
 const _: () = assert!(
     core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),
     "expr::Data lost its niche — check for #[repr] or nullable-ptr payload"
@@ -1849,13 +1858,15 @@ const _: () = assert!(
     core::mem::size_of::<Option<Expr>>() == core::mem::size_of::<Expr>(),
     "Expr lost its niche — Option<Expr> is used in G::Property/B::Property/etc."
 );
-// Inline-payload ceilings (regress these and `Data` grows past 24):
-const _: () = assert!(core::mem::size_of::<E::Identifier>() <= 16);
-const _: () = assert!(core::mem::size_of::<E::ImportIdentifier>() <= 16);
-const _: () = assert!(core::mem::size_of::<E::CommonJSExportIdentifier>() <= 16);
+// Inline-payload ceilings (regress any of these and `Data` grows past 16):
+const _: () = assert!(core::mem::size_of::<E::Identifier>() == 8);
+const _: () = assert!(core::mem::size_of::<E::ImportIdentifier>() == 8);
+const _: () = assert!(core::mem::size_of::<E::CommonJSExportIdentifier>() == 8);
+const _: () = assert!(core::mem::size_of::<E::PrivateIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::Number>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::Special>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::RequireString>() <= 8);
+const _: () = assert!(core::mem::size_of::<E::NewTarget>() <= 8);
 const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::size_of::<usize>());
 
 // Zig field-style union accessors (`data.e_string`, `data.e_object`). The
@@ -3209,9 +3220,11 @@ pub mod data {
         fn instance() -> *mut Backing {
             INSTANCE.with(|c| c.get())
         }
+        #[inline]
         pub fn memory_allocator() -> *mut ASTMemoryAllocator {
             MEMORY_ALLOCATOR.with(|c| c.get())
         }
+        #[inline]
         pub fn set_memory_allocator(p: *mut ASTMemoryAllocator) {
             MEMORY_ALLOCATOR.with(|c| c.set(p));
         }
@@ -3276,6 +3289,7 @@ pub mod data {
             }
         }
 
+        #[inline]
         pub fn append<T>(value: T) -> *mut T {
             let ma = memory_allocator();
             if !ma.is_null() {

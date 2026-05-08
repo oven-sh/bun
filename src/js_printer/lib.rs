@@ -3128,7 +3128,7 @@ where
                     let value = V { loc_ref: value_loc_ref, needs_decl: value_needs_decl };
                     if self.options.commonjs_named_exports_deoptimized || value.needs_decl {
                         if self.options.commonjs_module_exports_assigned_deoptimized
-                            && id.base == E::CommonJSExportIdentifierBase::ModuleDotExports
+                            && id.base() == E::CommonJSExportIdentifierBase::ModuleDotExports
                             && self.options.commonjs_module_ref.is_valid()
                         {
                             self.print_symbol(self.options.commonjs_module_ref);
@@ -3847,7 +3847,7 @@ where
                             did_print = true;
 
                             if let Some(target) = &self.call_target {
-                                wrap = e.was_originally_identifier
+                                wrap = e.was_originally_identifier()
                                     && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_));
                             }
 
@@ -3873,7 +3873,7 @@ where
                         did_print = true;
 
                         let wrap = if let Some(target) = &self.call_target {
-                            e.was_originally_identifier
+                            e.was_originally_identifier()
                                 && matches!(target, ExprData::EIdentifier(id) if id.ref_.eql(e.ref_))
                         } else {
                             false

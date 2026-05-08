@@ -90,6 +90,7 @@ impl ASTMemoryAllocator {
         self.previous_logger = ptr::null();
     }
 
+    #[inline]
     pub fn append<T>(&self, value: T) -> crate::ast::StoreRef<T> {
         // Zig: `this.bump_allocator.create(ValueType) catch unreachable; ptr.* = value;`
         // bumpalo's `alloc` aborts on OOM, matching `catch unreachable`.

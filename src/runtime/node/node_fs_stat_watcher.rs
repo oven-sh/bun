@@ -976,44 +976,24 @@ pub struct InitialStatTask {
     task: WorkPoolTask,
 }
 
+bun_threading::owned_task!(InitialStatTask, task);
+
 impl InitialStatTask {
     pub fn create_and_schedule(watcher: *mut StatWatcher) {
         // SAFETY: `watcher` is alive; we bump its intrusive refcount, held across
-        // the task lifetime (balanced by `deref()` in work_pool_callback's closed
-        // path or by the main-thread `initial_stat_*_on_main_thread` callbacks).
+        // the task lifetime (balanced by `deref()` in run_owned's closed path or
+        // by the main-thread `initial_stat_*_on_main_thread` callbacks).
         StatWatcher::ref_(watcher);
-        let task = Box::new(InitialStatTask {
+        WorkPool::schedule_new(InitialStatTask {
             watcher,
-            task: WorkPoolTask {
-                node: Default::default(),
-                callback: Self::work_pool_callback,
-            },
+            task: WorkPoolTask::default(),
         });
-        let task_ptr = bun_core::heap::leak(task);
-        // SAFETY: `task_ptr` leaked until `work_pool_callback` reclaims it. Use
-        // `addr_of_mut!` so the field pointer inherits `task_ptr`'s full-Box
-        // provenance — `&mut (*task_ptr).task` would narrow provenance to just
-        // the `task` field, making the later `.sub(offset_of!)` +
-        // `heap::take` in `work_pool_callback` out-of-provenance under
-        // Stacked Borrows.
-        WorkPool::schedule(unsafe { core::ptr::addr_of_mut!((*task_ptr).task) });
     }
 
-    unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
-        // SAFETY: `task` points to `InitialStatTask.task`; recover parent via
-        // offset_of. The incoming pointer carries whole-allocation provenance
-        // (see `addr_of_mut!` in `create_and_schedule`), required for both the
-        // `.sub(offset_of!)` and the subsequent `heap::take`.
-        let initial_stat_task: *mut InitialStatTask = unsafe {
-            task.cast::<u8>()
-                .sub(core::mem::offset_of!(InitialStatTask, task))
-                .cast::<InitialStatTask>()
-        };
-        // SAFETY: matches Zig `bun.destroy(initial_stat_task)` — reclaim Box,
-        // drop at end of scope. `watcher` is a raw `*mut` (Copy), so dropping
-        // the Box does not touch the refcount.
-        let initial_stat_task = unsafe { bun_core::heap::take(initial_stat_task) };
-        let this: *mut StatWatcher = initial_stat_task.watcher;
+    fn run_owned(self: Box<Self>) {
+        // `watcher` is a raw `*mut` (Copy), so dropping the Box does not touch
+        // the refcount; matches Zig `bun.destroy(initial_stat_task)`.
+        let this: *mut StatWatcher = self.watcher;
         // SAFETY: `this` is kept alive by the intrusive ref taken in
         // `create_and_schedule`. We only need shared access here — `closed` is
         // read-only, `path` is borrowed, and `set_last_stat`/

@@ -1201,6 +1201,8 @@ pub struct CpSingleTask<const IS_SHELL: bool> {
     pub task: WorkPoolTask,
 }
 
+bun_threading::owned_task!([const IS_SHELL: bool] CpSingleTask<IS_SHELL>, task);
+
 impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
     /// `path_buf` layout: `[src @ ..src_len][0][dest @ ..dest_len][0]`.
     pub fn create(
@@ -1212,16 +1214,13 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         debug_assert_eq!(path_buf.len(), src_len + 1 + dest_len + 1);
         debug_assert_eq!(path_buf[src_len], 0);
         debug_assert_eq!(path_buf[src_len + 1 + dest_len], 0);
-        let task = bun_core::heap::leak(Box::new(CpSingleTask {
+        WorkPool::schedule_new(CpSingleTask {
             cp_task: parent,
             path_buf,
             src_len,
             dest_len,
-            task: work_pool_task(Self::work_pool_callback),
-        }));
-        // SAFETY: `task` is a fresh Box allocation handed off to the work pool;
-        // reclaimed in `destroy()` after `work_pool_callback` runs.
-        WorkPool::schedule(unsafe { &raw mut (*task).task });
+            task: WorkPoolTask::default(),
+        });
     }
 
     #[inline]
@@ -1235,14 +1234,10 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         unsafe { OSPathSliceZ::from_raw(self.path_buf.as_ptr().add(self.src_len + 1), self.dest_len) }
     }
 
-    fn work_pool_callback(task: *mut WorkPoolTask) {
-        // SAFETY: task points to Self.task
-        let this: &mut Self = unsafe {
-            &mut *(task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>())
-        };
+    fn run_owned(self: Box<Self>) {
         // Preserve the raw `*mut` (Box::leak provenance) so `on_subtask_done`
         // may later promote it to `&mut` once the refcount reaches zero.
-        let cp_task = this.cp_task;
+        let cp_task = self.cp_task;
         // SAFETY: cp_task is set in create() and the parent outlives all subtasks (subtask_count refcount).
         // Shared borrow only — other workpool threads (and the directory-scan thread) may hold
         // `&Self` to the same parent concurrently; never form `&mut` here.
@@ -1253,8 +1248,8 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
 
         let args = &parent.args;
         let result = node_fs._copy_single_file_sync(
-            this.src(),
-            this.dest(),
+            self.src(),
+            self.dest(),
             constants::Copyfile::from_raw(
                 if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0i32 },
             ),
@@ -1271,23 +1266,16 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
                     parent.finish_concurrently(result);
                 }
                 Ok(_) => {
-                    parent.on_copy(this.src(), this.dest());
+                    parent.on_copy(self.src(), self.dest());
                 }
             }
         }
 
-        // SAFETY: `this` was `heap::alloc`'d in create(); destroyed exactly once here.
-        unsafe { Self::destroy(std::ptr::from_mut::<Self>(this)) };
+        // `self: Box<Self>` drops here (frees the owned `path_buf`).
+        drop(self);
         // Must be the very last use of the parent: when the count reaches
         // zero, runFromJSThread is enqueued and may destroy the parent.
         NewAsyncCpTask::on_subtask_done(cp_task);
-    }
-
-    /// SAFETY: `this` must be the pointer `heap::alloc`'d in `create()`; called exactly once.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: paired with `heap::alloc` in `create()`. Dropping the box
-        // also frees the owned `path_buf` (the single `<src>\0<dest>\0` buffer).
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -1911,28 +1899,26 @@ pub struct ReaddirSubtask {
     pub task: WorkPoolTask,
 }
 
-impl ReaddirSubtask {
-    pub fn new(init: ReaddirSubtask) -> Box<Self> { Box::new(init) }
+bun_threading::owned_task!(ReaddirSubtask, task);
 
-    pub fn call(task: *mut WorkPoolTask) {
-        // SAFETY: task points to Self.task
-        let this: &mut Self = unsafe {
-            &mut *(task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>())
-        };
-        // SAFETY: `this` is the Box::leak'd subtask; basename was allocator.dupeZ'd in enqueue()
-        let _cleanup = scopeguard::guard(std::ptr::from_mut::<Self>(this), |p| unsafe {
-            // free duped basename + destroy self.
-            // basename was allocated as `Box<[u8]>` of len+1 (NUL included) in
-            // enqueue(); reconstruct that exact layout for drop.
-            let z = (*p).basename.slice_assume_z();
+impl ReaddirSubtask {
+    fn run_owned(self: Box<Self>) {
+        let ReaddirSubtask { readdir_task, basename, task: _ } = *self;
+        // basename was allocated as `Box<[u8]>` of len+1 (NUL included) in
+        // enqueue(); reconstruct that exact layout for drop on scope exit.
+        let basename = scopeguard::guard(basename, |basename| {
+            let z = basename.slice_assume_z();
             let len_with_nul = z.len() + 1;
             let ptr = z.as_bytes().as_ptr().cast_mut();
-            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(ptr, len_with_nul)));
-            drop(bun_core::heap::take(p));
+            // SAFETY: paired with the `heap::leak(owned.into_boxed_slice())`
+            // in `AsyncReaddirRecursiveTask::enqueue`.
+            unsafe {
+                drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(ptr, len_with_nul)));
+            }
         });
         let mut buf = PathBuffer::uninit();
         // SAFETY: readdir_task (BACKREF) outlives subtask via subtask_count refcount
-        unsafe { &mut *this.readdir_task }.perform_work(this.basename.slice_assume_z(), &mut buf, false);
+        unsafe { &mut *readdir_task }.perform_work(basename.slice_assume_z(), &mut buf, false);
     }
 }
 
@@ -1980,15 +1966,14 @@ impl AsyncReaddirRecursiveTask {
         let len = owned.len() - 1; // exclude NUL
         let ptr = bun_core::heap::leak(owned).cast::<u8>();
         // SAFETY: `ptr[..len]` is the duped bytes; `ptr[len] == 0`. The Box<[u8]>
-        // backing is reconstructed and freed in `ReaddirSubtask::call`.
+        // backing is reconstructed and freed in `ReaddirSubtask::run_owned`.
         let basename_ps = PathString::init(unsafe { core::slice::from_raw_parts(ptr, len) });
-        let task = ReaddirSubtask::new(ReaddirSubtask {
+        debug_assert!(self.subtask_count.fetch_add(1, Ordering::Relaxed) > 0);
+        WorkPool::schedule_new(ReaddirSubtask {
             readdir_task: self,
             basename: basename_ps,
-            task: work_pool_task(ReaddirSubtask::call),
+            task: WorkPoolTask::default(),
         });
-        debug_assert!(self.subtask_count.fetch_add(1, Ordering::Relaxed) > 0);
-        WorkPool::schedule(&raw mut Box::leak(task).task);
     }
 
     pub fn create(

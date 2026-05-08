@@ -314,6 +314,20 @@ pub struct Task {
 // cross-thread `*Task` usage.)
 unsafe impl Send for Task {}
 
+impl Default for Task {
+    /// Placeholder for fields where the callback is installed later
+    /// (e.g. by [`crate::work_pool::WorkPool::schedule_owned`]). The
+    /// `unreachable` callback panics if scheduled un-initialized — same
+    /// failure mode as Zig's `.callback = undefined`.
+    #[inline]
+    fn default() -> Self {
+        unsafe fn unreachable_cb(_: *mut Task) {
+            unreachable!("ThreadPool.Task scheduled with default() callback");
+        }
+        Task { node: Node::default(), callback: unreachable_cb }
+    }
+}
+
 impl Task {
     #[inline]
     unsafe fn from_node(node: *mut Node) -> *mut Task {

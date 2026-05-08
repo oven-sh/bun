@@ -51,6 +51,56 @@ pub unsafe trait OwnedTask: Send + Sized + 'static {
     }
 }
 
+/// Implements [`OwnedTask`] (and the required `Send`) for a struct that
+/// embeds an intrusive `task: Task` field and is scheduled fire-and-forget
+/// via [`WorkPool::schedule_owned`]. Expands to the `TASK_OFFSET` constant,
+/// the `task_mut` accessor, and `unsafe impl Send` — the implementor supplies
+/// only `fn run(self: Box<Self>)`.
+///
+/// ```ignore
+/// owned_task!(HashJob, task);
+/// impl HashJob { fn run_owned(self: Box<Self>) { /* ... */ } }
+/// ```
+///
+/// The `Send` impl is part of the macro because every `OwnedTask` is *by
+/// construction* sent to a worker thread — Zig's `WorkPool.schedule` had no
+/// such bound and the per-type fields (raw `*mut EventLoop`, `*const
+/// JSGlobalObject`) are auto-`!Send` only nominally. The safety obligation
+/// ("all fields are sound to move across threads") is restated once here
+/// rather than at every `WorkPool::schedule(addr_of_mut!((*p).task))` site.
+#[macro_export]
+macro_rules! owned_task {
+    // Generic form (`owned_task!([const B: bool] CpSingleTask<B>, task);`).
+    // The leading `[..]` disambiguates from the plain-type arm so the `:ty`
+    // fragment below never sees a `<const ..>` and hard-errors.
+    ([$($gen:tt)*] $ty:ty, $field:ident) => {
+        // SAFETY: see plain-type arm.
+        unsafe impl<$($gen)*> ::core::marker::Send for $ty {}
+        // SAFETY: see plain-type arm.
+        unsafe impl<$($gen)*> $crate::work_pool::OwnedTask for $ty {
+            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
+            #[inline]
+            fn task_mut(&mut self) -> &mut $crate::work_pool::Task { &mut self.$field }
+            #[inline]
+            fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
+        }
+    };
+    ($ty:ty, $field:ident) => {
+        // SAFETY: scheduled via `WorkPool::schedule_owned`; see macro doc — the
+        // type is moved to a worker thread by design (Zig had no Send check).
+        unsafe impl ::core::marker::Send for $ty {}
+        // SAFETY: `TASK_OFFSET`/`task_mut` agree (`$field` is the intrusive
+        // `Task`); `run` forwards to the inherent `run_owned`.
+        unsafe impl $crate::work_pool::OwnedTask for $ty {
+            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
+            #[inline]
+            fn task_mut(&mut self) -> &mut $crate::work_pool::Task { &mut self.$field }
+            #[inline]
+            fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
+        }
+    };
+}
+
 // PORT NOTE: Zig used `bun.once` (a `Lock`+bool+data lazy-init pattern). Per
 // PORTING.md §Concurrency, that maps to `std::sync::OnceLock<T>` — std handles
 // the double-checked locking and gives a `&'static ThreadPool` directly.
@@ -95,6 +145,13 @@ impl WorkPool {
         // SAFETY: `raw` is a live heap allocation now owned by the pool;
         // `TASK_OFFSET` is the trait-contract offset of a `Task` field.
         Self::schedule(unsafe { raw.cast::<u8>().add(T::TASK_OFFSET).cast::<Task>() });
+    }
+
+    /// `Box::new` + [`schedule_owned`](Self::schedule_owned). Convenience for
+    /// the common case where the task is constructed inline at the call site.
+    #[inline]
+    pub fn schedule_new<T: OwnedTask>(task: T) {
+        Self::schedule_owned(Box::new(task));
     }
 
     pub fn go<C: Send + 'static>(

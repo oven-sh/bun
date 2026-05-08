@@ -49,7 +49,7 @@ if (!threw) throw new Error("expected readdirSync to throw (symlink loop not tri
 
 // Warmup: saturate allocator working set / ASAN quarantine so the baseline
 // measurement is taken after steady state is reached.
-for (let i = 0; i < 4000; i++) {
+for (let i = 0; i < 800; i++) {
   try {
     fs.readdirSync(root, { recursive: true, withFileTypes: true });
   } catch {}
@@ -57,7 +57,7 @@ for (let i = 0; i < 4000; i++) {
 Bun.gc(true);
 const before = process.memoryUsage.rss();
 
-for (let i = 0; i < 8000; i++) {
+for (let i = 0; i < 2000; i++) {
   try {
     fs.readdirSync(root, { recursive: true, withFileTypes: true });
   } catch {}
@@ -72,10 +72,10 @@ try {
   fs.rmSync(base, { recursive: true, force: true });
 } catch {}
 
-// With the leak, each failing call retains ~9 path strings (~5 KB). 8k
-// iterations is ~40+ MB of unreclaimable growth on top of the warmed-up
-// baseline (observed ~50-55 MB total). Without the leak the delta is allocator /
-// ASAN-quarantine noise (observed: <20 MB in debug+ASAN, ~0 in release).
-if (deltaMB > 32) {
-  throw new Error("Dirent.path leak: RSS grew " + deltaMB + " MB over 8000 failing readdirSync calls");
+// With the leak, each failing call retains ~9 path strings (~5 KB). 2k
+// iterations is ~10+ MB of unreclaimable growth on top of the warmed-up
+// baseline. Without the leak the delta is allocator / ASAN-quarantine noise
+// (observed: ~0 in release, low single-digit MB in debug).
+if (deltaMB > 8) {
+  throw new Error("Dirent.path leak: RSS grew " + deltaMB + " MB over 2000 failing readdirSync calls");
 }

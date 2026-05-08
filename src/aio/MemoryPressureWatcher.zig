@@ -222,6 +222,13 @@ const Darwin = struct {
         vm: *jsc.VirtualMachine,
         /// Set on the dispatch thread, consumed on the JS thread.
         pending_critical: std.atomic.Value(bool) = .init(true),
+        /// Set in uninstall() before dispatch_source_cancel() so an in-flight
+        /// onPressureDispatch skips enqueueTaskConcurrent — VirtualMachine
+        /// .deinit() proceeds past uninstall() to has_terminated=true, and a
+        /// post-terminate enqueue panics under allow_assert. Brings Darwin in
+        /// line with Linux/Windows whose uninstall() blocks until the
+        /// off-thread callback drains.
+        shutting_down: std.atomic.Value(bool) = .init(false),
     };
 
     fn install(vm: *jsc.VirtualMachine) void {
@@ -249,6 +256,7 @@ const Darwin = struct {
     /// *transitions*, so no holdoff is needed — one task per transition.
     fn onPressureDispatch(ctx: ?*anyopaque) callconv(.c) void {
         const s: *State = @ptrCast(@alignCast(ctx.?));
+        if (s.shutting_down.load(.acquire)) return;
         const data = dispatch_source_get_data(s.source);
         const critical = (data & (DISPATCH_MEMORYPRESSURE_CRITICAL | DISPATCH_MEMORYPRESSURE_PROC_LIMIT_CRITICAL)) != 0;
         s.pending_critical.store(critical, .monotonic);
@@ -264,6 +272,7 @@ const Darwin = struct {
     fn uninstall() void {
         const s = state orelse return;
         state = null;
+        s.shutting_down.store(true, .release);
         // Async — release+destroy happen in onCancelled once any in-flight
         // event handler has drained.
         dispatch_source_cancel(s.source);

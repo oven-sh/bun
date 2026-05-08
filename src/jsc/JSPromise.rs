@@ -16,7 +16,9 @@ use crate::virtual_machine::VirtualMachine;
 /// constructed or owned on the Rust side (GC-managed).
 #[repr(C)]
 pub struct JSPromise {
-    _p: [u8; 0],
+    // `UnsafeCell` opts out of `Freeze` so `&JSPromise` FFI params are not
+    // emitted with `readonly`/`noalias` LLVM attributes (mirrors JSGlobalObject).
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 

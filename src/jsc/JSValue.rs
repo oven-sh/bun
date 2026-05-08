@@ -305,7 +305,6 @@ impl JSValue {
     /// `JSValue.isAnyError()` — Error, Exception, or has `[Symbol.error]`.
     #[inline] pub fn is_any_error(self) -> bool {
         if !self.is_cell() { return false; }
-        // SAFETY: `self` is a cell.
         JSC__JSValue__isAnyError(self)
     }
     /// `JSValue.isError()` (JSValue.zig:999) — true iff this is an
@@ -1454,7 +1453,6 @@ pub trait PutKey {
 impl PutKey for &bun_string::ZigString {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        // SAFETY: `global` is live; `self` borrowed for the call.
         JSC__JSValue__put(target, global, self, value)
     }
 }
@@ -1467,7 +1465,6 @@ impl PutKey for bun_string::ZigString {
 impl PutKey for &bun_string::String {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        // SAFETY: `global` is live; `self` borrowed for the call.
         JSC__JSValue__putBunString(target, global, self, value)
     }
 }
@@ -2097,6 +2094,7 @@ impl JSValue {
     // ── Proxy internals (JSValue.zig:2326). ───────────────────────────────
     /// Asserts `self` is a `Proxy`.
     pub fn get_proxy_internal_field(self, field: ProxyField) -> JSValue {
+        debug_assert!(self.is_cell() && self.js_type() == JSType::ProxyObject);
         Bun__ProxyObject__getInternalField(self, field as u32)
     }
 

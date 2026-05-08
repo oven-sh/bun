@@ -2687,6 +2687,7 @@ fn transpile_source_code_inner(
                                 promise_ptr: Some(promise_ptr),
                                 specifier,
                                 referrer,
+                                hash,
                                 arena,
                             },
                         );

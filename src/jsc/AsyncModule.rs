@@ -35,9 +35,6 @@ use crate::{
 
 bun_core::declare_scope!(AsyncModule, hidden);
 
-// TODO(port): `opts: anytype` in Zig — accessed only as a field bag. Expressed
-// here as an explicit struct; reconcile with the actual call sites in
-// ModuleLoader once `transpileSourceCode`'s pending-import path is un-gated.
 pub struct InitOpts<'a> {
     pub parse_result: ParseResult,
     pub referrer: &'a [u8],
@@ -47,6 +44,7 @@ pub struct InitOpts<'a> {
     pub fd: Option<Fd>,
     pub package_json: Option<&'a PackageJSON>,
     pub loader: options::Loader,
+    pub hash: u32,
     pub arena: Box<ArenaAllocator>,
 }
 
@@ -685,7 +683,7 @@ impl AsyncModule {
             fd: opts.fd,
             package_json: opts.package_json.map(core::ptr::NonNull::from),
             loader: opts.loader.to_api(),
-            hash: u32::MAX,
+            hash: opts.hash,
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
             global_this: core::ptr::NonNull::from(global_object),

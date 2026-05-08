@@ -1388,13 +1388,19 @@ fn connect_finish<const IS_SSL: bool>(
     // value to doConnect (single allocation, aliased read). `do_connect` now
     // reads `self.connection` directly so no second borrow is needed here.
     if socket_ref.do_connect().is_err() {
-        let _ = socket_ref.handle_connect_error(if port.is_none() {
+        let errno = if port.is_none() {
             bun_sys::SystemErrno::ENOENT as c_int
         } else {
             bun_sys::SystemErrno::ECONNREFUSED as c_int
-        });
-        // Balance the unconditional `socket.ref()` above.
-        socket_ref.deref();
+        };
+        // SAFETY: `socket` is the live heap pointer; `socket_ref`'s `&mut` is no
+        // longer used on this branch. `handle_connect_error` takes `*mut Self`
+        // (noalias re-entrancy) — no `&mut NewSocket` held across its JS call.
+        unsafe {
+            let _ = NewSocket::<IS_SSL>::handle_connect_error(socket, errno);
+            // Balance the unconditional `socket_ref.ref_()` above.
+            (*socket).deref();
+        }
         return Ok(promise_value);
     }
 

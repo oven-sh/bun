@@ -585,7 +585,7 @@ impl All {
                         // SAFETY: `min` was just popped and is live; no `&mut`
                         // to `All` or to `*min` is held across `fire()`, which
                         // may re-enter `(*runtime_state()).timer`.
-                        unsafe { (*min).fire(&el_now, vm) };
+                        unsafe { EventLoopTimer::fire(min, &el_now, vm) };
                         continue;
                     }
                     *spec = Timespec { sec: 0, nsec: 0 };
@@ -681,7 +681,7 @@ impl All {
             // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
             // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
             // to `All` is live here.
-            unsafe { (*t).fire(&el_now, vm) };
+            unsafe { EventLoopTimer::fire(t, &el_now, vm) };
         }
     }
 

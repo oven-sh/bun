@@ -479,7 +479,13 @@ impl<const SSL: bool> NsSocketEvents<js_valkey::JSValkeyClient, SSL>
 }
 
 // ── Bun.connect / Bun.listen ────────────────────────────────────────────────
-pub type BunSocket<const SSL: bool> = PtrHandler<api::NewSocket<SSL>, SSL>;
+// PORT NOTE (noalias re-entrancy): routed through `RawPtrHandler`, not
+// `PtrHandler`. `NewSocket::on_*` re-enter JS (`socket.write/end/reload`) which
+// re-derives `&mut NewSocket` via the wrapper's `m_ptr`; a `&mut NewSocket`
+// argument formed by `PtrHandler` and protected through the dispatch frame
+// would alias that re-entrant borrow (Stacked-Borrows UB + `noalias`
+// dead-store of the re-entrant write). `RawPtrHandler` passes `*mut Self`.
+pub type BunSocket<const SSL: bool> = RawPtrHandler<api::NewSocket<SSL>, SSL>;
 
 /// Listener accept path: the ext is uninitialised at on_open time (the C accept
 /// loop just calloc'd it), so we read the `*Listener` off `group->ext` and let
@@ -490,7 +496,7 @@ pub struct BunListener<const SSL: bool>;
 
 impl<const SSL: bool> VHandler for BunListener<SSL>
 where
-    api::NewSocket<SSL>: SocketEvents<SSL>,
+    api::NewSocket<SSL>: RawSocketEvents<SSL>,
 {
     // No `Ext` decl — owner comes from `s.group().owner(Listener)`.
     type Ext = ();
@@ -515,8 +521,9 @@ where
         // old `configure({onCreate, onOpen})` path did this in one
         // on_open call.
         let ns = api::Listener::on_create::<SSL>(unsafe { &mut *listener }, wrap::<SSL>(s));
-        // SAFETY: `on_create` returns a freshly-boxed `NewSocket`.
-        swallow(unsafe { (*ns).on_open(wrap::<SSL>(s)) });
+        // SAFETY: `on_create` returns a freshly-boxed `NewSocket`; the `*mut`
+        // `on_*` methods hold no `&mut NewSocket` across re-entrant JS calls.
+        swallow(unsafe { api::NewSocket::on_open(ns, wrap::<SSL>(s)) });
     }
     // Accepted sockets reach the remaining events as `.bun_socket_*` once
     // on_create has restamped them; if anything fires before that, route to
@@ -524,34 +531,42 @@ where
     fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
         // SAFETY (applies to every `thunk::socket_ext_owner` in this impl): `s`
         // is live; the ext slot holds the unique heap `NewSocket` stashed by
-        // `on_create`; dispatch is single-threaded so no aliasing `&mut`.
+        // `on_create`; dispatch is single-threaded so no aliasing `&mut`. The
+        // `&mut` from `socket_ext_owner` is immediately converted to `*mut` so
+        // no `&mut NewSocket` is held across the re-entrant `on_*` body.
         if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            swallow(ns.on_close(wrap::<SSL>(s), code, reason));
+            let ns: *mut api::NewSocket<SSL> = ns;
+            swallow(unsafe { api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason) });
         }
     }
     fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
         if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            swallow(ns.on_data(wrap::<SSL>(s), data));
+            let ns: *mut api::NewSocket<SSL> = ns;
+            swallow(unsafe { api::NewSocket::on_data(ns, wrap::<SSL>(s), data) });
         }
     }
     fn on_writable_no_ext(s: *mut us_socket_t) {
         if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            swallow(ns.on_writable(wrap::<SSL>(s)));
+            let ns: *mut api::NewSocket<SSL> = ns;
+            swallow(unsafe { api::NewSocket::on_writable(ns, wrap::<SSL>(s)) });
         }
     }
     fn on_end_no_ext(s: *mut us_socket_t) {
         if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            swallow(ns.on_end(wrap::<SSL>(s)));
+            let ns: *mut api::NewSocket<SSL> = ns;
+            swallow(unsafe { api::NewSocket::on_end(ns, wrap::<SSL>(s)) });
         }
     }
     fn on_timeout_no_ext(s: *mut us_socket_t) {
         if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            swallow(ns.on_timeout(wrap::<SSL>(s)));
+            let ns: *mut api::NewSocket<SSL> = ns;
+            swallow(unsafe { api::NewSocket::on_timeout(ns, wrap::<SSL>(s)) });
         }
     }
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            swallow(ns.on_handshake(wrap::<SSL>(s), ok as i32, err));
+            let ns: *mut api::NewSocket<SSL> = ns;
+            swallow(unsafe { api::NewSocket::on_handshake(ns, wrap::<SSL>(s), ok as i32, err) });
         }
     }
 }

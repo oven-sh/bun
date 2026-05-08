@@ -182,9 +182,10 @@ pub struct VirtualMachine {
     /// Path of the entry module. BACKREF — borrows process-argv, the resolver's
     /// process-lifetime `dirname_store`/`filename_store`, the standalone module
     /// graph, or (for workers) the owning `WebWorker.unresolved_specifier`; in
-    /// every case the storage outlives this VM but is not Rust-`'static`. Stored
-    /// as a raw fat pointer (LIFETIMES.tsv class BACKREF) — read via `main()`.
-    main: *const [u8],
+    /// every case the storage outlives this VM but is not Rust-`'static`.
+    /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
+    /// `main()`.
+    main: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_string::String,
     pub main_hash: u32,
@@ -909,7 +910,7 @@ impl VirtualMachine {
         // SAFETY: BORROW_PARAM ptr set by caller, outlives this call (TODO(port): lifetime)
         let list = this
             .on_unhandled_rejection_exception_list
-            .map(|p| unsafe { &mut *p.as_ptr() });
+            .map(|mut p| unsafe { p.as_mut() });
         this.run_error_handler(value, list);
     }
 
@@ -1863,7 +1864,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).console).write(console);
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
-            addr_of_mut!((*vm).main).write(std::ptr::from_ref::<[u8]>(b"" as &[u8]));
+            addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_resolved_path).write(bun_string::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -2024,16 +2025,16 @@ impl VirtualMachine {
     /// see the field doc. Never freed by the VM.
     #[inline]
     pub fn main(&self) -> &[u8] {
-        // SAFETY: `main` is set in `init`/`set_main` to a non-null fat pointer
-        // whose storage outlives this VM (BACKREF — see field doc).
-        unsafe { &*self.main }
+        // `main` is a `RawSlice` whose storage outlives this VM (BACKREF — see
+        // field doc); the invariant is encapsulated in `RawSlice::slice`.
+        self.main.slice()
     }
 
     /// Set the entry-point path. Caller guarantees `path`'s storage outlives
     /// this VM (BACKREF — see `main` field doc).
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
-        self.main = std::ptr::from_ref::<[u8]>(path);
+        self.main = bun_ptr::RawSlice::new(path);
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -3261,10 +3262,9 @@ impl VirtualMachine {
         }
         // reload_entry_point() stores into pending_internal_promise on every return path.
         let main = self.main;
-        // SAFETY: see `main()` accessor — `main` is a non-null BACKREF slice.
-        // PORT NOTE: reshaped for borrowck — re-derive via raw ptr to avoid
+        // PORT NOTE: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
-        if self.reload_entry_point(unsafe { &*main }).is_err() {
+        if self.reload_entry_point(main.slice()).is_err() {
             panic!("Failed to reload");
         }
     }
@@ -3754,7 +3754,7 @@ impl VirtualMachine {
         // bytes that outlive `ResolveFunctionResult` (`'static` per the
         // struct's TODO(port) lifetime note). Erase to `'static` to seat the
         // result paths without threading a lifetime parameter through the VM.
-        let specifier: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(specifier) };
+        let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
         // (see js_parser/runtime.rs).
@@ -3823,11 +3823,13 @@ impl VirtualMachine {
                 // the resolve call (and the resolver only borrows it for the
                 // synchronous `resolve_and_auto_install`).
                 unsafe {
-                    &*std::ptr::from_ref::<[u8]>(bun_resolver::fs::PathName::init(source).dir_with_trailing_slash())
+                    bun_ptr::detach_lifetime(
+                        bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
+                    )
                 }
             } else {
                 // SAFETY: see `specifier` lifetime erasure note above.
-                unsafe { &*std::ptr::from_ref::<[u8]>(source) }
+                unsafe { bun_ptr::detach_lifetime(source) }
             }
         } else {
             top_level_dir
@@ -3918,13 +3920,13 @@ impl VirtualMachine {
         }
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
-        ret.query_string = unsafe { &*std::ptr::from_ref::<[u8]>(query_string) };
+        ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
         let result_path = result
             .path_const()
             .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
         // outlives `ResolveFunctionResult` (see field TODO(port) lifetime).
-        ret.path = unsafe { &*std::ptr::from_ref::<[u8]>(result_path.text) };
+        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
         ret.result = Some(result);
         self.resolved_count += 1;
 

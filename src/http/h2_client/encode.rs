@@ -171,8 +171,8 @@ pub fn write_request(
         encode_header(session, &mut encoded, name, h.value(), never_index)?;
     }
 
-    // SAFETY: request_body points into original_request_body.bytes (lives in client.state).
-    let body: &'static [u8] = unsafe { &*client.state.request_body };
+    // request_body points into original_request_body.bytes (lives in client.state).
+    let body = client.state.request_body;
     let has_inline_body =
         matches!(client.state.original_request_body, HTTPRequestBody::Bytes(_)) && !body.is_empty();
     let is_streaming = matches!(client.state.original_request_body, HTTPRequestBody::Stream(_));
@@ -187,7 +187,7 @@ pub fn write_request(
     }
     session.encode_scratch = encoded;
     if has_inline_body {
-        stream.pending_body = std::ptr::from_ref::<[u8]>(body);
+        stream.pending_body = body;
         drain_send_body(session, stream, usize::MAX);
     } else if !is_streaming {
         stream.sent_end_stream();
@@ -291,28 +291,28 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
     if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
         return;
     }
-    let Some(client_ptr) = stream.client else {
+    let Some(mut client_ptr) = stream.client else {
         return;
     };
     // SAFETY: stream.client is a live HTTPClient back-ref while set.
-    let client = unsafe { &mut *client_ptr.as_ptr() };
+    let client = unsafe { client_ptr.as_mut() };
     match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
-            let pending = stream.pending_body();
-            let sent = write_data_windowed(session, stream, pending, true, cap);
-            // SAFETY: pending_body[sent..] is a suffix of the original slice.
-            stream.pending_body = &raw const pending[sent..];
-            if stream.pending_body().is_empty() {
+            let pending = stream.pending_body;
+            let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
+            // pending_body[sent..] is a suffix of the original slice.
+            stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
+            if stream.pending_body.is_empty() {
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
             }
         }
         HTTPRequestBody::Stream(body) => {
-            let Some(sb_ptr) = body.buffer else {
+            let Some(mut sb_ptr) = body.buffer else {
                 return;
             };
             // SAFETY: ThreadSafeStreamBuffer is alive while body.buffer is Some.
-            let sb = unsafe { &mut *sb_ptr.as_ptr() };
+            let sb = unsafe { sb_ptr.as_mut() };
             let buffer = sb.acquire();
             let data_ptr = buffer.list.as_ptr();
             let data_len = buffer.size();

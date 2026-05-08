@@ -27,8 +27,9 @@ pub struct UpdateRequest {
     /// real `<'a>` through every `&mut [UpdateRequest]` in the install
     /// pipeline is the Phase-B reshape. ARENA-class field per the PORTING.md
     /// type map: `[]const u8` struct-field, never freed, points into a buffer
-    /// owned elsewhere → raw `*const [u8]`.
-    pub version_buf: *const [u8],
+    /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
+    /// invariant; see `version_buf()`).
+    pub version_buf: bun_ptr::RawSlice<u8>,
     pub package_id: PackageID,
     pub is_aliased: bool,
     pub failed: bool,
@@ -43,7 +44,7 @@ impl Default for UpdateRequest {
             name: b"",
             name_hash: 0,
             version: dependency::Version::default(),
-            version_buf: core::ptr::from_ref::<[u8]>(b""),
+            version_buf: bun_ptr::RawSlice::EMPTY,
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
             failed: false,
@@ -65,10 +66,10 @@ impl UpdateRequest {
     /// is threaded alongside `updates` everywhere they are read.
     #[inline]
     pub fn version_buf(&self) -> &[u8] {
-        // SAFETY: see fn doc. `version_buf` is always a valid (non-null, well-
-        // aligned) fat pointer — `Default` seeds it from a static empty slice,
-        // and every assignment is `&[u8] as *const [u8]`.
-        unsafe { &*self.version_buf }
+        // See fn doc. `RawSlice` encapsulates the deref under the
+        // outlives-holder invariant; `Default` seeds it as `EMPTY` and every
+        // assignment is `RawSlice::new(&[u8])`.
+        self.version_buf.slice()
     }
 
     #[inline]
@@ -270,7 +271,7 @@ impl UpdateRequest {
 
             let mut request = UpdateRequest {
                 version,
-                version_buf: core::ptr::from_ref::<[u8]>(input),
+                version_buf: bun_ptr::RawSlice::new(input),
                 ..UpdateRequest::default()
             };
             if let Some(name) = alias {

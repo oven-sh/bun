@@ -881,7 +881,7 @@ impl EventLoop {
     fn vm_ref(&self) -> &'static VirtualMachine {
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
         // owning per-thread singleton; non-null and outlives `self`.
-        unsafe { &*self.virtual_machine.unwrap().as_ptr() }
+        unsafe { self.virtual_machine.unwrap().as_ref() }
     }
     #[inline]
     fn global_ref(&self) -> &JSGlobalObject {

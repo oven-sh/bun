@@ -399,8 +399,7 @@ impl ClientSession {
                 &request,
                 client.url.href,
                 !client.flags.reject_unauthorized,
-                // SAFETY: request_body points into original_request_body.bytes.
-                unsafe { &*client.state.request_body },
+                client.state.request_body.slice(),
                 client.verbose == HTTPVerboseLevel::Curl,
             );
         }
@@ -497,10 +496,10 @@ impl ClientSession {
             // borrow only — we read the `client` backref, never mutate the
             // Stream, so no `&mut` is materialised.
             let stream = unsafe { &*stream };
-            let Some(client) = stream.client else { continue };
+            let Some(mut client) = stream.client else { continue };
             // SAFETY: stream.client is a live HTTPClient back-ref while set;
             // disjoint allocation, sole `&mut` at this point.
-            let client = unsafe { &mut *client.as_ptr() };
+            let client = unsafe { client.as_mut() };
             if client.async_http_id != async_http_id {
                 continue;
             }
@@ -520,10 +519,10 @@ impl ClientSession {
             // borrow only — we read the `client` backref, never mutate the
             // Stream itself in this scan loop.
             let s = unsafe { &*stream };
-            let Some(client_ptr) = s.client else { continue };
+            let Some(mut client_ptr) = s.client else { continue };
             // SAFETY: stream.client is a live HTTPClient back-ref while set;
             // disjoint allocation, sole `&mut` at this point.
-            let client = unsafe { &mut *client_ptr.as_ptr() };
+            let client = unsafe { client_ptr.as_mut() };
             if client.async_http_id != async_http_id {
                 continue;
             }
@@ -816,7 +815,7 @@ impl ClientSession {
             let stream = unsafe { &*e };
             let Some(client) = stream.client else { continue };
             // SAFETY: live back-ref.
-            if unsafe { (*client.as_ptr()).async_http_id } == async_http_id {
+            if unsafe { client.as_ref() }.async_http_id == async_http_id {
                 target = Some(e);
                 break;
             }
@@ -839,7 +838,7 @@ impl ClientSession {
                 continue;
             };
             // SAFETY: live back-ref.
-            if unsafe { (*client.as_ptr()).signals.get(signals::Field::Aborted) } {
+            if unsafe { client.as_ref() }.signals.get(signals::Field::Aborted) {
                 self.detach_with_failure(stream, err!(Aborted));
             } else {
                 i += 1;
@@ -903,11 +902,11 @@ impl ClientSession {
     fn deliver_stream(&mut self, stream_ptr: *mut Stream) -> bool {
         // SAFETY: caller passes a live entry from self.streams.
         let stream = unsafe { &mut *stream_ptr };
-        let Some(client_ptr) = stream.client else {
+        let Some(mut client_ptr) = stream.client else {
             return true;
         };
         // SAFETY: stream.client is a live back-ref while set.
-        let client = unsafe { &mut *client_ptr.as_ptr() };
+        let client = unsafe { client_ptr.as_mut() };
 
         if client.signals.get(signals::Field::Aborted) {
             self.rst_stream(stream, wire::ErrorCode::CANCEL);

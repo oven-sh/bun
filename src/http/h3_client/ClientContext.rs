@@ -61,9 +61,9 @@ impl ClientContext {
             )
         }?;
         // SAFETY: create_client returns non-null on Some.
-        let qctx = unsafe { NonNull::new_unchecked(qctx) };
+        let mut qctx = unsafe { NonNull::new_unchecked(qctx) };
         // SAFETY: qctx is a fresh live us_quic_socket_context_t.
-        callbacks::register(unsafe { &mut *qctx.as_ptr() });
+        callbacks::register(unsafe { qctx.as_mut() });
 
         let self_ = NonNull::from(Box::leak(Box::new(ClientContext {
             qctx,

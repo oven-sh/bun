@@ -552,7 +552,7 @@ impl NetworkTask {
                 // outlives the request (Zig leaks it). Detach the borrow so
                 // `header_builder.content` can be read again for `headers_buf`.
                 let appended = header_builder.content.append(last_modified);
-                last_modified = unsafe { &*std::ptr::from_ref::<[u8]>(appended) };
+                last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
             }
         } else {
             let header_buf: &'static str = if needs_extended {
@@ -588,7 +588,7 @@ impl NetworkTask {
         // because the HTTP thread reads them concurrently; the Zig source
         // passes raw slices under the same ownership contract. See the
         // identical pattern in `s3/simple_request.rs`.
-        let url = URL::parse(unsafe { &*(&raw const *self.url_buf) });
+        let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
         // SAFETY: ptr is non-null on both branches above (allocate() or static buf).
         let headers_buf: &'static [u8] = unsafe {
@@ -655,7 +655,7 @@ impl NetworkTask {
             // `self.callback`. Both outlive the HTTP request; Zig stores the
             // raw slice under the same contract.
             self.http_mut().client.if_modified_since =
-                unsafe { &*std::ptr::from_ref::<[u8]>(last_modified) };
+                unsafe { bun_ptr::detach_lifetime(last_modified) };
         }
 
         Ok(())
@@ -787,7 +787,7 @@ impl NetworkTask {
         // `'static` borrow because the HTTP thread reads it concurrently; the
         // Zig source passes a raw slice under the same ownership contract. See
         // the identical pattern in `for_manifest` above.
-        let url = URL::parse(unsafe { &*(&raw const *self.url_buf) });
+        let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),

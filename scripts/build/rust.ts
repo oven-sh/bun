@@ -188,6 +188,21 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // are PIC-compatible with the no-PIE link, and forcing `static`
   // workspace-wide would break proc-macro dylibs.
   const rustflags: string[] = [];
+  // Match the C++ side's CPU target (`cpuTargetFlags` in flags.ts) so Rust
+  // codegen sees the same ISA. Without this, C++ is built with
+  // `-march=haswell` while Rust defaults to generic x86-64 (SSE2 only),
+  // leaving auto-vectorization and BMI/LZCNT/POPCNT on the table for the
+  // entire Rust crate graph. rustc's `-C target-cpu=` takes LLVM CPU names
+  // (same vocabulary as clang's `-march=`/`-mcpu=`), so the mapping is 1:1.
+  const cpuTarget = cfg.x64
+    ? cfg.baseline
+      ? "nehalem"
+      : "haswell"
+    : cfg.darwin
+      ? "apple-m1"
+      : // armv8-a+crc isn't a CPU name — closest LLVM model with CRC baseline:
+        "cortex-a72";
+  rustflags.push(`-Ctarget-cpu=${cpuTarget}`);
   // `bun_core::build_options::ENABLE_ASAN = cfg!(bun_asan)` — must agree with
   // the C++ `ASAN_ENABLED` macro so Global::exit() picks the same libc exit
   // path (`exit` vs `quick_exit`) that c-bindings.cpp registered Bun__onExit on.

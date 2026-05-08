@@ -10,6 +10,7 @@ import { globSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
+import { generateCargoConfig } from "./cargo-config.ts";
 import { type Config, type PartialConfig, type Toolchain, detectHost, findRepoRoot, resolveConfig } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
@@ -199,6 +200,13 @@ export async function configure(partial: PartialConfig): Promise<ConfigureResult
 
   validateBunConfig(cfg);
   checkWorkarounds(cfg);
+
+  // Generated `.cargo/config.toml` — written at configure time (not a ninja
+  // rule), like `bun_dependency_versions.h`. Holds the per-target `linker = `
+  // (the discovered clang++ from `tools.ts`) so a contributor running `cargo`
+  // directly / rust-analyzer use the same toolchain the ninja build does.
+  generateCargoConfig(cfg);
+  mark("generateCargoConfig");
 
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
   // perl script from JSC. If perl is missing, codegen fails cryptically.

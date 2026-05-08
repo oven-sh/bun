@@ -259,6 +259,17 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Zsanitizer=address");
     rustflags.push("--cfg=bun_asan");
   }
+  // Force lld for any link rustc itself performs (the cdylib/staticlib deps
+  // like `lol_html_c_api`; the `bun_bin` staticlib has no link step). The
+  // default `cc` driver picks BFD `/usr/bin/ld`, which doesn't match the
+  // semantics the C/C++ object set assumes (and, under `-Clinker-plugin-lto`,
+  // doesn't understand `-plugin-opt`). This used to live only behind
+  // `cfg.lto`, with the non-LTO build relying on `.cargo/config.toml`'s
+  // `rustflags`; but `CARGO_ENCODED_RUSTFLAGS` (always set below) *replaces*
+  // the config-file `rustflags` rather than merging, so the config entry was
+  // dead for any ninja build. Push it unconditionally so the ninja build's
+  // behavior doesn't depend on the generated `.cargo/config.toml` at all.
+  rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   if (cfg.lto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
     // so the final lld `-flto=full` link sees through Rust↔C++ call edges.
@@ -283,11 +294,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // pre-merge all crates into one summary-less blob, which lld then reads
     // as EnableSplitLTOUnit=0.
     rustflags.push("-Zsplit-lto-unit");
-    // Any cdylib/staticlib in the dep graph (lol_html_c_api) gets linked by
-    // rustc itself; default `cc` driver picks BFD `/usr/bin/ld` which doesn't
-    // understand `-plugin-opt`. Force lld so the bitcode link goes through
-    // the same LTO-aware linker our final link uses.
-    rustflags.push(`-Clink-arg=-fuse-ld=lld`);
+    // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
+    // it doubles as making rustc's bitcode link go through the LTO-aware
+    // linker our final link uses, not BFD `/usr/bin/ld`.)
   }
 
   // ─── Environment ───

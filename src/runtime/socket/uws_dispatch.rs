@@ -225,8 +225,8 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
         // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
         // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` holds a live +1
         // ref to the `[raw, _]` half; dispatch is single-threaded so no aliasing
-        // `&mut` exists.
-        unsafe { &mut *raw }.on_data(NewSocketHandler::<true>::from(s), slice);
+        // `&mut` exists. `on_data` takes `*mut Self` (noalias re-entrancy fix).
+        unsafe { TLSSocket::on_data(raw, NewSocketHandler::<true>::from(s), slice) };
     }
     s
 }

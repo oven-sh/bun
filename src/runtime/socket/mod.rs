@@ -114,58 +114,75 @@ pub mod socket {
     };
 }
 
-// ─── SocketEvents glue ───────────────────────────────────────────────────────
-// `uws_handlers::SocketEvents<SSL>` is the trait the vtable dispatch layer
-// (`uws_dispatch.rs`) requires of `api::NewSocket<SSL>`. The inherent
-// `on_*` methods live on `socket_body::NewSocket`; bridge them here so the
-// trait impl and the struct definition stay in their respective files.
-impl<const SSL: bool> uws_handlers::SocketEvents<SSL> for NewSocket<SSL> {
+// ─── RawSocketEvents glue ────────────────────────────────────────────────────
+// `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
+// vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
+// not `PtrHandler`). PORT NOTE (noalias re-entrancy): the inherent `on_*`
+// methods take `this: *mut Self` precisely so no `&mut NewSocket` is held
+// across `callback.call` (JS can re-derive `&mut Self` via the wrapper's
+// `m_ptr` and mutate `flags`/`handlers`/`ref_count`); a `&mut self` argument
+// formed here from the ext slot and protected through the dispatch frame would
+// be aliasing UB. Bridge them here so the trait impl and the struct definition
+// stay in their respective files.
+impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
+    const HAS_ON_OPEN: bool = true;
+
     #[inline]
-    fn on_open(&mut self, s: bun_uws::NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        NewSocket::on_open(self, s);
-        Ok(())
+    unsafe fn on_open(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
+        // SAFETY: caller (RawPtrHandler) passes the live ext-slot pointer.
+        unsafe { NewSocket::on_open(this, s) };
     }
     #[inline]
-    fn on_data(&mut self, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) -> bun_jsc::JsResult<()> {
-        NewSocket::on_data(self, s, data);
-        Ok(())
+    unsafe fn on_data(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) {
+        // SAFETY: see `on_open`.
+        unsafe { NewSocket::on_data(this, s, data) };
     }
     #[inline]
-    fn on_writable(&mut self, s: bun_uws::NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        NewSocket::on_writable(self, s);
-        Ok(())
+    unsafe fn on_writable(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
+        // SAFETY: see `on_open`.
+        unsafe { NewSocket::on_writable(this, s) };
     }
     #[inline]
-    fn on_close(
-        &mut self,
+    unsafe fn on_close(
+        this: *mut Self,
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
-        reason: Option<*mut core::ffi::c_void>,
-    ) -> bun_jsc::JsResult<()> {
-        NewSocket::on_close(self, s, code, reason)
+        reason: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: see `on_open`.
+        let _ = unsafe {
+            NewSocket::on_close(
+                this,
+                s,
+                code,
+                if reason.is_null() { None } else { Some(reason) },
+            )
+        };
     }
     #[inline]
-    fn on_timeout(&mut self, s: bun_uws::NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        NewSocket::on_timeout(self, s);
-        Ok(())
+    unsafe fn on_timeout(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
+        // SAFETY: see `on_open`.
+        unsafe { NewSocket::on_timeout(this, s) };
     }
     #[inline]
-    fn on_end(&mut self, s: bun_uws::NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
-        NewSocket::on_end(self, s);
-        Ok(())
+    unsafe fn on_end(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
+        // SAFETY: see `on_open`.
+        unsafe { NewSocket::on_end(this, s) };
     }
     #[inline]
-    fn on_connect_error(&mut self, s: bun_uws::NewSocketHandler<SSL>, code: i32) -> bun_jsc::JsResult<()> {
-        NewSocket::on_connect_error(self, s, code)
+    unsafe fn on_connect_error(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>, code: i32) {
+        // SAFETY: see `on_open`.
+        let _ = unsafe { NewSocket::on_connect_error(this, s, code) };
     }
     #[inline]
-    fn on_handshake(
-        &mut self,
+    unsafe fn on_handshake(
+        this: *mut Self,
         s: bun_uws::NewSocketHandler<SSL>,
         ok: i32,
         err: bun_uws_sys::us_bun_verify_error_t,
-    ) -> bun_jsc::JsResult<()> {
-        NewSocket::on_handshake(self, s, ok, err)
+    ) {
+        // SAFETY: see `on_open`.
+        let _ = unsafe { NewSocket::on_handshake(this, s, ok, err) };
     }
 }
 

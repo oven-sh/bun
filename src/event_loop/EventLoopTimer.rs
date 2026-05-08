@@ -149,11 +149,23 @@ impl EventLoopTimer {
     /// PostgresSQLConnection, …). That match lives in
     /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is
     /// the erased `*mut VirtualMachine`.
-    pub fn fire(&mut self, now: &timespec, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
-        // SAFETY: `self` is a live timer just popped from `All.timers`; `now` is
-        // the snapshot taken by `All::next`; `vm` is the per-thread VM. The
-        // handler may free the container — caller must not touch `self` after.
-        unsafe { __bun_fire_timer(self, now, vm) };
+    ///
+    /// PORT NOTE (noalias re-entrancy): takes `this: *mut Self`, NOT
+    /// `&mut self`. `__bun_fire_timer` dispatches via container_of into a
+    /// tier-6 timer object whose JS callback can re-enter and re-derive a
+    /// `&mut EventLoopTimer` to *this same node* (e.g. `clearTimeout()` →
+    /// `vm.timer.remove()` mutates `(*this).state`/`heap`). A live `&mut self`
+    /// across that FFI call lets LLVM `noalias` dead-store the re-entrant
+    /// write. Both callers (`drain_timers`, `get_timeout`) already hold a raw
+    /// `*mut EventLoopTimer` popped from the heap — pass it directly.
+    ///
+    /// # Safety
+    /// `this` is a live timer just popped from `All.timers`; `now` is the
+    /// snapshot taken by `All::next`; `vm` is the per-thread VM. The handler
+    /// may free the container — caller must not touch `this` after.
+    pub unsafe fn fire(this: *mut Self, now: &timespec, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
+        // SAFETY: per fn contract.
+        unsafe { __bun_fire_timer(this, now, vm) };
     }
 }
 

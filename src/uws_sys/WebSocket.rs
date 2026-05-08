@@ -250,6 +250,24 @@ impl AnyWebSocket {
         unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>().as_mut() }
     }
 
+    /// Raw user-data pointer cast to `*mut T` (NULL if unset).
+    ///
+    /// PORT NOTE (noalias re-entrancy): the `WebSocketHandler` dispatch
+    /// trampolines use this instead of `as_::<T>()` so the handler frame holds
+    /// a raw `*mut T`, not a `noalias` `&mut T`. A JS callback fired from inside
+    /// the handler can re-derive `&mut T` via the JS wrapper's `m_ptr` (e.g.
+    /// `ws.close()` → `on_close` → `flags.set_closed(true)`); a live `noalias`
+    /// `&mut T` across that call lets LLVM dead-store the re-entrant write.
+    ///
+    /// # Safety
+    /// Caller must guarantee the user data was set to a `*mut T` for this socket.
+    #[inline]
+    pub unsafe fn as_ptr<T>(self) -> *mut T {
+        let (ssl, ws) = self.split();
+        // SAFETY: see `as_::<T>`; here we keep the result as a raw pointer.
+        unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>() }
+    }
+
     /// (ssl_flag, &mut socket) pair for the C shims that take both.
     ///
     /// `RawWebSocket` is an opaque `UnsafeCell<[u8; 0]>` — `&mut` carries no
@@ -495,18 +513,39 @@ impl Default for WebSocketBehavior {
 ///
 /// `HAS_ON_*` consts replace `@hasDecl(Type, "...")` — set to `false` to leave
 /// the corresponding C callback `null`.
+/// PORT NOTE (noalias re-entrancy): the `on_*` methods take `this: *mut Self`,
+/// NOT `&mut self`. The handler body re-enters JS (`ws.send()`, `ws.close()`,
+/// promise callbacks…); JS can call back into this same socket via the wrapper
+/// object's `m_ptr`, re-deriving a `&mut Self` and mutating its fields. A live
+/// `noalias` `&mut Self` argument carried through the dispatch frame would
+/// alias that re-entrant borrow (Stacked-Borrows UB) and let LLVM dead-store
+/// the re-entrant write. Implementors materialise short-lived `&mut *this`
+/// reborrows only — none spanning a JS callback.
 pub trait WebSocketHandler: Sized + 'static {
     const HAS_ON_MESSAGE: bool = true;
     const HAS_ON_DRAIN: bool = true;
     const HAS_ON_PING: bool = true;
     const HAS_ON_PONG: bool = true;
 
-    fn on_open(&mut self, ws: AnyWebSocket);
-    fn on_message(&mut self, ws: AnyWebSocket, message: &[u8], opcode: Opcode);
-    fn on_drain(&mut self, ws: AnyWebSocket);
-    fn on_ping(&mut self, ws: AnyWebSocket, message: &[u8]);
-    fn on_pong(&mut self, ws: AnyWebSocket, message: &[u8]);
-    fn on_close(&mut self, ws: AnyWebSocket, code: i32, message: &[u8]);
+    /// # Safety
+    /// `this` is the live `*mut Self` from the socket's user-data slot;
+    /// JS-thread only.
+    unsafe fn on_open(this: *mut Self, ws: AnyWebSocket);
+    /// # Safety
+    /// See `on_open`.
+    unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode);
+    /// # Safety
+    /// See `on_open`.
+    unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket);
+    /// # Safety
+    /// See `on_open`.
+    unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]);
+    /// # Safety
+    /// See `on_open`.
+    unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]);
+    /// # Safety
+    /// See `on_open`.
+    unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]);
 }
 
 /// Server type that handles the HTTP→WS upgrade. Replaces Zig's
@@ -540,10 +579,14 @@ where
 
     pub unsafe extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
-        // SAFETY: user data was set to *mut T at upgrade time.
-        let this = unsafe { ws.as_::<T>() }.unwrap();
+        // SAFETY: user data was set to *mut T at upgrade time. `*mut T` (not
+        // `&mut T`) — no `noalias` borrow held across the re-entrant handler.
+        let this = unsafe { ws.as_ptr::<T>() };
+        if this.is_null() {
+            return;
+        }
         // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
-        this.on_open(ws);
+        unsafe { T::on_open(this, ws) };
     }
 
     pub unsafe extern "C" fn on_message(
@@ -554,25 +597,41 @@ where
     ) {
         let ws = Self::make_ws(raw_ws);
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { ws.as_::<T>().unwrap().on_message(ws, thunk::c_slice(message, length), opcode) };
+        let this = unsafe { ws.as_ptr::<T>() };
+        if this.is_null() {
+            return;
+        }
+        unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
     }
 
     pub unsafe extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
-        let this = unsafe { ws.as_::<T>() }.unwrap();
-        this.on_drain(ws);
+        // SAFETY: see `on_open`.
+        let this = unsafe { ws.as_ptr::<T>() };
+        if this.is_null() {
+            return;
+        }
+        unsafe { T::on_drain(this, ws) };
     }
 
     pub unsafe extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { ws.as_::<T>().unwrap().on_ping(ws, thunk::c_slice(message, length)) };
+        let this = unsafe { ws.as_ptr::<T>() };
+        if this.is_null() {
+            return;
+        }
+        unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
     }
 
     pub unsafe extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid.
-        unsafe { ws.as_::<T>().unwrap().on_pong(ws, thunk::c_slice(message, length)) };
+        let this = unsafe { ws.as_ptr::<T>() };
+        if this.is_null() {
+            return;
+        }
+        unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
     }
 
     pub unsafe extern "C" fn on_close(
@@ -583,7 +642,11 @@ where
     ) {
         let ws = Self::make_ws(raw_ws);
         // SAFETY: user data was set to *mut T at upgrade time; `message[..length]` valid when non-null.
-        unsafe { ws.as_::<T>().unwrap().on_close(ws, code, thunk::c_slice(message, length)) };
+        let this = unsafe { ws.as_ptr::<T>() };
+        if this.is_null() {
+            return;
+        }
+        unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
     pub unsafe extern "C" fn on_upgrade(

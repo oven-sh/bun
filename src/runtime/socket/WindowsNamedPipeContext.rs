@@ -113,12 +113,13 @@ impl WindowsNamedPipeContext {
             SocketType::Tls(tls) => {
                 let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 // SAFETY: `tls` is kept alive by the +1 ref taken in `create()`.
-                unsafe { (*tls).on_open(socket) };
+                // `on_open` takes `*mut Self` (noalias re-entrancy) — no `&mut`.
+                unsafe { TLSSocket::on_open(tls, socket) };
             }
             SocketType::Tcp(tcp) => {
                 let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 // SAFETY: `tcp` is kept alive by the +1 ref taken in `create()`.
-                unsafe { (*tcp).on_open(socket) };
+                unsafe { TCPSocket::on_open(tcp, socket) };
             }
             SocketType::None => {}
         }
@@ -129,12 +130,12 @@ impl WindowsNamedPipeContext {
             SocketType::Tls(tls) => {
                 let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                unsafe { (*tls).on_data(socket, decoded_data) };
+                unsafe { TLSSocket::on_data(tls, socket, decoded_data) };
             }
             SocketType::Tcp(tcp) => {
                 let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                unsafe { (*tcp).on_data(socket, decoded_data) };
+                unsafe { TCPSocket::on_data(tcp, socket, decoded_data) };
             }
             SocketType::None => {}
         }
@@ -145,12 +146,12 @@ impl WindowsNamedPipeContext {
             SocketType::Tls(tls) => {
                 let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                let _ = unsafe { (*tls).on_handshake(socket, success as i32, ssl_error) };
+                let _ = unsafe { TLSSocket::on_handshake(tls, socket, success as i32, ssl_error) };
             }
             SocketType::Tcp(tcp) => {
                 let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                let _ = unsafe { (*tcp).on_handshake(socket, success as i32, ssl_error) };
+                let _ = unsafe { TCPSocket::on_handshake(tcp, socket, success as i32, ssl_error) };
             }
             SocketType::None => {}
         }
@@ -161,12 +162,12 @@ impl WindowsNamedPipeContext {
             SocketType::Tls(tls) => {
                 let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                unsafe { (*tls).on_end(socket) };
+                unsafe { TLSSocket::on_end(tls, socket) };
             }
             SocketType::Tcp(tcp) => {
                 let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                unsafe { (*tcp).on_end(socket) };
+                unsafe { TCPSocket::on_end(tcp, socket) };
             }
             SocketType::None => {}
         }
@@ -177,12 +178,12 @@ impl WindowsNamedPipeContext {
             SocketType::Tls(tls) => {
                 let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                unsafe { (*tls).on_writable(socket) };
+                unsafe { TLSSocket::on_writable(tls, socket) };
             }
             SocketType::Tcp(tcp) => {
                 let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                unsafe { (*tcp).on_writable(socket) };
+                unsafe { TCPSocket::on_writable(tcp, socket) };
             }
             SocketType::None => {}
         }
@@ -207,11 +208,11 @@ impl WindowsNamedPipeContext {
             match self.socket {
                 SocketType::Tls(tls) => {
                     // SAFETY: see `on_open`.
-                    let _ = unsafe { (*tls).handle_connect_error(err.errno as i32) };
+                    let _ = unsafe { TLSSocket::handle_connect_error(tls, err.errno as i32) };
                 }
                 SocketType::Tcp(tcp) => {
                     // SAFETY: see `on_open`.
-                    let _ = unsafe { (*tcp).handle_connect_error(err.errno as i32) };
+                    let _ = unsafe { TCPSocket::handle_connect_error(tcp, err.errno as i32) };
                 }
                 SocketType::None => {}
             }
@@ -223,12 +224,12 @@ impl WindowsNamedPipeContext {
             SocketType::Tls(tls) => {
                 let socket = socket_from_named_pipe::<true>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                unsafe { (*tls).on_timeout(socket) };
+                unsafe { TLSSocket::on_timeout(tls, socket) };
             }
             SocketType::Tcp(tcp) => {
                 let socket = socket_from_named_pipe::<false>(&mut self.named_pipe);
                 // SAFETY: see `on_open`.
-                unsafe { (*tcp).on_timeout(socket) };
+                unsafe { TCPSocket::on_timeout(tcp, socket) };
             }
             SocketType::None => {}
         }
@@ -242,14 +243,14 @@ impl WindowsNamedPipeContext {
             SocketType::Tls(tls) => {
                 // SAFETY: `tls` held a +1 ref from `create()`; release it after dispatch.
                 unsafe {
-                    let _ = (*tls).on_close(socket_from_named_pipe::<true>(&mut this_ref.named_pipe), 0, None);
+                    let _ = TLSSocket::on_close(tls, socket_from_named_pipe::<true>(&mut this_ref.named_pipe), 0, None);
                     (*tls).deref();
                 }
             }
             SocketType::Tcp(tcp) => {
                 // SAFETY: `tcp` held a +1 ref from `create()`; release it after dispatch.
                 unsafe {
-                    let _ = (*tcp).on_close(socket_from_named_pipe::<false>(&mut this_ref.named_pipe), 0, None);
+                    let _ = TCPSocket::on_close(tcp, socket_from_named_pipe::<false>(&mut this_ref.named_pipe), 0, None);
                     (*tcp).deref();
                 }
             }
@@ -385,11 +386,11 @@ impl WindowsNamedPipeContext {
             match unsafe { (*this).socket } {
                 SocketType::Tls(tls) => {
                     // SAFETY: +1 ref held; live until `Self::deref` below.
-                    let _ = unsafe { (*tls).handle_connect_error(SystemErrno::ENOENT as i32) };
+                    let _ = unsafe { TLSSocket::handle_connect_error(tls, SystemErrno::ENOENT as i32) };
                 }
                 SocketType::Tcp(tcp) => {
                     // SAFETY: +1 ref held; live until `Self::deref` below.
-                    let _ = unsafe { (*tcp).handle_connect_error(SystemErrno::ENOENT as i32) };
+                    let _ = unsafe { TCPSocket::handle_connect_error(tcp, SystemErrno::ENOENT as i32) };
                 }
                 SocketType::None => {}
             }
@@ -420,11 +421,11 @@ impl WindowsNamedPipeContext {
             match unsafe { (*this).socket } {
                 SocketType::Tls(tls) => {
                     // SAFETY: +1 ref held; live until `Self::deref` below.
-                    let _ = unsafe { (*tls).handle_connect_error(SystemErrno::ENOENT as i32) };
+                    let _ = unsafe { TLSSocket::handle_connect_error(tls, SystemErrno::ENOENT as i32) };
                 }
                 SocketType::Tcp(tcp) => {
                     // SAFETY: +1 ref held; live until `Self::deref` below.
-                    let _ = unsafe { (*tcp).handle_connect_error(SystemErrno::ENOENT as i32) };
+                    let _ = unsafe { TCPSocket::handle_connect_error(tcp, SystemErrno::ENOENT as i32) };
                 }
                 SocketType::None => {}
             }

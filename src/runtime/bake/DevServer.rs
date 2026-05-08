@@ -1359,21 +1359,29 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     const HAS_ON_PING: bool = false;
     const HAS_ON_PONG: bool = false;
 
+    // PORT NOTE (noalias re-entrancy): the trait now hands the handler a raw
+    // `*mut Self` (see `WebSocketHandler` doc). `HmrSocket::on_close` already
+    // takes `*mut Self`; `on_open`/`on_message` still take `&mut self` so
+    // re-derive a fresh `&mut *this` here (not carried in from a `noalias`
+    // dispatch-frame borrow).
     #[inline]
-    fn on_open(&mut self, ws: bun_uws_sys::AnyWebSocket) {
-        HmrSocket::on_open(self, ws)
+    unsafe fn on_open(this: *mut Self, ws: bun_uws_sys::AnyWebSocket) {
+        // SAFETY: `this` is the live user-data pointer (per trait contract).
+        HmrSocket::on_open(unsafe { &mut *this }, ws)
     }
     #[inline]
-    fn on_message(&mut self, ws: bun_uws_sys::AnyWebSocket, message: &[u8], opcode: bun_uws_sys::Opcode) {
-        HmrSocket::on_message(self, ws, message, opcode)
+    unsafe fn on_message(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, message: &[u8], opcode: bun_uws_sys::Opcode) {
+        // SAFETY: see `on_open`.
+        HmrSocket::on_message(unsafe { &mut *this }, ws, message, opcode)
     }
     #[inline]
-    fn on_close(&mut self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
-        HmrSocket::on_close(std::ptr::from_mut::<HmrSocket>(self), ws, code, message)
+    unsafe fn on_close(this: *mut Self, ws: bun_uws_sys::AnyWebSocket, code: i32, message: &[u8]) {
+        // SAFETY: see `on_open`.
+        unsafe { HmrSocket::on_close(this, ws, code, message) }
     }
-    fn on_drain(&mut self, _ws: bun_uws_sys::AnyWebSocket) {}
-    fn on_ping(&mut self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
-    fn on_pong(&mut self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+    unsafe fn on_drain(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket) {}
+    unsafe fn on_ping(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
+    unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
 }
 
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {

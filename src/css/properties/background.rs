@@ -645,13 +645,10 @@ macro_rules! init_small_list_helper {
         if let Some(list) = &mut $this.$field {
             list.clear_retaining_capacity();
             list.ensure_total_capacity(length);
-            list.set_len(length);
-            list.slice_mut()
+            list
         } else {
             $this.$field = Some(SmallList::init_capacity(length));
-            let list = $this.$field.as_mut().unwrap();
-            list.set_len(length);
-            list.slice_mut()
+            $this.$field.as_mut().unwrap()
         }
     }};
 }
@@ -695,20 +692,16 @@ impl BackgroundHandler {
             }
             Property::BackgroundPosition(val) => {
                 let len = val.len();
-                // PORT NOTE: reshaped for borrowck — Zig held two simultaneous &mut into
-                // disjoint fields of `self`. Index per-loop instead of holding both slices.
                 {
                     let x_positions = init_small_list_helper!(self, x_positions, len);
-                    debug_assert_eq!(val.slice().len(), x_positions.len());
-                    for (position, x) in val.slice().iter().zip(x_positions.iter_mut()) {
-                        *x = position.x.clone();
+                    for position in val.slice() {
+                        x_positions.append_assume_capacity(position.x.clone());
                     }
                 }
                 {
                     let y_positions = init_small_list_helper!(self, y_positions, len);
-                    debug_assert_eq!(val.slice().len(), y_positions.len());
-                    for (position, y) in val.slice().iter().zip(y_positions.iter_mut()) {
-                        *y = position.y.clone();
+                    for position in val.slice() {
+                        y_positions.append_assume_capacity(position.y.clone());
                     }
                 }
             }
@@ -787,44 +780,40 @@ impl BackgroundHandler {
                 self.color = Some(color);
                 self.images = Some(images);
                 let len = val.len();
-                // PORT NOTE: reshaped for borrowck — Zig zipped 6 mutable slices borrowed
-                // from disjoint `self` fields simultaneously. Rust forbids overlapping &mut
-                // through the macro borrows, so each list is initialised and filled
-                // sequentially.
                 {
                     let x_positions = init_small_list_helper!(self, x_positions, len);
-                    for (i, b) in val.slice().iter().enumerate() {
-                        x_positions[i] = b.position.x.clone();
+                    for b in val.slice() {
+                        x_positions.append_assume_capacity(b.position.x.clone());
                     }
                 }
                 {
                     let y_positions = init_small_list_helper!(self, y_positions, len);
-                    for (i, b) in val.slice().iter().enumerate() {
-                        y_positions[i] = b.position.y.clone();
+                    for b in val.slice() {
+                        y_positions.append_assume_capacity(b.position.y.clone());
                     }
                 }
                 {
                     let repeats = init_small_list_helper!(self, repeats, len);
-                    for (i, b) in val.slice().iter().enumerate() {
-                        repeats[i] = b.repeat;
+                    for b in val.slice() {
+                        repeats.append_assume_capacity(b.repeat);
                     }
                 }
                 {
                     let sizes = init_small_list_helper!(self, sizes, len);
-                    for (i, b) in val.slice().iter().enumerate() {
-                        sizes[i] = b.size.deep_clone(arena);
+                    for b in val.slice() {
+                        sizes.append_assume_capacity(b.size.deep_clone(arena));
                     }
                 }
                 {
                     let attachments = init_small_list_helper!(self, attachments, len);
-                    for (i, b) in val.slice().iter().enumerate() {
-                        attachments[i] = b.attachment;
+                    for b in val.slice() {
+                        attachments.append_assume_capacity(b.attachment);
                     }
                 }
                 {
                     let origins = init_small_list_helper!(self, origins, len);
-                    for (i, b) in val.slice().iter().enumerate() {
-                        origins[i] = b.origin;
+                    for b in val.slice() {
+                        origins.append_assume_capacity(b.origin);
                     }
                 }
 

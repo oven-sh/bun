@@ -1061,7 +1061,7 @@ function rustSink() {
 // Safe-body: \`m_sinkPtr\` params are typed \`&\`/\`&mut\` (every C++ caller
 // null-checks first); host fns route through \`bun_jsc::host_fn::host_fn_static\`.
 
-use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{host_fn, CallFrame, JSGlobalObject, JSValue};
 
 `;
 
@@ -1090,7 +1090,9 @@ pub extern "C" fn ${sym}(global: *mut JSGlobalObject, callframe: *mut CallFrame)
     }
 
     // extern "C" JSC::EncodedJSValue ${name}__getInternalFd(WebCore::JS${name}*)
-    // C++ caller null-checks `wrapped()` before calling.
+    // C++ caller passes `sink` (non-null after dynamicDowncast check). Note:
+    // JSSink.cpp passes the JS wrapper here, not `wrapped()`/`m_sinkPtr` — a
+    // pre-existing C++/Zig spec disagreement not introduced by this refactor.
     symbols.push(`${name}__getInternalFd`);
     templ += `#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {

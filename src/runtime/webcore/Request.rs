@@ -875,19 +875,22 @@ impl Request {
         self.internal_event_callback = InternalJSEventCallback::default();
     }
 
-    pub fn finalize(mut self: Box<Self>) {
-        self.js_ref.finalize();
-        self.finalize_without_deinit();
+    pub fn finalize(self: Box<Self>) {
+        // weak_ptr_data may have outstanding refs aliasing this allocation;
+        // hand ownership back to the raw pointer FIRST so a panic in the work
+        // below leaks instead of Box-drop UAF-ing those weak holders.
+        let this = Box::leak(self);
+        this.js_ref.finalize();
+        this.finalize_without_deinit();
         // SAFETY: `body` is a +1 ref handed out by `body::hive_alloc` /
         // `HiveRef::ref_()`; release it. Slot returns to the pool when the
         // count hits zero (drops the payload in place).
-        unsafe { (*self.body.as_ptr()).unref() };
-        if self.weak_ptr_data.on_finalize() {
-            drop(self);
-        } else {
-            // weak_ptr_data still has outstanding refs — keep allocation alive.
-            let _ = Box::leak(self);
+        unsafe { (*this.body.as_ptr()).unref() };
+        if this.weak_ptr_data.on_finalize() {
+            // SAFETY: `this` is the live Box-allocated payload; reclaim and drop.
+            drop(unsafe { Box::from_raw(this) });
         }
+        // else: weak_ptr_data still has outstanding refs — keep allocation alive.
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]

@@ -34,85 +34,88 @@ impl StringBuilder {
 
     pub fn append_latin1(&mut self, value: &[u8]) {
         // SAFETY: forwards a valid (ptr,len) slice to C++.
-        unsafe { StringBuilder__appendLatin1(self, value.as_ptr(), value.len()) }
+        unsafe { StringBuilder__appendLatin1(self.bytes.as_mut_ptr().cast(), value.as_ptr(), value.len()) }
     }
 
     pub fn append_utf16(&mut self, value: &[u16]) {
         // SAFETY: forwards a valid (ptr,len) slice to C++.
-        unsafe { StringBuilder__appendUtf16(self, value.as_ptr(), value.len()) }
+        unsafe { StringBuilder__appendUtf16(self.bytes.as_mut_ptr().cast(), value.as_ptr(), value.len()) }
     }
 
     pub fn append_double(&mut self, value: f64) {
-        StringBuilder__appendDouble(self, value)
+        // SAFETY: self.bytes is a live StringBuilder.
+        unsafe { StringBuilder__appendDouble(self.bytes.as_mut_ptr().cast(), value) }
     }
 
     pub fn append_int(&mut self, value: i32) {
-        StringBuilder__appendInt(self, value)
+        // SAFETY: self.bytes is a live StringBuilder.
+        unsafe { StringBuilder__appendInt(self.bytes.as_mut_ptr().cast(), value) }
     }
 
     pub fn append_usize(&mut self, value: usize) {
-        StringBuilder__appendUsize(self, value)
+        // SAFETY: self.bytes is a live StringBuilder.
+        unsafe { StringBuilder__appendUsize(self.bytes.as_mut_ptr().cast(), value) }
     }
 
     pub fn append_string(&mut self, value: String) {
-        StringBuilder__appendString(self, value)
+        // SAFETY: self.bytes is a live StringBuilder; bun_str::String is #[repr(C)].
+        unsafe { StringBuilder__appendString(self.bytes.as_mut_ptr().cast(), value) }
     }
 
     pub fn append_lchar(&mut self, value: u8) {
-        StringBuilder__appendLChar(self, value)
+        // SAFETY: self.bytes is a live StringBuilder.
+        unsafe { StringBuilder__appendLChar(self.bytes.as_mut_ptr().cast(), value) }
     }
 
     pub fn append_uchar(&mut self, value: u16) {
-        StringBuilder__appendUChar(self, value)
+        // SAFETY: self.bytes is a live StringBuilder.
+        unsafe { StringBuilder__appendUChar(self.bytes.as_mut_ptr().cast(), value) }
     }
 
     pub fn append_quoted_json_string(&mut self, value: String) {
-        StringBuilder__appendQuotedJsonString(self, value)
+        // SAFETY: self.bytes is a live StringBuilder; bun_str::String is #[repr(C)].
+        unsafe { StringBuilder__appendQuotedJsonString(self.bytes.as_mut_ptr().cast(), value) }
     }
 
     pub fn to_string(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // PORT NOTE: Zig wraps this in a TopExceptionScope. `from_js_host_call`
         // is the equivalent shape (call FFI → check pending exception); using it
         // here avoids the in-place-init / pinning dance TopExceptionScope needs.
-        crate::from_js_host_call(global, || StringBuilder__toString(self, global))
+        crate::from_js_host_call(global, || unsafe {
+            // SAFETY: self.bytes is a live StringBuilder; global is a valid borrow.
+            StringBuilder__toString(self.bytes.as_mut_ptr().cast(), global)
+        })
     }
 
     pub fn ensure_unused_capacity(&mut self, additional: usize) {
-        StringBuilder__ensureUnusedCapacity(self, additional)
+        // SAFETY: self.bytes is a live StringBuilder.
+        unsafe { StringBuilder__ensureUnusedCapacity(self.bytes.as_mut_ptr().cast(), additional) }
     }
 }
 
 impl Drop for StringBuilder {
     fn drop(&mut self) {
-        // The C++ `WTF::StringBuilder` destructor frees its heap buffer; the
-        // `[u8; SIZE]` carrier has no Rust drop glue, so this runs exactly once.
-        StringBuilder__deinit(self)
+        // SAFETY: self.bytes was initialized by StringBuilder__init and has not
+        // been deinitialized (Rust ownership guarantees Drop runs once).
+        unsafe { StringBuilder__deinit(self.bytes.as_mut_ptr().cast()) }
     }
 }
 
 // TODO(port): move to jsc_sys
-//
-// `StringBuilder` is a `#[repr(C)]` carrier for `WTF::StringBuilder`; every
-// inherent method holds `&mut self` exclusively and the C++ side never
-// re-enters JS in a way that aliases this stack value, so `&mut StringBuilder`
-// (which lowers to a non-null `StringBuilder*`) is sound at the FFI boundary.
-// Shims that take only `&mut StringBuilder` + scalars/`String`-by-value are
-// `safe fn`; the `(ptr,len)` appenders and the in-place initializer stay
-// `unsafe fn`.
 unsafe extern "C" {
     fn StringBuilder__init(this: *mut c_void);
-    safe fn StringBuilder__deinit(this: &mut StringBuilder);
-    fn StringBuilder__appendLatin1(this: &mut StringBuilder, str: *const u8, len: usize);
-    fn StringBuilder__appendUtf16(this: &mut StringBuilder, str: *const u16, len: usize);
-    safe fn StringBuilder__appendDouble(this: &mut StringBuilder, num: f64);
-    safe fn StringBuilder__appendInt(this: &mut StringBuilder, num: i32);
-    safe fn StringBuilder__appendUsize(this: &mut StringBuilder, num: usize);
-    safe fn StringBuilder__appendString(this: &mut StringBuilder, str: String);
-    safe fn StringBuilder__appendLChar(this: &mut StringBuilder, c: u8);
-    safe fn StringBuilder__appendUChar(this: &mut StringBuilder, c: u16);
-    safe fn StringBuilder__appendQuotedJsonString(this: &mut StringBuilder, str: String);
-    safe fn StringBuilder__toString(this: &mut StringBuilder, global: &JSGlobalObject) -> JSValue;
-    safe fn StringBuilder__ensureUnusedCapacity(this: &mut StringBuilder, additional: usize);
+    fn StringBuilder__deinit(this: *mut c_void);
+    fn StringBuilder__appendLatin1(this: *mut c_void, str: *const u8, len: usize);
+    fn StringBuilder__appendUtf16(this: *mut c_void, str: *const u16, len: usize);
+    fn StringBuilder__appendDouble(this: *mut c_void, num: f64);
+    fn StringBuilder__appendInt(this: *mut c_void, num: i32);
+    fn StringBuilder__appendUsize(this: *mut c_void, num: usize);
+    fn StringBuilder__appendString(this: *mut c_void, str: String);
+    fn StringBuilder__appendLChar(this: *mut c_void, c: u8);
+    fn StringBuilder__appendUChar(this: *mut c_void, c: u16);
+    fn StringBuilder__appendQuotedJsonString(this: *mut c_void, str: String);
+    fn StringBuilder__toString(this: *mut c_void, global: *const JSGlobalObject) -> JSValue;
+    fn StringBuilder__ensureUnusedCapacity(this: *mut c_void, additional: usize);
 }
 
 // ported from: src/jsc/StringBuilder.zig

@@ -55,12 +55,9 @@ impl Default for ArrayBuffer {
 // the pattern used by `JSGlobalObject`'s own extern block in `JSGlobalObject.rs`.
 unsafe extern "C" {
     fn JSBuffer__fromMmap(global: *const JSGlobalObject, addr: *mut c_void, len: usize) -> JSValue;
-    // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` lowers
-    // to a non-null `*const`, C++ mutates VM/heap state via interior mutation);
-    // the rest are scalars → `safe fn`.
-    safe fn ArrayBuffer__fromSharedMemfd(
+    fn ArrayBuffer__fromSharedMemfd(
         fd: i64,
-        global: &JSGlobalObject,
+        global: *const JSGlobalObject,
         byte_offset: usize,
         byte_length: usize,
         total_size: usize,
@@ -170,7 +167,11 @@ impl ArrayBuffer {
         total_size: usize,
         ty: JSType,
     ) -> JSValue {
-        ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
+        // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
+        // *const); all integer args are passed by value.
+        unsafe {
+            ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
+        }
     }
 
     pub fn to_js_buffer_from_memfd(fd: Fd, global: &JSGlobalObject) -> JsResult<JSValue> {

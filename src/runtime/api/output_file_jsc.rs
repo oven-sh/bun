@@ -42,9 +42,11 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         unsafe { (*store_ptr).mime_type = mime };
         blob.content_type = std::ptr::from_ref::<[u8]>(unsafe { (*store_ptr).mime_type.value.as_ref() });
     } else {
-        // No store ⇒ empty bytes ⇒ JS never reads `content_type`; match Zig
-        // by leaving the default `b""`.
-        let _ = mime;
+        // No store (empty bytes). Zig still assigns `blob.content_type` from the
+        // loader's mime so `contentTypeOrMimeType()` keeps returning a value.
+        let owned: Box<[u8]> = Box::from(mime.value.as_ref());
+        blob.content_type = Box::into_raw(owned);
+        blob.content_type_allocated = true;
     }
 }
 

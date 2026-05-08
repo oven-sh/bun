@@ -323,10 +323,8 @@ pub mod posix_spawn {
     use super::*;
     use super::bun_spawn;
 
-    // `bun.sys.Tag` has no `posix_spawn`/`waitpid` variants yet (subset table).
-    // TODO(b2-blocked): bun_sys::Tag::{posix_spawn,waitpid} — replace TODO with real tags.
-    const SYSCALL_POSIX_SPAWN: sys::Tag = sys::Tag::TODO;
-    const SYSCALL_WAITPID: sys::Tag = sys::Tag::TODO;
+    const SYSCALL_POSIX_SPAWN: sys::Tag = sys::Tag::posix_spawn;
+    const SYSCALL_WAITPID: sys::Tag = sys::Tag::waitpid;
 
     #[derive(Copy, Clone)]
     pub struct WaitPidResult {

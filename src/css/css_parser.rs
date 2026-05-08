@@ -5052,8 +5052,8 @@ impl<'a> Tokenizer<'a> {
             // todo_stuff.match_byte
             match self.next_byte_unchecked() {
                 b' ' | b'\t' | b'\n' | b'\r' | FORM_FEED_BYTE => {
-                    let mut value = CopyOnWriteStr::Borrowed(self.slice_from(start_pos));
-                    return self.consume_url_end(start_pos, &mut value);
+                    let value = CopyOnWriteStr::Borrowed(self.slice_from(start_pos));
+                    return self.consume_url_end(start_pos, value);
                 }
                 b')' => {
                     let value = self.slice_from(start_pos);
@@ -5083,7 +5083,7 @@ impl<'a> Tokenizer<'a> {
             // todo_stuff.match_byte
             match b {
                 b' ' | b'\t' | b'\n' | b'\r' | FORM_FEED_BYTE => {
-                    return self.consume_url_end(start_pos, &mut string_bytes);
+                    return self.consume_url_end(start_pos, string_bytes);
                 }
                 b')' => {
                     self.advance(1);
@@ -5122,7 +5122,7 @@ impl<'a> Tokenizer<'a> {
         Token::UnquotedUrl(string_bytes.to_slice())
     }
 
-    pub fn consume_url_end(&mut self, start_pos: usize, string: &mut CopyOnWriteStr<'a>) -> Token {
+    pub fn consume_url_end(&mut self, start_pos: usize, string: CopyOnWriteStr<'a>) -> Token {
         while !self.is_eof() {
             // todo_stuff.match_byte
             match self.next_byte_unchecked() {
@@ -5859,16 +5859,14 @@ impl<'a> CopyOnWriteStr<'a> {
         }
     }
 
-    pub fn to_slice(&self) -> &'static [u8] {
+    pub fn to_slice(self) -> &'static [u8] {
         match self {
             // SAFETY: see `src_str` — both arms borrow either the source or
             // arena, neither of which the consuming `Token` outlives.
             CopyOnWriteStr::Borrowed(b) => unsafe { src_str(b) },
-            // SAFETY: bumpalo Vec storage is in the arena and outlives 'a.
-            // TODO(port): bumpalo's `into_bump_slice()` is the proper API.
-            CopyOnWriteStr::Owned(o) => unsafe {
-                src_str(core::slice::from_raw_parts(o.as_ptr(), o.len()))
-            },
+            // SAFETY: `into_bump_slice` leaks the buffer into the arena so it
+            // lives for `'a`; otherwise dropping the Vec would `mi_free` it.
+            CopyOnWriteStr::Owned(o) => unsafe { src_str(o.into_bump_slice()) },
         }
     }
 }

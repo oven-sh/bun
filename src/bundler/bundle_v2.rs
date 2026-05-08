@@ -2243,9 +2243,7 @@ impl<'a> BundleV2<'a> {
     /// idle/busy time since the previous call. No-op when env var unset.
     #[inline]
     pub fn dump_pool_stats(&self, label: &str) {
-        // SAFETY: `pool` is the arena-allocated bundler ThreadPool, live for
-        // the bundle lifetime (`Graph.pool` set in `BundleV2::init`).
-        unsafe { self.graph.pool.as_ref() }.worker_pool().dump_stats(label);
+        self.graph.pool().worker_pool().dump_stats(label);
     }
 
     pub fn scan_for_secondary_paths(&mut self) {
@@ -2642,7 +2640,7 @@ impl<'a> BundleV2<'a> {
                 self.graph.estimated_file_loader_count += 1;
             }
 
-            unsafe { self.graph.pool.as_mut() }.schedule(task);
+            self.graph.pool().schedule(task);
         }
         Ok(())
     }
@@ -2728,7 +2726,7 @@ impl<'a> BundleV2<'a> {
                 self.graph.estimated_file_loader_count += 1;
             }
 
-            unsafe { self.graph.pool.as_mut() }.schedule(task);
+            self.graph.pool().schedule(task);
         }
 
         self.graph.entry_points.push(js_ast::Index::init(source_index.get()));
@@ -2814,7 +2812,7 @@ impl<'a> BundleV2<'a> {
         // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
         // backref into the now-stable `this.graph.heap` slot.
         this.linker.graph.bump = &raw const this.graph.heap;
-        unsafe { (*this.transpiler.log).clone_line_text = true };
+        this.transpiler.log_mut().clone_line_text = true;
 
         // We don't expose an option to disable this. Bake forbids tree-shaking
         // since every export must is always exist in case a future module
@@ -3117,7 +3115,7 @@ impl<'a> BundleV2<'a> {
             (*runtime_parse_task).loader = Some(Loader::Js);
         }
         self.increment_scan_counter();
-        unsafe { self.graph.pool.as_mut() }.schedule(runtime_parse_task);
+        self.graph.pool().schedule(runtime_parse_task);
         Ok(())
     }
 
@@ -3344,7 +3342,7 @@ impl<'a> BundleV2<'a> {
                 self.graph.estimated_file_loader_count += 1;
             }
 
-            unsafe { self.graph.pool.as_mut() }.schedule(task);
+            self.graph.pool().schedule(task);
         }
 
         Ok(source_index.get())
@@ -3426,7 +3424,7 @@ impl<'a> BundleV2<'a> {
                 self.graph.estimated_file_loader_count += 1;
             }
 
-            unsafe { self.graph.pool.as_mut() }.schedule(task);
+            self.graph.pool().schedule(task);
         }
         Ok(source_index.get())
     }
@@ -3471,8 +3469,8 @@ impl<'a> BundleV2<'a> {
 
         self.increment_scan_counter();
 
-        // SAFETY: `pool` and its `worker_pool` are live for the bundle lifetime.
-        unsafe { (*(*self.graph.pool.as_ptr()).worker_pool).schedule(bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!((*task).task))) };
+        // SAFETY: `task` is the just-allocated arena box; sole reference here.
+        self.graph.pool().worker_pool().schedule(bun_threading::thread_pool::Batch::from(unsafe { core::ptr::addr_of_mut!((*task).task) }));
 
         Ok(u32::try_from(source_index).expect("int cast"))
     }
@@ -3546,7 +3544,7 @@ impl<'a> BundleV2<'a> {
         )?;
         this.unique_key = generate_unique_key();
 
-        if unsafe { (*this.transpiler.log).has_errors() } {
+        if this.transpiler.log().has_errors() {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3556,7 +3554,7 @@ impl<'a> BundleV2<'a> {
         let entry_points: *const [Box<[u8]>] = &raw const *this.transpiler.options.entry_points;
         this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
-        if unsafe { (*this.transpiler.log).has_errors() } {
+        if this.transpiler.log().has_errors() {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3566,7 +3564,7 @@ impl<'a> BundleV2<'a> {
         *minify_duration = (((bun_core::time::nano_timestamp() as i64) - (bun_core::start_time() as i64)) / (bun_core::time::NS_PER_MS as i64)) as u64;
         *source_code_size = this.source_code_length as u64;
 
-        if unsafe { (*this.transpiler.log).has_errors() } {
+        if this.transpiler.log().has_errors() {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3669,7 +3667,7 @@ impl<'a> BundleV2<'a> {
         )?;
         this.unique_key = generate_unique_key();
 
-        if unsafe { (*this.transpiler.log).has_errors() } {
+        if this.transpiler.log().has_errors() {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3707,19 +3705,19 @@ impl<'a> BundleV2<'a> {
         )?;
         this.unique_key = generate_unique_key();
 
-        if unsafe { (*this.transpiler.log).has_errors() } {
+        if this.transpiler.log().has_errors() {
             return Err(bun_core::err!("BuildFailed"));
         }
 
         this.enqueue_entry_points_bake_production(entry_points)?;
 
-        if unsafe { (*this.transpiler.log).has_errors() } {
+        if this.transpiler.log().has_errors() {
             return Err(bun_core::err!("BuildFailed"));
         }
 
         this.wait_for_parse();
 
-        if unsafe { (*this.transpiler.log).has_errors() } {
+        if this.transpiler.log().has_errors() {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3789,14 +3787,27 @@ impl<'a> BundleV2<'a> {
             // (which needs `&mut self`) inside the loop. Zig accessed all of these
             // as raw `.items(.field)` slices with no borrow-checking.
             let self_ptr: *mut Self = self;
-            let unique_key_for_additional_files = unsafe { (*self_ptr).graph.input_files.items_unique_key_for_additional_file() };
-            let content_hashes_for_additional_files = unsafe { (*self_ptr).graph.input_files.items_content_hash_for_additional_file() };
-            let sources = unsafe { (*self_ptr).graph.input_files.items_source_mut() };
-            let targets = unsafe { (*self_ptr).graph.ast.items_target() };
+            // SAFETY: see PORT NOTE above — disjoint MultiArrayList columns,
+            // raw-ptr sidestep for split-borrow against `transpiler_for_target`
+            // inside the loop. All six column derefs share the same invariant.
+            let (
+                unique_key_for_additional_files,
+                content_hashes_for_additional_files,
+                sources,
+                targets,
+                additional_files,
+                loaders,
+            ) = unsafe {
+                (
+                    (*self_ptr).graph.input_files.items_unique_key_for_additional_file(),
+                    (*self_ptr).graph.input_files.items_content_hash_for_additional_file(),
+                    (*self_ptr).graph.input_files.items_source_mut(),
+                    (*self_ptr).graph.ast.items_target(),
+                    (*self_ptr).graph.input_files.items_additional_files_mut(),
+                    (*self_ptr).graph.input_files.items_loader(),
+                )
+            };
             let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
-
-            let additional_files = unsafe { (*self_ptr).graph.input_files.items_additional_files_mut() };
-            let loaders = unsafe { (*self_ptr).graph.input_files.items_loader() };
 
             for reachable_source in reachable_files {
                 let index = reachable_source.get() as usize;
@@ -3982,7 +3993,7 @@ impl<'a> BundleV2<'a> {
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
                 if source.path.is_file() {
-                    unsafe { this.graph.pool.as_mut() }.schedule(load.parse_task_mut());
+                    this.graph.pool().schedule(load.parse_task_mut());
                     return;
                 }
 
@@ -4043,7 +4054,7 @@ impl<'a> BundleV2<'a> {
                 let parse_task = load.parse_task_mut();
                 parse_task.loader = Some(code.loader);
                 parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
-                unsafe { this.graph.pool.as_mut() }.schedule(parse_task);
+                this.graph.pool().schedule(parse_task);
 
                 if let Some(watcher_ptr) = this.bun_watcher {
                     'add_watchers: {
@@ -4298,7 +4309,7 @@ impl<'a> BundleV2<'a> {
                                 this.graph.estimated_file_loader_count += 1;
                             }
 
-                            unsafe { this.graph.pool.as_mut() }.schedule(task);
+                            this.graph.pool().schedule(task);
                         }
                     } else {
                         out_source_index = Some(Index::init(unsafe { *value_ptr }));
@@ -4364,7 +4375,7 @@ impl<'a> BundleV2<'a> {
         // In Rust these are dropped automatically; arena-backed slices are bulk-freed.
 
         // bundle_v2.zig:1426-1437 — worker-assignment teardown.
-        let pool = unsafe { self.graph.pool.as_mut() };
+        let pool = self.graph.pool_mut();
         {
             let mut assignments = pool.workers_assignments.lock();
             if assignments.count() > 0 {
@@ -4373,8 +4384,7 @@ impl<'a> BundleV2<'a> {
                     unsafe { (**worker).deinit_soon() };
                 }
                 assignments.clear_retaining_capacity();
-                // SAFETY: worker_pool is live for the bundle lifetime.
-                unsafe { (*pool.worker_pool).wake_for_idle_events() };
+                pool.worker_pool().wake_for_idle_events();
             }
         }
         pool.deinit();
@@ -4390,7 +4400,7 @@ impl<'a> BundleV2<'a> {
     ) -> Result<BuildResult, Error> {
         self.unique_key = generate_unique_key();
 
-        if unsafe { (*self.transpiler.log).errors } > 0 {
+        if self.transpiler.log().errors > 0 {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -4403,7 +4413,7 @@ impl<'a> BundleV2<'a> {
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-        if unsafe { (*self.transpiler.log).errors } > 0 {
+        if self.transpiler.log().errors > 0 {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -4440,7 +4450,7 @@ impl<'a> BundleV2<'a> {
             )?
         };
 
-        if unsafe { (*self.transpiler.log).errors } > 0 {
+        if self.transpiler.log().errors > 0 {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -5017,7 +5027,7 @@ impl<'a> BundleV2<'a> {
         // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
         // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
         let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
-        generic_path_with_pretty_initialized(path, target, unsafe { &(*self.transpiler.fs).top_level_dir }, bump)
+        generic_path_with_pretty_initialized(path, target, self.transpiler.fs().top_level_dir, bump)
     }
 
     fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
@@ -5632,7 +5642,7 @@ impl<'a> BundleV2<'a> {
                     import_record.source_index = Index::INVALID;
 
                     if let Some(entry) = dev_server.is_file_cached(&path.text, bake_graph) {
-                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(unsafe { &(*self.transpiler.fs).top_level_dir }, &path.text);
+                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(self.transpiler.fs().top_level_dir, &path.text);
                         if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset {
                             // Overload `path.text` to point to the final URL
                             // This information cannot be queried while printing because a lock wouldn't get held.
@@ -5827,7 +5837,7 @@ impl<'a> BundleV2<'a> {
                     self.graph.estimated_file_loader_count += 1;
                 }
 
-                unsafe { self.graph.pool.as_mut() }.schedule(new_task);
+                self.graph.pool().schedule(new_task);
             } else {
                 if loader.should_copy_for_bundling() {
                     // SAFETY: value_ptr is valid (see above).

@@ -346,8 +346,7 @@ impl ThreadPool {
         if Self::uses_io_pool() {
             match parse_task.stage {
                 ParseTaskStage::NeedsParse(_) => {
-                    // SAFETY: worker_pool valid for lifetime of self.
-                    schedule_fn(unsafe { &*self.worker_pool }, ThreadPoolLib::Batch::from(&raw mut parse_task.task));
+                    schedule_fn(self.worker_pool(), ThreadPoolLib::Batch::from(&raw mut parse_task.task));
                 }
                 ParseTaskStage::NeedsSourceCode => {
                     // SAFETY: io_pool is Some when uses_io_pool(); points to live static.
@@ -356,8 +355,7 @@ impl ThreadPool {
                 }
             }
         } else {
-            // SAFETY: worker_pool valid for lifetime of self.
-            schedule_fn(unsafe { &*self.worker_pool }, ThreadPoolLib::Batch::from(&raw mut parse_task.task));
+            schedule_fn(self.worker_pool(), ThreadPoolLib::Batch::from(&raw mut parse_task.task));
         }
     }
 
@@ -553,7 +551,7 @@ impl Worker {
         // need a shared `&ThreadPool` — `get_worker` takes `&self` and serializes
         // map mutation via the internal `parking_lot::Mutex`, so concurrent
         // entry from multiple worker threads is sound.
-        let pool: &ThreadPool = unsafe { ctx.graph.pool.as_ref() };
+        let pool: &ThreadPool = ctx.graph.pool();
         let worker = pool.get_worker(bun_threading::current_thread_id());
         if !worker.has_created {
             worker.create(ctx);

@@ -111,7 +111,7 @@ pub fn scan_imports_and_exports(
     let files = this.graph.files.split_raw();
     // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the
     // lifetime of the link step. Read-only — this function never writes to it.
-    let input = unsafe { &*this.parse_graph }.input_files.split_raw();
+    let input = this.parse_graph().input_files.split_raw();
 
     use bun_js_parser::ast::bundled_ast::CssCol;
     let import_records_list: *mut [ImportRecordList] = ast.import_records;
@@ -313,19 +313,21 @@ pub fn scan_imports_and_exports(
         // bundle time.
         {
             let _trace = perf::trace("Bundler.WrapDependencies");
-            let mut dependency_wrapper = DependencyWrapper {
-                // SAFETY: `split_raw()`-derived column ptrs carry root
-                // provenance from the `MultiArrayList` heap buffer; this block
-                // holds no other borrow into ast/meta/files and makes no
-                // `&mut this` calls, so the reborrows are exclusive for the
-                // block.
-                flags: unsafe { &mut *flags },
-                import_records: unsafe { &*import_records_list },
-                exports_kind: unsafe { &mut *exports_kind },
-                entry_point_kinds: unsafe { &*entry_point_kinds },
-                export_star_map: HashMap::default(),
-                export_star_records: unsafe { &*export_star_import_records },
-                output_format,
+            // SAFETY: `split_raw()`-derived column ptrs carry root provenance
+            // from the `MultiArrayList` heap buffer; this block holds no other
+            // borrow into ast/meta/files and makes no `&mut this` calls, so
+            // the reborrows are exclusive for the block. All five derefs share
+            // the same invariant, so they are grouped under one `unsafe`.
+            let mut dependency_wrapper = unsafe {
+                DependencyWrapper {
+                    flags: &mut *flags,
+                    import_records: &*import_records_list,
+                    exports_kind: &mut *exports_kind,
+                    entry_point_kinds: &*entry_point_kinds,
+                    export_star_map: HashMap::default(),
+                    export_star_records: &*export_star_import_records,
+                    output_format,
+                }
             };
             // PORT NOTE: `defer dependency_wrapper.export_star_map.deinit()` → Drop handles it.
 
@@ -517,7 +519,7 @@ pub fn scan_imports_and_exports(
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool
             // set in `BundleV2::init`.
-            let worker_pool = unsafe { (*this.parse_graph).pool.as_ref() }.worker_pool();
+            let worker_pool = this.worker_pool();
             // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
             // so reborrow it mutably (not actually mutated by the by-value
             // variant). Step 6 reuses it afterwards.
@@ -1709,7 +1711,7 @@ mod __css_validation {
 
         // PERF(port): was stack-fallback arena (1024 bytes) — profile.
         // SAFETY: parse_graph backref valid for link step. Read-only.
-        let input = unsafe { &*this.parse_graph }.input_files.split_raw();
+        let input = this.parse_graph().input_files.split_raw();
         let mut visitor = Visitor {
             visited: ArrayHashMap::<logger::Ref, ()>::default(),
             properties: StringArrayHashMap::<PropertyInFile>::default(),

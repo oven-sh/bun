@@ -1307,7 +1307,7 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
                 // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid
                 // for the lifetime of the link step that owns this LinkerContext.
                 let source =
-                    &unsafe { &*self.ctx.parse_graph }.input_files.items_source()[source_index.get() as usize];
+                    &self.ctx.parse_graph().input_files.items_source()[source_index.get() as usize];
                 write!(
                     writer,
                     "{} ({})",

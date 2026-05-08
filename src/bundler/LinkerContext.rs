@@ -289,6 +289,15 @@ impl<'a> LinkerContext<'a> {
         unsafe { &*self.resolver }
     }
 
+    /// Safe accessor for the underlying `bun_threading::ThreadPool` driving
+    /// link-phase parallel work. Chains [`Self::parse_graph`] →
+    /// [`Graph::pool`] → [`ThreadPool::worker_pool`](crate::ThreadPool::worker_pool),
+    /// keeping the `unsafe` deref centralized in those accessors.
+    #[inline]
+    pub fn worker_pool(&self) -> &bun_threading::ThreadPool {
+        self.parse_graph().pool().worker_pool()
+    }
+
     pub fn mark_pending_task_done(&self) {
         // Zig: `.monotonic` → Rust `Relaxed` (LLVM `monotonic` == C11 `relaxed`).
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
@@ -447,17 +456,18 @@ impl<'a> LinkerContext<'a> {
             let ast_len = self.graph.ast.len();
             let ast_slice = self.graph.ast.slice();
             // SAFETY: SoA columns are disjoint; the underlying slab does not
-            // reallocate for the duration of this loop.
-            let exports_kind: &mut [ExportsKind] = unsafe {
-                core::slice::from_raw_parts_mut(
-                    ast_slice.items_raw::<"exports_kind", ExportsKind>(),
-                    ast_len,
-                )
-            };
-            let ast_flags_list: &mut [AstFlags] = unsafe {
-                core::slice::from_raw_parts_mut(
-                    ast_slice.items_raw::<"flags", AstFlags>(),
-                    ast_len,
+            // reallocate for the duration of this loop. Both derefs share the
+            // same invariant (root-provenance column ptrs from `items_raw`).
+            let (exports_kind, ast_flags_list): (&mut [ExportsKind], &mut [AstFlags]) = unsafe {
+                (
+                    core::slice::from_raw_parts_mut(
+                        ast_slice.items_raw::<"exports_kind", ExportsKind>(),
+                        ast_len,
+                    ),
+                    core::slice::from_raw_parts_mut(
+                        ast_slice.items_raw::<"flags", AstFlags>(),
+                        ast_len,
+                    ),
                 )
             };
             let meta_flags_list = self.graph.meta.items_flags_mut();
@@ -538,10 +548,7 @@ impl<'a> LinkerContext<'a> {
 
     pub fn schedule_tasks(&self, batch: ThreadPoolLib::Batch) {
         let _ = self.pending_task_count.fetch_add(u32::try_from(batch.len).expect("int cast"), Ordering::Relaxed);
-        // SAFETY: `pool` is the arena-allocated bundler `ThreadPool` set in
-        // `BundleV2::init`; `worker_pool()` is the safe accessor for its
-        // backing `bun_threading::ThreadPool`.
-        unsafe { self.parse_graph().pool.as_ref() }.worker_pool().schedule(batch);
+        self.worker_pool().schedule(batch);
     }
 
     fn process_html_import_files(&mut self) {
@@ -653,13 +660,31 @@ impl<'a> LinkerContext<'a> {
             // across the recursion).
             let parse_graph: *mut Graph = self.parse_graph;
             let import_records_list: *const [Vec<ImportRecord>] = self.graph.ast.items_import_records();
-            let tla_keywords: *const [Range] = unsafe { (*parse_graph).ast.items_top_level_await_keyword() };
-            let tla_checks: *mut [TlaCheck] = unsafe { (*parse_graph).ast.items_tla_check_mut() };
-            let input_files: *const [Source] = unsafe { (*parse_graph).input_files.items_source() };
             let flags: *mut [crate::ungate_support::js_meta::Flags] = self.graph.meta.items_flags_mut();
             let css_asts: *const [js_ast::ast::bundled_ast::CssCol] = self.graph.ast.items_css();
             let files_len = self.graph.files.len();
-            let import_records_len = unsafe { (&*import_records_list).len() };
+            // SAFETY: see block comment above — `parse_graph` backref disjoint
+            // from `*self`, stable SoA slabs; the recursive `validate_tla` body
+            // neither reallocates the slabs nor forms a competing `&mut` to
+            // any read-only column. All seven derefs share that invariant.
+            let (
+                tla_keywords,
+                tla_checks,
+                input_files,
+                import_records_list,
+                css_asts,
+                flags,
+            ) = unsafe {
+                (
+                    (*parse_graph).ast.items_top_level_await_keyword(),
+                    (*parse_graph).ast.items_tla_check_mut(),
+                    (*parse_graph).input_files.items_source(),
+                    &*import_records_list,
+                    &*css_asts,
+                    &mut *flags,
+                )
+            };
+            let import_records_len = import_records_list.len();
 
             // Process all files in source index order, like esbuild does
             let mut source_index: u32 = 0;
@@ -677,24 +702,20 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 // Skip CSS files
-                // SAFETY: bounds-checked by `import_records_len` above; column
-                // slab is stable.
-                if unsafe { (*css_asts)[source_index as usize].is_some() } {
+                if css_asts[source_index as usize].is_some() {
                     source_index += 1;
                     continue;
                 }
 
-                // SAFETY: see block comment above — disjoint SoA columns,
-                // stable slabs; reborrow per call.
-                let import_records = unsafe { (*import_records_list)[source_index as usize].slice() };
+                let import_records = import_records_list[source_index as usize].slice();
                 let _ = self.validate_tla(
                     source_index,
-                    unsafe { &*tla_keywords },
-                    unsafe { &mut *tla_checks },
-                    unsafe { &*input_files },
+                    tla_keywords,
+                    tla_checks,
+                    input_files,
                     import_records,
-                    unsafe { &mut *flags },
-                    unsafe { &*import_records_list },
+                    flags,
+                    import_records_list,
                 )?;
 
                 source_index += 1;
@@ -757,23 +778,49 @@ impl<'a> LinkerContext<'a> {
         let entry_point_kinds: *const [EntryPoint::Kind] = std::ptr::from_ref(self.graph.files.items_entry_point_kind());
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
-        let entry_points_len = unsafe { (&*entry_points).len() };
+        let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
+
+        // SAFETY: see block comment above — disjoint SoA columns, stable slabs
+        // (no reallocation during tree-shaking). All column derefs share that
+        // invariant; reborrowing once here (rather than per-call) is sound
+        // because the recursive `mark_file_*` bodies neither reallocate the
+        // slabs nor form a competing `&mut` to any read-only column.
+        let (
+            entry_points,
+            side_effects,
+            import_records,
+            entry_point_kinds,
+            css_reprs,
+            parts,
+            distances,
+            file_entry_bits,
+        ) = unsafe {
+            (
+                &*entry_points,
+                &*side_effects,
+                &*import_records,
+                &*entry_point_kinds,
+                &*css_reprs,
+                &mut *parts,
+                &mut *distances,
+                &mut *file_entry_bits,
+            )
+        };
+        let entry_points_len = entry_points.len();
 
         {
             let _trace2 = bun::perf::trace("Bundler.markFileLiveForTreeShaking");
 
             // Tree shaking: Each entry point marks all files reachable from itself
             for i in 0..entry_points_len {
-                // SAFETY: see block comment above — disjoint SoA columns,
-                // stable slabs; reborrow per recursive call.
-                let entry_point = unsafe { (*entry_points)[i] };
+                let entry_point = entry_points[i];
                 self.mark_file_live_for_tree_shaking(
                     entry_point,
-                    unsafe { &*side_effects },
-                    unsafe { &mut *parts },
-                    unsafe { &*import_records },
-                    unsafe { &*entry_point_kinds },
-                    unsafe { &*css_reprs },
+                    side_effects,
+                    parts,
+                    import_records,
+                    entry_point_kinds,
+                    css_reprs,
                 );
             }
         }
@@ -781,16 +828,14 @@ impl<'a> LinkerContext<'a> {
         {
             let _trace2 = bun::perf::trace("Bundler.markFileReachableForCodeSplitting");
 
-            let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
             // AutoBitSet needs to be initialized if it is dynamic
-            // SAFETY: sole writer to `file_entry_bits` for this init pass.
             if AutoBitSet::needs_dynamic(entry_points_len) {
-                for bits in unsafe { (&mut *file_entry_bits).iter_mut() } {
+                for bits in file_entry_bits.iter_mut() {
                     *bits = AutoBitSet::init_empty(entry_points_len)?;
                 }
-            } else if unsafe { !(&*file_entry_bits).is_empty() } {
+            } else if !file_entry_bits.is_empty() {
                 // assert that the tag is correct
-                debug_assert!(matches!(unsafe { &(*file_entry_bits)[0] }, AutoBitSet::Static(_)));
+                debug_assert!(matches!(&file_entry_bits[0], AutoBitSet::Static(_)));
             }
 
             // Code splitting: Determine which entry points can reach which files. This
@@ -798,17 +843,16 @@ impl<'a> LinkerContext<'a> {
             // between live parts within the same file. All liveness has to be computed
             // first before determining which entry points can reach which files.
             for i in 0..entry_points_len {
-                // SAFETY: see block comment above.
-                let entry_point = unsafe { (*entry_points)[i] };
+                let entry_point = entry_points[i];
                 self.mark_file_reachable_for_code_splitting(
                     entry_point,
                     i,
-                    unsafe { &mut *distances },
+                    distances,
                     0,
-                    unsafe { &*parts },
-                    unsafe { &*import_records },
-                    unsafe { &mut *file_entry_bits },
-                    unsafe { &*css_reprs },
+                    parts,
+                    import_records,
+                    file_entry_bits,
+                    css_reprs,
                 );
             }
         }
@@ -829,10 +873,7 @@ impl<'a> LinkerContext<'a> {
         // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
         // (shared), so a `&` is sufficient and avoids aliasing.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
-        let bundle: *const BundleV2 = unsafe {
-            bun_core::from_field_ptr!(BundleV2, linker, ctx.c.cast_const())
-        };
-        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
+        let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         let worker: &mut crate::thread_pool::Worker = &mut **worker;
         // PORT NOTE: dispatch on a discriminant copy so `chunk` isn't borrowed
@@ -857,10 +898,7 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
-        let bundle: *const BundleV2 = unsafe {
-            bun_core::from_field_ptr!(BundleV2, linker, ctx.c.cast_const())
-        };
-        let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
+        let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
             Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
@@ -1255,11 +1293,7 @@ impl SourceMapDataTask {
         // `bun.default_allocator` internally. The branch is a no-op, so we
         // pass the worker arena unconditionally; `DevServerHandle` does not
         // expose an arena accessor (§Dispatch).
-        let alloc: *const Bump = worker.arena;
-
-        // SAFETY: `alloc` is the thread-local worker arena (initialized by
-        // `Worker::create`); `compute_quoted_source_contents` ignores it.
-        SourceMapData::compute_quoted_source_contents(ctx, unsafe { &*alloc }, task.source_index);
+        SourceMapData::compute_quoted_source_contents(ctx, worker.arena(), task.source_index);
         worker.unget();
     }
 }
@@ -1397,6 +1431,22 @@ pub struct GenerateChunkCtx<'a> {
 // SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
+
+impl<'a> GenerateChunkCtx<'a> {
+    /// Recover a shared borrow of the owning `BundleV2` via container_of from
+    /// the embedded `LinkerContext` pointer (`BundleV2.linker == *self.c`).
+    /// Used solely to call `Worker::get`, which only reads `bundle.graph.pool`
+    /// (shared) and serializes via mutex — so a `&BundleV2` is sufficient and
+    /// no `&mut` is ever materialized over the shared bundle while peer
+    /// per-chunk tasks run concurrently.
+    #[inline]
+    pub fn bundle(&self) -> &BundleV2<'a> {
+        // SAFETY: `self.c` is `&raw mut bundle.linker` set in
+        // `generate_chunks_in_parallel`; container_of recovers the parent.
+        // The bundle is valid for the link step.
+        unsafe { &*bun_core::from_field_ptr!(BundleV2, linker, self.c.cast_const()) }
+    }
+}
 
 pub struct PendingPartRange<'a> {
     pub part_range: PartRange,

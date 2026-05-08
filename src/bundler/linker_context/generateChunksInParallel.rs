@@ -78,7 +78,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // TODO(port): worker_pool.eachPtr signature — arena param dropped; Rust impl is infallible.
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
-        unsafe { (*c.parse_graph).pool.as_ref() }.worker_pool().each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        c.worker_pool().each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
         debug!("  DONE {} renamers", chunks.len());
     }
 
@@ -131,7 +131,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
-            let worker_pool = unsafe { (*c.parse_graph).pool.as_ref() }.worker_pool();
+            let worker_pool = c.worker_pool();
             worker_pool.schedule(batch);
             worker_pool.wait_for_all();
 
@@ -273,7 +273,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
-            let worker_pool = unsafe { (*c.parse_graph).pool.as_ref() }.worker_pool();
+            let worker_pool = c.worker_pool();
             worker_pool.schedule(batch);
             worker_pool.wait_for_all();
             debug!("  DONE {} compiling part ranges", total_count);
@@ -294,7 +294,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
-            unsafe { (*c.parse_graph).pool.as_ref() }.worker_pool().each_ptr(
+            c.worker_pool().each_ptr(
                 chunk_contexts[0],
                 LinkerContext::generate_chunk,
                 chunks_to_do,
@@ -530,7 +530,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
-    let root_path: &[u8] = &unsafe { &(*c.resolver).opts }.output_dir;
+    // SAFETY: resolver backref; raw deref (not `c.resolver()`) because
+    // `root_path` is passed alongside `&mut *c` to `write_output_files_to_disk`
+    // below (split borrow — `output_dir` lives in the resolver, disjoint from
+    // anything `c` mutates).
+    let root_path: &[u8] = &unsafe { &*c.resolver }.opts.output_dir;
     let is_standalone = c.options.compile_to_standalone_html;
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0

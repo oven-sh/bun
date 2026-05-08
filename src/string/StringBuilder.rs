@@ -292,7 +292,7 @@ impl StringBuilder {
         // SAFETY: ptr came from Box::<[u8]>::new_uninit_slice(cap) leaked above;
         // all `cap` bytes have been written iff caller appended everything counted.
         // TODO(port): if not fully written this reads uninit bytes — Zig didn't care.
-        unsafe { Box::from_raw(slice::from_raw_parts_mut(ptr.as_ptr(), cap)) }
+        unsafe { bun_core::heap::take(slice::from_raw_parts_mut(ptr.as_ptr(), cap)) }
     }
 }
 

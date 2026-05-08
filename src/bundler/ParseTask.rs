@@ -2645,7 +2645,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
             ContentsOrFd::Contents(_) => WatcherData::NONE,
         },
     });
-    let result = Box::into_raw(result);
+    let result = bun_core::heap::leak(result);
 
     // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
     // SAFETY: worker.ctx backref valid; `linker.r#loop` is a live AnyEventLoop
@@ -2683,13 +2683,13 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
 }
 
 fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
-    // SAFETY: callback contract — `result` was Box::into_raw'd above; `ctx` is
+    // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
     // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
     BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
 }
 
 pub fn on_complete(result: *mut Result) {
-    // SAFETY: result allocated via Box::into_raw above; uniquely owned here.
+    // SAFETY: result allocated via heap::alloc above; uniquely owned here.
     let r = unsafe { &mut *result };
     let ctx = r.ctx;
     // SAFETY: `ctx` is a `*mut BundleV2` BACKREF (Zig `*BundleV2`) stored with

@@ -48,12 +48,12 @@ pub struct PostgresSQLQuery {
 
 // Zig `deinit`: `if (this.statement) |s| s.deref()` then deref query/cursor_name,
 // then `destroy(this)`. `query`/`cursor_name` are `BunString` (already Drop) and
-// `destroy` is `Box::from_raw` in `deref_`; only the raw `*mut PostgresSQLStatement`
+// `destroy` is `heap::take` in `deref_`; only the raw `*mut PostgresSQLStatement`
 // needs an explicit deref here.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
         if let Some(stmt) = self.statement.take() {
-            // SAFETY: `stmt` was produced by `Box::into_raw` (in `do_run` or
+            // SAFETY: `stmt` was produced by `heap::alloc` (in `do_run` or
             // PostgresSQLConnection's statements map) and was ref'd when stored
             // into `self.statement`.
             unsafe { PostgresSQLStatement::deref(stmt) };
@@ -127,17 +127,17 @@ impl Status {
 
 impl PostgresSQLQuery {
     // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
-    // TODO(port): these are IntrusiveRc inc/dec; deref_ runs deinit (Drop + Box::from_raw) at 0.
+    // TODO(port): these are IntrusiveRc inc/dec; deref_ runs deinit (Drop + heap::take) at 0.
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
     /// Intrusive refcount decrement. Takes a raw `*mut Self` (mirroring Zig's
     /// `*@This()`) rather than `&self`/`&mut self` because reaching zero frees the
     /// allocation — holding a live reference across that drop, or deriving the
-    /// `*mut` for `Box::from_raw` from a `&self` (read-only provenance), is UB.
+    /// `*mut` for `heap::take` from a `&self` (read-only provenance), is UB.
     ///
     /// # Safety
-    /// `this` must point to a live `PostgresSQLQuery` produced by `Box::into_raw`
+    /// `this` must point to a live `PostgresSQLQuery` produced by `heap::alloc`
     /// in `call`. If this call drops the count to zero, no `&`/`&mut` borrows of
     /// `*this` may outlive it.
     pub unsafe fn deref_(this: *mut Self) {
@@ -147,8 +147,8 @@ impl PostgresSQLQuery {
         let n = rc.get() - 1;
         rc.set(n);
         if n == 0 {
-            // SAFETY: last reference; `this` originated from `Box::into_raw` in `call`.
-            drop(unsafe { Box::from_raw(this) });
+            // SAFETY: last reference; `this` originated from `heap::alloc` in `call`.
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 
@@ -364,7 +364,7 @@ impl PostgresSQLQuery {
             return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
         }
 
-        let ptr = Box::into_raw(Box::new(PostgresSQLQuery::default()));
+        let ptr = bun_core::heap::leak(Box::new(PostgresSQLQuery::default()));
 
         // SAFETY: ptr was just allocated and is the m_ctx payload; toJS wraps it in the JSCell.
         let this_value = js::to_js(ptr, global_this);
@@ -436,7 +436,7 @@ impl PostgresSQLQuery {
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     //
-    // Takes `*mut Self` (the JSCell m_ctx payload, i.e. the original `Box::into_raw`
+    // Takes `*mut Self` (the JSCell m_ctx payload, i.e. the original `heap::alloc`
     // pointer) rather than `&mut Self`: `connection.requests.write_item(this_ptr)` below
     // stashes this pointer in a long-lived FIFO, and a `&mut`-derived `*mut` would carry
     // borrow-scoped provenance that is invalidated once codegen reuses m_ctx after this
@@ -489,7 +489,7 @@ impl PostgresSQLQuery {
                 let mut s = PostgresSQLStatement::default();
                 s.signature = Signature::empty();
                 s.status = StatementStatus::Parsing;
-                Box::into_raw(Box::new(s))
+                bun_core::heap::leak(Box::new(s))
             };
             // Query is simple and it's the only owner of the statement
             this.statement = Some(stmt);
@@ -747,7 +747,7 @@ impl PostgresSQLQuery {
                         s.signature = signature;
                         s.init_exact_refs(2);
                         s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
-                        Box::into_raw(Box::new(s))
+                        bun_core::heap::leak(Box::new(s))
                     };
                     this.statement = Some(stmt);
 
@@ -761,7 +761,7 @@ impl PostgresSQLQuery {
                         let mut s = PostgresSQLStatement::default();
                         s.signature = signature;
                         s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
-                        Box::into_raw(Box::new(s))
+                        bun_core::heap::leak(Box::new(s))
                     };
                     this.statement = Some(stmt);
                 }

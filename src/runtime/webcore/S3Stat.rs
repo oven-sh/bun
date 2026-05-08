@@ -60,9 +60,9 @@ impl S3Stat {
     }
 
     pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` was produced by `Box::into_raw` in the codegen'd
+        // SAFETY: `this` was produced by `heap::alloc` in the codegen'd
         // wrapper; finalize is called exactly once on the mutator thread.
-        let this = unsafe { Box::from_raw(this) };
+        let this = unsafe { bun_core::heap::take(this) };
         // `bun_str::String` is `#[derive(Copy)]` with NO `Drop` impl
         // (src/string/lib.rs), so dropping the Box alone would leak the +1
         // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them

@@ -79,7 +79,7 @@ impl Drop for Node {
         if self.owns_slice {
             // SAFETY: when owns_slice is true, slice was produced by Box::<[u8]>::into_raw
             // in `push_cloned` and has not been freed.
-            drop(unsafe { Box::from_raw(self.slice.cast_mut()) });
+            drop(unsafe { bun_core::heap::take(self.slice.cast_mut()) });
         }
     }
 }
@@ -103,7 +103,7 @@ impl StringJoiner {
         if data.is_empty() {
             return;
         }
-        let raw: *const [u8] = Box::into_raw(data);
+        let raw: *const [u8] = bun_core::heap::leak(data);
         self.push_raw(raw, true);
     }
 
@@ -114,7 +114,7 @@ impl StringJoiner {
         }
         // bun.handleOom(this.allocator.dupe(u8, data)) → Box<[u8]> (aborts on OOM)
         let owned: Box<[u8]> = Box::from(data);
-        let raw: *const [u8] = Box::into_raw(owned);
+        let raw: *const [u8] = bun_core::heap::leak(owned);
         self.push_raw(raw, true);
     }
 
@@ -146,16 +146,16 @@ impl StringJoiner {
             self.watcher.needs_newline = data_slice[data_slice.len() - 1] != b'\n';
         }
 
-        let new_tail_ptr = Box::into_raw(new_tail);
+        let new_tail_ptr = bun_core::heap::leak(new_tail);
         if let Some(current_tail) = self.tail {
             // SAFETY: `tail` always points to the last node in the chain owned via `head`.
             unsafe { (*current_tail.as_ptr()).next = new_tail_ptr };
         } else {
             debug_assert!(self.head.is_none());
-            // SAFETY: new_tail_ptr just came from Box::into_raw above.
-            self.head = Some(unsafe { Box::from_raw(new_tail_ptr) });
+            // SAFETY: new_tail_ptr just came from heap::alloc above.
+            self.head = Some(unsafe { bun_core::heap::take(new_tail_ptr) });
         }
-        // SAFETY: new_tail_ptr is non-null (from Box::into_raw).
+        // SAFETY: new_tail_ptr is non-null (from heap::alloc).
         self.tail = Some(unsafe { NonNull::new_unchecked(new_tail_ptr) });
     }
 
@@ -169,7 +169,7 @@ impl StringJoiner {
         self.tail = None;
         let len = self.len;
         self.len = 0;
-        let mut current: *mut Node = Box::into_raw(head);
+        let mut current: *mut Node = bun_core::heap::leak(head);
 
         // Zig: `allocator.alloc(u8, this.len)` — allocates uninitialized.
         // Avoid the redundant zero-fill of `vec![0u8; len]`.
@@ -194,7 +194,7 @@ impl StringJoiner {
             let prev = current;
             current = node.next;
             // SAFETY: `prev` is a Box-allocated node not yet freed.
-            drop(unsafe { Box::from_raw(prev) });
+            drop(unsafe { bun_core::heap::take(prev) });
         }
 
         debug_assert_eq!(off, len);
@@ -218,7 +218,7 @@ impl StringJoiner {
         self.tail = None;
         let len = self.len;
         self.len = 0;
-        let mut current: *mut Node = Box::into_raw(head);
+        let mut current: *mut Node = bun_core::heap::leak(head);
 
         let mut slice = vec![0u8; len + end.len()].into_boxed_slice();
 
@@ -235,7 +235,7 @@ impl StringJoiner {
             let prev = current;
             current = node.next;
             // SAFETY: `prev` is a Box-allocated node not yet freed.
-            drop(unsafe { Box::from_raw(prev) });
+            drop(unsafe { bun_core::heap::take(prev) });
         }
 
         debug_assert!(remaining.len() == end.len());
@@ -318,13 +318,13 @@ impl Drop for StringJoiner {
             return;
         };
         self.tail = None;
-        let mut current: *mut Node = Box::into_raw(head);
+        let mut current: *mut Node = bun_core::heap::leak(head);
 
         while !current.is_null() {
             // SAFETY: `current` walks the singly-linked chain of Box-allocated nodes.
             let next = unsafe { (*current).next };
             // SAFETY: each node was Box-allocated and not yet freed.
-            drop(unsafe { Box::from_raw(current) });
+            drop(unsafe { bun_core::heap::take(current) });
             current = next;
         }
     }

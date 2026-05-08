@@ -139,7 +139,7 @@ impl Drop for HTTPResponseMetadata {
             // SAFETY: the only non-empty producer is `clone_metadata`, which
             // `Box::leak`s exactly this slice; we are its sole owner.
             unsafe {
-                drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                     list.as_ptr().cast_mut(),
                     list.len(),
                 )));
@@ -550,7 +550,7 @@ impl Drop for HTTPClient<'_> {
         // proxy_authorization: Option<Vec<u8>> — dropped automatically.
         // proxy_headers: Option<Headers> — dropped automatically.
         if let Some(tunnel) = self.proxy_tunnel.take() {
-            // SAFETY: tunnel was created by ProxyTunnel::new (Box::into_raw) and
+            // SAFETY: tunnel was created by ProxyTunnel::new (heap::alloc) and
             // refcounted; detach_and_deref releases this client's strong ref.
             unsafe { (*tunnel.as_ptr()).detach_and_deref() };
         }
@@ -3154,7 +3154,7 @@ impl<'a> HTTPClient<'a> {
                 // `picohttp::StringBuilder::allocate()`; `cap` is the exact
                 // length it was allocated with.
                 Some(p) => unsafe {
-                    Box::from_raw(core::slice::from_raw_parts_mut(p.as_ptr(), cap))
+                    bun_core::heap::take(core::slice::from_raw_parts_mut(p.as_ptr(), cap))
                 },
                 None => Box::default(),
             };

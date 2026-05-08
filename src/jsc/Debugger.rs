@@ -462,7 +462,7 @@ impl Debugger {
                 // SAFETY: all-zero is a valid pre-`uv_timer_init` state (C POD,
                 // matches `std.mem.zeroes`).
                 let timer: *mut uv::Timer =
-                    Box::into_raw(Box::new(unsafe { core::mem::zeroed() }));
+                    bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed() }));
                 // SAFETY: `timer` freshly allocated; `uv_loop` valid.
                 unsafe { (*timer).init(uv_loop) };
 
@@ -483,7 +483,7 @@ impl Debugger {
                     // SAFETY: `handle` is the `Box<Timer>` allocated above
                     // (cast through `uv_handle_t` at offset 0); this is the
                     // sole owner reclaiming it after `uv_close` completes.
-                    drop(unsafe { Box::from_raw(handle.cast::<uv::Timer>()) });
+                    drop(unsafe { bun_core::heap::take(handle.cast::<uv::Timer>()) });
                 }
                 // SAFETY: `timer` initialized above.
                 unsafe {

@@ -6,6 +6,7 @@ pub mod result;
 pub mod tty;
 pub mod util;
 pub mod Global;
+pub mod heap;
 
 pub mod env;
 pub mod wtf;

@@ -1175,8 +1175,8 @@ pub mod package_manifest {
                             .sub(core::mem::offset_of!(SaveTask<'_>, task))
                             .cast()
                     };
-                    // SAFETY: allocated via Box::into_raw in save_async
-                    let save_task = unsafe { Box::from_raw(save_task) };
+                    // SAFETY: allocated via heap::alloc in save_async
+                    let save_task = unsafe { bun_core::heap::take(save_task) };
 
                     if let Err(err) = Serializer::save(
                         &save_task.manifest,
@@ -1198,7 +1198,7 @@ pub mod package_manifest {
 
             // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
             // the Registry.Scope outlives the threadpool task. Phase B: prove or change to owned.
-            let task = Box::into_raw(SaveTask::new(SaveTask {
+            let task = bun_core::heap::leak(SaveTask::new(SaveTask {
                 manifest: this.clone(), // TODO(port): Zig copied PackageManifest by value
                 scope,
                 tmpdir,

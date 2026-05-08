@@ -1124,7 +1124,7 @@ impl VirtualMachine {
                         hash,
                         specifier,
                     )?;
-                    let raw = Box::into_raw(ep);
+                    let raw = bun_core::heap::leak(ep);
                     v.insert(raw.cast());
                     raw
                 }
@@ -1417,7 +1417,7 @@ pub struct RuntimeHooks {
     /// Reclaim the per-VM state boxed by `init_runtime_state`. Called from
     /// [`VirtualMachine::destroy`] (worker teardown) with the exact opaque
     /// pointer `init_runtime_state` returned (or null). The high tier
-    /// `Box::from_raw`s it and clears its thread-local cache. Spec
+    /// `heap::take`s it and clears its thread-local cache. Spec
     /// VirtualMachine.zig: `timer`/`entry_point` are value fields freed in
     /// worker `destroy()`; without this slot every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
@@ -1802,7 +1802,7 @@ impl VirtualMachine {
         // Spec VirtualMachine.zig:1234 — `opts.log orelse allocator.create(Log)`.
         let log: *mut logger::Log = match opts.log {
             Some(l) => l.as_ptr(),
-            None => Box::into_raw(Box::new(logger::Log::default())),
+            None => bun_core::heap::leak(Box::new(logger::Log::default())),
         };
 
         // SAFETY: VM is large + self-referential; allocate zeroed and fill in
@@ -1847,7 +1847,7 @@ impl VirtualMachine {
             bun_core::Output::raw_error_writer(),
             bun_core::Output::raw_writer(),
         );
-        let console = Box::into_raw(console_box).cast::<crate::console_object::ConsoleObject>();
+        let console = bun_core::heap::leak(console_box).cast::<crate::console_object::ConsoleObject>();
 
         let context_id = opts
             .context_id
@@ -2617,7 +2617,7 @@ pub struct IPCInstance {
 
 impl IPCInstance {
     pub fn new(v: IPCInstance) -> *mut IPCInstance {
-        Box::into_raw(Box::new(v))
+        bun_core::heap::leak(Box::new(v))
     }
     pub fn ipc(&mut self) -> Option<&mut crate::ipc::SendQueue> {
         Some(&mut self.data)
@@ -2627,9 +2627,9 @@ impl IPCInstance {
     }
     /// Only reached from the `get_ipc_instance` error path.
     pub fn deinit(this: *mut IPCInstance) {
-        // SAFETY: `this` was produced by `IPCInstance::new` (Box::into_raw).
+        // SAFETY: `this` was produced by `IPCInstance::new` (heap::alloc).
         // `SendQueue` cleans itself up via `Drop`.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Spec VirtualMachine.zig:3940 `IPCInstance.handleIPCMessage`.
@@ -2756,7 +2756,7 @@ fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
     SPECIFIER_CACHE_RESOLVER_BUF.with(|c| {
         let mut p = c.get();
         if p.is_null() {
-            p = Box::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
+            p = bun_core::heap::leak(Box::new(bun_paths::PathBuffer::ZEROED));
             c.set(p);
         }
         p
@@ -2768,7 +2768,7 @@ fn ensure_source_code_printer() {
         let writer = bun_js_printer::BufferWriter::init();
         let mut printer = Box::new(bun_js_printer::BufferPrinter::init(writer));
         printer.ctx.append_null_byte = false;
-        SOURCE_CODE_PRINTER.set(NonNull::new(Box::into_raw(printer)));
+        SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::leak(printer)));
     }
 }
 
@@ -3541,11 +3541,11 @@ impl VirtualMachine {
                 let (ptr, len) = if DUPE {
                     let buf = Box::<[u8]>::from(input_);
                     let len = buf.len();
-                    (Box::into_raw(buf).cast::<u8>().cast_const(), len)
+                    (bun_core::heap::leak(buf).cast::<u8>().cast_const(), len)
                 } else {
                     (input_.as_ptr(), input_.len())
                 };
-                let ref_ = Box::into_raw(Box::new(RefString {
+                let ref_ = bun_core::heap::leak(Box::new(RefString {
                     ptr,
                     len,
                     hash,
@@ -3733,7 +3733,7 @@ impl VirtualMachine {
     fn dupe_resolved_path(s: &[u8]) -> &'static [u8] {
         // SAFETY: allocation is VM-lifetime by spec (VirtualMachine.zig:1740,
         // :1744, :1755, :1761) — never freed in `deinit`.
-        unsafe { &*Box::into_raw(s.to_vec().into_boxed_slice()) }
+        unsafe { &*bun_core::heap::leak(s.to_vec().into_boxed_slice()) }
     }
 
     /// Spec VirtualMachine.zig:1724 `_resolve`.
@@ -4141,10 +4141,10 @@ impl VirtualMachine {
         // in `deinit`; here it's `SOURCE_CODE_PRINTER` (boxed via
         // `ensure_source_code_printer`).
         if let Some(printer) = SOURCE_CODE_PRINTER.take() {
-            // SAFETY: `printer` was produced by `Box::into_raw` in
+            // SAFETY: `printer` was produced by `heap::alloc` in
             // `ensure_source_code_printer` and is exclusively owned by this
             // thread's VM.
-            drop(unsafe { Box::from_raw(printer.as_ptr()) });
+            drop(unsafe { bun_core::heap::take(printer.as_ptr()) });
         }
 
         // PORT NOTE: `SavedSourceMap`'s `Drop` is the Zig `deinit()`; it frees

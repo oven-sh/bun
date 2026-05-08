@@ -3461,7 +3461,7 @@ impl<'a> BundleV2<'a> {
         // PORT NOTE: `bun.new(ServerComponentParseTask, …)` — heap-owned by the
         // worker pool; freed via `bun.destroy` in `on_complete` after the
         // result posts back to the bundle thread.
-        let task = Box::into_raw(Box::new(ServerComponentParseTask {
+        let task = bun_core::heap::leak(Box::new(ServerComponentParseTask {
             data,
             // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (matches Zig `*BundleV2`).
             ctx: std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
@@ -6014,7 +6014,7 @@ impl<'a> BundleV2<'a> {
         }
 
         // defer bun.default_allocator.destroy(parse_result) — caller owns Box and drops at end
-        // TODO(port): parse_result is heap-allocated by worker; reconstruct Box::from_raw at scope exit
+        // TODO(port): parse_result is heap-allocated by worker; reconstruct heap::take at scope exit
 
         let mut diff: i32 = -1;
         // PORT NOTE: Zig used `defer { graph.pending_items += diff; … }` —
@@ -6997,7 +6997,7 @@ impl ExternalFreeFunctionAllocator {
         // PORT NOTE: Zig built a `std.mem.Allocator` whose `.ptr` was the boxed
         // `ExternalFreeFunctionAllocator` and whose vtable's `free` invoked the
         // plugin callback. `bun_alloc::StdAllocator` is the Rust equivalent.
-        let boxed = Box::into_raw(Box::new(ExternalFreeFunctionAllocator { free_callback, context }));
+        let boxed = bun_core::heap::leak(Box::new(ExternalFreeFunctionAllocator { free_callback, context }));
         bun_alloc::StdAllocator {
             ptr: boxed.cast(),
             vtable: &EXTERNAL_FREE_VTABLE,
@@ -7013,8 +7013,8 @@ impl ExternalFreeFunctionAllocator {
         let info: &mut ExternalFreeFunctionAllocator = unsafe { &mut *ext_free_function.cast::<ExternalFreeFunctionAllocator>() };
         // SAFETY: free_callback is a valid C fn provided by plugin
         unsafe { (info.free_callback)(info.context) };
-        // SAFETY: info was Box::into_raw'd in create()
-        drop(unsafe { Box::from_raw(info) });
+        // SAFETY: info was heap-allocated in create()
+        drop(unsafe { bun_core::heap::take(info) });
     }
 }
 

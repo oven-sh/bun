@@ -7,6 +7,40 @@ pub use crate::thread_pool::Task;
 
 pub struct WorkPool;
 
+/// A type that embeds an intrusive [`Task`] node and can be scheduled on the
+/// [`WorkPool`] by value (`Box<Self>`). Implementors declare the byte offset
+/// of their `task: Task` field; [`WorkPool::schedule_owned`] performs the
+/// `Box` → raw-pointer hand-off and the C-ABI callback shim recovers
+/// `Box<Self>` via `container_of`, so call sites never touch
+/// `Box::into_raw`/`from_raw` directly.
+///
+/// # Safety
+/// `TASK_OFFSET` MUST equal `core::mem::offset_of!(Self, <task field>)` where
+/// the field is of type [`Task`]. Getting this wrong is UB (the shim casts
+/// through it).
+pub unsafe trait OwnedTask: Sized + 'static {
+    /// `core::mem::offset_of!(Self, task)`.
+    const TASK_OFFSET: usize;
+
+    /// Run the task. Receives ownership of the heap allocation; dropping
+    /// `self` frees it (Zig: `bun.destroy(this)` at end of callback).
+    fn run(self: Box<Self>);
+
+    /// The C-ABI thread-pool callback shim. Generic over `Self`; recovers the
+    /// owning `Box<Self>` from the intrusive `*mut Task` and dispatches to
+    /// [`OwnedTask::run`]. This is the **single** `Box::from_raw` for every
+    /// `OwnedTask` implementor.
+    #[doc(hidden)]
+    unsafe fn __callback(task: *mut Task) {
+        // SAFETY: `task` points to the `Task` field at `Self::TASK_OFFSET`
+        // inside a `Box<Self>` that `WorkPool::schedule_owned` leaked. The
+        // thread pool guarantees this callback fires exactly once per
+        // scheduled task, so reclaiming the `Box` here is sound.
+        let this = unsafe { Box::from_raw(task.cast::<u8>().sub(Self::TASK_OFFSET).cast::<Self>()) };
+        this.run();
+    }
+}
+
 // PORT NOTE: Zig used `bun.once` (a `Lock`+bool+data lazy-init pattern). Per
 // PORTING.md §Concurrency, that maps to `std::sync::OnceLock<T>` — std handles
 // the double-checked locking and gives a `&'static ThreadPool` directly.
@@ -32,6 +66,27 @@ impl WorkPool {
 
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
+    }
+
+    /// Schedule a heap-allocated task by value. The pool takes ownership of
+    /// the `Box`; [`OwnedTask::run`] receives it back on a worker thread.
+    /// Replaces the open-coded `Box::into_raw` + `&raw mut (*p).task` +
+    /// `@fieldParentPtr`-in-callback pattern.
+    pub fn schedule_owned<T: OwnedTask>(mut task: Box<T>) {
+        // Install the monomorphized shim as the intrusive callback.
+        // SAFETY: `TASK_OFFSET` is the verified offset of a `Task` field
+        // (trait contract); the write is in-bounds.
+        unsafe {
+            let slot = (core::ptr::from_mut(&mut *task).cast::<u8>())
+                .add(T::TASK_OFFSET)
+                .cast::<Task>();
+            (*slot).callback = T::__callback;
+            (*slot).node = crate::thread_pool::Node::default();
+        }
+        // The single into_raw for every OwnedTask scheduler call.
+        let raw = Box::into_raw(task);
+        // SAFETY: `raw` is live for the pool's lifetime; offset is valid.
+        Self::schedule(unsafe { raw.cast::<u8>().add(T::TASK_OFFSET).cast::<Task>() });
     }
 
     pub fn go<C: Send + 'static>(

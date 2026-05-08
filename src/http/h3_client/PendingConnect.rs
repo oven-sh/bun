@@ -46,7 +46,7 @@ impl PendingConnect {
         // SAFETY: caller passes a live intrusive-refcounted ClientSession; PendingConnect
         // holds one ref from construction until Drop.
         unsafe { (*session).ref_() };
-        let self_ = Box::into_raw(Box::new(PendingConnect {
+        let self_ = bun_core::heap::leak(Box::new(PendingConnect {
             session,
             pc,
             loop_ptr: l,
@@ -62,13 +62,13 @@ impl PendingConnect {
         self.loop_ptr
     }
 
-    /// SAFETY: `this` must be the pointer produced by `Box::into_raw` in `register`
+    /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`
     /// and must not be used after this call (it is freed here).
     pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
-        // SAFETY: `this` was Box::into_raw'd in `register`; reclaim it so the Box drops at
+        // SAFETY: `this` was heap-allocated in `register`; reclaim it so the Box drops at
         // end of scope — `Drop` derefs `session` and the allocation is freed.
         // (Zig: defer { session.deref(); bun.destroy(this); })
-        let this = unsafe { Box::from_raw(this) };
+        let this = unsafe { bun_core::heap::take(this) };
         let session = this.session;
 
         // SAFETY: session is kept alive by the ref `this` holds for the duration of this fn.
@@ -99,10 +99,10 @@ impl PendingConnect {
     /// wake the loop. `drain_resolved` runs from `HTTPThread.drainEvents` on the
     /// next loop iteration after the wakeup.
     ///
-    /// SAFETY: `this` must be the pointer produced by `Box::into_raw` in `register`.
+    /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`.
     pub unsafe fn on_dns_resolved_threadsafe(this: *mut PendingConnect) {
         RESOLVED_MUTEX.lock();
-        // SAFETY: `this` is a live Box::into_raw'd PendingConnect (guaranteed by caller).
+        // SAFETY: `this` is a live heap-allocated PendingConnect (guaranteed by caller).
         // RESOLVED_HEAD is only read/written while RESOLVED_MUTEX is held; Relaxed is
         // sufficient because the mutex provides the happens-before ordering.
         unsafe { (*this).next = RESOLVED_HEAD.load(Ordering::Relaxed) };
@@ -119,10 +119,10 @@ impl PendingConnect {
         let mut head = RESOLVED_HEAD.swap(ptr::null_mut(), Ordering::Relaxed);
         RESOLVED_MUTEX.unlock();
         while !head.is_null() {
-            // SAFETY: every node on this list was Box::into_raw'd in register() and
+            // SAFETY: every node on this list was heap-allocated in register() and
             // is consumed exactly once by on_dns_resolved below.
             let next = unsafe { (*head).next };
-            // SAFETY: `head` is a valid Box::into_raw'd PendingConnect (see above).
+            // SAFETY: `head` is a valid heap-allocated PendingConnect (see above).
             unsafe { PendingConnect::on_dns_resolved(head) };
             head = next;
         }

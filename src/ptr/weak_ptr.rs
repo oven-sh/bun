@@ -131,10 +131,10 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         weak_data.set_reference_count(count);
         if weak_data.finalized() && count == 0 {
             // Zig: `bun.destroy(value)` — the allocation came from
-            // `bun.new(T, ...)` (i.e. `Box::new` + `Box::into_raw`).
+            // `bun.new(T, ...)` (i.e. `Box::new` + `heap::alloc`).
             // SAFETY: this is the last reference and the owner has finalized,
             // so we hold the only pointer to a `Box`-allocated `T`.
-            drop(unsafe { Box::from_raw(value.as_ptr()) });
+            drop(unsafe { bun_core::heap::take(value.as_ptr()) });
         }
     }
 }

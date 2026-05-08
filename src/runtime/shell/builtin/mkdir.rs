@@ -156,7 +156,7 @@ impl Mkdir {
                         let path = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
                         let task =
                             ShellMkdirTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
-                        // SAFETY: freshly Box::into_raw'd.
+                        // SAFETY: freshly heap-allocated.
                         unsafe { ShellTask::schedule(task) };
                     }
                     return Yield::suspended();
@@ -177,7 +177,7 @@ impl Mkdir {
             State::Idle | State::Done => panic!("Invalid state"),
         };
         if let Some(task) = pending {
-            // SAFETY: `task` was Box::into_raw'd in `OutputTask::new` and
+            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
             return unsafe { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e) };
         }
@@ -190,8 +190,8 @@ impl Mkdir {
         cmd: NodeId,
         task: *mut ShellMkdirTask,
     ) {
-        // SAFETY: task was Box::into_raw'd in create(); reclaim ownership.
-        let mut task = unsafe { Box::from_raw(task) };
+        // SAFETY: task was heap-allocated in create(); reclaim ownership.
+        let mut task = unsafe { bun_core::heap::take(task) };
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -338,13 +338,13 @@ impl ShellMkdirTask {
             task: ShellTask::new(evtloop),
         });
         task.task.interp = interp;
-        Box::into_raw(task)
+        bun_core::heap::leak(task)
     }
 
     /// Spec: mkdir.zig `runFromThreadPool`.
     pub fn run_from_thread_pool(this: *mut ShellMkdirTask) {
         use bun_paths::{platform, resolve_path, Platform};
-        // SAFETY: `this` is a live Box::into_raw'd task.
+        // SAFETY: `this` is a live heap-allocated task.
         let this = unsafe { &mut *this };
 
         // We have to give an absolute path to our mkdir implementation for it
@@ -397,7 +397,7 @@ impl ShellMkdirTask {
     }
 
     pub fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &mut Interpreter) {
-        // SAFETY: `this` is a live Box::into_raw'd task.
+        // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Mkdir::on_shell_mkdir_task_done(interp, cmd, this);
     }

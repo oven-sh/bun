@@ -182,7 +182,7 @@ impl FileRoute {
 
     pub fn init_from_blob(blob: Blob, opts: InitOptions<'_>) -> *mut FileRoute {
         let headers = headers_from(opts.headers, &blob);
-        Box::into_raw(Box::new(FileRoute {
+        bun_core::heap::leak(Box::new(FileRoute {
             ref_count: Cell::new(1),
             server: Cell::new(opts.server),
             has_last_modified_header: headers.get(b"last-modified").is_some(),
@@ -197,9 +197,9 @@ impl FileRoute {
 
     fn deinit(this: *mut FileRoute) {
         // blob and headers are owned fields — freed by Drop when the Box is dropped.
-        // SAFETY: `this` was allocated via Box::into_raw in init_from_blob/from_js and the
+        // SAFETY: `this` was allocated via heap::alloc in init_from_blob/from_js and the
         // intrusive ref_count has reached 0.
-        unsafe { drop(Box::from_raw(this)) }
+        unsafe { drop(bun_core::heap::take(this)) }
     }
 
     pub fn from_js(global: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut FileRoute>> {
@@ -234,7 +234,7 @@ impl FileRoute {
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
 
-                return Ok(Some(Box::into_raw(Box::new(FileRoute {
+                return Ok(Some(bun_core::heap::leak(Box::new(FileRoute {
                     ref_count: Cell::new(1),
                     server: Cell::new(None),
                     has_last_modified_header: headers.get(b"last-modified").is_some(),
@@ -255,7 +255,7 @@ impl FileRoute {
                 b.global_this = std::ptr::from_ref(global);
                 debug_assert!(!b.is_heap_allocated(), "expected blob not to be heap-allocated");
                 let headers = headers_from(None, &b);
-                return Ok(Some(Box::into_raw(Box::new(FileRoute {
+                return Ok(Some(bun_core::heap::leak(Box::new(FileRoute {
                     ref_count: Cell::new(1),
                     server: Cell::new(None),
                     headers,
@@ -651,7 +651,7 @@ fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
 bun_ptr::impl_cell_ref_counted! {
     impl FileRoute {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: `this` was produced by `Box::into_raw` (write provenance
+        // SAFETY: `this` was produced by `heap::alloc` (write provenance
         // preserved through FFI userdata round-trips); uniquely held at zero.
         unsafe fn destroy(this: *mut Self) { FileRoute::deinit(this) }
     }

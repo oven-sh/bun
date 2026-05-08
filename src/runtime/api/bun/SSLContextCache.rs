@@ -128,7 +128,7 @@ impl SSLContextCache {
         {
             let _guard = self.mutex.lock_guard();
             if let Some(entry) = self.map.get(&d) {
-                // SAFETY: map values are live heap Entries (Box::into_raw below); freed only
+                // SAFETY: map values are live heap Entries (heap::alloc below); freed only
                 // via compact_locked / Drop, both of which hold this mutex.
                 let entry = unsafe { &**entry };
                 if !entry.ctx.is_null() {
@@ -187,7 +187,7 @@ impl SSLContextCache {
             return Some(ctx);
         }
 
-        let entry = Box::into_raw(Box::new(Entry {
+        let entry = bun_core::heap::leak(Box::new(Entry {
             ctx,
             owner: owner_ptr,
         }));
@@ -202,8 +202,8 @@ impl SSLContextCache {
         } != 1
         {
             self.map.swap_remove(&d);
-            // SAFETY: entry was just Box::into_raw'd above and not yet published to ex_data.
-            drop(unsafe { Box::from_raw(entry) });
+            // SAFETY: entry was just heap-allocated above and not yet published to ex_data.
+            drop(unsafe { bun_core::heap::take(entry) });
             return Some(ctx);
         }
 
@@ -222,9 +222,9 @@ impl SSLContextCache {
             let entry = self.map.values()[i];
             // SAFETY: map values are live heap Entries; we hold the mutex.
             if unsafe { (*entry).ctx.is_null() } {
-                // SAFETY: entry was Box::into_raw'd in get_or_create_digest; ex_data
+                // SAFETY: entry was heap-allocated in get_or_create_digest; ex_data
                 // back-pointer is already moot (ctx == null means CRYPTO_EX_free ran).
-                drop(unsafe { Box::from_raw(entry) });
+                drop(unsafe { bun_core::heap::take(entry) });
                 self.map.swap_remove_at(i);
             } else {
                 i += 1;
@@ -283,9 +283,9 @@ impl Drop for SSLContextCache {
                     );
                 }
             }
-            // SAFETY: entry was Box::into_raw'd in get_or_create_digest and is removed
+            // SAFETY: entry was heap-allocated in get_or_create_digest and is removed
             // from any ex_data above, so no other path can reach it.
-            drop(unsafe { Box::from_raw(entry) });
+            drop(unsafe { bun_core::heap::take(entry) });
         }
         // map storage freed by its own Drop
     }

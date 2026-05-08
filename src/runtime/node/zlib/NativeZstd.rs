@@ -501,7 +501,7 @@ impl CompressionStreamImpl for NativeZstd {
             // SAFETY: `this` was Box-allocated by `constructor()`; refcount hit zero so
             // no other borrow exists. Reconstitute the Box to run Drop + free.
             // PORT NOTE: matches Zig `bun.destroy(this)` via RefCount.deinit.
-            unsafe { drop(Box::from_raw(this)) };
+            unsafe { drop(bun_core::heap::take(this)) };
         }
     }
 

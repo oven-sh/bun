@@ -156,7 +156,7 @@ impl ResourceUsage {
         // SAFETY: `this` was allocated via Box::new in `create` and ownership was
         // transferred to the JS wrapper; finalize is called exactly once by the GC
         // on the mutator thread during lazy sweep.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

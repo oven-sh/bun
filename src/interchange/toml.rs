@@ -177,7 +177,7 @@ mod hash_map_pool {
     pub(super) fn get() -> *mut Node {
         let popped = LIST.with_borrow_mut(|list| {
             if let Some(first) = list {
-                // SAFETY: `first` was produced by Box::into_raw below and is non-null.
+                // SAFETY: `first` was produced by heap::alloc below and is non-null.
                 let node = *first;
                 unsafe {
                     *list = if (*node).next.is_null() { None } else { Some((*node).next) };
@@ -193,7 +193,7 @@ mod hash_map_pool {
         }
 
         // default_allocator.create(LinkedList.Node) catch unreachable
-        Box::into_raw(Box::new(Node {
+        bun_core::heap::leak(Box::new(Node {
             data: HashMap::default(),
             next: core::ptr::null_mut(),
         }))
@@ -206,7 +206,7 @@ mod hash_map_pool {
         // node coming back via `release` may carry a stale `next` from a prior
         // prepend, and `get()` would follow it and double-vend that node.
         LIST.with_borrow_mut(|list| {
-            // SAFETY: `node` came from `get()` (Box::into_raw) and is exclusively owned here.
+            // SAFETY: `node` came from `get()` (heap::alloc) and is exclusively owned here.
             unsafe { (*node).next = list.unwrap_or(core::ptr::null_mut()) };
             *list = Some(node);
         });

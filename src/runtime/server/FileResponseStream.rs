@@ -109,8 +109,8 @@ impl FileResponseStream {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
-        // via `Box::from_raw` in `deref()` when the intrusive refcount hits 0.
-        let this: *mut FileResponseStream = Box::into_raw(Box::new(FileResponseStream {
+        // via `heap::take` in `deref()` when the intrusive refcount hits 0.
+        let this: *mut FileResponseStream = bun_core::heap::leak(Box::new(FileResponseStream {
             ref_count: Cell::new(1),
             resp: opts.resp,
             vm: opts.vm,
@@ -175,7 +175,7 @@ impl FileResponseStream {
         let this_parent = std::ptr::from_mut::<FileResponseStream>(this).cast::<c_void>();
         this.reader.set_parent(this_parent);
 
-        // SAFETY: `this` reborrows the live Box::into_raw allocation above.
+        // SAFETY: `this` reborrows the live heap::alloc allocation above.
         let _guard = unsafe { Self::ref_guard(this) };
 
         let start_result = if opts.offset > 0 {
@@ -506,7 +506,7 @@ impl FileResponseStream {
         }
 
         // SAFETY: `self` is the unique &mut handed in by the uWS callback
-        // trampoline; provenance traces back to Box::into_raw in `start()`.
+        // trampoline; provenance traces back to heap::alloc in `start()`.
         unsafe { Self::deref(self) };
     }
 
@@ -550,8 +550,8 @@ impl FileResponseStream {
     }
     /// # Safety
     /// `this` must point to a live `FileResponseStream` allocated via
-    /// `Box::into_raw` in `start()`. Mirrors Zig `RefCount.deref(*Self)` —
-    /// takes a raw mut pointer (not `&self`) so the `Box::from_raw` on the
+    /// `heap::alloc` in `start()`. Mirrors Zig `RefCount.deref(*Self)` —
+    /// takes a raw mut pointer (not `&self`) so the `heap::take` on the
     /// zero-ref path has write provenance back to the original allocation
     /// instead of being laundered through a `&T -> *const T -> *mut T` cast.
     pub unsafe fn deref(this: *mut Self) {
@@ -563,7 +563,7 @@ impl FileResponseStream {
                 // Intrusive ref_count just reached zero — no other live
                 // references. Dropping the Box runs `impl Drop` (fd close) and
                 // field drops.
-                drop(Box::from_raw(this));
+                drop(bun_core::heap::take(this));
             }
         }
     }
@@ -579,7 +579,7 @@ impl FileResponseStream {
 struct DerefOnDrop(*mut FileResponseStream);
 impl Drop for DerefOnDrop {
     fn drop(&mut self) {
-        // SAFETY: constructor contract — `self.0` is a live `Box::into_raw`
+        // SAFETY: constructor contract — `self.0` is a live `heap::alloc`
         // pointer with at least one outstanding ref owned by this guard.
         unsafe { FileResponseStream::deref(self.0) }
     }
@@ -629,7 +629,7 @@ impl Drop for FileResponseStream {
         bun_output::scoped_log!(FileResponseStream, "deinit");
         // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
         // field — closes the poll handle. `bun.destroy(this)` is owned by
-        // `Box::from_raw` in `deref`, not here.
+        // `heap::take` in `deref`, not here.
         if self.auto_close {
             #[cfg(windows)]
             Closer::close(self.fd, bun_sys::windows::libuv::Loop::get());

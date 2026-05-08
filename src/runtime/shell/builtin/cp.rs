@@ -211,7 +211,7 @@ impl Cp {
                             cmd, evtloop, opts, operands, src, tgt.clone(), cwd.clone(),
                             interp_ptr,
                         );
-                        // SAFETY: freshly Box::into_raw'd.
+                        // SAFETY: freshly heap-allocated.
                         unsafe { ShellCpTask::schedule(task) };
                     }
                     return Yield::suspended();
@@ -230,7 +230,7 @@ impl Cp {
             return Builtin::done(interp, cmd, 1);
         }
         if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
-            // SAFETY: `task` was Box::into_raw'd in `OutputTask::new` and
+            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
             return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
         }
@@ -254,7 +254,7 @@ impl Cp {
                 if eb.idx < eb.tasks.len() {
                     let t = eb.tasks[eb.idx];
                     eb.idx += 1;
-                    // SAFETY: `t` is a live Box::into_raw'd task stashed in
+                    // SAFETY: `t` is a live heap-allocated task stashed in
                     // `on_shell_cp_task_done`; not yet freed.
                     let tref = unsafe { &*t };
                     let ignorable = tref
@@ -272,8 +272,8 @@ impl Cp {
             };
             match next {
                 Some((t, true)) => {
-                    // SAFETY: paired with `Box::into_raw` in `create()`.
-                    drop(unsafe { Box::from_raw(t) });
+                    // SAFETY: paired with `heap::alloc` in `create()`.
+                    drop(unsafe { bun_core::heap::take(t) });
                 }
                 Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
                 None => break,
@@ -299,7 +299,7 @@ impl Cp {
         }
         #[cfg(windows)]
         {
-            // SAFETY: `task` is a live Box::into_raw'd task; main-thread only.
+            // SAFETY: `task` is a live heap-allocated task; main-thread only.
             let tref = unsafe { &mut *task };
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if let Some(err) = &tref.err {
@@ -336,8 +336,8 @@ impl Cp {
         cmd: NodeId,
         task: *mut ShellCpTask,
     ) -> Yield {
-        // SAFETY: task was Box::into_raw'd in create(); reclaim.
-        let mut task = unsafe { Box::from_raw(task) };
+        // SAFETY: task was heap-allocated in create(); reclaim.
+        let mut task = unsafe { bun_core::heap::take(task) };
         // Spec: cp.zig `task.takeOutput()`. The lock is uncontended here (all
         // work-pool subtasks have finished) but the data lives inside it.
         let output = core::mem::take(&mut *task.verbose_output.lock());
@@ -478,7 +478,7 @@ impl ShellCpTask {
         // Back-ref so `ShellTask::run_from_main_thread::<ShellCpTask>` (the
         // dispatch.rs bounce-back) can recover `&mut Interpreter`.
         task.task.interp = interp;
-        Box::into_raw(task)
+        bun_core::heap::leak(task)
     }
 
     /// Spec: cp.zig `onCopyImpl` — appends `"{src} -> {dest}\n"` to the verbose
@@ -519,7 +519,7 @@ impl ShellCpTask {
     /// can drain `verbose_output` / surface the error.
     ///
     /// # Safety
-    /// `this` is the live `Box::into_raw`'d task originally passed to
+    /// `this` is the live `heap::alloc`'d task originally passed to
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
     pub unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
@@ -541,7 +541,7 @@ impl ShellCpTask {
     /// `WorkPoolTask` / `concurrent_task` / `keep_alive` storage.
     ///
     /// # Safety
-    /// `this` must be a fresh `Box::into_raw`'d task (see [`create`]).
+    /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
     pub unsafe fn schedule(this: *mut ShellCpTask) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
@@ -565,7 +565,7 @@ impl ShellCpTask {
             task.cast::<u8>()
                 .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET).cast::<ShellCpTask>()
         };
-        // SAFETY: `this` is a live Box::into_raw'd task; the worker thread
+        // SAFETY: `this` is a live heap-allocated task; the worker thread
         // has exclusive access until the bounce-back is posted.
         if let Some(e) = unsafe { &mut *this }.run_from_thread_pool_impl() {
             // SAFETY: still exclusive.
@@ -579,7 +579,7 @@ impl ShellCpTask {
     /// concurrent queue; routed by `dispatch.rs` → [`run_from_main_thread`].
     ///
     /// # Safety
-    /// `this` is the live `Box::into_raw`'d task; not touched again on this
+    /// `this` is the live `heap::alloc`'d task; not touched again on this
     /// thread after return.
     unsafe fn enqueue_to_event_loop(this: *mut ShellCpTask) {
         // Reuse the generic `ShellTask` post-back (identical to Zig's manual
@@ -791,7 +791,7 @@ impl ShellCpTask {
     }
 
     pub fn run_from_main_thread(this: *mut ShellCpTask, interp: &mut Interpreter) {
-        // SAFETY: `this` is a live Box::into_raw'd task.
+        // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Cp::on_shell_cp_task_done(interp, cmd, this);
     }

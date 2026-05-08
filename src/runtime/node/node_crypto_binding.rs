@@ -121,7 +121,7 @@ macro_rules! extern_crypto_job {
                         callback: JSValue,
                     ) -> *mut Job {
                         let vm = global.bun_vm_ptr();
-                        let job = Box::into_raw(Box::new(Job {
+                        let job = bun_core::heap::leak(Box::new(Job {
                             vm,
                             task: WorkPoolTask {
                                 node: Default::default(),
@@ -214,8 +214,8 @@ macro_rules! extern_crypto_job {
                     }
 
                     unsafe fn deinit(this: *mut Job) {
-                        // SAFETY: caller guarantees `this` came from `Box::into_raw` in `create`.
-                        let mut this = unsafe { Box::from_raw(this) };
+                        // SAFETY: caller guarantees `this` came from `heap::alloc` in `create`.
+                        let mut this = unsafe { bun_core::heap::take(this) };
                         // SAFETY: ctx is the FFI-owned opaque handle; C++ owns its destructor.
                         unsafe { ctx_deinit(this.ctx) };
                         this.poll.unref(vm_ctx());
@@ -303,7 +303,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         // PORT NOTE: Zig copies `ctx.*` by value into the heap allocation; Rust takes
         // `Ctx` by value (move) — `Scrypt` is not `Clone` (owns `StringOrBuffer`/Strong).
         let vm = global.bun_vm_ptr();
-        let job = Box::into_raw(Box::new(CryptoJob {
+        let job = bun_core::heap::leak(Box::new(CryptoJob {
             vm,
             task: WorkPoolTask {
                 node: Default::default(),
@@ -320,7 +320,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         // ctx already owns (e.g. `Scrypt` has already protected its password/salt buffers in
         // `from_js`). `deinit` handles all of that; `poll.unref` is a no-op while inactive.
         let mut guard = scopeguard::guard(job, |job| {
-            // SAFETY: job came from Box::into_raw above and has not been consumed.
+            // SAFETY: job came from heap::alloc above and has not been consumed.
             unsafe { Self::deinit(job) };
         });
         // SAFETY: job is exclusively owned here.
@@ -366,12 +366,12 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     }
 
     pub fn run_from_js(this: *mut Self) {
-        // RAII: `this` is a `Box::into_raw` pointer threaded through C callbacks as
+        // RAII: `this` is a `heap::alloc` pointer threaded through C callbacks as
         // `*mut c_void`, so it cannot live as a `Box` for its whole lifetime. A `Drop`
         // impl on `CryptoJob<Ctx>` would force a `Ctx: CryptoJobCtx` bound onto the
         // struct (see PORT NOTE on the struct def), so defer the one-shot free here.
         // Guard captures the raw pointer (Copy) and is declared BEFORE the `&mut *this`
-        // reborrow below so the reborrow drops first — otherwise `Box::from_raw` in
+        // reborrow below so the reborrow drops first — otherwise `heap::take` in
         // `deinit` would alias a still-live `&mut Self` (Stacked Borrows UB).
         let _guard = scopeguard::guard(this, |this| {
             // SAFETY: only call site; runs once.
@@ -395,8 +395,8 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     }
 
     unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller guarantees `this` came from `Box::into_raw` in `init`.
-        let mut this = unsafe { Box::from_raw(this) };
+        // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
+        let mut this = unsafe { bun_core::heap::take(this) };
         this.ctx.deinit();
         this.poll.unref(vm_ctx());
         this.callback.deinit();

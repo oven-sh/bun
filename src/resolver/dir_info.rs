@@ -255,7 +255,7 @@ impl DirInfo {
             unsafe { core::ptr::drop_in_place(p.as_ptr()) };
         }
         if let Some(t) = self.tsconfig_json.take() {
-            // SAFETY: `t` carries mut-provenance from `Box::into_raw` in the
+            // SAFETY: `t` carries mut-provenance from `heap::alloc` in the
             // tsconfig merge loop; this is the sole remaining owner at shutdown.
             // `drop_in_place` releases its owned resources in-place (storage
             // itself is BSS/cache-owned and not freed here, matching Zig

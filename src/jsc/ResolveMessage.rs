@@ -341,7 +341,7 @@ impl ResolveMessage {
         // `msg` and the owned `referrer` buffer. (Mirrors the macro-generated
         // `ResolveMessageClass__finalize`; kept for parity with Zig source.)
         unsafe {
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 }

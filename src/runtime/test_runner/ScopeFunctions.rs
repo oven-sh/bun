@@ -795,9 +795,9 @@ impl ScopeFunctions {
     /// `.classes.ts` `finalize: true` — runs on mutator thread during lazy sweep.
     pub extern "C" fn finalize(this: *mut ScopeFunctions) {
         let _g = group_log::begin();
-        // SAFETY: `this` was Box::into_raw'd in `create_unbound`; codegen guarantees
+        // SAFETY: `this` was heap-allocated in `create_unbound`; codegen guarantees
         // finalize is called exactly once with that pointer.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

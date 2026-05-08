@@ -870,7 +870,7 @@ impl Value {
                         ..Default::default()
                     },
                 );
-                // SAFETY: `NewSource::new()` heap-allocates via `Box::into_raw`; ownership
+                // SAFETY: `NewSource::new()` heap-allocates via `heap::alloc`; ownership
                 // transfers to the JS wrapper's `m_ctx` in `to_readable_stream()` below
                 // (freed by the GC finalizer). Not a leak — FFI ownership hand-off.
                 let reader = unsafe { &mut *reader };
@@ -1173,7 +1173,7 @@ impl Value {
                                     blob.content_type_allocated = false;
                                 } else {
                                     blob.content_type = match mime_type.value {
-                                        Cow::Owned(v) => Box::into_raw(v.into_boxed_slice()),
+                                        Cow::Owned(v) => bun_core::heap::leak(v.into_boxed_slice()),
                                         Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                                     };
                                     blob.content_type_allocated = allocated;
@@ -1525,7 +1525,7 @@ impl Value {
                 ..Default::default()
             },
         );
-        // SAFETY: `NewSource::new()` heap-allocates via `Box::into_raw`; ownership
+        // SAFETY: `NewSource::new()` heap-allocates via `heap::alloc`; ownership
         // transfers to the JS wrapper's `m_ctx` in `to_readable_stream()` below
         // (freed by the GC finalizer). Not a leak — FFI ownership hand-off.
         let reader = unsafe { &mut *reader };
@@ -2045,7 +2045,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                         blob.content_type_allocated = false;
                     } else {
                         blob.content_type = match mime_type.value {
-                            Cow::Owned(v) => Box::into_raw(v.into_boxed_slice()),
+                            Cow::Owned(v) => bun_core::heap::leak(v.into_boxed_slice()),
                             Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                         };
                         blob.content_type_allocated = allocated;
@@ -2231,7 +2231,7 @@ impl<'a> ValueBufferer<'a> {
                 );
             }
             blob::read_file::ReadFileResultType::Result(data) => {
-                // SAFETY: every producer sets `buf = Box::into_raw(v.into_boxed_slice())`
+                // SAFETY: every producer sets `buf = heap::alloc(v.into_boxed_slice())`
                 // (read_file.rs); reclaim ownership here. Dropped at end of scope.
                 let buf = unsafe { Box::<[u8]>::from_raw(data.buf) };
                 bun_core::scoped_log!(

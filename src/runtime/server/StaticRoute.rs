@@ -25,7 +25,7 @@ use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 // PORT NOTE (§Pointers): `*StaticRoute` is also passed as uws onAborted/
 // onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
 // preserve write provenance through the FFI userdata round-trip so the eventual
-// `Box::from_raw` in `deref_` is sound.
+// `heap::take` in `deref_` is sound.
 pub struct StaticRoute {
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
@@ -66,7 +66,7 @@ impl StaticRoute {
     }
 
     /// # Safety
-    /// `this` must have been produced by `Box::into_raw` in one of the
+    /// `this` must have been produced by `heap::alloc` in one of the
     /// constructors below (write provenance preserved through FFI userdata
     /// round-trips). Caller must not hold any live `&`/`&mut` to `*this` across
     /// this call when the refcount may reach zero.
@@ -76,10 +76,10 @@ impl StaticRoute {
             let n = (*this).ref_count.get() - 1;
             (*this).ref_count.set(n);
             if n == 0 {
-                // ref_count hit zero; `this` was created via Box::into_raw and
+                // ref_count hit zero; `this` was created via heap::alloc and
                 // retains write provenance (no `&self` in the chain), so
                 // reconstituting the Box and dropping it is sound.
-                drop(Box::from_raw(this));
+                drop(bun_core::heap::take(this));
             }
         }
     }
@@ -112,7 +112,7 @@ impl StaticRoute {
         }
 
         let cached_blob_size = blob.size();
-        Box::into_raw(Box::new(StaticRoute {
+        bun_core::heap::leak(Box::new(StaticRoute {
             ref_count: Cell::new(1),
             blob,
             cached_blob_size,
@@ -139,7 +139,7 @@ impl StaticRoute {
         let duped = blob.dupe();
         self.blob = AnyBlob::Blob(blob);
 
-        Ok(Box::into_raw(Box::new(StaticRoute {
+        Ok(bun_core::heap::leak(Box::new(StaticRoute {
             ref_count: Cell::new(1),
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
@@ -236,7 +236,7 @@ impl StaticRoute {
             }
 
             let cached_blob_size = blob.size();
-            return Ok(Some(Box::into_raw(Box::new(StaticRoute {
+            return Ok(Some(bun_core::heap::leak(Box::new(StaticRoute {
                 ref_count: Cell::new(1),
                 blob,
                 cached_blob_size,
@@ -355,7 +355,7 @@ impl StaticRoute {
     /// `this` has ref_count >= 1 held until `on_response_complete`; uws stores the
     /// raw pointer and calls back on the same thread. Receiving `*mut Self` (rather
     /// than `&self`) preserves write provenance through the FFI userdata round-trip
-    /// so the eventual `Box::from_raw` in `deref_` is sound.
+    /// so the eventual `heap::take` in `deref_` is sound.
     unsafe fn to_async(this: *mut Self, resp: AnyResponse) {
         resp.on_aborted(
             |this: *mut StaticRoute, resp| {

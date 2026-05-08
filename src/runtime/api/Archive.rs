@@ -113,7 +113,7 @@ const _: () = {
             if p.is_null() { None } else { Some(p) }
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            let ptr = Box::into_raw(Box::new(self));
+            let ptr = bun_core::heap::leak(Box::new(self));
             // SAFETY: `global` is live; ownership of `ptr` transfers to the
             // C++ wrapper (freed via `ArchiveClass__finalize` → `finalize()`).
             // `as_ptr()` routes through `JSGlobalObject`'s `UnsafeCell`
@@ -141,8 +141,8 @@ impl Archive {
     pub fn finalize(this: *mut Self) {
         jsc::mark_binding();
         // SAFETY: called once by the JSC finalizer on the mutator thread; `this`
-        // was allocated by `Box::into_raw` in `constructor`/`create_archive`.
-        drop(unsafe { Box::from_raw(this) });
+        // was allocated by `heap::alloc` in `constructor`/`create_archive`.
+        drop(unsafe { bun_core::heap::take(this) });
         // store.deref() happens via Arc<BlobStore>::drop
     }
 
@@ -707,8 +707,8 @@ impl<C: TaskContext> AsyncTask<C> {
             concurrent_task: ConcurrentTask::default(),
             keep_alive: KeepAlive::default(),
         });
-        let raw = Box::into_raw(this);
-        // SAFETY: raw was just produced by Box::into_raw; not yet shared. Keep the event
+        let raw = bun_core::heap::leak(this);
+        // SAFETY: raw was just produced by heap::alloc; not yet shared. Keep the event
         // loop alive until `run_from_js` unrefs after the threadpool work completes.
         unsafe { (*raw).keep_alive.ref_(vm_ctx()) };
         Ok(raw)
@@ -739,7 +739,7 @@ impl<C: TaskContext> AsyncTask<C> {
 
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
-        let mut owned = unsafe { Box::from_raw(this) };
+        let mut owned = unsafe { bun_core::heap::take(this) };
         owned.keep_alive.unref(vm_ctx());
 
         // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope

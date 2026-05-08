@@ -406,7 +406,7 @@ struct Preconnect {
 
 impl Preconnect {
     fn on_result(this: *mut Preconnect, _: *mut AsyncHTTP<'static>, _: HTTPClientResult<'_>) {
-        // SAFETY: `this` was produced by `Box::into_raw` in `preconnect()` and is
+        // SAFETY: `this` was produced by `heap::alloc` in `preconnect()` and is
         // uniquely owned here; `async_http` was fully written before scheduling.
         unsafe {
             (*this).response_buffer = MutableString::default();
@@ -422,7 +422,7 @@ impl Preconnect {
             // Reclaim and drop the heap allocation (runs Drop on `async_http`
             // — which in turn drops `HTTPClient` — and on `response_buffer`).
             core::ptr::drop_in_place((*this).async_http.as_mut_ptr());
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 }
@@ -437,7 +437,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         return;
     }
 
-    let this: *mut Preconnect = Box::into_raw(Box::new(Preconnect {
+    let this: *mut Preconnect = bun_core::heap::leak(Box::new(Preconnect {
         async_http: MaybeUninit::uninit(),
         response_buffer: MutableString::default(),
         url,
@@ -737,9 +737,9 @@ impl<'a> AsyncHTTP<'a> {
         crate::http_thread::init(&Default::default());
 
         // PORT NOTE: Zig leaked `ctx` (never destroyed). `Box::leak` is forbidden
-        // (PORTING.md §Forbidden); allocate via `Box::into_raw` and reclaim once
+        // (PORTING.md §Forbidden); allocate via `heap::alloc` and reclaim once
         // the single sync callback has fired and we've read the result.
-        let ctx: *mut SingleHTTPChannel = Box::into_raw(Box::new(SingleHTTPChannel::init()));
+        let ctx: *mut SingleHTTPChannel = bun_core::heap::leak(Box::new(SingleHTTPChannel::init()));
         self.result_callback =
             HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx, send_sync_callback);
 
@@ -753,7 +753,7 @@ impl<'a> AsyncHTTP<'a> {
         // finished and no other reference remains.
         let result = unsafe { (*ctx).read_item() };
         // SAFETY: see above — sole owner, callback completed.
-        drop(unsafe { Box::from_raw(ctx) });
+        drop(unsafe { bun_core::heap::take(ctx) });
         if let Some(err) = result.fail {
             return Err(err);
         }
@@ -835,7 +835,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     if let Some(tunnel) = client.proxy_tunnel.take() {
                         // SAFETY: tunnel was created by ProxyTunnel::new
-                        // (Box::into_raw) and refcounted; this releases the
+                        // (heap::alloc) and refcounted; this releases the
                         // clone's strong ref.
                         (*tunnel.as_ptr()).detach_and_deref();
                     }
@@ -855,7 +855,7 @@ impl<'a> AsyncHTTP<'a> {
 
                 // SAFETY: `async_http` is the `async_http` field of a
                 // `ThreadlocalAsyncHTTP` heap-allocated by HTTPThread via
-                // `ThreadlocalAsyncHTTP::new` (Box::into_raw); recover the parent
+                // `ThreadlocalAsyncHTTP::new` (heap::alloc); recover the parent
                 // via field offset and reclaim the Box. This is the LAST access
                 // to `this`/`async_http`; only static state is touched afterward.
                 let threadlocal_http: *mut ThreadlocalAsyncHTTP = async_http.cast::<u8>()
@@ -974,7 +974,7 @@ impl HTTPChannelContext<'_> {
                 .sub(offset_of!(HTTPChannelContext, http))
                 .cast::<HTTPChannelContext>())
         };
-        let boxed = Box::into_raw(Box::new(data));
+        let boxed = bun_core::heap::leak(Box::new(data));
         // SAFETY: channel is set by the owner before scheduling; Zig dereferenced unconditionally.
         unsafe { this.channel.unwrap().as_ref() }
             .write_item(boxed)

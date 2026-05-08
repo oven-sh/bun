@@ -48,7 +48,7 @@ impl JSUint8Array {
     // In Rust the global allocator IS mimalloc, so `Box<[u8]>` encodes that ownership.
     pub fn from_bytes(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
         let len = bytes.len();
-        let ptr = Box::into_raw(bytes).cast::<u8>();
+        let ptr = bun_core::heap::leak(bytes).cast::<u8>();
         // SAFETY: `ptr`/`len` describe a heap allocation from the global (mimalloc)
         // allocator; the C++ side adopts and later frees it with the same allocator.
         unsafe { JSUint8Array__fromDefaultAllocator(global, ptr, len) }

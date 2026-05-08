@@ -1102,7 +1102,7 @@ pub fn initialize_mini_store() {
             // Zig threads `heap.arena()` into the AST allocator; in Rust
             // the Bump (`Arena`) is passed by reference.
             let memory_store = js_ast::ASTMemoryAllocator::new(&heap);
-            let mini_store = Box::into_raw(Box::new(MiniStore {
+            let mini_store = bun_core::heap::leak(Box::new(MiniStore {
                 heap,
                 memory_store,
             }));
@@ -1113,7 +1113,7 @@ pub fn initialize_mini_store() {
             }
             instance.set(Some(mini_store));
         } else {
-            // SAFETY: pointer was Box::into_raw'd on this thread in the branch above and is
+            // SAFETY: pointer was heap-allocated on this thread in the branch above and is
             // never freed; INSTANCE is thread-local and `Cell::get` copies the raw pointer
             // out (no borrow of the Cell is held), so this `&mut` is the sole live reference
             // to the allocation for its entire scope — no aliasing. Mirrors Zig's

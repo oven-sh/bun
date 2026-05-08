@@ -29,7 +29,7 @@ pub struct MaxBuf {
 // TODO(port): LIFETIMES.tsv classifies the caller fields (Subprocess.{stdout,stderr}_maxbuf,
 // {Posix,Windows}BufferedReader.maxbuf) as SHARED → Option<Arc<MaxBuf>>. The fn params below
 // (`ptr: &mut Option<NonNull<MaxBuf>>`, `value: Option<NonNull<MaxBuf>>`) and the hand-rolled
-// Box::into_raw/disowned()/destroy() refcount will not typecheck against those field types in
+// heap::alloc/disowned()/destroy() refcount will not typecheck against those field types in
 // Phase B — reconcile by retyping to Option<Arc<MaxBuf>> (with interior mutability for the
 // ownership flags) and dropping destroy()/disowned().
 impl MaxBuf {
@@ -45,12 +45,12 @@ impl MaxBuf {
         };
         // SAFETY: `owner` outlives this MaxBuf's `owned_by_subprocess` slot — the Subprocess
         // clears it via `remove_from_subprocess` in its finalize path before being dropped.
-        let maxbuf = Box::into_raw(Box::new(MaxBuf {
+        let maxbuf = bun_core::heap::leak(Box::new(MaxBuf {
             owned_by_subprocess: Some((owner, vtable)),
             owned_by_reader: false,
             remaining_bytes: initial,
         }));
-        // SAFETY: Box::into_raw never returns null.
+        // SAFETY: heap::alloc never returns null.
         *ptr = Some(unsafe { NonNull::new_unchecked(maxbuf) });
     }
 
@@ -59,18 +59,18 @@ impl MaxBuf {
     }
 
     /// # Safety
-    /// `this` must have been allocated by `create_for_subprocess` (i.e. via `Box::into_raw`)
+    /// `this` must have been allocated by `create_for_subprocess` (i.e. via `heap::alloc`)
     /// and must be fully disowned.
     unsafe fn destroy(this: NonNull<MaxBuf>) {
         debug_assert!(unsafe { this.as_ref() }.disowned());
-        // SAFETY: paired with Box::into_raw in `create_for_subprocess`.
-        drop(unsafe { Box::from_raw(this.as_ptr()) });
+        // SAFETY: paired with heap::alloc in `create_for_subprocess`.
+        drop(unsafe { bun_core::heap::take(this.as_ptr()) });
     }
 
     pub fn remove_from_subprocess(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
         let p = this_nn.as_ptr();
-        // SAFETY: `this_nn` came from `create_for_subprocess` (Box::into_raw); allocation is
+        // SAFETY: `this_nn` came from `create_for_subprocess` (heap::alloc); allocation is
         // live until `destroy`. Raw-pointer field access only — this fn is reachable from the
         // `on_overflow` vtable while `on_read_bytes` is still on the stack for the same
         // allocation, so no `&mut MaxBuf` may exist on this re-entrancy path (Zig's `*T`
@@ -83,7 +83,7 @@ impl MaxBuf {
         // SAFETY: same live allocation; `owned_by_subprocess` was just cleared, so disowned()
         // reduces to `!owned_by_reader`. Read via raw place to avoid forming a reference.
         if unsafe { !(*p).owned_by_reader } {
-            // SAFETY: both owners cleared ⇒ disowned(); paired with Box::into_raw.
+            // SAFETY: both owners cleared ⇒ disowned(); paired with heap::alloc.
             unsafe { MaxBuf::destroy(this_nn) };
         }
     }
@@ -106,7 +106,7 @@ impl MaxBuf {
         this.owned_by_reader = false;
         *ptr = None;
         if this.disowned() {
-            // SAFETY: just established `disowned()`; allocation originated from Box::into_raw.
+            // SAFETY: just established `disowned()`; allocation originated from heap::alloc.
             unsafe { MaxBuf::destroy(this_nn) };
         }
     }

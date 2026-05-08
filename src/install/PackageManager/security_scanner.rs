@@ -1206,7 +1206,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         // SAFETY: all-zero is a valid uv.Pipe (matches Zig std.mem.zeroes).
         let pipe_ptr: *mut uv::Pipe =
-            Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+            bun_core::heap::leak(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
         // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
         // close callback frees the heap allocation, so do NOT re-box on the
         // cleanup path (would double-free). Disarmed only after finish_spawn
@@ -1221,7 +1221,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `self.loop_()` already projects to the libuv `uv_loop_t*` on
         // Windows (see the `.uv_loop` projection in `loop_()`); pass through.
         let uv_loop = self.loop_();
-        // SAFETY: *pipe was just Box::into_raw'd above and is non-null.
+        // SAFETY: *pipe was just heap-allocated above and is non-null.
         if let Some(e) = unsafe { (**pipe).init(uv_loop, false) }.to_error(bun_sys::Tag::pipe) {
             return Err(e.into());
         }
@@ -1279,9 +1279,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `close_and_destroy` remains the sole cleanup, again matching Zig.
         self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
             // SAFETY: `pipe_ptr` is the same allocation produced by
-            // Box::into_raw above and has not been freed; ownership transfers
+            // heap::alloc above and has not been freed; ownership transfers
             // here exactly once.
-            StdioResult::Buffer(unsafe { Box::from_raw(pipe_ptr) })
+            StdioResult::Buffer(unsafe { bun_core::heap::take(pipe_ptr) })
         })?;
 
         // Success: pipe ownership now lives in StaticPipeWriter; disarm the

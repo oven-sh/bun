@@ -187,7 +187,7 @@ macro_rules! new_store {
                     PreAlloc::zero(prealloc.as_mut_ptr());
                     // SAFETY: `zero` fully initialized `metadata` and the non-buffer
                     // fields of `first_block`; `buffer` is MaybeUninit.
-                    let prealloc = Box::into_raw(unsafe { prealloc.assume_init() });
+                    let prealloc = bun_core::heap::leak(unsafe { prealloc.assume_init() });
                     // SAFETY: prealloc is a valid leaked Box.
                     unsafe { addr_of_mut!((*prealloc).metadata) }
                 }
@@ -232,7 +232,7 @@ macro_rules! new_store {
                     // but `Store` has no `head` field — lazy-compiled dead assertion
                     // upstream. Dropping it here.
                     // SAFETY: reconstitute the Box leaked in `init()`.
-                    drop(unsafe { Box::from_raw(prealloc) });
+                    drop(unsafe { bun_core::heap::take(prealloc) });
                 }
 
                 pub fn reset(store: &mut Store) {

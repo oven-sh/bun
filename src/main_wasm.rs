@@ -227,7 +227,7 @@ pub extern "C" fn bun_free(bytes: u64) {
     let slice = Uint8Array::from_js(bytes);
     // SAFETY: pointer/len were produced by `bun_malloc` above via `Box<[u8]>::into_raw`-equivalent.
     unsafe {
-        drop(Box::from_raw(slice as *mut [u8]));
+        drop(bun_core::heap::take(slice as *mut [u8]));
     }
 }
 
@@ -258,7 +258,7 @@ pub extern "C" fn init(heapsize: u32) {
             BUFFER_WRITER.write(bw);
             WRITER.write(js_printer::BufferPrinter::init(core::ptr::read(BUFFER_WRITER.as_ptr())));
             DEFINE.store(
-                Box::into_raw(Box::new(
+                bun_core::heap::leak(Box::new(
                     define_mod::Define::init(None, None).expect("unreachable"),
                 )),
                 Ordering::Relaxed,
@@ -617,7 +617,7 @@ pub extern "C" fn getTests(opts_array: u64) -> u64 {
     let Ok(()) = response.encode(&mut encoder) else { return 0 };
     let boxed = output.into_boxed_slice();
     let len = boxed.len();
-    let ptr = Box::into_raw(boxed).cast::<u8>();
+    let ptr = bun_core::heap::leak(boxed).cast::<u8>();
     // Boxed slice (len == capacity) is leaked to JS and freed via bun_free's
     // Box::<[u8]>::from_raw, so dealloc layout matches.
     pack_wasm_slice(ptr, len)
@@ -715,7 +715,7 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
 
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
-        let ptr = Box::into_raw(boxed).cast::<u8>();
+        let ptr = bun_core::heap::leak(boxed).cast::<u8>();
         // Boxed slice (len == capacity) is leaked to JS and freed via bun_free's
         // Box::<[u8]>::from_raw, so dealloc layout matches.
         pack_wasm_slice(ptr, len)
@@ -792,7 +792,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         scan_result.encode(&mut encoder).expect("unreachable");
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
-        let ptr = Box::into_raw(boxed).cast::<u8>();
+        let ptr = bun_core::heap::leak(boxed).cast::<u8>();
         // Boxed slice (len == capacity) is leaked to JS and freed via bun_free's
         // Box::<[u8]>::from_raw, so dealloc layout matches.
         pack_wasm_slice(ptr, len)
@@ -807,7 +807,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         scan_result.encode(&mut encoder).expect("unreachable");
         let boxed = output.into_boxed_slice();
         let len = boxed.len();
-        let ptr = Box::into_raw(boxed).cast::<u8>();
+        let ptr = bun_core::heap::leak(boxed).cast::<u8>();
         // Boxed slice (len == capacity) is leaked to JS and freed via bun_free's
         // Box::<[u8]>::from_raw, so dealloc layout matches.
         pack_wasm_slice(ptr, len)

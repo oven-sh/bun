@@ -59,12 +59,12 @@ impl BuildMessage {
         }
 
         // All-ASCII path: hand the buffer to JSC as an external Latin-1 string.
-        // Ownership transfers via `Box::into_raw`; the external-string finalizer
+        // Ownership transfers via `heap::alloc`; the external-string finalizer
         // calls `mi_free` on the block (global allocator is mimalloc).
         let len = text.len();
-        let ptr = Box::into_raw(text.into_boxed_slice()).cast::<u8>();
+        let ptr = bun_core::heap::leak(text.into_boxed_slice()).cast::<u8>();
         // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
-        // released by `Box::into_raw`; it stays live until JSC frees it.
+        // released by `heap::alloc`; it stays live until JSC frees it.
         let mut str = ZigString::init(unsafe { bun_core::ffi::slice(ptr, len) });
         str.set_output_encoding();
         str.to_external_value(global)
@@ -194,7 +194,7 @@ impl BuildMessage {
         // exactly once on the mutator thread during lazy sweep. Dropping the
         // Box runs `msg`'s Drop. (Mirrors the macro-generated
         // `BuildMessageClass__finalize`; kept for parity with the Zig source.)
-        unsafe { drop(Box::from_raw(this)) };
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 }
 

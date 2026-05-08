@@ -142,7 +142,7 @@ impl Touch {
                     let path = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
                     let task =
                         ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
-                    // SAFETY: freshly Box::into_raw'd.
+                    // SAFETY: freshly heap-allocated.
                     unsafe { ShellTask::schedule(task) };
                 }
                 Yield::suspended()
@@ -165,7 +165,7 @@ impl Touch {
             None
         };
         if let Some(task) = pending {
-            // SAFETY: `task` was Box::into_raw'd in `OutputTask::new` and
+            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
             return unsafe { OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e) };
         }
@@ -178,8 +178,8 @@ impl Touch {
         cmd: NodeId,
         task: *mut ShellTouchTask,
     ) {
-        // SAFETY: task was Box::into_raw'd in create(); reclaim.
-        let mut task = unsafe { Box::from_raw(task) };
+        // SAFETY: task was heap-allocated in create(); reclaim.
+        let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -302,7 +302,7 @@ impl ShellTouchTask {
             task: ShellTask::new(evtloop),
         });
         task.task.interp = interp;
-        Box::into_raw(task)
+        bun_core::heap::leak(task)
     }
 
     /// Spec: touch.zig `runFromThreadPool`. utimes() the path; on ENOENT
@@ -310,7 +310,7 @@ impl ShellTouchTask {
     pub fn run_from_thread_pool(this: *mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, platform, Platform};
         use bun_sys::FdExt as _;
-        // SAFETY: `this` is a live Box::into_raw'd task; the worker thread
+        // SAFETY: `this` is a live heap-allocated task; the worker thread
         // has exclusive access until `shell_task_trampoline` posts back.
         let this = unsafe { &mut *this };
 
@@ -359,7 +359,7 @@ impl ShellTouchTask {
     }
 
     pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &mut Interpreter) {
-        // SAFETY: `this` is a live Box::into_raw'd task.
+        // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
         Touch::on_shell_touch_task_done(interp, cmd, this);
     }

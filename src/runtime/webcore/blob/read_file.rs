@@ -83,8 +83,8 @@ pub trait ReadFileCompletion {
 
 impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
     fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
-        // SAFETY: handler was Box::into_raw'd by doReadFile(); we take ownership here.
-        let mut handler = unsafe { Box::from_raw(handler) };
+        // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
+        let mut handler = unsafe { bun_core::heap::take(handler) };
         // PORT NOTE: `Strong::swap()` ties the returned `&mut JSPromise` to
         // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
         // Decay to a raw pointer so `handler` can be dropped before resolution.
@@ -131,7 +131,7 @@ pub type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResult
 pub struct ReadFileRead {
     /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
     /// (`Vec::into_boxed_slice()` so layout is exactly `(ptr, len)`). Every
-    /// consumer reclaims via `Box::from_raw` — there is no borrow case left
+    /// consumer reclaims via `heap::take` — there is no borrow case left
     /// (Zig's `is_temporary = false` arm is unreachable here; only the two
     /// finishers below construct this type and both hand off owned bytes).
     /// Stored as a raw pointer rather than `Box<[u8]>` because the
@@ -157,8 +157,8 @@ impl bun_jsc::work_task::WorkTaskContext for ReadFile {
         unsafe { (*this).run(task) }
     }
     fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was Box::into_raw'd by the WorkTask flow; consumed here.
-        ReadFile::then(unsafe { Box::from_raw(this) }, global)
+        // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
+        ReadFile::then(unsafe { bun_core::heap::take(this) }, global)
     }
 }
 
@@ -552,11 +552,11 @@ impl ReadFile {
 
         // Zig hands `buffer.items` as a raw slice with `is_temporary = true`;
         // receiver takes ownership. Normalize to `Box<[u8]>` so every consumer
-        // can reclaim via `Box::from_raw` with a matching layout.
+        // can reclaim via `heap::take` with a matching layout.
         cb(
             cb_ctx,
             ReadFileResultType::Result(ReadFileRead {
-                buf: Box::into_raw(buf.into_boxed_slice()),
+                buf: bun_core::heap::leak(buf.into_boxed_slice()),
                 total_size,
             }),
         );
@@ -988,7 +988,7 @@ impl<'a> ReadFileUV<'a> {
         });
         // Keep the event loop alive while the async operation is pending
         event_loop.ref_concurrently();
-        let this_ptr: *mut ReadFileUV = Box::into_raw(this);
+        let this_ptr: *mut ReadFileUV = bun_core::heap::leak(this);
         // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
         unsafe { (*this_ptr).get_fd(Self::on_file_open) };
         // ownership now lives with the libuv request chain until finalize().
@@ -997,8 +997,8 @@ impl<'a> ReadFileUV<'a> {
 
     pub fn finalize(this: *mut Self) {
         log!("ReadFileUV.finalize");
-        // SAFETY: `this` was Box::into_raw'd in start(); we reclaim ownership here.
-        let mut this_box = unsafe { Box::from_raw(this) };
+        // SAFETY: `this` was heap-allocated in start(); we reclaim ownership here.
+        let mut this_box = unsafe { bun_core::heap::take(this) };
         let event_loop = this_box.event_loop;
 
         let cb = this_box.on_complete_fn;
@@ -1010,11 +1010,11 @@ impl<'a> ReadFileUV<'a> {
             // Move byte_store out so dropping `this_box` below does not free the
             // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
             // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
-            // via `Box::from_raw` — handing out `(ptr, len)` from a ByteStore
+            // via `heap::take` — handing out `(ptr, len)` from a ByteStore
             // whose `cap > len` would be a layout-mismatched dealloc.
             let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead {
-                buf: Box::into_raw(boxed),
+                buf: bun_core::heap::leak(boxed),
                 total_size: this_box.total_size,
             })
         };

@@ -196,7 +196,7 @@ pub trait Taskable {
     const TAG: TaskTag;
 
     /// Build a [`Task`] from a raw pointer to `Self`. Ownership semantics are
-    /// per-variant (most arms `Box::from_raw` on dispatch; a few are borrows).
+    /// per-variant (most arms `heap::take` on dispatch; a few are borrows).
     #[inline]
     fn into_task(ptr: *mut Self) -> Task {
         Task::new(Self::TAG, ptr.cast::<()>())
@@ -220,6 +220,15 @@ impl Task {
     #[inline]
     pub fn init<T: Taskable>(ptr: *mut T) -> Task {
         Task::new(T::TAG, ptr.cast::<()>())
+    }
+
+    /// Build a [`Task`] from an owned `Box<T>`. The dispatch arm for `T::TAG`
+    /// is responsible for reclaiming the allocation (see
+    /// `bun_runtime::dispatch::run_task`). This is the typed entry point
+    /// callers use instead of open-coding `heap::alloc`.
+    #[inline]
+    pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
+        Task::new(T::TAG, bun_core::heap::leak(task).cast::<()>())
     }
 
     /// Zig: `TaggedPointerUnion.initWithType(comptime Type, _ptr)` — for the
@@ -379,10 +388,10 @@ pub enum AutoDeinit {
 
 impl ConcurrentTask {
     /// `bun.TrivialNew(@This())` — heap-allocate a ConcurrentTask and return a raw pointer.
-    /// The pointer is intrusive (linked into `Queue`), so we use `Box::into_raw` rather than `Box<T>`.
+    /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
     #[inline]
     pub fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     /// `bun.TrivialDeinit(@This())` — free a ConcurrentTask previously returned by `new`.
@@ -392,7 +401,7 @@ impl ConcurrentTask {
     #[inline]
     pub unsafe fn destroy(this: *mut ConcurrentTask) {
         // SAFETY: caller contract above.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn create(task: Task) -> *mut ConcurrentTask {
@@ -407,6 +416,15 @@ impl ConcurrentTask {
         // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
         // bun_core::mark_binding!();
         Self::create(Task::init(task))
+    }
+
+    /// Typed `Box<T>`-taking constructor: the scheduler owns the
+    /// `Box` ↔ `*mut` round-trip so callers never write `heap::alloc`.
+    /// The matching `heap::take` lives in `bun_runtime::dispatch::run_task`
+    /// (or the variant's own `run_from_js_thread`), keyed by `T::TAG`.
+    #[inline]
+    pub fn create_boxed<T: Taskable>(task: Box<T>) -> *mut ConcurrentTask {
+        Self::create(Task::from_boxed(task))
     }
 
     // TODO(port): `comptime callback: anytype` + `std.meta.Child(@TypeOf(ptr))` is comptime

@@ -1202,9 +1202,9 @@ impl bun_ptr::RefCounted for H2FrameParser {
         unsafe { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        // SAFETY: refcount reached zero; sole owner of the `Box::into_raw`
+        // SAFETY: refcount reached zero; sole owner of the `heap::alloc`
         // allocation. `deinit` performs final teardown and frees `this` via
-        // `Box::from_raw`; `this` is not used after.
+        // `heap::take`; `this` is not used after.
         unsafe { (*this).deinit() };
     }
 }
@@ -1226,7 +1226,7 @@ impl H2FrameParser {
     // Borrows even when refcount==0 makes us the sole owner.
     pub fn deref(&mut self) {
         // SAFETY: `self` is live; `deref` decrements the intrusive count and,
-        // on zero, calls `destructor(this)` which frees via `Box::from_raw`.
+        // on zero, calls `destructor(this)` which frees via `heap::take`.
         // The caller must not touch `self` after this returns when count was 1.
         unsafe { bun_ptr::RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
     }
@@ -1356,7 +1356,7 @@ impl SignalRef {
         // SAFETY: parser is IntrusiveRc-held; ref()'d in attach_signal, valid until detach/deinit
         let parser = unsafe { &mut *this.parser };
         let Some(stream) = parser.streams.get(&this.stream_id).copied() else { return };
-        // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
         if stream.state != StreamState::CLOSED {
             // SAFETY: FFI call with valid global object
@@ -2441,7 +2441,7 @@ impl H2FrameParser {
             let mut it = StreamResumableIterator::init(self_ptr);
             something_was_flushed = false;
             while let Some(stream) = it.next() {
-                // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the
+                // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the
                 // map entry exists. Separate heap allocation from `self`, so no aliasing with the
                 // &mut Self reborrow below.
                 let stream = unsafe { &mut *stream };
@@ -2901,7 +2901,7 @@ impl H2FrameParser {
             self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Data frame on connection stream", self.last_stream_id, true);
             return data.len();
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
         let settings = self.remote_settings.unwrap_or(self.local_settings);
@@ -2991,7 +2991,7 @@ impl H2FrameParser {
             stream.padding = None;
             if emitted {
                 stream = match self.streams.get(&frame.stream_identifier).copied() {
-                    // SAFETY: s is *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+                    // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                     Some(s) => unsafe { &mut *s },
                     None => return end,
                 };
@@ -3155,7 +3155,7 @@ impl H2FrameParser {
             self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"RST_STREAM frame on connection stream", self.last_stream_id, true);
             return data.len();
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
         if frame.length != 4 {
@@ -3233,7 +3233,7 @@ impl H2FrameParser {
             self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Priority frame on connection stream", self.last_stream_id, true);
             return data.len();
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
         if frame.length as usize != StreamPriority::BYTE_SIZE {
@@ -3272,7 +3272,7 @@ impl H2FrameParser {
             self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Continuation on connection stream", self.last_stream_id, true);
             return Ok(data.len());
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
         if !stream.is_waiting_more_headers {
@@ -3288,7 +3288,7 @@ impl H2FrameParser {
             self.read_buffer.reset();
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
             stream = match self.decode_header_block(payload, stream, frame.flags)? {
-                // SAFETY: s is *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+                // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end),
             };
@@ -3320,7 +3320,7 @@ impl H2FrameParser {
             self.send_go_away(frame.stream_identifier, ErrorCode::PROTOCOL_ERROR, b"Headers frame on connection stream", self.last_stream_id, true);
             return Ok(data.len());
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
         let settings = self.remote_settings.unwrap_or(self.local_settings);
@@ -3368,7 +3368,7 @@ impl H2FrameParser {
             let end = payload.len() - padding;
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
             stream = match self.decode_header_block(&payload[offset..end], stream, frame.flags)? {
-                // SAFETY: s is *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+                // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end_),
             };
@@ -3539,7 +3539,7 @@ impl H2FrameParser {
         } else {
             self.local_settings.initial_window_size
         };
-        let stream = Box::into_raw(Box::new(Stream::init(
+        let stream = bun_core::heap::leak(Box::new(Stream::init(
             stream_identifier,
             local_window_size,
             self.remote_settings.map(|s| s.initial_window_size).unwrap_or(DEFAULT_WINDOW_SIZE as u32),
@@ -4114,7 +4114,7 @@ impl H2FrameParser {
         let Some(stream) = this.streams.get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &*stream };
 
         if let Some(signal_ref) = &stream.signal {
@@ -4144,7 +4144,7 @@ impl H2FrameParser {
         let Some(stream) = this.streams.get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
         let state = JSValue::create_empty_object(global_object, 6);
 
@@ -4180,7 +4180,7 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
         if !stream.can_send_data() && !stream.can_receive_data() {
@@ -4459,7 +4459,7 @@ impl H2FrameParser {
         let Some(stream) = this.streams.get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
@@ -4534,7 +4534,7 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
         let Some(headers_obj) = headers_arg.get_object() else {
@@ -4767,7 +4767,7 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
         if !stream.can_send_data() {
             this.dispatch_write_callback(callback_arg);
@@ -4936,7 +4936,7 @@ impl H2FrameParser {
         let this_ptr = std::ptr::from_mut::<Self>(this);
         let mut it = StreamResumableIterator::init(this_ptr);
         while let Some(stream_ptr) = it.next() {
-            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for
+            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
             let stream = unsafe { &mut *stream_ptr };
             // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
@@ -4977,7 +4977,7 @@ impl H2FrameParser {
         let this_ptr = std::ptr::from_mut::<Self>(this);
         let mut it = StreamResumableIterator::init(this_ptr);
         while let Some(stream_ptr) = it.next() {
-            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for
+            // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
             let stream = unsafe { &mut *stream_ptr };
             if stream.state != StreamState::CLOSED {
@@ -5143,7 +5143,7 @@ impl H2FrameParser {
                             let Some(stream) = this.handle_received_stream_id(stream_id) else {
                                 return Ok(JSValue::js_number(-1.0));
                             };
-                            // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+                            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                             let stream = unsafe { &mut *stream };
                             if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
                                 stream.set_context(stream_ctx_arg, global_object);
@@ -5187,7 +5187,7 @@ impl H2FrameParser {
                         let Some(stream) = this.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));
                         };
-                        // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
+                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
                         stream.state = StreamState::CLOSED;
                         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
@@ -5205,7 +5205,7 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
             return Ok(JSValue::js_number(-1.0));
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
+        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
@@ -5692,7 +5692,7 @@ impl H2FrameParser {
                 slot
             })
         } else {
-            Box::into_raw(Box::new(init))
+            bun_core::heap::leak(Box::new(init))
         };
         // Zig: `errdefer this.deinit()`. The remaining `?` sites below may throw a JS
         // exception; the guard returns the slot to the pool / frees the Box on that
@@ -5781,7 +5781,7 @@ impl H2FrameParser {
 
         // PORT NOTE: `HPACK::init` returns a C-allocated wrapper that must be
         // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
-        // before freeing). Wrapping it in `Box::from_raw` and letting `Box` drop
+        // before freeing). Wrapping it in `heap::take` and letting `Box` drop
         // would `mi_free` the struct but leak the encoder/decoder internals.
         this_ref.hpack = Some(lshpack::HpackHandle::new(this_ref.local_settings.header_table_size));
         if is_server {
@@ -5845,10 +5845,10 @@ impl H2FrameParser {
         let streams = core::mem::replace(&mut self.streams, BunHashMap::default());
         for (_, item) in streams.iter() {
             let stream = *item;
-            // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via Box::from_raw
+            // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via heap::take
             unsafe {
                 (*stream).free_resources::<true>(self);
-                drop(Box::from_raw(stream));
+                drop(bun_core::heap::take(stream));
             }
         }
         drop(streams);
@@ -5871,7 +5871,7 @@ impl H2FrameParser {
                     .put(this)
             });
         } else {
-            // SAFETY: `this` was `Box::into_raw`'d in `constructor`; the value has
+            // SAFETY: `this` was `heap::alloc`'d in `constructor`; the value has
             // already been dropped in place so reclaim the allocation as a
             // `MaybeUninit` box (no double drop).
             unsafe { drop(Box::<core::mem::MaybeUninit<Self>>::from_raw(this.cast())) };

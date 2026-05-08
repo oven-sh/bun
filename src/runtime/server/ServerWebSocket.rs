@@ -166,14 +166,14 @@ impl ServerWebSocket {
         signal: Option<NonNull<AbortSignal>>,
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
-        let this = Box::into_raw(Box::new(ServerWebSocket {
+        let this = bun_core::heap::leak(Box::new(ServerWebSocket {
             handler: std::ptr::from_ref::<WebSocketServerHandler>(handler),
             this_value: JsRef::empty(),
             flags: Flags::default(),
             signal,
         }));
         // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value
-        // SAFETY: `this` was just `Box::into_raw`'d; ownership transfers to the
+        // SAFETY: `this` was just `heap::alloc`'d; ownership transfers to the
         // C++ JS wrapper (freed via `ServerWebSocketClass__finalize` → `finalize`).
         let this_value = unsafe { ServerWebSocket::to_js_ptr(this, global_object) };
         // SAFETY: just allocated; unique. The JS wrapper holds the box but does
@@ -535,8 +535,8 @@ impl ServerWebSocket {
                 signal.as_ref().unref();
             }
         }
-        // SAFETY: allocated via Box::into_raw in `init`
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: allocated via heap::alloc in `init`
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(method)]

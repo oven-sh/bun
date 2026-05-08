@@ -99,10 +99,10 @@ pub enum Status {
 bun_ptr::impl_cell_ref_counted! {
     impl MySQLStatement {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: count hit 0; `this` came from `Box::into_raw`. Field cleanup
+        // SAFETY: count hit 0; `this` came from `heap::alloc`. Field cleanup
         // runs via `Drop for MySQLStatement`; the Box drop frees the
         // allocation (mirrors `bun.destroy`).
-        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 

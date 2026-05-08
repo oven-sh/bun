@@ -30,7 +30,7 @@ pub struct RefString {
 
     // Zig field `allocator: std.mem.Allocator` dropped — non-AST crate uses the
     // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below
-    // frees via `Box::from_raw`.
+    // frees via `heap::take`.
     pub ctx: Option<NonNull<c_void>>,
     pub on_before_deinit: Option<Callback>,
 }
@@ -79,7 +79,7 @@ impl RefString {
     /// this stays an explicit raw-pointer destroy rather than `impl Drop`.
     ///
     /// SAFETY: `this` must be the unique live reference to a `RefString`
-    /// previously allocated via `Box::into_raw` (or equivalent). After this
+    /// previously allocated via `heap::alloc` (or equivalent). After this
     /// call `this` is dangling.
     // TODO(port): revisit ownership in Phase B — intrusive refcount via
     // WTF::StringImpl; may become `impl Drop` if `RefString` ends up `Box`-owned.
@@ -96,12 +96,12 @@ impl RefString {
             }
 
             // `allocator.free(this.leak())` — reconstitute the owned byte slice and drop it.
-            drop(Box::from_raw(core::slice::from_raw_parts_mut(
+            drop(bun_core::heap::take(core::slice::from_raw_parts_mut(
                 (*this).ptr.cast_mut(),
                 (*this).len,
             )));
             // `allocator.destroy(this)`
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 }

@@ -60,7 +60,7 @@ enum Phase {
 
 // PORT NOTE: `extract_task` / `package_manager` are raw pointers, not
 // `&'a mut` / `&'a`. The Zig original stores `*Task` / `*PackageManager`
-// (freely-aliasing). This struct is heap-allocated (`Box::into_raw`),
+// (freely-aliasing). This struct is heap-allocated (`heap::alloc`),
 // crosses threads via `drain_task`, and self-destroys in `finish()`, so a
 // borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
 // `populate_result` materialises another `&mut Task` from a raw copy of it
@@ -196,10 +196,10 @@ impl TarballStream {
             compute_if_missing,
         );
 
-        // bun.TrivialNew(@This()) → Box::into_raw(Box::new(...)). Pointer is
+        // bun.TrivialNew(@This()) → heap::alloc(Box::new(...)). Pointer is
         // recovered via @fieldParentPtr from the thread-pool callback and
-        // freed in `finish()` via Box::from_raw.
-        Box::into_raw(Box::new(TarballStream {
+        // freed in `finish()` via heap::take.
+        bun_core::heap::leak(Box::new(TarballStream {
             mutex: Mutex::new(),
             pending: Vec::new(),
             closed: false,
@@ -895,15 +895,15 @@ impl TarballStream {
     /// `this` must be the live pointer returned by `init()`. Frees `*this`
     /// — caller must not touch it after return. Takes a raw pointer (not
     /// `&mut self`) so no Rust reference dangles across the
-    /// `Box::from_raw` self-destruction (Zig spec: `this.deinit()` with a
+    /// `heap::take` self-destruction (Zig spec: `this.deinit()` with a
     /// freely-aliasing `*TarballStream`).
     unsafe fn finish(this: *mut Self) {
         // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
         // are live raw pointers; this fn is the sole owner. After
-        // `Box::from_raw(this)` nothing touches `this`.
+        // `heap::take(this)` nothing touches `this`.
         unsafe {
         // Fields are already raw pointers (see struct PORT NOTE), so copying
-        // them out before `Box::from_raw(this)` is just a pointer copy — no
+        // them out before `heap::take(this)` is just a pointer copy — no
         // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
         let task: *mut Task = (*this).extract_task;
         let network: *mut NetworkTask = (*this).network_task;
@@ -950,11 +950,11 @@ impl TarballStream {
                 .delete_tree((*this).tmpname.as_bytes());
         }
 
-        // SAFETY: `this` was allocated via Box::into_raw in `init()`; this is
+        // SAFETY: `this` was allocated via heap::alloc in `init()`; this is
         // the sole owner and the only place it is reclaimed. No `&mut Self`
         // is in scope (raw-ptr receiver), so nothing dangles. After this
         // line `this` is freed — nothing below may touch it.
-        drop(Box::from_raw(this));
+        drop(bun_core::heap::take(this));
 
         // `task.apply_patch_task` is intentionally not touched: the
         // buffered `.extract` path (`enqueueExtractNPMPackage` →

@@ -80,9 +80,9 @@ impl TextDecoder {
     }
 
     pub fn finalize(this: *mut TextDecoder) {
-        // SAFETY: `this` was produced by Box::into_raw in the codegen'd constructor
+        // SAFETY: `this` was produced by heap::alloc in the codegen'd constructor
         // path; finalize runs on the mutator thread during lazy sweep.
-        unsafe { drop(Box::from_raw(this)) };
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -284,9 +284,9 @@ impl TextDecoder {
                 let mut bytes = vec![0u16; out_length].into_boxed_slice();
 
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
-                // PERF(port): Box::into_raw transfers a tight allocation (no excess capacity).
+                // PERF(port): heap::alloc transfers a tight allocation (no excess capacity).
                 Ok(ZigString::to_external_u16(
-                    Box::into_raw(bytes).cast::<u16>(),
+                    bun_core::heap::leak(bytes).cast::<u16>(),
                     out.written as usize,
                     global_this,
                 ))
@@ -513,7 +513,7 @@ impl TextDecoder {
             }
         }
 
-        Ok(Box::into_raw(TextDecoder::new(decoder)))
+        Ok(bun_core::heap::leak(TextDecoder::new(decoder)))
     }
 }
 

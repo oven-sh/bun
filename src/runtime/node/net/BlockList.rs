@@ -91,7 +91,7 @@ impl BlockList {
         self.ref_count.fetch_add(1, AtomicOrdering::AcqRel);
     }
     pub fn deref(this: *mut Self) {
-        // SAFETY: `this` is a live `Box::into_raw` pointer with ref_count >= 1.
+        // SAFETY: `this` is a live `heap::alloc` pointer with ref_count >= 1.
         unsafe {
             if (*this).ref_count.fetch_sub(1, AtomicOrdering::AcqRel) == 1 {
                 Self::deinit(this);
@@ -102,7 +102,7 @@ impl BlockList {
     // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
     // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        let ptr = Box::into_raw(Box::new(Self {
+        let ptr = bun_core::heap::leak(Box::new(Self {
             ref_count: AtomicU32::new(1),
             global_this: std::ptr::from_ref(global),
             da_rules: Vec::new(),
@@ -124,9 +124,9 @@ impl BlockList {
     }
 
     fn deinit(this: *mut Self) {
-        // `da_rules` is dropped by `Box` drop; `bun.destroy(this)` → `Box::from_raw`.
-        // SAFETY: called exactly once when ref_count hits zero on a `Box::into_raw` pointer.
-        unsafe { drop(Box::from_raw(this)) };
+        // `da_rules` is dropped by `Box` drop; `bun.destroy(this)` → `heap::take`.
+        // SAFETY: called exactly once when ref_count hits zero on a `heap::alloc` pointer.
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 
     // NOTE: no `#[bun_jsc::host_fn]` — receiver-less assoc fns aren't supported

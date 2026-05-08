@@ -60,7 +60,7 @@ const _: () = {
             // `js_ref = .init_weak(...)`, and `check_body_stream_ref` must all
             // run, otherwise the wrapper reports size 0 and any Locked-body
             // ReadableStream is never migrated into the GC slot.
-            let ptr = Box::into_raw(Box::new(self));
+            let ptr = bun_core::heap::leak(Box::new(self));
             // SAFETY: `ptr` is a freshly-leaked heap allocation; the inherent
             // `to_js` hands it to the C++ wrapper which takes ownership (freed
             // via `RequestClass__finalize`). Same pattern as `do_clone`.
@@ -885,8 +885,8 @@ impl Request {
         // count hits zero (drops the payload in place).
         unsafe { (*this_ref.body.as_ptr()).unref() };
         if this_ref.weak_ptr_data.on_finalize() {
-            // SAFETY: m_ctx was allocated via Box::into_raw in Request::new
-            drop(unsafe { Box::from_raw(this) });
+            // SAFETY: m_ctx was allocated via heap::alloc in Request::new
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 
@@ -1607,9 +1607,9 @@ impl Request {
         let this_value = callframe.this();
         let cloned = self.clone(global_this)?;
 
-        // TODO(port): cloned is Box<Request>; to_js consumes via Box::into_raw inside codegen.
-        let cloned_ptr = Box::into_raw(cloned);
-        // SAFETY: cloned_ptr was just created via Box::into_raw above; toJS adopts ownership.
+        // TODO(port): cloned is Box<Request>; to_js consumes via heap::alloc inside codegen.
+        let cloned_ptr = bun_core::heap::leak(cloned);
+        // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
         let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
         if !js_wrapper.is_empty() {
             // After toJS, checkBodyStreamRef has already moved the streams from

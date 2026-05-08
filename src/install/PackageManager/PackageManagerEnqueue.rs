@@ -609,7 +609,7 @@ pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
         PackageManager,
         "Enqueue patch task: 0x{:x} {}",
         task as usize,
-        // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+        // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
         unsafe { (*task).callback.tag_name() }
     );
     if this.patch_task_fifo.writable_length() == 0 {
@@ -626,10 +626,10 @@ pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
         PackageManager,
         "Enqueue patch task pre: 0x{:x} {}",
         task as usize,
-        // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+        // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
         unsafe { (*task).callback.tag_name() }
     );
-    // SAFETY: `task` is non-null (fresh `Box::into_raw` from `new_*`).
+    // SAFETY: `task` is non-null (fresh `heap::alloc` from `new_*`).
     unsafe { (*task).pre = true };
     if this.patch_task_fifo.writable_length() == 0 {
         this.flush_patch_task_queue();
@@ -936,7 +936,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 ResolvedPackageTask::PatchTask(patch_task) => {
-                                    // SAFETY: `patch_task` is a non-null `Box::into_raw`.
+                                    // SAFETY: `patch_task` is a non-null `heap::alloc`.
                                     let cb = unsafe { &(*patch_task).callback };
                                     if cb.is_calc_hash()
                                         && get_preinstall_state(this, result.package.meta.id)
@@ -1748,8 +1748,8 @@ fn enqueue_git_clone(
                     .patchfile_hash()
                     .unwrap();
                 let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-                // SAFETY: `pt` is fresh from `Box::into_raw`; reclaim ownership.
-                let mut pt = Box::from_raw(pt);
+                // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
+                let mut pt = bun_core::heap::take(pt);
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {
@@ -1827,8 +1827,8 @@ pub fn enqueue_git_checkout(
                     .patchfile_hash()
                     .unwrap();
                 let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-                // SAFETY: `pt` is fresh from `Box::into_raw`; reclaim ownership.
-                let mut pt = Box::from_raw(pt);
+                // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
+                let mut pt = bun_core::heap::take(pt);
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {

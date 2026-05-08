@@ -247,7 +247,7 @@ impl NativeBrotli {
             }
             _ => {}
         }
-        // bun.destroy(this) — freeing self is handled by IntrusiveRc / Box::from_raw.
+        // bun.destroy(this) — freeing self is handled by IntrusiveRc / heap::take.
     }
 }
 
@@ -574,7 +574,7 @@ impl CompressionStreamImpl for NativeBrotli {
             // Mirrors Zig `bun.ptr.RefCount(..).deref()` → `deinit()` + `bun.destroy(this)`.
             unsafe {
                 (*this).deinit();
-                drop(Box::from_raw(this));
+                drop(bun_core::heap::take(this));
             }
         }
     }

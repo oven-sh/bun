@@ -54,7 +54,7 @@ pub type ResumableSink = ResumableFetchSink;
 
 pub struct FetchTasklet {
     // PORT NOTE: ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +
-    // Box::into_raw); was `Option<Arc<_>>` in Phase A — `Arc` can't be mutably
+    // heap::alloc); was `Option<Arc<_>>` in Phase A — `Arc` can't be mutably
     // borrowed for `cancel/drain`, so model as raw like Zig's `?*ResumableSink`.
     pub sink: Option<*mut ResumableSink>,
     // Self-referential: borrows from `request_body` / `request_headers` owned
@@ -359,14 +359,14 @@ impl FetchTasklet {
     }
 
     // XXX: in Zig 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
-    /// SAFETY: `this` must be the last reference (ref_count == 0) and have been allocated via Box::into_raw.
+    /// SAFETY: `this` must be the last reference (ref_count == 0) and have been allocated via heap::alloc.
     unsafe fn deinit(this: *mut FetchTasklet) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
 
         debug_assert!(unsafe { (*this).ref_count.load(Ordering::Relaxed) } == 0);
 
-        // SAFETY: this was allocated via Box::into_raw in `get()`; ref_count == 0 so exclusive
-        let mut boxed = unsafe { Box::from_raw(this) };
+        // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
+        let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.clear_data();
         // self.http: Option<Box<AsyncHTTP>> dropped here automatically
         drop(boxed);
@@ -744,8 +744,8 @@ impl FetchTasklet {
 
         impl Holder {
             fn resolve(self_: *mut Holder) -> JsTerminatedResult<()> {
-                // SAFETY: allocated via Box::into_raw below; consumed once
-                let mut self_ = unsafe { Box::from_raw(self_) };
+                // SAFETY: allocated via heap::alloc below; consumed once
+                let mut self_ = unsafe { bun_core::heap::take(self_) };
                 // resolve the promise
                 let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
                 let res = self_.held.swap();
@@ -758,8 +758,8 @@ impl FetchTasklet {
             }
 
             fn reject(self_: *mut Holder) -> JsTerminatedResult<()> {
-                // SAFETY: allocated via Box::into_raw below; consumed once
-                let mut self_ = unsafe { Box::from_raw(self_) };
+                // SAFETY: allocated via heap::alloc below; consumed once
+                let mut self_ = unsafe { bun_core::heap::take(self_) };
                 // reject the promise
                 let prom = self_.promise.value_or_empty().as_any_promise().unwrap();
                 let res = self_.held.swap();
@@ -785,7 +785,7 @@ impl FetchTasklet {
                 .map_err(|_| bun_event_loop::ErasedJsError::Terminated)
         }
 
-        let holder = Box::into_raw(Box::new(Holder {
+        let holder = bun_core::heap::leak(Box::new(Holder {
             held: result,
             // we need the promise to be alive until the task is done
             promise: self.promise.take(),
@@ -1245,7 +1245,7 @@ impl FetchTasklet {
 
     pub fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
-        let response = Box::into_raw(Box::new(self.to_response()));
+        let response = bun_core::heap::leak(Box::new(self.to_response()));
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
         let response_js = Response::make_maybe_pooled(&global_this, response);
@@ -1354,7 +1354,7 @@ impl FetchTasklet {
                     // outlives `url`/`proxy` (consumed by AsyncHTTP::init below before the
                     // tasklet is dropped). Erase the borrow to a raw slice so borrowck
                     // doesn't tie `url`'s lifetime to the `fetch_tasklet` stack binding,
-                    // which is moved into `Box::into_raw` below.
+                    // which is moved into `heap::alloc` below.
                     let buf_ptr: *const [u8] = &raw const *fetch_tasklet.url_proxy_buffer;
                     url = ZigURL::parse(unsafe { &(&*buf_ptr)[0..old_url_len] });
                     proxy = Some(ZigURL::parse(unsafe { &(&*buf_ptr)[old_url_len..] }));
@@ -1371,7 +1371,7 @@ impl FetchTasklet {
             fetch_tasklet.signals.cert_errors = None;
         }
 
-        let fetch_tasklet_ptr = Box::into_raw(fetch_tasklet);
+        let fetch_tasklet_ptr = bun_core::heap::leak(fetch_tasklet);
         // SAFETY: just allocated; exclusive access until returned
         let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
 
@@ -1379,7 +1379,7 @@ impl FetchTasklet {
         // PORT NOTE: `AsyncHTTP::init` takes several `&'static [u8]` borrows
         // (headers_buf, request_body, hostname) that in Zig were plain slices
         // into FetchTasklet-owned storage. The tasklet is now heap-pinned via
-        // `Box::into_raw`, so erase the borrow lifetimes through raw pointers.
+        // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
         // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
         // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
         // its `request_headers.buf`, `request_body`, `hostname`, and
@@ -1447,7 +1447,7 @@ impl FetchTasklet {
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread) so handing the same raw pointer to both sides matches Zig's ownership.
             let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
-            // SAFETY: fresh heap allocation from `ThreadSafeStreamBuffer::new` (Box::into_raw);
+            // SAFETY: fresh heap allocation from `ThreadSafeStreamBuffer::new` (heap::alloc);
             // exclusively owned here until shared below.
             unsafe {
                 (*buffer).set_drain_callback::<FetchTasklet>(

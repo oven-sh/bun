@@ -296,7 +296,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// `bun.TrivialNew(@This())` — heap-allocate and return a raw pointer; this type is
     /// intrusive (heap field, OutputReader parent backrefs), so it lives behind `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     /// SAFETY: `manager` is a live `*mut PackageManager` set at construction.
@@ -429,7 +429,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// TODO: re-evaluate whether some variables still need to be atomic
     ///
     /// # Safety
-    /// `this` must have been produced by `Self::new` (`Box::into_raw`) and be uniquely
+    /// `this` must have been produced by `Self::new` (`heap::alloc`) and be uniquely
     /// accessed by the caller for the duration of this call. The pointer is stored as a
     /// long-lived backref (reader `parent`, intrusive-heap node, process exit handler),
     /// so it must carry allocation-rooted provenance — passing a `*mut Self` coerced
@@ -696,7 +696,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
 
         let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
-        // `to_process` returns an intrusively-refcounted `*mut Process` (Box::into_raw,
+        // `to_process` returns an intrusively-refcounted `*mut Process` (heap::alloc,
         // refcount = 1); the strong ref transfers to `(*this).process` and is released
         // in `reset_polls` via `process.deref()`.
         let process: *mut Process = spawned.to_process(event_loop, false);
@@ -815,7 +815,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         bstr::BStr::new(&self.package_name),
                         exit.code,
                     ));
-                    // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
+                    // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
                     Global::exit(exit.code as u32);
@@ -868,7 +868,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                 (*ctx.installer).start_task(ctx.entry_id);
                             }
                             self.decrement_pending_script_tasks();
-                            // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
+                            // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                             return;
                         }
@@ -881,7 +881,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 {
                     if self.scripts.items[new_script_index].is_some() {
                         self.reset_polls();
-                        // SAFETY: `self` was created by `Self::new` (Box::into_raw) and is
+                        // SAFETY: `self` was created by `Self::new` (heap::alloc) and is
                         // uniquely owned here; we do not touch `self` again on the
                         // success path before `return`, so the stored backrefs derived
                         // from this pointer are not invalidated by a later reborrow.
@@ -931,7 +931,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 // the last script finished
                 self.decrement_pending_script_tasks();
-                // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
+                // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             }
             Status::Signaled(signal) => {
@@ -978,7 +978,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     err,
                 ));
-                // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
+                // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
                 Global::exit(1);
@@ -1031,13 +1031,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// Cleanup side effects (`reset_polls`, `ensure_not_in_heap`) run via `Drop`.
     ///
     /// # Safety
-    /// `this` must have been produced by `Self::new` (`Box::into_raw`) and not yet destroyed;
+    /// `this` must have been produced by `Self::new` (`heap::alloc`) and not yet destroyed;
     /// the caller must not use any outstanding `&`/`&mut` to `*this` after this returns.
     pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` came from `Box::into_raw` in `Self::new` and is
+        // SAFETY: caller contract — `this` came from `heap::alloc` in `Self::new` and is
         // uniquely owned here. Dropping the Box runs `Drop` (reset_polls + ensure_not_in_heap)
         // then frees the allocation (Zig: `this.* = undefined; bun.destroy(this);`).
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn deinit_and_delete_package(&mut self) {
@@ -1059,7 +1059,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let _ = dir.delete_tree(basename);
         }
 
-        // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
+        // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
@@ -1110,7 +1110,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         // SAFETY: as above.
         let first_index = unsafe { &(*lifecycle_subprocess).scripts }.first_index;
-        // SAFETY: `lifecycle_subprocess` is the allocation-rooted `Box::into_raw` pointer
+        // SAFETY: `lifecycle_subprocess` is the allocation-rooted `heap::alloc` pointer
         // from `Self::new`; passing it gives the stored backrefs stable provenance.
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
             Output::pretty_errorln(format_args!(

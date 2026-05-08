@@ -126,8 +126,8 @@ bun_ptr::impl_cell_ref_counted! {
     impl ClientSession {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
         // SAFETY: ref_count reached zero; no other holders. Allocated via
-        // `Box::into_raw` in `create`.
-        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+        // `heap::alloc` in `create`.
+        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 
@@ -139,7 +139,7 @@ impl ClientSession {
     /// Captures a raw pointer (not a borrow) so the guard does not borrow the
     /// session — the guarded scope may freely take fresh `&mut self`, and the
     /// pointer (derived from `&mut self`) carries write provenance for the
-    /// final `Box::from_raw` in `deref`.
+    /// final `heap::take` in `deref`.
     #[inline]
     fn ref_scope(&mut self) -> SessionRefGuard {
         // SAFETY: `self` is a live heap-allocated ClientSession.
@@ -189,7 +189,7 @@ impl ClientSession {
         socket: Socket,
         client: &HTTPClient,
     ) -> *mut ClientSession {
-        let this = Box::into_raw(Box::new(ClientSession {
+        let this = bun_core::heap::leak(Box::new(ClientSession {
             ref_count: Cell::new(1),
             hpack: lshpack::HPACK::init(4096),
             socket,
@@ -353,7 +353,7 @@ impl ClientSession {
 
         let send_window =
             i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE)).expect("int cast");
-        let stream = Box::into_raw(Stream::new(
+        let stream = bun_core::heap::leak(Stream::new(
             self.next_stream_id,
             std::ptr::from_mut(self),
             Some(client.as_erased_ptr()),
@@ -384,8 +384,8 @@ impl ClientSession {
             // RFC 9113 §5.1).
             self.encoder_poisoned = true;
             self.streams.swap_remove(&stream_ref.id);
-            // SAFETY: stream was Box::into_raw'd above and removed from the map; sole owner.
-            unsafe { drop(Box::from_raw(stream)) };
+            // SAFETY: stream was heap-allocated above and removed from the map; sole owner.
+            unsafe { drop(bun_core::heap::take(stream)) };
             client.h2 = None;
             client.h2_fail(err);
             // The poisoned session is dead for new work; bounce any waiters
@@ -442,8 +442,8 @@ impl ClientSession {
             self.orphan_header_block = core::mem::take(&mut s.header_block);
         }
         self.streams.swap_remove(&s.id);
-        // SAFETY: stream was Box::into_raw'd in attach(); we are the sole owner after map removal.
-        unsafe { drop(Box::from_raw(stream)) };
+        // SAFETY: stream was heap-allocated in attach(); we are the sole owner after map removal.
+        unsafe { drop(bun_core::heap::take(stream)) };
     }
 
     /// Remove `stream` from the session, RST it, and fail its client. The
@@ -769,8 +769,8 @@ impl ClientSession {
                 // SAFETY: live back-ref.
                 unsafe { (*c.as_ptr()).h2 = None };
             }
-            // SAFETY: stream was Box::into_raw'd in attach(); sole owner here.
-            unsafe { drop(Box::from_raw(e)) };
+            // SAFETY: stream was heap-allocated in attach(); sole owner here.
+            unsafe { drop(bun_core::heap::take(e)) };
             if let Some(c) = client {
                 // SAFETY: live back-ref.
                 unsafe { (*c.as_ptr()).h2_fail(err) };
@@ -1126,11 +1126,11 @@ impl Drop for ClientSession {
         // write_buffer / read_buffer / pending_attach / orphan_header_block /
         // encode_scratch / hostname / ssl_config are dropped automatically.
         for &e in self.streams.values() {
-            // SAFETY: streams values are Box::into_raw'd in attach(); sole owner here.
-            unsafe { drop(Box::from_raw(e)) };
+            // SAFETY: streams values are heap-allocated in attach(); sole owner here.
+            unsafe { drop(bun_core::heap::take(e)) };
         }
         // streams map storage drops automatically.
-        // bun.destroy(this) — handled by Box::from_raw in `deref`.
+        // bun.destroy(this) — handled by heap::take in `deref`.
     }
 }
 

@@ -282,9 +282,9 @@ impl RuntimeTranspilerStore {
     ) -> *mut c_void {
         let job: *mut TranspilerJob = self.store.get();
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
-        // Box::from_raw on `path.text`.
-        let owned_text: *mut [u8] = Box::into_raw(Box::<[u8]>::from(path.text));
-        // SAFETY: owned_text was just allocated via Box::into_raw and lives until
+        // heap::take on `path.text`.
+        let owned_text: *mut [u8] = bun_core::heap::leak(Box::<[u8]>::from(path.text));
+        // SAFETY: owned_text was just allocated via heap::alloc and lives until
         // `reset_for_pool` reconstructs and drops the Box. The unbounded
         // lifetime from raw-ptr deref coerces to `'static` for `logger::fs::Path`.
         let owned_path = logger::fs::Path::init(unsafe { &*owned_text.cast_const() });
@@ -433,7 +433,7 @@ impl TranspilerJob {
         // `transpile()`; reconstruct the Box and drop it.
         let old_path = core::mem::take(&mut self.path);
         if !old_path.text.is_empty() {
-            // SAFETY: `text` is exactly the slice returned by `Box::into_raw` in
+            // SAFETY: `text` is exactly the slice returned by `heap::alloc` in
             // `transpile()`; len matches, and this is the unique owner.
             drop(unsafe {
                 Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
@@ -575,8 +575,8 @@ impl TranspilerJob {
         let ast_store_ptr = AST_MEMORY_STORE.with(|cell| {
             if cell.get().is_none() {
                 let boxed = Box::new(ASTMemoryAllocator::new(arena_ref));
-                // SAFETY: Box::into_raw never null
-                cell.set(Some(unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) }));
+                // SAFETY: heap::alloc never null
+                cell.set(Some(unsafe { NonNull::new_unchecked(bun_core::heap::leak(boxed)) }));
             }
             cell.get().unwrap()
         });
@@ -874,7 +874,7 @@ impl TranspilerJob {
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
             // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
             let mut entry: Box<CacheEntry> =
-                unsafe { Box::from_raw(entry_ptr.cast::<CacheEntry>()) };
+                unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };
 
             // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
             // `SavedSourceMap` takes its own internal mutex.
@@ -894,7 +894,7 @@ impl TranspilerJob {
                 analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
                     &entry.esm_record,
                 )
-                .map(|b| Box::into_raw(b).cast())
+                .map(|b| bun_core::heap::leak(b).cast())
                 .unwrap_or(ptr::null_mut())
             } else {
                 ptr::null_mut()
@@ -970,8 +970,8 @@ impl TranspilerJob {
                 let writer = BufferWriter::init();
                 let mut bp = Box::new(BufferPrinter::init(writer));
                 bp.ctx.append_null_byte = false;
-                // SAFETY: Box::into_raw never null
-                cell.set(Some(unsafe { NonNull::new_unchecked(Box::into_raw(bp)) }));
+                // SAFETY: heap::alloc never null
+                cell.set(Some(unsafe { NonNull::new_unchecked(bun_core::heap::leak(bp)) }));
             }
             cell.get().unwrap()
         });
@@ -1098,7 +1098,7 @@ impl TranspilerJob {
             module_info: module_info
                 .map(|mi| {
                     use analyze_transpiled_module::ModuleInfoExt;
-                    Box::into_raw(mi.into_deserialized()).cast()
+                    bun_core::heap::leak(mi.into_deserialized()).cast()
                 })
                 .unwrap_or(ptr::null_mut()),
             tag: this_tag,

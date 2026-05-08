@@ -324,9 +324,9 @@ impl Job {
 
     pub fn run_from_js(this: *mut Job) -> JsResult<()> {
         // PORT NOTE: Zig was `bun.JSTerminated!void`; widened to JsResult per crate convention.
-        // SAFETY: `this` was produced by `Box::into_raw` in `create()` and is uniquely owned here;
+        // SAFETY: `this` was produced by `heap::alloc` in `create()` and is uniquely owned here;
         // dropping the Box at any return point runs `impl Drop for Job` (Zig: `defer this.deinit()`).
-        let mut this = unsafe { Box::from_raw(this) };
+        let mut this = unsafe { bun_core::heap::take(this) };
 
         // SAFETY: `vm` is the live per-thread VirtualMachine pointer captured in `create()`.
         let vm = unsafe { &*this.vm };
@@ -359,7 +359,7 @@ impl Job {
         // (`node_crypto_binding::pbkdf2`) owns it and hands it over.
         data: PBKDF2,
     ) -> *mut Job {
-        let job = Box::into_raw(Box::new(Job {
+        let job = bun_core::heap::leak(Box::new(Job {
             pbkdf2: data,
             output: Vec::new(),
             task: WorkPoolTask {

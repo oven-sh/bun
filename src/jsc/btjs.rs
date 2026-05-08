@@ -822,7 +822,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
                 return b"<oom>\0".as_ptr().cast::<c_char>();
             }
             // leak intentionally — caller is lldb and never frees
-            return Box::into_raw(result_writer.into_boxed_slice()).cast::<c_char>().cast_const();
+            return bun_core::heap::leak(result_writer.into_boxed_slice()).cast::<c_char>().cast_const();
         }
     };
 
@@ -867,7 +867,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     // add null terminator
     result_writer.push(0);
     // leak intentionally — caller is lldb and never frees
-    Box::into_raw(result_writer.into_boxed_slice()).cast::<c_char>().cast_const()
+    bun_core::heap::leak(result_writer.into_boxed_slice()).cast::<c_char>().cast_const()
 }
 
 #[cfg(debug_assertions)]

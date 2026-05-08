@@ -1188,7 +1188,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // `process` twice and (b) run Drop on every field of the placeholder. Build
     // the struct once with its final field values instead, then fill in the
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
-    let subprocess_ptr = Box::into_raw(Box::new(SubprocessT {
+    let subprocess_ptr = bun_core::heap::leak(Box::new(SubprocessT {
         global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
         process,
         pid_rusage: None,
@@ -1458,7 +1458,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // vtable only dereferences this pointer later on the JS thread, after
         // the local `subprocess` borrow has ended.
         // SAFETY: `subprocess_ptr` is the stable boxed `Subprocess` (from
-        // `Box::into_raw` above) and `stdin` was just confirmed to be the
+        // `heap::alloc` above) and `stdin` was just confirmed to be the
         // `Pipe` variant; the signal's stored back-pointer remains valid for
         // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
         unsafe {
@@ -1470,7 +1470,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     let out = if !IS_SYNC {
-        // SAFETY: `subprocess_ptr` came from `Box::into_raw` above and has not
+        // SAFETY: `subprocess_ptr` came from `heap::alloc` above and has not
         // yet been wrapped; ownership transfers to the C++ JS cell (released via
         // `SubprocessClass__finalize`). Zig's `subprocess.toJS(globalThis)` did
         // not re-allocate, so use the raw-ptr entrypoint instead of the

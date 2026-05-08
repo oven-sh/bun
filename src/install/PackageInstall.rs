@@ -437,7 +437,7 @@ impl HardLinkWindowsInstallTask {
         remaining[..dest.len()].copy_from_slice(dest);
         remaining[dest.len()] = 0;
 
-        Box::into_raw(Box::new(Self {
+        bun_core::heap::leak(Box::new(Self {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
@@ -470,8 +470,8 @@ impl HardLinkWindowsInstallTask {
             );
             return;
         }
-        // SAFETY: self_ was Box::into_raw'd in init().
-        unsafe { drop(Box::from_raw(self_)) };
+        // SAFETY: self_ was heap-allocated in init().
+        unsafe { drop(bun_core::heap::take(self_)) };
     }
 
     fn run(&mut self) -> Option<bun_core::Error> {
@@ -561,8 +561,8 @@ impl UninstallTask {
                 .sub(core::mem::offset_of!(Self, task))
                 .cast::<Self>()
         };
-        // SAFETY: Box::into_raw'd in uninstall_before_install; reclaim ownership here.
-        let uninstall_task = unsafe { Box::from_raw(uninstall_task) };
+        // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
+        let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
 
         let mut debug_timer = Output::DebugTimer::start();
         scopeguard::defer! {
@@ -1907,7 +1907,7 @@ impl<'a> PackageInstall<'a> {
                     bun_fs::FileSystem::instance().top_level_dir(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
                 );
-                let task = Box::into_raw(Box::new(UninstallTask {
+                let task = bun_core::heap::leak(Box::new(UninstallTask {
                     absolute_path: absolute_path.to_vec().into_boxed_slice(),
                     task: WorkPoolTask { callback: UninstallTask::run, node: ThreadPoolNode::default() },
                 }));

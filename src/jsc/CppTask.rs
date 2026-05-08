@@ -73,7 +73,7 @@ pub struct ConcurrentCppTask {
 
 impl ConcurrentCppTask {
     pub fn new(cpp_task: *mut EventLoopTaskNoContext) -> *mut ConcurrentCppTask {
-        Box::into_raw(Box::new(ConcurrentCppTask {
+        bun_core::heap::leak(Box::new(ConcurrentCppTask {
             cpp_task,
             workpool_task: WorkPoolTask {
                 node: Default::default(),
@@ -91,8 +91,8 @@ impl ConcurrentCppTask {
         };
         // Extract all the info we need from `this` and `cpp_task` before we call functions that
         // free them
-        // SAFETY: `this` was allocated via Box::into_raw in `new`/`create_and_run`.
-        let this = unsafe { Box::from_raw(this) };
+        // SAFETY: `this` was allocated via heap::alloc in `new`/`create_and_run`.
+        let this = unsafe { bun_core::heap::take(this) };
         let cpp_task = this.cpp_task;
         // SAFETY: cpp_task is a valid C++ EventLoopTaskNoContext until `run` consumes it below.
         let maybe_vm = unsafe { (*cpp_task).get_vm() };

@@ -86,7 +86,7 @@ pub mod js {
 // the TSV row is for plain `*T` fields, not intrusive mixins.)
 //
 // `no_construct, no_finalize`: this class uses `constructNeedsThis: true` (3-arg
-// constructor) and intrusive refcounting (finalize → deref, not Box::from_raw),
+// constructor) and intrusive refcounting (finalize → deref, not heap::take),
 // neither of which the macro's default hooks support. The C-ABI shims live in
 // `mod js` above and `extern "C" fn finalize` below.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
@@ -343,7 +343,7 @@ impl Terminal {
     }
 
     pub fn ref_(&self) {
-        // SAFETY: `self` derived from a Box::into_raw'd allocation; intrusive
+        // SAFETY: `self` derived from a heap-allocated allocation; intrusive
         // refcount mixin only reads/writes the `ref_count` field via shared
         // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
         // materialized).
@@ -379,9 +379,9 @@ impl Terminal {
         // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
         options.term_name = ZigStringSlice::default();
 
-        // `bun.new(Terminal, .{...})` → Box::into_raw; the intrusive ref_count
+        // `bun.new(Terminal, .{...})` → heap::alloc; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
-        let terminal: *mut Terminal = Box::into_raw(Box::new(Terminal {
+        let terminal: *mut Terminal = bun_core::heap::leak(Box::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: pty_result.master,
             read_fd: pty_result.read_fd,
@@ -500,7 +500,7 @@ impl Terminal {
         }
 
         Ok(CreateResult {
-            // SAFETY: `terminal` is the Box::into_raw'd allocation above with
+            // SAFETY: `terminal` is the heap-allocated allocation above with
             // ref_count >= 1; IntrusiveRc::from_raw adopts one existing ref.
             terminal: unsafe { bun_ptr::IntrusiveRc::from_raw(terminal) },
             js_value: this_value,
@@ -1783,8 +1783,8 @@ impl Terminal {
         // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
         // via mimalloc on the C++ side) — leak the Box and hand over the slice.
         let len = duped.len();
-        let ptr = Box::into_raw(duped).cast::<u8>();
-        // SAFETY: ptr/len from Box::into_raw above; ownership transfers to JSC.
+        let ptr = bun_core::heap::leak(duped).cast::<u8>();
+        // SAFETY: ptr/len from heap::alloc above; ownership transfers to JSC.
         let bytes = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
         let data = MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
             .to_node_buffer(global_this);
@@ -1834,7 +1834,7 @@ impl Terminal {
 /// express that. Kept as a free fn called from `deref_()`.
 unsafe fn deinit_and_destroy(this: *mut Terminal) {
     bun_output::scoped_log!(Terminal, "deinit");
-    // SAFETY: caller is `deref_()` with ref_count == 0; `this` was Box::into_raw'd.
+    // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
     let t = unsafe { &mut *this };
     // Set reader/writer done flags to prevent extra deref calls in closeInternal
     t.flags.insert(Flags::READER_DONE);
@@ -1843,11 +1843,11 @@ unsafe fn deinit_and_destroy(this: *mut Terminal) {
     // closeInternal() checks flags.closed and returns early on subsequent calls,
     // so this is safe even if finalize() already called it
     t.close_internal();
-    // term_name, reader, writer: Drop runs via Box::from_raw below.
+    // term_name, reader, writer: Drop runs via heap::take below.
     // bun.destroy(this)
-    // SAFETY: `this` was Box::into_raw'd in init_terminal and ref_count == 0, so
+    // SAFETY: `this` was heap-allocated in init_terminal and ref_count == 0, so
     // no other live references exist.
-    drop(unsafe { Box::from_raw(this) });
+    drop(unsafe { bun_core::heap::take(this) });
 }
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → trait impl.
@@ -1859,7 +1859,7 @@ impl bun_ptr::RefCounted for Terminal {
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: ref_count == 0 so this is the last live reference; `this`
-        // was Box::into_raw'd in init_terminal.
+        // was heap-allocated in init_terminal.
         unsafe { deinit_and_destroy(this) };
     }
 }

@@ -206,7 +206,7 @@ impl ParsedSourceMap {
     /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
     /// Option<Arc<ParsedSourceMap>>`), so the strong count lives in the `Arc`
     /// header *before* the data pointer. Reconstituting that pointer with
-    /// `Box::from_raw` would free an interior offset and trips
+    /// `heap::take` would free an interior offset and trips
     /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
     /// `Arc::{increment,decrement}_strong_count` instead — same observable
     /// `ref()`/`deref()` semantics as the Zig spec, with the allocator that

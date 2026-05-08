@@ -468,15 +468,15 @@ impl FSEventsLoop {
             let task = unsafe { &mut *task };
             task.task.run();
             if task.auto_delete {
-                // SAFETY: was Box::into_raw'd in enqueue_task_concurrent
-                drop(unsafe { Box::from_raw(std::ptr::from_mut::<ConcurrentTask>(task)) });
+                // SAFETY: was heap-allocated in enqueue_task_concurrent
+                drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<ConcurrentTask>(task)) });
             }
         }
     }
 
     pub fn init() -> Result<*mut FSEventsLoop, bun_core::Error> {
         // TODO(port): narrow error set
-        let this = Box::into_raw(Box::new(FSEventsLoop {
+        let this = bun_core::heap::leak(Box::new(FSEventsLoop {
             signal_source: ptr::null_mut(),
             mutex: Mutex::new(),
             loop_: ptr::null_mut(),
@@ -532,7 +532,7 @@ impl FSEventsLoop {
 
     fn enqueue_task_concurrent(&mut self, task: Task) {
         let cf = CoreFoundation::get();
-        let concurrent = Box::into_raw(Box::new(ConcurrentTask {
+        let concurrent = bun_core::heap::leak(Box::new(ConcurrentTask {
             task: Task { ctx: ptr::null_mut(), callback: |_| {} },
             next: ptr::null_mut(),
             auto_delete: false,
@@ -919,7 +919,7 @@ impl FSEventsWatcher {
             ctx,
         });
 
-        // SAFETY: `loop_` is the heap-allocated global default loop (Box::into_raw
+        // SAFETY: `loop_` is the heap-allocated global default loop (heap::alloc
         // in FSEventsLoop::init); valid for the program lifetime. Mutable access
         // to its watcher list is serialized by `self.mutex` inside register_watcher.
         unsafe { (*loop_).register_watcher(&raw mut *this) };
@@ -1005,8 +1005,8 @@ pub fn close_and_wait() {
     unsafe {
         if let Some(loop_) = FSEVENTS_DEFAULT_LOOP.read() {
             let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
-            // SAFETY: loop_ was Box::into_raw'd in FSEventsLoop::init(); reconstitute to run Drop
-            drop(Box::from_raw(loop_.as_ptr()));
+            // SAFETY: loop_ was heap-allocated in FSEventsLoop::init(); reconstitute to run Drop
+            drop(bun_core::heap::take(loop_.as_ptr()));
             FSEVENTS_DEFAULT_LOOP.write(None);
         }
     }

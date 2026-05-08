@@ -643,6 +643,10 @@ impl ThrowFmtArgs for core::fmt::Arguments<'_> {
 /// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
 /// Re-exported here so existing `crate::mark_binding!()` call sites resolve.
 pub use bun_core::mark_binding;
+/// Re-exported for `jsc_macros`-generated code (`to_js`/`to_js_boxed`), which
+/// must use absolute `::bun_jsc::` paths and cannot assume `::bun_core` is in
+/// the consumer crate's dep graph.
+pub use bun_core::heap;
 
 pub use self::host_fn::{
     from_js_host_call, from_js_host_call_generic, host_construct_result, host_fn_result,
@@ -683,7 +687,7 @@ pub mod __macro_support {
     }
     impl<T> IntoConstructResult for alloc::boxed::Box<T> {
         #[inline] fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
-            Ok(alloc::boxed::Box::into_raw(self).cast())
+            Ok(bun_core::heap::leak(self).cast())
         }
     }
     impl<T> IntoConstructResult for JsResult<*mut T> {
@@ -691,7 +695,7 @@ pub mod __macro_support {
     }
     impl<T> IntoConstructResult for JsResult<alloc::boxed::Box<T>> {
         #[inline] fn into_construct_ptr(self) -> JsResult<*mut ::core::ffi::c_void> {
-            self.map(|b| alloc::boxed::Box::into_raw(b).cast())
+            self.map(|b| bun_core::heap::leak(b).cast())
         }
     }
 

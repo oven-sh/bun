@@ -45,9 +45,9 @@ impl Stream {
     /// Zig: `pub const new = bun.TrivialNew(@This());`
     /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
     /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
-    /// `Box::from_raw`.
+    /// `heap::take`.
     pub fn new(session: *mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
-        Box::into_raw(Box::new(Stream {
+        bun_core::heap::leak(Box::new(Stream {
             session,
             client: Some(client.as_erased_ptr()),
             qstream: None,

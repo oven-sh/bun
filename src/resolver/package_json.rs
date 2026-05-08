@@ -2180,7 +2180,7 @@ fn module_bufs() -> *mut ModuleBufs {
     MODULE_BUFS.with(|c| {
         let mut p = c.get();
         if p.is_null() {
-            p = Box::into_raw(Box::new(ModuleBufs {
+            p = bun_core::heap::leak(Box::new(ModuleBufs {
                 resolved_path_buf_percent: PathBuffer::ZEROED,
                 resolve_target_buf: PathBuffer::ZEROED,
                 resolve_target_buf2: PathBuffer::ZEROED,

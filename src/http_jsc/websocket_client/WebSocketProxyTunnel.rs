@@ -169,9 +169,9 @@ impl Drop for TunnelRefGuard {
 bun_ptr::impl_cell_ref_counted! {
     impl WebSocketProxyTunnel {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
-        // SAFETY: ref_count hit zero; `this` was allocated via `Box::into_raw`
+        // SAFETY: ref_count hit zero; `this` was allocated via `heap::alloc`
         // in `init`. Drop impl handles field cleanup.
-        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 
@@ -192,7 +192,7 @@ impl WebSocketProxyTunnel {
         rc.set(rc.get() + 1);
         // PORT NOTE: captures raw *mut (not &self) so the guard does not borrow
         // the tunnel — lets the guarded scope take &mut self without borrowck
-        // conflict, and gives `deref` proper write provenance for Box::from_raw.
+        // conflict, and gives `deref` proper write provenance for heap::take.
         TunnelRefGuard(this)
     }
 
@@ -231,9 +231,9 @@ impl WebSocketProxyTunnel {
             reject_unauthorized,
         });
         // ref_count initialized to 1; caller owns the Box allocation via the
-        // returned raw pointer (paired with `Box::from_raw` in `deref()`).
-        // SAFETY: Box::into_raw never returns null.
-        Ok(unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) })
+        // returned raw pointer (paired with `heap::take` in `deref()`).
+        // SAFETY: heap::alloc never returns null.
+        Ok(unsafe { NonNull::new_unchecked(bun_core::heap::leak(boxed)) })
     }
 
     /// Start TLS handshake inside the tunnel
@@ -634,7 +634,7 @@ impl Drop for WebSocketProxyTunnel {
     fn drop(&mut self) {
         // Field cleanup is automatic: wrapper (Option<SslWrapper>), write_buffer (StreamBuffer),
         // sni_hostname (Option<Box<[u8]>>) all impl Drop. The Zig deinit's `bun.destroy(this)`
-        // is handled by IntrusiveRc / `deref()` via Box::from_raw.
+        // is handled by IntrusiveRc / `deref()` via heap::take.
     }
 }
 

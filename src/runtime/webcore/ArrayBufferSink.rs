@@ -100,7 +100,7 @@ impl ArrayBufferSink {
 
     pub fn finalize(this: *mut Self) {
         // SAFETY: called from JSC lazy sweep on the mutator thread; `this` is
-        // the m_ctx payload allocated via Box::into_raw in init/JSSink.
+        // the m_ctx payload allocated via heap::alloc in init/JSSink.
         unsafe { Self::destroy(this) };
     }
 
@@ -185,12 +185,12 @@ impl ArrayBufferSink {
     }
 
     /// # Safety
-    /// `this` must have been allocated via `Box::into_raw` (i.e. by
+    /// `this` must have been allocated via `heap::alloc` (i.e. by
     /// [`ArrayBufferSink::init`] or the JSSink codegen path) and not yet freed.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
         // frees the box, matching Zig `this.bytes.deinit(...); bun.destroy(this)`.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject, as_uint8array: bool) -> JsResult<JSValue> {

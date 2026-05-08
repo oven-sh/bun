@@ -112,10 +112,10 @@ impl PathString {
         }
         // Shed any unused capacity so the (ptr,len) pair fully describes the
         // allocation and `deinit_owned` can reconstruct it without tracking
-        // capacity separately. `Box::into_raw` (not `leak`) is the explicit
-        // ownership-transfer-to-raw API; the matching `Box::from_raw` lives
+        // capacity separately. `heap::alloc` (not `leak`) is the explicit
+        // ownership-transfer-to-raw API; the matching `heap::take` lives
         // in `deinit_owned`.
-        let raw: *mut [u8] = Box::into_raw(bytes.into_boxed_slice());
+        let raw: *mut [u8] = bun_core::heap::leak(bytes.into_boxed_slice());
         // SAFETY: `raw` is a fresh non-null allocation; reborrow only to pack
         // ptr+len into the backing int.
         Self::init(unsafe { &*raw })
@@ -137,7 +137,7 @@ impl PathString {
         }
         // SAFETY: caller contract — (ptr,len) is exactly the `Box<[u8]>` that
         // `init_owned` released via `into_raw`.
-        drop(unsafe { Box::from_raw(core::slice::from_raw_parts_mut(ptr as *mut u8, len)) });
+        drop(unsafe { bun_core::heap::take(core::slice::from_raw_parts_mut(ptr as *mut u8, len)) });
     }
 
     #[inline]

@@ -24,7 +24,7 @@ pub struct Node<T> {
     // PORT NOTE: Zig stored `std.mem.Allocator param` here so `destroyNode`
     // could free via the originating allocator. In Rust the global mimalloc
     // allocator owns every `Box<Node<T>>`, so the field is dropped and
-    // `destroy_node` uses `Box::from_raw`.
+    // `destroy_node` uses `heap::take`.
     //
     // PORT NOTE: `MaybeUninit<T>` not `T` — Zig's `else undefined` (pool.zig:203)
     // is well-defined-until-read, but Rust's `assume_init()` on uninit bytes is
@@ -366,7 +366,7 @@ where
             debug_assert!(!Self::full());
         }
 
-        let new_node = Box::into_raw(Box::new(Node::<T> {
+        let new_node = bun_core::heap::leak(Box::new(Node::<T> {
             next: ptr::null_mut(),
             data: MaybeUninit::new(pooled),
         }));
@@ -433,7 +433,7 @@ where
             Some(init_) => MaybeUninit::new(init_().expect("unreachable")),
             None => MaybeUninit::uninit(),
         };
-        Box::into_raw(Box::new(Node::<T> {
+        bun_core::heap::leak(Box::new(Node::<T> {
             next: ptr::null_mut(),
             data,
         }))
@@ -509,13 +509,13 @@ where
         // `bun.memory.deinit`. If `Vec<u8>` (the `Vec<u8>` port) must keep
         // leaking for compat, gate its `Drop` there — not here.
         //
-        // SAFETY: `node` was created via `Box::into_raw` in `push`/`get` and
+        // SAFETY: `node` was created via `heap::alloc` in `push`/`get` and
         // is exclusively owned by the caller. `data` is initialized: `destroy_node`
         // is only reached from `release()` (caller had a usable node, so `data`
         // was written) or `delete_all()` (free-list nodes, always initialized).
         unsafe {
             (*node).data.assume_init_drop();
-            drop(Box::from_raw(node));
+            drop(bun_core::heap::take(node));
         }
     }
 }

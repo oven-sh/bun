@@ -184,14 +184,14 @@ impl bun_ptr::ThreadSafeRefCounted for Process {
         unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
     unsafe fn destructor(this: *mut Self) {
-        // SAFETY: refcount hit 0; allocation came from Box::into_raw in init_posix/spawn.
-        unsafe { drop(Box::from_raw(this)) };
+        // SAFETY: refcount hit 0; allocation came from heap::alloc in init_posix/spawn.
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 }
 
 impl Drop for Process {
     /// Zig `Process.deinit`: `this.poller.deinit(); bun.destroy(this)`. The
-    /// `bun.destroy` half is the `Box::from_raw` in `destructor` above; this
+    /// `bun.destroy` half is the `heap::take` in `destructor` above; this
     /// `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
         self.poller.deinit();
@@ -303,8 +303,8 @@ impl Process {
             }
             Status::Running
         };
-        // bun.new → Box::into_raw (pointer crosses FFI / intrusive refcount)
-        Box::into_raw(Box::new(Process {
+        // bun.new → heap::alloc (pointer crosses FFI / intrusive refcount)
+        bun_core::heap::leak(Box::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: posix.pid,
             #[cfg(target_os = "linux")]
@@ -1064,7 +1064,7 @@ pub mod waiter_thread_posix {
     impl<T: ProcessLike> ResultTask<T> {
         #[inline]
         pub fn new(v: ResultTask<T>) -> *mut ResultTask<T> {
-            Box::into_raw(Box::new(v))
+            bun_core::heap::leak(Box::new(v))
         }
 
         pub fn run_from_js_thread(self: Box<Self>) {
@@ -1098,7 +1098,7 @@ pub mod waiter_thread_posix {
     impl<T: ProcessLike> ResultTaskMini<T> {
         #[inline]
         pub fn new(v: ResultTaskMini<T>) -> *mut ResultTaskMini<T> {
-            Box::into_raw(Box::new(v))
+            bun_core::heap::leak(Box::new(v))
         }
 
         pub fn run_from_main_thread(self: Box<Self>) {
@@ -1114,9 +1114,9 @@ pub mod waiter_thread_posix {
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
         /// shape — `C = ()`). Default Rust ABI.
         pub fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
-            // SAFETY: `this` was Box::into_raw'd in `loop_()` below; the mini
+            // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
             // event loop hands ownership back here exactly once.
-            unsafe { Box::from_raw(this) }.run_from_main_thread();
+            unsafe { bun_core::heap::take(this) }.run_from_main_thread();
         }
     }
 
@@ -1164,7 +1164,7 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub fn append(&self, process: *mut T) {
-            self.queue.push(Box::into_raw(Box::new(TaskQueueEntry {
+            self.queue.push(bun_core::heap::leak(Box::new(TaskQueueEntry {
                 process,
                 next: core::ptr::null_mut(),
             })));
@@ -1185,8 +1185,8 @@ pub mod waiter_thread_posix {
                     if task.is_null() {
                         break;
                     }
-                    // SAFETY: task was Box::into_raw'd in append().
-                    let task = unsafe { Box::from_raw(task) };
+                    // SAFETY: task was heap-allocated in append().
+                    let task = unsafe { bun_core::heap::take(task) };
                     // PERF(port): was assume_capacity
                     active.push(task.process);
                     // task drops here (TrivialDeinit)
@@ -1233,7 +1233,7 @@ pub mod waiter_thread_posix {
                                     subprocess: process,
                                     task: AnyTaskWithExtraContext::default(),
                                 });
-                                // SAFETY: `out` just produced by Box::into_raw.
+                                // SAFETY: `out` just produced by heap::alloc.
                                 unsafe {
                                     (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
                                         out,
@@ -1450,8 +1450,8 @@ pub mod WaiterThread {
 pub struct WindowsSpawnResult {
     // Raw intrusive pointer (mirrors Zig `?*Process`). `Process` is intrusively
     // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
-    // `uv_process_t.data` in the libuv callbacks; allocation is `Box::into_raw`
-    // and destruction is `Box::from_raw` (see `ThreadSafeRefCounted::destructor`).
+    // `uv_process_t.data` in the libuv callbacks; allocation is `heap::alloc`
+    // and destruction is `heap::take` (see `ThreadSafeRefCounted::destructor`).
     pub process_: Option<*mut Process>,
     pub stdin: WindowsStdioResult,
     pub stdout: WindowsStdioResult,
@@ -1582,10 +1582,10 @@ pub enum WindowsStdio {
     Path(Box<[u8]>),
     Inherit,
     Ignore,
-    /// FFI-owned `uv::Pipe` (allocated via `Box::into_raw` in
+    /// FFI-owned `uv::Pipe` (allocated via `heap::alloc` in
     /// `create_zeroed_pipe`). Stored as a raw pointer so `spawn_process_windows`
     /// can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    /// `Box::from_raw` without double-freeing when `WindowsSpawnOptions` drops.
+    /// `heap::take` without double-freeing when `WindowsSpawnOptions` drops.
     Buffer(*mut uv::Pipe),
     /// See `Buffer` — same FFI ownership model.
     Ipc(*mut uv::Pipe),
@@ -1599,7 +1599,7 @@ impl WindowsStdio {
     ///
     /// **Not** `Drop`: `spawn_process_windows` takes `&WindowsSpawnOptions`
     /// (immutable borrow) and transfers sole ownership of the `Buffer`/`Ipc`
-    /// pipe into `WindowsStdioResult::Buffer` via `Box::from_raw`. An auto-Drop
+    /// pipe into `WindowsStdioResult::Buffer` via `heap::take`. An auto-Drop
     /// here would then double-free the same `*mut uv::Pipe` when the borrowed
     /// `WindowsSpawnOptions` (or the `to_spawn_options` temporary) goes out of
     /// scope. Zig has no auto-destructor on this union; callers invoke
@@ -1836,7 +1836,7 @@ pub fn spawn_process_windows(
                 }
                 WindowsStdio::Buffer(my_pipe) => {
                     // SAFETY: `my_pipe` is a non-null heap allocation from
-                    // create_zeroed_pipe (Box::into_raw).
+                    // create_zeroed_pipe (heap::alloc).
                     if let Some(err) =
                         unsafe { (&mut **my_pipe).init(loop_, false) }.to_error(bun_sys::Tag::uv_pipe)
                     {
@@ -1954,7 +1954,7 @@ pub fn spawn_process_windows(
     uv_process_options.stdio_count = c_int::try_from(stdio_containers.len()).expect("int cast");
     uv_process_options.exit_cb = Some(Process::on_exit_uv);
 
-    let process = Box::into_raw(Box::new(Process {
+    let process = bun_core::heap::leak(Box::new(Process {
         ref_count: bun_ptr::ThreadSafeRefCount::init(),
         event_loop: options.windows.loop_,
         pid: 0,
@@ -2041,14 +2041,14 @@ pub fn spawn_process_windows(
             match stdio_options[i] {
                 WindowsStdio::Buffer(_) => {
                     // SAFETY: stdio.data.stream is the same `*mut uv::Pipe`
-                    // produced by `Box::into_raw` in create_zeroed_pipe and
+                    // produced by `heap::alloc` in create_zeroed_pipe and
                     // stored in `options.{stdin,stdout,stderr}`. `WindowsStdio`
                     // has no `Drop` (deinit is explicit, Zig spec), so
                     // reconstructing the Box here is the *sole* ownership
                     // transfer — the borrowed `options` dropping later is a
                     // no-op on the raw pointer.
                     *result_stdio = WindowsStdioResult::Buffer(unsafe {
-                        Box::from_raw(stdio.data.stream.cast::<uv::Pipe>())
+                        bun_core::heap::take(stdio.data.stream.cast::<uv::Pipe>())
                     });
                 }
                 _ => {
@@ -2062,10 +2062,10 @@ pub fn spawn_process_windows(
         match input {
             WindowsStdio::Ipc(_) | WindowsStdio::Buffer(_) => {
                 // PERF(port): was assume_capacity
-                // SAFETY: sole ownership transfer of the Box::into_raw'd
+                // SAFETY: sole ownership transfer of the heap-allocated
                 // uv::Pipe; `WindowsStdio` has no Drop (explicit `deinit`).
                 result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
-                    Box::from_raw(stdio_containers[3 + i].data.stream.cast::<uv::Pipe>())
+                    bun_core::heap::take(stdio_containers[3 + i].data.stream.cast::<uv::Pipe>())
                 }));
             }
             _ => {
@@ -2133,7 +2133,7 @@ pub mod sync {
                     #[cfg(windows)]
                     {
                         // SAFETY: all-zero is valid uv::Pipe
-                        SpawnOptionsStdio::buffer(Box::into_raw(Box::new(unsafe {
+                        SpawnOptionsStdio::buffer(bun_core::heap::leak(Box::new(unsafe {
                             core::mem::zeroed::<uv::Pipe>()
                         })))
                     }
@@ -2341,18 +2341,18 @@ pub mod sync {
             let on_done_callback = this_ref.on_done_callback;
             // bun.default_allocator.destroy(this.pipe) — Box<uv::Pipe> drops with `this`
             // bun.default_allocator.destroy(this)
-            // SAFETY: this was Box::into_raw'd in start(); reclaim and drop
-            drop(unsafe { Box::from_raw(this) });
+            // SAFETY: this was heap-allocated in start(); reclaim and drop
+            drop(unsafe { bun_core::heap::take(this) });
             on_done_callback(context, tag, chunks, err);
         }
 
         pub fn start(self: Box<Self>) -> Maybe<()> {
-            // Single-pointer ownership: `Box::into_raw` is the *only* root for
+            // Single-pointer ownership: `heap::alloc` is the *only* root for
             // this allocation. Every subsequent access (including the libuv
-            // callbacks and the `Box::from_raw` in `on_close`) goes through
+            // callbacks and the `heap::take` in `on_close`) goes through
             // this pointer, so no Stacked Borrows tag is invalidated by an
             // interleaved Box deref.
-            let this: *mut SyncWindowsPipeReader = Box::into_raw(self);
+            let this: *mut SyncWindowsPipeReader = bun_core::heap::leak(self);
             // SAFETY: just allocated; sole owner.
             unsafe {
                 (*this).pipe.set_data(this.cast());
@@ -2396,7 +2396,7 @@ pub mod sync {
         pub err: bun_sys::E,
         pub waiting_count: u8,
         /// Intrusive-refcounted (Zig: `*Process`). Allocated via
-        /// `Box::into_raw` in `to_process`; freed when the embedded
+        /// `heap::alloc` in `to_process`; freed when the embedded
         /// `ThreadSafeRefCount` hits zero. Stored raw — `Arc<Process>` would
         /// give only `*const` provenance and make `&mut *` writes UB.
         pub process: *mut Process,
@@ -2422,7 +2422,7 @@ pub mod sync {
             status: Status,
             _: &Rusage,
         ) {
-            // SAFETY: `this` is the Box::into_raw root from spawn_windows_with_pipes;
+            // SAFETY: `this` is the heap::alloc root from spawn_windows_with_pipes;
             // single-threaded uv loop, no overlapping borrow of SyncWindowsProcess.
             unsafe {
                 (*this).status = Some(status);
@@ -2497,7 +2497,7 @@ pub mod sync {
             Ok(proces) => proces,
         };
 
-        // `*mut Process` — intrusive refcount (Box::into_raw in to_process).
+        // `*mut Process` — intrusive refcount (heap::alloc in to_process).
         let process: *mut Process = spawned.to_process((), true);
         let _detach_guard = scopeguard::guard(process, |process| {
             // SAFETY: sole owner during sync spawn; loop has drained, so no
@@ -2541,13 +2541,13 @@ pub mod sync {
             Ok(process) => process,
         };
         // Single-pointer ownership (mirrors Zig `bun.TrivialNew`): the
-        // `Box::into_raw` result is the *only* root for this allocation. Every
+        // `heap::alloc` result is the *only* root for this allocation. Every
         // field access below — including those inside uv callbacks fired from
         // `tick()` — goes through `this_ptr`, so no Box auto-deref ever
         // reasserts a Unique tag and pops the callbacks' tags under Stacked
         // Borrows.
         let this_ptr: *mut SyncWindowsProcess =
-            Box::into_raw(SyncWindowsProcess::new(SyncWindowsProcess {
+            bun_core::heap::leak(SyncWindowsProcess::new(SyncWindowsProcess {
                 process: spawned.to_process((), true),
                 stderr: Vec::new(),
                 stdout: Vec::new(),
@@ -2556,7 +2556,7 @@ pub mod sync {
                 status: None,
             }));
         // SAFETY: `(*this_ptr).process` was just produced by `to_process` (sole
-        // owner, mutable provenance from Box::into_raw). Mirrors Zig:
+        // owner, mutable provenance from heap::alloc). Mirrors Zig:
         // `this.process.ref(); this.process.setExitHandler(this);
         //  this.process.enableKeepingEventLoopAlive();`
         unsafe {
@@ -2590,7 +2590,7 @@ pub mod sync {
                     (*this_ptr).waiting_count += 1;
                 }
                 // `start` consumes the Box and transfers ownership to libuv
-                // via pipe.data (Box::into_raw inside).
+                // via pipe.data (heap::alloc inside).
                 match reader.start() {
                     Err(err) => {
                         // SAFETY: sync spawn — `(*this_ptr).process` is the only
@@ -2634,7 +2634,7 @@ pub mod sync {
         // allocation. Mirrors Zig `this.process.deref(); destroy(this);`.
         unsafe {
             (*(*this_ptr).process).deref();
-            drop(Box::from_raw(this_ptr));
+            drop(bun_core::heap::take(this_ptr));
         }
         Ok(Ok(result))
     }

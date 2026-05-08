@@ -63,7 +63,7 @@ fn tl_bufs() -> *mut TlBufs {
     TL_BUFS.with(|c| {
         let mut p = c.get();
         if p.is_null() {
-            p = Box::into_raw(Box::new(TlBufs {
+            p = bun_core::heap::leak(Box::new(TlBufs {
                 final_path_buf: PathBuffer::ZEROED,
                 ssh_path_buf: PathBuffer::ZEROED,
                 folder_name_buf: PathBuffer::ZEROED,

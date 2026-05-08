@@ -128,8 +128,8 @@ impl RefCounted for HTMLBundle {
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: refcount hit zero; allocated via Box (RefPtr::new / init()).
-        // `path: Box<[u8]>` auto-drops; dealloc handled by Box::from_raw.
-        drop(unsafe { Box::from_raw(this) });
+        // `path: Box<[u8]>` auto-drops; dealloc handled by heap::take.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -185,7 +185,7 @@ pub struct Route {
     pub dev_server_id: Option<route_bundle::Index>,
     /// When state == .pending, incomplete responses are stored here.
     // Raw `*mut` because the pointer is handed to uws onAborted callback and
-    // compared by identity; allocation/free is via Box::into_raw/from_raw.
+    // compared by identity; allocation/free is via heap::alloc/from_raw.
     pub pending_responses: Vec<*mut PendingResponse>,
 
     pub method: RouteMethod,
@@ -225,7 +225,7 @@ impl State {
             }
             State::Building(Some(c)) => {
                 // SAFETY: `c` was produced by `create_and_schedule_completion_task`
-                // (Box::into_raw, refcount ≥ 1) and we hold one of those refs.
+                // (heap::alloc, refcount ≥ 1) and we hold one of those refs.
                 unsafe {
                     (*c).cancelled = true;
                     RefCount::<JSBundleCompletionTask>::deref(c);
@@ -233,7 +233,7 @@ impl State {
             }
             State::Building(None) => {}
             State::Html(html) => {
-                // SAFETY: `html` was produced by `StaticRoute::clone` (Box::into_raw,
+                // SAFETY: `html` was produced by `StaticRoute::clone` (heap::alloc,
                 // refcount == 1) or via `ref_()`; this drops our ref.
                 unsafe { StaticRoute::deref_(html) };
             }
@@ -346,7 +346,7 @@ impl Route {
                         resp.end_without_body(true);
                         return;
                     };
-                    let pending = Box::into_raw(Box::new(PendingResponse {
+                    let pending = bun_core::heap::leak(Box::new(PendingResponse {
                         method,
                         resp,
                         server: route.server.get(),
@@ -641,9 +641,9 @@ impl Route {
                     }
 
                     let cached_blob_size = blob.size() as u64;
-                    // SAFETY: Box::into_raw never returns null.
+                    // SAFETY: heap::alloc never returns null.
                     let static_route = unsafe {
-                        core::ptr::NonNull::new_unchecked(Box::into_raw(Box::new(StaticRoute {
+                        core::ptr::NonNull::new_unchecked(bun_core::heap::leak(Box::new(StaticRoute {
                             ref_count: Cell::new(1),
                             blob,
                             server: Cell::new(Some(server)),
@@ -681,7 +681,7 @@ impl Route {
                 let (html_route, html_route_path) = this_html_route.unwrap_or_else(|| {
                     panic!("Internal assertion failure: HTML entry point not found in HTMLBundle.")
                 });
-                // SAFETY: html_route is a fresh Box::into_raw with ref_count=1;
+                // SAFETY: html_route is a fresh heap::alloc with ref_count=1;
                 // sole owner before registration.
                 let html_route_clone =
                     bun_core::handle_oom(unsafe { &mut *html_route.as_ptr() }.clone(global_this));
@@ -707,13 +707,13 @@ impl Route {
     pub fn resume_pending_responses(&mut self) {
         let pending = mem::take(&mut self.pending_responses);
         for pending_response_ptr in pending {
-            // SAFETY: every entry was created via Box::into_raw in on_any_request and
+            // SAFETY: every entry was created via heap::alloc in on_any_request and
             // is removed exactly once (here, or via on_aborted which removes without freeing).
             let pending_response = unsafe { &mut *pending_response_ptr };
-            // `defer pending_response.deinit()` — Box::from_raw + Drop at scope end.
+            // `defer pending_response.deinit()` — heap::take + Drop at scope end.
             let _drop = scopeguard::guard(pending_response_ptr, |p| {
                 // SAFETY: see above; reconstitutes the Box and runs `Drop`.
-                drop(unsafe { Box::from_raw(p) });
+                drop(unsafe { bun_core::heap::take(p) });
             });
 
             let resp = pending_response.resp;
@@ -772,7 +772,7 @@ impl RefCounted for Route {
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
         // SAFETY: refcount hit zero; allocated via Box (RefPtr::new / init()).
         // Drop impl asserts pending_responses is empty and frees owned fields.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -810,13 +810,13 @@ impl Drop for PendingResponse {
         // SAFETY: `route` was a live IntrusiveRc-managed Route when stored;
         // matches the `ref()` taken when this PendingResponse was created.
         unsafe { RefCount::<Route>::deref(self.route) };
-        // `bun.destroy(this)` handled by Box::from_raw caller.
+        // `bun.destroy(this)` handled by heap::take caller.
     }
 }
 
 impl PendingResponse {
     pub fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
-        // SAFETY: `this` was registered with resp.on_aborted from a live Box::into_raw allocation.
+        // SAFETY: `this` was registered with resp.on_aborted from a live heap::alloc allocation.
         let this_ref = unsafe { &mut *this };
         debug_assert!(this_ref.is_response_pending);
         this_ref.is_response_pending = false;

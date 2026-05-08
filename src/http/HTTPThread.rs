@@ -431,7 +431,7 @@ impl HttpThread {
                     // `group.loop_` is null), so reclaiming the Box is safe.
                     // SAFETY: custom_context was just Box::leak'd above and
                     // has refcount 1; reclaim and drop on error.
-                    drop(unsafe { Box::from_raw(std::ptr::from_mut::<NewHttpContext<true>>(custom_context)) });
+                    drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<NewHttpContext<true>>(custom_context)) });
 
                     return Err(match err {
                         InitError::FailedToOpenSocket

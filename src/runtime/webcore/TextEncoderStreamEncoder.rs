@@ -12,9 +12,9 @@ pub struct TextEncoderStreamEncoder {
 
 impl TextEncoderStreamEncoder {
     pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` was allocated via Box::into_raw in `constructor`; codegen calls
+        // SAFETY: `this` was allocated via heap::alloc in `constructor`; codegen calls
         // finalize exactly once on the mutator thread during lazy sweep.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits

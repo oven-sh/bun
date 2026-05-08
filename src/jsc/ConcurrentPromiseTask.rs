@@ -123,12 +123,12 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     /// Frees the heap allocation backing this task.
     ///
     /// # Safety
-    /// `this` must have been produced by `Box::into_raw` (via [`create_on_js_thread`] /
+    /// `this` must have been produced by `heap::alloc` (via [`create_on_js_thread`] /
     /// the `.manual_deinit` concurrent-task path) and must not be used afterwards.
     pub unsafe fn destroy(this: *mut Self) {
         // `promise.deinit()` is handled by `JSPromiseStrong: Drop`.
         // SAFETY: caller contract above.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

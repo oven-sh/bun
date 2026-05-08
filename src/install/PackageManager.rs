@@ -796,7 +796,7 @@ pub fn cached_package_folder_name_buf() -> *mut PathBuffer {
     CACHED_PACKAGE_FOLDER_NAME_BUFS.with(|c| {
         let mut p = c.get();
         if p.is_null() {
-            p = Box::into_raw(Box::new(PathBuffer::ZEROED));
+            p = bun_core::heap::leak(Box::new(PathBuffer::ZEROED));
             c.set(p);
         }
         p
@@ -921,7 +921,7 @@ impl PackageManager {
         let mut ptr = CONFIGURE_ENV_FOR_SCRIPTS_ONCE.load(core::sync::atomic::Ordering::Acquire);
         if ptr.is_null() {
             let t = configure_env_for_scripts_run(self, ctx, log_level)?;
-            ptr = Box::into_raw(Box::new(t));
+            ptr = bun_core::heap::leak(Box::new(t));
             CONFIGURE_ENV_FOR_SCRIPTS_ONCE.store(ptr, core::sync::atomic::Ordering::Release);
         }
         // SAFETY: `ptr` is a leaked `Box<Transpiler>`; main-thread-only so the

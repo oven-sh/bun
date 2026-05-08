@@ -65,9 +65,9 @@ pub trait BodyReaderHandler: Sized + 'static {
 
     /// `body` is freed after this function returns.
     ///
-    /// Receives the original `Box::into_raw`'d pointer (full-allocation
+    /// Receives the original `heap::alloc`'d pointer (full-allocation
     /// provenance) rather than `&mut self`: implementors typically free `Self`
-    /// (`Box::from_raw`) on the success path, and doing so through a
+    /// (`heap::take`) on the success path, and doing so through a
     /// `&mut self`-derived pointer is UB under Stacked/Tree Borrows. This
     /// mirrors Zig's `fn(*Wrap, ...)` callback shape exactly.
     ///
@@ -103,7 +103,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     /// restriction; in Rust, deriving the parent by `.sub(MIXIN_OFFSET)` from a
     /// `&mut self`-sourced pointer is out-of-provenance under Stacked Borrows
     /// and the resulting `&mut Wrap` would overlap a live `&mut Self`. Callers
-    /// pass the `Box::into_raw`'d wrapper pointer directly; trampolines below
+    /// pass the `heap::alloc`'d wrapper pointer directly; trampolines below
     /// reach the mixin via *forward* offset (`mixin_of`), so the stored pointer
     /// already has full-Wrap provenance and no overlapping `&mut` are formed.
     pub fn read_body<R: BodyResponse>(wrap: *mut Wrap, resp: &mut R) {
@@ -139,9 +139,9 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         // SAFETY: wrap was registered via read_body and remains alive for the
         // request duration; mixin_of yields an in-bounds field pointer.
         unsafe { (*Self::mixin_of(wrap)).body = Vec::new() };
-        // SAFETY: wrap is the original Box::into_raw'd pointer; the temporary
+        // SAFETY: wrap is the original heap-allocated pointer; the temporary
         // &mut to the mixin field above has ended, so on_error receives sole
-        // ownership of the allocation and may Box::from_raw it.
+        // ownership of the allocation and may heap::take it.
         unsafe { Wrap::on_error(wrap) };
     }
 
@@ -159,9 +159,9 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
             // SAFETY: mixin is an in-bounds field of *wrap.
             let mut body = unsafe { mem::take(&mut (*mixin).body) };
             resp.clear_on_data();
-            // SAFETY: wrap is the original Box::into_raw'd pointer; the &mut to
+            // SAFETY: wrap is the original heap-allocated pointer; the &mut to
             // mixin.body has ended, so on_body receives sole ownership of the
-            // allocation and may Box::from_raw it on success.
+            // allocation and may heap::take it on success.
             if !body.is_empty() {
                 // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
                 // Consider try_reserve in Phase B if graceful 500 on OOM is required.
@@ -192,8 +192,8 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         r.write_status(b"500 Internal Server Error");
         r.end_without_body(false);
 
-        // SAFETY: wrap is the original Box::into_raw'd pointer; the &mut to
-        // mixin.body above has ended; on_error may Box::from_raw it.
+        // SAFETY: wrap is the original heap-allocated pointer; the &mut to
+        // mixin.body above has ended; on_error may heap::take it.
         unsafe { Wrap::on_error(wrap) };
     }
 
@@ -210,8 +210,8 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         r.write_status(b"400 Bad Request");
         r.end_without_body(false);
 
-        // SAFETY: wrap is the original Box::into_raw'd pointer; the &mut to
-        // mixin.body above has ended; on_error may Box::from_raw it.
+        // SAFETY: wrap is the original heap-allocated pointer; the &mut to
+        // mixin.body above has ended; on_error may heap::take it.
         unsafe { Wrap::on_error(wrap) };
     }
 }

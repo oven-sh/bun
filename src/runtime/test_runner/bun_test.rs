@@ -333,7 +333,7 @@ pub mod js_fns {
                         BaseScopeCfg::default(),
                         AddedInPhase::Execution,
                     );
-                    let new_item_ptr = Box::into_raw(new_item);
+                    let new_item_ptr = bun_core::heap::leak(new_item);
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
                     unsafe {
                         (*new_item_ptr).next = (*append_point).next;
@@ -879,7 +879,7 @@ impl BunTest {
     }
 
     pub fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
-        let done_callback_test = Box::into_raw(Box::new(RunTestsTask {
+        let done_callback_test = bun_core::heap::leak(Box::new(RunTestsTask {
             weak: weak.clone(),
             global_this: GlobalRef::from(global_this),
             phase,
@@ -1319,8 +1319,8 @@ impl Drop for BunTest {
         }
 
         for entry in self.extra_execution_entries.drain(..) {
-            // SAFETY: entries were Box::into_raw'd in generic_hook; we own them
-            unsafe { drop(Box::from_raw(entry)); }
+            // SAFETY: entries were heap-allocated in generic_hook; we own them
+            unsafe { drop(bun_core::heap::take(entry)); }
         }
         // execution, collection, result_queue: dropped automatically
         // PERF(port): was arena bulk-free (arena_allocator.deinit)
@@ -1466,7 +1466,7 @@ impl bun_ptr::RefCounted for RefData {
         unsafe {
             bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
             // buntest_weak.deinit() → Weak::drop
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 }
@@ -1487,10 +1487,10 @@ pub struct RunTestsTask {
 }
 impl RunTestsTask {
     /// `ManagedTask` callback ABI: `fn(*mut T) -> JsResult<()>`. The pointer
-    /// was `Box::into_raw`'d in `run_next_tick`; reconstitute and drop here.
+    /// was `heap::alloc`'d in `run_next_tick`; reconstitute and drop here.
     pub fn call(this: *mut RunTestsTask) -> JsResult<()> {
-        // SAFETY: `this` was produced by `Box::into_raw` in `run_next_tick`.
-        let this = unsafe { Box::from_raw(this) };
+        // SAFETY: `this` was produced by `heap::alloc` in `run_next_tick`.
+        let this = unsafe { bun_core::heap::take(this) };
         // defer bun.destroy(this) → Box drops at end of scope
         // defer this.weak.deinit() → Weak drops with Box
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };

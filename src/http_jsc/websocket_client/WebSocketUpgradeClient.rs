@@ -188,15 +188,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
     ///
     /// # Safety
     /// `this` must be the unique remaining pointer to a `Self` allocated via
-    /// `Box::into_raw` in `connect`.
+    /// `heap::alloc` in `connect`.
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: caller guarantees `this` is the unique remaining ref.
         unsafe {
             (*this).clear_data();
             debug_assert!((*this).tcp.is_detached());
-            // allocated via Box::into_raw in `connect`.
+            // allocated via heap::alloc in `connect`.
             bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::TYPE_NAME, this);
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 
@@ -349,7 +349,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             subprotocols
         };
 
-        let client: *mut Self = Box::into_raw(Box::new(HTTPClient::<SSL> {
+        let client: *mut Self = bun_core::heap::leak(Box::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
             outgoing_websocket: Some(websocket),
@@ -454,7 +454,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                 err
                             );
                             client_ref.poll_ref.unref(vm_loop_ctx(vm_ptr));
-                            // SAFETY: `client` from Box::into_raw above; sole owner.
+                            // SAFETY: `client` from heap::alloc above; sole owner.
                             unsafe { Self::deref(client) };
                             return None;
                         };
@@ -488,7 +488,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     let client_ref = unsafe { &mut *client };
                     client_ref.tcp = socket;
                     if client_ref.state == State::Failed {
-                        // SAFETY: `client` from Box::into_raw above.
+                        // SAFETY: `client` from heap::alloc above.
                         unsafe { Self::deref(client) };
                         return None;
                     }
@@ -516,7 +516,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     return Some(client);
                 }
                 Err(_) => {
-                    // SAFETY: `client` from Box::into_raw above; never
+                    // SAFETY: `client` from heap::alloc above; never
                     // installed as userdata on the Err path.
                     unsafe { Self::deref(client) };
                 }
@@ -534,7 +534,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 out.tcp = sock;
                 // I don't think this case gets reached.
                 if out.state == State::Failed {
-                    // SAFETY: `client` from Box::into_raw above.
+                    // SAFETY: `client` from heap::alloc above.
                     unsafe { Self::deref(client) };
                     return None;
                 }
@@ -557,7 +557,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 Some(client)
             }
             Err(_) => {
-                // SAFETY: `client` from Box::into_raw above; never installed
+                // SAFETY: `client` from heap::alloc above; never installed
                 // as userdata on the Err path.
                 unsafe { Self::deref(client) };
                 None
@@ -1500,7 +1500,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // `WebSocket__didConnect` → `Bun__WebSocketClient__init`/`_initWithTunnel`
         // adopts the raw `(ptr, len)` into an `InitialDataHandler` queued as a
         // microtask, which reclaims it via `Box::<[u8]>::from_raw` when the
-        // microtask runs. Allocate as `Box<[u8]>` and `Box::into_raw` it so the
+        // microtask runs. Allocate as `Box<[u8]>` and `heap::alloc` it so the
         // alloc/free pair through the SAME Rust global allocator (mimalloc).
         // Do NOT keep a `Vec`/`Box` binding past the FFI call — it would drop
         // at scope exit and leave the queued microtask with a dangling pointer
@@ -1518,7 +1518,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             v.extend_from_slice(remain_buf);
             // Leak across the FFI boundary; `InitialDataHandler` reconstructs
             // the `Box<[u8]>` and drops it after delivery.
-            Box::into_raw(v.into_boxed_slice()).cast::<u8>()
+            bun_core::heap::leak(v.into_boxed_slice()).cast::<u8>()
         } else {
             core::ptr::null_mut()
         };
@@ -2232,7 +2232,7 @@ macro_rules! export_http_client {
                 this: *mut HTTPClient<$ssl>,
             ) {
                 // SAFETY: caller (C++) holds a live ref; `this` carries root
-                // (userdata) provenance from `Box::into_raw`.
+                // (userdata) provenance from `heap::alloc`.
                 unsafe { HTTPClient::<$ssl>::cancel(this) };
             }
 

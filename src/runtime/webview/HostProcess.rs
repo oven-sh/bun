@@ -48,7 +48,7 @@ pub extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
     unsafe {
         if let Some(i) = INSTANCE.load(core::sync::atomic::Ordering::Relaxed).as_mut() {
-            // SAFETY: INSTANCE is set to a live Box::into_raw'd pointer in
+            // SAFETY: INSTANCE is set to a live heap-allocated pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
             let _ = i.process.as_mut().kill(9);
         }
@@ -115,13 +115,13 @@ impl HostProcess {
         };
         // SAFETY: FFI call into WebKitBackend.cpp; signo is a plain i32.
         unsafe { Bun__WebViewHost__childDied(signo) };
-        // SAFETY: `this` was Box::into_raw'd in spawn(); process is the
+        // SAFETY: `this` was heap-allocated in spawn(); process is the
         // intrusive-rc *mut Process whose strong ref we hold. `deref()` drops
         // that ref (Zig: `process.deref()`), then drop the Box (Zig:
         // `bun.destroy(this)`).
         unsafe {
             (*(*this).process.as_ptr()).deref();
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
         INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
     }
@@ -196,7 +196,7 @@ fn spawn(
         let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
         let process = NonNull::new(spawned.to_process(event_loop, false))
             .expect("toProcess returned null");
-        let self_ptr = Box::into_raw(Box::new(HostProcess { process }));
+        let self_ptr = bun_core::heap::leak(Box::new(HostProcess { process }));
         // SAFETY: self_ptr is a freshly-allocated, exclusively-owned Box.
         unsafe {
             (*process.as_ptr()).set_exit_handler(self_ptr.cast(), &HOST_EXIT_VTABLE);
@@ -218,7 +218,7 @@ fn spawn(
                 // then reclaim the Box (Zig: `bun.destroy(self)`).
                 unsafe {
                     (*process.as_ptr()).deref();
-                    drop(Box::from_raw(self_ptr));
+                    drop(bun_core::heap::take(self_ptr));
                 }
                 // fd0_guard (errdefer at the top) closes fds[0]; don't double-close here.
                 return Err(bun_core::err!("WatchFailed"));

@@ -125,7 +125,7 @@ pub struct MiniEventLoop<'a> {
 thread_local! {
     pub static GLOBAL_INITIALIZED: Cell<bool> = const { Cell::new(false) };
     // PORT NOTE: Zig `threadlocal var global: *MiniEventLoop = undefined;` — raw pointer
-    // because the global is heap-allocated once (Box::into_raw) and lives for the
+    // because the global is heap-allocated once (heap::alloc) and lives for the
     // thread's lifetime (a true thread-lifetime singleton; never freed in Zig either).
     pub static GLOBAL: Cell<*mut MiniEventLoop<'static>> = const { Cell::new(core::ptr::null_mut()) };
 }
@@ -147,11 +147,11 @@ pub fn init_global(
     }
     let loop_ = MiniEventLoop::init();
     // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
-    // thread-lifetime singleton, so use `Box::into_raw` (intrusive ownership)
+    // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
     // and store the raw pointer in the thread-local — same as Zig
     // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
-    let global_ptr: *mut MiniEventLoop<'static> = Box::into_raw(Box::new(loop_));
-    // SAFETY: `global_ptr` was just allocated via `Box::into_raw`; this thread
+    let global_ptr: *mut MiniEventLoop<'static> = bun_core::heap::leak(Box::new(loop_));
+    // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
     // holds the only reference for the duration of first-init. The `GLOBAL`
     // thread-local is NOT yet published (set below, after this `&mut` is dropped),
     // so neither `MiniKind::get_vm()` nor a re-entrant `init_global()` can observe
@@ -178,11 +178,11 @@ pub fn init_global(
     });
     if global.env.is_none() {
         // Thread-lifetime singletons (matches Zig `bun.default_allocator.create`).
-        let map: *mut dotenv::Map = Box::into_raw(Box::new(dotenv::Map::init()));
+        let map: *mut dotenv::Map = bun_core::heap::leak(Box::new(dotenv::Map::init()));
         // SAFETY: `map` lives for the thread (singleton); never freed (Zig parity).
         let loader: *mut DotEnvLoader<'static> =
-            Box::into_raw(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
-        // SAFETY: `Box::into_raw` never returns null.
+            bun_core::heap::leak(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
+        // SAFETY: `heap::alloc` never returns null.
         global.env = Some(unsafe { NonNull::new_unchecked(loader) });
     }
 

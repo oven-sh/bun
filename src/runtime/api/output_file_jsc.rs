@@ -45,7 +45,7 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         // No store (empty bytes). Zig still assigns `blob.content_type` from the
         // loader's mime so `contentTypeOrMimeType()` keeps returning a value.
         let owned: Box<[u8]> = Box::from(mime.value.as_ref());
-        blob.content_type = Box::into_raw(owned);
+        blob.content_type = bun_core::heap::leak(owned);
         blob.content_type_allocated = true;
     }
 }
@@ -140,7 +140,7 @@ impl OutputFileJsc for OutputFile {
                 // SAFETY: `build_output` is a fresh heap payload; ownership
                 // transfers to the JS `BuildArtifact` wrapper (`finalize`
                 // reclaims it).
-                unsafe { BuildArtifact::to_js_ptr(Box::into_raw(build_output), global_object) }
+                unsafe { BuildArtifact::to_js_ptr(bun_core::heap::leak(build_output), global_object) }
             }
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text.as_ref());
@@ -174,7 +174,7 @@ impl OutputFileJsc for OutputFile {
                 });
 
                 // SAFETY: see `Copy` arm.
-                unsafe { BuildArtifact::to_js_ptr(Box::into_raw(build_output), global_object) }
+                unsafe { BuildArtifact::to_js_ptr(bun_core::heap::leak(build_output), global_object) }
             }
             OutputFileValue::Buffer { bytes } => {
                 let bytes_len = bytes.len();
@@ -197,7 +197,7 @@ impl OutputFileJsc for OutputFile {
                 });
 
                 // SAFETY: see `Copy` arm.
-                unsafe { BuildArtifact::to_js_ptr(Box::into_raw(build_output), global_object) }
+                unsafe { BuildArtifact::to_js_ptr(bun_core::heap::leak(build_output), global_object) }
             }
             OutputFileValue::Move(_) | OutputFileValue::Pending(_) | OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.

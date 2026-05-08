@@ -727,16 +727,16 @@ impl ErrorDeferred {
             // PORT NOTE: `bun_event_loop::ManagedTask::new` expects
             // `fn(*mut T) -> bun_event_loop::JsResult<()>` (low-tier `ErasedJsError`).
             fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
-                // SAFETY: `this` is the Box::into_raw'd pointer passed to ManagedTask::new
+                // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.
-                let this = unsafe { Box::from_raw(this) };
+                let this = unsafe { bun_core::heap::take(this) };
                 // SAFETY: global_this outlives the enqueued task (VM-owned).
                 let global = unsafe { &*this.global_this };
                 this.deferred.reject(global).map_err(Into::into)
             }
         }
 
-        let context = Box::into_raw(Box::new(Context {
+        let context = bun_core::heap::leak(Box::new(Context {
             deferred: self,
             global_this: std::ptr::from_ref(global_this),
         }));

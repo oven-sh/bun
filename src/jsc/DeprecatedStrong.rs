@@ -63,11 +63,11 @@ impl DeprecatedStrong {
         value.protect();
         #[cfg(debug_assertions)]
         let safety: Safety = Some(SafetyData {
-            // SAFETY: Box::into_raw never returns null. ManuallyDrop<T> is
+            // SAFETY: heap::alloc never returns null. ManuallyDrop<T> is
             // #[repr(transparent)], so the cast to *mut DeprecatedStrong is sound.
             ptr: unsafe {
                 NonNull::new_unchecked(
-                    Box::into_raw(Box::new(ManuallyDrop::new(DeprecatedStrong {
+                    bun_core::heap::leak(Box::new(ManuallyDrop::new(DeprecatedStrong {
                         raw: JSValue::from_encoded(0xAEBCFA),
                         safety: None,
                     })))
@@ -110,12 +110,12 @@ impl DeprecatedStrong {
         #[cfg(debug_assertions)]
         if let Some(safety) = &mut self.safety {
             if safety.ref_count == 1 {
-                // SAFETY: ptr was produced by Box::into_raw in `init` and not yet freed.
+                // SAFETY: ptr was produced by heap::alloc in `init` and not yet freed.
                 unsafe {
                     debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
                     (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
                     // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
-                    drop(Box::from_raw(
+                    drop(bun_core::heap::take(
                         safety.ptr.as_ptr().cast::<ManuallyDrop<DeprecatedStrong>>(),
                     ));
                 }
@@ -134,14 +134,14 @@ impl Drop for DeprecatedStrong {
         self.raw.unprotect();
         #[cfg(debug_assertions)]
         if let Some(safety) = &mut self.safety {
-            // SAFETY: ptr was produced by Box::into_raw in `init` and has not been freed
+            // SAFETY: ptr was produced by heap::alloc in `init` and has not been freed
             // (ref_count == 1 asserted below).
             unsafe {
                 debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
                 (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
                 debug_assert!(safety.ref_count == 1);
                 // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
-                drop(Box::from_raw(
+                drop(bun_core::heap::take(
                     safety.ptr.as_ptr().cast::<ManuallyDrop<DeprecatedStrong>>(),
                 ));
             }

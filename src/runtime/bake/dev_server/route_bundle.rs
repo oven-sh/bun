@@ -107,7 +107,7 @@ impl RouteBundle {
         if let Some(bundle) = self.client_bundle.take() {
             source_maps.unref(self.source_map_id());
             // SAFETY: `client_bundle` was produced by `StaticRoute::init_*`
-            // (Box::into_raw) and has its own ref held by this struct; no
+            // (heap::alloc) and has its own ref held by this struct; no
             // outstanding `&`/`&mut` borrow exists across this call.
             unsafe { StaticRoute::deref_(bundle.as_ptr()) };
         }

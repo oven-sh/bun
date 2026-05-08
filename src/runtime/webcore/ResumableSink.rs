@@ -164,8 +164,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         ref_count: u32,
     ) -> *mut Self {
         // `bun.TrivialNew(@This())` — heap-allocate via the global mimalloc;
-        // `Self::deref_` reclaims via `Box::from_raw` when the count hits 0.
-        let this: *mut Self = Box::into_raw(Box::new(Self {
+        // `Self::deref_` reclaims via `heap::take` when the count hits 0.
+        let this: *mut Self = bun_core::heap::leak(Box::new(Self {
             ref_count: Cell::new(ref_count),
             js_this: JsRef::empty(),
             stream: crate::webcore::readable_stream::Strong::default(),
@@ -542,10 +542,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             self.detach_js();
         }
         // Last use of `&mut self`. Derive a raw pointer for the refcount
-        // decrement(s) so no live `&mut` aliases the `Box::from_raw` teardown
+        // decrement(s) so no live `&mut` aliases the `heap::take` teardown
         // when the count reaches 0 (Stacked Borrows).
         let this: *mut Self = self;
-        // SAFETY: `this` was allocated via `Box::into_raw` in `init_exact_refs`
+        // SAFETY: `this` was allocated via `heap::alloc` in `init_exact_refs`
         // and is live until the final `deref_` below drops the count to 0.
         unsafe {
             if !js_is_strong {
@@ -567,7 +567,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     /// free the `Box` allocated in [`init_exact_refs`].
     ///
     /// # Safety
-    /// `this` must point to a live `Self` allocated via `Box::into_raw` in
+    /// `this` must point to a live `Self` allocated via `heap::alloc` in
     /// `init_exact_refs`. After this call returns, `this` may dangle — the
     /// caller must not access it (nor any `&`/`&mut` it was derived from).
     #[inline]
@@ -579,11 +579,11 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let n = rc.get() - 1;
         rc.set(n);
         if n == 0 {
-            // SAFETY: allocated via `Box::into_raw` in `init_exact_refs`;
+            // SAFETY: allocated via `heap::alloc` in `init_exact_refs`;
             // count==0 ⇒ no other live refs. No `&mut Self` is held across
             // this point (raw-ptr receiver), so `Box`'s `Drop` taking a fresh
             // `&mut Self` does not alias.
-            drop(unsafe { Box::from_raw(this) });
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 }

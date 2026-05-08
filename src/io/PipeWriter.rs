@@ -1156,7 +1156,7 @@ pub trait BaseWindowsPipeWriter {
             }
             Source::Pipe(pipe) => {
                 // Hand the Box off to libuv; on_pipe_close reclaims it.
-                let raw = Box::into_raw(pipe);
+                let raw = bun_core::heap::leak(pipe);
                 // SAFETY: raw is heap-allocated by Source::open; freed in on_pipe_close.
                 unsafe {
                     (*raw).data = raw.cast::<c_void>();
@@ -1165,7 +1165,7 @@ pub trait BaseWindowsPipeWriter {
             }
             Source::Tty(tty) => {
                 let p = tty.as_ptr();
-                // SAFETY: tty is heap-allocated (via open_tty Box::into_raw) or the
+                // SAFETY: tty is heap-allocated (via open_tty heap::alloc) or the
                 // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
                 unsafe { (*p).data = p.cast::<c_void>() };
                 // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
@@ -1211,7 +1211,7 @@ pub trait BaseWindowsPipeWriter {
     unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         // SAFETY: caller contract — Box-allocated, ownership transfers.
-        *self.source_mut() = Some(Source::Pipe(unsafe { Box::from_raw(pipe) }));
+        *self.source_mut() = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
         let p = self.parent_ptr();
         self.set_parent(p);
         self.start_with_current_pipe()
@@ -1266,7 +1266,7 @@ pub trait BaseWindowsPipeWriter {
     /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer.
     unsafe fn set_pipe(&mut self, pipe: *mut uv::Pipe) {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
-        *self.source_mut() = Some(Source::Pipe(unsafe { Box::from_raw(pipe) }));
+        *self.source_mut() = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
         let p = self.parent_ptr();
         self.set_parent(p);
     }
@@ -1284,7 +1284,7 @@ pub trait BaseWindowsPipeWriter {
 extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
     // SAFETY: handle.data was set to the boxed Pipe ptr in close().
     let this = unsafe { (*handle).data.cast::<uv::Pipe>() };
-    drop(unsafe { Box::from_raw(this) });
+    drop(unsafe { bun_core::heap::take(this) });
 }
 
 #[cfg(windows)]
@@ -1294,7 +1294,7 @@ extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
     // The stdin tty (fd 0) lives in static storage; never free it. Mirrors
     // Zig PipeWriter onTtyClose's `is_stdin_tty()` gate.
     if !crate::source::stdin_tty::is_stdin_tty(this) {
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 

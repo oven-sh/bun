@@ -225,12 +225,12 @@ impl ModuleInfoDeserialized {
                     // `@fieldParentPtr("_deserialized", self)`. The Rust port
                     // stores the `*mut ModuleInfo` directly because the printer
                     // crate's `ModuleInfo` no longer embeds this struct.
-                    drop(Box::from_raw(mi));
-                    drop(Box::from_raw(this));
+                    drop(bun_core::heap::take(mi));
+                    drop(bun_core::heap::take(this));
                 }
                 Owner::AllocatedSlice { slice } => {
-                    drop(Box::from_raw(slice));
-                    drop(Box::from_raw(this));
+                    drop(bun_core::heap::take(slice));
+                    drop(bun_core::heap::take(this));
                 }
             }
         }
@@ -260,9 +260,9 @@ impl ModuleInfoDeserialized {
     pub fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
         let duped: Box<[u8]> = Box::from(source);
         // Stabilize the address so the raw slice fields can borrow into it.
-        let duped_raw: *mut [u8] = Box::into_raw(duped);
+        let duped_raw: *mut [u8] = bun_core::heap::leak(duped);
         // On error, reclaim the allocation.
-        let guard = scopeguard::guard(duped_raw, |p| unsafe { drop(Box::from_raw(p)) });
+        let guard = scopeguard::guard(duped_raw, |p| unsafe { drop(bun_core::heap::take(p)) });
 
         // SAFETY: `duped_raw` is a valid, exclusively-owned allocation.
         let mut rem: &[u8] = unsafe { &*duped_raw };
@@ -393,7 +393,7 @@ impl StringIDExt for StringID {
 /// `ModuleInfoDeserialized` view kept in this crate.
 pub trait ModuleInfoExt {
     /// # Safety
-    /// `this` must originate from `Box::into_raw(ModuleInfo::create(..))`.
+    /// `this` must originate from `heap::alloc(ModuleInfo::create(..))`.
     unsafe fn destroy_raw(this: *mut ModuleInfo);
     /// Finalize and box the raw-pointer `ModuleInfoDeserialized` view, taking
     /// ownership of `self`. Replaces the Zig pattern of writing into the
@@ -404,8 +404,8 @@ pub trait ModuleInfoExt {
 impl ModuleInfoExt for ModuleInfo {
     #[inline]
     unsafe fn destroy_raw(this: *mut ModuleInfo) {
-        // SAFETY: caller contract — `this` is `Box::into_raw` output.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: caller contract — `this` is `heap::alloc` output.
+        drop(unsafe { bun_core::heap::take(this) });
     }
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
         // PORT NOTE: Zig wrote a self-referential `_deserialized` view inside
@@ -414,7 +414,7 @@ impl ModuleInfoExt for ModuleInfo {
         // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
         let _ = self.finalize();
         // PORT NOTE: reshaped for borrowck — capture raw pointers before
-        // `Box::into_raw(self)` consumes the box.
+        // `heap::alloc(self)` consumes the box.
         let (strings_buf, strings_lens, rm_keys, rm_values, buffer, record_kinds, flags);
         {
             let view = self.as_deserialized();
@@ -443,7 +443,7 @@ impl ModuleInfoExt for ModuleInfo {
             buffer,
             record_kinds,
             flags,
-            owner: Owner::ModuleInfo(Box::into_raw(self)),
+            owner: Owner::ModuleInfo(bun_core::heap::leak(self)),
         })
     }
 }
@@ -455,7 +455,7 @@ impl ModuleInfoExt for ModuleInfo {
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
     // SAFETY: C++ caller passes a pointer obtained from `ModuleInfo::create`.
-    drop(unsafe { Box::from_raw(info) });
+    drop(unsafe { bun_core::heap::take(info) });
 }
 
 #[unsafe(no_mangle)]

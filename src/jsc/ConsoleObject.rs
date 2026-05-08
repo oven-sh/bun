@@ -129,7 +129,7 @@ impl ConsoleObject {
     // before the adapters are wired up, and the `Pin` makes the
     // "must not move" invariant a type-system fact rather than a comment.
     // `VirtualMachine.console` stores the raw pointer (`*mut c_void`), so
-    // callers leak via `Box::into_raw(Pin::into_inner_unchecked(..))` — the
+    // callers leak via `heap::alloc(Pin::into_inner_unchecked(..))` — the
     // VM owns it for the process lifetime.
     //
     // TODO(port): Phase B — make `QuietWriterAdapter` own its 4 KiB buffer so
@@ -1631,7 +1631,7 @@ pub mod formatter {
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
         /// Raw pointer (not `Box`) because `visited::Pool` owns the
-        /// `Box::into_raw`/`from_raw` lifecycle — mirrors Zig
+        /// `heap::alloc`/`from_raw` lifecycle — mirrors Zig
         /// `?*Visited.Pool.Node`.
         pub map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
         pub hide_native: bool,

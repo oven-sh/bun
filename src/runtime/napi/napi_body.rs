@@ -1446,9 +1446,9 @@ pub extern "C" fn napi_create_promise(
     let deferred = get_out!(env, deferred_);
     let promise = get_out!(env, promise_);
     let strong = Box::new(JSPromiseStrong::init(env.to_js()));
-    let strong_ptr = Box::into_raw(strong);
+    let strong_ptr = bun_core::heap::leak(strong);
     *deferred = strong_ptr;
-    // SAFETY: strong_ptr was just created from Box::into_raw and is non-null.
+    // SAFETY: strong_ptr was just created from heap::alloc and is non-null.
     let prom_value = unsafe { (*strong_ptr).get() }.as_value(env.to_js());
     promise.set(env, prom_value);
     env.ok()
@@ -1462,8 +1462,8 @@ pub extern "C" fn napi_resolve_deferred(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
     let env = get_env!(env_);
-    // SAFETY: deferred was created by Box::into_raw in napi_create_promise.
-    let deferred_box = unsafe { Box::from_raw(deferred) };
+    // SAFETY: deferred was created by heap::alloc in napi_create_promise.
+    let deferred_box = unsafe { bun_core::heap::take(deferred) };
     // `deferred_box` drops at scope exit (deinit + free).
     let resolution = resolution_.get();
     // SAFETY: `deferred_box` holds a live JSPromise strong ref.
@@ -1482,8 +1482,8 @@ pub extern "C" fn napi_reject_deferred(
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_reject_deferred");
     let env = get_env!(env_);
-    // SAFETY: deferred was created by Box::into_raw in napi_create_promise.
-    let deferred_box = unsafe { Box::from_raw(deferred) };
+    // SAFETY: deferred was created by heap::alloc in napi_create_promise.
+    let deferred_box = unsafe { bun_core::heap::take(deferred) };
     let rejection = rejection_.get();
     // SAFETY: `deferred_box` holds a live JSPromise strong ref.
     let prom = unsafe { deferred_box.get() };
@@ -1598,7 +1598,7 @@ impl napi_async_work {
     ) -> *mut napi_async_work {
         let global = env.to_js();
 
-        Box::into_raw(Box::new(napi_async_work {
+        bun_core::heap::leak(Box::new(napi_async_work {
             task: WorkPoolTask {
                 node: bun_threading::thread_pool::Node::default(),
                 callback: Self::run_from_thread_pool,
@@ -1619,9 +1619,9 @@ impl napi_async_work {
     }
 
     pub fn destroy(this: *mut napi_async_work) {
-        // SAFETY: `this` was created by Box::into_raw in `new`.
+        // SAFETY: `this` was created by heap::alloc in `new`.
         // env.deinit() runs via Drop on NapiEnvRef.
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn schedule(&mut self) {
@@ -2214,7 +2214,7 @@ impl TsfnQueue {
 
 impl ThreadSafeFunction {
     pub fn new(init: ThreadSafeFunction) -> *mut ThreadSafeFunction {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     // This has two states:
@@ -2425,7 +2425,7 @@ impl ThreadSafeFunction {
     }
 
     /// Consumes and frees a heap-allocated ThreadSafeFunction (allocated by `new`).
-    /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `Box::into_raw`
+    /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `heap::alloc`
     /// and not aliased; caller transfers ownership.
     pub unsafe fn destroy(this: *mut ThreadSafeFunction) {
         // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
@@ -2449,8 +2449,8 @@ impl ThreadSafeFunction {
         // else-branch: `env` drops with the Box below.
 
         // callback.deinit() and queue.deinit() run via Drop.
-        // SAFETY: `this` was allocated by Box::into_raw in `new`.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: `this` was allocated by heap::alloc in `new`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn ref_(&mut self) {
@@ -3169,7 +3169,7 @@ impl NapiFinalizerTask {
         // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
         let vm: &VirtualMachine = global_this.bun_vm();
         let is_main_thread = VirtualMachine::get_or_null().is_some();
-        let this = Box::into_raw(self);
+        let this = bun_core::heap::leak(self);
 
         if !is_main_thread {
             // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
@@ -3189,8 +3189,8 @@ impl NapiFinalizerTask {
     }
 
     pub fn run_on_js_thread(this: *mut NapiFinalizerTask) {
-        // SAFETY: `this` was created by Box::into_raw in `schedule`.
-        let mut this_box = unsafe { Box::from_raw(this) };
+        // SAFETY: `this` was created by heap::alloc in `schedule`.
+        let mut this_box = unsafe { bun_core::heap::take(this) };
         this_box.finalizer.run();
         // finalizer.deinit() runs via Drop on NapiEnvRef when this_box drops.
     }

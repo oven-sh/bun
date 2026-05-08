@@ -191,14 +191,14 @@ impl MultiPartUpload {
         self.ref_count.set(self.ref_count.get() + 1);
     }
     pub fn deref_(this: *mut Self) {
-        // SAFETY: `this` is a live heap-allocated MultiPartUpload created via Box::into_raw
+        // SAFETY: `this` is a live heap-allocated MultiPartUpload created via heap::alloc
         unsafe {
             let rc = (*this).ref_count.get() - 1;
             (*this).ref_count.set(rc);
             if rc == 0 {
                 // deinit() in Zig ends with bun.destroy(this); here Drop runs field cleanup
-                // and Box::from_raw deallocates.
-                drop(Box::from_raw(this));
+                // and heap::take deallocates.
+                drop(bun_core::heap::take(this));
             }
         }
     }
@@ -402,7 +402,7 @@ impl Drop for MultiPartUpload {
         // uploadid_buffer: MutableString — Drop
         // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
         // multipart_upload_list: Vec<u8> — Drop
-        // bun.destroy(this) — handled by deref_() via Box::from_raw
+        // bun.destroy(this) — handled by deref_() via heap::take
     }
 }
 
@@ -499,7 +499,7 @@ impl MultiPartUpload {
         let (data, allocated_len): (*const [u8], usize) = if needs_clone {
             let owned = Box::<[u8]>::from(chunk);
             let len = owned.len();
-            (Box::into_raw(owned).cast_const(), len)
+            (bun_core::heap::leak(owned).cast_const(), len)
         } else {
             (std::ptr::from_ref::<[u8]>(chunk), allocated_size)
         };

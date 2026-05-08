@@ -63,8 +63,8 @@ bun_ptr::impl_cell_ref_counted! {
         fn ref_count(&self) -> &Cell<u32> { &self.ref_count }
         // SAFETY: refcount hit zero; this struct was Box-allocated for
         // custom-SSL entries (statics never reach 0). `this` originated from
-        // `Box::into_raw` so it carries unique ownership provenance.
-        unsafe fn destroy(this: *mut Self) { drop(Box::from_raw(this)) }
+        // `heap::alloc` so it carries unique ownership provenance.
+        unsafe fn destroy(this: *mut Self) { drop(bun_core::heap::take(this)) }
     }
 }
 pub type HTTPContextRc<const SSL: bool> = bun_ptr::IntrusiveRc<HTTPContext<SSL>>;
@@ -272,7 +272,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if !SSL {
             return;
         }
-        // `session` is the raw heap pointer (Box::into_raw provenance) passed
+        // `session` is the raw heap pointer (heap::alloc provenance) passed
         // through from the ClientSession `&mut self` callers; keeping it raw
         // lets `deref()` reclaim the Box without a `&T → *mut T` cast.
         // SAFETY: caller guarantees `session` is live for this call.

@@ -1388,7 +1388,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
         let res = unsafe { &mut *res };
-        let dw = Box::into_raw(HmrSocket::new(self, res));
+        let dw = bun_core::heap::leak(HmrSocket::new(self, res));
         let _ = self.active_websocket_connections.insert(dw, ());
         let _ = res.upgrade(
             dw,
@@ -1433,7 +1433,7 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
         sec_web_socket_extensions: &[u8],
         ctx: &mut bun_uws::WebSocketUpgradeContext,
     ) {
-        let boxed = Box::into_raw(Box::new(data));
+        let boxed = bun_core::heap::leak(Box::new(data));
         let _ = bun_uws_sys::response::Response::<SSL>::upgrade(
             self,
             boxed,
@@ -5449,7 +5449,7 @@ impl DevServer {
         debug_assert!(id == 0);
 
         let dw: Box<HmrSocket> = HmrSocket::new(self, res);
-        let dw_ptr: *mut HmrSocket = Box::into_raw(dw);
+        let dw_ptr: *mut HmrSocket = bun_core::heap::leak(dw);
         self.active_websocket_connections.put_no_clobber(dw_ptr, ()).expect("oom");
         res.upgrade::<*mut HmrSocket>(
             dw_ptr,
@@ -6127,13 +6127,13 @@ struct UnrefSourceMapRequest {
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
     const MIXIN_OFFSET: usize = offset_of!(UnrefSourceMapRequest, body);
     unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
-        // SAFETY: caller (BodyReaderMixin) passes the original Box::into_raw'd
+        // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
         unsafe { Self::run_with_body(this, body, resp) }
     }
     unsafe fn on_error(this: *mut Self) {
-        // SAFETY: caller passes the original Box::into_raw'd pointer; finalize
-        // consumes it via Box::from_raw exactly once.
+        // SAFETY: caller passes the original heap-allocated pointer; finalize
+        // consumes it via heap::take exactly once.
         unsafe { Self::finalize(this) }
     }
 }
@@ -6149,22 +6149,22 @@ impl UnrefSourceMapRequest {
         });
         // SAFETY: dev outlives the request
         unsafe { (*ctx.dev).server.as_mut().unwrap().on_pending_request() };
-        let raw = Box::into_raw(ctx);
+        let raw = bun_core::heap::leak(ctx);
         uws::BodyReaderMixin::<Self>::read_body(raw, resp);
     }
 
-    /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`;
+    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`;
     /// called exactly once.
     unsafe fn finalize(ctx: *mut UnrefSourceMapRequest) {
         // SAFETY: caller contract — ctx is the original Box allocation; no
         // live borrow of *ctx exists.
-        let ctx = unsafe { Box::from_raw(ctx) };
+        let ctx = unsafe { bun_core::heap::take(ctx) };
         // SAFETY: dev outlives the request
         unsafe { (*ctx.dev).server.as_mut().unwrap().on_static_request_complete() };
         drop(ctx);
     }
 
-    /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`.
+    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`.
     /// On `Ok` this consumes `ctx` via `finalize`; on `Err` ownership stays
     /// with the caller (BodyReaderMixin → `on_error`).
     unsafe fn run_with_body(
@@ -6186,7 +6186,7 @@ impl UnrefSourceMapRequest {
             .remove_or_upgrade_weak_ref(source_map_key, source_map_store::RemoveOrUpgradeMode::Remove);
         r.write_status(b"204 No Content");
         r.end(b"", false);
-        // SAFETY: ctx is the original Box::into_raw'd pointer; the only borrow
+        // SAFETY: ctx is the original heap-allocated pointer; the only borrow
         // derived from it points into a separate DevServer allocation and has
         // ended.
         unsafe { Self::finalize(ctx) };

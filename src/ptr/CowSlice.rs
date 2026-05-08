@@ -104,7 +104,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // PORT NOTE: Zig asserted ownership at runtime via a debug allocator
         // wrapper. In Rust the `Box<[T]>` type already proves unique ownership.
         let len = data.len();
-        let ptr = Box::into_raw(data).cast::<T>();
+        let ptr = bun_core::heap::leak(data).cast::<T>();
         Self {
             ptr,
             flags: Flags::new(len, true),
@@ -206,8 +206,8 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         #[cfg(debug_assertions)]
         if self.is_owned() {
             if let Some(d) = self.debug.take() {
-                // SAFETY: `d` was created via `Box::into_raw` in `init_owned`/`into_owned`.
-                drop(unsafe { Box::from_raw(d.as_ptr()) });
+                // SAFETY: `d` was created via `heap::alloc` in `init_owned`/`into_owned`.
+                drop(unsafe { bun_core::heap::take(d.as_ptr()) });
             }
         }
         // Zig: `defer str.* = Self.empty` — a *bitwise* overwrite. In Rust,
@@ -215,8 +215,8 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // free the very `ptr[..len]` allocation we are about to hand back.
         // `mem::forget(mem::replace(..))` resets `self` without dropping.
         core::mem::forget(core::mem::replace(self, Self::EMPTY));
-        // SAFETY: owned ⇒ `ptr[..len]` was produced by `Box::into_raw`.
-        Ok(unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(ptr, len)) })
+        // SAFETY: owned ⇒ `ptr[..len]` was produced by `heap::alloc`.
+        Ok(unsafe { bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(ptr, len)) })
     }
 
     /// Returns a new string that borrows this string's data.
@@ -284,7 +284,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         // TODO(port): `allocator.dupeZ` for `Z = true` — see `init_dupe`.
         // Sentinel is NOT preserved in this stub.
         let bytes: Box<[T]> = Box::<[T]>::from(self.slice());
-        self.ptr = Box::into_raw(bytes).cast::<T>();
+        self.ptr = bun_core::heap::leak(bytes).cast::<T>();
         // flags.len already correct (unchanged)
         self.flags.set_is_owned(true);
 
@@ -341,17 +341,17 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
                     *borrows
                 );
                 drop(borrows);
-                // SAFETY: owned ⇒ we created this via `Box::into_raw`.
-                drop(unsafe { Box::from_raw(debug.as_ptr()) });
+                // SAFETY: owned ⇒ we created this via `heap::alloc`.
+                drop(unsafe { bun_core::heap::take(debug.as_ptr()) });
             } else {
                 let mut borrows = dbg.mutex.lock();
                 *borrows -= 1; // double deinit of a borrowed string would underflow
             }
         }
         if self.flags.is_owned() {
-            // SAFETY: owned ⇒ `ptr[..len]` came from `Box::into_raw`.
+            // SAFETY: owned ⇒ `ptr[..len]` came from `heap::alloc`.
             drop(unsafe {
-                Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
                     self.ptr,
                     self.flags.len(),
                 ))
@@ -383,8 +383,8 @@ impl DebugData {
         let b = Box::new(Self {
             mutex: parking_lot::Mutex::new(0),
         });
-        // SAFETY: `Box::into_raw` never returns null.
-        unsafe { NonNull::new_unchecked(Box::into_raw(b)) }
+        // SAFETY: `heap::alloc` never returns null.
+        unsafe { NonNull::new_unchecked(bun_core::heap::leak(b)) }
     }
 }
 

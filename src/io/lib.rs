@@ -1676,34 +1676,28 @@ pub mod closer {
         task: WorkPoolTask,
     }
 
+    // SAFETY: `TASK_OFFSET` is `offset_of!(Closer, task)`; `task: WorkPoolTask`.
+    #[cfg(not(windows))]
+    unsafe impl bun_threading::work_pool::OwnedTask for Closer {
+        const TASK_OFFSET: usize = core::mem::offset_of!(Closer, task);
+        fn run(self: Box<Self>) {
+            use bun_sys::FdExt;
+            self.fd.close();
+        }
+    }
+
     #[cfg(not(windows))]
     impl Closer {
         /// `_compat`: for signature compatibility with the Windows version.
         pub fn close(fd: Fd, _compat: ()) {
             debug_assert!(fd.is_valid());
-            let closer = Box::into_raw(Box::new(Closer {
+            WorkPool::schedule_owned(Box::new(Closer {
                 fd,
                 task: WorkPoolTask {
                     node: Default::default(),
-                    callback: Self::on_close,
+                    callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
                 },
             }));
-            // SAFETY: closer is a valid heap allocation; task is its embedded field.
-            WorkPool::schedule(unsafe { &raw mut (*closer).task });
-        }
-
-        unsafe fn on_close(task: *mut WorkPoolTask) {
-            use bun_sys::FdExt;
-            // SAFETY: `task` is the `task` field of a `Closer` allocated above
-            // via Box::into_raw; recover the parent pointer with offset_of.
-            let closer = unsafe {
-                Box::from_raw(
-                    task.cast::<u8>()
-                        .sub(core::mem::offset_of!(Closer, task))
-                        .cast::<Closer>(),
-                )
-            };
-            closer.fd.close();
         }
     }
 
@@ -1725,7 +1719,7 @@ pub mod closer {
         pub fn close(fd: Fd, loop_: *mut uv::Loop) {
             // SAFETY: all-zero is a valid uv::fs_t (libuv C struct, zero-init by convention).
             let io_request: uv::fs_t = unsafe { core::mem::zeroed() };
-            let closer = Box::into_raw(Box::new(Closer { io_request }));
+            let closer = bun_core::heap::leak(Box::new(Closer { io_request }));
             // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
             // SAFETY: closer is a freshly-boxed valid pointer.
             unsafe {
@@ -1739,7 +1733,7 @@ pub mod closer {
                 .err_enum()
                 {
                     bun_core::Output::debug_warn(format_args!("libuv close() failed = {}", err));
-                    drop(Box::from_raw(closer));
+                    drop(bun_core::heap::take(closer));
                 }
             }
         }
@@ -1771,7 +1765,7 @@ pub mod closer {
                 }
 
                 (*req).deinit();
-                drop(Box::from_raw(closer));
+                drop(bun_core::heap::take(closer));
             }
         }
     }

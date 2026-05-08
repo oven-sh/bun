@@ -50,21 +50,21 @@ impl BodyReaderHandler for ErrorReportRequest {
     const MIXIN_OFFSET: usize = core::mem::offset_of!(ErrorReportRequest, body);
 
     unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
-        // SAFETY: caller (BodyReaderMixin) passes the original Box::into_raw'd
+        // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
         // pointer with full-allocation provenance and no live borrows.
         unsafe { ErrorReportRequest::run_with_body(this, body, resp) }
     }
 
     unsafe fn on_error(this: *mut Self) {
-        // SAFETY: caller passes the original Box::into_raw'd pointer; finalize
-        // consumes it via Box::from_raw exactly once.
+        // SAFETY: caller passes the original heap-allocated pointer; finalize
+        // consumes it via heap::take exactly once.
         unsafe { ErrorReportRequest::finalize(this) }
     }
 }
 
 impl ErrorReportRequest {
     pub fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
-        let ctx = Box::into_raw(Box::new(ErrorReportRequest {
+        let ctx = bun_core::heap::leak(Box::new(ErrorReportRequest {
             dev: NonNull::from(dev),
             body: uws::BodyReaderMixin::init(),
         }));
@@ -75,7 +75,7 @@ impl ErrorReportRequest {
         uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
     }
 
-    /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`;
+    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`;
     /// called exactly once (success path here, or via `on_error` on abort/error).
     pub unsafe fn finalize(ctx: *mut ErrorReportRequest) {
         // SAFETY: caller contract — ctx is the original Box allocation; no live
@@ -83,11 +83,11 @@ impl ErrorReportRequest {
         // never `&mut self`).
         unsafe {
             (*ctx).dev.as_mut().server.as_mut().unwrap().on_static_request_complete();
-            drop(Box::from_raw(ctx));
+            drop(bun_core::heap::take(ctx));
         }
     }
 
-    /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`,
+    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`,
     /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
     /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
     /// retains ownership and will call `on_error`.
@@ -404,7 +404,7 @@ impl ErrorReportRequest {
             },
         );
         // `should_finalize_self = true;` — see PORT NOTE at fn top.
-        // SAFETY: `ctx` is the original Box::into_raw'd pointer (caller
+        // SAFETY: `ctx` is the original heap-allocated pointer (caller
         // contract); the only borrow derived from it (`dev`) points into a
         // separate DevServer allocation, so freeing `*ctx` does not invalidate
         // any live reference.

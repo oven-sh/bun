@@ -82,17 +82,17 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
 
         // PORT NOTE: intrusive `task` field is recovered via container_of in
         // run_from_thread_pool, so this must live at a stable heap address as a
-        // raw pointer. Paired with `Box::from_raw` in `destroy`.
-        Box::into_raw(this)
+        // raw pointer. Paired with `heap::take` in `destroy`.
+        bun_core::heap::leak(this)
     }
 
     // PORT NOTE: not `impl Drop` — `ref_.unref` is also called from `run_from_js`,
     // and `Self` is held as a raw pointer (intrusive task). Explicit destroy matches
     // the Zig `bun.destroy(this)` shape.
     pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: `this` was produced by Box::into_raw in create_on_js_thread and
+        // SAFETY: `this` was produced by heap::alloc in create_on_js_thread and
         // has not been freed.
-        let mut this = unsafe { Box::from_raw(this) };
+        let mut this = unsafe { bun_core::heap::take(this) };
         this.ref_.unref(js_event_loop_ctx());
         // drop(this) — Box freed at scope exit
     }

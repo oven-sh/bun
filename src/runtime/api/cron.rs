@@ -74,7 +74,7 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
 /// Shared base for [`CronRegisterJob`] and [`CronRemoveJob`].
 // Zig: `fn CronJobBase(comptime Self: type) type { return struct { ... } }`
 //
-// PORT NOTE: every method on the path to `finish()` (which `Box::from_raw`-
+// PORT NOTE: every method on the path to `finish()` (which `heap::take`-
 // drops `this`) takes a raw `*mut Self` receiver, mirroring the Zig `*Self`.
 // A `&mut self` *parameter* would carry a Stacked Borrows FnEntry protector,
 // making the in-flight dealloc UB; a *local* `let s = &mut *this` reborrow
@@ -336,7 +336,7 @@ impl CronRegisterJob {
         }
     }
 
-    /// Consumes and frees `this` (`Box::from_raw`).
+    /// Consumes and frees `this` (`heap::take`).
     unsafe fn finish(this: *mut Self) {
         // SAFETY: caller holds the unique Box<Self>; consumed below. Local
         // reborrow has no FnEntry protector and is not used after the drop.
@@ -363,8 +363,8 @@ impl CronRegisterJob {
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
         // teardown observe the entered event-loop state.
-        // SAFETY: `this` was created via Box::into_raw in cron_register.
-        unsafe { drop(Box::from_raw(this)) };
+        // SAFETY: `this` was created via heap::alloc in cron_register.
+        unsafe { drop(bun_core::heap::take(this)) };
         ev.exit();
     }
 
@@ -734,7 +734,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
         }
-        let job = Box::into_raw(Box::new(CronRegisterJob {
+        let job = bun_core::heap::leak(Box::new(CronRegisterJob {
             promise: jsc::JSPromiseStrong::init(global),
             global: GlobalRef::from(global),
             poll: KeepAlive::default(),
@@ -1063,7 +1063,7 @@ impl CronRemoveJob {
         }
     }
 
-    /// Consumes and frees `this` (`Box::from_raw`).
+    /// Consumes and frees `this` (`heap::take`).
     unsafe fn finish(this: *mut Self) {
         // SAFETY: caller holds the unique Box<Self>; consumed below. Local
         // reborrow has no FnEntry protector and is not used after the drop.
@@ -1090,8 +1090,8 @@ impl CronRemoveJob {
         // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
         // INSIDE the enter/exit scope so Process detach/deref and reader
         // teardown observe the entered event-loop state.
-        // SAFETY: `this` was created via Box::into_raw in cron_remove.
-        unsafe { drop(Box::from_raw(this)) };
+        // SAFETY: `this` was created via heap::alloc in cron_remove.
+        unsafe { drop(bun_core::heap::take(this)) };
         ev.exit();
     }
 
@@ -1218,7 +1218,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             )));
         }
 
-        let job = Box::into_raw(Box::new(CronRemoveJob {
+        let job = bun_core::heap::leak(Box::new(CronRemoveJob {
             promise: jsc::JSPromiseStrong::init(global),
             global: GlobalRef::from(global),
             poll: KeepAlive::default(),
@@ -1350,7 +1350,7 @@ bun_ptr::impl_cell_ref_counted! {
             // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on
             // reassignment handles teardown (JSRef.rs trailer).
             (*this).this_value = JsRef::empty();
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 }
@@ -1370,7 +1370,7 @@ impl CronJob {
     /// reference is live across the potential free in `deref()`.
     ///
     /// # Safety
-    /// `this` must be a live `Box::into_raw` pointer for the guard's lifetime.
+    /// `this` must be a live `heap::alloc` pointer for the guard's lifetime.
     #[inline]
     unsafe fn ref_guard(this: *mut Self) -> CronJobDerefOnDrop {
         // SAFETY: caller contract — `this` is live.
@@ -1695,7 +1695,7 @@ impl CronJob {
         // SAFETY: `bun_vm()` returns the per-thread singleton.
         let vm = global.bun_vm().as_mut();
 
-        let job = Box::into_raw(Box::new(CronJob {
+        let job = bun_core::heap::leak(Box::new(CronJob {
             ref_count: Cell::new(1),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CronJob),
             global: GlobalRef::from(global),
@@ -1730,7 +1730,7 @@ impl CronJob {
             vm.rare_data().cron_jobs.push(job.cast::<()>().cast());
         }
 
-        // SAFETY: `job` is a fresh `Box::into_raw` pointer; ownership of one
+        // SAFETY: `job` is a fresh `heap::alloc` pointer; ownership of one
         // ref transfers to the C++ wrapper (released via `finalize` → `deref`).
         let js_value = unsafe { Self::to_js_ptr(job, global) };
         job_ref.this_value.set_strong(js_value, global);

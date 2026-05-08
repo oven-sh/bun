@@ -807,7 +807,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         this_ref.args.deinit_and_unprotect();
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create()
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -1140,7 +1140,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
         this_ref.args.deinit_and_unprotect();
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create()
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -1212,7 +1212,7 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         debug_assert_eq!(path_buf.len(), src_len + 1 + dest_len + 1);
         debug_assert_eq!(path_buf[src_len], 0);
         debug_assert_eq!(path_buf[src_len + 1 + dest_len], 0);
-        let task = Box::into_raw(Box::new(CpSingleTask {
+        let task = bun_core::heap::leak(Box::new(CpSingleTask {
             cp_task: parent,
             path_buf,
             src_len,
@@ -1276,18 +1276,18 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
             }
         }
 
-        // SAFETY: `this` was `Box::into_raw`'d in create(); destroyed exactly once here.
+        // SAFETY: `this` was `heap::alloc`'d in create(); destroyed exactly once here.
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(this)) };
         // Must be the very last use of the parent: when the count reaches
         // zero, runFromJSThread is enqueued and may destroy the parent.
         NewAsyncCpTask::on_subtask_done(cp_task);
     }
 
-    /// SAFETY: `this` must be the pointer `Box::into_raw`'d in `create()`; called exactly once.
+    /// SAFETY: `this` must be the pointer `heap::alloc`'d in `create()`; called exactly once.
     pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: paired with `Box::into_raw` in `create()`. Dropping the box
+        // SAFETY: paired with `heap::alloc` in `create()`. Dropping the box
         // also frees the owned `path_buf` (the single `<src>\0<dest>\0` buffer).
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -1514,12 +1514,12 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
         // PORT NOTE: Zig `err.deinit()` freed the path slice; Rust `bun_sys::Error`
-        // owns `Box<[u8]>` and frees on Drop (in `Box::from_raw` below).
+        // owns `Box<[u8]>` and frees on Drop (in `heap::take` below).
         if !IS_SHELL { this_ref.r#ref.unref(event_loop_handle_to_ctx(this_ref.evtloop)); }
         this_ref.args.deinit();
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -1928,7 +1928,7 @@ impl ReaddirSubtask {
             let len_with_nul = z.len() + 1;
             let ptr = z.as_bytes().as_ptr().cast_mut();
             drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(ptr, len_with_nul)));
-            drop(Box::from_raw(p));
+            drop(bun_core::heap::take(p));
         });
         let mut buf = PathBuffer::uninit();
         // SAFETY: readdir_task (BACKREF) outlives subtask via subtask_count refcount
@@ -1978,7 +1978,7 @@ impl AsyncReaddirRecursiveTask {
         owned.push(0);
         let owned: Box<[u8]> = owned.into_boxed_slice();
         let len = owned.len() - 1; // exclude NUL
-        let ptr = Box::into_raw(owned).cast::<u8>();
+        let ptr = bun_core::heap::leak(owned).cast::<u8>();
         // SAFETY: `ptr[..len]` is the duped bytes; `ptr[len] == 0`. The Box<[u8]>
         // backing is reconstructed and freed in `ReaddirSubtask::call`.
         let basename_ps = PathString::init(unsafe { core::slice::from_raw_parts(ptr, len) });
@@ -2011,7 +2011,7 @@ impl AsyncReaddirRecursiveTask {
             let mut owned = Vec::with_capacity(src.len() + 1);
             owned.extend_from_slice(src);
             owned.push(0);
-            let raw = Box::into_raw(owned.into_boxed_slice()).cast::<u8>();
+            let raw = bun_core::heap::leak(owned.into_boxed_slice()).cast::<u8>();
             // SAFETY: `raw[..src.len()]` is the duped bytes; `raw[src.len()] == 0`.
             PathString::init(unsafe { core::slice::from_raw_parts(raw, src.len()) })
         };
@@ -2106,7 +2106,7 @@ impl AsyncReaddirRecursiveTask {
                 next: core::ptr::null_mut(),
                 value: ResultListEntryValue::from_vec(clone),
             });
-            self.result_list_queue.push(Box::into_raw(list));
+            self.result_list_queue.push(bun_core::heap::leak(list));
         }
 
         if self.subtask_count.fetch_sub(1, Ordering::Relaxed) == 1 {
@@ -2149,16 +2149,16 @@ impl AsyncReaddirRecursiveTask {
                 let val = iter.next();
                 if val.is_null() { break; }
                 if let Some(dest) = to_destroy {
-                    // SAFETY: paired with Box::into_raw in write_results()
-                    unsafe { drop(Box::from_raw(dest)) };
+                    // SAFETY: paired with heap::alloc in write_results()
+                    unsafe { drop(bun_core::heap::take(dest)) };
                 }
                 to_destroy = Some(val);
-                // SAFETY: `val` came from the queue and is live until Box::from_raw above on the next iter
+                // SAFETY: `val` came from the queue and is live until heap::take above on the next iter
                 self.result_list.append_from(&mut unsafe { &mut *val }.value);
             }
             if let Some(dest) = to_destroy {
-                // SAFETY: paired with Box::into_raw in write_results()
-                unsafe { drop(Box::from_raw(dest)) };
+                // SAFETY: paired with heap::alloc in write_results()
+                unsafe { drop(bun_core::heap::take(dest)) };
             }
         }
 
@@ -2180,12 +2180,12 @@ impl AsyncReaddirRecursiveTask {
             if val.is_null() { break; }
             // SAFETY: `val` is a live queue node until freed below
             unsafe { &mut *val }.value.deinit();
-            // SAFETY: paired with Box::into_raw in write_results()
-            if let Some(dest) = to_destroy { unsafe { drop(Box::from_raw(dest)) }; }
+            // SAFETY: paired with heap::alloc in write_results()
+            if let Some(dest) = to_destroy { unsafe { drop(bun_core::heap::take(dest)) }; }
             to_destroy = Some(val);
         }
-        // SAFETY: paired with Box::into_raw in write_results()
-        if let Some(dest) = to_destroy { unsafe { drop(Box::from_raw(dest)) }; }
+        // SAFETY: paired with heap::alloc in write_results()
+        if let Some(dest) = to_destroy { unsafe { drop(bun_core::heap::take(dest)) }; }
         self.result_list_count.store(0, Ordering::Relaxed);
     }
 
@@ -2248,9 +2248,9 @@ impl AsyncReaddirRecursiveTask {
         this_ref.args.deinit();
         this_ref.free_root_path();
         this_ref.clear_result_list();
-        // Zig `promise.deinit()` — `JSPromiseStrong` releases on Drop (via Box::from_raw below).
+        // Zig `promise.deinit()` — `JSPromiseStrong` releases on Drop (via heap::take below).
         // SAFETY: paired with Box::leak in create()
-        drop(unsafe { Box::from_raw(this) });
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -5484,10 +5484,10 @@ impl NodeFS {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
                             // `into_boxed_slice()` so the allocation layout JSC frees with
                             // matches what we hand it (capacity == len).
-                            let raw = Box::into_raw(contents.to_vec().into_boxed_slice());
+                            let raw = bun_core::heap::leak(contents.to_vec().into_boxed_slice());
                             // SAFETY: ownership of the allocation is transferred to JSC; the
                             // ArrayBuffer finalizer reconstructs the Box and frees it
-                            // (PORTING.md:348 — `Box::into_raw`/`from_raw` across FFI).
+                            // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
                             Ok(ret::ReadFileWithOptions::Buffer(
                                 Buffer::from_bytes(unsafe { &mut *raw }, bun_jsc::JSType::Uint8Array),
                             ))
@@ -5598,11 +5598,11 @@ impl NodeFS {
                             };
                         }
                     }
-                    let raw = Box::into_raw(
+                    let raw = bun_core::heap::leak(
                         temporary_read_buffer_before_stat_call.to_vec().into_boxed_slice(),
                     );
                     // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
-                    // (PORTING.md:348 — `Box::into_raw`/`from_raw` across FFI).
+                    // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
                     Ok(ret::ReadFileWithOptions::Buffer(
                         Buffer::from_bytes(unsafe { &mut *raw }, bun_jsc::JSType::Uint8Array),
                     ))
@@ -5734,9 +5734,9 @@ impl NodeFS {
         match args.encoding {
             Encoding::Buffer => {
                 buf.truncate(final_len);
-                let raw = Box::into_raw(buf.into_boxed_slice());
+                let raw = bun_core::heap::leak(buf.into_boxed_slice());
                 // SAFETY: ownership transferred to JSC; freed via ArrayBuffer finalizer
-                // (PORTING.md:348 — `Box::into_raw`/`from_raw` across FFI).
+                // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
                 Ok(ret::ReadFileWithOptions::Buffer(
                     Buffer::from_bytes(unsafe { &mut *raw }, bun_jsc::JSType::Uint8Array),
                 ))

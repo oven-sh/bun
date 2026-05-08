@@ -691,12 +691,12 @@ impl Pending {
         // SAFETY: VM event loop is a singleton; temporary `&mut` is the sole
         // borrow for the duration of `enqueue_task` (no re-entry into Rust).
         vm.event_loop_ref()
-            .enqueue_task(bun_event_loop::Task::init(Box::into_raw(clone)));
+            .enqueue_task(bun_event_loop::Task::init(bun_core::heap::leak(clone)));
     }
 
     pub fn run_from_js_thread(this: *mut Pending) {
-        // SAFETY: this was Box::into_raw'd in run_on_next_tick
-        let mut boxed = unsafe { Box::from_raw(this) };
+        // SAFETY: this was heap-allocated in run_on_next_tick
+        let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.run();
         drop(boxed);
     }
@@ -1895,10 +1895,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     pub fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
-        // SAFETY: this was Box::into_raw'd; destroy takes sole ownership. Reclaim
+        // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
         // the Box first so we never hold a `&mut *this` alongside the Box's
         // unique pointer.
-        let mut this = unsafe { Box::from_raw(this) };
+        let mut this = unsafe { bun_core::heap::take(this) };
         // Callers may tear this sink down without routing through
         // flushPromise() (e.g. handleResolveStream / handleRejectStream).
         // Drop the GC root so the promise can be collected.
@@ -2222,9 +2222,9 @@ impl NetworkSink {
     }
 
     pub fn finalize_and_destroy(this: *mut Self) {
-        // SAFETY: this was Box::into_raw'd; reclaim sole ownership before
+        // SAFETY: this was heap-allocated; reclaim sole ownership before
         // touching fields so no `&mut *this` is live alongside the Box.
-        let mut this = unsafe { Box::from_raw(this) };
+        let mut this = unsafe { bun_core::heap::take(this) };
         this.finalize();
         drop(this);
     }

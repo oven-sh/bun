@@ -357,8 +357,8 @@ impl S3Ext for S3 {
                 result: S3DeleteResult<'_>,
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
-                // SAFETY: opaque_self was created via Box::into_raw(Wrapper::new(..)) below.
-                let mut self_ = unsafe { Box::from_raw(opaque_self.cast::<Wrapper>()) };
+                // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
+                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
                 // SAFETY: global was a valid &JSGlobalObject when the wrapper was created and
                 // the VM keeps it alive for the duration of the async op.
@@ -385,7 +385,7 @@ impl S3Ext for S3 {
 
         // PORT NOTE: Wrapper.deinit body deleted — store.deref() handled by StoreRef::drop,
         // promise.deinit() handled by JSPromiseStrong::drop, bun.destroy(wrap) handled by
-        // Box::from_raw + drop in resolve().
+        // heap::take + drop in resolve().
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
@@ -403,7 +403,7 @@ impl S3Ext for S3 {
             &aws_options.credentials,
             self.path(),
             Wrapper::resolve,
-            Box::into_raw(Wrapper::new(Wrapper {
+            bun_core::heap::leak(Wrapper::new(Wrapper {
                 promise,
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
                 // intrusive refcount (Zig: `store.ref()`).
@@ -443,8 +443,8 @@ impl S3Ext for S3 {
                 result: S3ListObjectsResult<'_>,
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
-                // SAFETY: opaque_self was created via Box::into_raw below.
-                let mut self_ = unsafe { Box::from_raw(opaque_self.cast::<Wrapper>()) };
+                // SAFETY: opaque_self was created via heap::alloc below.
+                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
                 // SAFETY: global was a valid &JSGlobalObject when the wrapper was created.
                 let global_object = unsafe { &*self_.global };
@@ -480,7 +480,7 @@ impl S3Ext for S3 {
 
         // PORT NOTE: Wrapper.deinit/destroy bodies deleted — store.deref() via StoreRef::drop,
         // promise.deinit() via JSPromiseStrong::drop, resolvedlistOptions.deinit() via
-        // S3ListObjectsOptions::drop, bun.destroy(self) via Box::from_raw + drop.
+        // S3ListObjectsOptions::drop, bun.destroy(self) via heap::take + drop.
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
@@ -503,7 +503,7 @@ impl S3Ext for S3 {
         // borrow to `list_objects` (which only reads them synchronously to
         // build the search-params string). The wrapper retains ownership for
         // `Drop` after the async callback — matching Zig's `deinit()`.
-        let wrapper = Box::into_raw(Box::new(Wrapper {
+        let wrapper = bun_core::heap::leak(Box::new(Wrapper {
             promise,
             // SAFETY: `store` is a live heap `Store`; `retained` bumps the
             // intrusive refcount (Zig: `store.ref()`).
@@ -615,7 +615,7 @@ pub extern "C" fn BlobArrayBuffer_deallocator(
     blob: *mut core::ffi::c_void,
 ) {
     // SAFETY: `blob` is the non-null `*mut Store` C++ stashed as deallocator
-    // context (originating from `Box::into_raw` / `StoreRef::into_raw`); it
+    // context (originating from `heap::alloc` / `StoreRef::into_raw`); it
     // owns one outstanding reference being released here.
     unsafe { Store::deref(NonNull::new_unchecked(blob.cast::<Store>())) };
 }

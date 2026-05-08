@@ -217,14 +217,14 @@ unsafe fn init_runtime_state(
     // the low tier (`VirtualMachine::init` writes it immediately before calling
     // this hook), so no uws wiring is repeated here.
 
-    // PORT NOTE: `Box::into_raw` is paired with `Box::from_raw` in
+    // PORT NOTE: `heap::alloc` is paired with `heap::take` in
     // [`deinit_runtime_state`] below — called from `VirtualMachine::deinit` /
     // worker `destroy()` via the `RuntimeHooks::deinit_runtime_state` slot.
     // Spec VirtualMachine.zig stores `timer`/`entry_point` as value fields
     // freed in worker `destroy()`; PORTING.md §Forbidden permits
     // `into_raw`-without-reclaim only for true process-lifetime singletons via
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).
-    let state = Box::into_raw(Box::new(RuntimeState {
+    let state = bun_core::heap::leak(Box::new(RuntimeState {
         timer: timer::All::init(),
         sql_rare: bun_sql_jsc::jsc::RareData {
             mysql_context: Default::default(),
@@ -450,10 +450,10 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
     if state.is_null() {
         return;
     }
-    // SAFETY: per fn contract — `state` is the unique `Box::into_raw` result
+    // SAFETY: per fn contract — `state` is the unique `heap::alloc` result
     // from `init_runtime_state`; the TLS was just cleared so no other live
     // alias exists on this thread.
-    drop(unsafe { Box::from_raw(state.cast::<RuntimeState>()) });
+    drop(unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) });
 }
 
 /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
@@ -1073,7 +1073,7 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
     } else {
         None
     };
-    Box::into_raw(Box::new(NodeFS {
+    bun_core::heap::leak(Box::new(NodeFS {
         sync_error_buf: bun_paths::PathBuffer::uninit(),
         vm: vm_field,
     }))
@@ -1298,7 +1298,7 @@ mod vm_loader_vtable {
     unsafe fn resolve_blob(spec: &[u8]) -> Option<OpaqueBlob> {
         crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
             .resolve_and_dupe(spec)
-            .map(|blob| Box::into_raw(Box::new(blob)).cast::<()>())
+            .map(|blob| bun_core::heap::leak(Box::new(blob)).cast::<()>())
     }
     unsafe fn blob_loader(b: OpaqueBlob, p: *const ()) -> Option<Loader> {
         // SAFETY: `b` was produced by `resolve_blob` above; `p` is the live VM.
@@ -1323,8 +1323,8 @@ mod vm_loader_vtable {
         unsafe { core::slice::from_raw_parts(v.as_ptr(), v.len()) }
     }
     unsafe fn blob_deinit(b: OpaqueBlob) {
-        // SAFETY: `b` was produced by `Box::into_raw` in `resolve_blob` above.
-        drop(unsafe { Box::from_raw(b.cast::<Blob>()) });
+        // SAFETY: `b` was produced by `heap::alloc` in `resolve_blob` above.
+        drop(unsafe { bun_core::heap::take(b.cast::<Blob>()) });
     }
 
     pub static VM_LOADER_VTABLE: VmLoaderVTable = VmLoaderVTable {
@@ -2469,7 +2469,7 @@ fn transpile_source_code_inner(
                     // (ModuleLoader.zig:387-398). The Rust port keeps the bytes
                     // in `AlreadyBundled::Bytecode(Box<[u8]>)`, which would drop
                     // when `parse_result` drops on return — UAF on the C++ side.
-                    // Move the variant out and `Box::into_raw` so ownership
+                    // Move the variant out and `heap::alloc` so ownership
                     // transfers to C++ exactly as in the spec.
                     let already_bundled =
                         core::mem::take(&mut parse_result.already_bundled);
@@ -2483,7 +2483,7 @@ fn transpile_source_code_inner(
                             } else {
                                 // C++ side becomes the owner (matches Zig
                                 // default_allocator semantics).
-                                (Box::into_raw(bytes).cast::<u8>(), len)
+                                (bun_core::heap::leak(bytes).cast::<u8>(), len)
                             }
                         }
                         _ => (core::ptr::null_mut(), 0),
@@ -2522,7 +2522,7 @@ fn transpile_source_code_inner(
                 // via cast.
                 if let Some(entry_ptr) = cache.entry {
                     // SAFETY: `cache.entry` is set by `RuntimeTranspilerCache::get`
-                    // (T6 vtable) to a `Box::into_raw(RuntimeTranspilerCacheEntry)`;
+                    // (T6 vtable) to a `heap::alloc(RuntimeTranspilerCacheEntry)`;
                     // we hold the only reference for this synchronous transpile.
                     let entry = unsafe {
                         &mut *entry_ptr.cast::<bun_bundler::cache::RuntimeTranspilerCacheEntry>()
@@ -3341,7 +3341,7 @@ unsafe fn fetch_builtin_module(
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
         if let Some(&entry) = unsafe { (*jsc_vm).macro_entry_points.get(&id) } {
             let entry = entry.cast::<MacroEntryPoint>();
-            // SAFETY: `entry` is the `Box::into_raw`d `MacroEntryPoint`
+            // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
             // inserted by `js_run_macro_entry_point`; map ownership keeps it
             // alive for the VM lifetime.
             unsafe {
@@ -3428,7 +3428,7 @@ export default db;
                     module_info: if module_info_len > 0 {
                         bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
                             ::create_from_cached_record(&*file.module_info)
-                            .map(Box::into_raw)
+                            .map(bun_core::heap::leak)
                             .unwrap_or(core::ptr::null_mut())
                             .cast::<c_void>()
                     } else {
@@ -4015,7 +4015,7 @@ unsafe fn transpile_file(
             let writer = bun_js_printer::BufferWriter::init();
             let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
-            p = Box::into_raw(bp);
+            p = bun_core::heap::leak(bp);
             cell.set(p);
         }
         p
@@ -4199,7 +4199,7 @@ unsafe fn transpile_virtual_module(
             let writer = bun_js_printer::BufferWriter::init();
             let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             bp.ctx.append_null_byte = false;
-            p = Box::into_raw(bp);
+            p = bun_core::heap::leak(bp);
             cell.set(p);
         }
         p
@@ -4958,7 +4958,7 @@ pub fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys:
         ref_count: core::sync::atomic::AtomicU32::new(2),
         is_all_ascii: None,
     });
-    Box::into_raw(store).cast()
+    bun_core::heap::leak(store).cast()
 }
 
 /// `bun_options_types::__bun_http_sync_download_init_thread` body —

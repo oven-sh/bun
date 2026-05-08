@@ -734,7 +734,7 @@ pub mod codegen {
                 fn to_js(self, g: &JSGlobalObject) -> JSValue {
                     // Ownership transfers to the C++ wrapper (freed via
                     // `${T}Class__finalize`); box and hand off the raw ptr.
-                    to_js(::std::boxed::Box::into_raw(::std::boxed::Box::new(self)), g)
+                    to_js(::bun_core::heap::alloc(self), g)
                 }
                 fn from_js(v: JSValue) -> Option<*mut Self> { from_js(v) }
                 fn from_js_direct(v: JSValue) -> Option<*mut Self> { from_js_direct(v) }

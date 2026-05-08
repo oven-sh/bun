@@ -244,8 +244,8 @@ impl SpawnSyncEventLoop {
 
 #[cfg(windows)]
 extern "C" fn on_close_uv_timer(timer: *mut libuv::Timer) {
-    // SAFETY: `timer` was allocated via `Box::into_raw` in `prepare_timer_on_windows`.
-    drop(unsafe { Box::from_raw(timer) });
+    // SAFETY: `timer` was allocated via `heap::alloc` in `prepare_timer_on_windows`.
+    drop(unsafe { bun_core::heap::take(timer) });
 }
 
 impl Drop for SpawnSyncEventLoop {
@@ -358,10 +358,10 @@ impl SpawnSyncEventLoop {
             None => 'brk: {
                 // SAFETY: all-zero is a valid `libuv::Timer` (C POD, matches `std.mem.zeroes`).
                 let uv_timer: Box<libuv::Timer> = Box::new(unsafe { core::mem::zeroed() });
-                let uv_timer = Box::into_raw(uv_timer);
+                let uv_timer = bun_core::heap::leak(uv_timer);
                 // SAFETY: uv_timer just allocated; `uv_loop` is set by C `us_create_loop`.
                 unsafe { (*uv_timer).init(self.uws_loop().uv_loop) };
-                // SAFETY: Box::into_raw never returns null.
+                // SAFETY: heap::alloc never returns null.
                 break 'brk unsafe { NonNull::new_unchecked(uv_timer) };
             }
         };

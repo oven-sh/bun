@@ -1642,7 +1642,7 @@ pub extern "C" fn Bun__escapeHTML8(
             // Ownership of the buffer transfers to JSC's external-string
             // finalizer (mimalloc-backed) via `to_external_value`; release
             // the Box without dropping so JSC frees it on GC.
-            let raw: *mut [u8] = Box::into_raw(escaped_html);
+            let raw: *mut [u8] = bun_core::heap::leak(escaped_html);
             // SAFETY: `raw` is a freshly-leaked Box<[u8]> allocation, valid for
             // the duration of this call; the resulting JSC external string
             // adopts and later frees it.
@@ -2899,7 +2899,7 @@ pub mod JSZstd {
     impl ZstdJob {
         // bun.TrivialNew(@This())
         pub fn new(init: ZstdJob) -> *mut ZstdJob {
-            Box::into_raw(Box::new(init))
+            bun_core::heap::leak(Box::new(init))
         }
 
         /// SAFETY: `task` must point to the `task` field of a live `ZstdJob`
@@ -2968,7 +2968,7 @@ pub mod JSZstd {
         }
 
         pub fn run_from_js(this: *mut ZstdJob) -> Result<(), jsc::JsTerminated> {
-            // SAFETY: `this` was created via ZstdJob::new (Box::into_raw) and is exclusively
+            // SAFETY: `this` was created via ZstdJob::new (heap::alloc) and is exclusively
             // owned here; destroy() reclaims the Box at scope exit on every path.
             let _deinit = scopeguard::guard(this, |p| unsafe { ZstdJob::destroy(p) });
             // SAFETY: `this` is non-null and valid for the duration of this call (see above).
@@ -3001,11 +3001,11 @@ pub mod JSZstd {
 
         /// Tear down and free a heap-allocated job.
         ///
-        /// SAFETY: `this` must have been produced by `ZstdJob::new` (i.e. `Box::into_raw`)
+        /// SAFETY: `this` must have been produced by `ZstdJob::new` (i.e. `heap::alloc`)
         /// and must not be used after this call. Invoked exactly once from `run_from_js`.
         pub unsafe fn destroy(this: *mut ZstdJob) {
             // SAFETY: caller contract — `this` is the unique raw Box pointer.
-            let mut boxed = unsafe { Box::from_raw(this) };
+            let mut boxed = unsafe { bun_core::heap::take(this) };
             boxed.poll.unref(bun_aio::posix_event_loop::get_vm_ctx(
                 bun_aio::AllocatorType::Js,
             ));

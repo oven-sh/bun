@@ -493,7 +493,7 @@ impl JSValue {
         // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
         // `Box<[u8]>` has no backing allocation, so the `None` arm leaks
         // nothing.
-        let ptr = Box::into_raw(bytes).cast::<u8>();
+        let ptr = bun_core::heap::leak(bytes).cast::<u8>();
         // SAFETY: `global` is live; `ptr`/`len` describe the just-released
         // mimalloc allocation whose ownership is transferred to JSC.
         unsafe {

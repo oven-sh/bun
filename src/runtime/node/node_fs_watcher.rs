@@ -94,8 +94,8 @@ impl FSWatcher {
         let this_ref = unsafe { &mut *this };
         // stop all managers and signals
         this_ref.detach();
-        // SAFETY: allocated via Box::into_raw in `init`; finalize owns teardown.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: allocated via heap::alloc in `init`; finalize owns teardown.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -188,7 +188,7 @@ impl FSWatchTaskPosix {
         // if false is closed or detached (can still contain valid refs but will not create a new one)
         if self.ctx().ref_task() {
             // PORT NOTE: reshaped for borrowck — clone self into a heap task, then reset.
-            let that = Box::into_raw(Box::new(FSWatchTaskPosix {
+            let that = bun_core::heap::leak(Box::new(FSWatchTaskPosix {
                 ctx: self.ctx,
                 count: self.count,
                 entries: core::mem::replace(
@@ -200,7 +200,7 @@ impl FSWatchTaskPosix {
             self.count = 0;
             // SAFETY: `that` is a freshly-boxed task; the concurrent queue takes
             // ownership of the `ConcurrentTask` node (and transitively the box)
-            // until the JS thread drains and `Box::from_raw`s it in `dispatch`.
+            // until the JS thread drains and `heap::take`s it in `dispatch`.
             unsafe {
                 (*that).concurrent_task.task = Task::init(that);
                 self.ctx()
@@ -232,11 +232,11 @@ impl FSWatchTaskPosix {
     /// this is only ever called on heap clones produced by `enqueue()` (via the
     /// task dispatcher), never on the embedded `FSWatcher.current_task` field —
     /// the assert below enforces that. A `Drop` impl would also fire on
-    /// `*self = Self{..}` in `append()` and on `Box::from_raw` in `finalize`,
+    /// `*self = Self{..}` in `append()` and on `heap::take` in `finalize`,
     /// where `self` *is* `current_task`, which would always trip the assert.
     ///
     /// # Safety
-    /// `this` must be the unique `Box::into_raw` pointer produced by
+    /// `this` must be the unique `heap::alloc` pointer produced by
     /// `enqueue()`; called from the JS-thread task dispatcher only.
     pub unsafe fn deinit(this: *mut Self) {
         // SAFETY: caller contract — `this` is the live heap clone.
@@ -250,8 +250,8 @@ impl FSWatchTaskPosix {
                 this.cast_const()
             ));
         }
-        // SAFETY: paired with `Box::into_raw` in `enqueue()`.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: paired with `heap::alloc` in `enqueue()`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -357,7 +357,7 @@ impl FSWatchTaskWindows {
         if !unsafe { &mut *ctx }.ref_task() {
             return;
         }
-        let task = Box::into_raw(Box::new(FSWatchTaskWindows {
+        let task = bun_core::heap::leak(Box::new(FSWatchTaskWindows {
             ctx,
             event: Event::Abort,
             count: 0,
@@ -421,13 +421,13 @@ impl FSWatchTaskWindows {
     /// call `FSWatchTask::deinit` uniformly.
     ///
     /// # Safety
-    /// `this` must be the unique `Box::into_raw` pointer produced by
+    /// `this` must be the unique `heap::alloc` pointer produced by
     /// `append_abort()` / `on_path_update_windows()`.
     pub unsafe fn deinit(this: *mut Self) {
         // `Event` (and `StringOrBytesToDecode`) free their payloads via Drop,
         // so dropping the Box is `event.deinit() + bun.destroy(this)`.
-        // SAFETY: paired with `Box::into_raw` at the enqueue site.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: paired with `heap::alloc` at the enqueue site.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -485,7 +485,7 @@ impl FSWatcher {
             return;
         }
 
-        let task = Box::into_raw(Box::new(FSWatchTaskWindows {
+        let task = bun_core::heap::leak(Box::new(FSWatchTaskWindows {
             ctx: this,
             event,
             count: 0,
@@ -656,7 +656,7 @@ impl FSWatcher {
     /// `to_js_ptr` without re-boxing (see jsc_macros::JsClass).
     ///
     /// # Safety
-    /// `this` must be the unique `Box::into_raw` pointer produced by `init`;
+    /// `this` must be the unique `heap::alloc` pointer produced by `init`;
     /// JS-thread only.
     pub unsafe fn init_js(this: *mut Self, listener: JSValue) {
         // SAFETY: caller contract — `this` is uniquely owned and live.
@@ -667,7 +667,7 @@ impl FSWatcher {
 
         // SAFETY: ownership of `this` transfers to the GC wrapper here; the
         // wrapper's finalize hook is `FSWatcher::finalize` which calls
-        // `Box::from_raw(this)`.
+        // `heap::take(this)`.
         let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
         js_this.ensure_still_alive();
         this_ref.js_this = js_this;
@@ -909,7 +909,7 @@ impl FSWatcher {
 
         if let Some(watcher) = self.path_watcher.take() {
             // Both backends expose `detach` as an associated fn over `*mut PathWatcher`
-            // (it self-destroys via `Box::from_raw` on the last handler, so it cannot
+            // (it self-destroys via `heap::take` on the last handler, so it cannot
             // soundly take `&mut self`). `watcher` is the live pointer returned by
             // `path_watcher::watch`.
             path_watcher::PathWatcher::detach(watcher, std::ptr::from_mut::<Self>(self).cast::<c_void>());
@@ -957,7 +957,7 @@ impl FSWatcher {
 
         let vm = args.global_this.bun_vm_ptr();
 
-        let ctx = Box::into_raw(Box::new(FSWatcher {
+        let ctx = bun_core::heap::leak(Box::new(FSWatcher {
             ctx: vm,
             current_task: FSWatchTask {
                 ctx: core::ptr::null_mut(),

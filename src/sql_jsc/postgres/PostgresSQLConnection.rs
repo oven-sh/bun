@@ -64,7 +64,7 @@ pub use js::{from_js, from_js_direct, to_js};
 impl jsc::JsClass for PostgresSQLConnection {
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         // Ownership transfers to the JSC wrapper's m_ctx; freed via `finalize`.
-        js::to_js(Box::into_raw(Box::new(self)), global)
+        js::to_js(bun_core::heap::leak(Box::new(self)), global)
     }
     fn from_js(value: JSValue) -> Option<*mut Self> {
         js::from_js(value)
@@ -240,7 +240,7 @@ impl PostgresSQLConnection {
     // pointers into `self.options_buf`. They are populated once in `call()` (each
     // initialised to `b""` then re-pointed at the StringBuilder allocation that
     // becomes `options_buf`) and never reassigned. The struct is Box-allocated
-    // via `Box::into_raw` and freed only when the intrusive refcount hits zero,
+    // via `heap::alloc` and freed only when the intrusive refcount hits zero,
     // so `options_buf` — and thus every slice — remains valid for any `&self`.
     //
     // NOTE: the returned borrow is tied to `&self`. Call sites that must hold a
@@ -1195,7 +1195,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     // moved `secure`/`tls_config` for the struct literal below.
     let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
 
-    let ptr: *mut PostgresSQLConnection = Box::into_raw(Box::new(PostgresSQLConnection {
+    let ptr: *mut PostgresSQLConnection = bun_core::heap::leak(Box::new(PostgresSQLConnection {
         socket: Socket::SocketTcp(uws::SocketTCP { socket: uws::InternalSocket::Detached }),
         status: Status::Connecting,
         ref_count: Cell::new(1),
@@ -1430,7 +1430,7 @@ impl PostgresSQLConnection {
     // connect-fail path before any JS wrapper exists. Non-pub: callers are `deref()` and the
     // connect-fail path in `call()`, both in this file.
     //
-    // Raw-pointer receiver: this function ends in `Box::from_raw(this)`. A `&mut self`
+    // Raw-pointer receiver: this function ends in `heap::take(this)`. A `&mut self`
     // argument would carry a Stacked Borrows protector for the whole frame, and freeing
     // the allocation while that protector is live is UB ("deallocating while item is
     // protected"). Taking `*mut Self` and reborrowing per-call keeps each `&mut` scoped
@@ -1461,7 +1461,7 @@ impl PostgresSQLConnection {
                 BoringSSL::c::SSL_CTX_free(s);
             }
             // Box-allocated in `call()`; ref_count is 0; reclaim.
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 

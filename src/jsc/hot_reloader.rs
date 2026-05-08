@@ -185,7 +185,7 @@ impl HotReloaderCtx for VirtualMachine {
             ImportWatcher::None => unreachable!(),
         };
         // The VM holds `bun_watcher` type-erased as `*mut c_void` (b2-cycle).
-        self.bun_watcher = Box::into_raw(iw).cast::<core::ffi::c_void>();
+        self.bun_watcher = bun_core::heap::leak(iw).cast::<core::ffi::c_void>();
 
         // Wire the resolver's directory-watch callback at the same time.
         // Zig: `ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`;
@@ -193,7 +193,7 @@ impl HotReloaderCtx for VirtualMachine {
         // erases the `*mut Watcher` into the resolver's `AnyResolveWatcher`
         // vtable (re-exported from `bun_watcher`, so it's the same type).
         // SAFETY: `watcher_ptr` was just installed into `self.bun_watcher`
-        // via `Box::into_raw` and is live for the VM's lifetime.
+        // via `heap::alloc` and is live for the VM's lifetime.
         self.transpiler.resolver.watcher =
             Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
 
@@ -549,14 +549,14 @@ where
 
     /// Spec: hot_reloader.zig `Task.deinit` → `bun.destroy(this)`. The
     /// dispatched task was heap-allocated in [`Self::enqueue`] via
-    /// `Box::into_raw`; the event loop calls this after `run()` to free it.
+    /// `heap::alloc`; the event loop calls this after `run()` to free it.
     ///
     /// # Safety
-    /// `this` must have been created via `Box::into_raw` in [`Self::enqueue`]
+    /// `this` must have been created via `heap::alloc` in [`Self::enqueue`]
     /// and must not be used after this call.
     pub unsafe fn deinit(this: *mut Self) {
-        // SAFETY: precondition — `this` came from Box::into_raw in `enqueue`.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: precondition — `this` came from heap::alloc in `enqueue`.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub fn run(&mut self) {
@@ -604,7 +604,7 @@ where
 
         // SAFETY: extern "C" fn with no preconditions.
         unsafe { BunDebugger__willHotReload() };
-        let that = Box::into_raw(Box::new(Self {
+        let that = bun_core::heap::leak(Box::new(Self {
             reloader: self.reloader,
             count: self.count,
             paths: self.paths,
@@ -651,7 +651,7 @@ where
         verbose: bool,
         clear_screen_flag: bool,
     ) -> Box<Watcher> {
-        let reloader = Box::into_raw(Box::new(Self {
+        let reloader = bun_core::heap::leak(Box::new(Self {
             ctx,
             verbose: cfg!(feature = "debug_logs") || verbose,
             pending_count: AtomicU32::new(0),
@@ -719,7 +719,7 @@ where
             return;
         }
 
-        let reloader = Box::into_raw(Box::new(Self {
+        let reloader = bun_core::heap::leak(Box::new(Self {
             ctx: this,
             verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
             pending_count: AtomicU32::new(0),

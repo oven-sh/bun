@@ -263,9 +263,9 @@ impl WindowsNamedPipeContext {
         // SAFETY: called from AnyTask; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
             EventState::Deinit => {
-                // SAFETY: `this` was allocated via Box::into_raw in create(); refcount hit zero
+                // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
                 // and this deferred task is the sole remaining owner. Drop runs field destructors.
-                drop(unsafe { Box::from_raw(this) });
+                drop(unsafe { bun_core::heap::take(this) });
             }
             EventState::None => panic!("Invalid event state"),
         }
@@ -288,7 +288,7 @@ impl WindowsNamedPipeContext {
         // allocate uninit, derive the stable pointer, build the fields, then ptr::write the whole
         // struct. Avoids `mem::zeroed()` on non-POD AnyTask/WindowsNamedPipe.
         let this: *mut WindowsNamedPipeContext =
-            Box::into_raw(Box::<core::mem::MaybeUninit<WindowsNamedPipeContext>>::new_uninit()).cast();
+            bun_core::heap::leak(Box::<core::mem::MaybeUninit<WindowsNamedPipeContext>>::new_uninit()).cast();
 
         // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
         let handlers = NamedPipeHandlers {

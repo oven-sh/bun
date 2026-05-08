@@ -378,9 +378,9 @@ impl HmrSocket {
         // referenced_source_maps.deinit(allocator) → Drop on HashMap (below)
         let removed = dev.active_websocket_connections.remove(&s);
         debug_assert!(removed.is_some());
-        // SAFETY: `s` was Box::into_raw'd in `new()`'s caller; this is the sole
+        // SAFETY: `s` was heap-allocated in `new()`'s caller; this is the sole
         // owner reclaiming it. Matches `s.dev.arena().destroy(s)`.
-        drop(unsafe { Box::from_raw(s) });
+        drop(unsafe { bun_core::heap::take(s) });
     }
 
     fn notify_inspector_client_navigation(

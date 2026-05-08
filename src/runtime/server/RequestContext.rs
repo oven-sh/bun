@@ -1244,7 +1244,7 @@ where
 
         // if have sink, call onAborted on sink
         if let Some(wrapper) = this.sink {
-            // SAFETY: `sink` is the Box::into_raw'd JSSink set by do_render_stream;
+            // SAFETY: `sink` is the heap-allocated JSSink set by do_render_stream;
             // sole live mutable view in this scope.
             unsafe { (*wrapper.as_ptr()).sink.abort() };
             return;
@@ -1721,7 +1721,7 @@ where
     /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
     /// outer allocation.
     fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>) {
-        // SAFETY: `ptr` was `Box::into_raw`'d in do_render_stream and is being
+        // SAFETY: `ptr` was `heap::alloc`'d in do_render_stream and is being
         // consumed exactly once here. `JSSink<T>` is repr(transparent), so the
         // inner `HTTPServerWritable` shares the allocation Layout.
         ResponseStream::<SSL_ENABLED, HTTP3>::destroy(
@@ -1771,7 +1771,7 @@ where
         // PORT NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
         // local `response_stream` view can coexist with `&mut *this` calls below.
         let response_stream_ptr =
-            unsafe { NonNull::new_unchecked(Box::into_raw(response_stream_box)) };
+            unsafe { NonNull::new_unchecked(bun_core::heap::leak(response_stream_box)) };
         this.sink = Some(response_stream_ptr);
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
@@ -2456,7 +2456,7 @@ where
 
         let mut wrote_anything = false;
         if let Some(wrapper_ptr) = req.sink.take() {
-            // SAFETY: `sink` is the Box::into_raw'd JSSink set by do_render_stream;
+            // SAFETY: `sink` is the heap-allocated JSSink set by do_render_stream;
             // sole live mutable view in this scope.
             let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
             let aborted = req.flags.aborted() || wrapper.sink.aborted;
@@ -2528,7 +2528,7 @@ where
         stream_log!("handleRejectStream");
 
         if let Some(wrapper_ptr) = req.sink.take() {
-            // SAFETY: `sink` is the Box::into_raw'd JSSink set by do_render_stream;
+            // SAFETY: `sink` is the heap-allocated JSSink set by do_render_stream;
             // sole live mutable view in this scope.
             let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
             if let Some(prom) = wrapper.sink.pending_flush.take() {

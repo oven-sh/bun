@@ -557,7 +557,7 @@ impl Drop for HashJob {
 
 impl HashJob {
     pub fn new(init: HashJob) -> *mut HashJob {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     pub fn get_value(password: &[u8], algorithm: AlgorithmValue) -> HashResultValue {
@@ -574,7 +574,7 @@ impl HashJob {
                 .sub(offset_of!(HashJob, task))
                 .cast::<HashJob>()
         };
-        // SAFETY: `this` was produced by Box::into_raw in `HashJob::new` and is uniquely
+        // SAFETY: `this` was produced by heap::alloc in `HashJob::new` and is uniquely
         // owned by this thread-pool callback; no other alias exists until we drop it below.
         let this_ref = unsafe { &mut *this };
 
@@ -587,7 +587,7 @@ impl HashJob {
         });
         // this.promise = .empty — handled by mem::take above
 
-        // SAFETY: `result` was just returned from Box::into_raw in `HashResult::new`;
+        // SAFETY: `result` was just returned from heap::alloc in `HashResult::new`;
         // not yet shared (enqueue happens after this write).
         unsafe {
             // Zig: `AnyTask.New(HashResult, run_from_js).init(result)` — construct directly
@@ -599,16 +599,16 @@ impl HashJob {
         }
         // this.ref = .{} — handled by mem::take above
         // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the job;
-        // `result` is a valid Box::into_raw allocation, ownership transfers to the
+        // `result` is a valid heap::alloc allocation, ownership transfers to the
         // event loop here. `task` is an intrusive field at a stable address.
         unsafe {
             (*this_ref.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
                 core::ptr::addr_of_mut!((*result).task),
             ));
         }
-        // SAFETY: `this` came from Box::into_raw in `HashJob::new`; `this_ref` is no longer
+        // SAFETY: `this` came from heap::alloc in `HashJob::new`; `this_ref` is no longer
         // used after this point. Drop runs secure_zero on the password.
-        unsafe { drop(Box::from_raw(this)) };
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 }
 
@@ -623,7 +623,7 @@ struct HashResult {
 
 impl HashResult {
     pub fn new(init: HashResult) -> *mut HashResult {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
@@ -635,7 +635,7 @@ impl HashResult {
 
     // TODO(port): bun.JSTerminated!void — confirm error type name in bun_jsc.
     pub fn run_from_js(this: *mut HashResult) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was produced by Box::into_raw and is uniquely owned here.
+        // SAFETY: `this` was produced by heap::alloc and is uniquely owned here.
         let this_ref = unsafe { &mut *this };
         let mut promise = core::mem::take(&mut this_ref.promise);
         // defer promise.deinit() — Drop on JSPromiseStrong at scope exit.
@@ -648,17 +648,17 @@ impl HashResult {
             HashResultValue::Err(err) => {
                 let error_instance =
                     HashResultValue::Err(err).to_error_instance(global);
-                // SAFETY: `this` came from Box::into_raw in `HashResult::new`; the event
+                // SAFETY: `this` came from heap::alloc in `HashResult::new`; the event
                 // loop hands sole ownership to this callback. `this_ref` is not used again.
-                unsafe { drop(Box::from_raw(this)) };
+                unsafe { drop(bun_core::heap::take(this)) };
                 promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
             HashResultValue::Hash(value) => {
                 let js_string = JscZigString::init(&value).to_js(global);
                 drop(value); // Zig: defer bun.default_allocator.free(value)
-                // SAFETY: `this` came from Box::into_raw in `HashResult::new`; the event
+                // SAFETY: `this` came from heap::alloc in `HashResult::new`; the event
                 // loop hands sole ownership to this callback. `this_ref` is not used again.
-                unsafe { drop(Box::from_raw(this)) };
+                unsafe { drop(bun_core::heap::take(this)) };
                 promise.resolve(global, js_string)?;
             }
         }
@@ -742,10 +742,10 @@ impl JSPasswordObject {
                 callback: HashJob::run,
             },
         });
-        // SAFETY: `job` was just returned from Box::into_raw in `HashJob::new`; not yet
+        // SAFETY: `job` was just returned from heap::alloc in `HashJob::new`; not yet
         // shared with the work pool.
         unsafe { (*job).r#ref.ref_(vm_ctx()) };
-        // SAFETY: `job` is a valid Box::into_raw allocation; ownership transfers to the
+        // SAFETY: `job` is a valid heap::alloc allocation; ownership transfers to the
         // work pool here. `task` is an intrusive field at a stable address.
         WorkPool::schedule(unsafe { core::ptr::addr_of_mut!((*job).task) });
 
@@ -794,10 +794,10 @@ impl JSPasswordObject {
                 callback: VerifyJob::run,
             },
         });
-        // SAFETY: `job` was just returned from Box::into_raw in `VerifyJob::new`; not yet
+        // SAFETY: `job` was just returned from heap::alloc in `VerifyJob::new`; not yet
         // shared with the work pool.
         unsafe { (*job).r#ref.ref_(vm_ctx()) };
-        // SAFETY: `job` is a valid Box::into_raw allocation; ownership transfers to the
+        // SAFETY: `job` is a valid heap::alloc allocation; ownership transfers to the
         // work pool here. `task` is an intrusive field at a stable address.
         WorkPool::schedule(unsafe { core::ptr::addr_of_mut!((*job).task) });
 
@@ -913,7 +913,7 @@ impl Drop for VerifyJob {
 
 impl VerifyJob {
     pub fn new(init: VerifyJob) -> *mut VerifyJob {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     pub fn get_value(
@@ -934,7 +934,7 @@ impl VerifyJob {
                 .sub(offset_of!(VerifyJob, task))
                 .cast::<VerifyJob>()
         };
-        // SAFETY: `this` was produced by Box::into_raw in `VerifyJob::new` and is uniquely
+        // SAFETY: `this` was produced by heap::alloc in `VerifyJob::new` and is uniquely
         // owned by this thread-pool callback; no other alias exists until we drop it below.
         let this_ref = unsafe { &mut *this };
 
@@ -946,7 +946,7 @@ impl VerifyJob {
             r#ref: core::mem::take(&mut this_ref.r#ref),
         });
 
-        // SAFETY: `result` was just returned from Box::into_raw in `VerifyResult::new`;
+        // SAFETY: `result` was just returned from heap::alloc in `VerifyResult::new`;
         // not yet shared (enqueue happens after this write).
         unsafe {
             // Zig: `AnyTask.New(VerifyResult, run_from_js).init(result)` — construct directly
@@ -957,16 +957,16 @@ impl VerifyJob {
             };
         }
         // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the job;
-        // `result` is a valid Box::into_raw allocation, ownership transfers to the
+        // `result` is a valid heap::alloc allocation, ownership transfers to the
         // event loop here. `task` is an intrusive field at a stable address.
         unsafe {
             (*this_ref.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
                 core::ptr::addr_of_mut!((*result).task),
             ));
         }
-        // SAFETY: `this` came from Box::into_raw in `VerifyJob::new`; `this_ref` is no
+        // SAFETY: `this` came from heap::alloc in `VerifyJob::new`; `this_ref` is no
         // longer used after this point. Drop runs secure_zero on password/prev_hash.
-        unsafe { drop(Box::from_raw(this)) };
+        unsafe { drop(bun_core::heap::take(this)) };
     }
 }
 
@@ -981,7 +981,7 @@ struct VerifyResult {
 
 impl VerifyResult {
     pub fn new(init: VerifyResult) -> *mut VerifyResult {
-        Box::into_raw(Box::new(init))
+        bun_core::heap::leak(Box::new(init))
     }
 
     /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
@@ -992,7 +992,7 @@ impl VerifyResult {
     }
 
     pub fn run_from_js(this: *mut VerifyResult) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was produced by Box::into_raw in `VerifyResult::new` and is
+        // SAFETY: `this` was produced by heap::alloc in `VerifyResult::new` and is
         // uniquely owned here (event loop hands sole ownership to this callback).
         let this_ref = unsafe { &mut *this };
         let mut promise = core::mem::take(&mut this_ref.promise);
@@ -1002,15 +1002,15 @@ impl VerifyResult {
         match this_ref.value {
             VerifyResultValue::Err(_) => {
                 let error_instance = this_ref.value.to_error_instance(global);
-                // SAFETY: `this` came from Box::into_raw in `VerifyResult::new`;
+                // SAFETY: `this` came from heap::alloc in `VerifyResult::new`;
                 // `this_ref` is not used again after this point.
-                unsafe { drop(Box::from_raw(this)) };
+                unsafe { drop(bun_core::heap::take(this)) };
                 promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
             VerifyResultValue::Pass(pass) => {
-                // SAFETY: `this` came from Box::into_raw in `VerifyResult::new`;
+                // SAFETY: `this` came from heap::alloc in `VerifyResult::new`;
                 // `this_ref` is not used again after this point.
-                unsafe { drop(Box::from_raw(this)) };
+                unsafe { drop(bun_core::heap::take(this)) };
                 promise.resolve(global, JSValue::js_boolean(pass))?;
             }
         }

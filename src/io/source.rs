@@ -19,7 +19,7 @@ pub enum Source {
     Pipe(Box<Pipe>),
     /// `NonNull` not `Box`: the stdin tty (fd 0) lives in static storage
     /// (`stdin_tty::value()`), and Box-from-static is UB. Heap-allocated ttys
-    /// use `Box::into_raw`; destroy paths gate `Box::from_raw` on `!is_stdin_tty()`.
+    /// use `heap::alloc`; destroy paths gate `heap::take` on `!is_stdin_tty()`.
     Tty(core::ptr::NonNull<Tty>),
     File(Box<File>),
     SyncFile(Box<File>),
@@ -192,7 +192,7 @@ impl File {
         debug_assert!(file.state == FileState::Closing);
         file.fs.deinit();
         // SAFETY: file was allocated via Box::new in open_file(); reclaim and drop.
-        drop(unsafe { Box::from_raw(file as *mut File) });
+        drop(unsafe { bun_core::heap::take(file as *mut File) });
     }
 }
 
@@ -301,7 +301,7 @@ impl Source {
         if let Some(err) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
             // close_and_destroy() schedules a libuv close whose callback frees
             // the allocation. Hand the Box to libuv via into_raw so Drop does not double-free.
-            let raw = Box::into_raw(pipe);
+            let raw = bun_core::heap::leak(pipe);
             // SAFETY: raw is a valid initialized uv::Pipe; ownership passes to libuv.
             unsafe { uv::Pipe::close_and_destroy(raw) };
             return bun_sys::Result::Err(err);
@@ -326,8 +326,8 @@ impl Source {
             return bun_sys::Result::Err(err);
         }
 
-        // SAFETY: Box::into_raw never returns null.
-        bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(Box::into_raw(tty)) })
+        // SAFETY: heap::alloc never returns null.
+        bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(bun_core::heap::leak(tty)) })
     }
 
     pub fn open_file(fd: Fd) -> Box<File> {
@@ -434,7 +434,7 @@ pub mod stdin_tty {
         }
 
         // SAFETY: value() is a process-global static, never null.
-        // Destroy path must gate `Box::from_raw` on `!is_stdin_tty(ptr)`.
+        // Destroy path must gate `heap::take` on `!is_stdin_tty(ptr)`.
         bun_sys::Result::Ok(unsafe { core::ptr::NonNull::new_unchecked(value()) })
     }
 }

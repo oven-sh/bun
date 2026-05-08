@@ -263,7 +263,7 @@ impl ShellSubprocess {
         if process.is_null() {
             return;
         }
-        // SAFETY: `process` was produced by `to_process` (Box::into_raw) and is
+        // SAFETY: `process` was produced by `to_process` (heap::alloc) and is
         // live until the deref below drops the last strong ref.
         unsafe {
             (*process).set_exit_handler_default();
@@ -400,8 +400,8 @@ impl ShellSubprocess {
                 }
             }
             subproc.proc().set_exit_handler_default();
-            // SAFETY: `this` was created via Box::into_raw in spawn and is uniquely owned here.
-            drop(unsafe { Box::from_raw(this) });
+            // SAFETY: `this` was created via heap::alloc in spawn and is uniquely owned here.
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 
@@ -631,11 +631,11 @@ impl ShellSubprocess {
             });
         }
         // Ownership of the now-initialised Box is released as a raw pointer
-        // (freed via `Box::from_raw` in `abort_after_failed_start` / Cmd
+        // (freed via `heap::take` in `abort_after_failed_start` / Cmd
         // teardown). `MaybeUninit<T>` and `T` share layout, so the cast is
         // sound.
         // SAFETY: fully initialised by the `write` above.
-        let _ = Box::into_raw(unsafe { slot.assume_init() });
+        let _ = bun_core::heap::leak(unsafe { slot.assume_init() });
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
         subproc.proc().set_exit_handler(subprocess.cast::<()>(), &SHELL_EXIT_VTABLE);
@@ -2061,11 +2061,11 @@ impl PipeReader {
             PipeReaderState::Done(bytes) => {
                 // `MarkedArrayBuffer::from_bytes` adopts the allocation (freed
                 // by the JSC ArrayBuffer destructor). Transfer ownership via
-                // `Box::into_raw` — this is an FFI hand-off, not a leak.
+                // `heap::alloc` — this is an FFI hand-off, not a leak.
                 let owned = core::mem::take(bytes);
                 let len = owned.len();
-                let ptr = Box::into_raw(owned).cast::<u8>();
-                // SAFETY: `ptr`/`len` come from `Box::into_raw` of the slice
+                let ptr = bun_core::heap::leak(owned).cast::<u8>();
+                // SAFETY: `ptr`/`len` come from `heap::alloc` of the slice
                 // just taken; ownership moves into the MarkedArrayBuffer.
                 let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)

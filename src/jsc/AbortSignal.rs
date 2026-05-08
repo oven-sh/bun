@@ -334,9 +334,9 @@ impl Timeout {
         let deadline = bun_core::Timespec::now_allow_mocked_time()
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
-        // PORT NOTE: `bun.TrivialNew` → `Box::into_raw(Box::new(...))` (mimalloc
+        // PORT NOTE: `bun.TrivialNew` → `heap::alloc(Box::new(...))` (mimalloc
         // is the global allocator per PORTING.md §Prereq).
-        let this: *mut Timeout = Box::into_raw(Box::new(Timeout {
+        let this: *mut Timeout = bun_core::heap::leak(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec { sec: deadline.sec, nsec: deadline.nsec },
                 tag: TimerTag::AbortSignalTimeout,
@@ -429,10 +429,10 @@ impl Timeout {
     // PORT NOTE: not `impl Drop` — Timeout is constructed/destroyed across FFI
     // (see export fns below) and `deinit` needs a `vm` parameter.
     unsafe fn deinit(this: *mut Timeout, vm: *mut VirtualMachine) {
-        // SAFETY: caller guarantees `this` came from `Box::into_raw` in `init`.
+        // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
         unsafe {
             Self::cancel(this, vm);
-            drop(Box::from_raw(this));
+            drop(bun_core::heap::take(this));
         }
     }
 }

@@ -525,7 +525,7 @@ impl EventLoop {
             }
             if let Some(dest) = to_destroy.take() {
                 // SAFETY: dest was returned by iterator and marked auto_delete; uniquely owned here
-                let _ = unsafe { Box::from_raw(dest) };
+                let _ = unsafe { bun_core::heap::take(dest) };
             }
 
             // SAFETY: `task` is non-null (checked above) and owned by this batch.
@@ -542,7 +542,7 @@ impl EventLoop {
 
         if let Some(dest) = to_destroy {
             // SAFETY: see above
-            let _ = unsafe { Box::from_raw(dest) };
+            let _ = unsafe { bun_core::heap::take(dest) };
         }
 
         self.tasks.readable_length() - start_count
@@ -1275,13 +1275,13 @@ pub fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop)
     {
         let _ = uws_loop;
     }
-    Box::into_raw(el).cast()
+    bun_core::heap::leak(el).cast()
 }
 
 #[unsafe(no_mangle)]
 pub fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
-    // SAFETY: paired with `Box::into_raw` in `__bun_spawn_sync_create_event_loop`.
-    drop(unsafe { Box::from_raw(el.cast::<EventLoop>()) });
+    // SAFETY: paired with `heap::alloc` in `__bun_spawn_sync_create_event_loop`.
+    drop(unsafe { bun_core::heap::take(el.cast::<EventLoop>()) });
 }
 
 /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).

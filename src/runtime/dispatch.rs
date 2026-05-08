@@ -157,7 +157,7 @@ pub fn run_task(
             unsafe { &mut *task.ptr.cast::<$ty>() }
         }};
     }
-    /// Raw `*mut T` (for `Box::from_raw`/self-consuming entry points).
+    /// Raw `*mut T` (for `heap::take`/self-consuming entry points).
     macro_rules! cast_ptr {
         ($ty:ty) => { task.ptr.cast::<$ty>() };
     }
@@ -168,7 +168,7 @@ pub fn run_task(
     /// `ShellTask.interp` back-ref.
     macro_rules! shell_dispatch {
         ($ty:ty) => {{
-            // SAFETY: §Dispatch — `t` is a live Box::into_raw'd shell task;
+            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
             // `interp` was set at schedule time and outlives the task.
             unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
         }};
@@ -305,25 +305,25 @@ pub fn run_task(
         // is observably equivalent.
         task_tag::AsyncGlobWalkTask => {
             let t = cast_ptr!(AsyncGlobWalkTask<'_>);
-            // SAFETY: tag identifies pointee; Box::into_raw'd at schedule time.
+            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
             let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
             unsafe { AsyncGlobWalkTask::destroy(t) };
             r?;
         }
         task_tag::AsyncImageTask => {
             let t = cast_ptr!(AsyncImageTask<'_>);
-            // SAFETY: tag identifies pointee; Box::into_raw'd at schedule time.
+            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
             let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
             unsafe { AsyncImageTask::destroy(t) };
             r?;
         }
         task_tag::AsyncTransformTask => {
             let t = cast_ptr!(AsyncTransformTask<'_>);
-            // SAFETY: tag identifies pointee; Box::into_raw'd at schedule time.
+            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
             let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
             unsafe { AsyncTransformTask::destroy(t) };
             r?;
         }
@@ -331,25 +331,25 @@ pub fn run_task(
         // ── blob copy/read/write promise tasks ───────────────────────────
         task_tag::CopyFilePromiseTask => {
             let t = cast_ptr!(CopyFilePromiseTask<'_>);
-            // SAFETY: tag identifies pointee; Box::into_raw'd at schedule time.
+            // SAFETY: tag identifies pointee; heap-allocated at schedule time.
             let r = unsafe { (*t).run_from_js() };
-            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
             unsafe { CopyFilePromiseTask::destroy(t) };
             r?;
         }
         task_tag::ReadFileTask => {
             let t = cast_ptr!(ReadFileTask);
-            // SAFETY: tag identifies pointee; Box::into_raw'd in WorkTask::create.
+            // SAFETY: tag identifies pointee; heap-allocated in WorkTask::create.
             let r = bun_jsc::work_task::WorkTask::run_from_js(t);
-            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
             unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
             r?;
         }
         task_tag::WriteFileTask => {
             let t = cast_ptr!(WriteFileTask);
-            // SAFETY: tag identifies pointee; Box::into_raw'd in WorkTask::create.
+            // SAFETY: tag identifies pointee; heap-allocated in WorkTask::create.
             let r = bun_jsc::work_task::WorkTask::run_from_js(t);
-            // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
             unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
             r?;
         }
@@ -386,7 +386,7 @@ pub fn run_task(
             // `deinit` frees it (`bun.destroy`).
             // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
             unsafe { (*t).run() };
-            // SAFETY: paired with Box::into_raw in `Task::enqueue`.
+            // SAFETY: paired with heap::alloc in `Task::enqueue`.
             unsafe { hot_reloader::HotReloadTask::deinit(t) };
             return Ok(RunTaskResult::EarlyReturn);
         }
@@ -405,7 +405,7 @@ pub fn run_task(
             let t = cast_ptr!(FSWatchTask);
             // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
             unsafe { (*t).run() };
-            // SAFETY: paired with Box::into_raw in `FSWatchTask::enqueue`.
+            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
             unsafe { FSWatchTask::deinit(t) };
         }
 
@@ -416,9 +416,9 @@ pub fn run_task(
             #[cfg(not(windows))]
             {
                 let t = cast_ptr!(get_addr_info_request::Task);
-                // SAFETY: tag identifies pointee; Box::into_raw'd in WorkTask::create.
+                // SAFETY: tag identifies pointee; heap-allocated in WorkTask::create.
                 let r = bun_jsc::work_task::WorkTask::run_from_js(t);
-                // SAFETY: paired with `create_on_js_thread` Box::into_raw.
+                // SAFETY: paired with `create_on_js_thread` heap::alloc.
                 unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
                 r?;
             }
@@ -485,8 +485,8 @@ pub fn run_task(
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
             {
-                // SAFETY: tag identifies pointee; Box::into_raw'd in WaiterThread.
-                let t = unsafe { Box::from_raw(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
+                // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
+                let t = unsafe { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
                 t.run_from_js_thread();
             }
             #[cfg(windows)]

@@ -174,8 +174,8 @@ pub struct WebWorker {
     /// `arena.deinit()`. Rust's `Arena = bumpalo::Bump` does not run `Drop`
     /// (so the inner `HashTable` would leak), and `clone_with_allocator()` no
     /// longer routes through the arena allocator anyway — own them as `Box`es
-    /// here instead. `start_vm()` `Box::into_raw`s and stores the pointers;
-    /// `shutdown()` step 5 `Box::from_raw`s after `vm.destroy()` (loader
+    /// here instead. `start_vm()` `heap::alloc`s and stores the pointers;
+    /// `shutdown()` step 5 `heap::take`s after `vm.destroy()` (loader
     /// first, then map — `Loader<'static>` borrows `*map`).
     worker_env_map: Cell<*mut bun_dotenv::Map>,
     worker_env_loader: Cell<*mut bun_dotenv::Loader<'static>>,
@@ -503,7 +503,7 @@ impl WebWorker {
 
         let store_fd = parent_ref.transpiler.resolver.store_fd;
 
-        let worker = Box::into_raw(Box::new(WebWorker {
+        let worker = bun_core::heap::leak(Box::new(WebWorker {
             cpp_worker,
             parent,
             parent_context_id,
@@ -589,9 +589,9 @@ impl WebWorker {
     /// matter.
     #[unsafe(export_name = "WebWorker__destroy")]
     pub extern "C" fn destroy(this: *mut WebWorker) {
-        // SAFETY: this was Box::into_raw'd in create(); C++ owns it and calls
+        // SAFETY: this was heap-allocated in create(); C++ owns it and calls
         // destroy exactly once.
-        let this = unsafe { Box::from_raw(this) };
+        let this = unsafe { bun_core::heap::take(this) };
         log!("[{}] destroy", this.execution_context_id);
         // unresolved_specifier / preloads / name freed by Drop.
         drop(this);
@@ -835,15 +835,15 @@ impl WebWorker {
         temp_proxy_slots.sync_into(&mut map);
 
         // `Loader<'static>` borrows `map` for its lifetime. In Zig both lived
-        // on the worker arena (bulk-freed); here both are `Box::into_raw`'d
+        // on the worker arena (bulk-freed); here both are `heap::alloc`'d
         // and stashed on `self` so `shutdown()` step 5 reclaims them on every
         // path — including the early-terminate checkpoint below, which calls
         // `shutdown()` before the VM exists.
-        let map_ptr: *mut bun_dotenv::Map = Box::into_raw(map);
+        let map_ptr: *mut bun_dotenv::Map = bun_core::heap::leak(map);
         // SAFETY: `map_ptr` heap-allocated above; `'static` is the lifetime
         // erasure for the worker-VM-lifetime borrow (Zig: arena-backed).
         let loader = Box::new(bun_dotenv::Loader::init(unsafe { &mut *map_ptr }));
-        let loader_ptr: *mut bun_dotenv::Loader<'static> = Box::into_raw(loader);
+        let loader_ptr: *mut bun_dotenv::Loader<'static> = bun_core::heap::leak(loader);
         self.worker_env_map.set(map_ptr);
         self.worker_env_loader.set(loader_ptr);
 
@@ -1235,15 +1235,15 @@ impl WebWorker {
         }
         // Reclaim the cloned env (loader borrows `*map` — drop loader first).
         // In Zig both lived on the worker arena and were bulk-freed below;
-        // here they were `Box::into_raw`'d in `start_vm()` (see field doc).
+        // here they were `heap::alloc`'d in `start_vm()` (see field doc).
         if !env_loader.is_null() {
-            // SAFETY: `Box::into_raw`'d in `start_vm`; sole owner; the VM is
+            // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
             // gone so its raw `transpiler.env` borrow is dead.
-            drop(unsafe { Box::from_raw(env_loader) });
+            drop(unsafe { bun_core::heap::take(env_loader) });
         }
         if !env_map.is_null() {
-            // SAFETY: `Box::into_raw`'d in `start_vm`; sole owner.
-            drop(unsafe { Box::from_raw(env_map) });
+            // SAFETY: `heap::alloc`'d in `start_vm`; sole owner.
+            drop(unsafe { bun_core::heap::take(env_map) });
         }
         bun_core::delete_all_pools_for_thread_exit();
         drop(arena.take());

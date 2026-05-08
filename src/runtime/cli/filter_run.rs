@@ -145,7 +145,7 @@ impl<'a> ProcessHandle<'a> {
         }
 
         handle.process = Some(ProcessInfo { ptr: process, status: Status::Running });
-        // SAFETY: `process` was just allocated by `to_process` (Box::into_raw);
+        // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // sole owner until reaped, owner backref set before reap callback can fire.
         let process = unsafe { &mut *process };
         process.set_exit_handler(
@@ -927,14 +927,14 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
                 #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(Box::into_raw(Box::new(
+                stdout: spawn::Stdio::Buffer(bun_core::heap::leak(Box::new(
                     // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
                     unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
                 ))),
                 #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(Box::into_raw(Box::new(
+                stderr: spawn::Stdio::Buffer(bun_core::heap::leak(Box::new(
                     // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
                     unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
                 ))),

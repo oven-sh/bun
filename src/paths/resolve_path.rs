@@ -406,7 +406,7 @@ thread_local! {
 fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> *mut PathBuffer {
     let mut p = c.get();
     if p.is_null() {
-        p = Box::into_raw(Box::new(PathBuffer::ZEROED));
+        p = bun_core::heap::leak(Box::new(PathBuffer::ZEROED));
         c.set(p);
     }
     p

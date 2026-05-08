@@ -2137,6 +2137,15 @@ pub fn init(
             // SAFETY: ctx.log is the process-lifetime CLI log set by
             // create_context_data(); single-threaded init region.
             .load(unsafe { &mut *ctx.log }, env, Some(cli), ctx.install.as_deref(), subcommand)?;
+
+        if let Some(config) = ctx.install.as_deref_mut() {
+            if let Some(p) = config.public_hoist_pattern.take() {
+                manager.options.public_hoist_pattern = Some(p);
+            }
+            if let Some(p) = config.hoist_pattern.take() {
+                manager.options.hoist_pattern = Some(p);
+            }
+        }
     }
 
     let mut ca: Vec<ZBox> = Vec::new();

@@ -6,7 +6,7 @@ use bun_url::URL;
 // TODO(port): move to <area>_sys / verify crate path for schema API
 use crate::bun_schema::api as Api;
 
-use bun_install::{Features, Npm, PnpmMatcher};
+use bun_install::{Features, Npm};
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
@@ -77,8 +77,8 @@ pub struct Options {
     /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
     pub node_linker: NodeLinker,
 
-    pub public_hoist_pattern: Option<PnpmMatcher>,
-    pub hoist_pattern: Option<PnpmMatcher>,
+    pub public_hoist_pattern: Option<Api::PnpmMatcher>,
+    pub hoist_pattern: Option<Api::PnpmMatcher>,
 
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
@@ -534,14 +534,10 @@ impl Options {
                     Some(&*Box::leak(leaked.into_boxed_slice()));
             }
 
-            // TODO(port): CYCLEBREAK — Api::PnpmMatcher is an opaque mirror of
-            // bun_install_types::PnpmMatcher (`_opaque: ()`), so there is no
-            // data to carry across. The bunfig/.npmrc parser populates
-            // `Options::{public_,}hoist_pattern` directly via the install crate
-            // path; the schema fields are placeholders until the dep edge
-            // `bun_options_types -> bun_install_types` is added.
-            let _ = &config.public_hoist_pattern;
-            let _ = &config.hoist_pattern;
+            // `PnpmMatcher` is move-only; `config` is `&` here so the matchers
+            // are taken by the owning caller (`PackageManager::init`) right
+            // after `load()` returns. The runtime auto-install path never uses
+            // the isolated linker, so it has nothing to transfer.
 
             if let Some(global_dir) = config.global_dir.as_deref() {
                 self.explicit_global_directory = leak_static(global_dir);

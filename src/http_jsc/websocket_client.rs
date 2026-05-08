@@ -37,6 +37,7 @@ use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 #[path = "websocket_client/WebSocketUpgradeClient.rs"]  pub mod websocket_upgrade_client;
 
 bun_core::declare_scope!(WebSocketClient, visible);
+bun_core::declare_scope!(alloc, hidden);
 
 macro_rules! log {
     ($($arg:tt)*) => { bun_core::scoped_log!(WebSocketClient, $($arg)*) };
@@ -136,6 +137,13 @@ bun_ptr::impl_cell_ref_counted! {
 pub(crate) use jsc::virtual_machine::VM_EVENT_LOOP_CTX_VTABLE as WS_VM_EVENT_LOOP_CTX_VTABLE;
 
 impl<const SSL: bool> WebSocket<SSL> {
+    /// Zig `@typeName(@This())` — tests grep for this exact shape under `BUN_DEBUG_alloc=1`.
+    const ALLOC_TYPE_NAME: &'static str = if SSL {
+        "http.websocket_client.NewWebSocketClient(true)"
+    } else {
+        "http.websocket_client.NewWebSocketClient(false)"
+    };
+
     #[inline]
     fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_aio::EventLoopCtx {
         // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot. Source
@@ -1740,6 +1748,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             },
             proxy_tunnel: None,
         }));
+        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
         // SAFETY: ws was just allocated via Box::into_raw
         let ws_ref = unsafe { &mut *ws };
 
@@ -1888,6 +1897,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             secure: None,
             proxy_tunnel: Some(tunnel_owned),
         }));
+        bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::ALLOC_TYPE_NAME, ws);
         // SAFETY: ws was just allocated via Box::into_raw
         let ws_ref = unsafe { &mut *ws };
 
@@ -2023,6 +2033,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         this_ref.clear_data();
         // deflate already dropped in clear_data; this is defensive parity with Zig
         this_ref.deflate = None;
+        bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
         // SAFETY: this was allocated via Box::into_raw in init/init_with_tunnel
         drop(unsafe { Box::from_raw(this) });
     }

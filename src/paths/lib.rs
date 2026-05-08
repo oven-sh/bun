@@ -722,6 +722,39 @@ pub mod fs {
     }
 
     impl<'a> Path<'a> {
+        /// Erase the borrow lifetime — Phase-A storage types
+        /// (`ImportRecord.path`, `Graph.input_files`) are pinned to
+        /// `Path<'static>` until the arena lifetime is re-threaded crate-wide.
+        ///
+        /// # Safety
+        /// Every borrowed slice in `self` (text/pretty/namespace and the
+        /// `PathName` sub-slices) must outlive every read through the
+        /// returned `Path<'static>`.
+        #[inline]
+        pub unsafe fn into_static(self) -> Path<'static> {
+            #[inline(always)]
+            unsafe fn d(s: &[u8]) -> &'static [u8] {
+                // SAFETY: caller contract on `into_static`.
+                unsafe { &*core::ptr::from_ref::<[u8]>(s) }
+            }
+            // SAFETY: caller contract — see fn doc.
+            unsafe {
+                Path {
+                    pretty: d(self.pretty),
+                    text: d(self.text),
+                    namespace: d(self.namespace),
+                    name: PathName {
+                        base: d(self.name.base),
+                        dir: d(self.name.dir),
+                        ext: d(self.name.ext),
+                        filename: d(self.name.filename),
+                    },
+                    is_disabled: self.is_disabled,
+                    is_symlink: self.is_symlink,
+                }
+            }
+        }
+
         // Zig: `pub const empty = Fs.Path.init("");`
         pub const EMPTY: Path<'static> = Path {
             pretty: b"",

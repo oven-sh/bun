@@ -700,14 +700,14 @@ impl<'a> Run<'a> {
                             // SAFETY: lifetime-erase per `BlobVTable` contract
                             // (the slice borrows the blob's store, which is
                             // pinned by the JS cell for the call duration).
-                            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(bytes) }
+                            unsafe { bun_collections::detach_lifetime(bytes) }
                         },
                         content_type: |p| {
                             // SAFETY: see `shared_view`.
                             let ct: &[u8] =
                                 unsafe { (*p.cast::<WebCore::Blob>()).content_type_slice() };
                             // SAFETY: lifetime-erase per `BlobVTable` contract.
-                            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(ct) }
+                            unsafe { bun_collections::detach_lifetime(ct) }
                         },
                     };
                     let blob_ref = BlobRef { owner: blob.cast(), vtable: &BLOB_VTABLE };

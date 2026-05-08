@@ -465,7 +465,7 @@ impl Watcher {
             // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
             // interned in `bun.fs.FileSystem` (process-lifetime); the borrow is
             // truly `'static`. Matches Zig's `else file_path` arm.
-            Cow::Borrowed(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(file_path) })
+            Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
         let mut item = WatchItem {
@@ -546,7 +546,7 @@ impl Watcher {
             // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
             // interned in `bun.fs.FileSystem` (process-lifetime); the borrow is
             // truly `'static`. Matches Zig's `else file_path` arm.
-            Cow::Borrowed(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(file_path) })
+            Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
         let parent_hash =

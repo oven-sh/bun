@@ -736,7 +736,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let estr = p.lexer.to_e_string()?;
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
-                return Ok(unsafe { mem::transmute::<&[u8], &'a [u8]>(estr.slice8()) });
+                return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
             } else {
                 // PORT NOTE: Zig used toUTF8AllocWithTypeWithoutInvalidSurrogatePairs which
                 // errors on lone surrogates. The Rust port replaces them with U+FFFD; the
@@ -760,7 +760,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn parse_expr_or_let_stmt(
         &mut self,
         opts: &mut ParseStatementOptions<'a>,
-    ) -> Result<ExprOrLetStmt<'a>, Error> {
+    ) -> Result<ExprOrLetStmt, Error> {
         let p = self;
         let token_range = p.lexer.range();
 
@@ -787,8 +787,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         let decls =
                             p.parse_and_declare_decls(js_ast::symbol::Kind::Other, opts)?;
-                        let decls_slice: &'a [G::Decl] =
-                            unsafe { mem::transmute::<&[G::Decl], &'a [G::Decl]>(decls.slice()) };
+                        let decls_slice = bun_collections::RawSlice::new(decls.slice());
                         return Ok(ExprOrLetStmt {
                             stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
                                 S::Local {
@@ -824,8 +823,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
-                let decls_slice: &'a [G::Decl] =
-                    unsafe { mem::transmute::<&[G::Decl], &'a [G::Decl]>(decls.slice()) };
+                let decls_slice = bun_collections::RawSlice::new(decls.slice());
                 if !opts.is_for_loop_init {
                     p.require_initializers(js_ast::LocalKind::KUsing, decls.slice())?;
                 }
@@ -875,9 +873,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         opts.is_using_statement = true;
                         let decls =
                             p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
-                        let decls_slice: &'a [G::Decl] = unsafe {
-                            mem::transmute::<&[G::Decl], &'a [G::Decl]>(decls.slice())
-                        };
+                        let decls_slice = bun_collections::RawSlice::new(decls.slice());
                         if !opts.is_for_loop_init {
                             p.require_initializers(
                                 js_ast::LocalKind::KAwaitUsing,
@@ -1272,7 +1268,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
             // SAFETY: E::String slice8() is arena-owned for 'a.
-            text: unsafe { mem::transmute::<&[u8], &'a [u8]>(path_text.slice8()) },
+            text: unsafe { bun_collections::detach_lifetime(path_text.slice8()) },
             is_macro: false,
             import_tag: bun_options_types::ImportRecordTag::None,
             loader: None,

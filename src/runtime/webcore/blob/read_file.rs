@@ -264,13 +264,10 @@ impl ReadFile {
         {
             return; // why
         }
-        // SAFETY: ClosingState is #[repr(u8)] with the same discriminants.
-        match unsafe { core::mem::transmute::<u8, ClosingState>(self.state.load(Ordering::Relaxed)) }
-        {
-            ClosingState::Closing => {
-                self.on_finish();
-            }
-            ClosingState::Running => self.do_read_loop(),
+        if self.state.load(Ordering::Relaxed) == ClosingState::Closing as u8 {
+            self.on_finish();
+        } else {
+            self.do_read_loop();
         }
     }
 
@@ -735,11 +732,7 @@ impl ReadFile {
         {
             return; // why
         }
-        // SAFETY: ClosingState is #[repr(u8)]; the AtomicU8 stores only valid discriminants.
-        while unsafe {
-            core::mem::transmute::<u8, ClosingState>(self.state.load(Ordering::Relaxed))
-        } == ClosingState::Running
-        {
+        while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
             // we hold a 64 KB stack buffer incase the amount of data to
             // be read is greater than the reported amount
             //

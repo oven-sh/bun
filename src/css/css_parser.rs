@@ -4367,7 +4367,7 @@ const MAX_THREE_B: u32 = 0x10000;
 // is only ever stored in a `Token` reachable through that same `Parser<'a>`.
 #[inline(always)]
 pub unsafe fn src_str(s: &[u8]) -> &'static [u8] {
-    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+    unsafe { bun_collections::detach_lifetime(s) }
 }
 
 impl<'a> Tokenizer<'a> {

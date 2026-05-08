@@ -725,7 +725,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // SAFETY: hostname borrows either a static literal or `client.url`/
             // `client.http_proxy` which outlive `connected_url` for the
             // duration of the connect attempt.
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(hostname) };
+            unsafe { bun_ptr::detach_lifetime(hostname) };
 
         if SSL {
             if client.can_offer_h2() {

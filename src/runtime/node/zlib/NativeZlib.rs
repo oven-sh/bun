@@ -113,9 +113,7 @@ impl NativeZlib {
             closed: false,
             task: WorkPoolTask { node: Default::default(), callback: noop_task_callback },
         });
-        // SAFETY: mode_int is range-checked to 1..=7 above; NodeMode is #[repr(i64-compatible)].
-        ptr.stream.mode = unsafe { mem::transmute::<u8, c::NodeMode>(u8::try_from(mode_int).expect("int cast")) };
-        // TODO(port): @enumFromInt — confirm NodeMode repr width matches transmute above.
+        ptr.stream.mode = c::NodeMode::from_int(mode_int as u8);
         Ok(ptr)
     }
 

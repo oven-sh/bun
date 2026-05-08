@@ -886,6 +886,29 @@ pub enum NodeMode {
     ZSTD_DECOMPRESS = 11,
 }
 
+impl NodeMode {
+    /// Decode from the JS-side mode int. Range-validated by the caller
+    /// (`NativeZlib`/`NativeBrotli`/`NativeZstd` constructors); out-of-range
+    /// values map to `NONE` rather than UB (RUST_PATTERNS.md §18).
+    #[inline]
+    pub const fn from_int(n: u8) -> Self {
+        match n {
+            1 => Self::DEFLATE,
+            2 => Self::INFLATE,
+            3 => Self::GZIP,
+            4 => Self::GUNZIP,
+            5 => Self::DEFLATERAW,
+            6 => Self::INFLATERAW,
+            7 => Self::UNZIP,
+            8 => Self::BROTLI_DECODE,
+            9 => Self::BROTLI_ENCODE,
+            10 => Self::ZSTD_COMPRESS,
+            11 => Self::ZSTD_DECOMPRESS,
+            _ => Self::NONE,
+        }
+    }
+}
+
 /// Not for streaming!
 pub struct ZlibCompressorArrayList<'a> {
     pub input: &'a [u8],

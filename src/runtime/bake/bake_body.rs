@@ -131,7 +131,7 @@ pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
     // PORTING.md sanctions this only inside the bake `from_js` self-referential
     // pattern — do NOT generalize.
-    unsafe { core::mem::transmute::<&T, &'static T>(r) }
+    unsafe { bun_ptr::detach_ref(r) }
 }
 
 /// `bun.getcwdAlloc(arena)` — write cwd into a stack `PathBuffer`, then dupe

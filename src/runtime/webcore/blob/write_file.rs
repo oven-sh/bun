@@ -255,22 +255,18 @@ impl WriteFile {
         file_blob: Blob,
         bytes_blob: Blob,
         context: *mut C,
-        callback: fn(ctx: *mut C, bytes: WriteFileResultType) -> Result<(), JsTerminated>,
+        callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<*mut WriteFile, Error> {
-        // SAFETY: erasing *mut C to *mut c_void in the first param; fn-pointer ABI is identical.
-        // Mirrors Zig's Handler.run thunk which is a no-op cast wrapper.
-        let erased: WriteFileOnWriteFileCallback = unsafe {
-            core::mem::transmute::<
-                fn(*mut C, WriteFileResultType) -> Result<(), JsTerminated>,
-                WriteFileOnWriteFileCallback,
-            >(callback)
-        };
+        // PORT NOTE: Zig generated a per-`Type` `Handler.run` thunk that
+        // `@ptrCast` the *anyopaque ctx back. In Rust the caller supplies a
+        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`)
+        // so the thunk collapses to a `.cast()` on `context`.
         WriteFile::create_with_ctx(
             file_blob,
             bytes_blob,
             context.cast::<c_void>(),
-            erased,
+            callback,
             mkdirp_if_not_exists,
         )
     }
@@ -802,14 +798,8 @@ mod windows_impl {
                 .path()
                 .slice();
             crate::node::fs::async_::AsyncMkdirp::new(crate::node::fs::async_::AsyncMkdirp {
-                // SAFETY: erasing &mut Self to *mut c_void for the completion ctx; ABI-compatible cast.
-                completion: unsafe {
-                    core::mem::transmute::<
-                        fn(&mut WriteFileWindows, bun_sys::Result<()>),
-                        crate::node::fs::async_::CompletionFn,
-                    >(Self::on_mkdirp_complete_concurrent)
-                },
-                completion_ctx: (core::ptr::from_mut(self)).cast::<c_void>(),
+                completion: Self::on_mkdirp_complete_concurrent,
+                completion_ctx: (core::ptr::from_mut(self)).cast::<()>(),
                 path: bun_core::dirname(path)
                     // this shouldn't happen
                     .unwrap_or(path)
@@ -838,17 +828,20 @@ mod windows_impl {
             }
         }
 
-        fn on_mkdirp_complete_concurrent(&mut self, err_: bun_sys::Result<()>) {
+        fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Result<()>) {
+            // SAFETY: `ctx` is the `*mut Self` stored in `AsyncMkdirp.completion_ctx`
+            // by `mkdirp` above; sole owner on this concurrent path.
+            let this = unsafe { &mut *ctx.cast::<WriteFileWindows>() };
             bun_output::scoped_log!(WriteFile, "mkdirp complete");
-            debug_assert!(self.err.is_none());
-            self.err = match err_ {
+            debug_assert!(this.err.is_none());
+            this.err = match err_ {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
             // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
             unsafe {
-                (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
-                    ManagedTask::new::<WriteFileWindows>(self, Self::on_mkdirp_complete),
+                (*this.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
+                    ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete),
                 ));
             }
         }
@@ -1016,22 +1009,17 @@ mod windows_impl {
             file_blob: Blob,
             bytes_blob: Blob,
             context: *mut C,
-            callback: fn(ctx: *mut C, bytes: WriteFileResultType) -> Result<(), JsTerminated>,
+            callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
-            // SAFETY: erasing *mut C → *mut c_void in first param; fn-pointer ABI identical.
-            let erased: WriteFileOnWriteFileCallback = unsafe {
-                core::mem::transmute::<
-                    fn(*mut C, WriteFileResultType) -> Result<(), JsTerminated>,
-                    WriteFileOnWriteFileCallback,
-                >(callback)
-            };
+            // PORT NOTE: see `WriteFile::create` — caller supplies an erased
+            // `*mut c_void` callback directly; `context` is just `.cast()`ed.
             WriteFileWindows::create_with_ctx(
                 file_blob,
                 bytes_blob,
                 event_loop,
                 context.cast::<c_void>(),
-                erased,
+                callback,
                 mkdirp_if_not_exists,
             )
         }
@@ -1046,7 +1034,8 @@ pub struct WriteFilePromise {
 }
 
 impl WriteFilePromise {
-    pub fn run(handler: *mut Self, count: WriteFileResultType) -> Result<(), JsTerminated> {
+    pub fn run(handler: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated> {
+        let handler = handler.cast::<Self>();
         // SAFETY: handler is a Box-allocated WriteFilePromise (see Blob.zig:1172); consumed here.
         // `swap()` releases the Strong's handle slot and yields a GC-owned `*mut JSPromise`,
         // which stays valid past `drop(heap::take(handler))`.

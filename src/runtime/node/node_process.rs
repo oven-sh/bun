@@ -480,11 +480,10 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
             fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
             fs.top_level_dir_buf[into_cwd_len] = 0;
             // SAFETY: `top_level_dir_buf` is a process-lifetime field of the
-            // FileSystem singleton; transmuting the borrow to `'static` matches
-            // the Zig semantics (`top_level_dir = top_level_dir_buf[0..len :0]`).
-            fs.top_level_dir = unsafe {
-                core::mem::transmute::<&[u8], &'static [u8]>(&fs.top_level_dir_buf[..into_cwd_len])
-            };
+            // FileSystem singleton; the detached borrow matches the Zig
+            // semantics (`top_level_dir = top_level_dir_buf[0..len :0]`).
+            fs.top_level_dir =
+                unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
 
             let len = fs.top_level_dir.len();
             // Ensure the path ends with a slash
@@ -492,9 +491,8 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
                 fs.top_level_dir_buf[len] = SEP;
                 fs.top_level_dir_buf[len + 1] = 0;
                 // SAFETY: see above.
-                fs.top_level_dir = unsafe {
-                    core::mem::transmute::<&[u8], &'static [u8]>(&fs.top_level_dir_buf[..len + 1])
-                };
+                fs.top_level_dir =
+                    unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
             }
             #[cfg(windows)]
             let without_trailing_slash = strings::without_trailing_slash_windows_path;

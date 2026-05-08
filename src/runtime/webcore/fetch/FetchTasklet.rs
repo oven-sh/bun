@@ -1742,7 +1742,7 @@ impl FetchTasklet {
         // SAFETY: lifetime erasure — `HTTPClientResult<'a>` borrows the
         // `*mut MutableString` we passed into `AsyncHTTP::init` (which lives
         // in `self.response_buffer` for the FetchTasklet's lifetime). Zig had
-        // no lifetime here; transmute `'_` → `'static` to store it.
+        // no lifetime here; widen `'_` → `'static` to store it.
         task_ref.result = unsafe {
             core::mem::transmute::<HTTPClientResult<'_>, HTTPClientResult<'static>>(result)
         };
@@ -1774,7 +1774,7 @@ impl FetchTasklet {
         // the Vec header — `result.body` always aliases `task_ref.response_buffer` (the
         // `*mut MutableString` passed to `AsyncHTTP::init` at FetchTasklet::create flows
         // through `HTTPClient.state.body_out_str` and back out in the result). Asserted
-        // above before the lifetime-erasing transmute; the bytes are already in place, so
+        // above before the lifetime-erasing assignment; the bytes are already in place, so
         // no copy is needed and the `reset()` calls below operate on the right allocation.
 
         if task_ref.ignore_data {

@@ -612,6 +612,33 @@ pub mod fs {
             is_symlink: false,
         };
 
+        /// Erase the borrow lifetime — see `bun_paths::fs::Path::into_static`
+        /// (the three `fs::Path` mirrors share this contract until unified).
+        ///
+        /// # Safety
+        /// Every borrowed slice in `self` must outlive every read through the
+        /// returned `Path<'static>`.
+        #[inline]
+        pub unsafe fn into_static(self) -> Path<'static> {
+            use bun_collections::detach_lifetime as d;
+            // SAFETY: caller contract — see fn doc.
+            unsafe {
+                Path {
+                    pretty: d(self.pretty),
+                    text: d(self.text),
+                    namespace: d(self.namespace),
+                    name: PathName {
+                        base: d(self.name.base),
+                        dir: d(self.name.dir),
+                        ext: d(self.name.ext),
+                        filename: d(self.name.filename),
+                    },
+                    is_disabled: self.is_disabled,
+                    is_symlink: self.is_symlink,
+                }
+            }
+        }
+
         pub fn is_file(&self) -> bool {
             self.namespace.is_empty() || self.namespace == b"file"
         }

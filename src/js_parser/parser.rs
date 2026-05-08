@@ -1564,16 +1564,21 @@ macro_rules! generated_symbol_name {
     }};
 }
 
-pub struct ExprOrLetStmt<'a> {
+pub struct ExprOrLetStmt {
     pub stmt_or_expr: js_ast::StmtOrExpr,
-    pub decls: &'a [G::Decl],
+    // PORT NOTE: Zig writes `.decls = decls.slice()` borrowing the heap buffer
+    // that was just moved into `S::Local`. The buffer pointer is stable across
+    // the move, but borrowck can't see that — store as `RawSlice` to record the
+    // outlives-holder invariant without a per-site unsafe cast. (Neither caller
+    // currently reads this field, matching parseStmt.zig:829-836.)
+    pub decls: bun_collections::RawSlice<G::Decl>,
 }
 
-impl<'a> Default for ExprOrLetStmt<'a> {
+impl Default for ExprOrLetStmt {
     fn default() -> Self {
         Self {
             stmt_or_expr: js_ast::StmtOrExpr::default(),
-            decls: &[],
+            decls: bun_collections::RawSlice::EMPTY,
         }
     }
 }

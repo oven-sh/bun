@@ -919,8 +919,8 @@ impl SystemErrno {
 
     #[inline]
     pub const fn to_e(self) -> E {
-        // SAFETY: SystemErrno and E share identical #[repr(u16)] discriminant sets.
-        unsafe { core::mem::transmute::<u16, E>(self as u16) }
+        // SystemErrno and E share identical #[repr(u16)] discriminant sets.
+        E::from_raw(self as u16)
     }
 
     #[inline]

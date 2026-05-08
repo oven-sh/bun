@@ -101,8 +101,7 @@ impl NativeZstd {
             // CompressionStream::write before scheduling; placeholder here.
             task: WorkPoolTask { node: Default::default(), callback: unset_task_callback },
         });
-        // SAFETY: mode_int is range-checked to 10..=11 above; NodeMode is #[repr(u8)].
-        ptr.stream.mode = unsafe { mem::transmute::<u8, NodeMode>(u8::try_from(mode_int).expect("int cast")) };
+        ptr.stream.mode = NodeMode::from_int(mode_int as u8);
         Ok(ptr)
     }
 

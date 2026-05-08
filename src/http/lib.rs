@@ -398,7 +398,7 @@ impl HTTPClientResultCallback {
         this: *mut T,
         callback: fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
     ) -> Self {
-        // SAFETY: fn-pointer transmute over *mut T → *mut () first arg; same
+        // SAFETY: fn-pointer cast over *mut T → *mut () first arg; same
         // calling convention, the receiver casts `ctx` back before use.
         unsafe {
             Self {
@@ -466,7 +466,7 @@ use bun_string::ZigStringSlice;
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
 // `if_modified_since`, `hostname`, and the borrowed `HTTPRequestBody::Bytes`
 // payload — to the caller's storage. Phase-A erased these to `'static` and
-// `transmute`d at every call site; threading the lifetime removes that hazard.
+// lifetime-erased at every call site; threading the lifetime removes that hazard.
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
 // lifetime-erased `HTTPClient<'static>` form via [`HTTPClient::as_erased_ptr`].
 pub struct HTTPClient<'a> {
@@ -1789,7 +1789,7 @@ impl<'a> HTTPClient<'a> {
         &buf[ptr.offset as usize..][..ptr.length as usize]
     }
 
-    pub fn build_request(&mut self, body_len: usize) -> picohttp::Request<'_> {
+    pub fn build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
         let mut header_count: usize = 0;
         let header_entries = self.header_entries.slice();
         let header_names = header_entries.items_name();
@@ -1846,11 +1846,8 @@ impl<'a> HTTPClient<'a> {
                         // SAFETY: header_str() returns a slice into self.header_buf which outlives
                         // this client; lifetime is erased here only because Phase A forbids struct
                         // lifetime params. The borrow is valid for the life of `self`.
-                        self.if_modified_since = unsafe {
-                            core::mem::transmute::<&[u8], &'static [u8]>(
-                                self.header_str(header_values[i]),
-                            )
-                        };
+                        self.if_modified_since =
+                            unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
                     }
                 }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
@@ -1967,11 +1964,16 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
+        // SAFETY: every borrowed slice points into storage that outlives the
+        // returned `Request` — `method_http_name` is `'static`; `url.pathname`
+        // borrows `self.url` (lives for the client); `request_headers_buf` is
+        // the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static. Return as
+        // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
             method: method_http_name(self.method),
-            path: self.url.pathname,
+            path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
-            headers: &request_headers_buf[0..header_count],
+            headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
             bytes_read: 0,
         }
     }
@@ -2250,14 +2252,7 @@ impl<'a> HTTPClient<'a> {
 
         let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
 
-        // PORT NOTE: build_request() borrows `&self` for the lifetime of the
-        // returned `Request<'_>`, but every slice it references (header_buf,
-        // url, SHARED_REQUEST_HEADERS_BUF) outlives this fn. Lifetime-widen so
-        // borrowck doesn't pin `&mut self` for the whole function.
-        // SAFETY: see PORT NOTE — borrows are into `'static`/self-owned storage.
-        let request: picohttp::Request<'static> = unsafe {
-            core::mem::transmute(self.build_request(self.state.original_request_body.len()))
-        };
+        let request = self.build_request(self.state.original_request_body.len());
 
         if self.http_proxy.is_some() {
             if self.url.is_https() {
@@ -2635,10 +2630,7 @@ impl<'a> HTTPClient<'a> {
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
                     let writer = &mut temporary_send_buffer;
 
-                    // SAFETY: see send_initial_request_payload PORT NOTE on lifetime widen.
-                    let request: picohttp::Request<'static> = unsafe {
-                        core::mem::transmute(self.build_request(self.request_body().len()))
-                    };
+                    let request = self.build_request(self.request_body().len());
                     if write_request(writer, &request).is_err() {
                         self.close_and_fail::<IS_SSL>(err!(OutOfMemory), socket);
                         return;

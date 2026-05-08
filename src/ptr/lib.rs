@@ -214,6 +214,24 @@ pub unsafe fn detach_lifetime<'a, T>(s: &[T]) -> &'a [T] {
     unsafe { &*core::ptr::from_ref::<[T]>(s) }
 }
 
+/// Single-element companion to [`detach_lifetime`] — detach a `&T` borrow.
+///
+/// Same contract: the **local-variable** counterpart to [`BackRef`], for the
+/// case where borrowck pins the borrow to a transient owner (a local copy, an
+/// arena guard) but the pointee is known to outlive `'a`. Prefer threading the
+/// real lifetime; reach for this only where the storage type is itself
+/// lifetime-erased (Phase-A `'static` placeholder fields) and the alternative
+/// is an open-coded lifetime-widening cast.
+///
+/// # Safety
+/// Caller guarantees `*r` is not freed, moved, or exclusively aliased for the
+/// full lifetime `'a` chosen by the caller.
+#[inline(always)]
+pub unsafe fn detach_ref<'a, T: ?Sized>(r: &T) -> &'a T {
+    // SAFETY: caller contract — `r` remains live and un-aliased-exclusively for `'a`.
+    unsafe { &*core::ptr::from_ref::<T>(r) }
+}
+
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
 /// Runtime sibling of `bun_js_parser::StoreSlice<T>` for `*const [T]` struct

@@ -202,7 +202,7 @@ impl ProgressBuf {
             let written = cap - cursor.len();
             // SAFETY: thread-local static buffer; lifetime extended for CLI usage. Matches Zig
             // returning a slice into a module-level static.
-            let out: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&buf[..written]) };
+            let out: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&buf[..written]) };
             Ok(out)
         })
     }
@@ -2685,8 +2685,8 @@ impl GitHandler {
         // them being long-lived (filesystem dirname_store / env). Phase B: ensure 'static or own.
         // SAFETY: `destination` lives in `filesystem.dirname_store` and `path` in env loader;
         // both are 'static for the CLI process. Extend lifetimes to satisfy `spawn`.
-        let destination: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(destination) };
-        let path: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path) };
+        let destination: &'static [u8] = unsafe { bun_ptr::detach_lifetime(destination) };
+        let path: &'static [u8] = unsafe { bun_ptr::detach_lifetime(path) };
         let thread = match std::thread::Builder::new()
             .spawn(move || Self::spawn_thread(destination, path, verbose))
         {

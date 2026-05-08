@@ -3986,9 +3986,7 @@ unsafe fn transpile_file(
         // (the `extra` struct is consumed by `transpile_source_code_inner`
         // before `_specifier` / `virtual_source_to_use` drop). Same erasure as
         // `transpile_virtual_module` below.
-        path: unsafe {
-            core::mem::transmute::<Fs::Path<'_>, Fs::Path<'static>>(lr.path)
-        },
+        path: unsafe { lr.path.into_static() },
         loader: synchronous_loader,
         module_type,
         source_code_printer: printer_ptr,
@@ -4124,8 +4122,7 @@ unsafe fn transpile_virtual_module(
     // fn-ptr ABI; the borrow actually lives only for this call (the `extra`
     // struct is consumed by `transpile_source_code_inner` before
     // `specifier_slice` drops). Same erasure as `transpile_file` above.
-    let path: Fs::Path<'static> =
-        unsafe { core::mem::transmute::<Fs::Path<'_>, Fs::Path<'static>>(Fs::Path::init(specifier)) };
+    let path: Fs::Path<'static> = unsafe { Fs::Path::init(specifier).into_static() };
 
     // Spec :1262-1270 — `loader_ != ._none ? fromAPI(loader_) : loaders.get(ext)
     // orelse (specifier == main ? .js : .file)`.
@@ -4467,7 +4464,7 @@ unsafe fn _resolve<'a>(
     // SAFETY: `vm.transpiler.fs` is the `'static` `FileSystem` singleton
     // pointer set in `init_runtime_state`.
     let top_level_dir: &'a [u8] =
-        unsafe { core::mem::transmute::<&[u8], &'a [u8]>((*(*vm).transpiler.fs).top_level_dir) };
+        unsafe { bun_ptr::detach_lifetime((*(*vm).transpiler.fs).top_level_dir) };
     let source_to_use: &[u8] = if !is_special_source {
         if is_a_file_path {
             Fs::PathName::init(source).dir_with_trailing_slash()
@@ -4574,7 +4571,7 @@ unsafe fn _resolve<'a>(
     // §allocators) — the same store `load_preloads` reads from. Transmute the
     // lifetime to `'a` so the caller can `cloneUTF8` it; the underlying bytes
     // outlive the program.
-    *ret_path = unsafe { core::mem::transmute::<&[u8], &'a [u8]>(result_path.text) };
+    *ret_path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
     Ok(())
 }
 

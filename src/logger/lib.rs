@@ -1084,7 +1084,7 @@ impl IntoStr for &[u8] {
     #[inline]
     fn into_str(self) -> Str {
         // SAFETY: Phase-A lifetime erasure; see module-level OWNERSHIP note.
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self) }
+        unsafe { bun_collections::detach_lifetime(self) }
     }
 }
 impl IntoStr for &str {
@@ -2122,8 +2122,7 @@ impl Log {
         // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`
         // and never removed; its heap allocation is stable across the `Vec`'s
         // growth, so the returned slice is valid for the life of `self`.
-        let view: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&boxed[..]) };
+        let view: &'static [u8] = unsafe { bun_collections::detach_lifetime(&boxed[..]) };
         self.owned_strings.push(boxed);
         view
     }

@@ -1311,7 +1311,7 @@ pub fn bun_resolve_sync_with_paths(
     // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
     // this synchronous resolve call; lifetime is erased for the resolver slot.
     bun_vm.transpiler.resolver.custom_dir_paths =
-        Some(unsafe { core::mem::transmute::<&[BunString], &'static [BunString]>(paths) });
+        Some(unsafe { bun_ptr::detach_lifetime(paths) });
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;

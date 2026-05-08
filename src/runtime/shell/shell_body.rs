@@ -1137,7 +1137,10 @@ pub mod testing_apis {
             let utf8str = bunstr.to_utf8();
 
             for disabled in crate::shell::builtin::Kind::DISABLED_ON_POSIX {
-                if utf8str.slice() == <&'static str>::from(*disabled).as_bytes() {
+                // Spec uses Zig `@tagName` (lowercase). `strum::IntoStaticStr`
+                // would yield the PascalCase variant name ("Cp"), so use
+                // `Kind::as_str` which mirrors the lowercase tag.
+                if utf8str.slice() == disabled.as_str().as_bytes() {
                     return Ok(JSValue::TRUE);
                 }
             }

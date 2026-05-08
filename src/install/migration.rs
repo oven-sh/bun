@@ -806,32 +806,23 @@ pub fn migrate_npm_lockfile<'a>(
         }
     }
 
-    // PORT NOTE: MultiArrayList simultaneous mutable column access — split via raw ptrs.
-    // SAFETY: distinct columns alias-free; capacity fixed (no further append until end of fn).
-    let pkg_slice = this.packages.slice();
-    let resolutions_col: *mut Resolution = unsafe { pkg_slice.items_raw::<"resolution", Resolution>() };
-    let metas_col: *mut lockfile::Meta = unsafe { pkg_slice.items_raw::<"meta", lockfile::Meta>() };
-    let dependencies_list_col: *mut ExternalSlice<Dependency> =
-        unsafe { pkg_slice.items_raw::<"dependencies", ExternalSlice<Dependency>>() };
-    let resolution_list_col: *mut ExternalSlice<PackageID> =
-        unsafe { pkg_slice.items_raw::<"resolutions", ExternalSlice<PackageID>>() };
+    // PORT NOTE: MultiArrayList column access — re-borrow the (disjoint) `resolution`,
+    // `meta`, `dependencies` and `resolutions` columns of `this.packages` at each use
+    // site via the generated `items_*` / `items_*_mut` accessors. Capacity is fixed
+    // (no further append until end of fn), so the slices stay valid; re-acquiring per
+    // statement keeps the borrows disjoint from the `&mut self` calls below.
     let pkg_count = this.packages.len();
 
     #[cfg(debug_assertions)]
     {
-        for i in 0..pkg_count {
-            // SAFETY: i < pkg_count
-            let r = unsafe { &*resolutions_col.add(i) };
+        for r in &this.packages.items_resolution()[..pkg_count] {
             debug_assert!(r.tag == resolution::Tag::Uninitialized || r.tag == resolution::Tag::Workspace);
         }
     }
 
     // Root resolution isn't hit through dependency tracing.
-    // SAFETY: index 0 is valid (root package always present)
-    unsafe {
-        *resolutions_col = Resolution::init(ResTagged::Root);
-        (*metas_col).origin = lockfile::Origin::Local;
-    }
+    this.packages.items_resolution_mut()[0] = Resolution::init(ResTagged::Root);
+    this.packages.items_meta_mut()[0].origin = lockfile::Origin::Local;
     let root_name_hash = this.packages.items_name_hash()[0];
     this.get_or_put_id(0, root_name_hash)?;
 
@@ -866,12 +857,10 @@ pub fn migrate_npm_lockfile<'a>(
         // `finalize_pkg!` at the one early-continue and at natural end-of-loop.
         macro_rules! finalize_pkg {
             () => {{
-                // SAFETY: package_idx < pkg_count
+                // package_idx < pkg_count; columns re-borrowed disjointly per statement.
                 if dependencies_start == deps_cursor {
-                    unsafe {
-                        *dependencies_list_col.add(package_idx as usize) = ExternalSlice::default();
-                        *resolution_list_col.add(package_idx as usize) = ExternalSlice::default();
-                    }
+                    this.packages.items_dependencies_mut()[package_idx as usize] = ExternalSlice::default();
+                    this.packages.items_resolutions_mut()[package_idx as usize] = ExternalSlice::default();
                 } else {
                     let len: u32 = (res_cursor - resolutions_start) as u32;
                     #[cfg(debug_assertions)]
@@ -879,12 +868,10 @@ pub fn migrate_npm_lockfile<'a>(
                         debug_assert!(len > 0);
                         debug_assert!(len == (deps_cursor - dependencies_start) as u32);
                     }
-                    unsafe {
-                        *dependencies_list_col.add(package_idx as usize) =
-                            ExternalSlice::new(dependencies_start as u32, len);
-                        *resolution_list_col.add(package_idx as usize) =
-                            ExternalSlice::new(resolutions_start as u32, len);
-                    }
+                    this.packages.items_dependencies_mut()[package_idx as usize] =
+                        ExternalSlice::new(dependencies_start as u32, len);
+                    this.packages.items_resolutions_mut()[package_idx as usize] =
+                        ExternalSlice::new(resolutions_start as u32, len);
                 }
                 package_idx += 1;
             }};
@@ -1070,7 +1057,7 @@ pub fn migrate_npm_lockfile<'a>(
                             // If the package resolution is not set, resolve the target package
                             // using the information we have from the dependency declaration.
                             // SAFETY: id < pkg_count (assigned during counting phase)
-                            if unsafe { (*resolutions_col.add(id as usize)).tag } == resolution::Tag::Uninitialized {
+                            if this.packages.items_resolution()[id as usize].tag == resolution::Tag::Uninitialized {
                                 debug!("resolving '{}'", bstr::BStr::new(name_bytes));
 
                                 let mut res_version_tag = version_tag;
@@ -1216,15 +1203,13 @@ pub fn migrate_npm_lockfile<'a>(
                                 };
                                 debug!("-> {}", res.fmt_for_debug(this.buffers.string_bytes.as_slice()));
 
-                                // SAFETY: id < pkg_count
-                                unsafe {
-                                    *resolutions_col.add(id as usize) = res;
-                                    (*metas_col.add(id as usize)).origin = match res.tag {
-                                        // This works?
-                                        resolution::Tag::Root => lockfile::Origin::Local,
-                                        _ => lockfile::Origin::Npm,
-                                    };
-                                }
+                                // id < pkg_count; columns re-borrowed disjointly.
+                                this.packages.items_resolution_mut()[id as usize] = res;
+                                this.packages.items_meta_mut()[id as usize].origin = match res.tag {
+                                    // This works?
+                                    resolution::Tag::Root => lockfile::Origin::Local,
+                                    _ => lockfile::Origin::Npm,
+                                };
 
                                 let nh = this.packages.items_name_hash()[id as usize];
                                 this.get_or_put_id(id, nh)?;
@@ -1328,8 +1313,7 @@ pub fn migrate_npm_lockfile<'a>(
     // This can be triggered by a bad lockfile with extra packages. NPM should trim packages out automatically.
     let mut is_missing_resolutions = false;
     for i in 0..pkg_count {
-        // SAFETY: i < pkg_count
-        let r = unsafe { &*resolutions_col.add(i) };
+        let r = &this.packages.items_resolution()[i];
         if r.tag == resolution::Tag::Uninitialized {
             Output::warn(format_args!(
                 "Could not resolve package '{}' in lockfile during migration",

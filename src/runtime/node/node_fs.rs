@@ -625,8 +625,9 @@ where
             tracker: AsyncTaskTracker::init(vm),
         });
         // Transfer ownership to libuv: the box outlives the async request and is
-        // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `Box::leak`
-        // is the safe spelling of this paired `into_raw`/`from_raw` hand-off.
+        // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
+        // names that hand-off — it is `Box::leak` under the hood; the reclaim
+        // happens in `destroy()`, not in this scope.
         let task: &mut Self = bun_core::heap::release(task);
         // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
         // event loop is the only one that owns AsyncFSTask/UVFSRequest.

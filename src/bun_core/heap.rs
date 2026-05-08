@@ -52,8 +52,10 @@ pub fn leak<T: ?Sized>(boxed: Box<T>) -> *mut T {
     Box::into_raw(boxed)
 }
 
-/// Give up our owning `Box<T>` and return a `&'static mut T` whose backing
-/// allocation's lifetime is now managed by **something other than this scope**:
+/// Give up our owning `Box<T>` and return a `&mut T` whose lifetime the caller
+/// picks (annotate it `&'static mut T` at the call site if the owner is
+/// process-lifetime). The backing allocation's lifetime is now managed by
+/// **something other than this scope**:
 ///
 ///   - an intrusive refcount on the payload (the trailing `deref()` / `unref()`
 ///     reclaims via `Box::from_raw` once the count hits zero),
@@ -67,6 +69,12 @@ pub fn leak<T: ?Sized>(boxed: Box<T>) -> *mut T {
 /// Use this (with a comment naming the owner) instead of a bare `Box::leak`
 /// whenever the allocation *is* reclaimed, just not here. A bare `Box::leak`
 /// should be reserved for genuine process-lifetime statics that are never freed.
+///
+/// Prefer a paired typed helper that owns *both* halves of the round-trip when
+/// one applies (`bun_threading::WorkPool::schedule_owned`,
+/// `bun_libuv_sys::UvHandle::set_owned_data`, `#[js_class]` `to_js_boxed`, …);
+/// `release` is for the residual cases (intrusive-refcount finalizers, FFI
+/// ownership protocols) where no such helper exists.
 #[inline(always)]
 pub fn release<'a, T: ?Sized + 'a>(boxed: Box<T>) -> &'a mut T {
     Box::leak(boxed)

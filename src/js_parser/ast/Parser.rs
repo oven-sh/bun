@@ -1295,7 +1295,7 @@ impl<'a> Parser<'a> {
                 for (part_idx, part) in parts.iter().enumerate() {
                     // `Part.stmts` is a `StoreSlice<Stmt>` (arena-owned). It is
                     // only ever populated from bump-allocated slices in this fn.
-                    for s in unsafe { &*part.stmts }.iter() {
+                    for s in part.stmts.iter() {
                         match s.data {
                             js_ast::StmtData::SComment(_)
                             | js_ast::StmtData::SDirective(_)
@@ -1526,8 +1526,7 @@ impl<'a> Parser<'a> {
                     let export_star_redirect: Option<&S::ExportStar> = 'brk: {
                         let mut export_star: Option<&S::ExportStar> = None;
                         for part in before.iter() {
-                            // SAFETY: see note on `Part.stmts` above.
-                            for stmt in unsafe { &*part.stmts }.iter() {
+                            for stmt in part.stmts.iter() {
                                 match &stmt.data {
                                     js_ast::StmtData::SExportStar(star) => {
                                         if star.alias.is_some() {

@@ -40,8 +40,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         // Collect all statements
         let mut total_stmts_count: usize = 0;
         for part in parts.iter() {
-            // arena-owned `StoreSlice<Stmt>` valid for 'a; read-only iteration.
-            total_stmts_count += unsafe { &*part.stmts }.len();
+            total_stmts_count += part.stmts.len();
         }
 
         if total_stmts_count == 0 {
@@ -52,8 +51,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         // PERF(port): was bun.handleOom(arena.alloc(Stmt, n)) — bump alloc + index fill
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
         for part in parts.iter() {
-            // SAFETY: arena-owned slice valid for 'a.
-            for stmt in unsafe { &*part.stmts }.iter() {
+            for stmt in part.stmts.iter() {
                 all_stmts.push(*stmt);
             }
         }
@@ -251,7 +249,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     let await_expr = self.new_expr(E::Await { value: import_expr }, stmt.loc);
 
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
-                    let import_items: &[crate::ClauseItem] = unsafe { &*import_data.items };
+                    let import_items: &[crate::ClauseItem] = import_data.items.slice();
 
                     if import_data.star_name_loc.is_some() {
                         // import * as X from 'mod' -> var X = await import('mod')

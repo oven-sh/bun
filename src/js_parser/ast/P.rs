@@ -1318,8 +1318,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // is the swap into `parts_[parts_end]` at the bottom.
                 let part = &parts_[i];
                 let is_dead = part.can_be_removed_if_unused && 'can_remove_part: {
-                    // SAFETY: arena-owned `*mut [Stmt]` valid for parser 'a lifetime.
-                    for stmt in unsafe { &*part.stmts }.iter() {
+                    for stmt in part.stmts.iter() {
                         match &stmt.data {
                             js_ast::StmtData::SLocal(local) => {
                                 if local.is_export {
@@ -1428,8 +1427,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let mut stmts_count: usize = 0;
             for (i, part) in parts_.iter().enumerate() {
                 if part.tag == crate::PartTag::None {
-                    // SAFETY: arena-owned `*mut [Stmt]` valid for parser 'a lifetime.
-                    stmts_count += unsafe { &*part.stmts }.len();
+                    stmts_count += part.stmts.len();
                     first_none_part = i.min(first_none_part);
                 }
             }
@@ -1442,8 +1440,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                 for part in parts_.iter() {
                     if part.tag == crate::PartTag::None {
-                        // SAFETY: arena-owned `*mut [Stmt]` valid for parser 'a lifetime.
-                        let src = unsafe { &*part.stmts };
+                        let src = part.stmts.slice();
                         stmts_remain[..src.len()].copy_from_slice(src);
                         stmts_remain = &mut stmts_remain[src.len()..];
                     }
@@ -2603,7 +2600,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
 
                     // Zig held `[]TemplatePart` and mutated `part.value` in place;
-                    // `E::Template.parts` is `*mut [TemplatePart]` (arena-owned, mutable
+                    // `E::Template.parts` is `StoreSlice<TemplatePart>` (arena-owned, mutable
                     // provenance preserved end-to-end) so derive the unique view directly.
                     // SAFETY: arena-owned slice; single-threaded visit pass has exclusive
                     // access and no other borrow of this slice is live across the loop body.
@@ -7187,11 +7184,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // get a estimate on how many statements there are going to be
                 let mut count: usize = 0;
                 for part in head_parts.iter() {
-                    // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                    count += unsafe { &*part.stmts }.len();
+                    count += part.stmts.len();
                 }
-                // SAFETY: same for last_part.
-                count += unsafe { &*hmr_transform_ctx.last_part.stmts }.len();
+                count += hmr_transform_ctx.last_part.stmts.len();
                 count + 2
             });
 
@@ -7265,8 +7260,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     removed_import_equals = removed_import_equals || result.removed_import_equals;
 
                     part.stmts = crate::StoreSlice::new_mut(result.stmts);
-                    // SAFETY: just assigned from a live &mut [Stmt].
-                    if unsafe { &*part.stmts }.len() > 0 {
+                    if !part.stmts.is_empty() {
                         if self.module_scope().contains_direct_eval && part.declared_symbols.len() > 0 {
                             // If this file contains a direct call to "eval()", all parts that
                             // declare top-level symbols must be kept since the eval'd code may
@@ -7341,11 +7335,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s
             for part in parts.iter() {
-                // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                for stmt in unsafe { &*part.stmts }.iter() {
+                for stmt in part.stmts.iter() {
                     if let js_ast::StmtData::SExportClause(clause) = &stmt.data {
-                        // SAFETY: ExportClause.items is an arena-owned slice valid for 'a.
-                        for item in unsafe { &*clause.items }.iter() {
+                        for item in clause.items.iter() {
                             if let Some(import) = self.named_imports.get_ptr_mut(&item.name.ref_.expect("infallible: ref bound")) {
                                 import.is_exported = true;
                             }
@@ -7376,16 +7368,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             let mut total_stmts_count: usize = 0;
             for part in parts.iter() {
-                // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                total_stmts_count += unsafe { &*part.stmts }.len();
+                total_stmts_count += part.stmts.len();
             }
 
             let preserve_strict_mode = self.module_scope().strict_mode
                 == js_ast::StrictModeKind::ExplicitStrictMode
                 && !(parts.len() > 0
-                    // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                    && unsafe { &*parts[0].stmts }.len() > 0
-                    && matches!(unsafe { &*parts[0].stmts }[0].data, js_ast::StmtData::SDirective(_)));
+                    && parts[0].stmts.len() > 0
+                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
 
             total_stmts_count += usize::from(preserve_strict_mode);
 
@@ -7399,8 +7389,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 for part in parts.iter() {
-                    // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                    let src = unsafe { &*part.stmts };
+                    let src = part.stmts.slice();
                     remaining_stmts[..src.len()].copy_from_slice(src);
                     remaining_stmts = &mut remaining_stmts[src.len()..];
                 }

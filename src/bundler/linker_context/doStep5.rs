@@ -352,10 +352,10 @@ impl LinkerContext<'_> {
             ($value:expr) => {{
                 // SAFETY: `stmts_head < stmts_count` by construction (counts above).
                 let cell = unsafe { &mut (*stmts_slab)[stmts_head] };
-                cell.write($value);
+                // `MaybeUninit::write` returns `&mut T` to the now-initialized slot.
+                let written: &mut Stmt = cell.write($value);
                 stmts_head += 1;
-                // SAFETY: just initialized.
-                js_ast::StoreSlice::new_mut(unsafe { core::slice::from_raw_parts_mut(cell.as_mut_ptr(), 1) })
+                js_ast::StoreSlice::new_mut(core::slice::from_mut(written))
             }};
         }
         let loc = Loc::EMPTY;

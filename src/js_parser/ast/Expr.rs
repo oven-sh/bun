@@ -2244,7 +2244,7 @@ impl Data {
             }
             Data::EClass(el) => {
                 // `properties` is an arena-owned `StoreSlice<Property>` (Zig: `[]Property`).
-                let src_props: &[G::Property] = unsafe { &*el.properties };
+                let src_props: &[G::Property] = el.properties.slice();
                 let mut properties =
                     bun_alloc::ArenaVec::with_capacity_in(src_props.len(), bump);
                 for prop in src_props.iter() {

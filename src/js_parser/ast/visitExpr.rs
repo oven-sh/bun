@@ -2288,9 +2288,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         // PERF(port): was arena dupe — profile in Phase B
-        // SAFETY: `body.stmts` is an arena-owned slice (StmtNodeList = StoreSlice<Stmt>).
-        let body_slice: &[Stmt] = unsafe { &*e_.body.stmts };
-        let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(body_slice);
+        let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
 
         // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
         let args_mut: &mut [G::Arg] = unsafe { e_.args.slice_mut() };

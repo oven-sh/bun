@@ -531,8 +531,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // Track the decl slice separately so we can reference it after `decls` is moved into
-        // an arena-backed S::Local. SAFETY: arena outlives this fn; ptr stays valid.
-        let mut decls_ptr: *const [G::Decl] = &[][..];
+        // an arena-backed S::Local. The Vec's heap buffer stays put across the move; the
+        // arena outlives this fn, so the lifetime-erased view remains valid.
+        let mut decls_ptr: crate::StoreSlice<G::Decl> = crate::StoreSlice::EMPTY;
         let init_loc = p.lexer.loc();
         let mut is_var = false;
         match p.lexer.token {
@@ -542,7 +543,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.lexer.next()?;
                 let mut stmt_opts = ParseStatementOptions::default();
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
-                decls_ptr = std::ptr::from_ref(decls.slice());
+                decls_ptr = crate::StoreSlice::new(decls.slice());
                 init_ = Some(p.s(
                     S::Local {
                         kind: js_ast::s::Kind::KVar,
@@ -557,7 +558,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.lexer.next()?;
                 let mut stmt_opts = ParseStatementOptions::default();
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
-                decls_ptr = std::ptr::from_ref(decls.slice());
+                decls_ptr = crate::StoreSlice::new(decls.slice());
                 init_ = Some(p.s(
                     S::Local {
                         kind: js_ast::s::Kind::KConst,
@@ -612,7 +613,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            p.forbid_initializers(unsafe { &*decls_ptr }, "of", false)?;
+            p.forbid_initializers(decls_ptr.slice(), "of", false)?;
             p.lexer.next()?;
             let value = p.parse_expr(Level::Comma)?;
             p.lexer.expect(T::TCloseParen)?;
@@ -631,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Detect for-in loops
         if p.lexer.token == T::TIn {
-            p.forbid_initializers(unsafe { &*decls_ptr }, "in", is_var)?;
+            p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
             p.lexer.next()?;
             let value = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
@@ -652,7 +653,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             match &init_stmt.data {
                 js_ast::StmtData::SLocal(local) => {
                     if local.kind == js_ast::s::Kind::KConst {
-                        p.require_initializers(js_ast::s::Kind::KConst, unsafe { &*decls_ptr })?;
+                        p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
                     }
                 }
                 _ => {}

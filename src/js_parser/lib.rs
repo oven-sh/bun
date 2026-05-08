@@ -18,7 +18,7 @@
 
 use core::fmt;
 
-use bun_collections::{ArrayHashMap, VecExt, MultiArrayList, StringHashMap};
+use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
 pub use bun_collections::VecExt as _VecExtReexport;
 use bun_core::Output;
 use bun_logger as logger;

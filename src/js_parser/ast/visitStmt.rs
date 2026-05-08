@@ -1371,9 +1371,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                     } else if p.commonjs_replacement_stmts.len() > 0 {
                         // PORT NOTE: Zig directly swaps backing storage; commonjs_replacement_stmts
-                        // is `StmtNodeList = *mut [Stmt]` here, so copy then clear.
-                        // SAFETY: arena-owned slice valid for 'a.
-                        let repl: &[Stmt] = unsafe { &*p.commonjs_replacement_stmts };
+                        // is `StmtNodeList = StoreSlice<Stmt>` here, so copy then clear.
+                        let repl: &[Stmt] = p.commonjs_replacement_stmts.slice();
                         if stmts.is_empty() {
                             *stmts = bun_alloc::vec_from_iter_in(repl.iter().copied(), p.arena);
                         } else {

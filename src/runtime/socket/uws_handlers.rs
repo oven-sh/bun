@@ -487,9 +487,6 @@ where
     }
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
-            // Inherent `NewSocket::on_handshake` (socket_body.rs) takes the
-            // `bun_uws` mirror of the verify-error struct; convert from the
-            // `bun_uws_sys` C-ABI type the trampoline delivered.
             swallow(unsafe { ns.as_mut() }.on_handshake(wrap::<SSL>(s), ok as i32, err));
         }
     }

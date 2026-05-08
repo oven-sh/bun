@@ -21,8 +21,8 @@ pub struct SocketGroup {
     pub vtable: Option<&'static VTable>,
     /// Embedding owner — typed access via `owner<T>()`. `*mut c_void` only
     /// because the C ABI slot is heterogenous (Listener / uWS App / RareData /
-    /// null); prefer `owner::<T>()` over reading this directly.
-    pub ext: *mut c_void,
+    /// null); never read this field directly — go through `owner::<T>()`.
+    ext: *mut c_void,
     pub head_sockets: *mut us_socket_t,
     pub head_connecting_sockets: *mut ConnectingSocket,
     pub head_listen_sockets: *mut ListenSocket,

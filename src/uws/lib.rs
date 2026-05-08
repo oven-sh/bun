@@ -14,9 +14,10 @@ use bun_string::ZStr;
 // `bun_uws_sys` so this crate and `_sys` name the SAME `#[repr(C)]` types —
 // callers no longer shim-convert between two layout-identical structs.
 //
-// Safe wrappers that don't exist in `_sys` (`NewSocketHandler`/`SocketTCP`/
-// `SocketTLS`, `InternalSocket`, `AnySocket`, `ConnectError`, `CloseKind`,
-// owned `SocketAddress`) stay defined here.
+// Safe raw-pointer wrappers (`NewSocketHandler`/`SocketTCP`/`SocketTLS`,
+// `InternalSocket`, `AnySocket`, `ConnectError`, `CloseKind`, owned
+// `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
+// bearing variants of the same names that are not yet reconciled.
 //
 // `bun_runtime::*` items (dispatch, WindowsNamedPipe, UpgradedDuplex) are
 // upward refs into a higher tier and intentionally remain local stub modules.
@@ -745,6 +746,9 @@ pub mod ssl_wrapper {
             Ok(usize::try_from(written).expect("int cast"))
         }
 
+        /// Explicit teardown. Idempotent (`.take()`); also runs from `Drop` so
+        /// `Option<SSLWrapper>` owners (UpgradedDuplex / WindowsNamedPipe) free
+        /// the BoringSSL handles by setting the field to `None`.
         pub fn deinit(&mut self) {
             self.flags.set_closed_notified(true);
             if let Some(ssl) = self.ssl.take() {
@@ -1028,6 +1032,14 @@ pub mod ssl_wrapper {
                     self.handle_writing(&mut buffer);
                 }
             }
+        }
+    }
+
+    impl<T: Copy> Drop for SSLWrapper<T> {
+        fn drop(&mut self) {
+            // `deinit()` is idempotent (Option::take on both NonNull fields), so
+            // an explicit `deinit()` followed by drop is a no-op the second time.
+            self.deinit();
         }
     }
 

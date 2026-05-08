@@ -104,6 +104,7 @@ impl TextDecoder {
     // const max_16_ascii: Vector16 = @splat(@as(u16, 127));
     // PORT NOTE: SIMD vector constants are unused in this file's hot paths in current Zig.
 
+    #[inline(always)]
     fn process_code_unit_utf16(
         &mut self,
         output: &mut Vec<u16>,
@@ -138,6 +139,7 @@ impl TextDecoder {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn code_unit_from_bytes_utf16<const BIG_ENDIAN: bool>(first: u16, second: u16) -> u16 {
         if BIG_ENDIAN {
             (first << 8) | second

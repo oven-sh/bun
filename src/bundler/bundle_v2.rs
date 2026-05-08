@@ -4614,7 +4614,7 @@ impl<'a> BundleV2<'a> {
                         // resolution, which is not usually the case.
                         css_total_files.push(Index::init(u32::try_from(index).expect("int cast"))); // PERF(port): was assume_capacity
                         let mut log = Logger::Log::init();
-                        if self.linker.scan_css_imports(
+                        if LinkerContext::scan_css_imports(
                             u32::try_from(index).expect("int cast"),
                             import_records.slice(),
                             // PORT NOTE: `scan_css_imports` takes the column as a raw
@@ -4624,6 +4624,7 @@ impl<'a> BundleV2<'a> {
                             std::ptr::from_ref(css_asts),
                             sources,
                             loaders,
+                            &mut log,
                         ) == crate::linker_context_mod::ScanCssImportsResult::Errors {
                             // TODO: it could be possible for a plugin to change
                             // the type of loader from whatever it was into a

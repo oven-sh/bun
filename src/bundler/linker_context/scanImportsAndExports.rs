@@ -174,15 +174,13 @@ pub fn scan_imports_and_exports(
             // Is it CSS?
             if col_ref!(css_asts)[id].is_some() {
                 // Inline URLs for non-CSS files into the CSS file
-                // PORT NOTE: reshaped — `scan_css_imports` takes `&mut self`;
-                // pass column pointers instead of overlapping `&mut` slices.
-                let _ = this.scan_css_imports(
+                let _ = LinkerContext::scan_css_imports(
                     id as u32,
                     col_ref!(import_records_list)[id].slice(),
                     css_asts,
                     col_ref!(input_files),
                     col_ref!(loaders),
-                    // PORT NOTE: Zig passed `this.log`; `&mut self` already owns it.
+                    this.log,
                 );
 
                 // Validate cross-file "composes: ... from" named imports and

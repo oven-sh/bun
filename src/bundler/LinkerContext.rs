@@ -2575,18 +2575,16 @@ impl<'a> LinkerContext<'a> {
 
     /// Spec: `LinkerContext.zig:496 scanCSSImports`.
     ///
-    /// PORT NOTE: signature reshaped vs. the gated draft above — the un-gated
-    /// caller (`scanImportsAndExports.rs`) holds raw SoA column pointers and
-    /// passes the `css_asts` column as a raw `*const [CssCol]` (the
-    /// scanImportsAndExports caller holds raw SoA pointers). `log` is borrowed
-    /// through `&mut self` instead of as a separate parameter.
+    /// `log` is an explicit parameter (not `self.log`) because the dev-server
+    /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
+    /// initialized `self.log`, passing a stack-local `Log` instead.
     pub fn scan_css_imports(
-        &mut self,
         file_source_index: u32,
         file_import_records: &[ImportRecord],
         css_asts: *const [js_ast::ast::bundled_ast::CssCol],
         sources: &[Source],
         loaders: &[Loader],
+        log: &mut Log,
     ) -> ScanCssImportsResult {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
         // the duration of `scanImportsAndExports`; we only test `is_none()`.
@@ -2602,7 +2600,7 @@ impl<'a> LinkerContext<'a> {
                         Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Napi
                         | Loader::Sqlite | Loader::Json | Loader::Jsonc | Loader::Json5
                         | Loader::Yaml | Loader::Html | Loader::SqliteEmbedded | Loader::Md => {
-                            self.log.add_error_fmt(
+                            log.add_error_fmt(
                                 Some(source),
                                 record.range.loc,
                                 format_args!(
@@ -2617,7 +2615,7 @@ impl<'a> LinkerContext<'a> {
                 }
             }
         }
-        if self.log.errors > 0 { ScanCssImportsResult::Errors } else { ScanCssImportsResult::Ok }
+        if log.errors > 0 { ScanCssImportsResult::Errors } else { ScanCssImportsResult::Ok }
     }
 
     /// Spec: `LinkerContext.zig:2158 createWrapperForFile`.

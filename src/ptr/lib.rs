@@ -268,8 +268,17 @@ pub use detach_lifetime_ref as detach_ref;
 ///
 /// The returned borrows are valid for the input borrow `'a` only — the boxes
 /// are not moved or dropped while the view is live.
+///
+/// # Safety
+/// Relies on `Box<[T]>` and `&[T]` having identical fat-pointer **field
+/// order** (data-ptr then len). This is de-facto stable on every supported
+/// rustc but is not a language guarantee — the const block below proves only
+/// size/align. `unsafe` + `#[doc(hidden)]` so the layout assumption stays
+/// visible at each call site rather than inviting new callers; do not use
+/// outside the bundler SoA-column read-only fan-out it was written for.
+#[doc(hidden)]
 #[inline(always)]
-pub fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
+pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
     const {
         assert!(core::mem::size_of::<Box<[T]>>() == core::mem::size_of::<&[T]>());
         assert!(core::mem::align_of::<Box<[T]>>() == core::mem::align_of::<&[T]>());
@@ -279,12 +288,16 @@ pub fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
     // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
     let view: &[&[T]] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
     // Fat-pointer field order (ptr-then-len) is de-facto stable but not
-    // language-guaranteed; verify every element in debug so an ABI change
-    // would trip here rather than silently misbehaving downstream. (The const
-    // block above only proves size/align, not field order.)
+    // language-guaranteed; spot-check first+last in debug so an ABI flip
+    // would trip here rather than silently misbehaving downstream. (Checking
+    // every element is O(n) per call and the bundler passes thousands of
+    // entries inside per-chunk loops; first/last is sufficient to detect a
+    // field-order swap since it would affect every element uniformly.)
     #[cfg(debug_assertions)]
-    for (i, b) in s.iter().enumerate() {
-        debug_assert!(b.as_ptr() == view[i].as_ptr() && b.len() == view[i].len());
+    if let (Some(bf), Some(bl)) = (s.first(), s.last()) {
+        let (vf, vl) = (view[0], view[view.len() - 1]);
+        debug_assert!(bf.as_ptr() == vf.as_ptr() && bf.len() == vf.len());
+        debug_assert!(bl.as_ptr() == vl.as_ptr() && bl.len() == vl.len());
     }
     view
 }

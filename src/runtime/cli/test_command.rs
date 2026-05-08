@@ -2038,6 +2038,7 @@ impl TestCommand {
                     .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(&**b) })
                     .collect()
             };
+            #[cfg(windows)]
             let filter_names: &[&[u8]] = &filter_names_owned;
 
             // PORT NOTE: on Windows the Zig duped+mutated each filter to swap
@@ -2059,11 +2060,18 @@ impl TestCommand {
             #[cfg(windows)]
             let filter_names_normalized: Vec<&'static [u8]> = filter_names_normalized_storage
                 .iter()
+                // SAFETY: the rewritten bytes are NOT `'static` — they live in
+                // `filter_names_normalized_storage`, a local `Vec<Box<[u8]>>`
+                // in this frame. Sound only because this frame never returns
+                // (every exit path is `global_exit()`), so the storage Vec is
+                // never dropped while `scanner.filter_names` is observed.
                 .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
                 .collect();
             #[cfg(not(windows))]
             let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
-            // PORT NOTE: defer free on Windows handled by Drop of Vec<Box<[u8]>>.
+            // PORT NOTE: Zig's `defer free` on Windows maps to Drop of the
+            // `Vec<Box<[u8]>>` storage above — but Drop never actually runs
+            // here (frame never returns); the storage simply outlives use.
             // SAFETY: lifetime-erase the outer borrow; the view vec and (on
             // Windows) its backing storage live in this never-returning frame,
             // and the underlying bytes are either in `ctx` (process-lifetime)

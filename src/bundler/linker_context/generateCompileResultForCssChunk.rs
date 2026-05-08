@@ -155,9 +155,13 @@ fn generate_compile_result_for_css_chunk_impl(
         &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
     };
     let parse_graph = c.parse_graph();
-    let unique_keys: &[&[u8]] = bun_ptr::boxed_slices_as_borrowed(
-        parse_graph.input_files.items_unique_key_for_additional_file(),
-    );
+    // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
+    // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
+    let unique_keys: &[&[u8]] = unsafe {
+        bun_ptr::boxed_slices_as_borrowed(
+            parse_graph.input_files.items_unique_key_for_additional_file(),
+        )
+    };
 
     match &css_import.kind {
         CssImportOrderKind::Layers(_) => {

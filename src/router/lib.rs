@@ -1469,13 +1469,15 @@ impl<'a> Match<'a> {
     /// Caller guarantees every borrowed slice (and `*params`' element slices)
     /// outlives the returned value.
     #[inline]
+    #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn detach_lifetime(self) -> Match<'static> {
-        // Safe-signature local so edition-2024 `unsafe_op_in_unsafe_fn` doesn't
-        // fire on every call site (and so the `.map(|s| d(s))` closure body —
-        // which is not itself an unsafe context — compiles cleanly). The actual
-        // unsafe op stays scoped to the pointer-cast inside.
+        // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
+        // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
+        // so the direct call sites below need no per-line `unsafe { }`. The
+        // `.map` closure body is not an unsafe context, so that one site spells
+        // `unsafe { d(s) }` explicitly.
         #[inline(always)]
-        fn d(s: &[u8]) -> &'static [u8] {
+        unsafe fn d(s: &[u8]) -> &'static [u8] {
             // SAFETY: caller contract on `detach_lifetime` — every borrowed
             // slice outlives the returned `Match<'static>`.
             unsafe { &*core::ptr::from_ref::<[u8]>(s) }
@@ -1491,7 +1493,7 @@ impl<'a> Match<'a> {
             // Raw pointer; lifetime parameter on the pointee is phantom for the
             // pointer value itself.
             params: self.params.cast::<route_param::List<'static>>(),
-            redirect_path: self.redirect_path.map(|s| d(s)),
+            redirect_path: self.redirect_path.map(|s| unsafe { d(s) }),
             query_string: d(self.query_string),
         }
     }

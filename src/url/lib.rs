@@ -309,14 +309,15 @@ impl<'a> URL<'a> {
     /// outlives `'b`. The buffer must NOT be dropped, reallocated, or mutated
     /// for the lifetime of the returned value.
     #[inline(always)]
+    #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn erase_lifetime<'b>(self) -> URL<'b> {
         // Field-by-field reconstruction — every slice is `(ptr, len)`, so the
         // value is bitwise unchanged; only the borrow-checker tag widens.
-        // `d` is a safe-signature local so edition-2024 `unsafe_op_in_unsafe_fn`
-        // doesn't fire on every call site; the actual unsafe op stays scoped
-        // to the pointer-cast inside.
+        // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
+        // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
+        // so the dozen call sites below need no per-line `unsafe { }`.
         #[inline(always)]
-        fn d<'b>(s: &[u8]) -> &'b [u8] {
+        unsafe fn d<'b>(s: &[u8]) -> &'b [u8] {
             // SAFETY: caller contract on `erase_lifetime` — every slice the
             // returned `URL<'b>` references outlives `'b`.
             unsafe { &*core::ptr::from_ref::<[u8]>(s) }

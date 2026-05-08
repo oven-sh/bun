@@ -28,7 +28,7 @@ pub mod ffi {
     /// Opaque `struct env_md_st` (`typedef ... EVP_MD`).
     #[repr(C)]
     pub struct EVP_MD {
-        _p: [u8; 0],
+        _p: core::cell::UnsafeCell<[u8; 0]>,
         _m: PhantomData<(*mut u8, PhantomPinned)>,
     }
 

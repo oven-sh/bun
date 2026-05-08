@@ -724,7 +724,7 @@ pub mod api {
         /// this crate stays free of `JSValue` / `JSGlobalObject`.
         #[repr(C)]
         pub struct Plugin {
-            _p: [u8; 0],
+            _p: core::cell::UnsafeCell<[u8; 0]>,
             _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
         }
         unsafe extern "C" {
@@ -1597,7 +1597,7 @@ pub use crate::ungate_support::EventLoop;
 /// and has no usable size/layout in this crate.
 #[repr(C)]
 pub struct JSBundleCompletionTask {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 

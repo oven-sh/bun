@@ -207,7 +207,7 @@ pub mod ssl_wrapper {
         // ── opaque handles not yet in bun_boringssl_sys ────────────────
         macro_rules! opaque {
             ($($name:ident),+ $(,)?) => {$(
-                #[repr(C)] pub(super) struct $name { _p: [u8; 0], _m: PhantomData<(*mut u8, PhantomPinned)> }
+                #[repr(C)] pub(super) struct $name { _p: core::cell::UnsafeCell<[u8; 0]>, _m: PhantomData<(*mut u8, PhantomPinned)> }
             )+};
         }
         opaque!(BIO, BIO_METHOD, X509_STORE, X509_STORE_CTX);

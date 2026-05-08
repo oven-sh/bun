@@ -20,15 +20,19 @@ use super::ErrorCode;
 /// Opaque handle to the C++ `WebCore::WebSocket` object.
 #[repr(C)]
 pub struct CppWebSocket {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
 // Kept private to this module — the safe wrappers below are the only callers.
+//
+// `CppWebSocket` is an UnsafeCell-backed opaque ZST, so `&CppWebSocket` carries
+// no `readonly`/`noalias` — the C++ side owns and mutates all state behind it.
+// Imports whose only non-value param is that handle are declared `safe fn`.
 unsafe extern "C" {
     fn WebSocket__didConnect(
-        websocket_context: *const CppWebSocket,
+        websocket_context: &CppWebSocket,
         socket: *mut Socket,
         buffered_data: *mut u8,
         buffered_len: usize,
@@ -36,20 +40,20 @@ unsafe extern "C" {
         secure: *mut SslCtx,
     );
     fn WebSocket__didConnectWithTunnel(
-        websocket_context: *const CppWebSocket,
+        websocket_context: &CppWebSocket,
         tunnel: *mut c_void,
         buffered_data: *mut u8,
         buffered_len: usize,
         deflate_params: *const websocket_deflate::Params,
     );
-    fn WebSocket__didAbruptClose(websocket_context: *const CppWebSocket, reason: ErrorCode);
-    fn WebSocket__didClose(websocket_context: *const CppWebSocket, code: u16, reason: *const BunString);
-    fn WebSocket__didReceiveText(websocket_context: *const CppWebSocket, clone: bool, text: *const ZigString);
-    fn WebSocket__didReceiveBytes(websocket_context: *const CppWebSocket, bytes: *const u8, byte_len: usize, opcode: u8);
-    fn WebSocket__rejectUnauthorized(websocket_context: *const CppWebSocket) -> bool;
-    fn WebSocket__incrementPendingActivity(websocket_context: *const CppWebSocket);
-    fn WebSocket__decrementPendingActivity(websocket_context: *const CppWebSocket);
-    fn WebSocket__setProtocol(websocket_context: *const CppWebSocket, protocol: *mut BunString);
+    safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
+    fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
+    fn WebSocket__didReceiveText(websocket_context: &CppWebSocket, clone: bool, text: *const ZigString);
+    fn WebSocket__didReceiveBytes(websocket_context: &CppWebSocket, bytes: *const u8, byte_len: usize, opcode: u8);
+    safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__incrementPendingActivity(websocket_context: &CppWebSocket);
+    safe fn WebSocket__decrementPendingActivity(websocket_context: &CppWebSocket);
+    fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
 }
 
 // PORT NOTE: receivers are `&self` (not `&mut self`) because `CppWebSocket` is
@@ -63,8 +67,7 @@ impl CppWebSocket {
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        // SAFETY: self is a valid C++ WebCore::WebSocket; event loop is entered.
-        unsafe { WebSocket__didAbruptClose(self, reason) };
+        WebSocket__didAbruptClose(self, reason);
         event_loop.exit();
     }
 
@@ -103,8 +106,7 @@ impl CppWebSocket {
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        // SAFETY: self is a valid C++ WebCore::WebSocket.
-        let result = unsafe { WebSocket__rejectUnauthorized(self) };
+        let result = WebSocket__rejectUnauthorized(self);
         event_loop.exit();
         result
     }
@@ -164,14 +166,12 @@ impl CppWebSocket {
     // PORT NOTE: `ref` is a Rust keyword; using raw identifier to match Zig fn name.
     pub fn r#ref(&self) {
         bun_jsc::mark_binding!();
-        // SAFETY: self is a valid C++ WebCore::WebSocket.
-        unsafe { WebSocket__incrementPendingActivity(self) };
+        WebSocket__incrementPendingActivity(self);
     }
 
     pub fn unref(&self) {
         bun_jsc::mark_binding!();
-        // SAFETY: self is a valid C++ WebCore::WebSocket.
-        unsafe { WebSocket__decrementPendingActivity(self) };
+        WebSocket__decrementPendingActivity(self);
     }
 
     pub fn set_protocol(&self, protocol: &mut BunString) {

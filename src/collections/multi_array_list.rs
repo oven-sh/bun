@@ -732,11 +732,11 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         let mut k = 0;
         while k < Reflected::<T>::COUNT {
             result.ptrs[fields[k]] = p;
-            // `p` walks within the single allocation of
+            // SAFETY: `p` walks within the single allocation of
             // `capacity_in_bytes(self.capacity)` bytes (or is null when
-            // capacity == 0, in which case the offset is 0). Always
-            // in-bounds, so `wrapping_add` is exact.
-            p = p.wrapping_add(bytes[k] * self.capacity);
+            // capacity == 0, in which case bytes[k] * 0 == 0 and add(0) is OK).
+            // `add` keeps the `inbounds` GEP hint that `wrapping_add` drops.
+            p = unsafe { p.add(bytes[k] * self.capacity) };
             k += 1;
         }
         result
@@ -748,8 +748,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         if self.capacity == 0 {
             return ptr::null_mut();
         }
-        // Column offset within the single allocation; always in-bounds.
-        self.bytes.wrapping_add(Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * self.capacity)
+        // SAFETY: column offset within the single allocation; always in-bounds.
+        // `add` keeps the `inbounds` GEP hint that `wrapping_add` drops.
+        unsafe { self.bytes.add(Reflected::<T>::COLUMN_OFFSET_PER_CAP[fi] * self.capacity) }
     }
 
     /// Get the shared slice of values for field `NAME`.
@@ -1003,8 +1004,8 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
                     ptr::copy_nonoverlapping(self_slice.ptr(fields[k]), dst, new_len * size);
                 }
             }
-            // Within the fresh allocation; always in-bounds.
-            dst = dst.wrapping_add(size * new_len);
+            // SAFETY: within the fresh allocation; always in-bounds.
+            dst = unsafe { dst.add(size * new_len) };
         }
         // SAFETY: free old backing store before overwriting self.
         unsafe { self.free_allocated_bytes() };
@@ -1068,8 +1069,8 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
                     ptr::copy_nonoverlapping(self_slice.ptr(fields[k]), dst, self.len * size);
                 }
             }
-            // Within the fresh allocation; always in-bounds.
-            dst = dst.wrapping_add(size * new_capacity);
+            // SAFETY: within the fresh allocation; always in-bounds.
+            dst = unsafe { dst.add(size * new_capacity) };
         }
         // SAFETY: free old backing store before taking new one.
         unsafe { self.free_allocated_bytes() };

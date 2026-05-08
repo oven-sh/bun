@@ -1465,9 +1465,13 @@ fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
             return false;
         }
     }
-    // When !check_len, callers guarantee a.len() >= b.len() (mirrors Zig
-    // contract); the slice bound is provable to LLVM after the check_len arm.
-    &a[..b.len()] == b
+    debug_assert!(a.len() >= b.len());
+    // SAFETY: when `check_len`, the early-return above gives `a.len()==b.len()`.
+    // When `!check_len`, callers guarantee `a.len() >= b.len()` (mirrors the
+    // Zig `eqlComptimeCheckLenU8` contract). LLVM cannot prove the latter, so
+    // a checked slice would emit a real bounds check on this hot path
+    // (lexer keyword/prefix matching) — keep the unchecked index.
+    unsafe { a.get_unchecked(..b.len()) == b }
 }
 
 fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(

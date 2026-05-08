@@ -110,7 +110,7 @@ impl String {
         debug_assert!(matches!(self.tag, Tag::ZigString | Tag::StaticZigString));
         // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig` is the active
         // union field. `ZigString` is `Copy`/POD so reading it is always sound.
-        self.as_zig()
+        unsafe { &self.value.zig }
     }
 
     /// Borrow the live `WTF::StringImpl`. Every caller branches on
@@ -121,7 +121,7 @@ impl String {
         debug_assert_eq!(self.tag, Tag::WTFStringImpl);
         // SAFETY: `tag == WTFStringImpl` ⇒ `wtf` is the active union field and
         // a non-null, live `*mut WTFStringImplStruct` (refcount ≥ 1).
-        self.as_wtf()
+        unsafe { &*self.value.wtf }
     }
 
     /// `bun.String.init(anytype)` — polymorphic borrow constructor

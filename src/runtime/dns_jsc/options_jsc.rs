@@ -280,10 +280,4 @@ pub fn addr_info_to_js_array(addr_info: &libc::addrinfo, global: &JSGlobalObject
 #[allow(unused_imports)]
 use bun_dns::GetAddrInfo as _GetAddrInfo;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/dns_jsc/options_jsc.zig (209 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      bun_dns flattened (no get_addr_info submodule); ComptimeStringMap → phf::Map statics via ComptimeStringMapExt; JsError→FromJSError mapped locally (orphan-rule)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/dns_jsc/options_jsc.zig

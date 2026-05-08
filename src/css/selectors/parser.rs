@@ -4057,10 +4057,4 @@ pub fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/selectors/parser.zig (3664 lines)
-//   confidence: medium
-//   todos:      22
-//   notes:      Arena lifetimes deferred (Str/Vec/Box used); ComptimeStringMap/EnumMap → stack-lowercase + phf or linear case-insensitive matchers (phf needs custom hasher); SelectorParsingState → bitflags; closures replace Zig anon-struct callbacks (saw_nesting flag, no raw *mut); Impl::PseudoElement/NonTSPseudoClass coercions need From bounds in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/selectors/parser.zig

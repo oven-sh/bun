@@ -1127,9 +1127,4 @@ impl Drop for RareData {
 
 pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/rare_data.zig (955 lines)
-//   confidence: medium
-//   notes:      High-tier by-value state (mysql/postgresql/ssl_ctx_cache/editor_context) lives in bun_runtime::jsc_hooks::RuntimeState; cron_jobs/watchers/stdio stores are type-erased per §Dispatch; PathBuf::get dropped stack-fallback allocator (callers must handle overflow).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/rare_data.zig

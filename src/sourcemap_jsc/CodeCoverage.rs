@@ -899,16 +899,4 @@ pub struct Block {
     pub end_line: u32,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap_jsc/CodeCoverage.zig (741 lines)
-//   confidence: medium
-//   todos:      0 cfg-gates; 1 deref TODO (ParsedSourceMap intrusive refcount release)
-//   notes:      All four prior gates un-gated. text/lcov writers compile against
-//               bun_io::Write; const-generic ENABLE_COLORS routes through runtime
-//               `bun_core::output::pretty_fmt` (PERF(port) — revisit once proc-macro
-//               lands). DynamicBitSet iteration via `iterator::<true,true>()`.
-//               SavedSourceMap lookup wired to stub `bun_jsc::VirtualMachine::
-//               source_mappings().get()`. threadlocal map uses Box owned by
-//               thread-local (no leak).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap_jsc/CodeCoverage.zig

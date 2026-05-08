@@ -588,10 +588,4 @@ impl Closer {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/aio/windows_event_loop.zig (422 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      AbstractVM trait collapses comptime EventLoopHandle branches; FilePoll pool-backed (no Drop); OpaqueWrap thunk hand-rolled; @compileError fns stubbed as unreachable!.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/aio/windows_event_loop.zig

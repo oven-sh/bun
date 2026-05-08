@@ -38,10 +38,4 @@ pub fn generate<'a>(
     Some(&out[..outlen as usize])
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sha_hmac/hmac.zig (19 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      EVP.Algorithm crate path guessed (bun.jsc.API.Bun.Crypto deep path); bun.Output.panic mapped to bun_core::output::panic; BoringSSL FFI declared locally in sha::ffi until bun_boringssl_sys is generated
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sha_hmac/hmac.zig

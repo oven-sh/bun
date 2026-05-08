@@ -100,10 +100,4 @@ pub trait AddConst {
     type Output;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/meta.zig (100 lines)
-//   confidence: low
-//   todos:      6
-//   notes:      pure @typeInfo/@Type comptime reflection backing bun.ptr smart pointers; per crate map those become Box/Rc/Arc so this module is likely dead in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/meta.zig

@@ -805,11 +805,4 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/ConvertESMExportsForHmr.zig (548 lines)
-//   confidence: medium
-//   notes:      Zig `p: anytype` ported as concrete `P<'p, TS, J, SCAN>`; needs
-//               `ParserLike` trait once bundle_v2's AstBuilder lands. `@hasField`
-//               reflection collapsed to unconditional `symbol_uses.swap_remove`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/ConvertESMExportsForHmr.zig

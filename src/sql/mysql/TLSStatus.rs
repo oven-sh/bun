@@ -12,10 +12,4 @@ pub enum TLSStatus {
     SslOk,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/TLSStatus.zig (12 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      union(enum) with unit-only variants → plain Rust enum
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/TLSStatus.zig

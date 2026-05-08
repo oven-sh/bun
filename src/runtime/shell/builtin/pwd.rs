@@ -73,9 +73,4 @@ impl Pwd {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/pwd.zig (78 lines)
-//   confidence: high
-//   blocked_on: IOWriter::enqueue (async path)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/pwd.zig

@@ -135,10 +135,4 @@ impl<T, C> New<T, C> {
     // PERF(port): Zig used `@call(bun.callmod_inline, Callback, ...)` — profile in Phase B.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/AnyTaskWithExtraContext.zig (72 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      comptime @field(T, name) decl-lookup replaced with explicit fn-pointer params; New's comptime Callback moved to init() arg via fn-ptr transmute (wrap thunk folded in); from() ContextType=void mapped to () not c_void — audit call sites in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/AnyTaskWithExtraContext.zig

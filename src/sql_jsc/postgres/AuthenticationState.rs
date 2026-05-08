@@ -17,10 +17,4 @@ impl AuthenticationState {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/AuthenticationState.zig (19 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      union(enum) → Rust enum; zero() relies on Drop for SASL cleanup
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/AuthenticationState.zig

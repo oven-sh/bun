@@ -887,10 +887,4 @@ impl ExtractTarball {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/extract_tarball.zig (613 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      ThreadlocalBuffers reshaped to thread_local! closure; LIFETIMES.tsv said `&'a mut &'a str` for outdirname but used `&'a mut &'a [u8]` (bytes, not str). bun_sys::Dir/File are Copy w/ no Drop — all `defer .close()` ported as scopeguard or explicit close().
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/extract_tarball.zig

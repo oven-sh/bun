@@ -202,9 +202,4 @@ impl ImmediateObject {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/ImmediateObject.zig (106 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/ImmediateObject.zig

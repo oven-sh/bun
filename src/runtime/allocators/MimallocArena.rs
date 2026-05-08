@@ -423,10 +423,4 @@ static GLOBAL_MIMALLOC_VTABLE: AllocatorVTable = AllocatorVTable {
     free: vtable_free,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/MimallocArena.zig (291 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ZigAllocator/AllocatorVTable/Alignment are crate-local types Phase B must define; cfg(feature="ci_assert"/"asan") names need confirming; get_default() thread_local borrow escape is unsafe-but-sound.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/MimallocArena.zig

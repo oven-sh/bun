@@ -73,10 +73,4 @@ impl S3Stat {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/S3Stat.zig (62 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      .classes.ts payload; toJS/fromJS aliases dropped (JsClass derive wires them)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/S3Stat.zig

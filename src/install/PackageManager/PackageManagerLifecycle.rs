@@ -652,13 +652,4 @@ pub fn find_trusted_dependencies_from_update_requests(
     this.find_trusted_dependencies_from_update_requests()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/PackageManagerLifecycle.zig (393 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      `set_preinstall_state` / `determine_preinstall_state` drop the
-//               separate `lockfile` parameter (always `self.lockfile` in the
-//               Rust port) to satisfy borrowck; `sleep`/`tick` reshaped via
-//               raw context pointers for the same reason.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/PackageManagerLifecycle.zig

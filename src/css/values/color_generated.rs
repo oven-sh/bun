@@ -251,11 +251,4 @@ convert_via!(OKLCH => XYZd65 => HSL);
 convert_via!(OKLCH => XYZd65 => HWB);
 convert_via!(OKLCH => SRGB   => RGBA);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/color_generated.zig (946 lines)
-//   confidence: high
-//   notes:      163 transitive conversions ported as `impl From<Src> for Dst`
-//               via single-hop intermediate; 2 omitted (HSL→RGBA, HWB→RGBA)
-//               because handwritten impls in color.rs already cover them.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/color_generated.zig

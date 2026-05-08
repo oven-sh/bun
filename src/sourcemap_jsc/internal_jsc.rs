@@ -80,10 +80,4 @@ pub fn testing_find(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     TestingAPIs::find(global, frame)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap_jsc/internal_jsc.zig (59 lines)
-//   confidence: high
-//   todos:      0 (all bodies un-gated; host_fn proc-macro pending)
-//   notes:      Ordinal newtype confirmed; create_utf8_for_js via bun_jsc::bun_string_jsc
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap_jsc/internal_jsc.zig

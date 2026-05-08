@@ -15,10 +15,4 @@ impl PatchCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/patch_command.zig (17 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      `.patch` enum literal — exact Rust enum path needs Phase B confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/patch_command.zig

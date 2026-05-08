@@ -622,10 +622,4 @@ impl PartialEq for Percentage {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/percentage.zig (473 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      LIFETIMES.tsv→Box for calc field; css is arena crate so PERF(port) markers added. add_recursive Sum-arm ownership needs review (Zig aliased raw ptrs, Rust deep-clones). D-type comptime switches (f32 special-case, needs_deepclone) folded into trait bounds.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/percentage.zig

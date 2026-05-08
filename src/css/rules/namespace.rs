@@ -40,10 +40,4 @@ impl NamespaceRule {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/namespace.zig (38 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      inherent deep_clone real (field-walk port of css.implementDeepClone)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/namespace.zig

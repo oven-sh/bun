@@ -100,8 +100,4 @@ impl Binary {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Binary.zig (179 lines)
-//   confidence: high (NodeId conversion + And/Or dispatch wired)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Binary.zig

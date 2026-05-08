@@ -347,10 +347,4 @@ fn create_dlopen(global: &JSGlobalObject) -> JSValue {
     object
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/os/constants.zig (297 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      comptime @hasField/@hasDecl reflection over std.posix.{E,SIG,RTLD} and WinsockError ported as macro_rules! token-pasting; Phase B must supply bun_sys::posix::{errno,sig,rtld} and bun_sys::windows::ws2_32::winsock_error modules exposing per-name `fn NAME() -> Option<i32>` (cfg-gated). "2BIG" special-cased (invalid Rust ident).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/os/constants.zig

@@ -7870,10 +7870,4 @@ impl i52 {
     fn from_js(v: JSValue) -> i64 { (v.to_int64() << 12) >> 12 }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_fs.zig (7344 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Very large file. Full structure preserved. comptime ExpectedType dispatch lowered onto ReaddirEntry trait (incl. Windows is_u16 arm via append_entry_w). read_file_with_options uses RareData pipe_read_buffer + JSC create_buffer fast-path when self.vm is set. Const-generic dispatch (NodeFSFunctionEnum) wired via uv_dispatch{,_req}. Task types use `unsafe fn destroy(*mut Self)` (FFI-style). args::*::deinit kept as inherent fns pending PathLike: Drop (cross-file).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_fs.zig

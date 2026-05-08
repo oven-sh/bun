@@ -92,10 +92,4 @@ impl Default for RefCountedStr {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/RefCountedStr.zig (47 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      intrusive single-thread RC; init takes Box<[u8]> (ownership transfer), deref/deinit are unsafe *mut Self self-destroy
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/RefCountedStr.zig

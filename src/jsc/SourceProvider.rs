@@ -19,10 +19,4 @@ unsafe extern "C" {
     fn JSC__SourceProvider__deref(provider: *mut SourceProvider);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/SourceProvider.zig (8 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      opaque FFI handle; extern decl should move to jsc_sys in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/SourceProvider.zig

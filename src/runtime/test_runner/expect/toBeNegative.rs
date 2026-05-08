@@ -54,10 +54,4 @@ pub fn to_be_negative(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeNegative.zig (42 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      scopeguard wraps `this` for defer post_match; Formatter init/get_signature signatures may need adjustment in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeNegative.zig

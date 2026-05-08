@@ -37,10 +37,4 @@ pub fn load() {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/DebugSocketMonitorWriter.zig (23 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      module-level mutable file → OnceLock<File>; std.fs replaced with bun_sys::File
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/DebugSocketMonitorWriter.zig

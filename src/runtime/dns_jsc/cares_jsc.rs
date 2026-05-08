@@ -880,10 +880,4 @@ pub fn bun_canonicalize_ip(
     bun_string_jsc::create_utf8_for_js(global_this, slice)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/dns_jsc/cares_jsc.zig (612 lines)
-//   confidence: high
-//   todos:      3
-//   notes:      comptime lookup_name demoted to runtime &'static [u8]; @typeInfo struct_any_reply field loop expanded by hand — keep in lockstep with c_ares::struct_any_reply.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/dns_jsc/cares_jsc.zig

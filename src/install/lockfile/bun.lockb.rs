@@ -723,10 +723,4 @@ pub fn load(
     Ok(res)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/bun.lockb.zig (640 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      save() borrowck reshape (StreamType absorbs Writer — single &mut Vec<u8>); z_allocator zeroing semantics deferred; Buffers::write_array/save + Package::Serializer::save take one `&mut (PositionalStream + Write)`; Dependency::Context.allocator field dropped
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/bun.lockb.zig

@@ -961,13 +961,4 @@ impl SideEffects {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/SideEffects.zig (915 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `p: anytype` → concrete `P<'a, TS, J, SCAN>`; e_object/e_array
-//               reshaped to index loops for borrowck; simplify_unused_binary_comma_expr
-//               uses a local Vec until P.binary_expression_simplify_stack element type is
-//               reshaped to BinaryExpressionSimplifyVisitor (P.rs field is `()` placeholder).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/SideEffects.zig

@@ -97,8 +97,4 @@ impl Stmt {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Stmt.zig (171 lines)
-//   confidence: high (NodeId conversion + expr-dispatch wired)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Stmt.zig

@@ -48,10 +48,4 @@ pub use live_streams as LIVE_STREAMS;
 // Deleted per PORTING.md — *_jsc aliases are dropped; H3TestingAPIs lives in
 // bun_http_jsc and is accessed via the extension-trait pattern there.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/H3Client.zig (33 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export module; *_jsc TestingAPIs alias dropped per guide
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/H3Client.zig

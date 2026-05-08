@@ -179,10 +179,4 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     Ok(codecs::Decoded { rgba: out, width: h.width, height: h.height, icc_profile: None })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/codec_bmp.zig (154 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      u5 shift/width widened to u32 (bounded ≤8 by header validation); codecs::Error/Decoded shape assumed from sibling module
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/codec_bmp.zig

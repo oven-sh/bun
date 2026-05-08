@@ -1549,13 +1549,7 @@ pub mod uv_e {
     pub const NOEXEC: UvInt = -uv::UV_ENOEXEC;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/errno/windows_errno.zig (1180 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      anytype dispatch in getErrno/init split into typed overloads; uv_code_to_system_errno hand-expanded from comptime reflection; UV_* enum discriminants depend on uv:: consts being const i32
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/errno/windows_errno.zig
 
 // ──────────────────────────────────────────────────────────────────────────
 // `windows` — Win32Error / NTSTATUS / kernel32 surface moved DOWN from

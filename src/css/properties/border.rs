@@ -1615,12 +1615,6 @@ fn is_border_property(property_id: PropertyIdTag) -> bool {
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/border.zig (1486 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      Heavy comptime-string @field/@unionInit dispatch ported to macro_rules! (fc_prop!/flush_category!). FlushContext.self narrowed to &mut flushed_properties for borrowck. fc_push!/fc_fallbacks!/prop! derive the BorderProperty bitflag via try_from_property_id(PropertyIdTag::$p) so a single PascalCase ident keys both Property and the flag set. flush_unparsed `prop` arm preserves Zig behavior of NOT pushing to dest (likely upstream bug). macro_rules! ordering (impl_fallbacks!, flush_category!) flagged for Phase B hoist.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/border.zig
 
 } // mod border_handler_body

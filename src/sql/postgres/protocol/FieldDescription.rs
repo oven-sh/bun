@@ -78,15 +78,7 @@ impl FieldDescription {
 // Zig: `pub fn deinit` only deinits the owned `name_or_index` field.
 // In Rust, `ColumnIdentifier` impls `Drop`, so field-drop is implicit — no explicit `Drop` needed.
 
-// TODO(port): `pub const decode = DecoderWrap(FieldDescription, decodeInternal).decode;`
-// DecoderWrap is a comptime type-generator; in Rust this is likely a trait impl
-// (e.g. `impl Decode for FieldDescription`) provided by decoder_wrap. Phase B wires this.
+// Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
 pub use self::FieldDescription as _DecoderWrapTarget;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/FieldDescription.zig (69 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      decode_internal reshaped to return Self; DecoderWrap alias needs trait impl in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/FieldDescription.zig

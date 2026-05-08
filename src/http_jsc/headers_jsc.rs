@@ -106,10 +106,4 @@ pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     H3TestingAPIs::quic_live_counts(global, frame)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/headers_jsc.zig (45 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      MultiArrayList column accessor API + FetchHeaders ptr ownership need Phase B resolution; Zig .monotonic → Rust Relaxed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/headers_jsc.zig

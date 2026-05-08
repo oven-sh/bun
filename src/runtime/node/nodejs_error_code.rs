@@ -1113,10 +1113,4 @@ pub enum Code {
     ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/nodejs_error_code.zig (1109 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      pure enum; variant names kept SCREAMING_SNAKE_CASE so IntoStaticStr yields exact Node.js code strings (@tagName compat)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/nodejs_error_code.zig

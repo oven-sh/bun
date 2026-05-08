@@ -2664,10 +2664,4 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     Ok((u32::try_from(off).expect("int cast"), u32::try_from(end - off).expect("int cast")))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/bun.lock.zig (2298 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      MultiArrayList field accessors (.items(.field)), Expr accessors (e_object/e_array/as_string), ResolutionValue union access, and bun_io::Write trait shape are all assumed. Writer is dyn-dispatched (Zig anytype) — see PERF(port) at type alias.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/bun.lock.zig

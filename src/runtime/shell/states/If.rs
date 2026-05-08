@@ -198,8 +198,4 @@ enum Action {
     SpawnStmt(*const ast::Stmt),
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/If.zig (204 lines)
-//   confidence: high (NodeId conversion; control flow + ast wiring complete)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/If.zig

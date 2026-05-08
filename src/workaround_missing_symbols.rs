@@ -191,10 +191,4 @@ pub use freebsd as current;
 #[cfg(target_family = "wasm")]
 pub mod current {}
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/workaround_missing_symbols.zig (136 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      bun_sys::linux must expose raw-syscall fstatat/fstat/statx returning usize + AT_* consts; errno lvalue accessor needed; windows fstat sig matches Zig verbatim (looks like upstream copy-paste)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/workaround_missing_symbols.zig

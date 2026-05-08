@@ -262,10 +262,4 @@ impl PromisePair {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/valkey_jsc/ValkeyCommand.zig (170 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      Command<'a> is a borrow view (Zig deinit no-op) — no LIFETIMES.tsv entry, revisit; bun_io::Write/CountingWriter, LinearFifo, JSPromiseStrong, JsTerminated need Phase-B path fixes; inherent assoc type aliases (Entry::Queue) are unstable — may need free-standing type aliases.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/valkey_jsc/ValkeyCommand.zig

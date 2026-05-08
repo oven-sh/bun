@@ -100,10 +100,4 @@ impl DeferredTaskQueue {
 
 // Zig `deinit` only freed the map's backing storage; `ArrayHashMap: Drop` handles that.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/DeferredTaskQueue.zig (68 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      assumes ArrayHashMap exposes get_or_put_value/swap_remove_at/keys/values matching Zig API
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/DeferredTaskQueue.zig

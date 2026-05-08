@@ -1638,10 +1638,4 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
     Output::debug_warn("Unknown sink type");
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/Sink.zig (663 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      JSSink became macro_rules! (abi_name in link/export names); @hasDecl/@hasField → JsSinkType trait consts; start() @field(streams.Start, abi_name) reflection deferred; Sink.ptr kept as &'a mut () per LIFETIMES.tsv but pending() sentinel suggests NonNull<c_void> in Phase B; FromJsResult non-exhaustive enum → usize+consts (Rust enum would be UB on ptr values).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/Sink.zig

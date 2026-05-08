@@ -1121,10 +1121,4 @@ unsafe extern "C" {
     fn Bun__startMacro(function: *const c_void, global: *mut c_void);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser_jsc/Macro.zig (642 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Macro disabled-sentinel restructured to Option<NonNull>; CallData threadlocal trampoline reshaped to *mut c_void; comptime Tag reshaped to runtime arg; default_allocator → MacroContext-owned bump arena threaded as &Arena; protect/unprotect defer reshaped to RAII JsArgs guard.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser_jsc/Macro.zig

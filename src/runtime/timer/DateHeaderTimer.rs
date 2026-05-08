@@ -125,10 +125,4 @@ pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop)
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/DateHeaderTimer.zig (82 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      EventLoopTimer/Timespec type paths are best-guess; vm.timer aliasing in extern fn may need reshaping
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/DateHeaderTimer.zig

@@ -326,10 +326,4 @@ impl HashMapExt for HashMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolver/dir_info.zig (128 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      LIFETIMES.tsv had no rows; all *PackageJSON/*TSConfigJSON fields use Option<NonNull<T>> pending Phase B ownership analysis. BSSMap const-generic params and fs::EntriesOption variant names are guesses.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolver/dir_info.zig

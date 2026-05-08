@@ -1033,10 +1033,4 @@ fn print_enhanced_audit_report(
     Ok(0)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/audit_command.zig (837 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      Output::* fns assumed to take fmt::Arguments; ExprData enum variant names, MultiArrayList column accessors, StringHashMap get_or_put API, and bun_json::parse signature are all guesses; VulnerabilityInfo string fields boxed instead of borrowing JSON arena.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/audit_command.zig

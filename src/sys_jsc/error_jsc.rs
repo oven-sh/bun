@@ -106,10 +106,4 @@ pub mod TestingAPIs {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys_jsc/error_jsc.zig (54 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Windows arms remain unchecked on posix builds (cfg-gated).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys_jsc/error_jsc.zig

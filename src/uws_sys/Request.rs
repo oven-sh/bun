@@ -179,10 +179,4 @@ mod c {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/Request.zig (97 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      H3Request import path needs Phase B verification; returned &[u8] lifetimes tied to &self
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/Request.zig

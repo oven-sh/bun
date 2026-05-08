@@ -217,10 +217,4 @@ pub mod group {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/debug.zig (108 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      stdout writer API + std.zig.fmtString escaping need Phase B wiring; mutable globals → atomics; byte buffers via Vec<u8> + std::io::Write; @src() → #[track_caller]
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/debug.zig

@@ -177,10 +177,4 @@ pub fn to_have_returned_with(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveReturnedWith.zig (159 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      Expect::throw takes (signature, fmt::Arguments). Second Formatter instances used to satisfy borrowck for dual to_fmt / RefCell list_formatter usage. Output.prettyFmt color-dispatch collapsed; throw_pretty handles tags at runtime.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveReturnedWith.zig

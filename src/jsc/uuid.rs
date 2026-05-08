@@ -289,10 +289,4 @@ impl fmt::Display for UUID5 {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/uuid.zig (270 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      bun_core::csprng / bun_threading::Mutex / bun_sha::SHA1 crate paths assumed; logic is 1:1
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/uuid.zig

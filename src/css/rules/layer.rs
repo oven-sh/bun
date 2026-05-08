@@ -230,10 +230,4 @@ impl LayerStatementRule {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/layer.zig (210 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      'bump arena lifetime dropped to match lifetime-free CssRuleList hub (restored when crate-wide thread lands); LayerName::parse stays  alongside its only caller (rule_parsers); inherent deep_clone real (field-walk port of css.implementDeepClone)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/layer.zig

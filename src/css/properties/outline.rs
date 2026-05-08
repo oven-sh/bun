@@ -32,10 +32,4 @@ impl OutlineStyle {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/outline.zig (33 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      DeriveParse/DeriveToCss mapped to derive macros; eql/deepClone kept as thin wrappers over derived PartialEq/Clone for callsite compat
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/outline.zig

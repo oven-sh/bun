@@ -359,10 +359,4 @@ impl EntryList {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/Order.zig (186 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      arena field dropped per non-AST rule; ExecutionEntry clones now Box::into_raw via ptr::read (leak risk) — Phase B must restore arena or add cleanup. Intrusive list uses Option<*mut> to match bun_test::ExecutionEntry.{next,failure_skip_past}. std.Random mapped to concrete DefaultPrng; shuffle_with_index/uint_less_than are exact ports of std.Random.shuffleWithIndex/uintLessThan(u64) so --seed=N permutes identically to Zig.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/Order.zig

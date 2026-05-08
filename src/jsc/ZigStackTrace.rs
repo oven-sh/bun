@@ -175,10 +175,4 @@ impl<'a> SourceLineIterator<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ZigStackTrace.zig (150 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      to_api() per-line Box<[u8]> instead of shared buffer (api type owns its bytes).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ZigStackTrace.zig

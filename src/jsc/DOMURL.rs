@@ -89,10 +89,4 @@ impl DOMURL {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/DOMURL.zig (58 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      cast/cast_ return Option<&mut DOMURL> per type-map (GC-owned cell, lifetime is placeholder for Phase B); bun_str::String tag access may need accessor in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/DOMURL.zig

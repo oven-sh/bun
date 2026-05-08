@@ -23,10 +23,4 @@ pub const TABLES: &[config::Table] = &[
     },
 ];
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/unicode/uucode/uucode_config.zig (16 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      build-time-only config for vendored uucode codegen; Table field types & uucode_lib crate path TBD in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/unicode/uucode/uucode_config.zig

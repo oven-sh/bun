@@ -36,10 +36,4 @@ impl CounterStyleRule {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/counter_style.zig (31 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      struct un-gated; to_css/deep_clone gated on DeclarationBlock::to_css_block + DeepClone; DeclarationBlock<'static> until 'bump threaded
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/counter_style.zig

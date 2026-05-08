@@ -249,10 +249,4 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/channel.zig (172 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      const-generic enum BUFFER_TYPE + UnsafeCell interior mutability; Mutex/Condition guard API and LinearFifo crate path need Phase B verification; ChannelError pre-narrowed from Zig `!T` (verify against inferred set)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/channel.zig

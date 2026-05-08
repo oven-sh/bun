@@ -1673,9 +1673,4 @@ pub fn print_revision_and_exit() -> ! {
     Global::exit(0);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/cli/cli.zig
-//   confidence: medium (B-2 help-path un-gate)
-//   notes:      which()/HelpCommand/print_*_and_exit real; start()/init() gated on bun_jsc + sibling *_command modules; const-generic Tag demoted to runtime (ConstParamTy missing on options_types::CommandTag::Tag)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/cli/cli.zig

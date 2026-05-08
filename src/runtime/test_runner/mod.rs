@@ -450,10 +450,4 @@ cfg_jsc! {
     pub use snapshot::Snapshots;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/test_runner/ (12 files + 75 matchers + diff/harness/timers)
-//   confidence: high
-//   todos:      0
-//   notes:      extension-trait shims forward to bun_jsc inherents 1:1; no local FFI re-decls; diff/ is JSC-free and live
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/test_runner/

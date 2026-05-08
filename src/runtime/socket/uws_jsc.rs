@@ -213,10 +213,4 @@ pub extern "C" fn us_socket_buffered_js_write(
     result
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/uws_jsc.zig (116 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      defer reshaped to labeled block; ERR()/BlobOrStringOrBuffer API shapes guessed; int casts now checked per PORTING.md
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/uws_jsc.zig

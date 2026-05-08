@@ -1584,19 +1584,4 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/install_with_manager.zig (1204 lines)
-//   confidence: medium
-//   notes:      Output::pretty multi-arg fmt needs a real API; heavy borrowck
-//               reshaping around manager.lockfile aliases routes through raw
-//               ptrs (Zig *T semantics). `Printer` retyped against the stub
-//               `crate::Lockfile` / `PackageManagerOptionsStub` so
-//               `print_install_summary` and `write_yarn_lock` route through
-//               the file-backed tree/yarn printers without a stub→real
-//               conversion. Compile still depends on the
-//               lockfile::Lockfile / lockfile_real::Lockfile unification
-//               (reconciler-6) for Package::parse / Diff::generate /
-//               OverrideMap::clone — same pre-existing constraint as the
-//               needs_new_lockfile branch's root.parse() call.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/install_with_manager.zig

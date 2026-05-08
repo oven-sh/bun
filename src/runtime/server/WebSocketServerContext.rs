@@ -471,10 +471,4 @@ pub fn on_create(
     Ok(server)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/WebSocketServerContext.zig (280 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `&'a JSGlobalObject` fields per LIFETIMES.tsv force lifetime param + no Default; on_create reshaped to construct inline. ZigString phf lookup needs UTF-16 handling check.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/WebSocketServerContext.zig

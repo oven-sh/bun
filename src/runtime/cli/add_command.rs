@@ -12,10 +12,4 @@ impl AddCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/add_command.zig (11 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      `.add` enum literal mapped to Subcommand::Add — verify variant name in bun_install.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/add_command.zig

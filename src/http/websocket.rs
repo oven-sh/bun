@@ -166,10 +166,4 @@ impl WebsocketHeader {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/websocket.zig (91 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      packed struct(u16) → transparent u16 + shift accessors; Opcode enum(u4) → repr(u8); writer: anytype → &mut impl bun_io::Write
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/websocket.zig

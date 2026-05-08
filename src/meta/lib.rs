@@ -165,10 +165,4 @@ pub fn void_field_type_discard_helper<T>(_data: T) {
 // `@hasField` checks become exhaustive `match`/destructure. No runtime
 // helper is possible.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/meta/meta.zig (374 lines)
-//   confidence: medium
-//   todos:      16
-//   notes:      file is ~entirely @typeInfo/@hasDecl reflection; Rust callers must use trait bounds / derives instead — only type_name/type_base_name and ListContainerType survive as code
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/meta/meta.zig

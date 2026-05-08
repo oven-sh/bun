@@ -543,10 +543,4 @@ pub enum Multiplier {
     Comma,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/syntax.zig (524 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      SyntaxString/Component/Kind/Multiplier + ParsedComponent/Repeated + parse_value/to_css/deep_clone real. ParsedComponent::deep_clone hand-expands implementDeepClone (payload deep_clone signatures non-uniform). Phase-A uses 'static slice placeholders pending 'bump threading.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/syntax.zig

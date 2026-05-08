@@ -2672,10 +2672,4 @@ impl ReadResult {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/streams.zig (1661 lines)
-//   confidence: medium
-//   todos:      41
-//   notes:      Result/Writable pending fields use raw ptrs (self-referential lifetimes); HTTPServerWritable UwsResponse type-dispatch on const generics needs trait; JSSink type-generator needs codegen; many borrowck reshapes around readable_slice()+send(). NetworkSink.task: LIFETIMES.tsv says SHARED→Arc but Zig calls mutable methods through intrusive refcount — Phase B must pick Arc<+interior-mut> vs IntrusiveArc.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/streams.zig

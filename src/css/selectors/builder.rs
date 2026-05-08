@@ -216,10 +216,4 @@ pub fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
     (&s[0..midpoint], &s[midpoint..])
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/selectors/builder.zig (203 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      arena-threaded via &'bump Arena; SmallList API (append/insert/slice/set_len) assumed; component move-vs-copy needs Phase B decision
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/selectors/builder.zig

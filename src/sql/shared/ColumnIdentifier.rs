@@ -41,10 +41,4 @@ impl ColumnIdentifier {
 // `deinit` dropped: the only work was `name.deinit()`, which Rust handles via
 // `Data: Drop` when the `Name` variant is dropped.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/shared/ColumnIdentifier.zig (38 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Data variant constructors (Empty/Owned) and .to_owned() signature assumed; verify against ported Data.rs
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/shared/ColumnIdentifier.zig

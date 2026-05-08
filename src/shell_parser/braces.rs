@@ -1454,10 +1454,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell_parser/braces.zig (740 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      AST uses raw *mut slices + BACKREF (LIFETIMES.tsv); expand_nested is unsafe-heavy by design. ShellCharIter associated types (CodepointType/InputChar) need a trait in bun_shell. Borrowck reshaping snapshots prefix Vecs in expand_* loops.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell_parser/braces.zig

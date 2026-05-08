@@ -99,10 +99,4 @@ pub fn to_contain_all_values(
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainAllValues.zig (79 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer postMatch needs RAII guard — pattern recurs across all expect matchers
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainAllValues.zig

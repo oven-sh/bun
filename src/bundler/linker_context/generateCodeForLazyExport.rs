@@ -577,10 +577,4 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/generateCodeForLazyExport.zig (421 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Heavy borrowck reshaping (Visitor moved into loop; `parts` re-borrowed); arena arena threading deferred to Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/generateCodeForLazyExport.zig

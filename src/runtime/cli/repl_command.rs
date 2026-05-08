@@ -326,10 +326,4 @@ unsafe extern "C" {
 use bun_bundler::options::EnvBehavior;
 use bun_options_types::OfflineMode::OfflineMode;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/repl_command.zig (191 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      Arena/allocator threading into VirtualMachine (bun_alloc::Arena ≠ MimallocArena) and OpaqueWrap callback shim need Phase-B design; vm.arena ptr assigned post-move into ReplRunner to avoid dangling; FFI return type for Bun__REPL__setupGlobalRequire needs verification.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/repl_command.zig

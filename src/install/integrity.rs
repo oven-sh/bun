@@ -393,10 +393,4 @@ const _: () = {
     }
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/integrity.zig (319 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Tag is a #[repr(transparent)] u8 newtype (Zig enum was non-exhaustive); base64 no-pad + Crypto hasher API names need confirming in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/integrity.zig

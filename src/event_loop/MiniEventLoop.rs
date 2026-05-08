@@ -829,10 +829,4 @@ impl<'a> AbstractVM<'a> for &'a mut MiniEventLoop<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/MiniEventLoop.zig (413 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      enqueue_task* take offset_of! for the @field intrusive init (callers pass core::mem::offset_of!(C, field)); Blob.Store Arc-vs-intrusive-refcount mismatch; MiniVM holds &mut (deviates from LIFETIMES.tsv) so file_polls/alloc_file_poll can mutate
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/MiniEventLoop.zig

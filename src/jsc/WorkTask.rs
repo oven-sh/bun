@@ -152,11 +152,4 @@ fn js_event_loop_ctx() -> Async::EventLoopCtx {
     Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/WorkTask.zig (88 lines)
-//   confidence: high
-//   notes:      `ctx`/`global_this` are raw `*mut`/`*const` (cross-thread,
-//               BACKREF — LIFETIMES.tsv); `KeepAlive` takes the cycle-break
-//               `EventLoopCtx` rather than `*VirtualMachine` directly.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/WorkTask.zig

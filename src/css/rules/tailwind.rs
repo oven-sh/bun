@@ -85,10 +85,4 @@ impl TailwindStyleName {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/tailwind.zig (57 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      enum_property_util must map PascalCase variants to lowercase CSS keywords (base/components/utilities/variants)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/tailwind.zig

@@ -97,10 +97,4 @@ impl<'a> Tmpfile<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/tmp.zig (89 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ALLOW_TMPFILE=false dead branches still type-check in Rust; may need #[cfg] gating if O::TMPFILE/linkat_tmpfile absent. tmpfilename stored as raw *const ZStr pending lifetime decision.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/tmp.zig

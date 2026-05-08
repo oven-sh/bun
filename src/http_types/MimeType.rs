@@ -1758,10 +1758,4 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
     None
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_types/MimeType.zig (1635 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `Table` is a `&'static str` newtype stand-in (PERF(port) vs Zig packed-u14); `value` is Cow<'static,[u8]> — non-'static borrow path in init() copies (see maybe_dupe TODO); `by_loader` gated on same-tier `bun_options_types::Loader`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_types/MimeType.zig

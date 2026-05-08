@@ -121,10 +121,4 @@ impl Default for PostgresErrorOptions<'_> {
 // re-exports are deleted: in Rust those live as extension-trait methods in
 // the `bun_sql_jsc` crate and the base crate has no mention of jsc.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/AnyPostgresError.zig (62 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      PostgresErrorOptions slice fields use &'static placeholder; Phase B should add <'a> lifetime (borrows wire buffer)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/AnyPostgresError.zig

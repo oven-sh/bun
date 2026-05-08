@@ -69,10 +69,4 @@ impl<'a> QueryBindingIterator<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/shared/QueryBindingIterator.zig (64 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      lifetime <'a> threaded through both variants; ObjectIterator filled explicitly (no Default — global_object is a borrow).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/shared/QueryBindingIterator.zig

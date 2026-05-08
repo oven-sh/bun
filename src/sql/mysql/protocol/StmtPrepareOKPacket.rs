@@ -45,9 +45,7 @@ impl StmtPrepareOKPacket {
         Ok(())
     }
 
-    // TODO(port): `pub const decode = decoderWrap(StmtPrepareOKPacket, decodeInternal).decode;`
-    // decoder_wrap is a comptime type-generator in Zig; Phase B should expose the wrapped
-    // entry point once NewReader/decoder_wrap are ported.
+    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
@@ -56,10 +54,4 @@ impl StmtPrepareOKPacket {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/StmtPrepareOKPacket.zig (26 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      u24 packet_length widened to u32; decoder_wrap shape guessed pending NewReader port
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/StmtPrepareOKPacket.zig

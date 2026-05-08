@@ -2057,10 +2057,4 @@ impl Import {
 
 pub use G::Class;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/E.zig (1470 lines)
-//   confidence: medium
-//   todos:      25
-//   notes:      AST string fields use `&'static [u8]` placeholder for arena slices (SAFETY-annotated transmutes; see Str alias); Expr::Data variant accessors (e_string/e_object/as_*) and StoreRef API assumed; Zig `pub var` constants ported as `pub const`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/E.zig

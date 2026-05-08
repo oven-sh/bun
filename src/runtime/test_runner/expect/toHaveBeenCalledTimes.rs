@@ -82,10 +82,4 @@ pub fn to_have_been_called_times(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveBeenCalledTimes.zig (49 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Expect.throw fmt-args shape TBD
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveBeenCalledTimes.zig

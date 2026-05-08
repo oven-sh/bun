@@ -54,10 +54,4 @@ pub fn to_be_integer(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeInteger.zig (35 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Formatter init/path may need fixing
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeInteger.zig

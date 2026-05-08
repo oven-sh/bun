@@ -708,13 +708,4 @@ impl TrustCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/pm_trusted_command.zig (464 lines)
-//   confidence: medium
-//   notes:      AbsPath::save() reshaped to len()/set_length() (ResetScope
-//               exclusively borrows the path); load_lockfile borrowck handled
-//               via `pm_raw: *mut PackageManager` (singleton pattern, matches
-//               package_manager_command.rs); Progress scripts_node stored as
-//               raw backref into stack local (matches Zig).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/pm_trusted_command.zig

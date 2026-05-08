@@ -317,10 +317,4 @@ impl Default for StepPosition {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/easing.zig (271 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      ComptimeEnumMap case-insensitive lookup needs phf custom hasher; DeriveToCss replaced with strum-based impl; eql/deepClone → derive(PartialEq, Clone)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/easing.zig

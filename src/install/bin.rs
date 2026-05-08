@@ -1758,10 +1758,4 @@ impl<'a> Linker<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/bin.zig (1162 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      heavy buffer-pointer arithmetic reshaped to offsets; create_symlink defer hoisted to chmod_on_ok at each return; sys dir-iter / makePath / deleteTree placeholders
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/bin.zig

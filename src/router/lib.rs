@@ -2522,10 +2522,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/router/router.zig (1918 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      Routes/RouteLoader self-reference Box<Route> via raw *const Route into list columns; Route PathString fields are DirnameStore-interned — `arena_slice()` re-widens to &'static at the SoA copy points; AbsPath is uniformly PathString (Windows interns the posix-normalized path into DirnameStore instead of a Box<[u8]> dup); RouteConfig moved down here, bun_bundler::options re-exports it; TinyPtr is repr(transparent) u32 with shift accessors (Zig packed struct(u32))
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/router/router.zig

@@ -384,10 +384,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/parseJSXElement.zig (319 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      const-generic mixin over NewParser_; `defer i += 1` inlined at arm exits; arena-backed lists → std Vec → Vec::move_from_list (Phase B: route through bump arena); JSXTag::parse un-gated in parser.rs.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/parseJSXElement.zig

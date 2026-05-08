@@ -42,10 +42,4 @@ pub fn html_string_to_js(this: HTMLString, global: &JSGlobalObject) -> JsResult<
     str.to_js(global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/lolhtml_jsc.zig (10 lines)
-//               + src/lolhtml_sys/lol_html.zig:HTMLString.toString
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/lolhtml_jsc.zig

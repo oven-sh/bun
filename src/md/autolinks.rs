@@ -372,10 +372,4 @@ fn post_process_autolink_end(content: &[u8], beg: usize, end_in: usize) -> usize
     end
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/autolinks.zig (300 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      EmphDelim import path assumes crate::parser::EmphDelim; verify field types (pos/count/open_count/close_count) are usize-compatible in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/autolinks.zig

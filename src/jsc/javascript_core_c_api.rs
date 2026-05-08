@@ -281,10 +281,4 @@ unsafe extern "C" {
     pub fn JSObjectGetProxyTarget(object: JSObjectRef) -> JSObjectRef;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/javascript_core_c_api.zig (147 lines)
-//   confidence: high
-//   todos:      6
-//   notes:      Legacy JSC C-API FFI shims; non-exhaustive Zig enums mapped to #[repr(u32)] (safe: input-only here). Phase B may fold into jsc_sys.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/javascript_core_c_api.zig

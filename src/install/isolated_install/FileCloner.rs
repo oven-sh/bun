@@ -57,9 +57,4 @@ impl FileCloner<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/isolated_install/FileCloner.zig (47 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/isolated_install/FileCloner.zig

@@ -2994,10 +2994,4 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
     None
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolver/package_json.zig (2186 lines)
-//   confidence: medium
-//   todos:      41
-//   notes:      Heavy use of threadlocal PathBuffer slices and source-buffer-borrowed strings; Resolution.path / ReverseResolution.subpath are owned Box<[u8]> copies (PERF(port): Phase B should thread real lifetimes once EntryData::String is &'a [u8]). ESModule mutates module_type/debug_logs through &self (Zig *const) — needs Cell/&mut reshape. MultiArrayList column accessors stubbed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolver/package_json.zig

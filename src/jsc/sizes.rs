@@ -9,10 +9,4 @@ pub const BUN_FFI_POINTER_OFFSET_TO_ARGUMENTS_LIST: usize = 6;
 pub const BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_VECTOR: usize = 16;
 pub const BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_LENGTH: usize = 24;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/sizes.zig (8 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Zig comptime_int constants mapped to usize; names SCREAMING_SNAKE_CASE per Rust convention.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/sizes.zig

@@ -320,10 +320,4 @@ pub fn populate_manifest_cache(
 #[allow(unused_imports)]
 use Options::LogLevel;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/PopulateManifestCache.zig (163 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      heavy borrowck overlap (manager ↔ lockfile slices, sleep_until self-borrow) handled via raw provenance root; NetworkTask in-place init reshaped per runTasks pattern; RunTasksCallbacks void-impl as ManifestsOnlyCallbacks
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/PopulateManifestCache.zig

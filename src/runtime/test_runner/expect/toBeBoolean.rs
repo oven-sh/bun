@@ -47,10 +47,4 @@ pub fn to_be_boolean(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeBoolean.zig (35 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match aliases &mut self under scopeguard; get_signature assumed const fn → &'static str
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeBoolean.zig

@@ -1,9 +1,4 @@
 // This is close to WHATWG URL, but we don't want the validation errors
-//
-// ══════════════════════════════════════════════════════════════════════════
-// B-2 UN-GATED — Phase-A draft merged into the live surface and made to compile.
-// See PORT STATUS at bottom for remaining TODOs.
-// ══════════════════════════════════════════════════════════════════════════
 #![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
 
@@ -1596,13 +1591,4 @@ impl<'a> Scanner<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/url/url.zig (1085 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      URL<'a> borrows href (view struct); QueryStringMap.slice is
-//               self-referential raw ptr; ParamList is Vec<Param> pending
-//               MultiArrayElement derive; bun_io::Write locally stubbed;
-//               from_string body re-gated (Box::leak forbidden).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/url/url.zig

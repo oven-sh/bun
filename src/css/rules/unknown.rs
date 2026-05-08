@@ -56,10 +56,4 @@ impl UnknownAtRule {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/unknown.zig (52 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `name` field laundered as &'static [u8] until crate-wide 'bump thread; inherent deep_clone real (field-walk port of css.implementDeepClone)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/unknown.zig

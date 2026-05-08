@@ -1300,10 +1300,4 @@ pub fn generate_entry_point_tail_js<'a>(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/postProcessJSChunk.zig (1125 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      MultiArrayList .items(.field) → .items_<field>() accessors; worker.arena pass-throughs need &'bump Bump threading in Phase B; AST node constructor shapes (Stmt::alloc/Expr::init/S::*/E::*) and CompileResult variant layout need Phase-B verification.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/postProcessJSChunk.zig

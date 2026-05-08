@@ -1777,12 +1777,4 @@ pub mod closer {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/io/io.zig (741 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      static-mut singleton + heavy cfg branching; tick_epoll &mut self aliasing
-//               resolved by passing watcher_fd by value; Flags const-generic dropped to
-//               runtime arg.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/io/io.zig

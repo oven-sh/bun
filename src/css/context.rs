@@ -343,10 +343,4 @@ impl<'a> PropertyHandlerContext<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/context.zig (307 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      arena field dropped (Vec-backed); @field comptime params reshaped to runtime args; unused_symbols type from LIFETIMES.tsv may need reconciling with bun_collections; MediaFeature/Value variant shapes guessed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/context.zig

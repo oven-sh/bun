@@ -46,10 +46,4 @@ impl<T: Copy> Errorable<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/Errorable.zig (43 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      extern union requires T: Copy; Result<T> shadows core::result::Result by design
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/Errorable.zig

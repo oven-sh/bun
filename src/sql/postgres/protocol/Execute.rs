@@ -36,10 +36,7 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig: `pub const write = WriteWrap(@This(), writeInternal).write;`
-    // TODO(port): WriteWrap is a comptime type-generator wrapping write_internal; in Rust this
-    // should be a trait (e.g. `impl WriteWrap for Execute`) whose default `write` calls
-    // `write_internal`. Stubbed as a direct delegate until WriteWrap.rs lands.
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -48,10 +45,4 @@ impl<'a> Execute<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/Execute.zig (26 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      WriteWrap comptime-generator mapped to trait/helper call; NewWriter<Context> signature may need &mut vs by-value adjustment in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/Execute.zig

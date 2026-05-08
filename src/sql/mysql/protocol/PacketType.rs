@@ -20,10 +20,4 @@ impl PacketType {
     pub const AUTH_SWITCH: u8 = 0xfe;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/PacketType.zig (14 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      non-exhaustive enum(u8) ported as #[repr(transparent)] struct + consts; AUTH_SWITCH kept as raw u8 const (aliases EOF=0xfe)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/PacketType.zig

@@ -901,10 +901,4 @@ fn scope_mode_str(m: SelfMode) -> &'static str {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/ScopeFunctions.zig (497 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      .classes.ts payload; allocator params dropped (non-AST); group_log modeled as RAII guard; SelfMode/SelfConcurrent/TestReporterKind/jest::* cross-refs need Phase B wiring; .each args use MarkedArgumentBuffer (new/as_slice/len pending in bun_jsc)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/ScopeFunctions.zig

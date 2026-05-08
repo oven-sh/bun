@@ -148,10 +148,4 @@ pub extern "C" fn Bun__Secrets__scheduleJob(
 // Zig `fixDeadCodeElimination` + `comptime { _ = ... }` dropped:
 // #[unsafe(no_mangle)] already prevents DCE of Bun__Secrets__scheduleJob in Rust.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSSecrets.zig (86 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      intrusive WorkPoolTask via offset_of!; AnyTask shape hand-filled; KeepAlive ref/unref deferred until EventLoopCtx vtable for JSC VM is wired
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSSecrets.zig

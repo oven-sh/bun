@@ -10,10 +10,4 @@ pub enum TLSStatus {
     SslOk,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/TLSStatus.zig (11 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      union(enum) → Rust enum; unit variants + one u8 payload
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/TLSStatus.zig

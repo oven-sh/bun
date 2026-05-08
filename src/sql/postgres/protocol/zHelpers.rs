@@ -10,10 +10,4 @@ pub fn z_field_count(prefix: &[u8], slice: &[u8]) -> usize {
     z_count(prefix)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/zHelpers.zig (11 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      pure helper fns; no cross-crate deps
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/zHelpers.zig

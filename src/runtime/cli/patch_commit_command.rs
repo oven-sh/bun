@@ -11,10 +11,4 @@ impl PatchCommitCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/patch_commit_command.zig (11 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      enum literal `.@"patch-commit"` mapped to Subcommand::PatchCommit — verify enum name/path in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/patch_commit_command.zig

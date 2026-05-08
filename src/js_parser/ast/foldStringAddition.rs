@@ -335,12 +335,4 @@ pub fn fold_string_addition(
 #[allow(unused_imports)]
 use js_ast as _;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/foldStringAddition.zig (233 lines)
-//   confidence: medium
-//   notes:      Rope `push`/`clone_rope_nodes` inlined locally pending E.rs
-//               round-C un-gate. `Template.parts` is `*mut [TemplatePart]`
-//               (arena-owned, mutable provenance) — element writes use
-//               `parts_mut()`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/foldStringAddition.zig

@@ -344,12 +344,4 @@ impl SinkHandler for ArrayBufferSink {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/ArrayBufferSink.zig (186 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      allocator field dropped (global mimalloc); `next` field uses
-//               `Sink<'static>` to mirror Zig's raw `*anyopaque`; `to_js`
-//               returns `JsResult<JSValue>` (Zig path was lazily-uncompiled).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/ArrayBufferSink.zig

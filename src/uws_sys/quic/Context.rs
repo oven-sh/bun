@@ -170,10 +170,4 @@ impl Context {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/quic/Context.zig (56 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      r#loop used to avoid keyword clash; Loop is passed/returned as *mut Loop at the wrapper layer because it freely aliases (Zig `*uws.Loop`, Context.zig:6,9); ConnectResult payloads are raw *mut per LIFETIMES.tsv (FFI class)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/quic/Context.zig

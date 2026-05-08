@@ -685,14 +685,4 @@ pub fn is_border_image_property(property_id: PropertyIdTag) -> bool {
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/border_image.zig (637 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Module fully un-gated. DeriveParse/DeriveToCss for
-//               BorderImageSideWidth hand-expanded; SmallList by-value drain
-//               replaced with slice()+deep_clone until IntoIterator lands;
-//               IsCompatible bridged for LengthOrNumber here (move to
-//               values/length.rs in Phase B).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/border_image.zig

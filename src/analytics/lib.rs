@@ -632,10 +632,4 @@ pub use generate_header as GenerateHeader;
 pub mod schema;
 pub use schema::{BufReader, Reader, SchemaInt, Writer};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/analytics/analytics.zig (380 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      Zig @typeInfo decl-reflection replaced by define_features! macro (uses nightly macro_metavar_expr for bit indices); @export of feature counters done via #[export_name] on the canonical statics; Linux cfgs include Android (Environment.isLinux is kernel-based); OnceLock-guarded globals mirror Zig's undefined+std.once pattern.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/analytics/analytics.zig

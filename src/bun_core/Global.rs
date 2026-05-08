@@ -672,10 +672,4 @@ pub extern "C" fn Bun__onExit() {
     Output::source::stdio::restore();
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_core/Global.zig (243 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      const-string version block leans on const_format + env consts; bun_jsc call in Bun__onExit is a crate-cycle hazard; RacyCell + !Sync export need Phase B attention
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_core/Global.zig

@@ -766,14 +766,4 @@ fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     unsafe { G::DeclList::from_bump_slice(slice) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/repl_transforms.zig (510 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Generic-P mixin lowered to direct `impl P<'a, TS, J, SCAN>`. Zig nested type
-//               paths (`S.Local.Kind`, `Decl.List`, `G.Property.List`) mapped to free aliases
-//               (`S::Kind`, `G::DeclList`, `G::PropertyList`). All `*mut [T]` arena slices
-//               accessed via `unsafe { &* }` per Phase-A raw-pointer convention; `&'static [u8]`
-//               assignments to `E::Dot.name` / `E::String.data` lean on the Phase-A `Str` lie.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/repl_transforms.zig

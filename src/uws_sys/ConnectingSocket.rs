@@ -108,10 +108,4 @@ unsafe extern "C" {
     pub fn us_connecting_socket_get_loop(s: *mut ConnectingSocket) -> *mut Loop;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/ConnectingSocket.zig (80 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      SocketGroup/SocketKind/Loop assumed in crate root; r#loop used for `loop` keyword
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/ConnectingSocket.zig

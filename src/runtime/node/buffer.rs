@@ -181,10 +181,4 @@ impl BufferVectorized {
 }
 } // mod _impl
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/buffer.zig (90 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      doubling-fill loop reshaped to offset-tracked copy_within for borrowck; encoder fn paths need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/buffer.zig

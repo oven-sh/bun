@@ -153,10 +153,4 @@ impl Yield {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/Yield.zig (172 lines)
-//   confidence: high
-//   notes:      `&mut State` → NodeId; pipeline_stack stores ids (no aliased
-//               &mut); labelled-switch lowered to loop+match.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/Yield.zig

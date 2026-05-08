@@ -521,14 +521,4 @@ pub fn put_timers_fns(global: &JSGlobalObject, jest: JSValue, vi: JSValue) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/timers/FakeTimers.zig (375 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      CURRENT_TIME reshaped (RwLock+AtomicU64) from `pub var` static; vm.timer
-//               resolved via `jsc_hooks::runtime_state()` (b2-cycle); ElTimespec ↔
-//               bun_core::Timespec bridged by struct copy until B-2 unifies them;
-//               bindgen_generated/FakeTimersConfig + set_fake_timer_marker stubbed
-//               (blocked_on bun_jsc surface).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/timers/FakeTimers.zig

@@ -610,10 +610,4 @@ impl SavedSourceMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/SavedSourceMap.zig (370 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      Heavy raw-ptr + manual lock/unlock interleave; TaggedPtrUnion tag API assumed; mutable statics need sync review; HashTable needs identity hasher + lockPointers shim.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/SavedSourceMap.zig

@@ -24,10 +24,4 @@ impl Encoding {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_types/Encoding.zig (22 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      plain enum + two predicate methods; no FFI/repr constraints in source
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_types/Encoding.zig

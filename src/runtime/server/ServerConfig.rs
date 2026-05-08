@@ -1578,13 +1578,4 @@ pub struct UserRouteBuilder {
     pub callback: Strong, // jsc.Strong.Optional
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/ServerConfig.zig (1127 lines)
-//   confidence: medium-high
-//   todos:      8
-//   notes:      apply_static_route handler shims need real trait;
-//               convert_file_system_router_type bridges two FileSystemRouterType
-//               structs via bake_body::arena_erase until bake_body threads a
-//               real `'bump` (tracked there).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/ServerConfig.zig

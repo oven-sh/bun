@@ -46,15 +46,7 @@ impl SASLInitialResponse {
         Ok(())
     }
 
-    // TODO(port): `pub const write = WriteWrap(@This(), writeInternal).write;`
-    // WriteWrap is a comptime type-generator that wraps write_internal — Phase B
-    // should wire this via the WriteWrap trait/macro once its Rust shape lands.
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/SASLInitialResponse.zig (35 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      WriteWrap re-export pattern deferred
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/SASLInitialResponse.zig

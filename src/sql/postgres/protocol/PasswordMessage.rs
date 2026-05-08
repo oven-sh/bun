@@ -45,10 +45,4 @@ impl PasswordMessage {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/PasswordMessage.zig (30 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      WriteWrap/NewWriter generic shape + Int32 to_bytes() name need confirming in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/PasswordMessage.zig

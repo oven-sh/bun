@@ -1843,10 +1843,4 @@ impl Request {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/Request.zig (1115 lines)
-//   confidence: medium
-//   todos:      25
-//   notes:      headers is Option<HeadersRef> (RAII over C++-refcounted FetchHeaders, NOT Rc/Arc); Box<BodyValue> needs interior mutability — Zig mutates #body.value in place; construct_into defer-cleanup reshaped to macro+closure (verify error paths); Flags kept unpacked for field-access parity.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/Request.zig

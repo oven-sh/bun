@@ -612,14 +612,4 @@ pub mod internal_bindings {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/Timer.zig (703 lines)
-//   confidence: medium
-//   notes:      JS-facing surface only; struct/heap/state-machine live in
-//               mod.rs. `vm.timer` resolved via jsc_hooks::runtime_state()
-//               (b2-cycle — bun_jsc::VirtualMachine.timer is `()`).
-//               TimeoutObject/ImmediateObject::init + ::from_js and
-//               DateHeaderTimer::enable ported against the canonical
-//               `mod.rs` types via crate::jsc::generated::{JSTimeout,JSImmediate}.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/Timer.zig

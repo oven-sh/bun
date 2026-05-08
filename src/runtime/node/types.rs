@@ -1722,10 +1722,4 @@ impl PathOrBlob {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/types.zig (1251 lines)
-//   confidence: medium
-//   todos:      21
-//   notes:      deinit → impl Drop; phf maps need case-insensitive/custom-eql lookup; sliceZWithForceCopy return-type mutability collapsed; Dirent.Kind remapped from std.fs to bun_sys::FileKind
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/types.zig

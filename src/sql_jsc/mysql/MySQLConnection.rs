@@ -1655,37 +1655,4 @@ pub type PreparedStatementsMapGetOrPutResult<'a> =
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/MySQLConnection.zig (1180 lines)
-//   confidence: medium
-//   gating:     none — do_handshake / upgrade_to_tls / cleanup now ported.
-//               handle_handshake / handle_auth / handle_command /
-//               handle_prepared_statement / handle_result_set /
-//               handle_result_set_ok / check_if_prepared_statement_is_done /
-//               send_handshake_response / send_auth_switch_response /
-//               handle_handshake_decode_public_key depend on
-//               bun_sql::mysql::protocol decode/write surfaces (Decode trait,
-//               writeWrap, PacketType repr, Capabilities field-style accessors,
-//               Auth::caching_sha2_password::Status,
-//               OKPacket/HandshakeResponse41 Default).
-//   un-gated:   struct + Default + init / can_pipeline / can_prepare_query /
-//               can_execute_query / is_able_to_write / is_processing_data /
-//               has_backpressure / reset_backpressure / can_flush / is_idle /
-//               enqueue_request / flush_queue / advance / flush_data / close /
-//               clean_queue_and_close / cleanup / set_socket / is_active /
-//               is_connected / read_and_process_data / process_packets dispatch /
-//               set_status / writer / buffered_reader / get_js_connection /
-//               Writer + WriterContext / Reader + ReaderContext / AnySocket
-//               dispatch helpers.
-//   notes:      ConnectionFlags is bitflags (Zig packed struct of bools —
-//               accessors rewritten to .contains()/.set()/.insert()/.remove());
-//               Reader/Writer hold *mut MySQLConnection (Copy) so the
-//               ReaderContext/WriterContext: Copy bounds are satisfied; queue
-//               advance/on_* calls route through raw `*mut JSMySQLConnection`
-//               (Zig @fieldParentPtr) to dodge stacked-borrow aliasing; Zig
-//               `defer` reshaped to explicit tail calls (no scopeguard capture
-//               of &mut self). database/user/password/options should be ranges
-//               into options_buf (currently 5 Box<[u8]> — revert init() params
-//               to &[u8] in Phase B).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/MySQLConnection.zig

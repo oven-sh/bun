@@ -1390,10 +1390,4 @@ fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
 use crate::resolution::Tag as ResolutionTag;
 use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/TarballStream.zig (940 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      intrusive thread-pool task; on_chunk/schedule_drain/drain/step/open_archive/finish/take_pending take `*mut Self` (Zig freely-aliasing `*T`) to avoid cross-thread/re-entrant/cross-call `&mut` aliasing and so libarchive client_data provenance roots at the Box allocation; extract_task/package_manager are raw ptrs.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/TarballStream.zig

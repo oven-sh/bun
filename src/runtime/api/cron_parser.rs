@@ -439,10 +439,4 @@ macro_rules! impl_bit_int {
 }
 impl_bit_int!(u8, u16, u32, u64);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/cron_parser.zig (298 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      u7→u8 throughout; phf CI lookup hand-rolled; GregorianDateTime field types/methods unverified in bun_jsc
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/cron_parser.zig

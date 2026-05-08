@@ -1279,10 +1279,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/parseSuffix.zig (957 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Const-generic mixin lowered to direct `impl P` (J: JsxT); @field/@tagName dispatch expanded to explicit match arms; Zig stack-local-aliasing workaround dropped (mutate `left` directly); helper names sfx_-prefixed to avoid colliding with parseStmt.rs / parsePrefix.rs t_* mixins on the same `impl P`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/parseSuffix.zig

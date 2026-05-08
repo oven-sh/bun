@@ -648,10 +648,4 @@ pub extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     unsafe { (*tunnel).set_connected_web_socket(ws) };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/websocket_client/WebSocketProxyTunnel.zig (371 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      const-generic SSL bool → variant dispatch in init() uses transmute_copy (identity at monomorphization); SslConfig/SslWrapper import paths need verification; callbacks never touch `wrapper` field bytes — `ssl` is snapshotted into a disjoint field and SNI is hoisted into start() (see module-level Aliasing model)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/websocket_client/WebSocketProxyTunnel.zig

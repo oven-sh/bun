@@ -150,10 +150,4 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     .unwrap_or_else(|e| global_object.take_error(e))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/protocol/error_response_jsc.zig (132 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      bun_string::String borrowed (not Copy) in match arms; field_message_payload reused from notice_response_jsc.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/protocol/error_response_jsc.zig

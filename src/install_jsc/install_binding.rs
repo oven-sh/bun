@@ -129,10 +129,4 @@ pub mod bun_install_js_bindings {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_jsc/install_binding.zig (72 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      std.json.fmt(Lockfile) → lockfile::WriteStream + json_stringify; bun_vm() raw-ptr deref scoped per access; Resolver→PackageManager downcast routed through VirtualMachine::package_manager()
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_jsc/install_binding.zig

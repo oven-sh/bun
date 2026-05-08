@@ -100,10 +100,4 @@ pub fn to_match_inline_snapshot(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toMatchInlineSnapshot.zig (64 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      defer post_match reshaped via scopeguard::guard wrapping &mut this; get_signature assumed const fn -> &'static str
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toMatchInlineSnapshot.zig

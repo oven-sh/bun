@@ -2935,10 +2935,4 @@ impl PackageManager {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/PackageManagerEnqueue.zig (2026 lines)
-//   confidence: medium
-//   todos:      15
-//   notes:      comptime SuccessFn/FailFn demoted to runtime fn ptrs (identity-compared); Task pool slots kept as raw *mut with in-place init; defer successFn → scopeguard (never disarmed); Closure<'a> per LIFETIMES.tsv; heavy borrowck reshaping expected in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/PackageManagerEnqueue.zig

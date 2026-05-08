@@ -245,10 +245,4 @@ impl fmt::Display for SystemError {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/SystemError.zig (127 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      #[repr(C)] FFI struct; deref/ref kept explicit (not Drop); pretty_fmt! macro needed in Phase B; field-default partial-init lost.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/SystemError.zig

@@ -252,10 +252,4 @@ impl fmt::Display for Capabilities {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/Capabilities.zig (212 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      comptime field iteration unrolled by hand; kept bool-struct (not bitflags) to preserve field access sites & Display output
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/Capabilities.zig

@@ -239,9 +239,4 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
     core::str::from_utf8(bytes).ok().and_then(|s| s.parse::<f32>().ok())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/seq.zig (148 lines)
-//   confidence: medium (NodeId style; full output buffered)
-//   blocked_on: IOWriter::enqueue body, f32 formatting parity
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/seq.zig

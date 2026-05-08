@@ -278,10 +278,4 @@ impl Parser<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/containers.zig (192 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      reshaped &mut self borrows (container field capture, raw bytes ptr in process_all_blocks); BlockType variant names (Ul/Ol/Li/Quote/P/H/Hr/Code/Html/Table) and Container field types (ch: u8, task_mark_off index width) assumed — verify against types.rs in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/containers.zig

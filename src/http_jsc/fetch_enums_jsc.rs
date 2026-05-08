@@ -37,10 +37,4 @@ pub fn fetch_cache_mode_to_js(this: FetchCacheMode, global: &JSGlobalObject) -> 
     unsafe { Bun__FetchCacheMode__toJS(this as u8, global.as_mut_ptr()) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/fetch_enums_jsc.zig (21 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      FromJsEnum impls live in bun_jsc (orphan rule); only to_js bridges here
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/fetch_enums_jsc.zig

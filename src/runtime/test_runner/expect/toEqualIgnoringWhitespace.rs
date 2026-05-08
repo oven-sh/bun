@@ -133,10 +133,4 @@ pub fn to_equal_ignoring_whitespace(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toEqualIgnoringWhitespace.zig (91 lines)
-//   confidence: medium-high
-//   todos:      2
-//   notes:      scopeguard reshape for postMatch defer; Formatter/to_fmt and Expect::throw signatures assumed; whitespace check matches Zig std.ascii.isWhitespace (includes VT)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toEqualIgnoringWhitespace.zig

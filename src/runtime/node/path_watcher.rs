@@ -1437,9 +1437,4 @@ impl WindowsStub {
     fn remove_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) {}
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/path_watcher.zig (958 lines)
-//   confidence: medium
-//   notes:      ZBox for owned [:0]u8; sys::linux raw inotify; std::thread for daemon
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/path_watcher.zig

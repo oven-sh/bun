@@ -1108,10 +1108,4 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/watcher/Watcher.zig (808 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      Mutex needs RAII guard; Box ownership across thread (init/shutdown/thread_main) needs Arc or raw-ptr protocol; ChangedFilePath now Option<&'static ZStr> (borrowed from platform buffer)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/watcher/Watcher.zig

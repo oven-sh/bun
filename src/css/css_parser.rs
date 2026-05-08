@@ -6727,10 +6727,4 @@ pub fn f32_length_with_5_digits(n_input: f32) -> usize {
     count
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/css_parser.zig (7329 lines)
-//   confidence: low
-//   todos:      65
-//   notes:      heavy comptime reflection (DeriveParse/DeriveToCss/DefineShorthand) → trait stubs + #[derive] proc-macros; Token/Tokenizer slice payloads need <'a> threading; Parser sub-borrows alias ParserInput (raw-ptr or split-borrow in Phase B); ParserOptions.logger mutated through &self; pluck_imports mutates through &const; arena-fed ArrayLists demoted to heap Vec — PERF(port) markers added, Phase B threads &'bump Bump
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/css_parser.zig

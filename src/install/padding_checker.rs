@@ -196,10 +196,4 @@ pub mod layout_asserts {
     pin!(crate::npm::NpmPackage,         size = 120, align = 8);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/padding_checker.zig (108 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Zig comptime @typeInfo walk → trait + proc-macro derive; fn is now a bounded marker, derive does the offset_of!/size_of gap checks (sketched in comments).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/padding_checker.zig

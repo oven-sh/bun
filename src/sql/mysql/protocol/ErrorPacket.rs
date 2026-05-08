@@ -71,9 +71,7 @@ impl ErrorPacket {
     }
 }
 
-// TODO(port): `decoderWrap(ErrorPacket, decodeInternal).decode` is a comptime
-// fn-to-type wrapper. Approximated here as a thin delegating fn; revisit once
-// `decoder_wrap` is ported in new_reader.rs.
+// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
 pub fn decode<Context: ReaderContext>(
     this: &mut ErrorPacket,
     reader: NewReader<Context>,
@@ -83,10 +81,4 @@ pub fn decode<Context: ReaderContext>(
 
 // `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/ErrorPacket.zig (50 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      decoderWrap shape guessed; MySQLErrorOptions.code lifetime needs verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/ErrorPacket.zig

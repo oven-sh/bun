@@ -202,10 +202,4 @@ impl Time {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/time.zig (215 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      op/op_to reshaped from bit-packed switch to tuple match; unused arena params dropped; into_calc threads &'bump Arena per AST-crate rule.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/time.zig

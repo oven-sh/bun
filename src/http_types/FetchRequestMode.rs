@@ -20,10 +20,4 @@ impl FetchRequestMode {
     //   (see PORTING.md §Idiom map, *_jsc alias rule).
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_types/FetchRequestMode.zig (17 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      enum(u2)→repr(u8); ComptimeStringMap→phf; toJS alias dropped (lives in bun_http_jsc ext trait)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_types/FetchRequestMode.zig

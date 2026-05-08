@@ -158,10 +158,4 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
     Ok(Tag::numeric)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/types/tag_jsc.zig (155 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      to_js_with_type's anytype-per-arm dispatch ported as TagToJs trait (no impls yet — no callers in tree); ERR(...).throw() lowered to throw_value(ERR_INVALID_ARG_TYPE(..)); Tag consts are lowercase in the Rust port.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/types/tag_jsc.zig

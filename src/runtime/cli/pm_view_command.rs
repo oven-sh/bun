@@ -526,10 +526,4 @@ pub fn view(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/pm_view_command.zig (410 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      JSON Expr converted to bun_js_parser::Expr immediately so the full accessor surface (get_object/get_array/get_string_cloned/set/get_path_may_be_index) is available.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/pm_view_command.zig

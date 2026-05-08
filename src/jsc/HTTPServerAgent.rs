@@ -266,10 +266,4 @@ pub type RouteId = i32;
 pub type HotReloadId = i32;
 pub type HTTPMethod = bun_http::Method;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/HTTPServerAgent.zig (179 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      `inline else` over server.userRoutes() variants flattened to single iter; AnyServer/ServerConfig event bodies deferred to bun_runtime tier; only setEnabled is C++-called
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/HTTPServerAgent.zig

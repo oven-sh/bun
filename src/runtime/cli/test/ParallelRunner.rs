@@ -16,10 +16,4 @@ pub use super::parallel::runner::run_as_worker;
 pub use super::parallel::runner::worker_emit_test_done;
 pub use super::parallel::worker::Worker;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/ParallelRunner.zig (19 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export facade; module path `super::parallel` may need adjustment in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/ParallelRunner.zig

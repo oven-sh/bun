@@ -510,15 +510,4 @@ fn put_entries_from_pnpm_lockfile(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/CatalogMap.zig (471 lines)
-//   confidence: high
-//   notes:      ArrayHashMap *_context calls routed via *_adapted (ArrayHashAdapter
-//               impl added on bun_semver::string::ArrayHashContext); allocator
-//               params dropped per global-mimalloc rule; `*Lockfile` params
-//               narrowed to the disjoint field actually read so callers can
-//               hold `&mut lockfile.catalogs` simultaneously; `Expr` resolved
-//               to the lower-tier `bun_logger::js_ast::Expr` (install JSON
-//               shape) to avoid a `bun_js_parser` dep cycle.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/CatalogMap.zig

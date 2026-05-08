@@ -231,10 +231,4 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
     s
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/uws_dispatch.zig (142 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      TABLES uses LazyLock (Zig was comptime .rodata); VTable/NewSocket import paths need Phase-B confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/uws_dispatch.zig

@@ -1397,12 +1397,4 @@ fn string_hash(s: &[u8]) -> u64 {
     Semver::semver_string::Builder::string_hash(s)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/migration.zig (1137 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      defer-at-loop-exit reshaped to finalize_pkg! macro + index cursors;
-//               MultiArrayList multi-column &mut and string_buf/this aliasing handled
-//               via raw ptrs (Phase-B borrowck audit pending).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/migration.zig

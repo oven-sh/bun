@@ -3781,10 +3781,4 @@ pub enum StmtListWhich {
     AllStmts,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/LinkerContext.zig (2782 lines)
-//   confidence: low
-//   todos:      17
-//   notes:      Heavy borrowck reshaping around recursive tree-shaking & MultiArrayList column slices; raw *mut backrefs (parse_graph/resolver) per LIFETIMES.tsv; many container_of! patterns for BundleV2.linker; arena threading (arena vs global) needs Phase B audit; MatchImport.alias is arena-owned raw `*const [u8]`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/LinkerContext.zig

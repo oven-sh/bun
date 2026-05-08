@@ -8325,10 +8325,4 @@ pub fn false_value_expr() -> js_ast::ExprData {
     js_ast::ExprData::EBoolean(E::Boolean { value: false })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/P.zig (6966 lines)
-//   confidence: low
-//   todos:      31
-//   notes:      Massive comptime type-generator (NewParser_). Const-generic struct + single 'a lifetime for log/define/source/bump. Conditional field types (ImportRecordList/NamedImportsType when scan_only) modeled as enums since Rust const generics cannot select types. Heavy raw *mut Scope per LIFETIMES.tsv ARENA classification. ExpressionTransposer/Binding.ToExpr/generate_import_stmt anytype params need Phase B trait wiring. lower_class metadata emission condensed into helper — diff carefully. Many `.data` payload mutations use raw ptrs pending js_ast::ExprData finalization.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/P.zig

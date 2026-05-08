@@ -874,10 +874,4 @@ pub mod c {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/App.zig (466 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      comptime per-handler extern "C" shims (RouteHandler/listen wrappers) deferred to Phase B macro; Response/WebSocket/ListenSocket nested types hoisted to module level; destroy() is unsafe *mut Self per FFI-destroy rule; uws_app_listen_config_t has new(port) not Default (Zig requires port)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/App.zig

@@ -4983,10 +4983,4 @@ bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 // SetFilePointerEx referenced via the `pub use` at the top of this module.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/windows/windows.zig (4108 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      Win32Error is a non-exhaustive enum(u16) → newtype(u16) + assoc consts; many std.os.windows.* refs mapped to bun_windows_sys (Phase B must wire that crate); winSockErrorToZigError uses bun_core::Error::intern for tag-based errors; INPUT_RECORD/KEY_EVENT_RECORD inner unions hoisted to named #[repr(C)] union types; SetFilePointerEx imported from externs.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/windows/windows.zig

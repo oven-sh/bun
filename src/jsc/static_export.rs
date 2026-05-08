@@ -43,10 +43,4 @@ impl<T, P> StaticExport<T, P> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/static_export.zig (15 lines)
-//   confidence: low
-//   todos:      2
-//   notes:      comptime-only export metadata; Phase B should replace with #[no_mangle] + proc-macro and delete this type
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/static_export.zig

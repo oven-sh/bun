@@ -529,10 +529,4 @@ impl fmt::Display for MinifyErrorKind {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/error.zig (417 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      []const u8 fields → *const [u8] (arena-owned, CSS crate); Phase B may thread <'bump>. logger::Msg/Data/Location field shapes guessed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/error.zig

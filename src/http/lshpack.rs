@@ -229,10 +229,4 @@ unsafe extern "C" {
     ) -> usize;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/lshpack.zig (75 lines)
-//   confidence: high
-//   todos:      3
-//   notes:      DecodeResult slices borrow FFI thread_local storage (faked as 'static); init() returns raw *mut — Phase B should wrap in Drop newtype.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/lshpack.zig

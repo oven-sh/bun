@@ -81,10 +81,4 @@ pub enum DOMExceptionCode {
     CryptoOperationFailedError,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSErrorCode.zig (72 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      JSErrorCode is non-exhaustive `enum(u8){_}` → transparent u8 newtype + consts; DOMExceptionCode is exhaustive #[repr(u8)] enum.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSErrorCode.zig

@@ -3000,10 +3000,4 @@ pub fn fix_dead_code_elimination() {
 
 } // end mod draft
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/crash_handler/crash_handler.zig (2263 lines)
-//   confidence: low
-//   todos:      35
-//   notes:      Heavy std.debug/std.posix/std.process coupling — needs bun_debug shim crate (StackTrace, SelfInfo, return_address) and bun_sys::posix signal API. Output::pretty_fmt_args, append_pre_crash_handler trampoline, and spawn_symbolizer need real impls in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/crash_handler/crash_handler.zig

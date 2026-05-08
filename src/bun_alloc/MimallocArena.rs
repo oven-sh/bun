@@ -726,13 +726,4 @@ impl<'a, T> ArenaVecExt<'a, T> for Vec<T, &'a MimallocArena> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/MimallocArena.zig (292 lines)
-//   confidence: high
-//   notes:      `Borrowed`/`Default` scaffolding dropped — Rust's
-//               `&MimallocArena` borrow + `Send` bound covers ownership;
-//               `ThreadLock` is mirrored as the debug-only `owning_thread`
-//               field guarding alloc/realloc; `getThreadLocalDefault` lives
-//               in `basic.rs` as `C_ALLOCATOR`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/MimallocArena.zig

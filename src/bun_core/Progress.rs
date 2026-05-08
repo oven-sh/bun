@@ -762,10 +762,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_core/Progress.zig (467 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      bun_sys::File API (stderr/tty/ansi/write_fmt), bun_threading::Mutex raw lock/unlock, Windows kernel32 bindings, {Bi:.2} bytes formatter, and global stderr mutex all need Phase-B wiring; Node.name uses 'static placeholder for caller-borrowed slices.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_core/Progress.zig

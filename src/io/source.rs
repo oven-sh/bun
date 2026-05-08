@@ -466,10 +466,4 @@ pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> 
     0
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/io/source.zig (375 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Box<Tty> vs static stdin_tty is unsound as-written; Phase B should make Source::Tty hold *mut Tty (destroy gated by is_stdin_tty) or ManuallyDrop. Pipe/File close via libuv callbacks — Box::into_raw/from_raw at handoff points.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/io/source.zig

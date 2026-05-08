@@ -1214,10 +1214,4 @@ fn has_runnable_extension(name: &[u8]) -> bool {
     loader.can_be_run_by_bun()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/multi_run.zig (845 lines)
-//   confidence: medium
-//   todos:      28
-//   notes:      Heavy raw-ptr backrefs (State<->ProcessHandle<->PipeReader); spawn/Output/signal crate paths guessed; ScriptConfig command/shell_bin need NUL-terminated owned type; borrowck reshaping in process_exit/flush_pipe_buffer.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/multi_run.zig

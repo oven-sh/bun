@@ -790,10 +790,4 @@ fn find_entity_in_text(content: &[u8], start: usize) -> Option<usize> {
     helpers::find_entity(content, start)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/html_renderer.zig (714 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Added <'src> lifetime for borrowed src_text/saved_img_title; VTable fn-pointer signatures and SpanDetail<'src> need reconciling with crate::types in Phase B; decode_entity_to_utf8 borrow of buf vs &mut self may need reshaping.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/html_renderer.zig

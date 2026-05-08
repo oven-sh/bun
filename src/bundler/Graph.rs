@@ -201,10 +201,4 @@ impl Graph {
 // the same type that `LinkerContext::mark_file_live_for_tree_shaking` expects.
 pub use bun_resolver::SideEffects;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/Graph.zig (140 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `pool` is arena-owned (self.heap) per LIFETIMES.tsv:170 transitive evidence — self-referential, kept as NonNull; nested Zig types `Index.Int` / `ServerComponentBoundary.List` mapped to module paths Phase B must verify.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/Graph.zig

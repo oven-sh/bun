@@ -1415,12 +1415,4 @@ fn is_hex_digit(cp: CodePoint) -> bool {
         || (cp >= 'A' as CodePoint && cp <= 'F' as CodePoint)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/lexer.zig (subset, is_json=true arms only)
-//   confidence: medium
-//   todos:      1
-//   notes:      CYCLEBREAK inline — JSON-only token loop; const-generic opts
-//               flattened to runtime JSONOptions; SIMD fast-paths and full
-//               Unicode ID tables intentionally omitted.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/lexer.zig

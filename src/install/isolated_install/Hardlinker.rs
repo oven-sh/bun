@@ -304,10 +304,4 @@ impl Hardlinker {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/isolated_install/Hardlinker.zig (210 lines)
-//   confidence: high
-//   notes:      save()/restore() reshaped to len()/set_length() for borrowck
-//               (ResetScope holds &mut Path; cannot coexist with append/slice).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/isolated_install/Hardlinker.zig

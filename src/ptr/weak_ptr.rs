@@ -145,10 +145,4 @@ impl<T: HasWeakPtrData> Default for WeakPtr<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/weak_ptr.zig (69 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      data_field comptime string → HasWeakPtrData trait; raw_ptr kept raw (intrusive) despite TSV saying Weak<T>
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/weak_ptr.zig

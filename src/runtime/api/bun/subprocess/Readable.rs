@@ -289,10 +289,4 @@ impl Readable {
 #[allow(unused_imports)]
 use bun_core as _; // bun.Output → bun_core (panics inlined as panic!())
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/subprocess/Readable.zig (195 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      Stdio variant payloads guessed; CowString mapped to bun_collections; pipe.detach() flagged at 3 sites — PipeReader.rs must drop self.deref() (Rc owns it) or rename to clear_process().
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/subprocess/Readable.zig

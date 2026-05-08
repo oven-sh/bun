@@ -304,11 +304,4 @@ pub use bun_install::package_manager::command_line_arguments as CommandLineArgum
 pub use bun_install::package_manager::Options;
 pub use super::Subcommand;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/UpdateRequest.zig (218 lines)
-//   confidence: high
-//   notes:      name/version_buf leaked as &'static (no deinit in Zig either —
-//               CLI-positional lifetime); Dependency.Version tag/value union
-//               accesses guarded by tag discriminant per Zig.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/UpdateRequest.zig

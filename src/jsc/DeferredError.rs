@@ -42,10 +42,4 @@ impl DeferredError {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/DeferredError.zig (34 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `from` collapses (comptime fmt, args: anytype) into fmt::Arguments; to_*_instance reached via StringJsc/ZigStringJsc ext traits
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/DeferredError.zig

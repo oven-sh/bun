@@ -101,10 +101,4 @@ pub use hmac::HMAC;
 
 // `comptime { CryptoHasher.Extern.@"export"(); }` — dropped; Rust links what's `pub`.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/crypto/crypto.zig (28 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export module; HMAC/EVP whole-module imports become `pub mod hmac/evp`
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/crypto/crypto.zig

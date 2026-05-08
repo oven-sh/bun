@@ -2280,10 +2280,4 @@ pub type MacroContext = Option<*mut c_void>;
 #[cfg(not(target_arch = "wasm32"))]
 pub type MacroContext = crate::Macro::MacroContext;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/Parser.zig (1627 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      Generic <P> needs ParserImpl trait; Jest field reflection stubbed via Jest::FIELDS; Options::macro_context default is unsound (was `undefined` in Zig).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/Parser.zig

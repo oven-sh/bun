@@ -518,10 +518,4 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/JSON5Object.zig (433 lines)
-//   confidence: high
-//   notes:      `defer visiting.remove` reshaped for borrowck (manual remove,
-//               no scopeguard). Upstream shims dissolved into bun_jsc / bun_str.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/JSON5Object.zig

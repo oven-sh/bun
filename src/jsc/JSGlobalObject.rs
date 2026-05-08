@@ -1705,17 +1705,7 @@ unsafe extern "C" {
     fn ScriptExecutionContextIdentifier__forGlobalObject(global: *const JSGlobalObject) -> u32;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSGlobalObject.zig (1072 lines)
-//   confidence: medium
-//   notes:      heavy comptime fmt/args collapsed to fmt::Arguments;
-//               validateIntegerRange/validateBigIntRange generic over
-//               bun_core::Integer; queue_microtask_callback takes the
-//               C-ABI trampoline directly; ERR/ErrorBuilder reshaped to
-//               runtime; getBodyStreamOrBytesForWasmStreaming moved to
-//               bun_runtime (layering).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSGlobalObject.zig
 
 impl ScriptExecutionContextIdentifier {
     /// Returns `None` if the context referred to by `self` no longer exists.

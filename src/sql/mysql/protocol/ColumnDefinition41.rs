@@ -150,10 +150,4 @@ impl ColumnDefinition41 {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/ColumnDefinition41.zig (99 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      decoder_wrap shape & ColumnIdentifier::init signature need Phase-B confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/ColumnDefinition41.zig

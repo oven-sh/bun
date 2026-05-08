@@ -34,12 +34,4 @@ pub fn url_from_js(
     Ok(OwnedURL::from_href(owned))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/url_jsc/url_jsc.zig (16 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      allocator param dropped; return type OwnedURL (no 'static lie);
-//               bun_jsc wired (JSValue/JSGlobalObject/href_from_js); body
-//               fully un-gated via bun_url::OwnedURL::from_href.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/url_jsc/url_jsc.zig

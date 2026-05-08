@@ -510,10 +510,4 @@ impl Drop for ZstdReaderArrayList<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/zstd/zstd.zig (275 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      list/list_ptr cache collapsed to single &mut Vec<u8>; FFI bindings inlined (zstd_sys crate TBD)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/zstd/zstd.zig

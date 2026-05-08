@@ -23,10 +23,4 @@ pub trait DecoderWrap: Sized {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/DecoderWrap.zig (12 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      comptime-fn-value type generator reshaped to extension trait; verify call sites
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/DecoderWrap.zig

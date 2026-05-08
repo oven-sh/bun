@@ -507,10 +507,4 @@ mod tests {
     // Omitted; Phase B can re-add as a criterion bench if needed.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/comptime_string_map.zig (553 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      heavy comptime → runtime+Lazy; callers needing only .get should use phf; fromJS moved to *_jsc ext trait; proc-macro upgrade in Phase B for true const init
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/comptime_string_map.zig

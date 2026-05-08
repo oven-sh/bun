@@ -277,9 +277,4 @@ impl YesTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/yes.zig (181 lines)
-//   confidence: medium — NodeId-arena style; JS-loop dispatch arm for
-//               `ShellYesTask` panics in Zig (Task.zig else-arm), preserved.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/yes.zig

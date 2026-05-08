@@ -144,10 +144,4 @@ pub fn bake() -> bool {
 /// To use them, extra flags are passed in addition to this one.
 pub const BAKE_DEBUGGING_FEATURES: bool = env::IS_CANARY || env::IS_DEBUG;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_core/feature_flags.zig (145 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      env::* consts (IS_BROWSER/IS_WASM/IS_NATIVE/IS_CANARY/ENABLE_ASAN etc.) must be defined as `pub const` in crate::env; crate::feature_flag provides runtime env-var getters
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_core/feature_flags.zig

@@ -277,9 +277,4 @@ impl CondExpr {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/CondExpr.zig (343 lines)
-//   confidence: medium (NodeId conversion; operator-eval body gated)
-//   blocked_on: ast::CondExpr, bun_sys::{stat,lstat,access}
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/CondExpr.zig

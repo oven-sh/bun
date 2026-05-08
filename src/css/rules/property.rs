@@ -270,10 +270,4 @@ const _: () = {
     }
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/property.zig (225 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      structs un-gated (data-only); Zig nested-struct namespaces ported as trait impls; initial_value:&'static [u8] until 'bump threaded; parse/to_css/deep_clone + parser-trait impls gated on RuleBodyParser/SyntaxString::parse_value/DeepClone
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/property.zig

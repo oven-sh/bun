@@ -197,10 +197,4 @@ fn generate_compile_result_for_js_chunk_impl(
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/generateCompileResultForJSChunk.zig (110 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      @fieldParentPtr parent type for Worker::get assumed BundleV2; Worker::get + scopeguard for unget; show_crash_trace gated by #[cfg(feature)]; dev_server arena selection deferred (DevServerHandle has no arena accessor yet)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/generateCompileResultForJSChunk.zig

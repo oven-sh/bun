@@ -2776,10 +2776,4 @@ impl WrapperLike for Element {
     const HAS_INVALIDATE: bool = true;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/html_rewriter.zig (2031 lines)
-//   confidence: medium
-//   todos:      28
-//   notes:      HandlerCallback comptime-reflection replaced with HandlerLike/WrapperLike traits + closures; Rc<LOLHTMLContext> get_mut() is KNOWN-WRONG after transform() — Phase B must switch to IntrusiveRc/RefCell; intrusive RefCount left as hand-rolled Cell<u32> + ref_/deref (Phase B: bun_ptr::IntrusiveRc); bare-JSValue heap fields kept alive via gcProtect (Phase B: evaluate Strong); host_fn.wrapInstanceMethod shims left to #[bun_jsc::host_fn(method)] codegen; tmp_sync_error stack-ptr pattern preserved with NonNull but fragile.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/html_rewriter.zig

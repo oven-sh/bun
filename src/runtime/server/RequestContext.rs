@@ -4003,21 +4003,4 @@ fn get_content_type(
 
 static WELCOME_PAGE_HTML_GZ: &[u8] = include_bytes!("../api/welcome-page.html.gz");
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/RequestContext.zig (2736 lines)
-//   confidence: low (state machine un-gated; not yet compile-verified —
-//               bun_http/bun_css/bun_js_parser transitive deps broken)
-//   todos:      31
-//   notes:      cycle-6: `_gated_state_machine` unwrapped. resp field is now
-//               `Option<uws::AnyResponse>` (runtime dispatch over the three
-//               transport handles — inherent methods on the Transport associated
-//               type can't be called from generic code). uWS callback sigs
-//               (on_abort/on_timeout/on_writable_*/on_data) reshaped to
-//               `fn(*mut Self, ..., AnyResponse)`; `run_corked_with_type`
-//               handlers reshaped to `fn(*mut U)` with thin `*_corked`
-//               adapters where the body is also called as a method.
-//               Still gated: `do_render_stream` body + sink finalize/detach
-//               (ResponseStreamJSSink = c_void), `render_default_error` +
-//               DEBUG_MODE HTML fallback (Api/Fallback schema types unported).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/RequestContext.zig

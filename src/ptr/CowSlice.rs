@@ -429,10 +429,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/CowSlice.zig (320 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      sentinel modeled as `const Z: bool` (Zig used `?T`); allocator params dropped (global mimalloc); DebugData shared via raw NonNull + Box::into_raw; dupeZ stubbed (sentinel dropped) — needs Z-aware backing-len in Drop/take_slice
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/CowSlice.zig

@@ -37,10 +37,4 @@ pub fn prepare_request<Context: WriterContext>(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/MySQLRequest.zig (31 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      NewWriter<Context> by-value matches Zig; may need &mut depending on NewWriter port
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/MySQLRequest.zig

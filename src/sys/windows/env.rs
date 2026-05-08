@@ -107,10 +107,4 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/windows/env.zig (60 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Windows-only startup; needs Rust-side `std.os.environ` global (bun_core::os) and confirmed bun_str transcoder name.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/windows/env.zig

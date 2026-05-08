@@ -510,10 +510,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/unicode.zig (477 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      u21→u32, u2→u8; data tables copied verbatim; self-contained (no cross-crate deps)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/unicode.zig

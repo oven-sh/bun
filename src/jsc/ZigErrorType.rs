@@ -10,10 +10,4 @@ pub struct ZigErrorType {
     pub value: JSValue,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ZigErrorType.zig (7 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      trivial #[repr(C)] struct; ErrorCode is sibling module in bun_jsc
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ZigErrorType.zig

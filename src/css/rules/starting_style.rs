@@ -37,10 +37,4 @@ impl<R> StartingStyleRule<R> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/starting_style.zig (39 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      struct un-gated; to_css/deep_clone gated on CssRuleList::to_css + DeepClone trait
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/starting_style.zig

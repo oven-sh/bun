@@ -503,10 +503,4 @@ pub enum SkipTypeOptions {
 pub type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
 pub const SKIP_TYPE_OPTIONS_EMPTY: SkipTypeOptionsBitset = enumset::EnumSet::empty();
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/TypeScript.zig (472 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      `p: anytype` left as unbounded generic <P> — Phase B must define a Parser trait or thread the concrete parser type; lexer Token (T) variant casing assumed PascalCase.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/TypeScript.zig

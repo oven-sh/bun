@@ -1578,13 +1578,4 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/rm.zig (1268 lines)
-//   confidence: medium — full DirTask tree-walk + verbose/err accounting
-//               ported; raw-ptr ownership matches Zig's WorkPool model.
-//   notes:      `root_task` is heap-allocated separately (Zig embeds it) so
-//               `&ShellRmTask` and `&mut DirTask` provably never overlap; see
-//               PORT NOTE on the field. Worker-thread entry points stay on
-//               raw `*mut DirTask` and only reborrow disjoint fields.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/rm.zig

@@ -681,12 +681,4 @@ fn print_dependency_tree(
     ctx.path_tracker.remove(&current_pkg_id);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/why_command.zig (492 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Output::pretty/prettyln take format_args!; mutable global → AtomicUsize;
-//               defer-remove + in-place sort reshaped for borrowck; lockfile detached
-//               from pm to avoid aliased &mut in load_from_cwd.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/why_command.zig

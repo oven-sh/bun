@@ -165,10 +165,4 @@ impl JSONLineBuffer {
 
 // `pub fn deinit` dropped: Vec<u8>'s Drop frees the backing allocation (global mimalloc).
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSONLineBuffer.zig (135 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Assumes bun_collections::Vec<u8> exposes pub `ptr/len/cap` fields + slice()/write()/unused_capacity_slice()/ensure_unused_capacity() and impls Drop+Default; compact() uses ptr::copy for overlapping memmove.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSONLineBuffer.zig

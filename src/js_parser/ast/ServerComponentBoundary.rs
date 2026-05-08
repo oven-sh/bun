@@ -155,10 +155,4 @@ impl<'a> ArrayHashAdapter<IndexInt, ()> for Adapter<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/ServerComponentBoundary.zig (121 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ArrayHashMap<(),()> + ArrayHashAdapter for adapted lookups; MultiArrayElement derived
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/ServerComponentBoundary.zig

@@ -36,13 +36,4 @@ pub use murmur::{Murmur2_32, Murmur2_64, Murmur3_32};
 pub use rapidhash::RapidHash;
 pub use xxhash::{XxHash3, XxHash32, XxHash64, XxHash64Streaming};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/HashObject.zig (hash algorithm surface)
-//               vendor/zig/lib/std/hash/{Adler32,cityhash,murmur,xxhash}.zig
-//               src/bun_core/deprecated.zig (RapidHash)
-//   confidence: high — adler32/cityhash/murmur/rapidhash are line-for-line
-//               ports verified against Zig's smhasher constants; xxhash is
-//               twox-hash 2.x verified against Zig's reference vectors.
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/HashObject.zig

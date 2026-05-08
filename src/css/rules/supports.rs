@@ -507,10 +507,4 @@ impl<R> SupportsRule<R> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/supports.zig (419 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      data types un-gated; SupportsCondition::to_css real (Declaration arm gated on PropertyId methods); parse/parse_declaration/parse_in_parens + SeenDeclKey gated on Parser API surface + PropertyId; SupportsRule::to_css/deep_clone gated on CssRuleList::to_css; 'i lifetime dropped until PropertyId<'i> threads
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/supports.zig

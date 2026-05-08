@@ -323,12 +323,4 @@ pub trait BindingJsonWriter {
     fn write(&mut self, value: Serializable) -> Result<(), bun_core::Error>;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/Binding.zig (171 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      ToExpr type-erased (fn ptr; *mut c_void ctx supplied per-call);
-//               to_expr accepts Borrow<ToExprWrapper> for caller flexibility;
-//               B variants raw *mut per Phase-A arena convention.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/Binding.zig

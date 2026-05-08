@@ -469,10 +469,4 @@ impl Parser<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/ref_defs.zig (351 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      RefDef fields owned (Box<[u8]>); lookup returns &RefDef. build_ref_def_hashtable reshaped for borrowck (raw ptr into block_bytes, mem::take on buffer). Assumes Parser fields: block_bytes/buffer: Vec<u8>, ref_defs: Vec<RefDef>, text: Box<[u8]>/&[u8], size: usize. BlockType::P / BlockHeader location guessed from types.zig/parser.zig.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/ref_defs.zig

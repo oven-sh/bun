@@ -795,10 +795,4 @@ impl PostgresSQLQuery {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/PostgresSQLQuery.zig (539 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      statement field switched to *mut (matches PreparedStatementsMap + PostgresSQLConnection accessors); Flags is a plain struct (callers field-access directly); deref_ takes *mut Self and on_* scopeguards/do_run route all access through derived raw ptr (SB-safe).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/PostgresSQLQuery.zig

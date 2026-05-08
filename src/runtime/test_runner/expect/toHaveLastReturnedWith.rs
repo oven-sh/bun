@@ -139,10 +139,4 @@ pub fn to_have_last_returned_with(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveLastReturnedWith.zig (89 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      scopeguard for post_match will fight borrowck; Formatter ctor + Expect::throw/get_signature signatures assumed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveLastReturnedWith.zig

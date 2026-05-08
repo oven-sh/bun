@@ -562,10 +562,4 @@ pub mod internal {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/dns/dns.zig (296 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      Options kept as plain struct (not packed u64) w/ to_packed_bytes for hash; std.net.Address needs bun_sys::net wrapper; *_jsc aliases dropped per guide
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/dns/dns.zig

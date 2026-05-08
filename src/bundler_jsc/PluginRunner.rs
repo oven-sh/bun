@@ -39,14 +39,4 @@ pub fn could_be_plugin(specifier: &[u8]) -> bool {
 /// still name this module.
 pub use bun_jsc::virtual_machine::plugin_runner_on_resolve_jsc as on_resolve_jsc;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler_jsc/PluginRunner.zig (241 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Façade only — all bodies layered down (extract_namespace/
-//               could_be_plugin → bun_bundler::transpiler; PluginRunner +
-//               on_resolve → bun_jsc::plugin_runner; on_resolve_jsc →
-//               bun_jsc::virtual_machine). Allocator field dropped per
-//               PORTING.md (global mimalloc).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler_jsc/PluginRunner.zig

@@ -304,10 +304,4 @@ impl crate::generics::CssEql for Angle {
 /// May be specified as either an angle or a percentage that resolves to an angle.
 pub type AnglePercentage = DimensionPercentage<Angle>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/angle.zig (306 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      op_to intentionally diverges from upstream Zig bug (other_tag reads from `this`); Calc<'bump,T> shape and css::Result/Maybe variants need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/angle.zig

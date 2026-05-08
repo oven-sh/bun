@@ -568,4 +568,3 @@ impl Drop for StaticRoute {
         self.blob.detach();
     }
 }
-

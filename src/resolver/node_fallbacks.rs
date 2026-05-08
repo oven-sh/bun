@@ -168,10 +168,4 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
     None
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolver/node_fallbacks.zig (99 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Heavy comptime init → macros + phf; needs const-fn ctors on Path/Source/PackageJSON in Phase B. LIFETIMES.tsv pins struct field `code` to &'static str; free fn `contents_from_path` returns &'static [u8] per type-map rule.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolver/node_fallbacks.zig

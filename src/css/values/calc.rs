@@ -1775,10 +1775,4 @@ impl CalcValue for DimensionPercentage<Angle> {
     #[inline] fn eql(&self, other: &Self) -> bool { DimensionPercentage::eql(self, other) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/calc.zig (1892 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      `CssResult<T>` is now `core::result::Result` — `.as_value()`/`.result()` callsites rewritten to `.ok()`/`?`. `switch (V)` comptime dispatch reified as `CalcValue` trait with per-type impls (CSSNumber/Angle/Percentage/Time/Length/DimensionPercentage<LengthValue|Angle>). closure-struct → Rust-closure reshape changes parse_ident plumbing. LIFETIMES.tsv chose Box over arena so arena params dropped — Vec sites that were arena-fed now carry PERF(port) markers. Preserved likely Zig bug at clamp switch_val packing.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/calc.zig

@@ -672,10 +672,4 @@ pub static JSX_ENTITY: phf::Map<&'static [u8], CodePoint> = phf_map! {
     b"zwnj" => 0x200C,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/lexer_tables.zig (809 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ComptimeStringMap→phf; void-valued maps→phf::Set; tokenToString uses LazyLock<EnumMap> (PERF note); associated-const phf maps may need hoisting to module statics if phf_map! rejects const position.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/lexer_tables.zig

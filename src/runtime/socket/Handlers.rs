@@ -491,10 +491,4 @@ impl SocketConfig {
 // TODO(port): GeneratedTls is the union(enum) at jsc.generated.SocketConfig.tls
 use bun_jsc::generated::SocketConfigTls as GeneratedTls;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/Handlers.zig (348 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      mark_inactive client-mode self-destroy moved to caller (Box drop); ZigString.Slice / generated-enum paths need confirmation; ci_assert mapped to feature flag
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/Handlers.zig

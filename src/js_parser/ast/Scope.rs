@@ -258,10 +258,4 @@ impl Kind {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/Scope.zig (220 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      StringHashMap prehashed-adapter API (hash/get_adapted/get_or_put) assumed; children/parent are arena raw ptrs per LIFETIMES.tsv
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/Scope.zig

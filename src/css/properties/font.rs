@@ -1249,17 +1249,4 @@ fn is_font_property(property_id: &crate::properties::PropertyId) -> bool {
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/font.zig (1061 lines)
-//   confidence: medium
-//   todos:      27
-//   notes:      module un-gated; all data types real; parse/to_css/handle_property/
-//               flush bodies internally gated on DeriveParse/DeriveToCss proc-
-//               macros + EnumProperty from_ascii_case_insensitive impls +
-//               generics::IsCompatible blanket + parse_utility::parse_string +
-//               Vec parse/insert arena threading. FontFamily.FamilyName
-//               is arena-owned *const [u8] (thread 'bump in Phase B; manual
-//               PartialEq/Clone compare/copy by content/pointer-shallow);
-//               FontHandler @field helpers expanded via macro_rules!.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/font.zig

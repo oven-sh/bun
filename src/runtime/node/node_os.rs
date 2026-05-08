@@ -1630,10 +1630,4 @@ fn slice_to_nul_u16(buf: &[u16]) -> &[u16] {
     &buf[..nul]
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_os.zig (1114 lines)
-//   confidence: medium
-//   todos:      16
-//   notes:      heavy platform-conditional FFI; std.fs/std.net/std.posix mapped to bun_sys placeholders; gen_::node_os codegen wiring deferred to Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_os.zig

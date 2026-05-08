@@ -436,10 +436,4 @@ pub fn is_logical_border_radius_property(property_id: PropertyIdTag) -> bool {
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/border_radius.zig (321 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      @field/@unionInit helpers ported as macro_rules!; Property variant naming (kebab→PascalCase) and tuple-vs-struct payload shape need Phase-B alignment with generated Property enum.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/border_radius.zig

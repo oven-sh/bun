@@ -30,11 +30,7 @@ impl CopyFail {
         Ok(Self { message })
     }
 
-    // Zig: `pub const decode = DecoderWrap(CopyFail, decodeInternal).decode;`
-    // TODO(port): DecoderWrap is a comptime type-generator that adapts `decode_internal`
-    // into a public `decode` fn. In Rust this should become a trait impl
-    // (e.g. `impl super::decoder_wrap::Decode for CopyFail`) where `decode` is the
-    // trait's provided method. Phase B wires this once DecoderWrap.rs lands.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
 
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
@@ -55,17 +51,7 @@ impl CopyFail {
         Ok(())
     }
 
-    // Zig: `pub const write = WriteWrap(@This(), writeInternal).write;`
-    // TODO(port): WriteWrap is a comptime type-generator that adapts `write_internal`
-    // into a public `write` fn. In Rust this should become a trait impl
-    // (e.g. `impl super::write_wrap::Write for CopyFail`) where `write` is the
-    // trait's provided method. Phase B wires this once WriteWrap.rs lands.
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/CopyFail.zig (41 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      decode_internal reshaped from out-param to -> Result<Self>; DecoderWrap/WriteWrap comptime wrappers deferred to trait impls; Int32::to_bytes assumed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/CopyFail.zig

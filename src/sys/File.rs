@@ -579,10 +579,4 @@ pub struct ToSourceOptions {
     pub convert_bom: bool,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/File.zig (472 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      anytype path/dir_fd dispatch collapsed to &ZStr + Into<File>; Reader/Writer mapped to std::io traits; allocator params dropped (Vec<u8>).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/File.zig

@@ -901,10 +901,4 @@ const _: () = {
     }
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/font_face.zig (738 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      structs/enums un-gated except FontFaceProperty/Source (payloads need gated_prop! properties::{font,custom}); ArrayList=Vec placeholder (arena in Phase B); FontFormat::String/&'static [u8] until 'bump threaded; parse/to_css/deep_clone + parser-trait impls gated on properties::{font,custom} + enum_property_util/EnumProperty derive + Parser surface + DeepClone
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/font_face.zig

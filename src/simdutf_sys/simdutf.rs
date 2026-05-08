@@ -513,10 +513,4 @@ pub mod base64 {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/simdutf_sys/simdutf.zig (412 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      Status ported as #[repr(transparent)] i32 newtype (Zig enum had `_` catch-all → arbitrary i32 valid across FFI). utf32 wrappers pass *const u32 where extern wants *const c_uint — Phase B may need .cast() if c_uint != u32 on some target. jsc.markBinding() calls dropped (debug-only no-ops).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/simdutf_sys/simdutf.zig

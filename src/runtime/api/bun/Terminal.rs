@@ -1975,10 +1975,4 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/Terminal.zig (1220 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      IntrusiveRc<Terminal> for RefCount (crosses FFI as m_ctx); termios uses bun_sys::posix + libc constants; StreamingWriter/BufferedReader wired via trait impls; globalThis stored as NonNull (JSC_BORROW on heap m_ctx); js:: re-exports generated_classes::js_Terminal.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/Terminal.zig

@@ -302,10 +302,4 @@ unsafe extern "C" {
     fn malloc_size(ptr: *const c_void) -> usize;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/heap_breakdown.zig (146 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      comptime per-name static (`getZone`) → macro + runtime fallback; `heapLabel` reflection → `HeapLabel` trait; vtable → `impl crate::Allocator`; `is_instance` stubbed; "Bun__" prefix scoped to `named_allocator` only (matches Zig).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/heap_breakdown.zig

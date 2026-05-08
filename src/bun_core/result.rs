@@ -944,20 +944,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun.zig (anyerror / errno_map / errnoToZigErr)
-//               src/sys/coreutils_error_map.zig
-//               src/bun_core/result.zig (11 lines)
-//   confidence: high
-//   todos:      1 (Windows: From<io::Error> needs Win32→SystemErrno translation;
-//               currently falls back to Unexpected to avoid mis-aliasing)
-//   notes:      Error is #[repr(transparent)] NonZeroU16 string-interned;
-//               err!() yields distinct comparable codes; name() round-trips.
-//               errno_map / coreutils_error_map are cfg-gated per target_os
-//               (tables duplicated from bun_errno because of the dep cycle;
-//               const-asserted to match SystemErrno cardinality per platform).
-//               VERIFIED: per-platform tables cover full SystemErrno range
-//               (linux=134, win=138, darwin=107, freebsd=98); macOS/BSD
-//               errno 11→EDEADLK / 35→EAGAIN swap is correct vs *_errno.zig.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun.zig

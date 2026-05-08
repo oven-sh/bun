@@ -538,13 +538,4 @@ pub fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEven
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/watcher/WindowsWatcher.zig (323 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      B-2 un-gated against bun_sys::windows; ntdll::NtCreateFile /
-//               FILE_OPEN now landed in bun_windows_sys; EventIterator uses
-//               *const DirWatcher to avoid borrowck on watch_loop_cycle; not
-//               yet cross-compiled (no Windows target wired into cargo check).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/watcher/WindowsWatcher.zig

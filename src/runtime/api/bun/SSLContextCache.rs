@@ -301,10 +301,4 @@ pub mod c {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/SSLContextCache.zig (205 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ArrayHashMap needs custom DigestContext hasher + get_or_put/swap_remove_at/count/values API; Mutex assumed RAII guard; &mut self vs interior-mutability may need rework in Phase B (bun_ssl_ctx_cache_on_free takes &owner via *const)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/SSLContextCache.zig

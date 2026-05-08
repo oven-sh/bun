@@ -3202,10 +3202,4 @@ impl NapiFinalizerTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/napi/napi.zig (2554 lines)
-//   confidence: medium
-//   todos:      16
-//   notes:      Heavy FFI surface; Windows MSVC-mangled V8 symbols need #[link_name] codegen; ThreadSafeFunction lock/condvar uses bun_threading raw Mutex API (lock/unlock) — Phase B may want RAII guard; NapiEnvRef = bun_ptr::ExternalShared<NapiEnv> needs vtable wiring; ThreadSafeFunction::destroy moves env out via ptr::read+zeroed sentinel.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/napi/napi.zig

@@ -1764,12 +1764,4 @@ impl<'a> Parser<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/cli/bunfig.zig (1305 lines)
-//   confidence: high
-//   notes:      const-generic `comptime cmd` demoted to runtime arg (Tag lacks
-//               ConstParamTy); Parser.bunfig collapsed into Parser.ctx to
-//               satisfy borrowck; local Expr accessor shims fill gaps in
-//               bun_logger::js_ast.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/cli/bunfig.zig

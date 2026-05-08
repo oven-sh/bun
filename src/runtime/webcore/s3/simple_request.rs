@@ -618,10 +618,4 @@ pub fn execute_simple_s3_request(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/s3/simple_request.zig (464 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      AsyncHTTP undefined-init + struct copy in http_callback need real init/clone API; result enums carry <'a> for borrowed callback payloads (BORROW_PARAM class — Phase B revisit)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/s3/simple_request.zig

@@ -24,10 +24,4 @@ impl ResultSetHeader {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/ResultSetHeader.zig (12 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      decoderWrap is comptime type-gen; Phase B must define the Rust shape in new_reader.rs
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/ResultSetHeader.zig

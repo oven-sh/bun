@@ -49,10 +49,4 @@ impl ZigStackFrameCode {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ZigStackFrameCode.zig (40 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      non-exhaustive enum(u8) ported as #[repr(transparent)] newtype; u21 widened to u32
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ZigStackFrameCode.zig

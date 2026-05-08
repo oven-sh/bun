@@ -2021,10 +2021,4 @@ type in_addr = sockaddr_in;
 #[allow(dead_code)]
 type struct_sockaddr = sockaddr;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cares_sys/c_ares.zig (1553 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      comptime callback-wrapper pattern reshaped to per-reply traits; Channel::resolve uses ResolveHandler trait in place of @field/comptime-string dispatch; bun_sys sockaddr/EAI/AF paths need confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cares_sys/c_ares.zig

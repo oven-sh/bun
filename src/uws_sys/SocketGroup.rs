@@ -366,10 +366,4 @@ unsafe extern "C" {
     ) -> *mut us_socket_t;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/SocketGroup.zig (208 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      init() owner_ptr collapsed from anytype→*mut c_void; deinit→unsafe destroy(*mut Self) per #[repr(C)]-FFI exception (no Drop); imports assume Loop/SocketKind/SslCtx/etc. live in crate root
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/SocketGroup.zig

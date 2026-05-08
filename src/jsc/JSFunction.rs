@@ -110,10 +110,4 @@ impl JSFunction {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSFunction.zig (75 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      collapsed comptime @TypeOf dispatch in `create` to take JSHostFn directly; fn_name via Into<BunString>
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSFunction.zig

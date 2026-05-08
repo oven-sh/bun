@@ -201,10 +201,4 @@ fn to_ptr(ptr_val: *const c_void) -> u64 {
     (ptr_val as usize as u64) & ((1u64 << 48) - 1)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/EnvStr.zig (119 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      packed u128 modeled as #[repr(transparent)] with shift accessors; slice() lifetime + RefCountedStr::init ownership contract need Phase-B review
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/EnvStr.zig

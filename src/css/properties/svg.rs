@@ -83,10 +83,4 @@ pub enum TextRendering {}
 // TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))`.
 pub enum ImageRendering {}
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/svg.zig (75 lines)
-//   confidence: high
-//   todos:      7
-//   notes:      7 enum-property types are @compileError placeholders in Zig; ported as empty enums. StrokeDasharray uses Vec<T> pending arena decision.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/svg.zig

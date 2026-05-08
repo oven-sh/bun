@@ -94,10 +94,4 @@ pub fn to_contain_keys(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainKeys.zig (75 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Formatter borrow aliasing (to_fmt called 3x on &mut) may need reshape in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainKeys.zig

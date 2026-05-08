@@ -300,10 +300,4 @@ pub fn clipboard_change_count() -> i64 {
     unsafe { bun_coregraphics_clipboard_change_count() }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/backend_coregraphics.zig (155 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      BackendError hand-expanded from full codecs::Error union (6 variants); vec![0u8;n] zero-fills where Zig left uninit (PERF-tagged); externs left in-file pending *_sys crate
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/backend_coregraphics.zig

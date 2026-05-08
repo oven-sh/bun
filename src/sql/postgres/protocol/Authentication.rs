@@ -198,10 +198,7 @@ impl Authentication {
         }
     }
 
-    // TODO(port): `pub const decode = DecoderWrap(Authentication, decodeInternal).decode;`
-    // DecoderWrap is a comptime type-generator that wraps `decode_internal` into a `decode`
-    // entry point. Phase B should express this via a trait impl on `Authentication` rather
-    // than a const fn alias.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, bun_core::Error> {
@@ -209,10 +206,4 @@ impl Authentication {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/Authentication.zig (180 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      SASLContinue r/s/i are self-referential into `data`; stored as *const [u8]. DecoderWrap alias needs trait-based rewrite in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/Authentication.zig

@@ -786,10 +786,4 @@ pub fn get_list_objects_options_from_js(
     Ok(list_objects_options)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/s3/list_objects.zig (598 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      S3ListObjectsOptions has self-referential view+backing field pairs (raw ptr placeholder); result structs use <'a> borrowing from xml input; std.mem.replace inlined for &quot; handling
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/s3/list_objects.zig

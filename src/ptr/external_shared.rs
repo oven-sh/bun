@@ -166,10 +166,4 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalSharedOptional<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/external_shared.zig (114 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      duck-typed `external_shared_descriptor` → trait; nested `Optional` hoisted to `ExternalSharedOptional<T>` (inherent assoc types unstable); `ref`/`deref` renamed to `ext_ref`/`ext_deref` to dodge keyword/Deref collision
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/external_shared.zig

@@ -511,10 +511,4 @@ pub fn validate_string_enum<T: StringEnum>(
     ))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/util/validators.zig (301 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      comptime fmt-string concat reshaped to fmt::Arguments; ERR() builder wired to JSGlobalObject::err; validateStringEnum requires StringEnum trait impl per enum (no comptime reflection in Rust)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/util/validators.zig

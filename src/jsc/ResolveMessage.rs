@@ -346,10 +346,4 @@ impl ResolveMessage {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ResolveMessage.zig (249 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      .classes.ts payload; referrer stored as Box<[u8]> (was Fs.Path); ZigString external-value ownership needs Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ResolveMessage.zig

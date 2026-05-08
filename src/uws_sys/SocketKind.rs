@@ -117,10 +117,4 @@ pub static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
 #[unsafe(no_mangle)]
 pub static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/SocketKind.zig (101 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      #[repr(u8)] enforces the ≤256-variant invariant; exported ordinals are `static` (linkage matches Zig `export const`).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/SocketKind.zig

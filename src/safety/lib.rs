@@ -65,10 +65,4 @@ pub(crate) fn call_alloc_predicate(hook: &AtomicPtr<()>, alloc: bun_alloc::StdAl
     unsafe { f(alloc) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/safety/safety.zig (4 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export crate root; sibling modules ported separately
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/safety/safety.zig

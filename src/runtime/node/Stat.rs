@@ -260,10 +260,4 @@ impl Stats {
     // compile error instead.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/Stat.zig (207 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      const-generic cannot select `Float` type → to_time_ms split into i64/f64 variants
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/Stat.zig

@@ -345,10 +345,4 @@ fn write_range<const COLORS: bool>(w: &mut impl std::io::Write, first: &mut bool
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/parallel/aggregate.zig (288 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      ArrayHashMap get_or_put/sort_by + Output::pretty_fmt<const> + NodeFs mkdir API are speculative; arena dropped per non-AST rule
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/parallel/aggregate.zig

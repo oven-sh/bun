@@ -359,10 +359,4 @@ fn expand_row(idx: &[u8], out: &mut [u8], pal: &[[u8; 4]; 256]) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/codec_gif.zig (287 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Box::new_zeroed requires nightly or 1.82+; codecs::Decoded.rgba assumed Box<[u8]>
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/codec_gif.zig

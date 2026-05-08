@@ -19,10 +19,4 @@ impl<'a> PortalOrPreparedStatement<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/PortalOrPreparedStatement.zig (18 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      borrowed-slice payload; enum carries <'a> (transient param wrapper, no deinit)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/PortalOrPreparedStatement.zig

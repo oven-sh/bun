@@ -548,10 +548,4 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/generateCompileResultForHtmlChunk.zig (344 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      lol-html bindings are raw-pointer associated fns; chunk/chunks held as raw ptrs to satisfy borrowck across C callbacks; dev_server arena ownership semantics need Phase B review.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/generateCompileResultForHtmlChunk.zig

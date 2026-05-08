@@ -1004,10 +1004,4 @@ impl Enable {
     #[inline] pub fn global_virtual_store(&self) -> bool { self.contains(Enable::GLOBAL_VIRTUAL_STORE) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/PackageManagerOptions.zig (760 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      &'static [u8] for borrowed CLI/config strings (no deinit); Do/Enable as bitflags w/ custom Default; defer-side-effect moved to fn end; std.fs.Dir→bun_sys::Fd; mutable globals (verbose_install/supported_method) wrapped as setters
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/PackageManagerOptions.zig

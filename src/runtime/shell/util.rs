@@ -27,8 +27,4 @@ pub type WatchFd = core::ffi::c_int; // std.posix.fd_t
 #[cfg(not(target_os = "linux"))]
 pub type WatchFd = i32;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/util.zig (21 lines)
-//   confidence: high
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/util.zig

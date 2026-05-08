@@ -193,10 +193,4 @@ impl Decompressor {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/Decompressor.zig (119 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      reader lifetimes erased to 'static (Zig used by-value ArrayList aliasing); the Decompressor is always dropped before the request buffers it borrows
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/Decompressor.zig

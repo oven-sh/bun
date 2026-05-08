@@ -8,10 +8,4 @@ pub enum SQLQueryResultMode {
     Raw = 2,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/shared/SQLQueryResultMode.zig (5 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      enum(u2) widened to repr(u8); no u2 in Rust
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/shared/SQLQueryResultMode.zig

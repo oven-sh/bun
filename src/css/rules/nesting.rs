@@ -33,10 +33,4 @@ impl<R> NestingRule<R> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/nesting.zig (32 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      generic type-returning fn → struct<R>; struct un-gated; to_css/deep_clone gated on StyleRule::to_css
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/nesting.zig

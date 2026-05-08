@@ -147,10 +147,4 @@ pub extern "C" fn Timer_disableEventLoopDelayMonitoring(vm: *mut VirtualMachine)
 use crate::timer::EventLoopTimerTag;
 use bun_core::TimespecMockMode;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/EventLoopDelayMonitor.zig (83 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      exported C fns operate on crate::timer::EventLoopDelayMonitor (mod.rs canonical type) via runtime_state(); ElTimespec stub conversion until bun_event_loop switches to bun_core::Timespec.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/EventLoopDelayMonitor.zig

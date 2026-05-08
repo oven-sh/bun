@@ -371,10 +371,4 @@ pub type libdeflate_options = Options;
 #[allow(non_camel_case_types)]
 pub type libdeflate_decompressor = Decompressor;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/libdeflate_sys/libdeflate.zig (150 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      opaque FFI handles keep explicit unsafe destroy (no Drop); Status uses #[repr(u32)] for c_uint; mi_malloc/mi_free path assumed in bun_alloc::mimalloc
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/libdeflate_sys/libdeflate.zig

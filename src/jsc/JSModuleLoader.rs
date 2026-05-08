@@ -134,10 +134,4 @@ impl JSModuleLoader {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSModuleLoader.zig (55 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      thin FFI wrappers; returned JSInternalPromise refs tied to global's lifetime as a placeholder
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSModuleLoader.zig

@@ -451,10 +451,4 @@ impl<const BUFFER_CAPACITY: usize> BoundedArrayAligned<u8, BUFFER_CAPACITY> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/bounded_array.zig (308 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      alignment const-param dropped (stable Rust limitation); len widened to usize (PERF); inherent assoc type is nightly-only
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/bounded_array.zig

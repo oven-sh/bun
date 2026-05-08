@@ -2424,10 +2424,4 @@ impl AccessorDirEntry for DirIterator::IteratorResult {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/glob/GlobWalker.zig (1857 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      Arena removed (non-AST crate); Directory.dir_path reshaped to len+buf to avoid self-reference; Accessor duck-typing → trait; ignore_filter_fn lowered to runtime fn ptr; SENTINEL MatchedPath = Box<[u8]> that already includes the trailing NUL (matched_path_to_bun_string takes the full slice); alloc-only fns return Result<_, AllocError> — Phase B should revisit BunString lifetime tying to owned paths.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/glob/GlobWalker.zig

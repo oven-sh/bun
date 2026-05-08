@@ -200,10 +200,4 @@ pub fn end_progress_bar(manager: &mut PackageManager) {
     manager.end_progress_bar()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/ProgressStrings.zig (100 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `node.name` slice points into `self.progress_name_buf` (inline on a leaked singleton) — lifetime erased via `slice::from_raw_parts` to mirror Zig's raw-pointer aliasing. `set_node_name` takes `*mut Node` + const-generic `IS_FIRST` (Zig `comptime is_first`) and `emoji: &[u8]` to match the `runTasks.rs` callers.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/ProgressStrings.zig

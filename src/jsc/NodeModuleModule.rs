@@ -266,9 +266,4 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/NodeModuleModule.zig (196 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/NodeModuleModule.zig

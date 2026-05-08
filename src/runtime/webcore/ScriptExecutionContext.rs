@@ -26,10 +26,4 @@ impl IdentifierExt for Identifier {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/ScriptExecutionContext.zig (24 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      `enum(u32) { _ }` ported as transparent newtype; returned &JSGlobalObject lifetime needs Phase B review
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/ScriptExecutionContext.zig

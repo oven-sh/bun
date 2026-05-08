@@ -2365,4 +2365,3 @@ pub const ALL: &[MimeTypeList] = &[
     MimeTypeList("x-shader/x-fragment"),
     MimeTypeList("x-shader/x-vertex"),
 ];
-

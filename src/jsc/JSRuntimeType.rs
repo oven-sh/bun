@@ -20,10 +20,4 @@ impl JSRuntimeType {
     pub const BIG_INT: Self = Self(0x200);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSRuntimeType.zig (16 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      non-exhaustive enum(u16) → transparent u16 newtype (bitflag values)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSRuntimeType.zig

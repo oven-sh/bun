@@ -978,10 +978,4 @@ pub static PURE_GLOBAL_IDENTIFIER_MAP: phf::Map<&'static [u8], PureGlobalIdentif
     b"crypto" => PureGlobalIdentifierValue::Other,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/defines-table.zig (931 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      static IdentifierDefine inits assume const-constructible Expr::Data; may need LazyLock in Phase B. ComptimeStringMap → phf::phf_map.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/defines-table.zig

@@ -547,10 +547,4 @@ impl OutputFile {
 // Deleted per PORTING.md — `to_js` / `to_blob` become extension-trait methods that
 // live in `bun_bundler_jsc`; the base type carries no jsc reference.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/OutputFile.zig (336 lines)
-//   confidence: medium
-//   todos:      15
-//   notes:      jsc/runtime deps (OutputKind, NodeFS, SavedFile) leak into base crate; ZERO_VALUE can't be const; std.fs.File/Dir params remapped to bun_sys::Fd
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/OutputFile.zig

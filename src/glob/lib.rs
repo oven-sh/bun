@@ -59,10 +59,4 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     false
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/glob/glob.zig (40 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      `match` re-export uses raw ident r#match; first comptime arg `null` to GlobWalker_ dropped pending glob_walker.rs shape
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/glob/glob.zig

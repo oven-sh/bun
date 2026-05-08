@@ -110,10 +110,4 @@ pub fn to_have_length(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveLength.zig (77 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      scopeguard::defer! for post_match may need borrowck reshape; get_signature must be const fn; Expect.throw fmt-string uses Zig {d} placeholders — arg-packing pending Expect.throw Rust signature
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveLength.zig

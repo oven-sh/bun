@@ -39,10 +39,4 @@ impl JSArray {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSArray.zig (25 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      from_js_host_call modeled as closure helper (Zig used anytype tuple + @src()); externs left inline pending jsc_sys split
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSArray.zig

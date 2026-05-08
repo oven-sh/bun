@@ -533,10 +533,4 @@ fn ignored_workspace_paths(path: &[u8]) -> bool {
 // `init_with_cwd(..., Some(ignored_workspace_paths))`.
 type GlobWalker = glob::GlobWalker<glob::walk::SyscallAccessor, false>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/Package/WorkspaceMap.zig (422 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      ArrayHashMap get_or_put/sort APIs assumed; GlobWalker ignore-callback threaded as const fn-ptr generic (Phase B verify); iter.next() Maybe(?T) shape guessed; arena.reset() hoisted to top-of-iter so walker/iter Drop before invalidation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/Package/WorkspaceMap.zig

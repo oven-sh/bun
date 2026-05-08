@@ -644,10 +644,4 @@ pub extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl
     unsafe { (*this.cast::<UpgradedDuplex>()).ssl().unwrap_or(core::ptr::null_mut()) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/UpgradedDuplex.zig (504 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      JSC_BORROW fields use &'a per LIFETIMES.tsv (struct gains <'a>); deinit→Drop with private teardown() for early call from on_close; SSLWrapper handlers struct shape & several bun_jsc helper paths need confirmation.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/UpgradedDuplex.zig

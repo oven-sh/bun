@@ -400,10 +400,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/SmolStr.zig (275 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      packed u128 bit-layout reimplemented with manual shift accessors; Drop replaces deinit so heap-backed mutators neutralize self before fallible Vec ops to avoid error-path double-free; Vec<u8> raw-parts API needs verification in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/SmolStr.zig

@@ -852,10 +852,4 @@ pub extern "C" fn emsc_main() {
 
 // Zig `comptime { _ = ... }` force-reference block dropped — Rust links what's `pub extern "C"`.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/main_wasm.zig (669 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      wasm32 entry; heavy static-mut globals + arena threading into bun_js_parser need Phase B rework; ApiWriter generic collapsed to &mut Vec<u8> sink
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/main_wasm.zig

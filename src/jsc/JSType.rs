@@ -846,10 +846,4 @@ impl JSType {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSType.zig (840 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Non-exhaustive enum(u8){_} → #[repr(transparent)] struct(u8) + assoc consts (FFI-safe; values read from JSCell header). TypedArrayType import path may need adjustment.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSType.zig

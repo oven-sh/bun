@@ -90,10 +90,4 @@ impl<'a> ReaderContext for StackReader<'a> {
     fn read_z(&mut self) -> Result<Data, AnyPostgresError> { Self::read_z(self) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/StackReader.zig (65 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      *usize fields not in LIFETIMES.tsv → assumed BORROW_PARAM (<'a>); Data variant shape assumed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/StackReader.zig

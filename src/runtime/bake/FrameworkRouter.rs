@@ -2196,10 +2196,4 @@ impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/FrameworkRouter.zig (1399 lines)
-//   confidence: medium
-//   todos:      15
-//   notes:      Part<'a> stored in Route via lifetime erasure (arena-backed); insert() comptime-dependent pattern type collapsed to runtime enum; InsertionContext vtable → trait object; constructor has borrowck conflict (router+self); newEdge is dead code (Route.Edge undefined in source).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/FrameworkRouter.zig

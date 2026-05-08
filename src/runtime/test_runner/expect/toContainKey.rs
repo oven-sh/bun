@@ -91,10 +91,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainKey.zig (58 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match needs borrowck reshape
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainKey.zig

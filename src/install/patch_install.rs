@@ -942,10 +942,4 @@ use crate::network_task::Authorization;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/patch_install.zig (593 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      manager BACKREF stored as *mut PackageManager (wake_raw needs mutable provenance); owned-ZStr field type, std.fs.Dir mapping, and Log early-deinit semantics need Phase B attention.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/patch_install.zig

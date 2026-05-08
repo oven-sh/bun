@@ -109,10 +109,4 @@ impl RawAtomicRefCount {
 // silently resolve to one variant regardless of the bool — a footgun. Callers
 // must pick `RawRefCount` (single-thread) vs `RawAtomicRefCount` explicitly.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/raw_ref_count.zig (96 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      comptime type-function → two concrete structs (Int fixed to u32; only width ever used).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/raw_ref_count.zig

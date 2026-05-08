@@ -1320,10 +1320,4 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/CommandLineArguments.zig (1159 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      `clap::param!`/`concat_params!` are placeholder macros for comptime param parsing + array concat; string fields use &'static [u8] (argv-backed); some help raw-strings contain `"` and need `r#""#` review; `parse` is const-generic on Subcommand (was comptime).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/CommandLineArguments.zig

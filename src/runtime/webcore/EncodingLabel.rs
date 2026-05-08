@@ -246,9 +246,4 @@ static STRING_MAP: phf::Map<&'static [u8], EncodingLabel> = phf::phf_map! {
     b"replacement" => EncodingLabel::Replacement,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/EncodingLabel.zig (239 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/EncodingLabel.zig

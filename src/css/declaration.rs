@@ -601,10 +601,4 @@ impl<'bump> DeclarationHandler<'bump> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/declaration.zig (461 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      parse/to_css/to_css_block + PropertyDeclarationParser + parse_declaration{,_impl} un-gated; composes_ctx anytype → &mut impl ComposesCtx; DeclarationBlock::parse lives on 'static (crate-wide 'bump erasure — re-threads with CssRule<'bump>); deep_clone/eql/hash_property_ids gated on Property: DeepClone/CssEql + PropertyId::hash; DebugFmt Display gated on Printer::new; DisallowNotSingleClass note dropped pending warn_fmt_with_notes
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/declaration.zig

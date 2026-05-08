@@ -86,10 +86,4 @@ macro_rules! tagged_union {
 
 pub use tagged_union as TaggedUnion;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/meta/tagged_union.zig (236 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Zig returns anonymous type from comptime fn; Rust macro requires caller-supplied name. deinit → auto Drop glue (deleted). Phase B: audit call sites; this util may be entirely unnecessary in Rust.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/meta/tagged_union.zig

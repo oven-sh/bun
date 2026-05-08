@@ -1029,14 +1029,4 @@ use super::TrackInstalledBin;
 use super::package_json_editor::EditOptions;
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/updatePackageJSONAndInstall.zig (761 lines)
-//   confidence: medium
-//   notes:      `manager.update_requests` ownership reshaped (Zig stored a slice header,
-//               Rust field is owning Box) — moved into manager before install, taken back
-//               after; AST swap-remove uses `slice.swap` since `G::Property` is `!Clone`.
-//               `--analyze` branch (Zig L693-727) moved up into
-//               `bun_runtime::cli::pm_update_package_json` to break the
-//               install→{bundler,runtime} dependency cycle.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/updatePackageJSONAndInstall.zig

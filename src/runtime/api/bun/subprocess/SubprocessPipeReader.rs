@@ -453,10 +453,4 @@ impl BufferedReaderParent for PipeReader {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/subprocess/SubprocessPipeReader.zig (251 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      intrusive refcount + self-deref patterns (detach/start guard) need raw-ptr review; LIFETIMES.tsv had no rows so process/event_loop use NonNull backrefs
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/subprocess/SubprocessPipeReader.zig

@@ -920,13 +920,4 @@ pub fn iterate<const IS_U16: bool>(self_: Fd) -> NewWrappedIterator<IS_U16> {
     NewWrappedIterator::<IS_U16>::init(self_)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/dir_iterator.zig (564 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      const-enum `PathType` generic flattened to `bool` (stable
-//               const-generics); inherent associated `Error` types dropped;
-//               linux getdents64 goes through libc::syscall raw path. Windows
-//               body is gated on bun_sys::windows FFI surface.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/dir_iterator.zig

@@ -1046,16 +1046,4 @@ pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
     drop(unsafe { Box::from_raw(config) });
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/SSLConfig.zig (577 lines)
-//   confidence: high
-//   notes:      Struct + Default/Clone/Drop/is_same/content_hash/as_usockets/
-//               take_{protos,server_name}/from_js/from_generated/file helpers
-//               + GlobalRegistry::{intern,remove} all live. key/cert/ca use
-//               CStringList (owned CString + thin-ptr side-buffer) so
-//               as_usockets() hands a layout-correct **const c_char to uSockets.
-//               GlobalRegistry reshaped from ArrayHashMap<*SSLConfig> to
-//               Vec<(u64, Weak)> probe-via-upgrade to avoid &/&mut aliasing
-//               between Arc::drop_in_place and concurrent intern().
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/SSLConfig.zig

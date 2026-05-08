@@ -64,10 +64,4 @@ impl ManagedTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/event_loop/ManagedTask.zig (47 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      `New(comptime Type, comptime Callback) type` collapsed to generic `new<T>(ctx, cb)`; fn-pointer transmute replaces the `wrap` trampoline. `Task::init(*mut ManagedTask)` assumed on crate::Task.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/event_loop/ManagedTask.zig

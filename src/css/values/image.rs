@@ -533,10 +533,4 @@ fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/image.zig (408 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      DeriveParse/DeriveToCss/implementEql/implementDeepClone need proc-macro derives; file_type uses raw *const [u8] pending arena-lifetime design; arena params dropped per Box<Gradient> TSV decision
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/image.zig

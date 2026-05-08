@@ -2175,12 +2175,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/lowerDecorators.zig (1495 lines)
-//   confidence: medium
-//   notes:      Phase-A raw-pointer arena slices (`*mut [T]`, `Str = &'static [u8]`)
-//               force several `unsafe { core::mem::transmute }` lifetime erasures
-//               and `core::ptr::read` shallow-copies of Vec; revisit once
-//               'bump is threaded through E/G/S.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/lowerDecorators.zig

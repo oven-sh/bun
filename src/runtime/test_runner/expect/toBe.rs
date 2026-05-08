@@ -113,10 +113,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBe.zig (74 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      scopeguard owns &mut Expect for `defer postMatch`; second Formatter for dual to_fmt borrow; throw() assumed to take fmt::Arguments
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBe.zig

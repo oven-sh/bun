@@ -207,10 +207,4 @@ pub use ansi::render_to_ansi;
 pub use ansi::detect_light_background;
 pub use ansi::detect_kitty_graphics;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/root.zig (124 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      allocator params dropped; parser::ParserError name + Flags struct-init shape need Phase-B confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/root.zig

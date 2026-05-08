@@ -58,10 +58,4 @@ unsafe extern "C" {
     fn Bun__X509__toJS(cert: *mut X509, global_object: *const JSGlobalObject) -> JSValue;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/x509.zig (57 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      from_js_host_call signature/@src() mapping needs Phase B; X509 taken as &mut (raw *mut only at extern "C" boundary)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/x509.zig

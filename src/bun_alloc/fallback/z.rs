@@ -83,10 +83,4 @@ impl Z {
 // ctx pointer is unused (`.ptr = undefined`) it collapses to `&self` on a ZST.
 const _: fn() -> *mut c_void = || ptr::null_mut();
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/fallback/z.zig (43 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      vtable→trait-impl on ZST; c_allocator import path needs Phase-B wiring
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/fallback/z.zig

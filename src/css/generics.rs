@@ -1615,14 +1615,4 @@ impl PartialCmp for CSSInteger {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/generics.zig (674 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      Heavy @typeInfo reflection reshaped into traits + blanket impls;
-//               per-type derives `#[derive(DeepClone, CssEql, CssHash)]` are
-//               implemented in `bun_css_derive` and re-exported here (same-name
-//               trait+derive idiom). ParseWithOptions falls through to Parse
-//               via per-container forwarding impls (no specialization).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/generics.zig

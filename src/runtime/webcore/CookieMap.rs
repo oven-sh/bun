@@ -58,10 +58,4 @@ impl CookieMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/CookieMap.zig (17 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      extern decls should move to runtime_sys
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/CookieMap.zig

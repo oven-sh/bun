@@ -75,10 +75,4 @@ pub fn to_js_data(global_object: &JSGlobalObject, value: Data) -> JSValue {
     JSValue::from_date_string(global_object, cstr)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/types/date.zig (55 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      `toJS(anytype)` split into to_js_i64/to_js_data; string-arm of from_js gated on bun_string::String::parse_date
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/types/date.zig

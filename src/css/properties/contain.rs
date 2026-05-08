@@ -20,10 +20,4 @@ pub enum ContainerNameList {
 // TODO(port): css.DefineEnumProperty(@compileError(css.todo_stuff.depth)) — unimplemented placeholder in Zig source
 pub struct Container;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/contain.zig (22 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      ContainerType/Container are @compileError placeholders in Zig; left as unit structs
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/contain.zig

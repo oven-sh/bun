@@ -134,10 +134,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeCloseTo.zig (90 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      defer post_match needs borrowck reshape; Expect::throw fmt-string/args threading undecided
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeCloseTo.zig

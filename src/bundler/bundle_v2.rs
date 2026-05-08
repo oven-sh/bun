@@ -7024,12 +7024,6 @@ pub use Logger::Loc;
 // Uses jsc.conv (SYSV_ABI on Windows x64) for proper calling convention
 // Sets up metafile object with { json: <lazy parsed>, markdown?: string }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/bundle_v2.zig (4509 lines)
-//   confidence: low
-//   todos:      30
-//   notes:      Heavy borrowck reshaping needed (overlapping &mut self.graph/transpiler); enqueueEntryPoints split into 3 fns (see PORT NOTE); ParseTask/Resolve/Load/ThreadPool/chunks now arena-allocated via `arena_create`/`alloc_slice_fill_iter` (no more global-heap leaks); ssr_transpiler aliases transpiler in init (illegal in Rust); init() should arena-allocate self
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/bundle_v2.zig
 
 }

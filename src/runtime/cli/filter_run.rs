@@ -1061,10 +1061,4 @@ fn has_cycle(current: &mut ProcessHandle) -> bool {
     false
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/filter_run.zig (682 lines)
-//   confidence: medium
-//   todos:      26
-//   notes:      Self-referential State<->ProcessHandle (raw ptr backrefs); fmt!() needs comptime pretty_fmt macro; ScriptConfig slice ownership leaked in Zig — Phase B should pin State and revisit Stdio/SpawnOptions/sigaction shapes.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/filter_run.zig

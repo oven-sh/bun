@@ -71,9 +71,4 @@ impl Dirname {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/dirname.zig (70 lines)
-//   confidence: high
-//   blocked_on: IOWriter::enqueue (async path)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/dirname.zig

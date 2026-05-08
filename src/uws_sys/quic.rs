@@ -32,10 +32,4 @@ pub fn global_init() {
     unsafe { us_quic_global_init() }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/quic.zig (20 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export module; submodule filenames snake_cased per crate-map rule
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/quic.zig

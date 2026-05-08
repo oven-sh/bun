@@ -55,9 +55,4 @@ pub fn set_max_http_header_size(global: &JSGlobalObject, frame: &CallFrame) -> J
     Ok(JSValue::from(bun_http::max_http_header_size()))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_http_binding.zig (44 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_http_binding.zig

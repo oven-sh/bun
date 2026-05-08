@@ -61,10 +61,4 @@ impl ErrorPacketJsc for ErrorPacket {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/protocol/error_packet_jsc.zig (40 lines)
-//   confidence: medium-high
-//   todos:      0
-//   notes:      JSValue::put takes &[u8] keys directly (no ZigString wrapper); sql_state passed through as Option (matches Zig ?[5]u8)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/protocol/error_packet_jsc.zig

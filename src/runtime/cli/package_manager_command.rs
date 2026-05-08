@@ -897,19 +897,4 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] 
     &buf[..written]
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/package_manager_command.zig (618 lines)
-//   confidence: medium
-//   notes:      `pm.lockfile.loadFromCwd(pm, ..)` is a self-referential split
-//               borrow in Rust; hoisted into `bun_install` as
-//               `PackageManager::load_lockfile_from_cwd` so callers stay in
-//               safe code. After `handle_load_lockfile_errors` the result is
-//               dropped and `pm.lockfile` is used directly (the Zig
-//               `load_lockfile.ok.lockfile` and `pm.lockfile` are the same
-//               pointer).
-//               `Command::Context` (= `&mut ContextData`) is reborrowed at
-//               each sub-command call site so `ctx` remains usable across
-//               branches; sub-commands taking `&Command::Context` receive
-//               `&&mut ContextData`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/package_manager_command.zig

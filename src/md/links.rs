@@ -680,10 +680,4 @@ impl Parser<'_> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/links.zig (527 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Span/SpanAttrs/TextType type names guessed; lookup_ref_def borrow vs render_ref_link(&mut self) may need reshape in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/links.zig

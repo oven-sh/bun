@@ -234,10 +234,4 @@ impl<'a> Interval<'a> {
 
 use core::ffi::CStr;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/platform/darwin.zig (105 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      $NOCANCEL externs renamed via #[link_name]; libc crate used for sockaddr/iovec/pollfd/etc.; Signpost gets <'a> per LIFETIMES.tsv; nested OSLog decls flattened to module scope.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/platform/darwin.zig

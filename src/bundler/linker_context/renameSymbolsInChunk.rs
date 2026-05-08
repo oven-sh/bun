@@ -388,10 +388,4 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/renameSymbolsInChunk.zig (276 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Returns owned `ChunkRenamer` (not borrowed `Renamer<'r,_>`); SoA columns accessed via raw `*mut [T]` pointers (matches scanImportsAndExports); `symbol::Map` shallow view via `from_bump_slice` to mirror Zig by-value pass without double-free.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/renameSymbolsInChunk.zig

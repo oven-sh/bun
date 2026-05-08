@@ -299,10 +299,4 @@ impl<T> Default for IntrusiveField<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/io/heap.zig (220 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      comptime `less` fn-ptr folded into HeapContext<T> trait; duck-typed `.heap` field access expressed via HeapNode trait; all node links kept as raw *mut T per INTRUSIVE classification — public methods are `unsafe fn`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/io/heap.zig

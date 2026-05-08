@@ -359,9 +359,4 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     Ok(JSValue::js_number(prev as f64))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/virtual_machine_exports.zig (244 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/virtual_machine_exports.zig

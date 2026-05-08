@@ -291,8 +291,4 @@ pub use parsed_shell_script::ParsedShellScript;
 /// interpreter's internal process node.
 pub type Subprocess = crate::api::bun::subprocess::Subprocess<'static>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/shell.zig
-//   confidence: low (NodeId-arena scaffolding; parser/AST still gated)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/shell.zig

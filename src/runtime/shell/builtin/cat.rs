@@ -475,8 +475,4 @@ impl FlagParser for Opts {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/cat.zig (357 lines)
-//   confidence: high (NodeId style; full state machine; openat/IOReader wired)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/cat.zig

@@ -705,10 +705,4 @@ pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Err
     Ok(out)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/codecs.zig (498 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      system_backend ?type → cfg-gated module re-export; BackendUnavailable error reshaped to Ok(None); wrap() comptime fn → macro; backend global → AtomicU8; EncodeOptions.icc_profile is raw NonNull<[u8]> (Phase-A no-lifetime rule)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/codecs.zig

@@ -1612,10 +1612,4 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/udp_socket.zig (1091 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      .classes.ts codegen accessors wired via codegen_cached_accessors!; MarkedArgumentBuffer::run signature verified
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/udp_socket.zig

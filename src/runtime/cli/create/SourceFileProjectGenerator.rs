@@ -1076,10 +1076,4 @@ impl Logger {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/create/SourceFileProjectGenerator.zig (887 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      spawn_sync crate path + MultiArrayList .items(.field) accessors guessed; comptime @field dispatch reshaped to Tag::files(); duped-filename slices intentionally Box::leak'd to match Zig lifetime
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/create/SourceFileProjectGenerator.zig

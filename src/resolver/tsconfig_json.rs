@@ -958,10 +958,4 @@ impl TSConfigJSON {
     // drop handles both: PathsMap has Drop, and Box frees the allocation. No explicit Drop needed.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolver/tsconfig_json.zig (522 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      String fields modeled as Box<[u8]> (Zig never freed them — resolver-lifetime); JsxField enum hand-listed (no FieldEnum reflection); Expr.as_string/as_property/ExprData shapes assumed from bun_js_parser; ImportsNotUsedAsValue::List moved to module-level static (no associated statics in Rust).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolver/tsconfig_json.zig

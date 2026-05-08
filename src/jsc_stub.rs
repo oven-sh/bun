@@ -13,10 +13,4 @@ pub struct Node;
 
 pub struct VirtualMachine;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc_stub.zig (10 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      WASM-build placeholder types; API is a module (Rust can't nest types in structs)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc_stub.zig

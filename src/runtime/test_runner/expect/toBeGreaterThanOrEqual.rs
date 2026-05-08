@@ -115,10 +115,4 @@ pub fn to_be_greater_than_or_equal(
 // PORT NOTE: unused `EXPECTED_LINE`/`RECEIVED_LINE` consts kept to mirror Zig structure for
 // side-by-side diff; `concat!` requires literals so they are inlined at the call site.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeGreaterThanOrEqual.zig (69 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      `defer postMatch` via scopeguard may fight borrowck; `Expect::throw` fmt-string/args split needs Phase B API decision
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeGreaterThanOrEqual.zig

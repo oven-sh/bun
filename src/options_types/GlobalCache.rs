@@ -58,10 +58,4 @@ impl GlobalCache {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/options_types/GlobalCache.zig (49 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      MAP is an associated const phf::Map; if phf const-init is rejected, hoist to module-level `pub static`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/options_types/GlobalCache.zig

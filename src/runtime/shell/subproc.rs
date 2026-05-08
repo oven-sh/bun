@@ -2281,10 +2281,4 @@ impl From<&PipeReaderState> for &'static str {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/subproc.zig (1475 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      Arc<PipeReader>/Arc<IOWriter> used for intrusive-refcount types; spawn does two-phase Box::new_uninit init so backrefs are valid; ShellErr unified via crate::shell re-export; several Zig paths reference nonexistent fields (lazy-compiled dead code) — flagged inline.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/subproc.zig

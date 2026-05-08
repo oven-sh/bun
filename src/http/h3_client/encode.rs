@@ -215,11 +215,4 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h3_client/encode.zig (132 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `lower` disjoint-slice borrow into `headers` reshaped to raw-ptr;
-//               request_body kept as *const [u8] (Zig backref slice).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h3_client/encode.zig

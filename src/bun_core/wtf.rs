@@ -48,9 +48,4 @@ pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
     if ms.is_finite() { Ok(ms) } else { Err(InvalidDate) }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/WTF.zig (parseES5Date) → extern "C" WTF__parseES5Date
-//   confidence: high — pure FFI shim; no logic ported.
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/WTF.zig

@@ -1656,12 +1656,4 @@ impl WindowsNamedPipeListeningContext {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/Listener.zig (1120 lines)
-//   confidence: low
-//   blocked:    Windows named-pipe listen/connect paths; JsClass::to_js for
-//               heap-pinned Listener; Handlers by-value move semantics.
-//   notes:      Heavy errdefer/scopeguard reshaping in listen()/connect_inner();
-//               `inline else` body hoisted to connect_finish<const IS_SSL>.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/Listener.zig

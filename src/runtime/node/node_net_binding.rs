@@ -164,9 +164,4 @@ pub fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     Listener::connect_inner(global, maybe_tcp, maybe_tls, opts)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_net_binding.zig (106 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_net_binding.zig

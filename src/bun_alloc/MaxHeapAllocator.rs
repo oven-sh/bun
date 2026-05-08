@@ -145,11 +145,4 @@ impl Drop for MaxHeapAllocator {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/MaxHeapAllocator.zig (58 lines)
-//   confidence: high
-//   notes:      AlignedManaged(u8, max_align_t) → raw MAX_ALIGN-aligned buffer
-//               (Vec<u8> would lose the alignment guarantee). vtable fns are
-//               inherent; `is_instance` uses Allocator::type_id().
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/MaxHeapAllocator.zig

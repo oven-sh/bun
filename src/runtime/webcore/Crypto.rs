@@ -549,13 +549,4 @@ pub extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
     Crypto::default().to_js(global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/Crypto.zig (288 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      JSGlobalObjectCryptoExt locally ports throwDOMException /
-//               validateIntegerRange / throwInvalidPropertyTypeValue because
-//               src/jsc/JSGlobalObject.rs defines them on a parallel
-//               JSGlobalObject struct (not the canonical bun_jsc one).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/Crypto.zig

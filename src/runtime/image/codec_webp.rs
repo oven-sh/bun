@@ -253,10 +253,4 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_prof
     Ok(codecs::Encoded { bytes: NonNull::from(assembled_slice), free: encoded_wrap_free!(WebPFree) })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/codec_webp.zig (168 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      codecs::Encoded.bytes field type (raw slice w/ custom free fn) and codecs::Error variant names assumed; scopeguard used for all libwebp FFI defer cleanup; extern fns left in-place pending libwebp_sys crate.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/codec_webp.zig

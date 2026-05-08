@@ -86,10 +86,4 @@ pub fn to_be_instance_of(
     res
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeInstanceOf.zig (53 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match reshaped as inner-closure + trailing call; two &mut formatter borrows at expected_fmt/value_fmt may need reshaping in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeInstanceOf.zig

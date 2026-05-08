@@ -347,10 +347,4 @@ pub extern "C" fn Bun__shouldIgnoreOneDisconnectEventListener(global: *mut JSGlo
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_cluster_binding.zig (304 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      RacyCell CHILD_SINGLETON needs JS-thread cell
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_cluster_binding.zig

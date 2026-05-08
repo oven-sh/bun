@@ -780,8 +780,4 @@ pub struct Opts {
     pub one_file_per_line: bool,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/ls.zig (1026 lines)
-//   confidence: medium-high — full DirIterator/-l body ported
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/ls.zig

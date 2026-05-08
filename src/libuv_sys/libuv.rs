@@ -2856,15 +2856,4 @@ const _: () = {
     assert_offset!(uv_udp_t, data, 0);
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/libuv_sys/libuv.zig (3213 lines) → field-accurate Rust
-//               #[repr(C)] mirrors + UvHandle/UvStream/UvReq generics.
-//   confidence: high — every struct is layout-asserted against the C header
-//               sizes; all 200+ extern fns ported 1:1.
-//   notes:      `Maybe(T)`-returning wrappers (`.init`/`.open` etc.) return
-//               raw `ReturnCode` here so this crate stays leaf; higher-tier
-//               `bun_sys` provides the `to_error(Tag)` mapping. The
-//               comptime-monomorphised `readStart`/`write` trampolines were
-//               not ported (callers supply C callbacks directly).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/libuv_sys/libuv.zig

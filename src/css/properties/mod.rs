@@ -336,10 +336,4 @@ pub(crate) use generic_registrations::GenericBorderImpl;
 // intentionally omitted here. See `src/css/properties/properties.zig` for the
 // historical block; the live definitions come from `properties_generated`.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/properties.zig (1886 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      hub + properties_generated un-gated; all leaf property value types real (animation un-gated; prop_value_stub! removed)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/properties.zig

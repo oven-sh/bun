@@ -1207,10 +1207,4 @@ impl<'a> ParserCtx<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/YAMLObject.zig (1094 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      arena/ASTMemoryAllocator interaction needs review; u16 char literal patterns use hex with comments.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/YAMLObject.zig

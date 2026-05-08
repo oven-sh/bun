@@ -1379,10 +1379,4 @@ pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ThreadPool;
 pub use crate::ParseTask;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/Chunk.zig (853 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      arena-borrowed string fields use &'static [u8] placeholder; packed structs hand-rolled with get/set accessors; MultiArrayList SoA accessors guessed; @constCast on file_path needs ownership audit; Layers Cow lifetime is 'static placeholder for 'bump
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/Chunk.zig

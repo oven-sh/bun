@@ -163,10 +163,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/symbols.zig (133 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      Zig mixin-struct flattened to impl block on P<const ...>; getOrPut sites reshaped for borrowck (get-then-insert); arena lifetime on `name` deferred to Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/symbols.zig

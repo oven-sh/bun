@@ -178,10 +178,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toIncludeRepeated.zig (110 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard on post_match aliases &mut Self; Formatter borrow shape and Expect::throw fmt-arg signature need Phase B attention
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toIncludeRepeated.zig

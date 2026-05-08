@@ -1012,10 +1012,4 @@ impl AtomicState {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/AsyncHTTP.zig (494 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      depends on HTTPThread::{init,schedule,wakeup} (concurrent un-gate). HTTPClientResult is non-Copy so SingleHTTPChannel uses Mutex+Condvar instead of bun_threading::Channel.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/AsyncHTTP.zig

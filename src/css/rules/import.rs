@@ -359,10 +359,4 @@ const _: () = {
 #[allow(unused_imports)]
 use {Arena as _Arena, ImportRecord as _ImportRecord};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/import.zig (268 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      layout-pun conditions()/conditions_mut() needs #[repr(C)] verified; url laundered as &'static [u8] pending crate-wide 'bump; inherent deep_clone real (field-walk port of css.implementDeepClone)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/import.zig

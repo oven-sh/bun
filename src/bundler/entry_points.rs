@@ -537,10 +537,4 @@ pub trait TranspilerLike {
 
 use crate::options::ClientCssInJs;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/entry_points.zig (374 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      self-referential structs (Source borrows code_buffer) need raw-ptr handling in Phase B; TranspilerType duck-typing stubbed via placeholder trait
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/entry_points.zig

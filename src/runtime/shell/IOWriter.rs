@@ -1205,12 +1205,4 @@ pub fn on_io_writer_chunk(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/IOWriter.zig (915 lines)
-//   confidence: medium
-//   notes:      RefCount→Arc; UnsafeCell interior for &self enqueue;
-//               *mut Interpreter backref for async poll callbacks (set_interp
-//               must be wired by interpreter.rs root_io setup);
-//               AsyncDeinit hop folded into Drop.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/IOWriter.zig

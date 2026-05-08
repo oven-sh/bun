@@ -3173,10 +3173,4 @@ pub mod form_data {
 /// `bun.FormData.AsyncFormData` verbatim.
 pub use form_data as FormData;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_core/util.zig (235 lines)
-//   confidence: low
-//   todos:      7
-//   notes:      pure comptime-reflection helpers; mapped to MapLike/ArrayLike traits — Phase B should inline call sites to .collect()/Vec::from and likely delete this module
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_core/util.zig

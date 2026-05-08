@@ -94,10 +94,4 @@ unsafe fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize
     self_.fallback.raw_free(buf, alignment, ra)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/BufferFallbackAllocator.zig (85 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Zig `Allocator` struct → `StdAllocator`; vtable hand-rolled.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/BufferFallbackAllocator.zig

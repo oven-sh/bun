@@ -116,10 +116,4 @@ pub mod protocol {
     use {css as _, Angle as _};
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/values.zig (36 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      thin re-export module; Specifier.file slice ownership needs Phase B verification (CSS arena)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/values.zig

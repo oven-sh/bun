@@ -3095,11 +3095,4 @@ pub fn get_use_system_ca(
     ))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun.zig (3824 lines)
-//   confidence: low
-//   todos:      44
-//   notes:      Root re-export hub; heavy comptime reflection (span/sliceTo/serializable/ThreadlocalBuffers/MakePath) stubbed with TODO(port); pool params erased per guide; argv stored as Vec<Box<ZStr>>; timespec::MockMode nesting reshaped (runtime param + PERF(port) markers).
-// ──────────────────────────────────────────────────────────────────────────
-
+// ported from: src/bun.zig

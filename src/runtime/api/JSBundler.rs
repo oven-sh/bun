@@ -2078,9 +2078,4 @@ impl BuildArtifact {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/JSBundler.zig (2050 lines)
-//   confidence: medium
-//   notes:      Names self-referential slices need raw ptrs; MiniImportRecord slice fields are borrowed (raw *const [u8]); Load.path/namespace changed from borrowed to owned
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/JSBundler.zig

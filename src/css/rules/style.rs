@@ -385,10 +385,4 @@ impl<R> StyleRule<R> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/rules/style.zig (249 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      struct + is_empty/hash_key/update_prefix/is_compatible/to_css/to_css_base/minify/is_duplicate un-gated (to_css_shim! entry deleted in rules/mod.rs); declarations field uses DeclarationBlock<'static> until 'bump threads through CssRule (DeclarationHandler transmute in minify() collapses with it); hash_key inlines hash_property_ids (gated in declaration.rs); to_css_base composes-handling stubbed (Composes payload + handle_composes gated); minify is_unused arm gated on ArrayHashMap key-type reconcile (rules/mod.rs ↔ selector.rs); deep_clone gated on DeclarationBlock::deep_clone
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/rules/style.zig

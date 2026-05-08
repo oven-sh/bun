@@ -744,12 +744,4 @@ impl ProxyTunnel {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/ProxyTunnel.zig (452 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      SSLWrapper<*mut HTTPClient> handlers wired to bun_uws::ssl_wrapper;
-//               Socket::from_generic transmute_copy bridges const-generic IS_SSL → enum;
-//               HTTPClient.proxy_tunnel is Option<NonNull<ProxyTunnel>> (intrusive-rc).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/ProxyTunnel.zig

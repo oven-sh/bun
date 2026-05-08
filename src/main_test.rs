@@ -289,10 +289,4 @@ enum MemoryCheck {
     Leak,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/main_test.zig (206 lines)
-//   confidence: low
-//   todos:      14
-//   notes:      Zig test-harness entrypoint; builtin.test_functions / std.testing leak-allocator / stderr file-lock have no Rust equivalents — Phase B needs a real test registry + leak-check strategy.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/main_test.zig

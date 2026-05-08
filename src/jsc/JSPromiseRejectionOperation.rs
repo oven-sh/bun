@@ -5,10 +5,4 @@ pub enum JSPromiseRejectionOperation {
     Handle = 1,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSPromiseRejectionOperation.zig (4 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      trivial #[repr(u32)] enum; no dependencies
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSPromiseRejectionOperation.zig

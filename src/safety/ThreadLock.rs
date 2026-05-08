@@ -146,10 +146,4 @@ pub(crate) const ENABLED: bool = cfg!(feature = "ci_assert");
 #[allow(dead_code)]
 const TRACES_ENABLED: bool = cfg!(debug_assertions);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/safety/ThreadLock.zig (78 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      ci_assert cfg name + thread_id module surface (ThreadId/current) need Phase-B wiring; @inComptime/@returnAddress have no Rust equivalent
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/safety/ThreadLock.zig

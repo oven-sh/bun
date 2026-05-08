@@ -554,10 +554,4 @@ pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
 }
 } // mod _impl
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_process.zig (381 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      comptime-built ComptimeStringMap from cli auto_params needs build.rs/proc-macro; process_title heap backing owned by parking_lot::Mutex (published slice still in cli static); exported *const c_char statics wrapped in Sync newtype; host_fn.wrapN exports hand-rolled as extern "C" shims (callers are not JSHostFunctionType)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_process.zig

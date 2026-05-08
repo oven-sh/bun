@@ -554,11 +554,4 @@ pub(super) fn make_napi_env_if_needed<'a>(
     None
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/ffi/FFI.zig (open/close/compile + symbol parsing)
-//   confidence: medium (B-2 second-pass un-gate)
-//   notes:      JSC host-fn entry points real; TinyCC compile body still
-//               blocked on `bun_tcc_sys::tcc` (gated). `link_symbols`,
-//               `callback`, `cc` remain in `ffi_body.rs` (heavy CompileC dep).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/ffi/FFI.zig

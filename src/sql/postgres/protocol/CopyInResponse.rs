@@ -14,8 +14,7 @@ impl CopyInResponse {
         bun_core::output::panic(format_args!("TODO: not implemented {}", "CopyInResponse"));
     }
 
-    // Zig: pub const decode = DecoderWrap(CopyInResponse, decodeInternal).decode;
-    // Direct delegate; revisit as trait impl.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
         context: Container,
@@ -24,10 +23,4 @@ impl CopyInResponse {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/CopyInResponse.zig (13 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      DecoderWrap wrapping is a comptime type-fn; needs trait/macro shape in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/CopyInResponse.zig

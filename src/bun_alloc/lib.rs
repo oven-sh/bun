@@ -2499,10 +2499,4 @@ pub fn default_allocator() -> &'static dyn Allocator {
  #[path = "heap_breakdown.rs"] mod heap_breakdown_full;
 pub mod memory;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_alloc/bun_alloc.zig (937 lines)
-//   confidence: low
-//   todos:      32
-//   notes:      per-monomorphization statics solved via declare-site `bss_*!` macros (SyncUnsafeCell<MaybeUninit> + Once + init_at); BSSMap key_list_overflow calls non-existent OverflowList API in upstream Zig (likely dead code); parking_lot::Mutex needs RAII guard; BSSList.head dual-semantics (sibling-ref vs heap) needs enum split.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_alloc/bun_alloc.zig

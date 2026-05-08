@@ -129,10 +129,4 @@ pub fn to_be_one_of(
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeOneOf.zig (92 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      defer post_match via scopeguard borrows &mut this across body; const get_signature needs Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeOneOf.zig

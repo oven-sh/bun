@@ -50,10 +50,4 @@ pub mod toml;
 #[path = "yaml.rs"]
 pub mod yaml;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/interchange/interchange.zig (4 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export crate root; submodules ported separately
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/interchange/interchange.zig

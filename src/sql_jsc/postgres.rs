@@ -139,10 +139,4 @@ pub mod protocol {
 pub use bun_sql::postgres::postgres_protocol as base_protocol;
 pub use bun_sql::postgres::postgres_types as base_types;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres.zig (30 lines)
-//   confidence: medium
-//   todos:      see TODO(b2-blocked) above
-//   notes:      `create_binding` body gated; submodule filenames PascalCase → #[path]
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres.zig

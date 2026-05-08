@@ -645,10 +645,4 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/immutable/escapeHTML.zig (642 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      SIMD paths assume core::simd-style API on AsciiVector/AsciiU16Vector (nightly portable_simd or bun_highway shim); ENABLE_SIMD const + strings::append signature need wiring in Phase B. Raw ptr/end loops reshaped to index-based for borrowck.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/immutable/escapeHTML.zig

@@ -35,10 +35,4 @@ pub fn configure_transform_options_for_bun(
     Ok(args)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/config.zig (26 lines)
-//   confidence: high
-//   todos:      3
-//   notes:      allocator params dropped (non-AST crate); `bun.schema.api` crate path needs Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/config.zig

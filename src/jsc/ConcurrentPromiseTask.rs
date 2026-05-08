@@ -140,11 +140,4 @@ fn js_event_loop_ctx() -> Async::EventLoopCtx {
     Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ConcurrentPromiseTask.zig (76 lines)
-//   confidence: high
-//   notes:      `ctx` is `Box<Context>` (OWNED); intrusive `task`/`concurrent_task`
-//               recovered via `offset_of!`; `KeepAlive` takes the cycle-break
-//               `EventLoopCtx` rather than `*VirtualMachine` directly.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ConcurrentPromiseTask.zig

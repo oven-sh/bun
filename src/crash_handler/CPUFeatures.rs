@@ -123,10 +123,4 @@ impl CPUFeatures {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/crash_handler/CPUFeatures.zig (71 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      bun_analytics::Features counter API is guessed; per-arch Flags via cfg + bitflags, @typeInfo loop expanded to const table
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/crash_handler/CPUFeatures.zig

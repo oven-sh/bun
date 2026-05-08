@@ -137,10 +137,4 @@ unsafe extern "C" {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/ListenSocket.zig (69 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      socket() uses crate::socket::NewSocketHandler (no upward dep); add_server_name takes *mut SslCtx + *mut c_void userdata (both stored past the call by C — avoids aliased-&mut / const→mut UB on round-trip).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/ListenSocket.zig

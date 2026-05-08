@@ -56,10 +56,4 @@ static MAP: phf::Map<&'static [u8], AuthMethod> = phf::phf_map! {
     b"sha256_password" => AuthMethod::Sha256Password,
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/AuthMethod.zig (37 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      auth::* scramble fns assumed to return fixed-size arrays; borrowck may need reshaping for buf double-borrow in scramble()
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/AuthMethod.zig

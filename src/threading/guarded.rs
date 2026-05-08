@@ -119,10 +119,4 @@ impl RawMutex for Mutex {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/guarded.zig (72 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      RawMutex trait stubbed here; lock() returns an RAII GuardedLock (drop unlocks).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/guarded.zig

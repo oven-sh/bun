@@ -258,10 +258,4 @@ impl OutputFileJsc for OutputFile {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler_jsc/output_file_jsc.zig (214 lines)
-//   confidence: high
-//   notes:      mem::replace reshape for borrowck; allocator params dropped;
-//               duped paths carried as `PathLike::EncodedSlice` (owned).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler_jsc/output_file_jsc.zig

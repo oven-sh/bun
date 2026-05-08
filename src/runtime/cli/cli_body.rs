@@ -1800,10 +1800,4 @@ use crate::cli::{
 use bun_install;
 use bun_install::package_manager_real::Subcommand as PmSubcommand;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/cli.zig (1493 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      Heavy use of mutable statics (argv/ctx) and Output::pretty printf-style — Phase B must settle bun_core::argv()/set_argv() API and Output fmt-args wiring; ExactSizeMatcher match → guard chain (PERF flagged); Tag const-generic requires ConstParamTy on options_types::CommandTag.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/cli.zig

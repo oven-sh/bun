@@ -937,10 +937,4 @@ impl ZigStringEncode for bun_str::ZigString {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/encoding.zig (554 lines)
-//   confidence: medium
-//   todos:      11
-//   notes:      const-generic Encoding reshaped to u8 (adt_const_params not used); Vec<u16>↔Vec<u8> reinterpretation and unaligned u16 writes need Phase B helpers; OOM returns empty/dead in Zig but aborts in Rust
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/encoding.zig

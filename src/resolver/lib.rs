@@ -9511,12 +9511,6 @@ pub struct RootPathPair<'b> {
     pub package_json: *const PackageJSON,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/resolver/resolver.zig (4388 lines)
-//   confidence: low
-//   todos:      41
-//   notes:      heavy reliance on threadlocal raw bufs + BSSMap-interned ptrs; many `defer` reshapes need scopeguard wiring; PackageManager/ESModule API surface guessed; borrowck will need significant Phase-B reshaping around &mut self + cached *DirInfo. Drop must close DirInfo FDs. ResolveWatcher needs stable-Rust reshape (const fn-ptr generic).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/resolver/resolver.zig
 
 } // end  mod __phase_a_body

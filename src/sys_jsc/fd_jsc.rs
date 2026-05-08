@@ -123,11 +123,4 @@ impl FdJsc for Fd {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys_jsc/fd_jsc.zig (80 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      uses bun_jsc::{JSValue, JSGlobalObject, VM, SystemError,
-//               RangeErrorOptions} directly.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys_jsc/fd_jsc.zig

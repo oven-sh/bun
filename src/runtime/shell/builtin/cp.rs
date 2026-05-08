@@ -887,9 +887,4 @@ impl FlagParser for Opts {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/cp.zig (771 lines)
-//   confidence: medium (NodeId style; thread-pool body + EBUSY ported)
-//   blocked_on: IOWriter::enqueue body
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/cp.zig

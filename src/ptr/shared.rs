@@ -196,10 +196,4 @@ pub type AtomicWeak<T> = std::sync::Weak<T>;
 // `Option<Rc<T>>`, and slices/const are rejected by the type system rather than
 // a comptime check.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/shared.zig (568 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Per PORTING.md §Pointers, Shared/AtomicShared map to std Rc/Arc — this file is type aliases + method-map docs, not a reimplementation. Phase B: rewrite the ~4 SharedIn/WithOptions call sites to concrete Rc/Arc and delete the shim aliases.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/shared.zig

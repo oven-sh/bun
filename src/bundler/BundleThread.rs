@@ -430,15 +430,4 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/BundleThread.zig (195 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      generic-static singleton collapsed to concrete JSBundleCompletionTask;
-//               defer/errdefer rewritten straight-line; Waker via bun_aio (new dep);
-//               ResetEvent ported locally (parking_lot-backed); BundleV2::init +
-//               runFromJSInNewThread delegated to CompletionStruct trait (Zig
-//               @compileError already made the body monomorphic on
-//               JSBundleCompletionTask, whose concrete impl lives in T6)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/BundleThread.zig

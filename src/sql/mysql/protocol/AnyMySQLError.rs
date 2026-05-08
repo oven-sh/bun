@@ -76,10 +76,4 @@ impl From<bun_core::Error> for Error {
 // is a *_jsc alias — deleted per PORTING.md. `mysql_error_to_js` lives in
 // `bun_sql_jsc::mysql::protocol::any_mysql_error_jsc` as an extension fn.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/AnyMySQLError.zig (42 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      error set → thiserror+IntoStaticStr enum; *_jsc alias dropped
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/AnyMySQLError.zig

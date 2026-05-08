@@ -1779,10 +1779,4 @@ fn exists_z(path: &[u8]) -> bool {
     bun_sys::exists(path)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/init_command.zig (1270 lines)
-//   confidence: medium
-//   todos:      26
-//   notes:      Heavy comptime reflection (@hasDecl/@field, anytype templating, EnumFields) reshaped into RadioChoice trait + direct asset bytes; std.fs/std.process replaced with bun_sys/spawn_sync stubs; named-field template substitution needs a Phase B helper; defer/errdefer in process_radio_button inlined via macro for borrowck.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/init_command.zig

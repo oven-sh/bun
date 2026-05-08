@@ -171,10 +171,4 @@ pub enum Strategy {
     IgnoreFailure,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/isolated_install/Symlinker.zig (143 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      bun_paths::Path/RelPath/AbsPath sep-config generics and Errno variant names need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/isolated_install/Symlinker.zig

@@ -116,10 +116,4 @@ impl ShellCompletions {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/shell_completions.zig (75 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      @embedFile paths need build wiring; slice-of-slice fields may need <'a> in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/shell_completions.zig

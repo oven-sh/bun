@@ -55,10 +55,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeTrue.zig (35 lines)
-//   confidence: medium-high
-//   todos:      0
-//   notes:      defer post_match() reshaped via inner closure (no raw ptrs); Formatter init/throw() signatures need Phase B confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeTrue.zig

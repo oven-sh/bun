@@ -1836,10 +1836,4 @@ impl<'a> CompoundSelectorIter<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/selectors/selector.zig (1613 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      Arena-backed (bumpalo) slice ownership for Component::Is/Negation payloads needs Phase B reconciliation; `r#impl` module name; Component/PseudoClass variant shapes guessed from Zig union arms.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/selectors/selector.zig

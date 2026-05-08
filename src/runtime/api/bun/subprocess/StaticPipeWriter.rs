@@ -369,10 +369,4 @@ impl<P: StaticPipeWriterProcess> Drop for StaticPipeWriter<P> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/subprocess/StaticPipeWriter.zig (142 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      buffer self-borrows source (raw *const [u8], Phase B may switch to offset+len); IntrusiveRc/BufferedWriterHandler wiring + P trait bound deferred to Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/subprocess/StaticPipeWriter.zig

@@ -3218,10 +3218,4 @@ pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/BunObject.zig (2172 lines)
-//   confidence: medium
-//   todos:      17
-//   notes:      Heavy comptime @export table replaced with macro_rules! shims (needs proc-macro in Phase B); ZlibReaderArrayList ownership/list_ptr self-ref needs Rust-side reshape; ZstdJob fallible alloc placeholder.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/BunObject.zig

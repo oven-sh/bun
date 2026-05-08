@@ -68,10 +68,4 @@ impl Socket {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/quic/Socket.zig (27 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      opaque FFI handle + extern wrappers; ext<T> returns &mut Option<NonNull<T>> (same layout as Zig ?*T)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/quic/Socket.zig

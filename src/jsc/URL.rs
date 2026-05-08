@@ -201,10 +201,4 @@ impl URL {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/URL.zig (166 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      opaque FFI handle; from_* return NonNull<URL> (owned C++ ptr) — Phase B may want RAII wrapper
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/URL.zig

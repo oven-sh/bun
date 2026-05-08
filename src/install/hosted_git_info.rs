@@ -1948,10 +1948,4 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
 // Zig grep for `TestingAPIs` still lands here.
 pub mod testing_apis {}
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/hosted_git_info.zig (1652 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Self-referential slices reshaped to Range<usize> into owned buffer; UrlProtocol/UrlProtocolPair carry <'a> (BORROW_PARAM); StringBuilder/PercentEncoding/JscUrl API shapes verified against bun_core/bun_url.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/hosted_git_info.zig

@@ -333,10 +333,4 @@ macro_rules! new_store {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/NewStore.zig (171 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      type-list comptime fn → macro_rules!; Block buffer alignment needs Phase-B fix (repr(align) wants literal); deinit→unsafe destroy(*mut) (frees enclosing PreAlloc, not Drop-shaped); upstream `store.head` assertion is dead Zig.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/NewStore.zig

@@ -54,10 +54,4 @@ impl CallbackWrapper {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/codegen.zig (33 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      comptime fn-ptr params demoted to runtime fields (Rust const generics lack fn-ptr support); revisit if monomorphization matters
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/codegen.zig

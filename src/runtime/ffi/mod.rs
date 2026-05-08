@@ -839,13 +839,4 @@ impl CompilerRT {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/ffi/FFI.zig (2465 lines)
-//   confidence: medium (B-2 second-pass un-gate)
-//   notes:      ABIType + FFI/Function/Step/Compiled/CompileC structs real;
-//               dlopen primitives + JSC host-fn bodies (open/close/compile/
-//               generate_symbols) real in `host_fns.rs`. TinyCC compile/
-//               relocate paths and cc/linkSymbols/callback preserved in
-//               ffi_body.rs (gated on bun_tcc_sys::tcc).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/ffi/FFI.zig

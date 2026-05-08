@@ -29,10 +29,4 @@ impl FetchCacheMode {
     // deleted — to_js lives as an extension-trait method in bun_http_jsc (see PORTING.md §Idiom map).
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_types/FetchCacheMode.zig (21 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      phf_map! is not const-evaluable as an associated const in current phf; Phase B may need `pub static MAP` at module scope instead.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_types/FetchCacheMode.zig

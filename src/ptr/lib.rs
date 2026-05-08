@@ -58,10 +58,4 @@ pub use weak_ptr::WeakPtr;
 
 pub mod meta; // small, used by other crates
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/ptr.zig (33 lines)
-//   confidence: high
-//   todos:      2
-//   notes:      thin re-export hub; Phase B must reconcile with std Box/Rc/Arc mapping and bun_collections::TaggedPtr
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/ptr.zig

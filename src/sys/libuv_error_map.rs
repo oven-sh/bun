@@ -118,10 +118,4 @@ pub static LIBUV_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static str>> = LazyL
     map
 });
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/libuv_error_map.zig (105 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      comptime EnumMap → LazyLock<EnumMap>; needs SystemErrno::from_name (strum) for @hasField/@field; value type [:0]const u8 → &'static str (only used as message text)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/libuv_error_map.zig

@@ -66,10 +66,4 @@ pub enum TextOverflow {
     Ellipsis,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/overflow.zig (80 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DefineEnumProperty mixin mapped to placeholder #[derive(css::EnumProperty)]; Phase B must supply that derive (parse/to_css from lowercase tag name).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/overflow.zig

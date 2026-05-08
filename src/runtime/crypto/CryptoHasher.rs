@@ -1531,10 +1531,4 @@ pub type SHA384 = StaticCryptoHasher<hashers::SHA384>;
 pub type SHA512 = StaticCryptoHasher<hashers::SHA512>;
 pub type SHA512_256 = StaticCryptoHasher<hashers::SHA512_256>;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/crypto/CryptoHasher.zig (894 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      Heavy comptime reflection (algo_map inline-for, @typeInfo on Hasher.hash arity) replaced with ZigHashAlgo/StaticHasher traits + for_each_zig_algo! macro; [u8; ASSOC_CONST] arrays need generic_const_exprs workaround; StringOrBuffer `inline else` arms collapsed to .slice() helper.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/crypto/CryptoHasher.zig

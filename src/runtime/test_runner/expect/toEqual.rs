@@ -59,10 +59,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toEqual.zig (49 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      defer post_match reshaped via scopeguard owning &mut Self; get_signature assumed const fn -> &'static str
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toEqual.zig

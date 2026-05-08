@@ -91,10 +91,4 @@ impl Resolution {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/resolution.zig (91 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      to_css "x" unit gated on compat::Feature autogen; arena param dropped from add_f32.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/resolution.zig

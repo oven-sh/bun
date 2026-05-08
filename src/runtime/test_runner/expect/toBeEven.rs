@@ -82,10 +82,4 @@ pub fn to_be_even(
     res
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeEven.zig (62 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      defer post_match() reshaped via inner closure (no raw ptrs); Expect::throw arity collapsed fmt+args into format_args!
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeEven.zig

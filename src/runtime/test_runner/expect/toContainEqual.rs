@@ -142,10 +142,4 @@ pub fn to_contain_equal(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainEqual.zig (113 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      `this` wrapped in scopeguard for post_match defer; Expect.throw fmt-args shape may need adjusting
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainEqual.zig

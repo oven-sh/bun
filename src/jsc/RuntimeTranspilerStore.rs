@@ -1109,12 +1109,4 @@ impl TranspilerJob {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/RuntimeTranspilerStore.zig (655 lines)
-//   confidence: medium
-//   notes:      run() does heavy defer→scopeguard + by-value Transpiler copy via
-//               ptr::read+ManuallyDrop; vm/global_this are raw *mut (BACKREF —
-//               struct crosses threads); KeepAlive ref/unref routed via the
-//               `get_vm_ctx` hook (matches AsyncModule.rs).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/RuntimeTranspilerStore.zig

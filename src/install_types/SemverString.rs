@@ -705,10 +705,4 @@ const _: () = assert!(
     "String types must be the same size",
 );
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install_types/SemverString.zig (662 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      `comptime Type` dispatch lifted to BuilderStringType trait; Builder.ptr retyped to Option<Box<[u8]>> per LIFETIMES.tsv with borrowck reshaping; u63 truncation expressed via MAX_ADDRESSABLE_SPACE_MASK; toJS alias deleted (lives in semver_jsc).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install_types/SemverString.zig

@@ -350,10 +350,4 @@ impl<'arena> BundledAst<'arena> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/BundledAst.zig (235 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Struct carries <'arena> (css field per LIFETIMES.tsv); Ast field move/clone semantics and associated List type paths need Phase-B fixup; `empty` is a fn not const.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/BundledAst.zig

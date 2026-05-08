@@ -989,14 +989,4 @@ pub mod semver_string {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/semver/semver.zig (10 lines)
-//               + MOVE-IN src/install_types/{SlicedString,ExternalString,SemverString}.zig
-//   confidence: medium
-//   todos:      5
-//   notes:      thin re-export crate root; *_jsc alias dropped per guide. SlicedString /
-//               ExternalString / String moved down from bun_install_types to break the
-//               install_types↔semver cycle. Lockfile-taking helpers (Buf::init, hash_context,
-//               array_hash_context) and toJS stay upstream.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/semver/semver.zig

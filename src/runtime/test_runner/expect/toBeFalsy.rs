@@ -71,10 +71,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeFalsy.zig (42 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      defer post_match() inlined on each return path; throw() assumed to take format_args!
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeFalsy.zig

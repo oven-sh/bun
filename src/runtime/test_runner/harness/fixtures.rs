@@ -584,10 +584,4 @@ pub static VERCEL_ROUTES_LIST: RouteList = &[
     (b"pages/virtual-event-starter-ki.js", b"// pages/virtual-event-starter-ki.js"),
 ];
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/harness/fixtures.zig (574 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Route lists are Zig anon-struct field-name→value maps consumed via @typeInfo; ported as static (key,value) slices. Consumers must iterate slice instead of struct fields.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/harness/fixtures.zig

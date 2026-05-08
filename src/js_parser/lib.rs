@@ -2524,10 +2524,4 @@ pub mod renamer {
     use symbol as _;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/js_parser.zig (711 lines)
-//   confidence: medium
-//   todos:      23
-//   notes:      arena slices typed as raw *const/*mut [T] pending crate-wide 'bump; MultiArrayList/ArrayHashMap APIs assumed; Expr::init/stmt::Data variant names guessed; local `enum Result` shadows prelude so all error unions spelled core::result::Result; @tagName enums use #[strum(serialize_all = "snake_case")]
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/js_parser.zig

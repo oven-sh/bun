@@ -342,10 +342,4 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     Ok(value.to_js(global))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/HashObject.zig (156 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      comptime ArgsTuple reflection collapsed into HashAlgorithm trait; std.hash.* backends wired to bun_hash (bit-identical ports)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/HashObject.zig

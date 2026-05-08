@@ -940,14 +940,4 @@ macro_rules! __impl_compression_stream {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_zlib_binding.zig (396 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      CompressionStream is a Zig mixin (usingnamespace pattern) — Rust
-//               port routes field access through the CompressionStreamImpl trait;
-//               Native{Zlib,Brotli,Zstd} must impl it (and Taskable). host_fn
-//               attrs were dropped (the macro can't handle `&mut T` self);
-//               per-class wrapper shims will be needed when codegen wires up.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_zlib_binding.zig

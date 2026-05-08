@@ -299,10 +299,4 @@ pub enum PrintMode {
 // so `.{}` is invalid there. Construction sites must supply required fields explicitly
 // (struct-update or a `new(range, path, kind)` helper in Phase B).
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/options_types/import_record.zig (225 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      ALL_LABELS/ERROR_LABELS static init may need OnceLock; to_api() source references nonexistent `entry_point` variant; original_path lifetime needs review
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/options_types/import_record.zig

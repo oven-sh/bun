@@ -900,10 +900,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/linear_fifo.zig (588 lines)
-//   confidence: medium
-//   todos:      16
-//   notes:      comptime buffer_type variant → trait LinearFifoBuffer; Reader/Writer std.Io adapters and realign() tmp-buffer alignment deferred to Phase B; bulk-copy methods bound `T: Copy`
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/linear_fifo.zig

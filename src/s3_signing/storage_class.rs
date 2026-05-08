@@ -46,10 +46,4 @@ impl StorageClass {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/s3_signing/storage_class.zig (45 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      variant names kept SCREAMING_SNAKE to match Zig + header values; MAP is assoc const (Zig had it nested)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/s3_signing/storage_class.zig

@@ -429,10 +429,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/clap/args.zig (348 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      arena fields dropped (non-AST); ShellIterator returns Cow<'a,[u8]>; argv materialized via OnceLock (bun_core exposes iterator only); inherent assoc-type aliases removed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/clap/args.zig

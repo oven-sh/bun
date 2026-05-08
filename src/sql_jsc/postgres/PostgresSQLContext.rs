@@ -28,10 +28,4 @@ impl PostgresSQLContext {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/PostgresSQLContext.zig (22 lines)
-//   confidence: high
-//   todos:      see TODO(b2-blocked)
-//   notes:      host_fn export-name attribute spelling needs Phase B confirmation
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/PostgresSQLContext.zig

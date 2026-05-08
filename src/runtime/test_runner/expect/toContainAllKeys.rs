@@ -109,10 +109,4 @@ pub fn to_contain_all_keys(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainAllKeys.zig (74 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match() via scopeguard conflicts with &mut this borrows; while-else reshaped to found-flag; throw()/get_signature signatures assumed to take format_args!.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainAllKeys.zig

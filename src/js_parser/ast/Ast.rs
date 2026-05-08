@@ -224,10 +224,4 @@ impl Ast {
 
 pub use crate::ast::g::Class;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/Ast.zig (143 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      Zig nested `.List` types referenced via module paths; hashbang/directive/export_star_import_records ownership needs Phase-B lifetime decision; deinit folded into Drop semantics of field types; manual `impl Default` spells out Ref::NONE / Range::NONE / ExportsKind::None / Target::Browser to match Zig field defaults.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/Ast.zig

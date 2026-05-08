@@ -99,10 +99,4 @@ pub fn to_throw_error_matching_snapshot(
     result
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toThrowErrorMatchingSnapshot.zig (55 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match only runs on success path (Phase B restructure); Expect method sigs (throw/snapshot/get_value) assumed from sibling ports
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toThrowErrorMatchingSnapshot.zig

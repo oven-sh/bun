@@ -1034,10 +1034,4 @@ impl From<FromPnpmLockfileError> for bun_core::Error {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/resolution.zig (552 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      extern union kept as #[repr(C)] union (lockfile binary layout); Tag is a transparent u8 newtype (Zig enum is non-exhaustive — lockfile bytes may carry unknown values); Builder comptime param modeled as StringBuilderLike trait; clone(buf, builder) renamed clone_into to avoid shadowing Clone::clone
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/resolution.zig

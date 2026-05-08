@@ -1267,10 +1267,4 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
 // `pub const TestingAPIs = @import("../sourcemap_jsc/internal_jsc.zig").TestingAPIs;`
 // deleted — *_jsc alias; extension-trait lives in bun_sourcemap_jsc.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sourcemap/InternalSourceMap.zig (927 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      raw-ptr view types (WindowReader/FindCache) need lifetime audit; MutableString API surface guessed; allocator params dropped (global mimalloc).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sourcemap/InternalSourceMap.zig

@@ -323,10 +323,4 @@ fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatche
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PnpmMatcher.zig (204 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      ast::ExprData variant names + logger::ErrorOpts shape are guesses; RegularExpression::init return type assumed Result<Box<_>, _>
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PnpmMatcher.zig

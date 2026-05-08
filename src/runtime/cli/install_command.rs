@@ -200,16 +200,4 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/install_command.zig (97 lines)
-//   confidence: medium
-//   notes:      `Analyzer.on_analyze` re-enters the install path from inside
-//               `BuildCommand::exec`'s `on_fetch` callback while the global
-//               `ContextData` is conceptually still borrowed; raw `*mut`
-//               storage mirrors Zig's freely-aliasing `Command.Context`
-//               (`*ContextData`) and matches the precedent set by
-//               `create_command.rs`. Rewritten `positionals` are parked in
-//               `OnceLock` statics (process-lifetime — `Global::exit(0)`
-//               follows) instead of `Box::leak`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/install_command.zig

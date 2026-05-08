@@ -325,9 +325,4 @@ fn create_parsed_shell_script_impl(
     Ok(this_jsvalue)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/ParsedShellScript.zig (218 lines)
-//   confidence: medium
-//   notes:      jsobjs/script were arena-backed (self-ref with args.arena) — global Vec used to sidestep self-referential borrow
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/ParsedShellScript.zig

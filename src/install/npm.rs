@@ -3063,11 +3063,4 @@ impl PackageManifest {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/npm.zig (2775 lines)
-//   confidence: medium
-//   todos:      24
-//   notes:      parse() heavily reshaped for borrowck (cursor indices vs overlapping subslices); Serializer field-order reflection hardcoded; SaveTask scope lifetime crosses thread boundary; verify in Phase B
-// ──────────────────────────────────────────────────────────────────────────
-
+// ported from: src/install/npm.zig

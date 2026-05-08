@@ -29,9 +29,7 @@ impl SASLResponse {
         Ok(())
     }
 
-    // pub const write = WriteWrap(@This(), writeInternal).write;
-    // TODO(port): WriteWrap is a type-generating fn that wraps write_internal; Phase B
-    // wires this once WriteWrap's Rust shape (trait or macro) is settled.
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -40,10 +38,4 @@ impl SASLResponse {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/SASLResponse.zig (30 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      WriteWrap/NewWriter generic shapes guessed; header build reshaped from Zig `++` array concat
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/SASLResponse.zig

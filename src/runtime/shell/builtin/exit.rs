@@ -81,9 +81,4 @@ fn parse_exit_code(s: &[u8]) -> Option<crate::shell::ExitCode> {
     s.parse::<u64>().ok().map(|n| (n % 256) as crate::shell::ExitCode)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/exit.zig (72 lines)
-//   confidence: high
-//   blocked_on: IOWriter::enqueue (async stderr path)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/exit.zig

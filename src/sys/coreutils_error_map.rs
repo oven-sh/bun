@@ -399,10 +399,4 @@ static ENTRIES: &[(&str, &str)] = &[
     ("EINTEGRITY", "Integrity check failed"),
 ];
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/coreutils_error_map.zig (370 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Zig comptime @hasField/@field replaced with LazyLock + SystemErrno::from_name (needs strum::EnumString on SystemErrno); value type [:0]const u8 → &'static str (literals only)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/coreutils_error_map.zig

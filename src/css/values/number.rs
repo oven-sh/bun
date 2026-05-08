@@ -67,10 +67,4 @@ impl CSSIntegerFns {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/number.zig (62 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `CssResult<T>` is now `core::result::Result`; sign() preserves Zig's redundant 0.0/0.0 branch verbatim.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/number.zig

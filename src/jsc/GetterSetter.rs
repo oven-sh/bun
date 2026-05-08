@@ -24,10 +24,4 @@ unsafe extern "C" {
     fn JSC__GetterSetter__isSetterNull(this: *const GetterSetter) -> bool;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/GetterSetter.zig (11 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      opaque FFI handle; externs left in place pending jsc_sys crate
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/GetterSetter.zig

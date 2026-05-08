@@ -927,10 +927,4 @@ impl<'a> AnySocket<'a> {
 #[allow(dead_code)]
 fn native_socket_handle_type<const SSL_: bool>() {}
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/socket.zig (653 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      InternalSocket gets <'a> per LIFETIMES.tsv (BORROW_PARAM duplex/pipe) — conflicts with Zig's by-value Copy semantics; Phase B may demote to *mut. @field reflection in from_fd/adopt_group replaced with closures. get_native_handle return type erased to *mut c_void (const-generic type dispatch unsupported). Assumes us_socket_t/ConnectingSocket methods take *mut Self as associated fns. write_fd and from_fd reshaped for borrowck (no Clone bound).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/socket.zig

@@ -1109,10 +1109,4 @@ fn is_ident_continue_ascii(c: u8) -> bool {
     matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/interchange/json5.zig (913 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      arena-backed (interchange = AST crate); Expr::init / E::* / move_from_list signatures need Phase-B alignment with bun_js_parser; labeled-switch scanner mapped to `loop { break 'next ... }`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/interchange/json5.zig

@@ -310,10 +310,4 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     Ok(JSValue::from(is_valid))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/csrf_jsc.zig (176 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      analytics counter API, EvpAlgorithm/NodeEncoding paths, and csrf option-struct names are guessed; verify in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/csrf_jsc.zig

@@ -132,10 +132,4 @@ pub type os_path_buffer_pool = w_path_buffer_pool;
 #[allow(non_camel_case_types)]
 pub type os_path_buffer_pool = path_buffer_pool;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/paths/path_buffer_pool.zig (34 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ObjectPool → thread_local Vec<Box<T>> (cap 4); get() now RAII guard.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/paths/path_buffer_pool.zig

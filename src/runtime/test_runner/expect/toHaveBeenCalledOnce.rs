@@ -74,10 +74,4 @@ pub fn to_have_been_called_once(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveBeenCalledOnce.zig (42 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard owns &mut Expect for post_match defer; bun.cpp FFI path guessed
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveBeenCalledOnce.zig

@@ -674,10 +674,4 @@ impl EditorContext {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/open.zig (450 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      std.process.Child + std.Thread replaced with stubs; SpawnedEditorContext made self-ref-safe via (ptr,len); std.fs calls mapped to bun_sys with guessed signatures; BIN_NAME wrapped in Lazy (enum_map! is non-const)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/open.zig

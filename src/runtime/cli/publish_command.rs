@@ -1867,9 +1867,4 @@ impl From<GetOTPError> for PublishError {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/publish_command.zig (1468 lines)
-//   confidence: medium
-//   notes:      Context<const bool> cannot vary field types (script_env/publish_script kept as Option); std.process.Child→spawn_sync, std.Thread→std::thread, std.fs.Dir→bun_sys::Fd; allocPrintSentinel reshaped for borrowck; json_mod::Expr↔bun_js_parser::Expr split is the same Phase-A bridge carried by WorkspacePackageJSONCache.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/publish_command.zig

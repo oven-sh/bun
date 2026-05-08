@@ -904,10 +904,4 @@ unsafe extern "C" {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler_jsc/JSBundleCompletionTask.zig (621 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      IntrusiveArc wiring + on_complete borrowck (do_compilation reborrows &mut self) need Phase-B attention; output_files compaction reshaped from struct-copy to swap+truncate.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler_jsc/JSBundleCompletionTask.zig

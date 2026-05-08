@@ -3116,10 +3116,4 @@ mod tests {
     // TODO(port): fuzz test — std.testing.fuzz(testOne, .{})
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect.zig (2271 lines)
-//   confidence: medium
-//   todos:      30
-//   notes:      comptime fmt-string concat (getSignature/throw/throwPretty) needs const_format; Flags packed accessors hand-rolled; mock formatters wrap &mut ConsoleObject::Formatter in RefCell (callers must construct with RefCell::new)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect.zig

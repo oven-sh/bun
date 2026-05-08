@@ -504,13 +504,7 @@ impl fmt::Display for Error {
 // Zig re-exported `toJS` / `toJSWithAsyncStack` / `TestingAPIs` from `../sys_jsc/error_jsc.zig`.
 // Per PORTING.md these become extension-trait methods in the `bun_sys_jsc` crate; deleted here.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/Error.zig (337 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      path/dest retyped Box<[u8]> (Zig mixed borrow/own); oom/retry consts→fns; SystemErrno raw-int lookup folded into safe from_raw; SystemError dep on bun_jsc may need relayering.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/Error.zig
 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_core::output::ErrName` impls — orphan rule lets the higher tier (sys)

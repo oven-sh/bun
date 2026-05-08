@@ -1192,10 +1192,4 @@ pub fn compute_reserved_names_for_scope(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_printer/renamer.zig (956 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      NameStr is `*const [u8]` arena-backed (bumpalo::Bump per renamer); Phase B threads `'bump`. StringHashMap owns boxed keys so Zig key-ptr writes were dropped.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_printer/renamer.zig

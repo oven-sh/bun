@@ -239,10 +239,4 @@ pub type zStream_struct = struct_z_stream_s;
 pub type gz_header_s = struct_gz_header_s;
 pub type gzFile_s = struct_gzFile_s;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/zlib_sys/win32.zig (205 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Bytef retyped from [*]u8 to u8 to match C ABI; ReturnCode/FlushValue/DataType assumed #[repr(C)] in crate::shared
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/zlib_sys/win32.zig

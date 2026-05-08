@@ -63,10 +63,4 @@ pub fn current_thread_id() -> u64 {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/threading.zig (11 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      crate root; #[path] attrs assume sibling .rs filenames match .zig basenames per PORTING.md
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/threading.zig

@@ -171,10 +171,4 @@ const _: () = {
     assert!(DiffKind::Equal as i32 == 2);
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/node_assert.zig (128 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      Zig diffChars mixed-encoding branch ignores its own utf8 conversion (preserved verbatim).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/node_assert.zig

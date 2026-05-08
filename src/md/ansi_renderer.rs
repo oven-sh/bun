@@ -2565,10 +2565,4 @@ pub fn render_to_ansi<'a>(
     Ok(Some(core::mem::take(&mut renderer.out.list).into_boxed_slice()))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/ansi_renderer.zig (2249 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Theme/AnsiRenderer carry <'a> per LIFETIMES.tsv BORROW_PARAM; several borrowck reshapes (find_parent_list→index, mem::take on bufs in flush_*); probe_kitty_graphics + write_highlighted_js depend on unported bun_sys::posix / bun_core::fmt shapes. u32→usize widening uses  as usize per §Idiom — Phase B may need a helper if std lacks From<u32> for usize on target.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/ansi_renderer.zig

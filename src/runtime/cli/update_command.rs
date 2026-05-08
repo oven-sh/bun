@@ -22,10 +22,4 @@ impl UpdateCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/update_command.zig (18 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `.update` enum literal mapped to `package_manager_real::Subcommand::Update`.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/update_command.zig

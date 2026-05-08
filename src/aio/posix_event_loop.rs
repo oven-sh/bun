@@ -1867,10 +1867,4 @@ impl Closer {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/aio/posix_event_loop.zig (1414 lines)
-//   confidence: medium
-//   todos:      19
-//   notes:      anytype event-loop ctx collapsed to `impl AbstractVm`; TaggedPtrUnion tag dispatch + cross-crate Owner type paths need Phase B wiring; unregister_with_fd split into wrapper+impl to express Zig `defer this.deactivate(loop)` without raw-pointer scopeguard.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/aio/posix_event_loop.zig

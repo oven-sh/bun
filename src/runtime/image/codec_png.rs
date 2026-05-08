@@ -326,10 +326,4 @@ pub fn encode_indexed(
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/codec_png.zig (197 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      codecs::Encoded.bytes/free shape and quantize::Options name guessed; spng externs need a *_sys crate
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/codec_png.zig

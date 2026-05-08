@@ -541,10 +541,4 @@ impl<T> ArrayListAlignedIn<T> {
 // PORTING.md ("If the body only frees/deinits owned fields, delete the body entirely") no
 // explicit `impl Drop for ArrayListAlignedIn<T>` is written.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/array_list.zig (425 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      Allocator/alignment generics dropped per §Allocators; deep-deinit is Vec's default Drop, *_shallow variants leak via set_len; slice-taking methods bound on T: Clone (Zig bit-copies) — Phase B may want IntoIterator<Item=T> signatures instead.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/array_list.zig

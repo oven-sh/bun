@@ -104,8 +104,4 @@ impl FileJsc for File {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/standalone_graph_jsc.zig (40 lines)
-//   confidence: high
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/standalone_graph_jsc.zig

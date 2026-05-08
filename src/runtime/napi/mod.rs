@@ -67,9 +67,4 @@ pub struct ThreadsafeFunction(());
 pub struct AsyncWork(());
 pub struct Ref(());
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/napi/napi.zig
-//   confidence: low (B-2 thin un-gate)
-//   notes:      NapiEnv opaque + NapiStatus enum compile; rest blocked on bun_jsc.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/napi/napi.zig

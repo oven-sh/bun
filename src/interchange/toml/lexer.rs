@@ -1490,10 +1490,4 @@ fn float64(num: CodePoint) -> f64 {
     num as f64
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/interchange/toml/lexer.zig (1248 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      &'a [u8] slice fields borrow source.contents; verify logger::Source lifetime in Phase B. CodepointIterator/Cursor field types (i/width) assumed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/interchange/toml/lexer.zig

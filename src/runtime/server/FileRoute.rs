@@ -652,17 +652,4 @@ bun_ptr::impl_cell_ref_counted! {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/FileRoute.zig (390 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      on()/on_response_complete take *mut Self (intrusive RC freed
-//               via deref); on() derives a single &Self — stat_hash wrapped in
-//               UnsafeCell for the per-request hash() write so the shared
-//               borrow stays SB-valid; StatHash from bun_resolver::fs;
-//               Headers::from bridged via cycle-break vtable (FetchHeadersRef
-//               shared with StaticRoute, AnyBlobRef local for &Blob);
-//               date_for_header intentionally diverges from Zig's
-//               `catch return` (see PORT NOTE in on()).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/FileRoute.zig

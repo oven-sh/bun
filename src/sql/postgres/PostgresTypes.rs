@@ -15,10 +15,4 @@ pub use int_types::{int4, int8, short, Int4, Int8, Short};
 
 use super::types::int_types;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/PostgresTypes.zig (18 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export module; *_jsc aliases dropped per guide
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/PostgresTypes.zig

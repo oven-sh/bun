@@ -597,12 +597,6 @@ fn is_transition_property(property_id: &PropertyId) -> bool {
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/transition.zig (519 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      @field comptime dispatch → macros; PropertyId variant names guessed (kebab→PascalCase); VendorPrefix::FIELDS iteration assumes bitflags-style API
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/transition.zig
 
 } // mod transition_handler_body

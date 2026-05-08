@@ -352,10 +352,4 @@ macro_rules! impl_get_errno_libc {
 }
 impl_get_errno_libc!(i32, u32, isize, i64);
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/errno/darwin_errno.zig (207 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      std.posix.{mode_t,E,S} re-exports + std.c._errno() need bun_sys homes; UV_E.@"2BIG" renamed _2BIG (identifier can't start with digit)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/errno/darwin_errno.zig

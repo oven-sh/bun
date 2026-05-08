@@ -312,13 +312,4 @@ pub struct Continue {
     pub label: Option<LocRef>, // = None
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/S.zig (237 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      arena-owned slice fields use raw *const/*mut [T]; swap to the
-//               settled arena slice type in one pass. Zig per-field defaults on
-//               structs with required fields are noted inline (Rust has no
-//               partial-Default); callers must spell them out.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/S.zig

@@ -1438,10 +1438,4 @@ fn is_align_property(property_id: &PropertyId) -> bool {
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/align.zig (1516 lines)
-//   confidence: medium
-//   todos:      23
-//   notes:      AlignHandler comptime-string @field/@unionInit helpers ported as macro_rules!; DeriveParse/DeriveToCss/DefineEnumProperty/PropertyFieldMap need proc-macro derives in Phase B; Property variant names/shapes assumed PascalCase tuple-variants.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/align.zig

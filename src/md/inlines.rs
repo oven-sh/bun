@@ -1006,10 +1006,4 @@ pub fn can_close_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_e
         && helpers::is_unicode_punctuation(helpers::decode_utf8(content, run_end).codepoint))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/md/inlines.zig (749 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      SpanDetail struct for renderer.enter_span(.a, .{...}) is guessed; u2/u4 widened to u8; process_leaf_block mem::take()s self.buffer (Zig aliased it); resolve_emphasis_delimiters reshaped to index-based for borrowck.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/md/inlines.zig

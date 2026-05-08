@@ -301,11 +301,4 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
 
 pub type BitSet = DynamicBitSet;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/findAllImportedPartsInJSOrder.zig (221 lines)
-//   confidence: medium
-//   notes:      visitor caches SoA column slices via shared `&LinkerContext`;
-//               the single mutable column write goes through a raw `*mut [u32]`
-//               (col-ptr pattern, cf. scanImportsAndExports.rs).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/findAllImportedPartsInJSOrder.zig

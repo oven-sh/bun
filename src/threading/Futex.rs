@@ -512,10 +512,4 @@ impl Deadline {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/Futex.zig (421 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Platform syscall wrappers (bun_sys::{windows,darwin,linux,freebsd}) need exact signatures in Phase B; Darwin min-version check hardcoded true.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/Futex.zig

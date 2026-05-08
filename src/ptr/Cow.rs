@@ -71,10 +71,4 @@ impl<'a, T: Clone> Cow<'a, T> {
     // deleted entirely; `Drop` cannot take an allocator param.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ptr/Cow.zig (81 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      VTable param collapsed to `T: Clone` bound; allocator params dropped (non-AST crate); slice-type @compileError guard not expressible on generic T.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ptr/Cow.zig

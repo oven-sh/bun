@@ -401,10 +401,4 @@ unsafe extern "C" {
     fn TopExceptionScope__destruct(ptr: *mut [u8; SIZE]);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/TopExceptionScope.zig (216 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      self-referential + in-place FFI construct; needs Pin/RAII wrapper in Phase B; ci_assert/asan cfg names need verification; NonNull<Exception> kept over &Exception (JSC heap cell)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/TopExceptionScope.zig

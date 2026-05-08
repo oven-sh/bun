@@ -870,14 +870,4 @@ const fn u56_max() -> usize {
     (1usize << 56) - 1
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/ffi/FFIObject.zig (650 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      DOMCall is comptime codegen → represented as DomCall descriptors
-//               + extern `*__put` fns; wrapStaticMethod is comptime fn-reflection
-//               → manually unrolled per-field thunks (`mod fields` + `wrap_host_fn!`);
-//               ValueOrError.Slice carries raw (ptr,len) for FFI-owned memory;
-//               reader fns shadow primitive type names (legal Rust).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/ffi/FFIObject.zig

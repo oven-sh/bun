@@ -3406,10 +3406,4 @@ pub enum ConvertTo {
 // must ensure every `T: From<U>` pair the macro requires actually exists
 // (the generated file fills the transitive gaps).
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/color.zig (4716 lines)
-//   confidence: low
-//   todos:      14
-//   notes:      Heavy comptime-reflection mixins (DefineColorspace/ColorIntoMixin) folded into Colorspace/ColorGamut/Interpolate traits + define_colorspace! macro + From impls; Calc::parse_with stack-ptr closures need Phase B API review; several Zig bugs (a99-rgb, XYZd50→XYZd65, SRGBLinear angle channel, LABColor::new_*) mirrored for parity; arena params dropped (Box owns).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/color.zig

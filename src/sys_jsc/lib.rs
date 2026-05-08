@@ -81,12 +81,4 @@ impl SystemErrorJsc for bun_sys::SystemError {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys_jsc/{signal_code,error,fd}_jsc.zig (bridge crate root)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export of bun_jsc types + bun_sys::SystemError → JSC
-//               marshalling; FromJsEnum<SignalCode> lives in bun_jsc (orphan
-//               rule — trait is defined there).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys_jsc/{signal_code,error,fd}_jsc.zig

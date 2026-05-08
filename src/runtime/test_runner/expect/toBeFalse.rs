@@ -53,10 +53,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeFalse.zig (35 lines)
-//   confidence: medium-high
-//   todos:      0
-//   notes:      defer post_match() reshaped via inner closure (no raw ptrs); matches toBeTrue.rs pattern
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeFalse.zig

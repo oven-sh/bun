@@ -718,10 +718,4 @@ impl S3Client {
 // (`.Double`, `.NumberObject`), re-exported at the `bun_jsc` crate root.
 use bun_jsc::{FormatTag, JSType};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/S3Client.zig (332 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      ConsoleFormatter trait wired; env-loader S3Credentials reached via raw VM ptr (matches S3File.rs/fetch.rs); `defer blob.detach()` → field Drop; S3Ext::{unlink,list_objects} take `&self` + `&Store` (no mutation, no SB hazard).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/S3Client.zig

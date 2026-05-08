@@ -599,10 +599,4 @@ impl SubscriptionPushMessage {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/valkey/valkey_protocol.zig (564 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      ValkeyReader carries <'a> (borrowed buffer); allocator params dropped; deinit→Drop auto; *_jsc aliases removed; Vec used for partial-fill arrays so errdefer→Drop
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/valkey/valkey_protocol.zig

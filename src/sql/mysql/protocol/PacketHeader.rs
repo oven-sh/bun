@@ -29,10 +29,4 @@ impl PacketHeader {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/PacketHeader.zig (25 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      u24 → u32 for length field (Rust lacks u24); value bounded to 24 bits
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/PacketHeader.zig

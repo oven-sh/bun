@@ -505,15 +505,4 @@ pub unsafe fn __bun_fd_path_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
     { let _ = (fd, buf, cap); 0 }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/fd.zig (720 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Packed-struct Fd hoisted to bun_core (canonical T0). This file
-//               provides FdExt (close/make_lib_uv_owned/make_path/delete_tree),
-//               HashMapContext, MovableIfWindowsFd, and the Display path-hook.
-//               Windows close path routes through libuv (uv_fs_close) for Uv
-//               fds and ntdll NtClose for system handles. std.fs interop
-//               intentionally dropped (banned).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/fd.zig

@@ -1508,13 +1508,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/skipTypescript.zig (1317 lines)
-//   confidence: medium
-//   notes:      Zig type-returning fn collapsed into inherent impl on P<TS,JSX,SCAN_ONLY>;
-//               `comptime get_metadata` → const generic + Option<&mut Metadata>; Backtracking
-//               comptime reflection split into 3 concrete closure helpers (snapshot/restore
-//               replace by-value lexer copy); TDot arm reshaped for borrowck (find_symbol vs
-//               result borrow are disjoint).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/skipTypescript.zig

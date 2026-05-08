@@ -65,9 +65,7 @@ impl StartupMessage {
         Ok(())
     }
 
-    // TODO(port): `pub const write = WriteWrap(@This(), writeInternal).write;` —
-    // WriteWrap is a comptime type-generator that wraps write_internal. Phase B
-    // should express this as a trait impl or macro on WriteWrap.
+    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
@@ -76,10 +74,4 @@ impl StartupMessage {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/StartupMessage.zig (50 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      WriteWrap comptime wrapper needs trait/macro; Int32::to_bytes() assumed (was std.mem.toBytes)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/StartupMessage.zig

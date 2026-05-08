@@ -191,12 +191,4 @@ pub fn current() -> ThreadId {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/safety/thread_id.zig (5 lines)
-//               vendor/zig/lib/std/Thread.zig `Id` + `getCurrentId` (MOVE_DOWN from bun_threading)
-//   confidence: high
-//   todos:      0
-//   notes:      Platform-width integer + atomic alias + OS-native `current()`; bun_threading
-//               re-exports from here to break the T2→T0 back-edge.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/safety/thread_id.zig

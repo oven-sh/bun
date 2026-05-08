@@ -62,10 +62,4 @@ impl AuthSwitchRequest {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/AuthSwitchRequest.zig (42 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Data::Temporary borrows reader buffer (lifetime TBD); decoder_wrap shape pending NewReader.rs
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/AuthSwitchRequest.zig

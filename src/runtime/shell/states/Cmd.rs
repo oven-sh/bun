@@ -1030,11 +1030,4 @@ fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Cmd.zig (1018 lines)
-//   confidence: medium (state-machine + expansion + builtin + subprocess
-//               spawn wired)
-//   blocked_on: initRedirections (file/JS-object redirects on the subprocess
-//               path), IOWriter redirect handling
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Cmd.zig

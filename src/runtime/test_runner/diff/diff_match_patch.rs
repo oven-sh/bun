@@ -1663,10 +1663,4 @@ mod tests {
     // injection harness in this codebase. Dropped.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/diff/diff_match_patch.zig (2994 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      `Diff.text` retyped to `Box<[Unit]>`; `last_equality`/overlap branches reshaped for borrowck; u8-only paths gated by TypeId; `LinesToCharsResult.line_array` raw-ptr (no struct lifetimes in Phase A); bisect inner loops keep bare `as` (PERF(port): @intCast); ~1400 lines of OOM-injection tests stubbed (no Rust equivalent for `checkAllAllocationFailures`).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/diff/diff_match_patch.zig

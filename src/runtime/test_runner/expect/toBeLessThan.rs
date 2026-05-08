@@ -117,10 +117,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeLessThan.zig (69 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      scopeguard for post_match conflicts with &mut self; to_fmt double-borrow on Formatter
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeLessThan.zig

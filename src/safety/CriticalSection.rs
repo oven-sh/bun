@@ -258,10 +258,4 @@ impl CriticalSection {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/safety/CriticalSection.zig (202 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `ci_assert` cfg gate + ThreadId/AtomicThreadId provenance need Phase-B wiring; @returnAddress() stubbed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/safety/CriticalSection.zig

@@ -146,10 +146,4 @@ pub fn to_have_property(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toHaveProperty.zig (101 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard owns &mut Expect for post_match defer; Expect.throw assumed to take fmt::Arguments; to_fmt(&mut formatter) may need borrowck reshape (two &mut in one format_args!)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toHaveProperty.zig

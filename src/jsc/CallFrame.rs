@@ -437,10 +437,4 @@ unsafe extern "C" {
     fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const c_char;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/CallFrame.zig (304 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ArgumentsSlice gets <'a> per LIFETIMES.tsv; arena kept as bun_alloc::Arena (non-AST crate, flagged inline for Phase-B ownership review); remaining_buf is Cow<'a, [JSValue]> + cursor so init_async owns its dupe (matches Zig); Arguments<MAX> init demoted from comptime i to runtime
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/CallFrame.zig

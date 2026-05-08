@@ -159,9 +159,4 @@ enum NextAction {
     Finish,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Async.zig (181 lines)
-//   confidence: medium (NodeId conversion; event-loop scheduling gated)
-//   blocked_on: bun_jsc::EventLoopTask, ast::Expr matching
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Async.zig

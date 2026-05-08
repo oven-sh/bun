@@ -55,9 +55,4 @@ pub fn from_js_case_insensitive<V: Copy>(
         .map(|(_, v)| *v))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/comptime_string_map_jsc.zig (20 lines)
-//   confidence: high
-//   notes:      `comptime Map: type` reshaped to `&'static phf::Map<&[u8], V>`
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/comptime_string_map_jsc.zig

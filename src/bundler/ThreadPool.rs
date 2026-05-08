@@ -686,15 +686,4 @@ impl Worker {
 pub use bun_js_parser::Ref;
 pub use bun_js_parser::Index;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/ThreadPool.zig (364 lines)
-//   confidence: medium
-//   blocked_on: crate::Linker.resolver (unit stub — see initialize_transpiler PORT NOTE);
-//               bun_alloc::MimallocArena (help_catch_memory_issues);
-//               bun_perf PerfEvent codegen (Bundler.Worker.create)
-//   notes:      Heavy `undefined`-init + self-referential arena field →
-//               MaybeUninit/ManuallyDrop on Worker. io_thread_pool::shutdown()
-//               Zig source missing trailing return; io_thread_pool::acquire()
-//               Zig source skips ref-count bump on the lock-race path (mirrored).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/ThreadPool.zig

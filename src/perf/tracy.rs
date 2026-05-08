@@ -799,10 +799,4 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
 // Phase B: wire to build-time config (env! / cfg-set const).
 const CALLSTACK_DEPTH: c_int = 10;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/perf/tracy.zig (558 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      trace/trace_named need callsite macros for per-static srcloc; TracyAllocator stubbed (std.mem.Allocator vtable → GlobalAlloc shim in Phase B, ENABLE_ALLOCATION=false); dlsym handle hoisted to module static
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/perf/tracy.zig

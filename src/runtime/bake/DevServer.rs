@@ -6702,10 +6702,4 @@ use crate::bake::dev_server::incremental_graph;
 type DebuggerId = jsc::debugger::DebuggerId;
 type BunFrontendDevServerAgent = jsc::debugger::BunFrontendDevServerAgent;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/DevServer.zig (4783 lines)
-//   confidence: low
-//   todos:      76
-//   notes:      Heavy borrowck reshaping needed in Phase B: init() late-init fields now use Box<MaybeUninit<DevServer>> + addr_of_mut!().write() per field; DevServer/HTMLRouter/PromiseResponse now carry `<'a>` per LIFETIMES.tsv but impl blocks still need the param threaded; many scopeguard closures capture &mut dev across other &mut borrows; finalize_bundle has self-referential ptrs into dev. ensure_route_is_bundled uses trait pattern for Zig comptime Ctx duck-typing. Several `anytype` params (set_routes, on_request, on_src_request) bound by placeholder traits.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/DevServer.zig

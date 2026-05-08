@@ -283,10 +283,4 @@ fn shrink(rgba: &[u8], order: &[u32], lo: u32, hi: u32) -> ColorBox {
     ColorBox { lo, hi, min, max }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/image/quantize.zig (234 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      Renamed `Result`→`QuantizeResult` and `Box`→`ColorBox` to avoid prelude shadowing; SortCtx inlined as sort_unstable_by_key closure; OOM is now abort-on-fail via Vec (Result<_, AllocError> kept for signature parity).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/image/quantize.zig

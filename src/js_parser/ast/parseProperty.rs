@@ -745,10 +745,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/parseProperty.zig (591 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Zig type-returning fn → inherent impl on P<const TS, J, SCAN_ONLY>; flags::Property as EnumSet (init via .insert/.into); FnOrArrowDataParse is Clone-only (saved via .clone()); G::Fn.args raw *mut [Arg] derefed under unsafe; ClassStaticBlock.stmts copies StmtList → Vec (Phase B: arena-backed).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/parseProperty.zig

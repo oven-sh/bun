@@ -1868,18 +1868,4 @@ pub fn set_instance(loader: *mut Loader<'static>) {
     INSTANCE.store(loader, Ordering::Release);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/dotenv/env_loader.zig (1433 lines)
-//   confidence: medium-high (Map/Parser/loadProcess/ccache/node-path/envp/file-loading/
-//               copy_for_define all live)
-//   notes:      @field(this, base) → match helper; HashTableValue.value owned (Box<[u8]>),
-//               Phase B may need Cow. NullDelimitedEnvMap owns its strings (no Box::leak).
-//               load_default_files un-gated (DirEntryProbe trait; impl lives in
-//               bun_resolver — define-low/impl-high pattern). copy_for_define un-gated
-//               via DefineStoreVTable + local DotEnvBehavior mirror (api.StringMap flattened
-//               to slice pair). load_env_file{,_dynamic} bodies re-gated on bun_logger::Source
-//               owning contents (PORTING.md §Forbidden bans Box::leak); get_s3_credentials
-//               un-gated via local S3Credentials POD mirror (§Dispatch — high-tier callers
-//               construct the real refcounted bun_s3_signing::S3Credentials from it).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/dotenv/env_loader.zig

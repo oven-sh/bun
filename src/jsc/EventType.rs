@@ -38,10 +38,4 @@ impl EventType {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/EventType.zig (32 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      non-exhaustive enum(u8) → transparent u8 newtype; phf_map keys hardcoded (Zig used .label() at comptime)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/EventType.zig

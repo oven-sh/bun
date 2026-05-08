@@ -2646,10 +2646,4 @@ fn is_rename_collision(err: &sys::Error) -> bool {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/isolated_install/Installer.zig (2045 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      run() labeled-switch state machine reshaped to loop+match; heavy borrowck reshaping needed for installer/manager/lockfile aliasing in Task::run; bun.Path/AbsPath const-generic option syntax is placeholder; MultiArrayList .items(.field) → .items().field accessor assumed; Result/Yield::RunScripts kept raw ptr pending &'a mut reshape
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/isolated_install/Installer.zig

@@ -253,9 +253,4 @@ impl TimeoutObject {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/TimeoutObject.zig (144 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/TimeoutObject.zig

@@ -468,10 +468,4 @@ unsafe extern "C" {
     ) -> *mut Heap;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/mimalloc_sys/mimalloc.zig (226 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      `Option` enum shadows core::option::Option in this module; nullable fn-ptrs use full path.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/mimalloc_sys/mimalloc.zig

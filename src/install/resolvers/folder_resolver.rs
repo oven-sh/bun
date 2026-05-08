@@ -504,9 +504,4 @@ pub fn get_or_put(
     FolderResolution::NewPackageId(package.meta.id)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/resolvers/folder_resolver.zig (352 lines)
-//   confidence: medium
-//   notes:      const-generic Resolution::Tag uses ConstParamTy; getOrPut reshaped (lookup→compute→insert) for borrowck; readPackageJSONFromDisk borrow-splits manager via raw ptr (matches Package::parse_from_real_manager pattern); Paths/normalize_package_json_path lifetimes are aliasing-heavy (abs/rel both borrow joined + threadlocal)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/resolvers/folder_resolver.zig

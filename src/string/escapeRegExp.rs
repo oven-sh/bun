@@ -81,10 +81,4 @@ pub fn escape_reg_exp_for_package_name_matching<W: std::io::Write>(
 // from `../jsc/bun_string_jsc.zig`. Per PORTING.md these `*_jsc` alias lines are deleted —
 // the JS-facing wrappers live in the `*_jsc` crate as extension-trait methods.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/escapeRegExp.zig (81 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      byte-writer trait (`std::io::Write`) is a placeholder; swap to the real crate trait in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/escapeRegExp.zig

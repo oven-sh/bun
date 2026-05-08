@@ -3065,10 +3065,4 @@ mod pretty_fmt_tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bun_core/output.zig (1380 lines)
-//   confidence: medium
-//   todos:      29
-//   notes:      pretty_fmt! proc-macro landed (bun_core_macros) — tested against pretty_fmt_runtime; Source self-ref *Writer fields replaced by accessors (TSV BORROW_FIELD); writer()/error_writer() escape raw ptrs and want a with_* closure API; per-scope buffered writer state deferred; many `static mut` need atomics/OnceLock in Phase B; Source::ZEROED relies on mem::zeroed() over QuietWriterAdapter/StreamType (hand-write once layouts fixed).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bun_core/output.zig

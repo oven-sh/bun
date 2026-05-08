@@ -1020,10 +1020,4 @@ pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsRe
 // TODO(port): proc-macro — `#[bun_jsc::host_fn(static, auto_protect)]` replaces
 // `wrapStaticMethod` (decode table as above + BlobOrStringOrBuffer).
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/host_fn.zig (807 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      ~70% of source is @typeInfo fn-signature reflection -> #[bun_jsc::host_fn]/host_call/dom_call proc-macros; runtime helpers + FFI + DomEffect ported directly.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/host_fn.zig

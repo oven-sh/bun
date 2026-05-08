@@ -35,10 +35,4 @@ impl Exception {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/Exception.zig (20 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      opaque FFI handle + 2 extern wrappers; externs flagged for jsc_sys
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/Exception.zig

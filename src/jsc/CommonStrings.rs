@@ -108,10 +108,4 @@ impl<'a> CommonStrings<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/CommonStrings.zig (70 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      4 method renames (IPv4/ipv4 snake_case collision; @"127.0.0.1"/@"::" invalid idents) — grep callers in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/CommonStrings.zig

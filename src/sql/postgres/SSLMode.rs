@@ -8,10 +8,4 @@ pub enum SSLMode {
     VerifyFull = 4,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/SSLMode.zig (7 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      trivial #[repr(u8)] enum; no dependencies
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/SSLMode.zig

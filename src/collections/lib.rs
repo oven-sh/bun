@@ -367,10 +367,4 @@ pub use array_list::ArrayListAligned;
 pub use array_list::ArrayListAlignedDefault;
 pub use array_list::ArrayListAlignedIn;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/collections/collections.zig (17 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      pure re-export hub; Phase B must add mod decls for HashMap/ArrayHashMap/TaggedPtr etc. referenced by PORTING.md's Collections table but not present in the Zig source.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/collections/collections.zig

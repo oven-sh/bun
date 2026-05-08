@@ -333,10 +333,4 @@ impl BoxShadowHandler {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/box_shadow.zig (259 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      implement_eql/implement_deep_clone need derive macros; std.meta.fields loops expanded by hand; borrowck reshape needed in handle_property (flush while holding &mut self.box_shadows)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/box_shadow.zig

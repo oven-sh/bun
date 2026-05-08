@@ -111,10 +111,4 @@ pub fn to_match(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toMatch.zig (69 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard owns &mut Expect for `defer postMatch`; second Formatter for dual to_fmt borrow; `get_signature` must be const.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toMatch.zig

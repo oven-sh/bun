@@ -948,14 +948,4 @@ impl TimerObjectInternals {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/timer/TimerObjectInternals.zig
-//   confidence: medium — struct/flags + runImmediateTask + fire + reschedule
-//               + deinit real; init/cancel/do_{ref,unref,refresh}/to_primitive
-//               remain in gated draft.
-//   notes:      `vm.timer` resolved via `jsc_hooks::runtime_state()` (b2-cycle
-//               — low-tier VirtualMachine.timer is `()`). `defer` in
-//               fire()/run() linearized — verified no early-return paths skip
-//               deref.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/timer/TimerObjectInternals.zig

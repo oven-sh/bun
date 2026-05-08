@@ -3691,10 +3691,4 @@ export_path_host_fn! {
     "Bun__Path__toNamespacedPath" => to_namespaced_path,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/path.zig (2986 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Heavy borrowck reshaping (slice-into-buf → length tracking). @intCast narrowing uses try_from().unwrap() — see PERF(port) markers for hot-loop sites.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/path.zig

@@ -323,10 +323,4 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/s3/credentials_jsc.zig (263 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      Rust S3Credentials fields are owned Box<[u8]> (Zig were borrowed slices); deep-copy into Box. content_* keep self-referential raw-ptr shape.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/s3/credentials_jsc.zig

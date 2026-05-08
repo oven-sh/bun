@@ -70,9 +70,4 @@ impl Basename {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/basename.zig (66 lines)
-//   confidence: high
-//   blocked_on: IOWriter::enqueue (async path)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/basename.zig

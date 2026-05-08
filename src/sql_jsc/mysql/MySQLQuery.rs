@@ -597,10 +597,4 @@ impl MySQLQuery {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/MySQLQuery.zig (334 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      statement: *mut MySQLStatement w/ intrusive ref_/deref (matches PreparedStatementsMap). ExecuteParams thunks bridge cross-crate Value. MarkedArgumentBuffer::run trampoline shape needs confirming.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/MySQLQuery.zig

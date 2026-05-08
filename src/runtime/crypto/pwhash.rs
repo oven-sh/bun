@@ -447,16 +447,4 @@ pub mod bcrypt {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     vendor/zig/lib/std/crypto/{argon2,bcrypt}.zig
-//   vendor:     rust-argon2 3.x (lib name `argon2`), bcrypt 0.19, getrandom 0.4
-//   confidence: high
-//   notes:      PHC-format bcrypt (`$bcrypt$…`) verify is hand-rolled here
-//               because the `bcrypt` crate has no PHC codec; PHC *hash* output
-//               remains `.crypt`-only since Bun never requests `.phc`. Zig's
-//               `silently_truncate_password == false` HMAC-SHA512 pre-hash
-//               path is unreachable from Bun (PasswordObject pre-hashes long
-//               inputs itself and always passes `true`) and is debug-asserted
-//               rather than implemented.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: vendor/zig/lib/std/crypto/{argon2,bcrypt}.zig

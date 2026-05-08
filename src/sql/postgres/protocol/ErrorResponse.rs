@@ -49,20 +49,10 @@ impl ErrorResponse {
     ) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
-    // TODO(port): DecoderWrap(ErrorResponse, decodeInternal).decode — Zig passes a
-    // generic fn as a comptime value; Rust const generics cannot carry generic fn
-    // items. Phase B: make DecoderWrap a trait (`impl Decode for ErrorResponse`)
-    // whose blanket method calls `Self::decode_internal`. Thin wrapper above
-    // preserves the `ErrorResponse::decode(reader)` call shape in the meantime.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
 }
 
 // Zig `pub const toJS = @import("../../../sql_jsc/...").toJS;` alias deleted —
 // `to_js` lives on an extension trait in the `bun_sql_jsc` crate.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/ErrorResponse.zig (38 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DecoderWrap fn-value pattern needs trait redesign in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/ErrorResponse.zig

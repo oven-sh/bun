@@ -847,13 +847,4 @@ impl Json {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/cache.zig (334 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Entry.contents is provenance-tagged `Contents` enum (Owned/SharedBuffer/External) — no Box::leak;
-//               Fs::read_handle_into inlines RealFS.readFileWithHandle until bun_resolver::fs_full un-gates
-//               (UTF-8 BOM strip + stream re-stat loop + trailing-NUL inlined; UTF-16 BOM transcode TODO);
-//               Fs.deinit (Zig) was dead code (referenced nonexistent `c.entries`).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/cache.zig

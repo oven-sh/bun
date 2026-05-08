@@ -493,10 +493,4 @@ impl State {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/tcc_sys/tcc.zig (323 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      FFI sys-crate; opaque handle uses NonNull<State>+explicit destroy (no Drop); Config.options is raw NonNull<ZStr> (no struct lifetime in Phase A); comptime-reflection helpers ported as slice-iterating fns (define_symbols/add_symbols); OutputError added to enum to surface latent Zig bug.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/tcc_sys/tcc.zig

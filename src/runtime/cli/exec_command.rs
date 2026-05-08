@@ -99,10 +99,4 @@ impl ExecCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/exec_command.zig (46 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      Output::err signature & bun_paths::join API guessed; ctx ownership vs borrow into Interpreter may need adjusting
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/exec_command.zig

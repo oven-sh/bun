@@ -198,10 +198,4 @@ impl BuildMessage {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/BuildMessage.zig (203 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      .classes.ts m_ctx payload; allocator field dropped; to_string_fn external-value path transfers ownership via Box::into_raw → mi_free
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/BuildMessage.zig

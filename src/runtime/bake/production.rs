@@ -1671,13 +1671,4 @@ impl TypeAndFlags {
 
 // `fn @"export"()` force-reference block dropped — Rust links what's `pub`.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bake/production.zig (1074 lines)
-//   confidence: medium (phase-e: review fixes applied — ssr_transpiler UB,
-//               Box::leak→OnceLock, install/macro_remap ownership, EntryPointMap
-//               unified with bundler, PerThread owns its data)
-//   notes:      `bake_body::Framework` ↔ `bake_types::Framework` projection
-//               kept (needs FileSystemRouterType/Style move-down to bun_bundler
-//               to fully unify; tracked by TODO(port) at the call site).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bake/production.zig

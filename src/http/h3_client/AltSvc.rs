@@ -265,10 +265,4 @@ fn timestamp() -> i64 {
         .unwrap_or(0)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/h3_client/AltSvc.zig (160 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      static-mut cache + StringHashMap insert/iter API need Phase B fixup; logic is 1:1
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/h3_client/AltSvc.zig

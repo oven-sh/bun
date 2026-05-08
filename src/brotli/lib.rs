@@ -488,10 +488,4 @@ impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
     // in Phase B if any caller needs the trait object.
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/brotli/brotli.zig (287 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      list/list_ptr by-value-copy dance collapsed to &mut Vec<u8>; compress_stream output lifetime tied to &mut self (was 'static placeholder); end() inlines write_chunk to dodge borrowck conflict
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/brotli/brotli.zig

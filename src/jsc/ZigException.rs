@@ -231,10 +231,4 @@ impl Holder {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/ZigException.zig (183 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      #[repr(C)] FFI payload; deinit kept explicit (not Drop) due to `loaded` gate + vm param; Holder::Zero const → fn zero(); Holder.zig_exception is MaybeUninit (Zig `= undefined`, gated by `loaded`).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/ZigException.zig

@@ -1502,10 +1502,4 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/s3_signing/credentials.zig (939 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      jsc::VirtualMachine awsCache/boringEngine deps need threading out; SignResult._headers and S3CredentialsWithOptions.content_* are self-referential (raw ptrs); SignedHeaders/CanonicalRequest comptime tables ported as runtime builders (PERF tagged); epoch date calc stubbed; cache.set key intentionally diverges from Zig bug.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/s3_signing/credentials.zig

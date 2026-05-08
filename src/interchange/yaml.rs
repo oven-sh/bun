@@ -5479,10 +5479,4 @@ fn eq_ascii<Enc: Encoding>(s: &[Enc::Unit], lit: &[u8]) -> bool {
 // These were not active code; intentionally not ported.
 // ───────────────────────────────────────────────────────────────────────────
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/interchange/yaml.zig (5743 lines)
-//   confidence: medium
-//   todos:      36
-//   notes:      scan_plain_scalar ported 1:1 with ScalarResolverCtx using *mut Parser backref (Phase B: reshape borrowck); Encoding modeled as trait (assoc Unit type); defer context.unset/block_indents.pop translated as manual unwind (skipped on `?` paths — Phase B scopeguard); Utf16 literal()/ch16 push paths stubbed; parseUnsigned/parseDouble over &[Enc::Unit] stubbed; ast::ExprData variant names guessed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/interchange/yaml.zig

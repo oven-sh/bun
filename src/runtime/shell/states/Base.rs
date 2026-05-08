@@ -99,10 +99,4 @@ pub enum TryError {
     Sys,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/states/Base.zig (150 lines)
-//   confidence: high
-//   notes:      `interpreter: *Interpreter` back-ref dropped (passed as &mut
-//               to every method); parent stored as NodeId.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/states/Base.zig

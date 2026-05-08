@@ -8,10 +8,7 @@ pub struct BackendKeyData {
 }
 
 impl BackendKeyData {
-    // TODO(port): `pub const decode = DecoderWrap(BackendKeyData, decodeInternal).decode;`
-    // DecoderWrap is a comptime type-generator wrapping `decode_internal` into a standard
-    // `decode` entry point. Phase B: express as a trait impl or thin wrapper once
-    // DecoderWrap's Rust shape is settled.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
@@ -32,10 +29,4 @@ impl BackendKeyData {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/BackendKeyData.zig (20 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DecoderWrap comptime wrapper needs trait/shape from Phase B; out-param ctor reshaped to Result<Self>.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/BackendKeyData.zig

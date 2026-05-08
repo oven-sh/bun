@@ -28,10 +28,4 @@ pub fn source_map_mode_from_js(
     Ok(None)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler_jsc/source_map_mode_jsc.zig (27 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      SourceMapMode import path assumed bun_options_types::schema::api per doc-comment hint
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler_jsc/source_map_mode_jsc.zig

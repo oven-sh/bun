@@ -382,12 +382,4 @@ pub fn parse_override_value(
     }))
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/OverrideMap.zig (360 lines)
-//   confidence: high
-//   notes:      `Expr` is the T2 `bun_logger::js_ast::Expr` (JSON value tree);
-//               `lockfile.allocator` dropped — JSON strings are already UTF-8;
-//               `sort` takes `&[u8]` (string_bytes) for borrowck disjointness;
-//               comptime `field` param demoted to runtime &'static str.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/OverrideMap.zig

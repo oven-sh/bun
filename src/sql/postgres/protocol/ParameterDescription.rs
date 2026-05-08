@@ -32,7 +32,7 @@ impl ParameterDescription {
         Ok(Self { parameters })
     }
 
-    // TODO(port): DecoderWrap comptime fn-pointer wiring — direct delegate.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
@@ -52,10 +52,4 @@ fn to_int32_slice(slice: &[u8]) -> &[[u8; core::mem::size_of::<Int4>()]] {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/ParameterDescription.zig (36 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DecoderWrap wiring + NewReader generic bounds need Phase B; unaligned i32 slice reshaped to [[u8;4]].
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/ParameterDescription.zig

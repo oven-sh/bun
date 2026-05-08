@@ -45,10 +45,4 @@ impl ACL {
     };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/s3_signing/acl.zig (43 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      MAP as associated const may need to become module-level `static` if phf_map! rejects const context
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/s3_signing/acl.zig

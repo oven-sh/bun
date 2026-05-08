@@ -74,10 +74,4 @@ pub fn to_be_odd(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) 
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeOdd.zig (60 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match needs borrowck reshape; comptime get_signature flagged inline as PERF(port); Zig {f} fmt-spec mapped to {}
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeOdd.zig

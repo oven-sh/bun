@@ -3553,10 +3553,4 @@ pub mod js_printer {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/logger/logger.zig (1522 lines)
-//   confidence: medium
-//   todos:      21
-//   notes:      string-field ownership is intentionally deferred (see module doc); `Output.prettyFmt` comptime markup rewrite needs a callsite macro; `add_resolve_error*` gained explicit `specifier_arg` param (Zig used `args.@"0"`).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/logger/logger.zig

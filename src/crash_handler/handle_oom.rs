@@ -100,10 +100,4 @@ impl HandleOom for Error {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/crash_handler/handle_oom.zig (66 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime @typeInfo error-set reflection reshaped into a HandleOom trait; `!` assoc type needs nightly or Infallible swap; most callsites should drop handle_oom entirely per §Allocators
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/crash_handler/handle_oom.zig

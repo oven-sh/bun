@@ -1,8 +1,5 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 #![warn(unused_must_use)]
-// B-2: module tree fully wired in. Remaining cross-tier deps are noted inline
-// as TODO(b2-blocked) (see prepared_statement::ExecuteParams re: sql_jsc::Value).
-
 #![warn(unreachable_pub)]
 pub mod shared {
     #[path = "SQLQueryResultMode.rs"]

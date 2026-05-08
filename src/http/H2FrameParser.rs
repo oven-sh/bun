@@ -275,10 +275,4 @@ impl SettingsPayloadUnit {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/H2FrameParser.zig (154 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      packed struct(uN) with non-byte widths (u24/u31/u40/u48/u72) mapped to #[repr(C,packed)]/#[repr(transparent)] + manual byteswap; non-exhaustive `_` enums need newtype audit in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/H2FrameParser.zig

@@ -228,10 +228,4 @@ pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 pub use crate::webview::host_process as WebViewHostProcess;
 pub use crate::webview::chrome_process as ChromeProcess;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api.zig (72 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      pure re-export hub; whole-file Zig imports mapped to `pub use <mod> as Name` — Phase B may need to swap module aliases for inner struct re-exports where the Zig file-as-struct pattern was used
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api.zig

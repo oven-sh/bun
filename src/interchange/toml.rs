@@ -633,10 +633,4 @@ impl<'a> TOML<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/interchange/toml.zig (392 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      AST-arena crate; HashMapPool is dead code; raw *mut used where Zig aliases into Expr.data; set_rope/get_or_put_array provided locally via ObjectRopeExt (T2 js_ast omits them).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/interchange/toml.zig

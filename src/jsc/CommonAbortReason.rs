@@ -25,10 +25,4 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/CommonAbortReason.zig (17 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      extern fn left inline; relocate to jsc_sys in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/CommonAbortReason.zig

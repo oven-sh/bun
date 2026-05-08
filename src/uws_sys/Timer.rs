@@ -118,10 +118,4 @@ unsafe extern "C" {
     pub fn us_timer_loop(t: *mut Timer) -> *mut Loop;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/Timer.zig (64 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      ext()/as_() do unchecked type-punning of the ext slot; errno read uses std::io pending bun_sys accessor; deinit ported as unsafe close(*mut Self)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/Timer.zig

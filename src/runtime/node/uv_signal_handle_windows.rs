@@ -53,10 +53,4 @@ pub extern "C" fn Bun__UVSignalHandle__close(signal: *mut libuv::uv_signal_t) {
     libuv::uv_close(signal.cast(), free_with_default_allocator);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/uv_signal_handle_windows.zig (46 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      uv_close cb signature may need *mut uv_handle_t (not c_void) depending on bun_sys::windows::libuv binding shape
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/uv_signal_handle_windows.zig

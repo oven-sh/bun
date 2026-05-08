@@ -1451,10 +1451,4 @@ fn fmt16(s: &[u16]) -> impl core::fmt::Display + '_ {
     F(s)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/windows-shim/bun_shim_impl.zig (972 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      heavy raw-pointer arithmetic; `is_standalone` mapped to cargo feature `shim_standalone`; `mode.RetType()` collapsed to `LauncherRet` enum; `bun_ctx: anytype` mapped to `BunCtx` trait; `read_without_launch` path appears incomplete upstream (never returns `.command_line`, never uses `context.buf`)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/windows-shim/bun_shim_impl.zig

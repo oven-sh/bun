@@ -118,10 +118,4 @@ unsafe extern "C" {
     fn StringBuilder__ensureUnusedCapacity(this: *mut c_void, additional: usize);
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/StringBuilder.zig (91 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime Append enum split into per-variant append_* methods; TopExceptionScope @src() needs Phase B macro
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/StringBuilder.zig

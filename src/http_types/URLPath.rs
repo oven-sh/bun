@@ -210,10 +210,4 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     })
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_types/URLPath.zig (150 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      &'static [u8] fields are a placeholder; struct borrows from input/threadlocal scratch — Phase B must pick a real lifetime/ownership story. decode_fault_tolerant writer arg needs bun_io::Write shape.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_types/URLPath.zig

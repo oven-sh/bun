@@ -51,9 +51,4 @@ impl ConfigVersion {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/ConfigVersion.zig (45 lines)
-//   confidence: high
-//   todos:      0
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/ConfigVersion.zig

@@ -20,8 +20,4 @@ impl False {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/builtin/false_.zig (27 lines)
-//   confidence: high
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/builtin/false_.zig

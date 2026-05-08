@@ -48,10 +48,4 @@ pub fn from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCod
     Ok(SignalCode::DEFAULT)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys_jsc/signal_code_jsc.zig (42 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      `FromJsEnum for SignalCode` lives in bun_jsc (orphan rule).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys_jsc/signal_code_jsc.zig

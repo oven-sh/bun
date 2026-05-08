@@ -76,10 +76,4 @@ impl WaitGroup {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/WaitGroup.zig (67 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      assumes crate::Mutex/Condition expose lock()/unlock()/signal()/wait(&Mutex) and impl Default
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/WaitGroup.zig

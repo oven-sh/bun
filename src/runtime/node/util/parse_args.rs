@@ -1008,8 +1008,4 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     Ok(result)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/util/parse_args.zig (764 lines)
-//   confidence: high
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/util/parse_args.zig

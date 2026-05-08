@@ -1879,12 +1879,4 @@ impl NodeHTTPResponse {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/server/NodeHTTPResponse.zig (1255 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      .classes.ts payload w/ intrusive refcount; codegen owns the
-//               `#[no_mangle]` prototype thunks (generated_classes.rs re-exports
-//               this struct); `defer self.deref()` reshaped to tail calls.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/server/NodeHTTPResponse.zig

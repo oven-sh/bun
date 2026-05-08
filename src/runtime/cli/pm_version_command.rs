@@ -1010,9 +1010,4 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/pm_version_command.zig (646 lines)
-//   confidence: high
-//   notes:      spawn_sync/JSON/Output crate paths verified phase-d.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/pm_version_command.zig

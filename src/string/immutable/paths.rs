@@ -608,10 +608,4 @@ fn basename_windows<T: Ch>(input: &[T]) -> &[T] {
     &input[start_index + 1..end_index]
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/immutable/paths.zig (486 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Generic Ch trait stands in for comptime T (u8/u16); several bun_paths/bun_str helper fn names assumed (has_prefix_ascii_t, is_absolute_windows, trim_left, contains_char_t); WStr/ZStr from_raw_mut used for all sentinel-slice returns.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/immutable/paths.zig

@@ -830,10 +830,4 @@ pub mod fs {
 
 pub use self::fs::PathContentsPair;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/paths/paths.zig (27 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      thin re-export crate root; PathBuffer/WPathBuffer are #[repr(transparent)] newtypes (uninit/ZEROED + Deref to slice); MAX_PATH_BYTES cfg arms mirror Zig std values — verify in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/paths/paths.zig

@@ -33,10 +33,4 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
         .to_js()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/crypto/boringssl_jsc.zig (21 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `globalThis.ERR(tag, fmt, args).toJS()` mapped to provisional `global.err(ErrorCode, format_args!).to_js()`; verify bun_jsc error-builder API in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/crypto/boringssl_jsc.zig

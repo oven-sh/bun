@@ -526,10 +526,4 @@ impl List {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/lockfile/Package/Scripts.zig (384 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      @field reflection over hook names tabulated via hooks()/hooks_mut(); owned ZString type for `cwd`, AbsPath save/restore RAII, and lockfile.scripts indexed access need Phase B verification
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/lockfile/Package/Scripts.zig

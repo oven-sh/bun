@@ -139,10 +139,4 @@ impl Drop for EnvMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/EnvMap.zig (119 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      ArrayHashMap with custom Context (Windows case-insensitive); allocator params dropped per §Allocators
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/EnvMap.zig

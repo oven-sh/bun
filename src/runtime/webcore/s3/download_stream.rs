@@ -402,10 +402,4 @@ impl Default for State {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/s3/download_stream.zig (244 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      MutableString/AsyncHTTP struct-copy semantics + ConcurrentTask.from enum literal need Phase-B confirmation; mutex lock/unlock kept explicit pending RAII guard.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/s3/download_stream.zig

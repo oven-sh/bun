@@ -240,10 +240,4 @@ pub mod c {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/SocketContext.zig (139 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      bun_boringssl_sys::Sha256 (forward-ref) / ZStr API names assumed; verify in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/SocketContext.zig

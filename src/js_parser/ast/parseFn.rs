@@ -605,10 +605,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/parseFn.zig (508 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      comptime-type-returning fn → inherent impl on P<'a, TS, J, SCAN_ONLY>; `defer p.popScope()` in parse_arrow_body manually unrolled; std.mem.toBytes/bytesToValue → plain Copy; arena-backed Vec via bumpalo; E::Arrow.args lifetime erased via raw-ptr round-trip pending arena-lifetime field rework
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/parseFn.zig

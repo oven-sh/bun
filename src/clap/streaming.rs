@@ -534,10 +534,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/clap/streaming.zig (449 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      ArgIterator duck-typing → args::ArgIter trait; defer in chainging() hoisted (safe — no state reads between); Diagnostic stores owned bytes.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/clap/streaming.zig

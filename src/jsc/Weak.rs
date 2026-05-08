@@ -187,10 +187,4 @@ impl<T> Drop for Weak<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/Weak.zig (115 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      r#ref keyword-escaped; jsc.markBinding(@src()) calls dropped (debug instrumentation); Weak gains <'a> per LIFETIMES.tsv JSC_BORROW
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/Weak.zig

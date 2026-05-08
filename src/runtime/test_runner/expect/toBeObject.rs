@@ -59,10 +59,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeObject.zig (35 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      defer post_match reshaped as inner-closure + trailing call (no raw ptr); Formatter init/throw signatures may need adjustment in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeObject.zig

@@ -53,10 +53,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeSymbol.zig (35 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      defer post_match needs borrowck reshape; get_signature assumed const fn
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeSymbol.zig

@@ -660,10 +660,4 @@ struct BraceIndex {
     end: u32,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/glob/matcher.zig (495 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      decode_wtf8_rune_t signature/ptr-to-[u8;4] may need adjustment; BoundedArray::new/push/as_slice assumed; get_unicode match arms use u32 ranges around b'\\'
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/glob/matcher.zig

@@ -2753,11 +2753,4 @@ impl PostgresSQLConnection {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/PostgresSQLConnection.zig (1981 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      .classes.ts payload w/ intrusive refcount; js_value is JsRef (self-wrapper weak); self-referential string fields use raw *const [u8]; heavy defer/borrowck reshaping in advance()/on()/on_data()/fail_with_js_value(); on() uses const-generic MessageType
-// ──────────────────────────────────────────────────────────────────────────
-
+// ported from: src/sql_jsc/postgres/PostgresSQLConnection.zig

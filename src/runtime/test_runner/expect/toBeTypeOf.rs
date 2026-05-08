@@ -130,10 +130,4 @@ pub fn to_be_type_of(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeTypeOf.zig (93 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      scopeguard for postMatch holds &mut self; Formatter two-mut-borrow in to_fmt may need reshape
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeTypeOf.zig

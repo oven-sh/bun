@@ -1121,9 +1121,9 @@ pub fn initialize_mini_store() {
             let mini_store = unsafe { &mut *instance.get().unwrap() };
             // PORT NOTE: Zig checked `stack_allocator.fixed_buffer_allocator.end_index >=
             // buffer.len() - 1` to decide whether to recycle the heap arena. The Rust
-            // `ASTMemoryAllocator` collapses SFA+fallback into a single bumpalo arena
-            // (see ASTMemoryAllocator.rs PORT STATUS), so there is no stack-buffer
-            // watermark to inspect — `reset()` already releases all bump allocations.
+            // `ASTMemoryAllocator` collapses SFA+fallback into a single bumpalo arena,
+            // so there is no stack-buffer watermark to inspect — `reset()` already
+            // releases all bump allocations.
             // PERF(port): was arena bulk-free (heap.deinit() + re-init) — profile in Phase B
             let _ = &mini_store.heap;
             mini_store.memory_store.reset();
@@ -1290,13 +1290,4 @@ impl From<PackageManifestError> for bun_core::Error {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/install.zig (295 lines)
-//   confidence: medium
-//   notes:      lib.rs for bun_install crate — module decls + re-exports of
-//               file-backed sibling modules. All inline stub structs/modules
-//               (parallel Lockfile/PackageManager/Repository/NetworkTask/
-//               TarballStream/PackageManifestMap/…) removed; callers now reach
-//               the real implementations directly.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/install.zig

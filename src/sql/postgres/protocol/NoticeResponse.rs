@@ -27,9 +27,7 @@ impl NoticeResponse {
         Ok(Self::default())
     }
 
-    // Zig: pub const decode = DecoderWrap(NoticeResponse, decodeInternal).decode;
-    // TODO(port): DecoderWrap is a comptime type-generator; Phase B should expose
-    // this via a trait impl or macro in decoder_wrap.rs.
+    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(context: Container) -> Result<Self, bun_core::Error> {
         Self::decode_internal(NewReader { wrapped: context })
     }
@@ -38,10 +36,4 @@ impl NoticeResponse {
 // Zig `toJS` re-export from sql_jsc deleted per PORTING.md — `to_js` lives as
 // an extension-trait method in the bun_sql_jsc crate.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/NoticeResponse.zig (28 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      decode_internal reshaped from out-param to Result<Self>; DecoderWrap call shape is a guess
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/NoticeResponse.zig

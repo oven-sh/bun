@@ -439,10 +439,4 @@ pub const TEST_NAME_SUFFIXES: [&[u8]; 4] = [
     b"_spec",
 ];
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/Scanner.zig (268 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      read_directory_with_iterator callback pattern + fs &mut vs & needs Phase B resolution; ScanEntry.dir_path lifetime borrows dirname_store
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/Scanner.zig

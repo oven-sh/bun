@@ -335,10 +335,4 @@ impl Drop for MySQLRequestQueue {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/mysql/MySQLRequestQueue.zig (227 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      LinearFifo<*mut JSMySQLQuery, DynamicBuffer> w/ explicit init(); advance() defer reshaped to post-block cleanup; Drop reshaped to read_item() loop for borrowck
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/mysql/MySQLRequestQueue.zig

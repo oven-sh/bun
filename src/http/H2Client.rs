@@ -174,12 +174,4 @@ pub(crate) mod bridge {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http/H2Client.zig (45 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      thin re-export hub; u31 widened to u32; *_jsc alias dropped;
-//               bridge stubs for gated HTTPClient/HTTPContext state-machine
-//               methods (delete once the gated draft block (now dissolved) un-gates)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http/H2Client.zig

@@ -262,10 +262,4 @@ impl<T: Node> UnboundedQueue<T> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/threading/unbounded_queue.zig (177 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      next_field comptime param + @hasDecl accessor branch folded into unsafe `Node` trait; per-field cache-line alignment dropped (PERF note)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/threading/unbounded_queue.zig

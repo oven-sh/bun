@@ -160,13 +160,4 @@ impl ResourceUsage {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/subprocess/ResourceUsage.zig (74 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      .classes.ts-backed payload (noConstructor: true → no_construct);
-//               toJS/fromJS aliases provided by #[bun_jsc::JsClass]; field
-//               access normalized via local RusageFields trait across
-//               libc::rusage / freebsd / WinRusage.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/subprocess/ResourceUsage.zig

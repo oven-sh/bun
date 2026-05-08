@@ -5,9 +5,4 @@
 
 pub use bun_install_types::resolver_hooks::{OldV2VersionedURL, VersionedURL, VersionedURLType};
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/versioned_url.zig (44 lines)
-//   confidence: high
-//   notes:      Body moved to bun_install_types (layering).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/versioned_url.zig

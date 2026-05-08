@@ -144,9 +144,7 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // TODO(port): `pub const decode = decoderWrap(Response, decodeInternal).decode;`
-        // — decoderWrap only auto-wraps a bare context into NewReader; here the
-        // arg is already wrapped, so forward directly (matches StmtPrepareOKPacket).
+        // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
@@ -287,8 +285,7 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // TODO(port): `pub const write = writeWrap(EncryptedPassword, writeInternal).write;`
-        // writeWrap only auto-wraps a bare context; arg is already wrapped, forward directly.
+        // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
         pub fn write<Context: WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
             self.write_internal(writer)
         }
@@ -336,17 +333,11 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // TODO(port): `pub const write = writeWrap(PublicKeyRequest, writeInternal).write;`
+        // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
         pub fn write<Context: WriterContext>(&self, writer: NewWriter<Context>) -> Result<(), bun_core::Error> {
             self.write_internal(writer)
         }
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/Auth.zig (229 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      decoder_wrap/write_wrap signatures guessed; EncryptedPassword fields are raw *const [u8] (Phase-A no-lifetime rule) — Phase B may promote to <'a>; stack-fallback bufs replaced with Vec (PERF-tagged); BoringSSL FFI wrapped in scopeguard for defer-free.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/Auth.zig

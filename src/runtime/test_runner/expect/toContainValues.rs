@@ -105,10 +105,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toContainValues.zig (73 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      defer postMatch needs borrowck reshape; Zig while-else flattened to `found` flag; {f} fmt specifier mapped to Display {}
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toContainValues.zig

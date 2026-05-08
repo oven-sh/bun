@@ -830,10 +830,4 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/js_parser/ast/maybe.zig (728 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      for-else semantics ambiguous (line ~248); Expr::Data variant accessors (.e_binary()/.e_dot()) assumed; jsc::URL dep flagged for *_jsc split
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/js_parser/ast/maybe.zig

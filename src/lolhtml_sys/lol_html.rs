@@ -1260,10 +1260,4 @@ impl Encoding {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/lolhtml_sys/lol_html.zig (867 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      comptime fn-value handler/sink generics modeled as traits; opaque FFI frees kept as `unsafe fn destroy(*mut Self)` (Phase B: owning wrappers + Drop); Comment::replace faithfully mirrors upstream bug calling _before
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/lolhtml_sys/lol_html.zig

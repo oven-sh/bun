@@ -36,10 +36,4 @@ pub fn to_js<T: ByteaToJs>(
     value.bytea_to_js(global)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/types/bytea.zig (23 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      TO const typed as `Short` to match FROM; verify against sibling type modules.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/types/bytea.zig

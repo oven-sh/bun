@@ -481,11 +481,4 @@ pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/AstBuilder.zig (375 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ImportScanner duck-typing (comptime stub fields) needs a Rust trait;
-//               `to_bundled_ast` skips scan/HMR-finalize until ImportScanner accepts AstBuilder.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/AstBuilder.zig

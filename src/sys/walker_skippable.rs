@@ -266,10 +266,4 @@ fn slice_as_bytes<T>(s: &[T]) -> &[u8] {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/walker_skippable.zig (199 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      skip_filenames/skip_dirnames reshaped to Range<usize> into skip_all (self-ref slices); DirIterator/WrappedIterator/EntryKind/OSPathSliceZ API names assumed — verify in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/walker_skippable.zig

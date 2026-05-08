@@ -263,10 +263,4 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
 // ../runtime/api/csrf_jsc.zig — per PORTING.md these *_jsc aliases are
 // deleted; JS bindings live in the *_jsc crate as extension methods.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/csrf/csrf.zig (220 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      generate()/verify() fully un-gated; all T0/T1 deps (bun_core::{csprng,time}, bun_boringssl_sys::{EVP_MAX_MD_SIZE,CRYPTO_memcmp}, bun_sha_hmac::hmac, bun_base64, bun_string::strings) resolved
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/csrf/csrf.zig

@@ -780,10 +780,4 @@ pub mod c {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/uws_sys/WebSocket.zig (362 lines)
-//   confidence: medium-high
-//   todos:      5
-//   notes:      Wrap uses traits (WebSocketHandler/WebSocketUpgradeServer) for @hasDecl; cork() tunnels (ctx,fn) via user_data instead of comptime monomorphization; NewApp/NewAppResponse types pending App.rs port
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/uws_sys/WebSocket.zig

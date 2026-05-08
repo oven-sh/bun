@@ -1338,10 +1338,4 @@ mod tests {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/interchange/json.zig (1044 lines)
-//   confidence: medium
-//   todos:      35
-//   notes:      8-bool const-generic stands in for comptime JSONOptions; toAST -> ToAst trait (struct/enum/union arms need derive macro); verify JSONOptions defaults for type aliases; Zig fast-path slices [0..1] against 2-byte literals (preserved verbatim — likely upstream bug).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/interchange/json.zig

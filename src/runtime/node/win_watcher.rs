@@ -476,10 +476,4 @@ pub fn watch(
     sys::Result::Ok(watcher)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/node/win_watcher.zig (310 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      Heavy raw-ptr/libuv FFI; getOrPut reshaped to lookup+insert; FSWatcher/Event import paths need Phase-B fixup.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/node/win_watcher.zig

@@ -2618,10 +2618,4 @@ impl<'a> Copy<'a> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/http_jsc/websocket_client.zig (1792 lines)
-//   confidence: medium
-//   todos:      20
-//   notes:      Heavy borrowck reshaping (raw-ptr re-slicing of self buffers — Phase B should add a split-borrow helper on LinearFifo); proxy_tunnel now IntrusiveArc (update LIFETIMES.tsv); scopeguard ref/deref guards conflict with &mut self; @export macro uses paste!.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/http_jsc/websocket_client.zig

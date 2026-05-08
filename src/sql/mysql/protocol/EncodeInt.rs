@@ -89,10 +89,4 @@ pub fn decode_length_int(bytes: &[u8]) -> Option<DecodedLengthInt> {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/EncodeInt.zig (73 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      BoundedArray field access (.len/.buffer) assumed; anon return struct named DecodedLengthInt; @intCast narrowings mapped to u8::try_from(..).expect("int cast")
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/EncodeInt.zig

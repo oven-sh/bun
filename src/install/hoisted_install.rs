@@ -612,15 +612,4 @@ pub fn install_hoisted_packages(
     Ok(summary)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/hoisted_install.zig (380 lines)
-//   confidence: medium
-//   notes:      `PackageInstaller` field borrows + `Tree::Iterator` slices are
-//               derived through `mgr_ptr` (raw provenance root) to mirror the
-//               Zig non-exclusive `*Lockfile` / `*PackageManager` aliasing;
-//               Phase B should retype `PackageInstaller.{manager,lockfile,
-//               options,progress}` and the column slices as raw pointers
-//               (LIFETIMES.tsv: BACKREF) so Stacked Borrows holds without the
-//               unsafe reborrows.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/hoisted_install.zig

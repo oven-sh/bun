@@ -108,10 +108,4 @@ impl Expect {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/expect/toBeLessThanOrEqual.zig (69 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      scopeguard for postMatch borrows `this`+`global` (borrowck risk); Expect.throw signature in Rust unclear (Zig: signature, fmt, args tuple).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/expect/toBeLessThanOrEqual.zig

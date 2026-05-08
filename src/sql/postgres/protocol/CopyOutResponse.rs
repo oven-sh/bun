@@ -18,8 +18,7 @@ impl CopyOutResponse {
     }
 }
 
-// TODO(port): `DecoderWrap(CopyOutResponse, decodeInternal).decode` passes a fn as a
-// comptime param to a type-generator. Direct delegate; revisit as trait impl.
+// Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
 impl CopyOutResponse {
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
@@ -29,10 +28,4 @@ impl CopyOutResponse {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/CopyOutResponse.zig (13 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DecoderWrap fn-as-comptime-param needs trait reshape in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/CopyOutResponse.zig

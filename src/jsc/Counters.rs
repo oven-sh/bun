@@ -47,10 +47,4 @@ pub enum Field {
     SpawnMemfd,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/Counters.zig (23 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      JSObject::create needs reflection shim or manual property puts in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/Counters.zig

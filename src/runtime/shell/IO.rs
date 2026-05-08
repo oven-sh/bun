@@ -182,9 +182,4 @@ impl OutKind {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/shell/IO.zig (185 lines)
-//   confidence: high (to_subproc_stdio wired)
-//   blocked_on: -
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/shell/IO.zig

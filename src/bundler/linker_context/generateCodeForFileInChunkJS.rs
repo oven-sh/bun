@@ -1092,12 +1092,4 @@ use bun_js_parser::ast::expr::Data as ExprData;
 use bun_js_parser::ast::binding::Data as BindingData;
 use bun_js_parser::ast::LocalKind;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/generateCodeForFileInChunkJS.zig (802 lines)
-//   confidence: medium
-//   notes:      AST-crate arena threading erased to raw pointers / 'static; SoA column
-//               accessors assumed codegen'd (items_*); ESM hoist loop reshaped for borrowck
-//               via raw-pointer aliasing of stmts.all_stmts; ExportHoist routed through
-//               ToExprWrapper trampoline (Zig used anytype duck-typing).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/generateCodeForFileInChunkJS.zig

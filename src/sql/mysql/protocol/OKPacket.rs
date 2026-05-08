@@ -56,19 +56,7 @@ impl OKPacket {
     }
 }
 
-// TODO(port): Zig `pub const decode = decoderWrap(OKPacket, decodeInternal).decode;`
-// `decoderWrap` is a comptime type-generator that wraps `decode_internal` into a
-// uniform `decode` entry point. Phase B: wire this to whatever shape
-// `crate::mysql::protocol::new_reader::decoder_wrap` exposes (likely a trait impl
-// or `pub fn decode<C>(&mut self, reader: NewReader<C>) -> Result<(), bun_core::Error>`).
+// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
 pub use self::OKPacket as _DecoderWrapTarget;
-// placeholder so the symbol name `decode` is grep-able for Phase B:
-// pub const decode = decoder_wrap::<OKPacket>(OKPacket::decode_internal).decode;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/mysql/protocol/OKPacket.zig (49 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      u24→u32 for packet_size; `decode` const needs decoder_wrap shape from Phase B; no Default (packet_size has no Zig default)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/mysql/protocol/OKPacket.zig

@@ -77,10 +77,4 @@ pub static ALL_YARN_COMMANDS: phf::Set<&'static [u8]> = phf::phf_set! {
     // b"workspaces",
 };
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/list-of-yarn-commands.zig (76 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      ComptimeStringMap(void) → phf::Set; duplicate keys must be deduped for phf to compile
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/list-of-yarn-commands.zig

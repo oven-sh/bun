@@ -718,10 +718,4 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
 // TODO(port): `HotReload` enum import — placeholder for `ctx.debug.hot_reload != .watch` check
 use crate::Command::HotReload;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/test/ChangedFilesFilter.zig (545 lines)
-//   confidence: medium
-//   todos:      13
-//   notes:      spawn_sync/MultiArrayList/hot_reloader-globals/RNG need API confirmation; Result<'a> shadows std::Result by design
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/test/ChangedFilesFilter.zig

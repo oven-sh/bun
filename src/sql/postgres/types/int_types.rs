@@ -22,10 +22,4 @@ where
     v.swap_bytes().to_ne_bytes()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/types/int_types.zig (10 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      type aliases kept lowercase (PostgreSQL wire-protocol names); int32() bounds on TryFrom<T> to model @intCast over anytype
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/types/int_types.zig

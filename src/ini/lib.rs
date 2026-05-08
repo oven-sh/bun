@@ -1996,10 +1996,4 @@ fn handle_auth(
 
 } // mod draft
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/ini/ini.zig (1357 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      B-2: Parser::parse()/prepare_str()/ConfigIterator::next()/ScopeIterator::next() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, Expr::as_utf8_string_literal, IntoExprData, Vec::at/len). Quoted-value JSON fast path in prepare_str() un-gated against bun_interchange::json::parse_utf8_impl — T2 result lifted to bun_js_parser::Expr inline for scalars; Array/Object stringify pending T2/T4 Expr unification. ScopeIterator::next inner registry-parse block + ScopeItem.registry field + handle_auth() un-gated against bun_api::{NpmRegistry,npm_registry::Parser} + bun_base64. load_npmrc_config stays gated on bun_core::output::ErrName-for-bun_sys::Error + Log::print/Output::error_writer() type bridge. load_npmrc stays gated on bun_js_parser::Expr accessor surface (as_property/get/as_bool/is_array/as_string/as_string_cloned) + PnpmMatcher::from_expr Expr-type unification (bun_logger::ast::Expr vs bun_js_parser::Expr).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/ini/ini.zig

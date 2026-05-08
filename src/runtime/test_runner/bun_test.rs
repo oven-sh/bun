@@ -1947,10 +1947,4 @@ pub use super::debug;
 pub use super::scope_functions as ScopeFunctions;
 pub use super::order as Order;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/bun_test.zig (1072 lines)
-//   confidence: medium
-//   todos:      22
-//   notes:      BunTestPtr=Rc<BunTestCell> (UnsafeCell interior-mut, .get()/.as_ptr() mirror Zig *BunTest); BunTest<'a> reporter borrow is mutated (reshape); RefData uses bun_ptr::IntrusiveRc (crosses FFI via asPromisePtr); intrusive ExecutionEntry list kept raw; group.begin/end mapped to debug::group stubs.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/bun_test.zig

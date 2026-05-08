@@ -467,10 +467,4 @@ impl Drop for WindowsNamedPipeContext {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/WindowsNamedPipeContext.zig (307 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      intrusive refcount w/ deferred-task self-destroy + raw ctx ptr through uws callbacks; create() uses MaybeUninit+ptr::write for self-referential init; TLSSocket/TCPSocket Arc semantics need verification vs IntrusiveArc; GlobalRef/VirtualMachine fields are JSC_BORROW
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/WindowsNamedPipeContext.zig

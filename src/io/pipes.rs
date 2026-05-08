@@ -153,10 +153,4 @@ pub enum ReadState {
     Drained,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/io/pipes.zig (105 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      onCloseFn comptime-void pattern → Option<F>; FilePoll flag idents and deinit_force_unregister signature need confirmation in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/io/pipes.zig

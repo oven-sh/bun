@@ -5125,10 +5125,4 @@ export_host_fn!(
     "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_getRuntimeDefaultResultOrderOption"
 );
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/dns_jsc/dns.zig (3649 lines)
-//   confidence: low
-//   todos:      32
-//   notes:      Heavy comptime-type/@field reflection (per-record caches, getKey, getOrPutIntoResolvePendingCache) modeled via CAresRecordType trait + PendingCacheField enum + HasPendingCacheKey trait dispatch; Resolver refcount now IntrusiveRc (Arc removed); lookup deinit split into Drop+destroy(*mut Self) — callers still &mut self, reshape in Phase B; RequestKey split into borrowed + RequestKeyOwned; RequestResult thinned to NonNull for FFI view — owning Box<[ResultEntry]> lives on Request.result_buf; ResolveInfoRequest<T>/GetAddrInfoRequest now impl c_ares::ResolveHandler/AddrInfoHandler so Channel::resolve/get_addr_info actually dispatch; ~100 unsafe blocks still need // SAFETY: annotation (cited hot paths done).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/dns_jsc/dns.zig

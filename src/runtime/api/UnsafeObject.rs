@@ -92,9 +92,4 @@ fn dump_mimalloc(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValu
     Ok(JSValue::UNDEFINED)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/UnsafeObject.zig (76 lines)
-//   confidence: medium
-//   todos:      2
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/UnsafeObject.zig

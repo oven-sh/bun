@@ -1878,10 +1878,4 @@ impl JSValkeyClient {
     // cluster(subcommand: "KEYSLOT", key: RedisKey)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/valkey_jsc/js_valkey_functions.zig (1599 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      comptime type-generators (`compile.@"..."`) ported as macro_rules!; Command/CommandArgs/CommandMeta field shapes assumed from usage; ERR(.REDIS_INVALID_STATE) and JSPropertyIterator config need Phase B wiring; JSArgument moved into &[...] temporaries — verify Drop semantics match Zig deinit order
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/valkey_jsc/js_valkey_functions.zig

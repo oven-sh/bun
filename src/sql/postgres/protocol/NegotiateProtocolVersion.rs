@@ -56,10 +56,4 @@ impl NegotiateProtocolVersion {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql/postgres/protocol/NegotiateProtocolVersion.zig (42 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      out-param ctor reshaped to Result<Self>; borrow_utf8-then-drop of reader Data mirrors Zig but looks suspicious
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql/postgres/protocol/NegotiateProtocolVersion.zig

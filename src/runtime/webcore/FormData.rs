@@ -455,10 +455,4 @@ pub fn for_each_multipart_entry<C>(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/FormData.zig (418 lines)
-//   confidence: high
-//   todos:      5
-//   notes:      Encoding/AsyncFormData/get_boundary live in bun_core (JSC-free); to_js is an extension trait here. Field.value/FormData.buffer raw *const [u8] (borrow into caller input).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/FormData.zig

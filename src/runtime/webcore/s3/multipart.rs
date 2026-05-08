@@ -1153,10 +1153,4 @@ pub enum WriteEncoding {
     Utf16,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/s3/multipart.zig (800 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      Intrusive RefCount (bun_ptr::IntrusiveRc target) + self-referential upload_id reshaped; simple_request option/callback types & StreamBuffer ownership-transfer need verification in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/s3/multipart.zig

@@ -8,7 +8,7 @@
 //! bodies (`Queue::poll_modules` / `resolve_error` / `download_error` /
 //! `resume_loading_module`) are preserved verbatim from the Phase-A draft
 //! `bun_install::PackageManager` runTasks / `MultiArrayList` column accessors /
-//! `bun_bundler::linker` that aren't wired yet (see PORT STATUS).
+//! `bun_bundler::linker` that aren't wired yet.
 
 use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_void;
@@ -1406,13 +1406,4 @@ impl AsyncModule {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/AsyncModule.zig (782 lines)
-//   confidence: medium
-//   notes:      AsyncModule struct + Queue + InitOpts + error types real.
-//               fulfill() real (called from RuntimeTranspilerStore). Queue
-//               method bodies / init / done / on_done / resolve_error /
-//               download_error / resume_loading_module ported and un-gated.
-//               string_buf slices stored as (off,len) — struct is movable.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/AsyncModule.zig

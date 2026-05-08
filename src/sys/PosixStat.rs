@@ -168,10 +168,4 @@ impl PosixStat {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/PosixStat.zig (80 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      to_u64 @typeInfo reflection ported as trait+macro over primitive ints; Stat field access (.dev etc.) may need accessor methods in Phase B
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/PosixStat.zig

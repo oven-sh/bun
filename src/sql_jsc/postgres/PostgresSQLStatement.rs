@@ -261,10 +261,4 @@ impl Drop for PostgresSQLStatement {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sql_jsc/postgres/PostgresSQLStatement.zig (182 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      IntrusiveRc owns dealloc; structure() returns &CachedStructure (not by-value); Error::Protocol arm gated on PostgresErrorOptions<'a>; DataCellFlags via bitflags insert()
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sql_jsc/postgres/PostgresSQLStatement.zig

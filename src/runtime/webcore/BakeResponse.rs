@@ -252,11 +252,4 @@ fn assert_streaming_disabled(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/webcore/BakeResponse.zig (146 lines)
-//   confidence: high
-//   notes:      jsc.conv ABI on exports/imports needs Phase-B verification on
-//               Windows-x64; `*mut Response` ownership transfers to the C++
-//               wrapper via Box::into_raw in all SSR paths.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/webcore/BakeResponse.zig

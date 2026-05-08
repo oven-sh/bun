@@ -35,10 +35,4 @@ fn detect_uncached() -> Option<&'static [u8]> {
     generated::detect_uncached_generated()
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/ci_info.zig (27 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `bun_core::Once` API shape assumed; generated `ci_info` module path needs Phase B wiring
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/ci_info.zig

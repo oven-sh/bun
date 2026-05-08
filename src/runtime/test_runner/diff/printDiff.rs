@@ -749,10 +749,4 @@ pub fn print_diff(
     print_diff_footer(writer, config, removed_diff_lines, inserted_diff_lines)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/test_runner/diff/printDiff.zig (585 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      arena allocator dropped (non-AST crate); diff_match_patch::Dmp API assumed; DiffSegment carries <'a> for borrowed slices
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/test_runner/diff/printDiff.zig

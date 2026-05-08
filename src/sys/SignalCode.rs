@@ -225,10 +225,4 @@ impl fmt::Display for Fmt {
 // deleted per porting guide — `from_js` lives as an extension-trait method in
 // the `bun_sys_jsc` crate.
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/sys/SignalCode.zig (132 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      non-exhaustive enum(u8) ported as #[repr(transparent)] newtype; Output.prettyFmt ANSI consts need wiring in bun_core
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/sys/SignalCode.zig

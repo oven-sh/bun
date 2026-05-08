@@ -1560,10 +1560,4 @@ pub mod testing_apis {
 // (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
 pub use testing_apis as testing_ap_is;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/bun/subprocess.zig (1024 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      Subprocess gained <'a> (terminal/global_this per LIFETIMES.tsv); ref/deref via bun_ptr::RefCount<Self> + RefCounted impl; PROCESS_EXIT_VTABLE wired for §Dispatch; process held as raw *mut Process (intrusive ThreadSafeRefCount, matches Zig *Process) so finalize releases at Zig timing; on_process_exit defers reshaped to manual calls at return points.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/api/bun/subprocess.zig

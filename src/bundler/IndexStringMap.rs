@@ -26,10 +26,4 @@ impl IndexStringMap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/IndexStringMap.zig (25 lines)
-//   confidence: high
-//   todos:      0
-//   notes:      arena params dropped (values retyped to Box<[u8]>); Index::Int path may need fixup
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/IndexStringMap.zig

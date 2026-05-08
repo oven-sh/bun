@@ -330,10 +330,4 @@ impl Drop for StringJoiner {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/string/StringJoiner.zig (180 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      NullableAllocator collapsed to `owns_slice: bool` + impl Drop for Node; borrowed-slice lifetime unexpressed (raw *const [u8]); done()/done_with_end() reset len=0 so Drop's debug_assert holds; head=Box/tail=NonNull/next=*mut per LIFETIMES.tsv requires Box::into_raw round-trips.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/string/StringJoiner.zig

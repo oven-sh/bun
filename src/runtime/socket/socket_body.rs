@@ -3867,10 +3867,4 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
     Ok(JSValue::UNDEFINED)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/socket/socket.zig (2286 lines)
-//   confidence: medium
-//   todos:      16
-//   notes:      `twin`/`DuplexUpgradeContext.tls`/`NativeCallbacks::H2` switched to IntrusiveRc (intrusive RefCount + raw *T crosses FFI). `handlers: Option<NonNull<Handlers>>` (faithful `?*Handlers`) — server-mode points at embedded `Listener.handlers` so `@fieldParentPtr` arithmetic in get_listener/mark_inactive stays valid; client-mode is `Box::into_raw` freed by `Handlers::mark_inactive`. `get_handlers` returns raw `*mut`; callers reborrow per-access and never hold `&mut Handlers` across `callback.call()` (reload() may overwrite the pointee). DuplexUpgradeContext is allocated via `Box<MaybeUninit>` + `addr_of_mut!` field-writes (self-referential ctx; `upgrade` has fn-ptr niches + Drop). Handlers scope.exit() defer-pattern reshaped to tail-calls; verify ordering vs Zig defers.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/socket/socket.zig

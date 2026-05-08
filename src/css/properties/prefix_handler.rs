@@ -227,10 +227,4 @@ impl FallbackHandler {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/properties/prefix_handler.zig (135 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      Heavy @typeInfo/@field reflection unrolled via macro_rules! for the 2 active fields; Zig line 55 `field.name[1]` looks like an upstream bug — ported as apparent intent, verify in Phase B.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/properties/prefix_handler.zig

@@ -1298,10 +1298,4 @@ impl BunxCommand {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/cli/bunx_command.zig (923 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      bun.which/PATH_BUF borrow scoping + Output fmt API + bufPrint helpers need Phase B fixes; Options string fields use &'static [u8] placeholder for argv lifetime
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/cli/bunx_command.zig

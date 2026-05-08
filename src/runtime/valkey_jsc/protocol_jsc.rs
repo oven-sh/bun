@@ -188,10 +188,4 @@ pub fn resp_value_to_js_with_options(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/valkey_jsc/protocol_jsc.zig (147 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      RESPValue variant payload shapes assumed from usage; jsc::Error.fmt() signature guessed (format_args!).
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/runtime/valkey_jsc/protocol_jsc.zig

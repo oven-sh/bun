@@ -99,10 +99,4 @@ impl DeferredBatchTask {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/DeferredBatchTask.zig (52 lines)
-//   confidence: medium
-//   todos:      0
-//   notes:      intrusive container_of into BundleV2.drain_defer_task; jsLoopForPlugins routed via dispatch::CompletionHandle (CYCLEBREAK §Dispatch — T6 owns JSBundleCompletionTask layout)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/DeferredBatchTask.zig

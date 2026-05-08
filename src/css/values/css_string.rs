@@ -31,10 +31,4 @@ impl CssStringFns {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/css/values/css_string.zig (16 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      CssString lifetime tied to parser arena; Phase B may need explicit 'bump threading.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/css/values/css_string.zig

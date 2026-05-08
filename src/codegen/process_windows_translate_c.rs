@@ -104,10 +104,4 @@ fn index_of_scalar_pos(haystack: &[u8], start: usize, scalar: u8) -> Option<usiz
         .map(|p| start + p)
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/codegen/process_windows_translate_c.zig (73 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      build-time binary; std.zig.Tokenizer inlined as ASCII ident scan; std::fs/env used deliberately
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/codegen/process_windows_translate_c.zig

@@ -1005,16 +1005,4 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/bundler/linker_context/findImportedFilesInCSSOrder.zig (679 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Heavy bitwise-copy of arena-backed CssImportOrder/Vec
-//               values to mirror Zig `entry.*` / `@memcpy` semantics — sound
-//               because all aliased `conditions` lists allocate in the bump
-//               arena via `init_capacity_in` (`Origin::Borrowed`, no-op
-//               `Drop`). `crate::bun_css::LayerName` (ungate shadow) vs
-//               `::bun_css::LayerName` are distinct nominal types; raw-ptr
-//               cast at the two boundary sites until the shadow is removed.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/bundler/linker_context/findImportedFilesInCSSOrder.zig

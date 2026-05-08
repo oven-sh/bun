@@ -577,10 +577,4 @@ pub fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> W
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/watcher/INotifyWatcher.zig (385 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      align(1) Event ptrs need read_unaligned audit; borrowck reshapes in watch_loop_cycle/process_inotify_event_batch (eventlist_index column copied to Vec)
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/watcher/INotifyWatcher.zig

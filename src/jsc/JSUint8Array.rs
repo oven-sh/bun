@@ -88,10 +88,4 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/JSUint8Array.zig (35 lines)
-//   confidence: high
-//   todos:      1
-//   notes:      sizes:: constants come from generated sizes.zig; from_bytes takes Box<[u8]> to encode allocator-ownership transfer
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/jsc/JSUint8Array.zig

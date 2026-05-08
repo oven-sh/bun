@@ -1905,10 +1905,4 @@ pub type BufferedReader = WindowsBufferedReader;
 #[cfg(not(any(unix, windows)))]
 compile_error!("Unsupported platform");
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/io/PipeReader.zig (1313 lines)
-//   confidence: medium
-//   todos:      6
-//   notes:      vtable init via per-T associated const (rodata); read fns reshaped for borrowck (resizable_buffer folded into &mut self, drain_chunk takes &vtable); register_poll hoists vtable scalars to avoid raw-ptr escape; FileType passed as runtime arg (adt_const_params unstable); on_file_read defer-block inlined after body; Windows Drop mirrors Zig's source=null-before-closeImpl no-op (verify intent); Windows Source variants need #[cfg] alignment with source.rs.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/io/PipeReader.zig

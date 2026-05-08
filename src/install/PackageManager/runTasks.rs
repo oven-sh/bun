@@ -1976,10 +1976,4 @@ fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/install/PackageManager/runTasks.zig (1307 lines)
-//   confidence: medium
-//   todos:      15
-//   notes:      Heavy comptime duck-typing (`callbacks: anytype`, `Ctx: type`) modeled as `RunTasksCallbacks` trait with HAS_*/IS_* assoc consts; `defer` blocks expressed via scopeguard with raw-ptr captures (SAFETY-annotated) so they fire on `?` paths — Phase B should replace with pool-guard iterators; `on_package_download_error` id param is PackageID|Task::Id union.
-// ──────────────────────────────────────────────────────────────────────────
+// ported from: src/install/PackageManager/runTasks.zig

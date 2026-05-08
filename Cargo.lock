@@ -2063,6 +2063,7 @@ dependencies = [
  "bun_string",
  "bun_sys",
  "bun_threading",
+ "bun_which",
  "libc",
  "parking_lot",
  "scopeguard",

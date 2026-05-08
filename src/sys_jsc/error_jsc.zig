@@ -91,7 +91,7 @@ pub const TestingAPIs = struct {
 
     /// Verifies `bun.sys.termios`'s layout matches the host libc by
     /// round-tripping distinctive values through `tcgetattr`/`tcsetattr` on a
-    /// freshly opened PTY master. If the struct layout disagrees with libc
+    /// freshly opened PTY slave. If the struct layout disagrees with libc
     /// (as `std.posix.termios` does on Android bionic — `NCCS == 19` and no
     /// `c_ispeed`/`c_ospeed`, 36B vs glibc's ~60B), libc and Zig read/write
     /// `c_cc` at different extents and the values don't round-trip. Returns
@@ -100,15 +100,27 @@ pub const TestingAPIs = struct {
         if (comptime !Environment.isPosix) return .js_undefined;
 
         const posix = std.posix;
-        // `posix_openpt` is in libc on Linux (glibc/musl/bionic) and macOS,
-        // so no libutil dlopen dance is needed. FreeBSD has it too.
-        const posix_openpt = @extern(
-            *const fn (c_int) callconv(.c) c_int,
-            .{ .name = "posix_openpt" },
-        );
-        const fd = posix_openpt(bun.O.RDWR | bun.O.NOCTTY);
-        if (fd < 0) return .js_undefined;
-        defer bun.FD.fromNative(fd).close();
+        // `posix_openpt`/`grantpt`/`unlockpt`/`ptsname` are in libc on Linux
+        // (glibc/musl/bionic), macOS and FreeBSD, so no libutil dlopen dance
+        // is needed. On BSD-derived systems the *master* fd isn't a terminal
+        // (`tcgetattr` → ENOTTY), so open the slave and probe that instead.
+        const pty = struct {
+            const posix_openpt = @extern(*const fn (c_int) callconv(.c) c_int, .{ .name = "posix_openpt" });
+            const grantpt = @extern(*const fn (c_int) callconv(.c) c_int, .{ .name = "grantpt" });
+            const unlockpt = @extern(*const fn (c_int) callconv(.c) c_int, .{ .name = "unlockpt" });
+            const ptsname = @extern(*const fn (c_int) callconv(.c) ?[*:0]const u8, .{ .name = "ptsname" });
+        };
+        const master = pty.posix_openpt(bun.O.RDWR | bun.O.NOCTTY);
+        if (master < 0) return .js_undefined;
+        defer bun.FD.fromNative(master).close();
+        if (pty.grantpt(master) != 0 or pty.unlockpt(master) != 0) return .js_undefined;
+        const slave_name = pty.ptsname(master) orelse return .js_undefined;
+        const slave = switch (bun.sys.open(std.mem.span(slave_name), bun.O.RDWR | bun.O.NOCTTY, 0)) {
+            .result => |f| f,
+            .err => return .js_undefined,
+        };
+        defer slave.close();
+        const fd = slave.native();
 
         var t = bun.sys.tcgetattr(fd) catch return .js_undefined;
         // Pick a cc index near the top of bionic's 19-slot array so a size

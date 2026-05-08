@@ -6,7 +6,8 @@
 // writes to .ispeed/.ospeed land past bionic's struct and reinitialising
 // c_cflag zeroes CBAUD → baud becomes B0.
 //
-// This test opens a PTY master via posix_openpt, writes a sentinel into
+// This test opens a PTY slave via posix_openpt/grantpt/unlockpt/ptsname
+// (the master fd isn't a terminal on BSD/macOS), writes a sentinel into
 // c_cc[VLNEXT] and toggles ECHO via bun.sys.tcsetattr, then reads both
 // back via bun.sys.tcgetattr. That round-trip holds iff the Zig struct
 // agrees with libc's on this platform.

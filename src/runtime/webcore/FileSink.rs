@@ -1431,28 +1431,32 @@ impl FileSink {
 //
 // TODO(port): gate on `export_cpp_apis` feature in Phase B; replace with
 // `#[bun_jsc::host_fn]` once the proc-macro lands.
-#[unsafe(export_name = "Bun__FileSink__onResolveStream")]
-unsafe extern "C" fn on_resolve_stream_shim(
-    g: *mut JSGlobalObject,
-    cf: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are valid for the call. Kept as
-    // raw `JsHostFn` shape so the fn-item coerces to `.then()`'s `JsHostFn`
-    // pointer slot without a transmute.
-    match on_resolve_stream(unsafe { &*g }, unsafe { &*cf }) {
-        Ok(v) => v,
-        Err(_) => JSValue::ZERO,
+bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__FileSink__onResolveStream")]
+    unsafe fn on_resolve_stream_shim(
+        g: *mut JSGlobalObject,
+        cf: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are valid for the call. Kept as
+        // raw `JsHostFn` shape so the fn-item coerces to `.then()`'s `JsHostFn`
+        // pointer slot without a transmute.
+        match on_resolve_stream(unsafe { &*g }, unsafe { &*cf }) {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
+        }
     }
 }
-#[unsafe(export_name = "Bun__FileSink__onRejectStream")]
-unsafe extern "C" fn on_reject_stream_shim(
-    g: *mut JSGlobalObject,
-    cf: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are valid for the call.
-    match on_reject_stream(unsafe { &*g }, unsafe { &*cf }) {
-        Ok(v) => v,
-        Err(_) => JSValue::ZERO,
+bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__FileSink__onRejectStream")]
+    unsafe fn on_reject_stream_shim(
+        g: *mut JSGlobalObject,
+        cf: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are valid for the call.
+        match on_reject_stream(unsafe { &*g }, unsafe { &*cf }) {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
+        }
     }
 }
 

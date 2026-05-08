@@ -5336,23 +5336,27 @@ pub fn on_file_stream_reject_request_stream(
 // host fns above are `JSHostFnZig`; `then()` wants the raw `JSHostFn` shape.
 // Exported under the Zig `@export` names so C++ (`BunPromiseInlines.h`) links
 // the same symbol it does today.
-#[unsafe(export_name = "Bun__FileStreamWrapper__onResolveRequestStream")]
-unsafe extern "C" fn on_file_stream_resolve_request_stream_shim(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are live for the host call.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
-    bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__FileStreamWrapper__onResolveRequestStream")]
+    unsafe fn on_file_stream_resolve_request_stream_shim(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are live for the host call.
+        let (global, callframe) = unsafe { (&*global, &*callframe) };
+        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
+    }
 }
-#[unsafe(export_name = "Bun__FileStreamWrapper__onRejectRequestStream")]
-unsafe extern "C" fn on_file_stream_reject_request_stream_shim(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are live for the host call.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
-    bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__FileStreamWrapper__onRejectRequestStream")]
+    unsafe fn on_file_stream_reject_request_stream_shim(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are live for the host call.
+        let (global, callframe) = unsafe { (&*global, &*callframe) };
+        bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_reject_request_stream(global, callframe))
+    }
 }
 
 // PORT NOTE: the local `AnyPromiseResultExt` shim was removed —

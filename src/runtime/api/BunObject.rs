@@ -2042,23 +2042,27 @@ impl CSRFObject {
     pub fn create(global_this: &JSGlobalObject) -> JSValue {
         let object = JSValue::create_empty_object(global_this, 2);
 
-        // PORT NOTE: `JSFunction::create` takes the raw C-ABI host fn pointer,
+        // PORT NOTE: `JSFunction::create` takes the raw JSC-ABI host fn pointer,
         // so wrap the safe Rust-style `JsResult` fns via `to_js_host_call`.
-        unsafe extern "C" fn csrf_generate_shim(
-            g: *mut JSGlobalObject,
-            f: *mut CallFrame,
-        ) -> JSValue {
-            // SAFETY: JSC always passes valid pointers here.
-            let (g, f) = unsafe { (&*g, &*f) };
-            bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__generate(g, f))
+        bun_jsc::jsc_host_abi! {
+            unsafe fn csrf_generate_shim(
+                g: *mut JSGlobalObject,
+                f: *mut CallFrame,
+            ) -> JSValue {
+                // SAFETY: JSC always passes valid pointers here.
+                let (g, f) = unsafe { (&*g, &*f) };
+                bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__generate(g, f))
+            }
         }
-        unsafe extern "C" fn csrf_verify_shim(
-            g: *mut JSGlobalObject,
-            f: *mut CallFrame,
-        ) -> JSValue {
-            // SAFETY: JSC always passes valid pointers here.
-            let (g, f) = unsafe { (&*g, &*f) };
-            bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__verify(g, f))
+        bun_jsc::jsc_host_abi! {
+            unsafe fn csrf_verify_shim(
+                g: *mut JSGlobalObject,
+                f: *mut CallFrame,
+            ) -> JSValue {
+                // SAFETY: JSC always passes valid pointers here.
+                let (g, f) = unsafe { (&*g, &*f) };
+                bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__verify(g, f))
+            }
         }
 
         object.put(

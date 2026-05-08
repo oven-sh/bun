@@ -216,7 +216,10 @@ impl PathWatcher {
             None
         } else {
             // SAFETY: libuv passes a valid NUL-terminated string when non-null.
-            Some(unsafe { ZStr::from_ptr(filename.cast::<u8>()) })
+            Some(unsafe {
+                let cs = core::ffi::CStr::from_ptr(filename);
+                ZStr::from_raw(cs.as_ptr().cast::<u8>(), cs.to_bytes().len())
+            })
         }) else {
             return;
         };
@@ -409,7 +412,10 @@ impl PathWatcher {
         if let Some(manager) = me.manager.take() {
             let path: &ZStr = if !me.handle.path.is_null() {
                 // SAFETY: handle.path is a NUL-terminated C string owned by libuv.
-                unsafe { ZStr::from_ptr(me.handle.path.cast::<u8>()) }
+                unsafe {
+                    let cs = core::ffi::CStr::from_ptr(me.handle.path);
+                    ZStr::from_raw(cs.as_ptr().cast::<u8>(), cs.to_bytes().len())
+                }
             } else {
                 ZStr::EMPTY
             };

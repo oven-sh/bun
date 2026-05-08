@@ -1337,24 +1337,27 @@ impl Drop for BunTest {
 // `static JSHostFn = thunk` puts the name in `.data` (nm `d`), and the address
 // C++ sees never matches the local thunk we hand to `.then()`, tripping the
 // `RELEASE_ASSERT_NOT_REACHED` at the bottom of `promiseHandlerID`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__TestScope__Describe2__bunTestThen(
-    global: *mut JSGlobalObject,
-    frame: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC passes non-null live pointers for both.
-    let (global, frame) = unsafe { (&*global, &*frame) };
-    jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_then(global, frame))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__TestScope__Describe2__bunTestThen(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC passes non-null live pointers for both.
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_then(global, frame))
+    }
 }
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__TestScope__Describe2__bunTestCatch(
-    global: *mut JSGlobalObject,
-    frame: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC passes non-null live pointers for both.
-    let (global, frame) = unsafe { (&*global, &*frame) };
-    jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_catch(global, frame))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__TestScope__Describe2__bunTestCatch(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC passes non-null live pointers for both.
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_catch(global, frame))
+    }
 }
 
 // Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an

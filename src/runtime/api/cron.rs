@@ -1755,21 +1755,25 @@ impl CronJob {
 // pointer passed to `JSValue::then` against `&Bun__CronJob__onPromiseResolve`
 // by identity. A `static JSHostFn` would export a data slot whose address never
 // matches the inner shim, tripping RELEASE_ASSERT_NOT_REACHED.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__CronJob__onPromiseResolve(
-    global: *mut JSGlobalObject,
-    frame: *mut CallFrame,
-) -> JSValue {
-    let (global, frame) = unsafe { (&*global, &*frame) };
-    jsc::host_fn::to_js_host_fn_result(global, on_promise_resolve(global, frame))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__CronJob__onPromiseResolve(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        jsc::host_fn::to_js_host_fn_result(global, on_promise_resolve(global, frame))
+    }
 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__CronJob__onPromiseReject(
-    global: *mut JSGlobalObject,
-    frame: *mut CallFrame,
-) -> JSValue {
-    let (global, frame) = unsafe { (&*global, &*frame) };
-    jsc::host_fn::to_js_host_fn_result(global, on_promise_reject(global, frame))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__CronJob__onPromiseReject(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        jsc::host_fn::to_js_host_fn_result(global, on_promise_reject(global, frame))
+    }
 }
 
 fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

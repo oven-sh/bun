@@ -1378,13 +1378,15 @@ impl Expect {
                 // PORT NOTE: Zig used `toJSHostFn(applyCustomMatcher)` (comptime fn-ptr
                 // wrapping). Rust's `to_js_host_fn` returns an opaque closure, so emit
                 // an explicit C-ABI shim and pass its address.
-                unsafe extern "C" fn __apply_custom_matcher_shim(
-                    g: *mut bun_jsc::JSGlobalObject,
-                    f: *mut bun_jsc::CallFrame,
-                ) -> JSValue {
-                    // SAFETY: JSC guarantees both pointers are live for the call.
-                    let (g, f) = unsafe { (&*g, &*f) };
-                    bun_jsc::to_js_host_fn_result(g, Expect::apply_custom_matcher(g, f))
+                bun_jsc::jsc_host_abi! {
+                    unsafe fn __apply_custom_matcher_shim(
+                        g: *mut bun_jsc::JSGlobalObject,
+                        f: *mut bun_jsc::CallFrame,
+                    ) -> JSValue {
+                        // SAFETY: JSC guarantees both pointers are live for the call.
+                        let (g, f) = unsafe { (&*g, &*f) };
+                        bun_jsc::to_js_host_fn_result(g, Expect::apply_custom_matcher(g, f))
+                    }
                 }
                 let host_fn_ptr: bun_jsc::JSHostFn = __apply_custom_matcher_shim;
                 // SAFETY: FFI call with valid global, &bun_str::String, host-fn ptr, and JSValue.

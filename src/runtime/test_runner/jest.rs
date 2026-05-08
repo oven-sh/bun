@@ -464,9 +464,10 @@ pub mod Jest {
     }
 
     // TODO(port): move to <area>_sys
-    // TODO(port): callconv(jsc.conv) — needs "sysv64" on Windows-x64, "C" elsewhere
     unsafe extern "C" {
         pub safe fn Bun__Jest__testModuleObject(global: &JSGlobalObject) -> JSValue;
+    }
+    bun_jsc::jsc_abi_extern! {
         pub fn JSMock__jsMockFn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub fn JSMock__jsModuleMock(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub fn JSMock__jsNow(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;

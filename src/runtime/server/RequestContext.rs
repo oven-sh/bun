@@ -3695,9 +3695,11 @@ const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 /// blanket H3 impls but never serve requests at runtime — HTTP/3 always
 /// implies TLS. If a future refactor ever routes a promise reaction through
 /// one, fail loudly here instead of silently mismatching `promiseHandlerID`.
-#[cold]
-unsafe extern "C" fn unreachable_host_fn(_g: *mut JSGlobalObject, _f: *mut CallFrame) -> JSValue {
-    unreachable!("RequestContext promise reaction for non-TLS HTTP/3 instantiation");
+bun_jsc::jsc_host_abi! {
+    #[cold]
+    unsafe fn unreachable_host_fn(_g: *mut JSGlobalObject, _f: *mut CallFrame) -> JSValue {
+        unreachable!("RequestContext promise reaction for non-TLS HTTP/3 instantiation");
+    }
 }
 
 // ─── per-monomorphization C-ABI exports ──────────────────────────────────────

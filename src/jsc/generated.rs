@@ -305,6 +305,79 @@ pub struct SSLConfig {
     pub client_renegotiation_window: u32,
 }
 
+// ── refcount release on drop ──────────────────────────────────────────────
+//
+// `adopt_string` adopts a +1 `WTF::StringImpl` ref into a `GenString`
+// (= `bun_string::String`), which is `Copy` and has no `Drop`. The Zig
+// bindgen output instead types these fields as `bun.string.WTFString.Optional`
+// — an RAII `WTF::Ref`-alike whose `deinit()` derefs — and the generated
+// struct's `deinit()` calls `bun.memory.deinit(&field)` on each. We replicate
+// that here by deref-ing every owned string field from the container's `Drop`
+// (matches `bindgen_generated.SSLConfig.deinit` in ssl_config.zig).
+//
+// `GenArrayBuffer` / `GenBlob` raw-pointer payloads also carry an adopted +1
+// ref and are still leaked on drop — tracked by the `pub type` TODOs above;
+// out of scope here.
+//
+// `.get()` on `GenOpt` / `GenVal` returns a *bitwise* `Clone` of the
+// `bun_string::String` (the derived `Clone`, not the inherent `clone()` which
+// bumps), so it does not take an additional ref — the single adopted ref stays
+// owned by the field and is released exactly once below.
+
+#[inline]
+fn release_gen_opt_string(s: &GenOpt<GenString>) {
+    if let Some(string) = &s.0 {
+        // Releases the +1 ref adopted by `adopt_opt_string` / `adopt_string`.
+        string.deref();
+    }
+}
+
+#[inline]
+fn release_gen_val_string(s: &GenVal<GenString>) {
+    // Releases the +1 ref adopted by `adopt_string`.
+    s.0.deref();
+}
+
+impl Drop for SSLConfigAlpnProtocols {
+    fn drop(&mut self) {
+        if let SSLConfigAlpnProtocols::String(v) = self {
+            release_gen_val_string(v);
+        }
+    }
+}
+
+impl Drop for SSLConfigSingleFile {
+    fn drop(&mut self) {
+        if let SSLConfigSingleFile::String(v) = self {
+            release_gen_val_string(v);
+        }
+    }
+}
+
+impl Drop for SSLConfigFile {
+    fn drop(&mut self) {
+        // `Array` recursively drops each `SSLConfigSingleFile`; `Buffer` / `File`
+        // are raw-ptr payloads (see module note above).
+        if let SSLConfigFile::String(v) = self {
+            release_gen_val_string(v);
+        }
+    }
+}
+
+impl Drop for SSLConfig {
+    fn drop(&mut self) {
+        release_gen_opt_string(&self.passphrase);
+        release_gen_opt_string(&self.dh_params_file);
+        release_gen_opt_string(&self.server_name);
+        // `ca` / `cert` / `key`: `SSLConfigFile` — released by its own `Drop`.
+        release_gen_opt_string(&self.key_file);
+        release_gen_opt_string(&self.cert_file);
+        release_gen_opt_string(&self.ca_file);
+        // `alpn_protocols`: `SSLConfigAlpnProtocols` — released by its own `Drop`.
+        release_gen_opt_string(&self.ciphers);
+    }
+}
+
 // ── extern layouts ────────────────────────────────────────────────────────
 
 /// `BindgenSSLConfigSingleFile.ExternType` =
@@ -515,6 +588,15 @@ pub struct SocketConfig {
     pub allow_half_open: bool,
     pub reuse_port: bool,
     pub ipv6_only: bool,
+}
+
+impl Drop for SocketConfig {
+    fn drop(&mut self) {
+        // `tls`: `SocketConfigTls::Object` holds `SSLConfig`, released by its
+        // own `Drop`. `handlers`: only `JSValue`s — no owned refs.
+        release_gen_opt_string(&self.unix_);
+        release_gen_opt_string(&self.hostname);
+    }
 }
 
 /// `BindgenSocketConfigTLS.ExternType` =

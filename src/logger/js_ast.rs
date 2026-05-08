@@ -1094,7 +1094,18 @@ pub mod expr {
                     }
                     E::Object { properties, ..*o }.into_data_store()
                 }
-                Data::EString(s) => s.shallow_clone().into_data_store(),
+                Data::EString(s) => {
+                    // Dupe the string bytes too: callers cache the cloned tree
+                    // past the lifetime of the parsed `Source.contents` (e.g.
+                    // `WorkspacePackageJSONCache` overwrites `source.contents`
+                    // while keeping `root`). Zig leaks the old contents; here
+                    // the clone owns its bytes in the same store as the node.
+                    let mut cloned = s.shallow_clone();
+                    if !cloned.is_utf16 && !cloned.data.is_empty() {
+                        cloned.data = super::data_store_dupe_str(cloned.data);
+                    }
+                    cloned.into_data_store()
+                }
                 // Inline `Copy` payloads — no heap to clone.
                 d @ (Data::EBoolean(_)
                 | Data::ENumber(_)

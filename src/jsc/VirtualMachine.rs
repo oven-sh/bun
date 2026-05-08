@@ -5031,12 +5031,8 @@ impl VirtualMachine {
 
         let top_source_url = frames[top].source_url.to_utf8();
 
-        // PORT NOTE: reshaped for borrowck — `resolve_source_mapping` borrows
-        // `&mut self`; the returned `Lookup<'_>` borrows `self.source_mappings`.
-        // We can't hold `&mut frames[top]` across that call, so reads/writes go
-        // through indices and the lookup is consumed before frame writes.
         let already_remapped = frames[top].remapped;
-        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup<'_>> = if already_remapped {
+        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
             Some(bun_sourcemap::mapping::Lookup {
                 mapping: bun_sourcemap::mapping::Mapping {
                     generated: bun_sourcemap::LineColumnOffset::default(),
@@ -5065,13 +5061,7 @@ impl VirtualMachine {
         };
 
         if let Some(lookup) = maybe_lookup {
-            // PORT NOTE: reshaped for borrowck — `Lookup<'_>` borrows
-            // `self.source_mappings`, but the `code:` block below needs
-            // `&mut self` for `fetch_without_on_load_plugins`. Extract
-            // everything needed from `lookup` up-front, then drop it.
-            // Zig `defer if (source_map) |map| map.deref();` — `ParsedSourceMap`
-            // is borrowed (`&'a`) in the Rust port; the ref-counted handle is
-            // owned by `self.source_mappings`, so no manual deref here.
+            // Zig `defer if (source_map) |map| map.deref();` — Arc drop on scope exit.
             let mapping = lookup.mapping;
             let display_url = if !already_remapped {
                 lookup.display_source_url_if_needed(top_source_url.slice())
@@ -5080,7 +5070,7 @@ impl VirtualMachine {
             };
             let external_code = if enable_source_code_preview
                 && !already_remapped
-                && lookup.source_map.is_some_and(|m| m.is_external())
+                && lookup.source_map.as_deref().is_some_and(|m| m.is_external())
             {
                 lookup.get_source_code(top_source_url.slice())
             } else {
@@ -6043,25 +6033,11 @@ impl VirtualMachine {
         line: bun_core::Ordinal,
         column: bun_core::Ordinal,
         source_handling: bun_sourcemap::SourceContentHandling,
-    ) -> Option<bun_sourcemap::mapping::Lookup<'_>> {
-        // PORT NOTE: reshaped for borrowck (rust-lang/rust#54663) — the Zig
-        // `orelse` arm mutates `source_mappings` after the lookup miss, but the
-        // hit arm returns a `Lookup<'_>` that borrows it. Current NLL rejects
-        // that conditional-return-of-borrow even though the borrow is dead on
-        // the None arm. `resolve_mapping`'s borrowing fields are always `None`
-        // (see SavedSourceMap TODO(b2-blocked)), so lift the owned parts out
-        // into a non-borrowing tuple and rebuild after the borrow ends.
-        if let Some((mapping, prefetched)) = self
-            .source_mappings
-            .resolve_mapping(path, line, column, source_handling)
-            .map(|l| (l.mapping, l.prefetched_source_code))
+    ) -> Option<bun_sourcemap::mapping::Lookup> {
+        if let Some(lookup) =
+            self.source_mappings.resolve_mapping(path, line, column, source_handling)
         {
-            return Some(bun_sourcemap::mapping::Lookup {
-                mapping,
-                source_map: None,
-                prefetched_source_code: prefetched,
-                name: None,
-            });
+            return Some(lookup);
         }
 
         // Spec VirtualMachine.zig:3871-3889 — standalone-module-graph fallback.
@@ -6093,11 +6069,7 @@ impl VirtualMachine {
 
         Some(bun_sourcemap::mapping::Lookup {
             mapping,
-            // PORT NOTE: `Lookup::source_map` is `Option<&'a ParsedSourceMap>`
-            // but `map` is an owned `Arc`; same lifetime gap as
-            // `SavedSourceMap::resolve_mapping` (TODO(b2-blocked) there) —
-            // drop the local strong ref and return without the back-pointer.
-            source_map: None,
+            source_map: Some(map),
             prefetched_source_code: None,
             name: None,
         })

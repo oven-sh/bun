@@ -351,26 +351,24 @@ impl<'a> bun_collections::multi_array_list::SortContext for SortContext<'a> {
     }
 }
 
-pub struct Lookup<'a> {
+pub struct Lookup {
     pub mapping: Mapping,
-    pub source_map: Option<&'a ParsedSourceMap>,
+    pub source_map: Option<std::sync::Arc<ParsedSourceMap>>,
     /// Owned by default_allocator always
     /// use `get_source_code` to access this as a Slice
-    // TODO(port): lifetime — comment says "owned by default_allocator"; ownership is
-    // transferred into the returned ZigStringSlice in `get_source_code`.
     pub prefetched_source_code: Option<Box<[u8]>>,
 
-    pub name: Option<&'a [u8]>,
+    pub name: Option<Box<[u8]>>,
 }
 
-impl<'a> Lookup<'a> {
+impl Lookup {
     /// This creates a bun.String if the source remap *changes* the source url,
     /// which is only possible if the executed file differs from the source file:
     ///
     /// - `bun build --sourcemap`, it is another file on disk
     /// - `bun build --compile --sourcemap`, it is an embedded file.
     pub fn display_source_url_if_needed(&self, base_filename: &[u8]) -> Option<bun_str::String> {
-        let source_map = self.source_map?;
+        let source_map = self.source_map.as_deref()?;
         // See doc comment on `external_source_names`
         if source_map.external_source_names.len() == 0 {
             return None;
@@ -411,7 +409,7 @@ impl<'a> Lookup<'a> {
                 break 'bytes code.into_vec();
             }
 
-            let source_map = self.source_map?;
+            let source_map = self.source_map.as_deref()?;
             debug_assert!(source_map.is_external());
 
             let Some(provider) = source_map.underlying_provider.provider() else {

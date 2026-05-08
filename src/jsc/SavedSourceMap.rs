@@ -568,7 +568,7 @@ impl SavedSourceMap {
         line: Ordinal,
         column: Ordinal,
         source_handling: SourceMap::SourceContentHandling,
-    ) -> Option<SourceMap::mapping::Lookup<'_>> {
+    ) -> Option<SourceMap::mapping::Lookup> {
         let parse = self.get_with_content(
             path,
             match source_handling {
@@ -595,15 +595,9 @@ impl SavedSourceMap {
             None => map.find_mapping(line, column)?,
         };
 
-        // TODO(b2-blocked): `Lookup::source_map` is `Option<&'a ParsedSourceMap>`
-        // but `get_with_content` yields an owned `Arc<ParsedSourceMap>`; cannot
-        // hand out a borrow that outlives this stack frame. Zig's `Lookup` holds
-        // the refcounted pointer directly. Until `Lookup` switches to `Arc`,
-        // drop the strong ref here and return without the source_map back-ref.
-        let _ = map;
         Some(SourceMap::mapping::Lookup {
             mapping,
-            source_map: None,
+            source_map: Some(map),
             prefetched_source_code: parse.source_contents,
             name: None,
         })

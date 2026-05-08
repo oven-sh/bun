@@ -274,11 +274,6 @@ const PosixBufferedReader = struct {
     }
 
     pub fn registerPoll(this: *PosixBufferedReader) void {
-        // A paused reader must never re-arm: onReadChunk can run before registerPoll
-        // (e.g. the streaming-enabled retry path below) and pause() inside it would
-        // otherwise be undone here, stealing input from a child reading the same TTY.
-        if (this.flags.is_paused) return;
-
         const poll = this.handle.getPoll() orelse brk: {
             if (this.handle == .fd and this.flags.pollable) {
                 const fd = this.handle.fd;

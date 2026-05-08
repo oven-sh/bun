@@ -455,11 +455,6 @@ impl PosixBufferedReader {
     }
 
     pub fn register_poll(&mut self) {
-        // A paused reader must never re-arm: on_read_chunk can run before register_poll
-        // on some retry paths and pause() inside it would otherwise be undone here.
-        if self.flags.contains(PosixFlags::IS_PAUSED) {
-            return;
-        }
         // PORT NOTE: reshaped for borrowck — hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.

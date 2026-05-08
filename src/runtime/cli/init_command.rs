@@ -1583,16 +1583,28 @@ impl Template {
         #[cfg(windows)]
         {
             if let Some(user) = bun_core::getenv_z_any_case(b"USER") {
-                let mut pathbuf = path_buffer_pool().get();
-                let path = match bun_str::buf_print_z(
-                    &mut *pathbuf,
-                    format_args!(
-                        "C:\\Users\\{}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
-                        bstr::BStr::new(user)
-                    ),
-                ) {
-                    Ok(p) => p,
-                    Err(_) => return false,
+                let mut pathbuf = path_buffer_pool::get();
+                // Zig: `std.fmt.bufPrintZ(..) catch { return false; }` —
+                // fallible on overflow, do not panic.
+                let path: &ZStr = {
+                    use std::io::Write as _;
+                    let total = pathbuf.len();
+                    let mut cursor: &mut [u8] = &mut pathbuf[..];
+                    if cursor
+                        .write_fmt(format_args!(
+                            "C:\\Users\\{}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
+                            bstr::BStr::new(user)
+                        ))
+                        .is_err()
+                    {
+                        return false;
+                    }
+                    let remaining = cursor.len();
+                    let written = total - remaining;
+                    if written >= total { return false; }
+                    pathbuf[written] = 0;
+                    // SAFETY: NUL written at pathbuf[written].
+                    unsafe { ZStr::from_raw(pathbuf.as_ptr(), written) }
                 };
 
                 if bun_sys::exists(path.as_bytes()) {

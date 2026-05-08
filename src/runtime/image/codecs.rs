@@ -602,7 +602,9 @@ pub fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
 }
 
 pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Result<Vec<u8>, Error> {
-    #[cfg(any(target_os = "macos", windows))]
+    // Zig: `if (@hasDecl(b, "scale"))` — only `backend_coregraphics` provides
+    // scale/rotate/flip (vImage); WIC has decode/encode only.
+    #[cfg(target_os = "macos")]
     if use_system() {
         match system_backend::BackendError::split(system_backend::scale(src, sw, sh, dw, dh, f)) {
             Ok(Some(out)) => return Ok(out),
@@ -652,7 +654,7 @@ pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Resu
 
 pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error> {
     let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 { (h, w) } else { (w, h) };
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(target_os = "macos")]
     if use_system() {
         match system_backend::BackendError::split(system_backend::rotate(src, w, h, degrees / 90)) {
             Ok(Some(out)) => return Ok(Decoded { rgba: out, width: dw, height: dh, icc_profile: None }),
@@ -675,7 +677,7 @@ pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error
 }
 
 pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(target_os = "macos")]
     if use_system() {
         match system_backend::BackendError::split(system_backend::flip(src, w, h, horizontal)) {
             Ok(Some(out)) => return Ok(out),

@@ -66,6 +66,20 @@ pub type ResultW = sys::Result<Option<IteratorResultW>>;
 pub type Iterator = NewIterator<false>;
 pub type IteratorW = NewIterator<true>;
 
+/// Cross-platform marker for the const-bool→buffer-type selection. On Windows
+/// this is the real `Select<B>` machinery (see the `windows` `platform` mod);
+/// on every other target the per-platform `NewIterator<B>` carries no
+/// associated-type bound, so `WrappedSelect<B>` is a vacuous always-satisfied
+/// blanket — present only so `NewWrappedIterator`/`iterate` can spell a single
+/// `where` clause that propagates the Windows bound without cfg-splitting
+/// every impl.
+#[cfg(windows)]
+pub use platform::SelectImpl as WrappedSelect;
+#[cfg(not(windows))]
+pub trait WrappedSelect<const B: bool> {}
+#[cfg(not(windows))]
+impl<const B: bool> WrappedSelect<B> for () {}
+
 // ──────────────────────────────────────────────────────────────────────────
 // macOS
 // ──────────────────────────────────────────────────────────────────────────
@@ -804,7 +818,10 @@ pub enum PathType {
     U16,
 }
 
-pub struct NewWrappedIterator<const IS_U16: bool> {
+pub struct NewWrappedIterator<const IS_U16: bool>
+where
+    (): WrappedSelect<IS_U16>,
+{
     pub iter: NewIterator<IS_U16>,
 }
 
@@ -830,7 +847,10 @@ impl NewWrappedIterator<true> {
     }
 }
 
-impl<const IS_U16: bool> NewWrappedIterator<IS_U16> {
+impl<const IS_U16: bool> NewWrappedIterator<IS_U16>
+where
+    (): WrappedSelect<IS_U16>,
+{
     pub fn init(dir: Fd) -> Self {
         #[cfg(target_os = "macos")]
         {
@@ -916,7 +936,10 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16> {
 pub type WrappedIterator = NewWrappedIterator<false>;
 pub type WrappedIteratorW = NewWrappedIterator<true>;
 
-pub fn iterate<const IS_U16: bool>(self_: Fd) -> NewWrappedIterator<IS_U16> {
+pub fn iterate<const IS_U16: bool>(self_: Fd) -> NewWrappedIterator<IS_U16>
+where
+    (): WrappedSelect<IS_U16>,
+{
     NewWrappedIterator::<IS_U16>::init(self_)
 }
 

@@ -605,7 +605,7 @@ mod windows_impl {
             // `heap::take → StoreRef::drop`.
             unsafe {
                 let wf = &mut *write_file;
-                wf.io_request.loop_ = (*event_loop).virtual_machine.event_loop_handle.unwrap();
+                wf.io_request.loop_ = (*event_loop).uv_loop();
                 wf.io_request.data = write_file.cast::<c_void>();
 
                 match &wf.file_blob.store.as_ref().unwrap().data.as_file().pathlike {
@@ -640,7 +640,7 @@ mod windows_impl {
         #[inline]
         pub fn loop_(&self) -> *mut uv::Loop {
             // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
-            unsafe { (*self.event_loop).virtual_machine.event_loop_handle.unwrap() }
+            unsafe { (*self.event_loop).uv_loop() }
         }
 
         pub fn open(&mut self) -> Result<(), WriteFileWindowsError> {

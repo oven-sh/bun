@@ -197,7 +197,7 @@ impl BufferedReaderParent for CronRegisterJob {
         // SAFETY: see `on_reader_done`.
         unsafe { <Self as CronJobBase>::on_reader_error(this, err) }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -255,7 +255,7 @@ impl CronRegisterJob {
                     && s.state != RegisterState::BootingOut
                 {
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = strings::trim(
+                    let stderr_output: &[u8] = bun_string::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     );
@@ -927,7 +927,7 @@ impl BufferedReaderParent for CronRemoveJob {
         // SAFETY: see `on_reader_done`.
         unsafe { <Self as CronJobBase>::on_reader_error(this, err) }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -988,7 +988,7 @@ impl CronRemoveJob {
                     || (cfg!(windows) && s.state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
                     #[cfg(windows)]
-                    let stderr_output: &[u8] = strings::trim(
+                    let stderr_output: &[u8] = bun_string::immutable::trim(
                         s.stderr_reader.final_buffer().as_slice(),
                         &ASCII_WHITESPACE,
                     );
@@ -1755,21 +1755,25 @@ impl CronJob {
 // pointer passed to `JSValue::then` against `&Bun__CronJob__onPromiseResolve`
 // by identity. A `static JSHostFn` would export a data slot whose address never
 // matches the inner shim, tripping RELEASE_ASSERT_NOT_REACHED.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__CronJob__onPromiseResolve(
-    global: *mut JSGlobalObject,
-    frame: *mut CallFrame,
-) -> JSValue {
-    let (global, frame) = unsafe { (&*global, &*frame) };
-    jsc::host_fn::to_js_host_fn_result(global, on_promise_resolve(global, frame))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__CronJob__onPromiseResolve(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        jsc::host_fn::to_js_host_fn_result(global, on_promise_resolve(global, frame))
+    }
 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__CronJob__onPromiseReject(
-    global: *mut JSGlobalObject,
-    frame: *mut CallFrame,
-) -> JSValue {
-    let (global, frame) = unsafe { (&*global, &*frame) };
-    jsc::host_fn::to_js_host_fn_result(global, on_promise_reject(global, frame))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__CronJob__onPromiseReject(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> JSValue {
+        let (global, frame) = unsafe { (&*global, &*frame) };
+        jsc::host_fn::to_js_host_fn_result(global, on_promise_reject(global, frame))
+    }
 }
 
 fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

@@ -1434,11 +1434,12 @@ pub mod upgrade_js_bindings {
 
             let mut buf = bun_paths::WPathBuffer::uninit();
             let tmpdir_path = fs::FileSystem::RealFS::get_default_temp_dir();
-            let path = match sys::normalize_path_windows::<u8>(
-                sys::INVALID_FD,
-                tmpdir_path,
-                &mut buf,
-                Default::default(),
+            let mut wtmp = bun_paths::WPathBuffer::uninit();
+            let tmpdir_w = bun_string::strings::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
+            let path = match sys::normalize_path_windows(
+                sys::Fd::INVALID,
+                tmpdir_w,
+                &mut buf[..],
             ) {
                 sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),
                 sys::Result::Ok(norm) => norm,

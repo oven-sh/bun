@@ -32,8 +32,8 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 
 #[cfg(windows)]
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
-    use bun_windows_sys::Win32::Storage::FileSystem as fs;
-    use bun_windows_sys::Win32::Foundation::FILETIME;
+    use bun_windows_sys as fs;
+    use bun_windows_sys::FILETIME;
     // Spec parity: `bun.sys.stat` on Windows goes through libuv → `_wstat64`-
     // equivalent. For a cache-key digest we only need (mtime, size) to change
     // when the file changes, so go straight to `GetFileAttributesExW` — same

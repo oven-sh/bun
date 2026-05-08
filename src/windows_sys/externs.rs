@@ -92,6 +92,23 @@ pub struct BY_HANDLE_FILE_INFORMATION {
     pub nFileIndexLow: DWORD,
 }
 
+/// `WIN32_FILE_ATTRIBUTE_DATA` — out-param of `GetFileAttributesExW` (fileapi.h).
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct WIN32_FILE_ATTRIBUTE_DATA {
+    pub dwFileAttributes: DWORD,
+    pub ftCreationTime: FILETIME,
+    pub ftLastAccessTime: FILETIME,
+    pub ftLastWriteTime: FILETIME,
+    pub nFileSizeHigh: DWORD,
+    pub nFileSizeLow: DWORD,
+}
+
+/// `GET_FILEEX_INFO_LEVELS` — enum(u32) selecting `GetFileAttributesExW` payload.
+pub type GET_FILEEX_INFO_LEVELS = u32;
+pub const GetFileExInfoStandard: GET_FILEEX_INFO_LEVELS = 0;
+pub const GetFileExMaxInfoLevel: GET_FILEEX_INFO_LEVELS = 1;
+
 /// Mirrors `std.os.windows.FILE_INFO_BY_HANDLE_CLASS` (`enum(u32)`).
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
 
@@ -394,6 +411,34 @@ pub mod ntdll {
         ) -> NTSTATUS;
         pub fn RtlWakeAddressSingle(Address: *const c_void);
         pub fn RtlWakeAddressAll(Address: *const c_void);
+
+        /// `RtlExitUserProcess` (ntdll). The Win32 `ExitProcess` forwards to
+        /// this; the freestanding `bun_shim_impl` calls it directly to avoid
+        /// linking kernel32 in the standalone PE.
+        pub fn RtlExitUserProcess(ExitStatus: u32) -> !;
+
+        pub fn NtReadFile(
+            FileHandle: HANDLE,
+            Event: HANDLE,
+            ApcRoutine: *mut c_void,
+            ApcContext: *mut c_void,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            Buffer: *mut c_void,
+            Length: ULONG,
+            ByteOffset: *const LARGE_INTEGER,
+            Key: *const ULONG,
+        ) -> NTSTATUS;
+        pub fn NtWriteFile(
+            FileHandle: HANDLE,
+            Event: HANDLE,
+            ApcRoutine: *mut c_void,
+            ApcContext: *mut c_void,
+            IoStatusBlock: *mut IO_STATUS_BLOCK,
+            Buffer: *const c_void,
+            Length: ULONG,
+            ByteOffset: *const LARGE_INTEGER,
+            Key: *const ULONG,
+        ) -> NTSTATUS;
     }
     pub use super::RtlNtStatusToDosError;
 }
@@ -517,6 +562,8 @@ impl NTSTATUS {
     /// `STATUS_TIMEOUT` — returned by `NtWaitForSingleObject` /
     /// `RtlWaitOnAddress` when the wait timed out.
     pub const TIMEOUT: NTSTATUS = NTSTATUS(0x0000_0102);
+    /// `STATUS_END_OF_FILE` — `NtReadFile` past EOF.
+    pub const END_OF_FILE: NTSTATUS = NTSTATUS(0xC000_0011);
 
     #[inline]
     pub const fn from_raw(raw: u32) -> Self { NTSTATUS(raw) }
@@ -1248,6 +1295,8 @@ unsafe extern "system" {
     pub fn SetEndOfFile(hFile: HANDLE) -> BOOL;
 
     pub fn GetProcessTimes(in_hProcess: HANDLE, out_lpCreationTime: *mut FILETIME, out_lpExitTime: *mut FILETIME, out_lpKernelTime: *mut FILETIME, out_lpUserTime: *mut FILETIME) -> BOOL;
+
+    pub fn GetFileAttributesExW(lpFileName: LPCWSTR, fInfoLevelId: GET_FILEEX_INFO_LEVELS, lpFileInformation: LPVOID) -> BOOL;
 }
 
 unsafe extern "C" {

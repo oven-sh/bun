@@ -633,7 +633,7 @@ pub fn bindgen_node_os_dispatch_set_priority2(
 // host fn (it lives in `Generated*Bindings.cpp`); we just call
 // `NewRuntimeFunction` here.
 
-unsafe extern "C" {
+bun_jsc::jsc_abi_extern! {
     // C++-side host fns (Generated*Bindings.cpp).
     fn bindgen_Fmt_jsc_jsFmtString(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
     fn bindgen_DevServer_jsGetDeinitCountForTesting(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;

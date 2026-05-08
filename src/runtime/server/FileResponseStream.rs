@@ -605,7 +605,7 @@ impl bun_io::BufferedReaderParent for FileResponseStream {
         // SAFETY: tail-position — reader is finished with `self`.
         unsafe { (*this).on_reader_error(err) }
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Route through the io vtable (knows EventLoopHandle layout).
         // SAFETY: trait contract — `this` non-null/live.
         unsafe { <Self as bun_io::BufferedReaderParent>::event_loop(this) }

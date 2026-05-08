@@ -1653,8 +1653,12 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             InternalSocket::Connected(s) => {
                 // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
                 let raw = unsafe { sock_c::us_socket_get_fd(s) };
+                // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`)
+                // on Windows. Tag kind=system explicitly — `from_native` would
+                // store raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as
+                // kind=uv.
                 #[cfg(windows)]
-                { bun_core::Fd::from_system(raw) }
+                { bun_core::Fd::from_system(raw as *mut core::ffi::c_void) }
                 #[cfg(not(windows))]
                 { bun_core::Fd::from_native(raw) }
             }

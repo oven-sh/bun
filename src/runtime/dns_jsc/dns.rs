@@ -38,14 +38,14 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTim
 // target-agnostic. Windows values come from ws2def.h via the libuv-sys mirror
 // (layout-identical: `ADDRINFOA`, 128-byte 8-aligned `sockaddr_storage`).
 #[cfg(not(windows))]
-mod netc {
+pub mod netc {
     pub use libc::{
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
         AF_INET, AF_INET6, AF_UNSPEC, AI_ADDRCONFIG, EAI_NONAME, SOCK_STREAM,
     };
 }
 #[cfg(windows)]
-mod netc {
+pub mod netc {
     use core::ffi::c_int;
     pub use bun_libuv_sys::{addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
     pub const AF_UNSPEC: c_int = 0;
@@ -156,6 +156,7 @@ const IANA_DNS_PORT: i32 = 53;
 // LibInfo (macOS libinfo async getaddrinfo)
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(target_os = "macos")]
 pub mod lib_info {
     use super::*;
 
@@ -388,14 +389,15 @@ pub mod lib_uv_backend {
 
     struct Holder {
         uv_info: *mut libuv::uv_getaddrinfo_t,
-        task: jsc::AnyTask,
+        task: jsc::AnyTask::AnyTask,
     }
 
     impl Holder {
-        fn run(held: *mut Self) {
+        fn run(held: *mut c_void) -> jsc::AnyTask::JsResult<()> {
             // SAFETY: held was heap-allocated in on_raw_libuv_complete
-            let held = unsafe { bun_core::heap::take(held) };
+            let held = unsafe { bun_core::heap::take(held.cast::<Self>()) };
             GetAddrInfoRequest::on_libuv_complete(held.uv_info);
+            Ok(())
         }
     }
 
@@ -414,9 +416,12 @@ pub mod lib_uv_backend {
         }));
         // SAFETY: holder is a valid heap allocation
         unsafe {
-            (*holder).task = jsc::AnyTask::new::<Holder>(Holder::run, holder);
-            (*this).head.global_this()
-                .bun_vm()
+            (*holder).task = jsc::AnyTask::AnyTask {
+                ctx: NonNull::new(holder.cast()),
+                callback: Holder::run,
+            };
+            (*(*this).head.global_this()
+                .bun_vm())
                 .enqueue_task(jsc::Task::init(&mut (*holder).task));
         }
     }
@@ -470,7 +475,7 @@ pub mod lib_uv_backend {
                 Some(on_raw_libuv_complete),
                 host.as_ptr().cast::<c_char>(),
                 port_z.as_ptr().cast::<c_char>(),
-                hints.as_ref().map_or(ptr::null(), core::ptr::from_ref),
+                hints.as_ref().map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
             );
             if rc.int() < 0 {
                 // uv_getaddrinfo can fail synchronously before it queues any work
@@ -1150,6 +1155,7 @@ pub mod get_addr_info_request {
     }
 
     // TODO(port): move to <area>_sys
+    #[cfg(target_os = "macos")]
     unsafe extern "C" {
         fn getaddrinfo_send_reply(
             port: mach_port,
@@ -2033,6 +2039,7 @@ pub mod internal {
     }
 
     // TODO(port): move to <area>_sys
+    #[cfg(target_os = "macos")]
     unsafe extern "C" {
         fn getaddrinfo_send_reply(
             port: mach_port,
@@ -2523,6 +2530,7 @@ pub mod internal {
         }
     }
 
+    #[cfg(target_os = "macos")]
     pub fn lookup_libinfo(req: *mut Request, loop_: jsc::EventLoopHandle) -> bool {
         let Some(getaddrinfo_async_start_) = lib_info::getaddrinfo_async_start() else {
             return false;
@@ -2592,6 +2600,7 @@ pub mod internal {
         true
     }
 
+    #[cfg(target_os = "macos")]
     extern "C" fn libinfo_callback(status: i32, addr_info: *mut AddrInfo, arg: *mut c_void) {
         let req: *mut Request = arg.cast();
         let status_int: c_int = status;

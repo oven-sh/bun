@@ -1884,7 +1884,7 @@ impl BufferedReaderParent for Terminal {
         // SAFETY: see on_read_chunk; tail-position.
         unsafe { &mut *this }.on_reader_error(err)
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // SAFETY: see on_read_chunk; shared-only read of event_loop_handle.
         unsafe { (*this).event_loop_handle.r#loop().cast() }
     }
@@ -1935,13 +1935,13 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: see on_write. Shared-only read of event_loop_handle.
-        unsafe { (*this).event_loop_handle.r#loop().cast() }
+        unsafe { (*this).event_loop_handle.r#loop() }
     }
 }
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uv::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
         unsafe { (*this).event_loop_handle.uv_loop() }
     }

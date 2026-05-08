@@ -49,7 +49,7 @@ use core::mem::{size_of, MaybeUninit};
 use bun_sys::windows as w;
 use w::{BOOL, DWORD, HANDLE, IO_STATUS_BLOCK, LARGE_INTEGER, NTSTATUS, PVOID, ULONG, UNICODE_STRING};
 
-use super::bin_linking_shim::Flags;
+use super::_bin_linking_shim::Flags;
 
 const DBG: bool = cfg!(debug_assertions);
 
@@ -358,7 +358,7 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
     }
 
     // SAFETY: RtlExitUserProcess never returns.
-    unsafe { nt::RtlExitUserProcess(255) };
+    unsafe { nt::RtlExitUserProcess(255) }
 }
 
 const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
@@ -582,7 +582,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         };
         if rc != NTSTATUS::SUCCESS {
             if DBG {
-                debug!("error opening: {}", <&'static str>::from(rc));
+                debug!("error opening: {}", rc.0);
             }
             if rc == NTSTATUS::OBJECT_NAME_NOT_FOUND {
                 return LauncherMode::fail(MODE, FailReason::ShimNotFound);
@@ -762,7 +762,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         }
         rc => {
             if DBG {
-                debug!("error reading: {}", <&'static str>::from(rc));
+                debug!("error reading: {}", rc.0);
             }
             return LauncherMode::fail(MODE, FailReason::CouldNotReadShim);
         }
@@ -791,7 +791,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         debug!("Flags:");
         // TODO(port): Zig used `inline for` over `std.meta.fieldNames(Flags)`. Replace with a
         // manual dump or a `Debug` impl on `Flags`.
-        debug!("    {:?}", flags);
+        debug!("    {:#06x}", flags.bits());
     }
 
     if !flags.is_valid() {
@@ -881,8 +881,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             let shebang_bin_path_len_bytes = shebang_metadata.bin_path_len_bytes;
 
             if DBG {
-                debug!("bin_path_len_bytes: {}", shebang_metadata.bin_path_len_bytes);
-                debug!("args_len_bytes: {}", shebang_metadata.args_len_bytes);
+                let bin_path_len_bytes = shebang_metadata.bin_path_len_bytes;
+                let args_len_bytes = shebang_metadata.args_len_bytes;
+                debug!("bin_path_len_bytes: {}", bin_path_len_bytes);
+                debug!("args_len_bytes: {}", args_len_bytes);
             }
 
             // magic number related to how BinLinkingShim.zig writes the metadata
@@ -1046,8 +1048,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     {
         // Prepare stdio for the child process, as after this we are going to *immediatly* exit
         // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
-        bun_core::Output::Source::Stdio::restore();
-        bun_sys::windows::windows_enable_stdio_inheritance();
+        bun_core::output::source::stdio::restore();
+        // SAFETY: FFI; sets `HANDLE_FLAG_INHERIT` on the three standard
+        // handles. No preconditions beyond those handles being valid (they are
+        // process-lifetime).
+        unsafe { bun_sys::windows::windows_enable_stdio_inheritance() };
     }
 
     // I attempted to use lower level methods for this, but it really seems
@@ -1129,10 +1134,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     core::ptr::null_mut(),
                     core::ptr::null_mut(),
                     1, // true
-                    w::ProcessCreationFlags {
-                        create_unicode_environment: !IS_STANDALONE,
-                        ..Default::default()
-                    },
+                    // `CREATE_UNICODE_ENVIRONMENT` only when running inside
+                    // bun.exe (lpEnvironment is then a UTF-16 block); the
+                    // standalone PE passes a null environment so flags are 0.
+                    if IS_STANDALONE { 0 } else { 0x0000_0400 /* CREATE_UNICODE_ENVIRONMENT */ },
                     if IS_STANDALONE {
                         core::ptr::null_mut()
                     } else {
@@ -1146,10 +1151,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             if did_process_spawn == 0 {
                 let spawn_err = unsafe { k32::GetLastError() };
                 if DBG {
-                    debug!("CreateProcessW failed: {}", <&'static str>::from(spawn_err));
+                    debug!("CreateProcessW failed: {}", spawn_err);
                     debug!("attempt number: {}", attempt_number);
                 }
-                return match spawn_err {
+                return match w::Win32Error(spawn_err as u16) {
                     w::Win32Error::FILE_NOT_FOUND => {
                         if flags.has_shebang() {
                             if attempt_number == 0 {
@@ -1276,9 +1281,21 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 }
 
 #[cfg(not(feature = "shim_standalone"))]
-type CommandContext = bun_options_types::context::Context::Context;
+type CommandContext<'a> = bun_options_types::Context::Context<'a>;
 #[cfg(feature = "shim_standalone")]
-type CommandContext = (); // unused in standalone
+type CommandContext<'a> = core::marker::PhantomData<&'a ()>; // unused in standalone
+
+// Zig stores `cli_context: CommandContext` where `CommandContext = *Command.Context`
+// — a raw pointer copied by value. Mirror that with `*mut ContextData` so reading
+// the field through `&self` (the `BunCtx` impl is on `&FromBunRunContext` and the
+// trait method takes `&self`, i.e. two layers of `&`) does not retag the pointee
+// to SharedReadOnly. Storing `&'a mut ContextData` and casting `*const→*mut` in
+// the accessor would violate Stacked Borrows the moment `Run.boot` writes through
+// it.
+#[cfg(not(feature = "shim_standalone"))]
+type CommandContextPtr = *mut bun_options_types::Context::ContextData;
+#[cfg(feature = "shim_standalone")]
+type CommandContextPtr = (); // unused in standalone
 
 pub struct FromBunRunContext {
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
@@ -1293,9 +1310,9 @@ pub struct FromBunRunContext {
     /// Was --bun passed?
     pub force_use_bun: bool,
     /// A pointer to a function that can launch `Run.boot`
-    pub direct_launch_with_bun_js: fn(&mut [u16], CommandContext),
+    pub direct_launch_with_bun_js: fn(&mut [u16], CommandContext<'_>),
     /// Command.Context
-    pub cli_context: CommandContext,
+    pub cli_context: CommandContextPtr,
     /// Passed directly to CreateProcessW's lpEnvironment with CREATE_UNICODE_ENVIRONMENT
     pub environment: Option<*const u16>,
 }
@@ -1310,7 +1327,15 @@ impl BunCtx for &FromBunRunContext {
     fn handle(&self) -> HANDLE { self.handle }
     fn force_use_bun(&self) -> bool { self.force_use_bun }
     fn direct_launch_with_bun_js(&self, wpath: &mut [u16]) {
-        (self.direct_launch_with_bun_js)(wpath, self.cli_context)
+        // SAFETY: `cli_context` was initialized from the caller's
+        // `&mut ContextData` (run_command.rs `core::ptr::from_mut(ctx)`); the
+        // raw `*mut` is `Copy` through `&self` without retag and retains the
+        // Unique provenance. It is exclusively owned for the duration of
+        // `try_startup_from_bun_js` and not aliased while `launcher` runs.
+        #[cfg(not(feature = "shim_standalone"))]
+        (self.direct_launch_with_bun_js)(wpath, unsafe { &mut *self.cli_context });
+        #[cfg(feature = "shim_standalone")]
+        { let _ = wpath; unreachable!() }
     }
     fn environment(&self) -> Option<*const u16> { self.environment }
 }

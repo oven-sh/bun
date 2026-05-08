@@ -201,7 +201,7 @@ pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<O
         ResultAny::Addrinfo(addrinfo) => {
             // LIFETIMES.tsv: GetAddrInfo.Result.Any.addrinfo is FFI → *mut libc::addrinfo
             // (nullable raw pointer, no Option wrapper).
-            let addrinfo: *mut libc::addrinfo = *addrinfo;
+            let addrinfo: *mut super::netc::addrinfo = *addrinfo;
             if addrinfo.is_null() {
                 return Ok(None);
             }
@@ -232,8 +232,8 @@ pub fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSVal
         // sockaddr union under `.any` with a `.family` field. The Rust
         // `bun_sys::net::Address` exposes `.family() -> i32`.
         match this.address.family() {
-            f if f == libc::AF_INET as _ => JSValue::js_number(4.0),
-            f if f == libc::AF_INET6 as _ => JSValue::js_number(6.0),
+            f if f == super::netc::AF_INET as _ => JSValue::js_number(4.0),
+            f if f == super::netc::AF_INET6 as _ => JSValue::js_number(6.0),
             _ => JSValue::js_number(0.0),
         },
     );
@@ -254,12 +254,12 @@ pub fn address_to_js(
     str.transfer_to_js(global)
 }
 
-pub fn addr_info_to_js_array(addr_info: &libc::addrinfo, global: &JSGlobalObject) -> JsResult<JSValue> {
+pub fn addr_info_to_js_array(addr_info: &super::netc::addrinfo, global: &JSGlobalObject) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global, addr_info_count(addr_info) as usize)?;
 
     {
         let mut j: u32 = 0;
-        let mut current: *const libc::addrinfo = addr_info;
+        let mut current: *const super::netc::addrinfo = addr_info;
         // SAFETY: `current` walks the getaddrinfo(3) singly-linked result list;
         // each node and its `ai_next` are valid until freeaddrinfo is called by
         // the owner (which outlives this call).

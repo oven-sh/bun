@@ -436,7 +436,7 @@ impl BufferedReaderParent for PipeReader {
     unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
         unsafe { (*this).on_reader_error(err) };
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Raw `addr_of!` projection — no `&Self` materialized (reader field may
         // be borrowed mutably by the caller).
         unsafe { (*this).loop_().cast() }

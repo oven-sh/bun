@@ -125,7 +125,7 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
 
 #[cfg(windows)]
 impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsWriterParent for StaticPipeWriter<P> {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_windows::libuv::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
         // SAFETY: BACKREF set via set_parent; shared-only read of event_loop.
         unsafe { (*this).loop_() }
     }

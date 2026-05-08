@@ -826,9 +826,9 @@ impl Fd {
                 // `AllocConsole`, `AttachConsole`, etc.
                 // SAFETY: cached statics written once at startup.
                 unsafe {
-                    if self == fd::WINDOWS_CACHED_STDIN { return 0; }
-                    if self == fd::WINDOWS_CACHED_STDOUT { return 1; }
-                    if self == fd::WINDOWS_CACHED_STDERR { return 2; }
+                    if self == fd::WINDOWS_CACHED_STDIN.read() { return 0; }
+                    if self == fd::WINDOWS_CACHED_STDOUT.read() { return 1; }
+                    if self == fd::WINDOWS_CACHED_STDERR.read() { return 2; }
                 }
                 if fd::is_stdio_handle(fd::STD_INPUT_HANDLE, handle) { return 0; }
                 if fd::is_stdio_handle(fd::STD_OUTPUT_HANDLE, handle) { return 1; }
@@ -848,9 +848,10 @@ impl Fd {
     #[cfg(not(windows))] #[inline] pub const fn stderr() -> Fd { Fd(2) }
     #[cfg(not(windows))] #[inline] pub fn cwd() -> Fd { Fd(libc::AT_FDCWD) }
 
-    #[cfg(windows)] #[inline] pub fn stdin()  -> Fd { unsafe { fd::WINDOWS_CACHED_STDIN } }
-    #[cfg(windows)] #[inline] pub fn stdout() -> Fd { unsafe { fd::WINDOWS_CACHED_STDOUT } }
-    #[cfg(windows)] #[inline] pub fn stderr() -> Fd { unsafe { fd::WINDOWS_CACHED_STDERR } }
+    // SAFETY: cached statics written once at startup before any reader.
+    #[cfg(windows)] #[inline] pub fn stdin()  -> Fd { unsafe { fd::WINDOWS_CACHED_STDIN.read() } }
+    #[cfg(windows)] #[inline] pub fn stdout() -> Fd { unsafe { fd::WINDOWS_CACHED_STDOUT.read() } }
+    #[cfg(windows)] #[inline] pub fn stderr() -> Fd { unsafe { fd::WINDOWS_CACHED_STDERR.read() } }
     #[cfg(windows)] #[inline] pub fn cwd() -> Fd {
         // SAFETY: PEB is process-global; only reading the cached cwd handle.
         Fd::from_system(unsafe { fd::windows_current_directory_handle() })

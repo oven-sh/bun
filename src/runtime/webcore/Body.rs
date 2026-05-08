@@ -2545,24 +2545,27 @@ impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
 // comptime { @export(...) } → no_mangle extern "C" exports.
 // TODO(port): // TODO(b2-blocked): #[bun_jsc::host_fn] on on_resolve_stream/on_reject_stream emits the JSC ABI shim;
 // these no_mangle re-exports point at those shims under the C names the C++ side expects.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__BodyValueBufferer__onResolveStream(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are live for the duration of the host-fn call.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
-    jsc::to_js_host_fn_result(global, ValueBufferer::on_resolve_stream(global, callframe))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__BodyValueBufferer__onResolveStream(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are live for the duration of the host-fn call.
+        let (global, callframe) = unsafe { (&*global, &*callframe) };
+        jsc::to_js_host_fn_result(global, ValueBufferer::on_resolve_stream(global, callframe))
+    }
 }
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__BodyValueBufferer__onRejectStream(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are live for the duration of the host-fn call.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
-    jsc::to_js_host_fn_result(global, ValueBufferer::on_reject_stream(global, callframe))
+bun_jsc::jsc_host_abi! {
+    #[unsafe(no_mangle)]
+    pub unsafe fn Bun__BodyValueBufferer__onRejectStream(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC guarantees both pointers are live for the duration of the host-fn call.
+        let (global, callframe) = unsafe { (&*global, &*callframe) };
+        jsc::to_js_host_fn_result(global, ValueBufferer::on_reject_stream(global, callframe))
+    }
 }
 
 // ported from: src/runtime/webcore/Body.zig

@@ -1471,6 +1471,22 @@ pub enum WindowsStdioResult {
 }
 
 #[cfg(windows)]
+impl Default for WindowsStdioResult {
+    fn default() -> Self { Self::Unavailable }
+}
+
+#[cfg(windows)]
+impl WindowsStdioResult {
+    /// Mirrors `Option::<Fd>::take()` on the POSIX `SpawnedStdio` so callers
+    /// (`shell::subproc`, `bun_spawn` JS bindings) can pull the handle out by
+    /// value without per-platform `mem::replace` at every call site.
+    #[inline]
+    pub fn take(&mut self) -> Self {
+        core::mem::take(self)
+    }
+}
+
+#[cfg(windows)]
 impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized, sync_: bool) -> *mut Process {
         let process = self.process_.take().unwrap();

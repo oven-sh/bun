@@ -11,10 +11,13 @@ use crate::{EventLoopHandle, FilePoll, FilePollFlag, FilePollKind};
 // `uv_loop_t` (`bun_aio::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
 // can hand it to libuv/uws without a cross-crate cast.
+//
+// Public so trait implementors in `bun_runtime` can name the same type in
+// their `loop_` signature without duplicating the cfg-split.
 #[cfg(not(windows))]
-type Loop = bun_uws_sys::Loop;
+pub type Loop = bun_uws_sys::Loop;
 #[cfg(windows)]
-type Loop = bun_sys::windows::libuv::Loop;
+pub type Loop = bun_sys::windows::libuv::Loop;
 
 /// `bun_aio::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag

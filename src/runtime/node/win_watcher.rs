@@ -136,7 +136,7 @@ pub struct PathWatcher {
 
 #[derive(Clone, Copy)]
 pub struct ChangeEvent {
-    hash: Watcher::HashType,
+    hash: bun_watcher::HashType,
     event_type: EventType,
     timestamp: u64,
 }
@@ -151,7 +151,7 @@ impl Default for ChangeEvent {
 impl ChangeEvent {
     pub fn emit(
         &mut self,
-        hash: Watcher::HashType,
+        hash: bun_watcher::HashType,
         timestamp: u64,
         event_type: EventType,
     ) -> bool {
@@ -216,15 +216,18 @@ impl PathWatcher {
             None
         } else {
             // SAFETY: libuv passes a valid NUL-terminated string when non-null.
-            Some(unsafe { ZStr::from_ptr(filename.cast::<u8>()) })
+            Some(unsafe {
+                let cs = core::ffi::CStr::from_ptr(filename);
+                ZStr::from_raw(cs.as_ptr().cast::<u8>(), cs.to_bytes().len())
+            })
         }) else {
             return;
         };
 
         this.emit(
             path.as_bytes(),
-            // @truncate — intentional wrap to Watcher::HashType
-            event_ref.hash(path.as_bytes(), events, status) as Watcher::HashType,
+            // @truncate — intentional wrap to bun_watcher::HashType
+            event_ref.hash(path.as_bytes(), events, status) as bun_watcher::HashType,
             timestamp,
             !event_ref.is_dir(),
             if events & uv::UV_RENAME != 0 {
@@ -238,7 +241,7 @@ impl PathWatcher {
     pub fn emit(
         &mut self,
         path: &[u8],
-        hash: Watcher::HashType,
+        hash: bun_watcher::HashType,
         timestamp: u64,
         is_file: bool,
         event_type: EventType,
@@ -409,7 +412,10 @@ impl PathWatcher {
         if let Some(manager) = me.manager.take() {
             let path: &ZStr = if !me.handle.path.is_null() {
                 // SAFETY: handle.path is a NUL-terminated C string owned by libuv.
-                unsafe { ZStr::from_ptr(me.handle.path.cast::<u8>()) }
+                unsafe {
+                    let cs = core::ffi::CStr::from_ptr(me.handle.path);
+                    ZStr::from_raw(cs.as_ptr().cast::<u8>(), cs.to_bytes().len())
+                }
             } else {
                 ZStr::EMPTY
             };

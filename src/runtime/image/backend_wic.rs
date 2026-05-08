@@ -61,6 +61,24 @@ pub enum BackendError {
 }
 use BackendError::*;
 
+impl BackendError {
+    /// Reshape Zig's `(codecs.Error || error{BackendUnavailable})!T` into the
+    /// Rust caller's `Result<Option<T>, codecs::Error>` convention used by
+    /// `codecs.rs` (`Ok(None)` = BackendUnavailable → fall through to the
+    /// pure-Rust codec path).
+    #[inline]
+    pub fn split<T>(r: Result<T, Self>) -> Result<Option<T>, codecs::Error> {
+        match r {
+            Ok(v) => Ok(Some(v)),
+            Err(Self::BackendUnavailable) => Ok(None),
+            Err(Self::DecodeFailed) => Err(codecs::Error::DecodeFailed),
+            Err(Self::EncodeFailed) => Err(codecs::Error::EncodeFailed),
+            Err(Self::TooManyPixels) => Err(codecs::Error::TooManyPixels),
+            Err(Self::OutOfMemory) => Err(codecs::Error::OutOfMemory),
+        }
+    }
+}
+
 impl From<BackendError> for bun_core::Error {
     fn from(e: BackendError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))

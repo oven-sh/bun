@@ -1035,7 +1035,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for WindowsNamedPipe {
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: see on_write. Shared-only read of `vm`.
-        unsafe { (*this).vm.uws_loop().cast() }
+        unsafe { (*this).vm.uws_loop() }
     }
 }
 

@@ -493,7 +493,7 @@ fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> 
                     unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
             }
             #[cfg(windows)]
-            let without_trailing_slash = strings::without_trailing_slash_windows_path;
+            let without_trailing_slash = bun_string::immutable::paths::without_trailing_slash_windows_path;
             #[cfg(not(windows))]
             let without_trailing_slash = strings::without_trailing_slash;
             let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir));

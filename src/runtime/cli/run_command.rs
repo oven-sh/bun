@@ -373,7 +373,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         // SAFETY: same lifetime erasure as the `!use_system_shell`
                         // branch above — `env` outlives the mini event loop.
                         Some(unsafe {
-                            &mut *core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
+                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
                                 .cast::<DotEnv::Loader<'static>>()
                         }),
                         None,
@@ -1904,8 +1904,7 @@ impl RunCommand {
             #[cfg(debug_assertions)]
             {
                 let dir_slice_u8 =
-                    strings::utf16_le_to_utf8_alloc(&target_path_buffer[..dir_slice_len])
-                        .expect("oom");
+                    bun_string::immutable::to_utf8_alloc_with_type(&target_path_buffer[..dir_slice_len]);
                 let _ = sys::Dir::cwd().delete_tree(&dir_slice_u8);
                 sys::Dir::cwd().make_path(&dir_slice_u8).expect("huh?");
             }
@@ -2250,7 +2249,7 @@ impl RunCommand {
                         Some(unsafe {
                             // SAFETY: env loader is process-lifetime; erase
                             // borrowed lifetime for the singleton handoff.
-                            &mut *core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
+                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
                                 .cast::<DotEnv::Loader<'static>>()
                         }),
                         None,
@@ -4125,7 +4124,7 @@ impl BunXFastPath {
             arguments_len: i,
             force_use_bun: ctx.debug.run_in_bun,
             direct_launch_with_bun_js: Self::direct_launch_callback,
-            cli_context: ctx,
+            cli_context: ::core::ptr::from_mut(ctx),
             environment,
         };
 

@@ -98,7 +98,16 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
 }
 #[cfg(windows)]
 #[inline]
-fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike { t }
+fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
+    // Windows `time_like::TimeLike` is `f64` seconds (libuv's `uv_fs_futime`
+    // takes doubles directly). The few callers that round-trip through
+    // `sys::TimeLike` (e.g. `lutimes` ENOENT fallback to `utimens`) need the
+    // `{sec, nsec}` split. Use `floor` so `nsec` stays in `[0, 1e9)` for
+    // negative non-integer `t` (e.g. `-1.5` → `{-2, 500_000_000}`, not
+    // `{-1, -500_000_000}` which `trunc` would yield).
+    let sec = t.floor();
+    sys::TimeLike { sec: sec as i64, nsec: ((t - sec) * 1e9).round() as i64 }
+}
 
 // Local namespace shim: dependents in this file spell `ConcurrentTask::create*`
 // (the Zig spelling). The Rust crate exports the *struct* as `ConcurrentTask`
@@ -383,11 +392,11 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
 }
 #[cfg(windows)]
 #[inline]
-fn mkdir_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> { Syscall::mkdir_os_path(path, mode) }
+fn mkdir_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> { let _ = mode; sys::mkdir_w(path) }
 #[cfg(windows)]
 #[inline]
 fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
-    Syscall::openat_os_path(dirfd, path, flags, mode)
+    sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
 type ReadPosition = i64;
@@ -658,7 +667,7 @@ where
                 // call (path is copied internally by libuv before return).
                 let rc = unsafe { uv::uv_fs_open(loop_, &mut task.req, path.as_ptr(), flags, mode, Some(Self::uv_callback)) };
                 debug_assert!(rc == uv::ReturnCode::ZERO);
-                sys::syslog!("uv open({}, {}, {}) = scheduled", bstr::BStr::new(path.as_bytes()), flags, mode);
+                sys::syslog!("uv open({}, {}, {}) = scheduled", ::bstr::BStr::new(path.as_bytes()), flags, mode);
             }
             NodeFSFunctionEnum::Close => {
                 let args: &args::Close = args_as!(args::Close);
@@ -668,7 +677,7 @@ where
                     // SAFETY: identity write — `R == ret::Close == ()` for this `F`.
                     unsafe { core::ptr::write(&mut task.result as *mut Maybe<R> as *mut Maybe<ret::Close>, Ok(())) };
                     let task_ptr: *mut Self = task;
-                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task_ptr));
+                    task.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(task_ptr));
                     return task.promise.value();
                 }
                 // SAFETY: libuv async request.
@@ -723,7 +732,7 @@ where
                     // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
                     unsafe { core::ptr::write(&mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>, Ok(ret::Write { bytes_written: 0 })) };
                     let task_ptr: *mut Self = task;
-                    task.global_object().bun_vm().event_loop().enqueue_task(Task::init(task_ptr));
+                    task.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(task_ptr));
                     return task.promise.value();
                 }
                 let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
@@ -739,7 +748,7 @@ where
                 // SAFETY: libuv copies `path` internally before return.
                 let rc = unsafe { uv::uv_fs_statfs(loop_, &mut task.req, path.as_ptr(), Some(Self::uv_callbackreq)) };
                 debug_assert!(rc == uv::ReturnCode::ZERO);
-                sys::syslog!("uv statfs({}) = ~~", bstr::BStr::new(path.as_bytes()));
+                sys::syslog!("uv statfs({}) = ~~", ::bstr::BStr::new(path.as_bytes()));
             }
             _ => unreachable!("UVFSRequest type not implemented"),
         }
@@ -759,7 +768,7 @@ where
         // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
         // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
         let this_ptr: *mut Self = this;
-        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this_ptr));
+        this.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(this_ptr));
     }
 
     extern "C" fn uv_callbackreq(req: *mut uv::fs_t) {
@@ -773,7 +782,7 @@ where
         this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
         // No `err.clone()` needed — see `uv_callback` above.
         let this_ptr: *mut Self = this;
-        this.global_object().bun_vm().event_loop().enqueue_task(Task::init(this_ptr));
+        this.global_object().bun_vm().event_loop_mut().enqueue_task(Task::init(this_ptr));
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -1711,7 +1720,15 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
         let mut buf = OSPathBuffer::uninit();
         #[cfg(windows)]
-        let normdest: OSPathSliceZ = match sys::normalize_path_windows::<u16>(FD::INVALID, dest, &mut buf, sys::NormalizeOpts { add_nt_prefix: false }) {
+        let normdest: &OSPathSliceZ = match sys::normalize_path_windows_opts(
+            FD::INVALID,
+            dest.as_slice(),
+            &mut buf[..],
+            // node_fs.zig:861 `.{ .add_nt_prefix = false }` — `normdest` feeds
+            // `mkdirRecursiveOSPath` / `CopyFileW` which expect Win32 paths,
+            // not `\??\` NT object paths.
+            sys::NormalizePathWindowsOpts { add_nt_prefix: false },
+        ) {
             Err(err) => { this_ref.finish_concurrently(Err(err)); return false; }
             Ok(n) => n,
         };
@@ -2521,14 +2538,22 @@ pub mod args {
     }
 
     /// Zig: `fn wrapTo(comptime T: type, in: i64) T` where `T` is unsigned.
-    /// Only ever instantiated with `uid_t`/`gid_t` (= `u32`), so drop the
-    /// `num_traits` dependency and hard-code the wrap.
+    /// Only ever instantiated with `uid_t`/`gid_t` — `u32` on POSIX, `u8` on
+    /// Windows (libuv's `uv_uid_t`/`uv_gid_t` are `unsigned char`). Hard-code
+    /// the per-platform wrap rather than pulling `num_traits`.
+    #[cfg(not(windows))]
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
         // Zig spec (node_fs.zig:1586): `@intCast(@mod(in, std.math.maxInt(T)))`
-        // — i.e. modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
+        // — modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
         // and `4294967295 → 0`. Match the spec exactly.
         T::from(in_.rem_euclid(u32::MAX as i64) as u32)
+    }
+    #[cfg(windows)]
+    #[inline]
+    fn wrap_to<T: From<u8>>(in_: i64) -> T {
+        // Same `@mod(in, maxInt(T))` semantics with `T = u8`.
+        T::from(in_.rem_euclid(u8::MAX as i64) as u8)
     }
 
     pub type LChown = Chown;
@@ -4400,14 +4425,17 @@ impl NodeFS {
     pub fn fdatasync(&mut self, args: &args::FdataSync, _: Flavor) -> Maybe<ret::Fdatasync> {
         #[cfg(windows)]
         { return Syscall::fdatasync(args.fd); }
-        // `libc` omits the Darwin binding (fdatasync exists since 10.7).
-        #[cfg(target_os = "macos")]
-        unsafe extern "C" { fn fdatasync(fd: libc::c_int) -> libc::c_int; }
-        #[cfg(all(unix, not(target_os = "macos")))]
-        use libc::fdatasync;
-        // SAFETY: args.fd.native() is a valid open fd; fdatasync is the libc FFI
-        Maybe::<ret::Fdatasync>::errno_sys_fd(unsafe { fdatasync(args.fd.native()) }, sys::Tag::fdatasync, args.fd)
-            .unwrap_or(Ok(()))
+        #[cfg(not(windows))]
+        {
+            // `libc` omits the Darwin binding (fdatasync exists since 10.7).
+            #[cfg(target_os = "macos")]
+            unsafe extern "C" { fn fdatasync(fd: libc::c_int) -> libc::c_int; }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            use libc::fdatasync;
+            // SAFETY: args.fd.native() is a valid open fd; fdatasync is the libc FFI
+            Maybe::<ret::Fdatasync>::errno_sys_fd(unsafe { fdatasync(args.fd.native()) }, sys::Tag::fdatasync, args.fd)
+                .unwrap_or(Ok(()))
+        }
     }
 
     pub fn fstat(&mut self, args: &args::Fstat, _: Flavor) -> Maybe<ret::Fstat> {
@@ -4427,6 +4455,7 @@ impl NodeFS {
     pub fn fsync(&mut self, args: &args::Fsync, _: Flavor) -> Maybe<ret::Fsync> {
         #[cfg(windows)]
         { return Syscall::fsync(args.fd); }
+        #[cfg(not(windows))]
         Maybe::<ret::Fsync>::errno_sys(unsafe { libc::fsync(args.fd.native()) }, sys::Tag::fsync)
             .unwrap_or(Ok(()))
     }
@@ -4445,6 +4474,7 @@ impl NodeFS {
                 Err(sys::Error { errno: e, syscall: sys::Tag::futime, fd: args.fd, ..Default::default() })
             } else { Ok(()) };
         }
+        #[cfg(not(windows))]
         match Syscall::futimens(args.fd, to_sys_time_like(args.atime), to_sys_time_like(args.mtime)) {
             Err(err) => Err(err),
             Ok(_) => Ok(()),
@@ -4460,20 +4490,26 @@ impl NodeFS {
             // anyway. Match glibc's stub behaviour.
             return Err(sys::Error { errno: E::EOPNOTSUPP as _, syscall: sys::Tag::lchmod, path: args.path.slice().into(), ..Default::default() });
         }
-        let path = args.path.slice_z(&mut self.sync_error_buf);
-        match Syscall::lchmod(path, args.mode) {
-            Err(err) => Err(err.with_path(args.path.slice())),
-            Ok(_) => Ok(()),
+        #[cfg(not(any(windows, target_os = "android")))]
+        {
+            let path = args.path.slice_z(&mut self.sync_error_buf);
+            match Syscall::lchmod(path, args.mode) {
+                Err(err) => Err(err.with_path(args.path.slice())),
+                Ok(_) => Ok(()),
+            }
         }
     }
 
     pub fn lchown(&mut self, args: &args::LChown, _: Flavor) -> Maybe<ret::Lchown> {
         #[cfg(windows)]
         { return Maybe::<ret::Lchown>::todo(); }
-        let path = args.path.slice_z(&mut self.sync_error_buf);
-        match Syscall::lchown(path, args.uid, args.gid) {
-            Err(err) => Err(err.with_path(args.path.slice())),
-            Ok(_) => Ok(()),
+        #[cfg(not(windows))]
+        {
+            let path = args.path.slice_z(&mut self.sync_error_buf);
+            match Syscall::lchown(path, args.uid, args.gid) {
+                Err(err) => Err(err.with_path(args.path.slice())),
+                Ok(_) => Ok(()),
+            }
         }
     }
 
@@ -4489,6 +4525,7 @@ impl NodeFS {
             };
         }
         // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
+        #[cfg(not(windows))]
         Maybe::<ret::Link>::errno_sys_pd(unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) }, sys::Tag::link, args.old_path.slice(), args.new_path.slice())
             .unwrap_or(Ok(()))
     }
@@ -4761,6 +4798,8 @@ impl NodeFS {
             return Ok(ZigString::dupe_for_js(unsafe { bun_string::slice_to_nul(req.path) }).expect("oom"));
         }
 
+        #[cfg(not(windows))]
+        {
         // SAFETY: `prefix_buf` is NUL-terminated and writable; mkdtemp(3) writes the
         // generated name back into the buffer in-place.
         let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
@@ -4776,6 +4815,7 @@ impl NodeFS {
             path: prefix_buf[..len + 6].into(),
             ..Default::default()
         })
+        }
     }
 
     pub fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
@@ -5456,7 +5496,7 @@ impl NodeFS {
         #[cfg(not(windows))]
         let open_res = Syscall::open(path, flags, 0);
         #[cfg(windows)]
-        let open_res = sys::open_dir_at_windows_a(FD::cwd(), path, sys::OpenDirOpts { iterable: true, read_only: true, ..Default::default() });
+        let open_res = sys::open_dir_at_windows_a(FD::cwd(), path.as_bytes(), sys::WindowsOpenDirOptions { iterable: true, read_only: true, ..Default::default() });
         let fd = match open_res {
             Err(err) => return Err(err.with_path(args.path.slice())),
             Ok(fd_) => fd_,
@@ -6239,10 +6279,13 @@ impl NodeFS {
                 Err(err) => Err(err.with_path_and_syscall(path.slice(), sys::Tag::truncate)),
             };
         }
-        let _ = flags;
-        // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
-        Maybe::<ret::Truncate>::errno_sys_p(unsafe { libc::truncate(path.slice_z(&mut self.sync_error_buf).as_ptr().cast(), len_i64) }, sys::Tag::truncate, path.slice())
-            .unwrap_or(Ok(()))
+        #[cfg(not(windows))]
+        {
+            let _ = flags;
+            // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
+            Maybe::<ret::Truncate>::errno_sys_p(unsafe { libc::truncate(path.slice_z(&mut self.sync_error_buf).as_ptr().cast(), len_i64) }, sys::Tag::truncate, path.slice())
+                .unwrap_or(Ok(()))
+        }
     }
 
     pub fn truncate(&mut self, args: &args::Truncate, _: Flavor) -> Maybe<ret::Truncate> {
@@ -6650,7 +6693,7 @@ impl NodeFS {
     pub fn _copy_single_file_sync(
         &mut self,
         src: &OSPathSliceZ, dest: &OSPathSliceZ, mode: constants::Copyfile,
-        /// Stat on posix, file attributes on windows
+        // Stat on posix, file attributes on windows
         #[cfg(windows)] reuse_stat: Option<windows::DWORD>,
         #[cfg(not(windows))] reuse_stat: Option<sys::Stat>,
         args: &args::Cp,

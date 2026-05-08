@@ -1391,7 +1391,7 @@ impl FileSystemFlags {
             // code that operates on bun.O flags works correctly.
             #[cfg(windows)]
             {
-                return Ok(Some(FileSystemFlags(libuv::O::to_bun_o(flags))));
+                return Ok(Some(FileSystemFlags(bun_libuv_sys::O::to_bun_o(flags))));
             }
             #[cfg(not(windows))]
             {

@@ -60,8 +60,12 @@ pub struct AutoContext;
 impl<K: Hash + Eq + ?Sized> ArrayHashContext<K> for AutoContext {
     #[inline]
     fn hash(&self, key: &K) -> u32 {
-        // Zig: std.array_hash_map.getAutoHashFn → std.hash.Wyhash (NOT Wyhash11).
-        let mut h = bun_wyhash::Wyhash::init(0);
+        // Zig: std.array_hash_map.getAutoHashFn → std.hash.Wyhash. The
+        // streaming `Wyhash` state zero-fills a 48-byte buffer on every
+        // `init`/`shallow_copy` (Zig left it `undefined`); route through the
+        // one-shot hasher to skip that — keys here are small POD (`Ref`,
+        // indices) so the per-chunk fold is a single `mum`.
+        let mut h = bun_wyhash::OneShotHasher::default();
         key.hash(&mut h);
         h.finish() as u32 // @truncate
     }
@@ -1143,21 +1147,22 @@ impl<V, C> ArrayHashMapExt for StringArrayHashMap<V, C> {
 /// adds the Zig `getOrPut` / `getOrPutValue` entry points while keeping the
 /// std surface (`.get`, `.contains_key`, `.reserve`, `.insert`, …) reachable
 /// via `Deref`.
-// TODO(port): swap `RandomState` for a wyhash `BuildHasher` once one lands in
-// `bun_wyhash` so hashing is deterministic across runs.
+// Hashed with seed-0 wyhash (matches Zig's `std.hash_map.StringContext`) —
+// deterministic across runs and ~3-5× faster than `RandomState`/SipHash on
+// the short identifier keys the parser/printer/renamer churn.
 #[derive(Clone)]
 pub struct StringHashMap<V> {
-    inner: std::collections::HashMap<Box<[u8]>, V>,
+    inner: std::collections::HashMap<Box<[u8]>, V, bun_wyhash::BuildHasher>,
 }
 
 impl<V> Default for StringHashMap<V> {
     fn default() -> Self {
-        Self { inner: std::collections::HashMap::new() }
+        Self { inner: std::collections::HashMap::default() }
     }
 }
 
 impl<V> Deref for StringHashMap<V> {
-    type Target = std::collections::HashMap<Box<[u8]>, V>;
+    type Target = std::collections::HashMap<Box<[u8]>, V, bun_wyhash::BuildHasher>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
@@ -1175,7 +1180,12 @@ impl<V> StringHashMap<V> {
     }
 
     pub fn with_capacity(n: usize) -> Self {
-        Self { inner: std::collections::HashMap::with_capacity(n) }
+        Self {
+            inner: std::collections::HashMap::with_capacity_and_hasher(
+                n,
+                bun_wyhash::BuildHasher::default(),
+            ),
+        }
     }
 
     #[inline]

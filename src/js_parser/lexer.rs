@@ -710,7 +710,7 @@ lexer_impl_header! {
                         }
 
                         // legacy octal literals
-                        c if (0x30..=0x37).contains(&c) => {
+                        0x30..=0x37 => {
                             let octal_start =
                                 (iter.i as usize + width2 as usize) - 2;
                             if IS_JSON {
@@ -735,7 +735,7 @@ lexer_impl_header! {
                             let c3: CodePoint = iter.c;
 
                             match c3 {
-                                c if (0x30..=0x37).contains(&c) => {
+                                0x30..=0x37 => {
                                     value = value * 8 + (c3 - 0x30) as i64;
                                     prev = iter;
                                     if !iterator.next(&mut iter) {
@@ -744,7 +744,7 @@ lexer_impl_header! {
 
                                     let c4 = iter.c;
                                     match c4 {
-                                        c if (0x30..=0x37).contains(&c) => {
+                                        0x30..=0x37 => {
                                             let temp =
                                                 value * 8 + (c4 - 0x30) as i64;
                                             if temp < 256 {
@@ -753,7 +753,7 @@ lexer_impl_header! {
                                                 iter = prev;
                                             }
                                         }
-                                        c if c == 0x38 || c == 0x39 => {
+                                        0x38 | 0x39 => {
                                             is_bad = true;
                                         }
                                         _ => {
@@ -761,7 +761,7 @@ lexer_impl_header! {
                                         }
                                     }
                                 }
-                                c if c == 0x38 || c == 0x39 => {
+                                0x38 | 0x39 => {
                                     is_bad = true;
                                 }
                                 _ => {
@@ -787,7 +787,7 @@ lexer_impl_header! {
                                 .expect("unreachable");
                             }
                         }
-                        c if c == 0x38 || c == 0x39 => {
+                        0x38 | 0x39 => {
                             iter.c = c2;
                         }
                         // 2-digit hexadecimal
@@ -802,13 +802,13 @@ lexer_impl_header! {
                             c3 = iter.c;
                             width3 = iter.width;
                             match c3 {
-                                c if (0x30..=0x39).contains(&c) => {
+                                0x30..=0x39 => {
                                     value = value * 16 | (c3 - 0x30);
                                 }
-                                c if (0x61..=0x66).contains(&c) => {
+                                0x61..=0x66 => {
                                     value = value * 16 | (c3 + 10 - 0x61);
                                 }
-                                c if (0x41..=0x46).contains(&c) => {
+                                0x41..=0x46 => {
                                     value = value * 16 | (c3 + 10 - 0x41);
                                 }
                                 _ => {
@@ -824,13 +824,13 @@ lexer_impl_header! {
                             c3 = iter.c;
                             width3 = iter.width;
                             match c3 {
-                                c if (0x30..=0x39).contains(&c) => {
+                                0x30..=0x39 => {
                                     value = value * 16 | (c3 - 0x30);
                                 }
-                                c if (0x61..=0x66).contains(&c) => {
+                                0x61..=0x66 => {
                                     value = value * 16 | (c3 + 10 - 0x61);
                                 }
-                                c if (0x41..=0x46).contains(&c) => {
+                                0x41..=0x46 => {
                                     value = value * 16 | (c3 + 10 - 0x41);
                                 }
                                 _ => {
@@ -874,19 +874,19 @@ lexer_impl_header! {
                                     c3 = iter.c;
 
                                     match c3 {
-                                        c if (0x30..=0x39).contains(&c) => {
+                                        0x30..=0x39 => {
                                             value =
                                                 value * 16 | (c3 - 0x30) as i64;
                                         }
-                                        c if (0x61..=0x66).contains(&c) => {
+                                        0x61..=0x66 => {
                                             value = value * 16
                                                 | (c3 + 10 - 0x61) as i64;
                                         }
-                                        c if (0x41..=0x46).contains(&c) => {
+                                        0x41..=0x46 => {
                                             value = value * 16
                                                 | (c3 + 10 - 0x41) as i64;
                                         }
-                                        c if c == 0x7D => {
+                                        0x7D => {
                                             if is_first {
                                                 self.end = (start + iter.i as usize)
                                                     .saturating_sub(width3 as usize);
@@ -937,15 +937,15 @@ lexer_impl_header! {
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match c3 {
-                                        c if (0x30..=0x39).contains(&c) => {
+                                        0x30..=0x39 => {
                                             value =
                                                 value * 16 | (c3 - 0x30) as i64;
                                         }
-                                        c if (0x61..=0x66).contains(&c) => {
+                                        0x61..=0x66 => {
                                             value = value * 16
                                                 | (c3 + 10 - 0x61) as i64;
                                         }
-                                        c if (0x41..=0x46).contains(&c) => {
+                                        0x41..=0x46 => {
                                             value = value * 16
                                                 | (c3 + 10 - 0x41) as i64;
                                         }
@@ -985,7 +985,7 @@ lexer_impl_header! {
                             // Ignore line continuations. A line continuation is not an escaped newline.
                             continue;
                         }
-                        c if c == 0x0A || c == 0x2028 || c == 0x2029 => {
+                        0x0A | 0x2028 | 0x2029 => {
                             if IS_JSON {
                                 self.end =
                                     start + iter.i as usize - width2 as usize;
@@ -998,9 +998,7 @@ lexer_impl_header! {
                         _ => {
                             if IS_JSON {
                                 match c2 {
-                                    c if c == 0x22
-                                        || c == 0x5C
-                                        || c == 0x2F => {}
+                                    0x22 | 0x5C | 0x2F => {}
                                     _ => {
                                         self.end = start + iter.i as usize
                                             - width2 as usize;
@@ -1065,10 +1063,7 @@ lexer_impl_header! {
 
                     match self.code_point {
                         // 0 cannot be in this list because it may be a legacy octal literal
-                        c if c == 0x60
-                            || c == 0x27
-                            || c == 0x22
-                            || c == 0x5C =>
+                        0x60 | 0x27 | 0x22 | 0x5C =>
                         {
                             self.step();
                             continue 'string_literal;
@@ -1100,7 +1095,7 @@ lexer_impl_header! {
                         0 => {
                             break 'string_literal;
                         }
-                        c if c == 0x60 => {}
+                        0x60 => {}
                         _ => {
                             self.add_default_error(b"Unterminated string literal")?;
                         }
@@ -1123,7 +1118,8 @@ lexer_impl_header! {
                         continue 'string_literal;
                     }
                 }
-                // exit condition
+                // exit condition (const-generic param can't be a pattern; guard is fine —
+                // the literal arms above still lower to a jump table)
                 c if c == QUOTE => {
                     self.step();
                     break;
@@ -1235,41 +1231,53 @@ lexer_impl_header! {
 
     #[inline]
     fn next_codepoint(&mut self) -> CodePoint {
-        if self.current >= self.source.contents.len() {
-            self.end = self.source.contents.len();
+        let contents: &[u8] = self.source.contents.as_ref();
+        let len = contents.len();
+        if self.current >= len {
+            self.end = len;
             return -1;
         }
-        let cp_len = strings::wtf8_byte_sequence_length_with_invalid(
-            self.source.contents[self.current],
-        );
-        let slice: &[u8] = if !(cp_len as usize + self.current > self.source.contents.len()) {
-            &self.source.contents[self.current..cp_len as usize + self.current]
-        } else {
-            b""
-        };
-
-        let code_point: CodePoint = match slice.len() {
-            0 => -1,
-            1 => slice[0] as CodePoint,
-            _ => {
-                // SAFETY: we read at most cp_len (≤4) bytes; Zig indexes ptr[0..4].
-                // TODO(port): the Zig code reads `slice.ptr[0..4]` which may read past
-                // `slice.len`. Phase B: ensure `decode_wtf8_rune_t_multibyte` only reads
-                // `len` bytes from the pointer.
-                let mut quad = [0u8; 4];
-                quad[..slice.len()].copy_from_slice(slice);
-                strings::decode_wtf8_rune_t_multibyte(
-                    &quad,
-                    u8::try_from(slice.len()).expect("int cast"),
-                    strings::UNICODE_REPLACEMENT as CodePoint,
-                )
-            }
-        };
+        // SAFETY: `self.current < len` was checked immediately above.
+        let first = unsafe { *contents.get_unchecked(self.current) };
 
         self.end = self.current;
 
+        // ASCII fast path (Zig elides this via the per-byte ptr[current] +
+        // 1-arm switch; here we lift it explicitly so the multibyte branch
+        // is out of the per-byte hot loop entirely).
+        if first < 0x80 {
+            self.current += 1;
+            return first as CodePoint;
+        }
+
+        let cp_len = strings::wtf8_byte_sequence_length_with_invalid(first) as usize;
+        // SAFETY: `self.current < len` (checked above) and `cp_len ∈ 1..=4`, so the
+        // slice start is in-bounds; the end is clamped to `len` so the resulting
+        // slice never exceeds `contents`. Matches Zig's `it.source.contents.ptr[...]`.
+        let avail = len - self.current;
+        let take = cp_len.min(avail);
+        let slice = unsafe { contents.get_unchecked(self.current..self.current + take) };
+
+        let code_point: CodePoint = if take < 2 {
+            // truncated multibyte at EOF
+            -1
+        } else {
+            // SAFETY: `take` ∈ 2..=4 (cp_len ≤ 4, take ≥ 2 here) and `slice.len() == take`,
+            // so reading the first `take` bytes is in-bounds. `decode_wtf8_rune_t_multibyte`
+            // only dereferences `p[0..len]`; pad bytes are never read.
+            let mut quad = [0u8; 4];
+            unsafe {
+                core::ptr::copy_nonoverlapping(slice.as_ptr(), quad.as_mut_ptr(), take);
+            }
+            strings::decode_wtf8_rune_t_multibyte(
+                &quad,
+                take as u8,
+                strings::UNICODE_REPLACEMENT as CodePoint,
+            )
+        };
+
         self.current += if code_point != strings::UNICODE_REPLACEMENT as CodePoint {
-            cp_len as usize
+            cp_len
         } else {
             1
         };
@@ -1354,9 +1362,7 @@ lexer_impl_header! {
                     self.step();
                     while self.code_point != 0x7D {
                         match self.code_point {
-                            c if (0x30..=0x39).contains(&c)
-                                || (0x61..=0x66).contains(&c)
-                                || (0x41..=0x46).contains(&c) =>
+                            0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46 =>
                             {
                                 self.step();
                             }
@@ -1370,9 +1376,7 @@ lexer_impl_header! {
                     // comptime var j: usize = 0;
                     for _ in 0..4 {
                         match self.code_point {
-                            c if (0x30..=0x39).contains(&c)
-                                || (0x61..=0x66).contains(&c)
-                                || (0x41..=0x46).contains(&c) =>
+                            0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46 =>
                             {
                                 self.step();
                             }
@@ -1482,12 +1486,12 @@ lexer_impl_header! {
 
     pub fn maybe_expand_equals(&mut self) -> Result<(), Error> {
         match self.code_point {
-            c if c == 0x3E => {
+            0x3E => {
                 // "=" + ">" = "=>"
                 self.token = T::TEqualsGreaterThan;
                 self.step();
             }
-            c if c == 0x3D => {
+            0x3D => {
                 // "=" + "=" = "=="
                 self.token = T::TEqualsEquals;
                 self.step();
@@ -1594,7 +1598,7 @@ lexer_impl_header! {
                     self.token = T::TEndOfFile;
                 }
 
-                c if c == 0x23 => {
+                0x23 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Private identifiers are not allowed in JSON",
@@ -1609,10 +1613,7 @@ lexer_impl_header! {
                         'hashbang: loop {
                             self.step();
                             match self.code_point {
-                                c if c == 0x0D
-                                    || c == 0x0A
-                                    || c == 0x2028
-                                    || c == 0x2029 =>
+                                0x0D | 0x0A | 0x2028 | 0x2029 =>
                                 {
                                     break 'hashbang;
                                 }
@@ -1653,10 +1654,7 @@ lexer_impl_header! {
                         break;
                     }
                 }
-                c if c == 0x0D
-                    || c == 0x0A
-                    || c == 0x2028
-                    || c == 0x2029 =>
+                0x0D | 0x0A | 0x2028 | 0x2029 =>
                 {
                     self.has_newline_before = true;
 
@@ -1701,43 +1699,43 @@ lexer_impl_header! {
                     self.step();
                     continue;
                 }
-                c if c == 0x09 || c == 0x20 => {
+                0x09 | 0x20 => {
                     self.step();
                     continue;
                 }
-                c if c == 0x28 => {
+                0x28 => {
                     self.step();
                     self.token = T::TOpenParen;
                 }
-                c if c == 0x29 => {
+                0x29 => {
                     self.step();
                     self.token = T::TCloseParen;
                 }
-                c if c == 0x5B => {
+                0x5B => {
                     self.step();
                     self.token = T::TOpenBracket;
                 }
-                c if c == 0x5D => {
+                0x5D => {
                     self.step();
                     self.token = T::TCloseBracket;
                 }
-                c if c == 0x7B => {
+                0x7B => {
                     self.step();
                     self.token = T::TOpenBrace;
                 }
-                c if c == 0x7D => {
+                0x7D => {
                     self.step();
                     self.token = T::TCloseBrace;
                 }
-                c if c == 0x2C => {
+                0x2C => {
                     self.step();
                     self.token = T::TComma;
                 }
-                c if c == 0x3A => {
+                0x3A => {
                     self.step();
                     self.token = T::TColon;
                 }
-                c if c == 0x3B => {
+                0x3B => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Semicolons are not allowed in JSON",
@@ -1746,7 +1744,7 @@ lexer_impl_header! {
                     self.step();
                     self.token = T::TSemicolon;
                 }
-                c if c == 0x40 => {
+                0x40 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Decorators are not allowed in JSON",
@@ -1755,7 +1753,7 @@ lexer_impl_header! {
                     self.step();
                     self.token = T::TAt;
                 }
-                c if c == 0x7E => {
+                0x7E => {
                     if IS_JSON {
                         return self
                             .add_unsupported_syntax_error(b"~ is not allowed in JSON");
@@ -1763,14 +1761,14 @@ lexer_impl_header! {
                     self.step();
                     self.token = T::TTilde;
                 }
-                c if c == 0x3F => {
+                0x3F => {
                     // '?' or '?.' or '??' or '??='
                     self.step();
                     match self.code_point {
-                        c if c == 0x3F => {
+                        0x3F => {
                             self.step();
                             match self.code_point {
-                                c if c == 0x3D => {
+                                0x3D => {
                                     self.step();
                                     self.token = T::TQuestionQuestionEquals;
                                 }
@@ -1780,7 +1778,7 @@ lexer_impl_header! {
                             }
                         }
 
-                        c if c == 0x2E => {
+                        0x2E => {
                             self.token = T::TQuestion;
                             let current = self.current;
                             let contents = &self.source.contents;
@@ -1799,7 +1797,7 @@ lexer_impl_header! {
                         }
                     }
                 }
-                c if c == 0x25 => {
+                0x25 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1809,7 +1807,7 @@ lexer_impl_header! {
                     // '%' or '%='
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TPercentEquals;
                         }
@@ -1819,7 +1817,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x26 => {
+                0x26 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1829,14 +1827,14 @@ lexer_impl_header! {
                     // '&' or '&=' or '&&' or '&&='
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TAmpersandEquals;
                         }
-                        c if c == 0x26 => {
+                        0x26 => {
                             self.step();
                             match self.code_point {
-                                c if c == 0x3D => {
+                                0x3D => {
                                     self.step();
                                     self.token = T::TAmpersandAmpersandEquals;
                                 }
@@ -1851,7 +1849,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x7C => {
+                0x7C => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1861,14 +1859,14 @@ lexer_impl_header! {
                     // '|' or '|=' or '||' or '||='
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TBarEquals;
                         }
-                        c if c == 0x7C => {
+                        0x7C => {
                             self.step();
                             match self.code_point {
-                                c if c == 0x3D => {
+                                0x3D => {
                                     self.step();
                                     self.token = T::TBarBarEquals;
                                 }
@@ -1883,7 +1881,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x5E => {
+                0x5E => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1893,7 +1891,7 @@ lexer_impl_header! {
                     // '^' or '^='
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TCaretEquals;
                         }
@@ -1903,7 +1901,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x2B => {
+                0x2B => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -1913,11 +1911,11 @@ lexer_impl_header! {
                     // '+' or '+=' or '++'
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TPlusEquals;
                         }
-                        c if c == 0x2B => {
+                        0x2B => {
                             self.step();
                             self.token = T::TPlusPlus;
                         }
@@ -1927,11 +1925,11 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x2D => {
+                0x2D => {
                     // '+' or '+=' or '++'
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             if IS_JSON {
                                 return self.add_unsupported_syntax_error(
                                     b"Operators are not allowed in JSON",
@@ -1940,7 +1938,7 @@ lexer_impl_header! {
                             self.step();
                             self.token = T::TMinusEquals;
                         }
-                        c if c == 0x2D => {
+                        0x2D => {
                             if IS_JSON {
                                 return self.add_unsupported_syntax_error(
                                     b"Operators are not allowed in JSON",
@@ -1960,10 +1958,7 @@ lexer_impl_header! {
 
                                 'single_line_html_close_comment: loop {
                                     match self.code_point {
-                                        c if c == 0x0D
-                                            || c == 0x0A
-                                            || c == 0x2028
-                                            || c == 0x2029 =>
+                                        0x0D | 0x0A | 0x2028 | 0x2029 =>
                                         {
                                             break 'single_line_html_close_comment;
                                         }
@@ -1985,18 +1980,18 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x2A => {
+                0x2A => {
                     // '*' or '*=' or '**' or '**='
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TAsteriskEquals;
                         }
-                        c if c == 0x2A => {
+                        0x2A => {
                             self.step();
                             match self.code_point {
-                                c if c == 0x3D => {
+                                0x3D => {
                                     self.step();
                                     self.token = T::TAsteriskAsteriskEquals;
                                 }
@@ -2010,16 +2005,16 @@ lexer_impl_header! {
                         }
                     }
                 }
-                c if c == 0x2F => {
+                0x2F => {
                     // '/' or '/=' or '//' or '/* ... */'
                     self.step();
 
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TSlashEquals;
                         }
-                        c if c == 0x2F => {
+                        0x2F => {
                             self.scan_single_line_comment();
                             if IS_JSON {
                                 if !ALLOW_COMMENTS {
@@ -2034,22 +2029,19 @@ lexer_impl_header! {
                             self.scan_comment_text(false);
                             continue;
                         }
-                        c if c == 0x2A => {
+                        0x2A => {
                             self.step();
 
                             'multi_line_comment: loop {
                                 match self.code_point {
-                                    c if c == 0x2A => {
+                                    0x2A => {
                                         self.step();
                                         if self.code_point == 0x2F {
                                             self.step();
                                             break 'multi_line_comment;
                                         }
                                     }
-                                    c if c == 0x0D
-                                        || c == 0x0A
-                                        || c == 0x2028
-                                        || c == 0x2029 =>
+                                    0x0D | 0x0A | 0x2028 | 0x2029 =>
                                     {
                                         self.step();
                                         self.has_newline_before = true;
@@ -2108,7 +2100,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x3D => {
+                0x3D => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -2118,14 +2110,14 @@ lexer_impl_header! {
                     // '=' or '=>' or '==' or '==='
                     self.step();
                     match self.code_point {
-                        c if c == 0x3E => {
+                        0x3E => {
                             self.step();
                             self.token = T::TEqualsGreaterThan;
                         }
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             match self.code_point {
-                                c if c == 0x3D => {
+                                0x3D => {
                                     self.step();
                                     self.token = T::TEqualsEqualsEquals;
                                 }
@@ -2140,7 +2132,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x3C => {
+                0x3C => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -2150,14 +2142,14 @@ lexer_impl_header! {
                     // '<' or '<<' or '<=' or '<<=' or '<!--'
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TLessThanEquals;
                         }
-                        c if c == 0x3C => {
+                        0x3C => {
                             self.step();
                             match self.code_point {
-                                c if c == 0x3D => {
+                                0x3D => {
                                     self.step();
                                     self.token = T::TLessThanLessThanEquals;
                                 }
@@ -2167,7 +2159,7 @@ lexer_impl_header! {
                             }
                         }
                         // Handle legacy HTML-style comments
-                        c if c == 0x21 => {
+                        0x21 => {
                             if self.peek("--".len()) == b"--" {
                                 self.add_unsupported_syntax_error(
                                     b"Legacy HTML comments not implemented yet!",
@@ -2183,7 +2175,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x3E => {
+                0x3E => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -2194,21 +2186,21 @@ lexer_impl_header! {
                     self.step();
 
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             self.token = T::TGreaterThanEquals;
                         }
-                        c if c == 0x3E => {
+                        0x3E => {
                             self.step();
                             match self.code_point {
-                                c if c == 0x3D => {
+                                0x3D => {
                                     self.step();
                                     self.token = T::TGreaterThanGreaterThanEquals;
                                 }
-                                c if c == 0x3E => {
+                                0x3E => {
                                     self.step();
                                     match self.code_point {
-                                        c if c == 0x3D => {
+                                        0x3D => {
                                             self.step();
                                             self.token = T::TGreaterThanGreaterThanGreaterThanEquals;
                                         }
@@ -2228,7 +2220,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x21 => {
+                0x21 => {
                     if IS_JSON {
                         return self.add_unsupported_syntax_error(
                             b"Operators are not allowed in JSON",
@@ -2238,10 +2230,10 @@ lexer_impl_header! {
                     // '!' or '!=' or '!=='
                     self.step();
                     match self.code_point {
-                        c if c == 0x3D => {
+                        0x3D => {
                             self.step();
                             match self.code_point {
-                                c if c == 0x3D => {
+                                0x3D => {
                                     self.step();
                                     self.token = T::TExclamationEqualsEquals;
                                 }
@@ -2256,20 +2248,17 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x27 => {
+                0x27 => {
                     self.parse_string_literal::<0x27>()?;
                 }
-                c if c == 0x22 => {
+                0x22 => {
                     self.parse_string_literal::<0x22>()?;
                 }
-                c if c == 0x60 => {
+                0x60 => {
                     self.parse_string_literal::<0x60>()?;
                 }
 
-                c if c == 0x5F
-                    || c == 0x24
-                    || (0x61..=0x7A).contains(&c)
-                    || (0x41..=0x5A).contains(&c) =>
+                0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A =>
                 {
                     let advance = latin1_identifier_continue_length(
                         &self.source.contents[self.current..],
@@ -2304,7 +2293,7 @@ lexer_impl_header! {
                     }
                 }
 
-                c if c == 0x5C => {
+                0x5C => {
                     if IS_JSON && IGNORE_LEADING_ESCAPE_SEQUENCES {
                         if self.start == 0
                             || self.current == self.source.contents.len() - 1
@@ -2321,7 +2310,7 @@ lexer_impl_header! {
                     self.token = scan_result.token;
                 }
 
-                c if c == 0x2E || (0x30..=0x39).contains(&c) => {
+                0x2E | 0x30..=0x39 => {
                     self.parse_numeric_literal_or_dot()?;
                 }
 
@@ -2527,10 +2516,7 @@ lexer_impl_header! {
                 self.step(); // Consume the interesting char, sets code_point, advances current
 
                 match self.code_point {
-                    c if c == 0x0D
-                        || c == 0x0A
-                        || c == 0x2028
-                        || c == 0x2029 =>
+                    0x0D | 0x0A | 0x2028 | 0x2029 =>
                     {
                         // Is it a line terminator?
                         // Found the end of the comment line.
@@ -2540,7 +2526,7 @@ lexer_impl_header! {
                         return;
                     } // EOF? Stop.
 
-                    c if c == 0x23 || c == 0x40 => {
+                    0x23 | 0x40 => {
                         if !IS_JSON {
                             let pragma_trigger_pos = self.end; // Position OF #/@
                             // Use remaining() which starts *after* the consumed #/@
@@ -2837,7 +2823,7 @@ lexer_impl_header! {
         self.regex_flags_start = None;
         loop {
             match self.code_point {
-                c if c == 0x2F => {
+                0x2F => {
                     self.step();
 
                     let mut has_set_flags_start = false;
@@ -2850,14 +2836,7 @@ lexer_impl_header! {
                     let _ = FLAG_CHARACTERS;
                     while is_identifier_continue(self.code_point) {
                         match self.code_point {
-                            c if c == 0x64
-                                || c == 0x67
-                                || c == 0x69
-                                || c == 0x6D
-                                || c == 0x73
-                                || c == 0x75
-                                || c == 0x79
-                                || c == 0x76 =>
+                            0x64 | 0x67 | 0x69 | 0x6D | 0x73 | 0x75 | 0x79 | 0x76 =>
                             {
                                 if !has_set_flags_start {
                                     self.regex_flags_start =
@@ -2900,7 +2879,7 @@ lexer_impl_header! {
                     }
                     return Ok(());
                 }
-                c if c == 0x5B => {
+                0x5B => {
                     self.step();
                     while self.code_point != 0x5D {
                         self.scan_reg_exp_validate_and_step()?;
@@ -2937,55 +2916,49 @@ lexer_impl_header! {
                 -1 => {
                     self.token = T::TEndOfFile;
                 }
-                c if c == 0x0D
-                    || c == 0x0A
-                    || c == 0x2028
-                    || c == 0x2029 =>
+                0x0D | 0x0A | 0x2028 | 0x2029 =>
                 {
                     self.step();
                     self.has_newline_before = true;
                     continue;
                 }
-                c if c == 0x09 || c == 0x20 => {
+                0x09 | 0x20 => {
                     self.step();
                     continue;
                 }
-                c if c == 0x2E => {
+                0x2E => {
                     self.step();
                     self.token = T::TDot;
                 }
-                c if c == 0x3D => {
+                0x3D => {
                     self.step();
                     self.token = T::TEquals;
                 }
-                c if c == 0x7B => {
+                0x7B => {
                     self.step();
                     self.token = T::TOpenBrace;
                 }
-                c if c == 0x7D => {
+                0x7D => {
                     self.step();
                     self.token = T::TCloseBrace;
                 }
-                c if c == 0x3C => {
+                0x3C => {
                     self.step();
                     self.token = T::TLessThan;
                 }
-                c if c == 0x3E => {
+                0x3E => {
                     self.step();
                     self.token = T::TGreaterThan;
                 }
-                c if c == 0x2F => {
+                0x2F => {
                     // '/' or '//' or '/* ... */'
                     self.step();
                     match self.code_point {
-                        c if c == 0x2F => {
+                        0x2F => {
                             'single_line_comment: loop {
                                 self.step();
                                 match self.code_point {
-                                    c if c == 0x0D
-                                        || c == 0x0A
-                                        || c == 0x2028
-                                        || c == 0x2029 =>
+                                    0x0D | 0x0A | 0x2028 | 0x2029 =>
                                     {
                                         break 'single_line_comment;
                                     }
@@ -2997,21 +2970,18 @@ lexer_impl_header! {
                             }
                             continue;
                         }
-                        c if c == 0x2A => {
+                        0x2A => {
                             self.step();
                             'multi_line_comment: loop {
                                 match self.code_point {
-                                    c if c == 0x2A => {
+                                    0x2A => {
                                         self.step();
                                         if self.code_point == 0x2F {
                                             self.step();
                                             break 'multi_line_comment;
                                         }
                                     }
-                                    c if c == 0x0D
-                                        || c == 0x0A
-                                        || c == 0x2028
-                                        || c == 0x2029 =>
+                                    0x0D | 0x0A | 0x2028 | 0x2029 =>
                                     {
                                         self.step();
                                         self.has_newline_before = true;
@@ -3037,11 +3007,11 @@ lexer_impl_header! {
                         }
                     }
                 }
-                c if c == 0x27 => {
+                0x27 => {
                     self.step();
                     self.parse_jsx_string_literal::<b'\''>()?;
                 }
-                c if c == 0x22 => {
+                0x22 => {
                     self.step();
                     self.parse_jsx_string_literal::<b'"'>()?;
                 }
@@ -3109,12 +3079,12 @@ lexer_impl_header! {
                 -1 => {
                     self.syntax_error()?;
                 }
-                c if c == 0x26 => {
+                0x26 => {
                     needs_decode = true;
                     self.step();
                 }
 
-                c if c == 0x5C => {
+                0x5C => {
                     backslash = Range {
                         loc: Loc {
                             start: i32::try_from(self.end).expect("int cast"),
@@ -3221,11 +3191,11 @@ lexer_impl_header! {
                 -1 => {
                     self.token = T::TEndOfFile;
                 }
-                c if c == 0x7B => {
+                0x7B => {
                     self.step();
                     self.token = T::TOpenBrace;
                 }
-                c if c == 0x3C => {
+                0x3C => {
                     self.step();
                     self.token = T::TLessThan;
                 }
@@ -3237,16 +3207,12 @@ lexer_impl_header! {
                             -1 => {
                                 self.syntax_error()?;
                             }
-                            c if c == 0x26
-                                || c == 0x0D
-                                || c == 0x0A
-                                || c == 0x2028
-                                || c == 0x2029 =>
+                            0x26 | 0x0D | 0x0A | 0x2028 | 0x2029 =>
                             {
                                 needs_fixing = true;
                                 self.step();
                             }
-                            c if c == 0x7B || c == 0x3C => {
+                            0x7B | 0x3C => {
                                 break 'string_literal;
                             }
                             _ => {
@@ -3322,10 +3288,7 @@ lexer_impl_header! {
 
         while iterator.next(&mut cursor) {
             match cursor.c {
-                c if c == 0x0D
-                    || c == 0x0A
-                    || c == 0x2028
-                    || c == 0x2029 =>
+                0x0D | 0x0A | 0x2028 | 0x2029 =>
                 {
                     if first_non_whitespace.is_some()
                         && after_last_non_whitespace.is_some()
@@ -3346,7 +3309,7 @@ lexer_impl_header! {
                     // Reset for the next line
                     first_non_whitespace = None;
                 }
-                c if c == 0x09 || c == 0x20 => {}
+                0x09 | 0x20 => {}
                 _ => {
                     // Check for unusual whitespace characters
                     if !is_whitespace(cursor.c) {
@@ -3497,10 +3460,7 @@ lexer_impl_header! {
         }
 
         match self.code_point {
-            c if c == 0x0D
-                || c == 0x0A
-                || c == 0x2028
-                || c == 0x2029 =>
+            0x0D | 0x0A | 0x2028 | 0x2029 =>
             {
                 // Newlines aren't allowed in regular expressions
                 self.syntax_error()?;
@@ -3628,16 +3588,16 @@ lexer_impl_header! {
         // Check for binary, octal, or hexadecimal literal;
         if first == 0x30 {
             match self.code_point {
-                c if c == 0x62 || c == 0x42 => {
+                0x62 | 0x42 => {
                     base = 2.0;
                 }
-                c if c == 0x6F || c == 0x4F => {
+                0x6F | 0x4F => {
                     base = 8.0;
                 }
-                c if c == 0x78 || c == 0x58 => {
+                0x78 | 0x58 => {
                     base = 16.0;
                 }
-                c if (0x30..=0x37).contains(&c) || c == 0x5F => {
+                0x30..=0x37 | 0x5F => {
                     base = 8.0;
                     self.is_legacy_octal_literal = true;
                 }
@@ -3656,7 +3616,7 @@ lexer_impl_header! {
 
             'integer_literal: loop {
                 match self.code_point {
-                    c if c == 0x5F => {
+                    0x5F => {
                         // Cannot have multiple underscores in a row;
                         if last_underscore_end > 0 && self.end == last_underscore_end + 1
                         {
@@ -3672,19 +3632,19 @@ lexer_impl_header! {
                         underscore_count += 1;
                     }
 
-                    c if c == 0x30 || c == 0x31 => {
+                    0x30 | 0x31 => {
                         self.number = self.number * base as f64
                             + float64(self.code_point - 0x30);
                     }
 
-                    c if (0x32..=0x37).contains(&c) => {
+                    0x32..=0x37 => {
                         if base == 2.0 {
                             self.syntax_error()?;
                         }
                         self.number = self.number * base as f64
                             + float64(self.code_point - 0x30);
                     }
-                    c if c == 0x38 || c == 0x39 => {
+                    0x38 | 0x39 => {
                         if self.is_legacy_octal_literal {
                             is_invalid_legacy_octal_literal = true;
                         } else if base < 10.0 {
@@ -3693,14 +3653,14 @@ lexer_impl_header! {
                         self.number = self.number * base as f64
                             + float64(self.code_point - 0x30);
                     }
-                    c if (0x41..=0x46).contains(&c) => {
+                    0x41..=0x46 => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
                         self.number = self.number * base as f64
                             + float64(self.code_point + 10 - 0x41);
                     }
-                    c if (0x61..=0x66).contains(&c) => {
+                    0x61..=0x66 => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
@@ -4352,14 +4312,14 @@ struct InvalidEscapeSequenceFormatter {
 impl fmt::Display for InvalidEscapeSequenceFormatter {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.code_point {
-            c if c == 0x22 => {
+            0x22 => {
                 writer.write_str("Unexpected escaped double quote '\"'")
             }
-            c if c == 0x27 => {
+            0x27 => {
                 writer.write_str("Unexpected escaped single quote \"'\"")
             }
-            c if c == 0x60 => writer.write_str("Unexpected escaped backtick '`'"),
-            c if c == 0x5C => {
+            0x60 => writer.write_str("Unexpected escaped backtick '`'"),
+            0x5C => {
                 writer.write_str("Unexpected escaped backslash '\\'")
             }
             _ => writer.write_str("Unexpected escape sequence"),

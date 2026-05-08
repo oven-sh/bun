@@ -311,15 +311,31 @@ pub mod unicode {
 
     impl<'a> NewCodePointIterator<'a> {
         /// Zig-style cursor advance. Returns `false` at end.
+        #[inline]
         pub fn next(&self, cursor: &mut Cursor) -> bool {
+            let bytes = self.bytes;
             let pos = cursor.i as usize + cursor.width as usize;
-            if pos >= self.bytes.len() { return false; }
-            let len = wtf8_byte_sequence_length(self.bytes[pos]);
-            let mut buf = [0u8; 4];
-            let avail = (self.bytes.len() - pos).min(len as usize).min(4);
-            buf[..avail].copy_from_slice(&self.bytes[pos..pos + avail]);
-            let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
+            if pos >= bytes.len() { return false; }
+            // SAFETY: `pos < bytes.len()` was checked immediately above.
+            let first = unsafe { *bytes.get_unchecked(pos) };
             cursor.i = pos as u32;
+            // ASCII fast path — the overwhelmingly common case for JS source
+            // (identifiers, escape-free strings). Matches Zig's per-byte ptr
+            // indexing + 1-arm switch in `decodeWTF8RuneT`.
+            if first < 0x80 {
+                cursor.c = first as CodePoint;
+                cursor.width = 1;
+                return true;
+            }
+            let len = wtf8_byte_sequence_length(first);
+            // SAFETY: `pos < bytes.len()` and `take ∈ 1..=4` clamped to the
+            // remaining length, so `pos..pos+take` is in-bounds.
+            let take = (len as usize).min(bytes.len() - pos);
+            let mut buf = [0u8; 4];
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr().add(pos), buf.as_mut_ptr(), take);
+            }
+            let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
             if cp == -1 {
                 cursor.c = super::UNICODE_REPLACEMENT as CodePoint;
                 cursor.width = 1;

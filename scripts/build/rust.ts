@@ -190,15 +190,28 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // idempotent and a fast no-op when the component is already there. Same
   // shape as `dep_cargo_cross` in source.ts — see the comment there.
   //
+  // The `||` fallback handles the worse case: a stale agent has a *partial*
+  // pinned-toolchain dir (rustc/cargo present, no `rust-std`, and no
+  // `lib/rustlib/multirust-channel-manifest.toml`), so `rustup target add`
+  // fails with `Missing manifest in toolchain '<channel>-<host>'`.
+  // `rustup toolchain install --force` re-fetches everything (manifest
+  // included) — a proper repair. It's only reached when `target add` errors,
+  // so the happy path stays the ~50ms no-op. Shell precedence makes
+  // `A || B && C` parse as `(A || B) && C` in both `sh` and `cmd.exe`.
+  //
   // Only registered when `cfg.cargo` is a rustup proxy (otherwise there's no
   // `rustup` to call and target install is the user's problem). Tier 3 targets
   // (no prebuilt std) also skip this rule; emitRust() routes both through
   // `rust_build`, with `-Zbuild-std` for Tier 3.
   const rustup = findRustup(cfg);
   if (rustup !== undefined) {
+    const repair =
+      cfg.rustToolchain !== undefined
+        ? ` || ${stream} $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --profile minimal --component rust-src --target $rust_target`
+        : "";
     n.rule("rust_build_cross", {
       command:
-        `${stream} $env ${q(rustup)} target add $rust_target && ` +
+        `${stream} $env ${q(rustup)} target add $rust_target${repair} && ` +
         `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
       description: "cargo bun_bin → $label ($rust_target)",
       pool: "console",

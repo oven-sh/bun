@@ -133,43 +133,17 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
     const NAME: &'static str = "InternalSourceMap";
 }
 
+/// Thin forwarder to the leaf-crate state in
+/// `bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo` so the path
+/// recorded here is the same one `run_command` prints.
 pub mod missing_source_map_note_info {
-    use super::*;
+    pub use bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::{
+        print, seen_invalid, set_seen_invalid,
+    };
 
-    // Zig used plain `pub var`; all access is from the single JS thread's
-    // error-reporting path, so `RacyCell` for the buffer + `AtomicBool` for the
-    // flag is sufficient (per docs/PORTING.md §Global mutable state).
-    pub static STORAGE: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-    pub static PATH: bun_core::RacyCell<Option<&'static [u8]>> = bun_core::RacyCell::new(None);
-    pub static SEEN_INVALID: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(false);
-
-    /// Record `path` into the static note buffer (caller must be on the JS thread).
-    ///
-    /// # Safety
-    /// JS-thread-only; no concurrent access to `STORAGE`/`PATH`.
-    pub(super) unsafe fn record(path: &[u8]) {
-        let storage = unsafe { &mut (&mut *STORAGE.get())[..path.len()] };
-        storage.copy_from_slice(path);
-        unsafe {
-            PATH.write(Some(core::slice::from_raw_parts(storage.as_ptr(), path.len())));
-        }
-    }
-
-    pub fn print() {
-        if SEEN_INVALID.load(core::sync::atomic::Ordering::Relaxed) {
-            return;
-        }
-        // SAFETY: single-threaded access from the JS thread error-reporting path.
-        if let Some(note) = unsafe { PATH.read() } {
-            bun_core::note!(
-                "missing sourcemaps for {}",
-                bstr::BStr::new(note)
-            );
-            bun_core::note!(
-                "consider bundling with '--sourcemap' to get unminified traces"
-            );
-        }
+    #[inline]
+    pub(super) fn record(path: &[u8]) {
+        bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::set_path(path);
     }
 }
 
@@ -481,8 +455,7 @@ impl SavedSourceMap {
             self.map_mut().remove(&h);
 
             // Store path for a user note.
-            // SAFETY: single-threaded JS-thread access.
-            unsafe { missing_source_map_note_info::record(path) };
+            missing_source_map_note_info::record(path);
             self.unlock();
             return SourceMap::ParseUrl::default();
         } else if tag == Value::case::<BakeSourceProvider>() {
@@ -509,8 +482,7 @@ impl SavedSourceMap {
             self.map_mut().remove(&h);
 
             // Store path for a user note.
-            // SAFETY: single-threaded JS-thread access.
-            unsafe { missing_source_map_note_info::record(path) };
+            missing_source_map_note_info::record(path);
             self.unlock();
             return SourceMap::ParseUrl::default();
         } else if tag == Value::case::<DevServerSourceProvider>() {
@@ -537,8 +509,7 @@ impl SavedSourceMap {
             self.map_mut().remove(&h);
 
             // Store path for a user note.
-            // SAFETY: single-threaded JS-thread access.
-            unsafe { missing_source_map_note_info::record(path) };
+            missing_source_map_note_info::record(path);
             self.unlock();
             return SourceMap::ParseUrl::default();
         } else {

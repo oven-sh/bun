@@ -166,9 +166,10 @@ pub fn dirname_simple(p: &[u8]) -> &[u8] {
     p.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
         .map(|i| &p[..i]).unwrap_or(b"")
 }
+/// Port of `std.fs.path.basename` — strips trailing separators before slicing
+/// the final component (so `basename("/a/b/")` is `"b"`, not `""`).
 pub fn basename(p: &[u8]) -> &[u8] {
-    p.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
-        .map(|i| &p[i+1..]).unwrap_or(p)
+    if cfg!(windows) { basename_windows(p) } else { basename_posix(p) }
 }
 
 /// Port of `std.fs.path.basenamePosix` — strips trailing `/` then returns the
@@ -209,16 +210,11 @@ pub fn basename_windows(p: &[u8]) -> &[u8] {
     &p[start..end]
 }
 
-#[inline]
-fn std_basename(p: &[u8]) -> &[u8] {
-    if cfg!(windows) { basename_windows(p) } else { basename_posix(p) }
-}
-
 /// Port of `std.fs.path.extension` — returns the file extension of `p`
 /// **including** the leading dot, or `b""` if none. Dotfiles (`.gitignore`)
 /// and basenames whose only `.` is at index 0 report no extension.
 pub fn extension(p: &[u8]) -> &[u8] {
-    let filename = std_basename(p);
+    let filename = basename(p);
     match filename.iter().rposition(|&c| c == b'.') {
         Some(dot) if dot > 0 => &filename[dot..],
         _ => &p[p.len()..],
@@ -229,7 +225,7 @@ pub fn extension(p: &[u8]) -> &[u8] {
 /// extension (as defined by [`extension`]) stripped. Dotfiles keep their
 /// leading dot (`.gitignore` → `.gitignore`).
 pub fn stem(p: &[u8]) -> &[u8] {
-    let filename = std_basename(p);
+    let filename = basename(p);
     match filename.iter().rposition(|&c| c == b'.') {
         Some(0) => p,
         Some(dot) => &filename[..dot],

@@ -2960,8 +2960,7 @@ fn edit_root_package_json(
                                 // only produce this error only when we need to get the workspace version
                                 Output::err_generic(
                                     "Failed to resolve workspace version for \"{}\" in `{}`. Run <cyan>`bun install`<r> and try again.",
-                                    format_args!(
-                                        "{} {}",
+                                    (
                                         bstr::BStr::new(dependency_name),
                                         bstr::BStr::new(dependency_group),
                                     ),
@@ -2986,7 +2985,7 @@ fn edit_root_package_json(
                             None => {
                                 Output::err_generic(
                                     "Failed to resolve catalog version for \"{}\" in `{}` (catalogs require a lockfile).",
-                                    format_args!("{} {}", bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
+                                    (bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
                                 );
                                 Global::crash();
                             }
@@ -3012,7 +3011,7 @@ fn edit_root_package_json(
                         let Some(catalog) = catalog else {
                             Output::err_generic(
                                 "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog).",
-                                format_args!("{} {}", bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
+                                (bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
                             );
                             Global::crash();
                         };
@@ -3028,7 +3027,7 @@ fn edit_root_package_json(
                         else {
                             Output::err_generic(
                                 "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency).",
-                                format_args!("{} {}", bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
+                                (bstr::BStr::new(dep_name_str), bstr::BStr::new(dependency_group)),
                             );
                             Global::crash();
                         };

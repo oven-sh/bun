@@ -672,7 +672,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         &mut self,
         work_item: WorkItem<A>,
     ) -> Result<Maybe<()>, Error> {
-        log!("transition => {}", bstr::BStr::new(&work_item.path));
+        // For SENTINEL=true, `MatchedPath`-derived WorkItem paths carry a trailing
+        // NUL in their `.len()`; the logical path drops it (see `work_item_logical_path`).
+        let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
+        log!("transition => {}", bstr::BStr::new(work_item_path));
         // PORT NOTE: reshaped for borrowck — Zig set `iter_state = .{ .directory = .{...} }`
         // up front and then mutated `this.iter_state.directory.*` while also borrowing
         // `this.walker`. Build the Directory in a local and assign at the end.
@@ -685,18 +688,18 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 }
             }
             // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
-            if work_item.path.len() >= dir_path_buf.len() {
+            if work_item_path.len() >= dir_path_buf.len() {
                 if let Some(fd) = work_item.fd {
                     self.close_disallowing_cwd(fd);
                 }
                 return Ok(Err(
                     SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open)
-                        .with_path(&work_item.path),
+                        .with_path(work_item_path),
                 ));
             }
-            dir_path_buf[0..work_item.path.len()].copy_from_slice(&work_item.path);
-            dir_path_buf[work_item.path.len()] = 0;
-            work_item.path.len()
+            dir_path_buf[0..work_item_path.len()].copy_from_slice(work_item_path);
+            dir_path_buf[work_item_path.len()] = 0;
+            work_item_path.len()
         };
 
         let mut had_dot_dot = false;
@@ -935,10 +938,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             continue;
                         }
                         WorkItemKind::Symlink => {
-                            if work_item.path.len() >= MAX_PATH_BYTES {
+                            // For SENTINEL=true the joined symlink path carries a trailing
+                            // NUL in `.len()`; drop it (see `work_item_logical_path`) so the
+                            // NUL re-written at `[len]` below isn't left embedded in the path.
+                            let work_item_path: &[u8] =
+                                work_item_logical_path(&work_item.path);
+                            if work_item_path.len() >= MAX_PATH_BYTES {
                                 return Ok(Err(
                                     SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open)
-                                        .with_path(&work_item.path),
+                                        .with_path(work_item_path),
                                 ));
                             }
                             // PORT NOTE: reshaped for borrowck — Zig used `self.path_buf`
@@ -946,7 +954,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // `collapseDots`/`handleSysErrWithPath`. In Rust we split-borrow
                             // `path_buf` and `pattern_components` (disjoint fields) for the
                             // write+normalize, then drop the &mut and read via `self.walker`.
-                            let mut symlink_full_path_len = work_item.path.len();
+                            let mut symlink_full_path_len = work_item_path.len();
                             // PORT NOTE: reshaped for borrowck — entry_name is a sub-slice
                             // of symlink_full_path; capture range and re-slice later.
                             let entry_start = work_item.entry_start as usize;
@@ -955,9 +963,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let active: ComponentSet = {
                                 let walker = &mut *self.walker;
                                 let scratch_path_buf = &mut *walker.path_buf;
-                                scratch_path_buf[0..work_item.path.len()]
-                                    .copy_from_slice(&work_item.path);
-                                scratch_path_buf[work_item.path.len()] = 0;
+                                scratch_path_buf[0..work_item_path.len()]
+                                    .copy_from_slice(work_item_path);
+                                scratch_path_buf[work_item_path.len()] = 0;
 
                                 if work_item.active.count() == 1 {
                                     let single: u32 = u32::try_from(
@@ -2372,6 +2380,23 @@ fn dupe_matched<const SENTINEL: bool>(s: &[u8]) -> Box<[u8]> {
 #[inline]
 fn matched_as_slice<const SENTINEL: bool>(p: &[u8]) -> &[u8] {
     if SENTINEL && !p.is_empty() { &p[..p.len() - 1] } else { p }
+}
+
+/// The logical path stored in a [`WorkItem`], excluding any trailing NUL.
+///
+/// For `SENTINEL == true`, `MatchedPath` boxes produced by [`GlobWalker::join`]
+/// carry a trailing NUL inside their `.len()` — Zig models the same value as
+/// `[:0]const u8`, which coerces to a `[]const u8` whose `.len` *excludes* the
+/// NUL. Root `WorkItem`s (and `SENTINEL == false` walks) instead hold a plain
+/// path with no NUL. A real filesystem path can never contain (let alone end
+/// in) a NUL byte, so a single trailing NUL is unambiguously the sentinel; we
+/// strip it here to recover the logical length, mirroring the Zig coercion.
+/// Without this, the NUL would be copied into the directory-path buffer and end
+/// up *embedded* in every path joined onto it (e.g. `assets/*` matching as
+/// `assets\0/file-1`, which truncates to `assets` when used as a C string).
+#[inline]
+fn work_item_logical_path(path: &[u8]) -> &[u8] {
+    if path.last() == Some(&0) { &path[..path.len() - 1] } else { path }
 }
 
 // const stdJoin = if (!sentinel) std.fs.path.join else std.fs.path.joinZ;

@@ -3502,6 +3502,11 @@ impl VirtualMachine {
         // `parent_poll_ref` is held (see web_worker.rs file header).
         let parent = unsafe { &*worker.parent_vm() };
         vm_ref.standalone_module_graph = parent.standalone_module_graph;
+        // Spec VirtualMachine.zig:1465 `initWorker` — the worker's resolver also
+        // needs the standalone graph, otherwise embedded `/$bunfs/...` specifiers
+        // (e.g. a `new Worker("./worker.ts")` entry point inside a compiled
+        // executable) resolve against the real filesystem and fail.
+        vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
         vm_ref.hot_reload = parent.hot_reload;
         vm_ref.initial_script_execution_context_identifier =
             worker.execution_context_id() as i32;

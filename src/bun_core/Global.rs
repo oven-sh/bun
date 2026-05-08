@@ -164,8 +164,9 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
 
 /// Capture and dump the current call stack. Uses `std::backtrace` so T0
 /// callers (ThreadLock-panic, FD-debug) still get symbolicated frames without
-/// reaching up to `bun_crash_handler`. `limits.frame_count` is honoured by
-/// truncating the rendered frame lines; the rich llvm-symbolizer path lives in
+/// reaching up to `bun_crash_handler`. `limits` is accepted for signature
+/// parity with `bun_crash_handler::dump_current_stack_trace` but **ignored**
+/// (see body); the rich llvm-symbolizer / frame-filtered path lives in
 /// `bun_crash_handler` for crash reports specifically.
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
     // `std::backtrace` cannot seed capture from a return address, so the Zig

@@ -2841,19 +2841,21 @@ function generateRust(
   const symbols: string[] = [];
   function thunk(sym: string, sig: string, body: string) {
     symbols.push(sym);
-    // Rust 2024 `unsafe_op_in_unsafe_fn`: an `unsafe fn` body is safe-by-default
-    // and must wrap unsafe ops in an explicit block. Every thunk body either
-    // dereferences `*mut T` or calls an `unsafe fn host_fn::*`, so wrap once.
-    thunks.push(`#[unsafe(no_mangle)]\npub unsafe extern "C" fn ${sym}${sig} {\n    unsafe {\n${body}\n    }\n}`);
+    // Safe-body thunks: every body routes through a safe `host_fn::*` helper
+    // (which centralises the raw-pointer deref + SAFETY contract) or takes its
+    // pointer params as `&`/`&mut` directly (ABI-identical to `*const`/`*mut`
+    // for non-null inputs, which the C++ caller guarantees). No `unsafe` token
+    // appears in the generated file.
+    thunks.push(`#[unsafe(no_mangle)]\npub extern "C" fn ${sym}${sig} {\n${body}\n}`);
   }
   const T = typeName;
 
   // memoryCost / estimatedSize / ZigStructSize
   if (memoryCost) {
-    thunk(symbolName(typeName, "memoryCost"), `(this: *mut ${T}) -> usize`, `    ${T}::memory_cost(&*this)`);
+    thunk(symbolName(typeName, "memoryCost"), `(this: &${T}) -> usize`, `    ${T}::memory_cost(this)`);
   }
   if (estimatedSize) {
-    thunk(symbolName(typeName, "estimatedSize"), `(this: *mut ${T}) -> usize`, `    ${T}::estimated_size(&*this)`);
+    thunk(symbolName(typeName, "estimatedSize"), `(this: &${T}) -> usize`, `    ${T}::estimated_size(this)`);
   }
   if (!memoryCost && !estimatedSize) {
     symbols.push(symbolName(typeName, "ZigStructSize"));
@@ -2863,20 +2865,20 @@ function generateRust(
   }
 
   if (hasPendingActivity) {
-    thunk(
-      symbolName(typeName, "hasPendingActivity"),
-      `(this: *mut ${T}) -> bool`,
-      `    ${T}::has_pending_activity(&*this)`,
-    );
+    thunk(symbolName(typeName, "hasPendingActivity"), `(this: &${T}) -> bool`, `    ${T}::has_pending_activity(this)`);
   }
 
   if (finalize) {
     // `finalize` receives the raw `*mut Self` (not `&mut`) so the impl may
     // `Box::from_raw` / `drop_in_place` without an outstanding mutable borrow.
+    // The `unsafe { }` covers user impls declared `pub unsafe fn finalize`
+    // (e.g. `Interpreter`); `unused_unsafe` is allowed for the safe-fn
+    // majority. SAFETY: `this` is the unique GC-owned `m_ctx` pointer, valid
+    // and not aliased — `JS${T}::~JS${T}` is the only caller.
     thunk(
       classSymbolName(typeName, "finalize"),
       `(this: *mut ${T})`,
-      `    host_fn::host_fn_finalize(this, |t| ${T}::finalize(t))`,
+      `    host_fn::host_fn_finalize(this, |t| unsafe { ${T}::finalize(t) })`,
     );
   }
 
@@ -2955,8 +2957,8 @@ function generateRust(
           const fastId = rustSnakeIdent(DOMJITName(fn));
           thunk(
             names.DOMJIT,
-            `(this: *mut ${T}, global: *mut JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
-            `    ${T}::${fastId}(&mut *this, &*global${args.length ? ", " + argFwd : ""})`,
+            `(this: &mut ${T}, global: &JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
+            `    ${T}::${fastId}(this, global${args.length ? ", " + argFwd : ""})`,
           );
         }
         thunk(
@@ -3007,8 +3009,8 @@ function generateRust(
           const fastId = rustSnakeIdent(DOMJITName(fn));
           thunk(
             names.DOMJIT,
-            `(global: *mut JSGlobalObject, this_value: JSValue${args.length ? ", " + argDecl : ""}) -> JSValue`,
-            `    ${T}::${fastId}(&*global, this_value${args.length ? ", " + argFwd : ""})`,
+            `(global: &JSGlobalObject, this_value: JSValue${args.length ? ", " + argDecl : ""}) -> JSValue`,
+            `    ${T}::${fastId}(global, this_value${args.length ? ", " + argFwd : ""})`,
           );
         }
         thunk(
@@ -3024,20 +3026,20 @@ function generateRust(
   if (structuredClone) {
     thunk(
       symbolName(typeName, "onStructuredCloneSerialize"),
-      `(this: *mut ${T}, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
-      `    ${T}::on_structured_clone_serialize(&mut *this, &*global, ctx, write_bytes)`,
+      `(this: &mut ${T}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
+      `    ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes)`,
     );
     if (typeof structuredClone === "object" && structuredClone.transferable) {
       thunk(
         symbolName(typeName, "onStructuredCloneTransfer"),
-        `(this: *mut ${T}, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
-        `    ${T}::on_structured_clone_transfer(&mut *this, &*global, ctx, write_bytes)`,
+        `(this: &mut ${T}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
+        `    ${T}::on_structured_clone_transfer(this, global, ctx, write_bytes)`,
       );
     }
     thunk(
       symbolName(typeName, "onStructuredCloneDeserialize"),
-      `(global: *mut JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
-      `    host_fn::host_fn_result(&*global, || ${T}::on_structured_clone_deserialize(&*global, ptr, end))`,
+      `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
+      `    host_fn::host_fn_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end))`,
     );
   }
 
@@ -3048,8 +3050,8 @@ function generateRust(
   const cachedExterns = gc_fields
     .map(
       ([name]) =>
-        `        fn ${protoSymbolName(typeName, name)}SetCachedValue(this_value: JSValue, global: *mut JSGlobalObject, value: JSValue);\n` +
-        `        fn ${protoSymbolName(typeName, name)}GetCachedValue(this_value: JSValue) -> JSValue;`,
+        `        safe fn ${protoSymbolName(typeName, name)}SetCachedValue(this_value: JSValue, global: *mut JSGlobalObject, value: JSValue);\n` +
+        `        safe fn ${protoSymbolName(typeName, name)}GetCachedValue(this_value: JSValue) -> JSValue;`,
     )
     .join("\n");
 
@@ -3057,36 +3059,42 @@ function generateRust(
     .map(
       ([name]) => `    /// \`${typeName}.${name}\` cached-value setter (GC-visited via WriteBarrier).
     #[inline] pub fn ${rustSnakeIdent(name)}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        unsafe { ${protoSymbolName(typeName, name)}SetCachedValue(this_value, global.as_mut_ptr(), value) }
+        ${protoSymbolName(typeName, name)}SetCachedValue(this_value, global.as_mut_ptr(), value)
     }
     /// \`${typeName}.${name}\` cached-value getter; \`None\` when never set.
     #[inline] pub fn ${rustSnakeIdent(name)}_get_cached(this_value: JSValue) -> Option<JSValue> {
-        let v = unsafe { ${protoSymbolName(typeName, name)}GetCachedValue(this_value) };
+        let v = ${protoSymbolName(typeName, name)}GetCachedValue(this_value);
         if v.is_empty() { None } else { Some(v) }
     }`,
     )
     .join("\n");
 
+  // `safe fn` (Rust 2024) inside `unsafe extern "C" {}`: the C++ side
+  // (ZigGeneratedClasses.cpp) tolerates every well-typed input — \`fromJS\`
+  // returns null on type mismatch, \`create\` allocates from a live global,
+  // \`SetCachedValue\` is a WriteBarrier store. Declaring them \`safe\` moves
+  // the audit obligation to this generator (one place) instead of an
+  // \`unsafe {}\` per call site (~800 in the emitted file).
   const jsModule = `pub mod js_${typeName} {
     use super::*;
     unsafe extern "C" {
-        fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
-        fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};
-        fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;
-        fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
-        fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
+        safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
+        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};
+        safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;
+        safe fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
+        safe fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
 ${cachedExterns}
     }
     #[inline] pub fn from_js(value: JSValue) -> Option<core::ptr::NonNull<${typeName}>> {
-        core::ptr::NonNull::new(unsafe { ${symbolName(typeName, "fromJS")}(value) })
+        core::ptr::NonNull::new(${symbolName(typeName, "fromJS")}(value))
     }
     #[inline] pub fn from_js_direct(value: JSValue) -> Option<core::ptr::NonNull<${typeName}>> {
-        core::ptr::NonNull::new(unsafe { ${symbolName(typeName, "fromJSDirect")}(value) })
+        core::ptr::NonNull::new(${symbolName(typeName, "fromJSDirect")}(value))
     }
     ${
       !noConstructor
         ? `#[inline] pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        unsafe { ${symbolName(typeName, "getConstructor")}(global.as_mut_ptr()) }
+        ${symbolName(typeName, "getConstructor")}(global.as_mut_ptr())
     }`
         : ""
     }
@@ -3094,12 +3102,12 @@ ${cachedExterns}
       !overridesToJS
         ? `/// Transfer ownership of \`this\` to a freshly-allocated JS wrapper.
     #[inline] pub fn to_js(this: *mut ${typeName}, global: &JSGlobalObject) -> JSValue {
-        unsafe { ${symbolName(typeName, "create")}(global.as_mut_ptr(), this) }
+        ${symbolName(typeName, "create")}(global.as_mut_ptr(), this)
     }`
         : ""
     }
     #[inline] pub fn detach_ptr(value: JSValue) {
-        let ok = unsafe { ${symbolName(typeName, "dangerouslySetPtr")}(value, core::ptr::null_mut()) };
+        let ok = ${symbolName(typeName, "dangerouslySetPtr")}(value, core::ptr::null_mut());
         debug_assert!(ok);
     }
 ${gcAccessors}

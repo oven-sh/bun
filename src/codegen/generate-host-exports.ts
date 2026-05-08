@@ -131,22 +131,15 @@ const fnHeadRe = /^\s*pub\s+(?:unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
 function ptrify(ty: string): { cTy: string; deref: (n: string) => string } {
   ty = ty.trim();
-  // `&mut T` → `*mut T`, deref `unsafe { &mut *n }`
-  let m = ty.match(/^&\s*mut\s+(.+)$/);
-  if (m) return { cTy: `*mut ${m[1].trim()}`, deref: n => `unsafe { &mut *${n} }` };
   // `&[T]` / `&str` are NOT FFI-safe; reject (caller should use ptr+len).
   if (/^&\s*(?:\[|str\b)/.test(ty)) {
     throw new Error(`slice/str param \`${ty}\` is not FFI-safe; pass (ptr, len)`);
   }
-  // `&T` → `*const T`, deref `unsafe { &*n }` — but `&JSGlobalObject` /
-  // `&CallFrame` go through `*mut` because that's what JSC passes (mutable
-  // VM state behind the handle; the impl borrows it `&`).
-  m = ty.match(/^&\s*(.+)$/);
-  if (m) {
-    const inner = m[1].trim();
-    const mutSide = inner === "JSGlobalObject" || inner === "CallFrame" ? "mut" : "const";
-    return { cTy: `*${mutSide} ${inner}`, deref: n => `unsafe { &*${n} }` };
-  }
+  // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
+  // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`
+  // when the C++ caller guarantees non-null (it does), so the thunk param can
+  // be the safe reference type directly and the body needs no `unsafe` deref.
+  if (/^&/.test(ty)) return { cTy: ty, deref: n => n };
   // Already a raw pointer / scalar / `Option<…>` / `JSValue` — pass through.
   return { cTy: ty, deref: n => n };
 }
@@ -357,7 +350,7 @@ const externTotal = Object.values(externBlocks).reduce((a, b) => a + b, 0);
 function emitNoMangle(abi: Export["abi"], symbol: string, sig: string, ret: string, body: string): string {
   const item = (abiStr: string, cfg: string) =>
     `${cfg}#[unsafe(no_mangle)]
-pub unsafe extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
+pub extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
 ${body}
 }`;
   if (abi === "jsc") {
@@ -386,9 +379,11 @@ function emitThunk(e: Export): string {
     case "host": {
       // JSC host fn: `(g, cf) -> JSValue`. Always JSC ABI — these are
       // dispatched through `JSC::JSFunction` (`BUN_DECLARE_HOST_FUNCTION`).
+      // Keep raw `*mut` params so the symbol coerces to `host_fn::JSHostFn`
+      // when Rust code passes it as a callback (e.g. `JSValue::then2`).
       const body = retIsJsResult
-        ? `    unsafe { host_fn::host_fn_static(g, cf, ${impl}) }`
-        : `    ${impl}(unsafe { &*g }, unsafe { &*cf })`;
+        ? `    host_fn::host_fn_static(g, cf, ${impl})`
+        : `    host_fn::host_fn_static_passthrough(g, cf, ${impl})`;
       return `
 // ${loc}
 ${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body)}`;
@@ -397,7 +392,9 @@ ${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "J
       // Lazy property creator: `(g) -> JSValue`. ABI is whatever the C++ decl
       // uses — `e.abi` (default `c` for direct `extern "C"` calls; `jsc` for
       // `SYSV_ABI` lazyPropCb-style getters).
-      const body = retIsJsResult ? `    unsafe { host_fn::host_fn_lazy(g, ${impl}) }` : `    ${impl}(unsafe { &*g })`;
+      const body = retIsJsResult
+        ? `    host_fn::host_fn_lazy(g, ${impl})`
+        : `    host_fn::host_fn_lazy_passthrough(g, ${impl})`;
       return `
 // ${loc}
 ${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject", "JSValue", body)}`;

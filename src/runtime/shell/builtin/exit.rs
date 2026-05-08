@@ -2,6 +2,7 @@ use core::ffi::CStr;
 
 use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
@@ -48,10 +49,12 @@ impl Exit {
     }
 
     fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
-        if Builtin::of(interp, cmd).stderr.needs_io().is_some() {
-            // TODO(b2-blocked): IOWriter::enqueue — async path.
+        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
-            return Yield::suspended();
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::of_mut(interp, cmd)
+                .stderr
+                .enqueue(child, msg, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
         Builtin::done(interp, cmd, 1)

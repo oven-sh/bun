@@ -295,7 +295,7 @@ impl<'a> CopyFile<'a> {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
     ) -> Result<(), bun_core::Error> {
@@ -782,7 +782,7 @@ impl<'a> CopyFile<'a> {
                 }
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // Bun.write(Bun.file("a"), Bun.file("b"))
                 if bun_sys::S::ISREG(stat.st_mode as _)
@@ -890,6 +890,7 @@ impl<'a> CopyFile<'a> {
 
             #[cfg(not(any(
                 target_os = "linux",
+                target_os = "android",
                 target_os = "macos",
                 target_os = "freebsd"
             )))]
@@ -917,7 +918,7 @@ impl Drop for CopyFile<'_> {
 
 // Port of `bun.sys.preallocate_supported` / `bun.sys.preallocate_length` (sys.zig).
 // Kept local until bun_sys exports them; values match crate::node::fs.
-const PREALLOCATE_SUPPORTED: bool = cfg!(target_os = "linux");
+const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
 const OPEN_DESTINATION_FLAGS: i32 =

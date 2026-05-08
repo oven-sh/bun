@@ -545,9 +545,11 @@ fn walk_subtree<const DIRS_ONLY: bool>(
 }
 
 // Platform dispatch alias (Zig: `const Platform = switch (Environment.os) { ... }`).
-#[cfg(target_os = "linux")]
+// Android uses the same inotify backend as Linux (bionic exposes the same
+// `inotify_*` libc surface; the kernel ABI is identical).
+#[cfg(any(target_os = "linux", target_os = "android"))]
 type Platform = Linux;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 type PlatformWatch = LinuxWatch;
 
 #[cfg(target_os = "macos")]
@@ -578,7 +580,7 @@ compile_error!("path_watcher: unsupported target");
 /// Linux: one inotify fd, one blocking reader thread, wd → {PathWatcher, subpath} map.
 /// Recursive watches are implemented by walking the tree at subscribe time and adding
 /// a wd per directory, then adding new subdirectories as they appear (IN_CREATE|IN_ISDIR).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub struct Linux {
     fd: Fd,
     running: AtomicBool,
@@ -590,7 +592,7 @@ pub struct Linux {
     wd_map: HashMap<i32, Vec<WdOwner>>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl Default for Linux {
     fn default() -> Self {
         Self {
@@ -601,7 +603,7 @@ impl Default for Linux {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 struct WdOwner {
     /// Raw `*mut` (Zig: `*PathWatcher`). Stored in a long-lived map and mutated
     /// (`emit`, `platform.wds`) under `manager.mutex`; a `&PathWatcher` here would
@@ -613,7 +615,7 @@ struct WdOwner {
     subpath: ZBox,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[derive(Default)]
 pub struct LinuxWatch {
     /// All wds belonging to this PathWatcher (one for a file/non-recursive dir,
@@ -622,7 +624,7 @@ pub struct LinuxWatch {
 }
 // Drop: Vec frees automatically.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod inotify_masks {
     use bun_sys::linux::IN;
     pub const WATCH_FILE_MASK: u32 = IN::MODIFY | IN::ATTRIB | IN::MOVE_SELF | IN::DELETE_SELF;
@@ -637,7 +639,7 @@ mod inotify_masks {
         | IN::ONLYDIR;
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl Linux {
     fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
         use bun_sys::linux::IN;
@@ -987,7 +989,7 @@ impl Linux {
 
 /// The kernel `struct inotify_event` header. Shared with the bundler watcher;
 /// field naming there is `watch_descriptor` / `name_len`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_watcher::inotify_watcher::Event as InotifyEvent;
 
 // ────────────────────────────────────────────────────────────────────────────────

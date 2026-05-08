@@ -95,7 +95,7 @@ mod windows_ffi {
 
 /// `bun_sys::linux` doesn't exist yet; use `libc` constants directly.
 /// TODO(b2-blocked): bun_sys::linux — replace with that module once available.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {
     pub(crate) use libc::epoll_event;
     pub(crate) const EPOLL_IN: u32 = libc::EPOLLIN as u32;
@@ -149,7 +149,7 @@ fn kevent_call(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 type EventType = linux::epoll_event;
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 type EventType = KEvent;
@@ -159,7 +159,7 @@ type EventType = KEvent;
 pub struct Loop {
     pub pending: RequestQueue,
     pub waker: Waker,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub epoll_fd: Fd,
     /// FreeBSD's `Waker` is `LinuxWaker` (an eventfd), so unlike macOS the
     /// waker fd is NOT itself a kqueue. We create one here and register the
@@ -189,7 +189,7 @@ impl Loop {
         *loop_ = Loop {
             pending: RequestQueue::default(),
             waker: Waker::init().unwrap_or_else(|_| panic!("failed to initialize waker")),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             epoll_fd: Fd::INVALID,
             #[cfg(target_os = "freebsd")]
             kqueue_fd: Fd::INVALID,
@@ -197,7 +197,7 @@ impl Loop {
             active: 0,
         };
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: direct syscall wrapper.
             let raw = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC | 0) };
@@ -309,7 +309,7 @@ impl Loop {
         let name = unsafe { bun_core::ZStr::from_raw(b"IO Watcher\0".as_ptr(), 10) };
         bun_core::Output::Source::configure_named_thread(name);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             self.tick_epoll();
         }
@@ -317,13 +317,13 @@ impl Loop {
         {
             self.tick_kqueue();
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd")))]
         {
             panic!("TODO on this platform");
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn tick_epoll(&mut self) {
         self.update_now();
 
@@ -434,7 +434,7 @@ impl Loop {
     }
 
     pub fn pollfd(&self) -> Fd {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return self.epoll_fd;
         }
@@ -442,7 +442,7 @@ impl Loop {
         {
             return self.kqueue_fd;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
         {
             self.waker.get_fd()
         }
@@ -579,7 +579,7 @@ impl Loop {
     // inside `impl`, so it's hoisted to `windows_ffi` at module scope.
 
     pub fn update_timespec(timespec: &mut libc::timespec) {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: valid out-pointer.
             let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, timespec) };
@@ -598,7 +598,7 @@ impl Loop {
             timespec.tv_sec = sec.try_into().expect("infallible: size matches");
             timespec.tv_nsec = nsec.try_into().expect("infallible: size matches");
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         {
             // SAFETY: valid out-pointer.
             let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, timespec) };
@@ -898,7 +898,7 @@ impl Flags {
         flags
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn from_epoll_event(epoll: linux::epoll_event) -> FlagsSet {
         let mut flags = FlagsSet::empty();
         if epoll.events & linux::EPOLL_IN != 0 {
@@ -1012,7 +1012,7 @@ impl Poll {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
         // SAFETY: valid fds; null event is allowed for CTL_DEL on Linux ≥ 2.6.9.
         unsafe {
@@ -1066,7 +1066,7 @@ impl Poll {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn on_update_epoll(poll: *mut Poll, tag: PollableTag, event: linux::epoll_event) {
         // ignore empty tags. This case should be unreachable in practice
         if tag == PollableTag::Empty {
@@ -1089,7 +1089,7 @@ impl Poll {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     // PORT NOTE: `flag` was a comptime param in Zig; `enumset::EnumSetType` cannot be a
     // const generic, so it's a runtime arg. The `match` below preserves the exhaustiveness check.
     pub fn register_for_epoll(
@@ -1476,19 +1476,19 @@ pub mod waker {
     #[cfg(target_os = "macos")]
     pub type Waker = KEventWaker;
     /// FreeBSD 13+ has eventfd(2), so the Linux waker works as-is.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub type Waker = LinuxWaker;
     #[cfg(windows)]
     pub type Waker = WindowsWaker;
 
     // ── Linux / FreeBSD ───────────────────────────────────────────────────────
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub struct LinuxWaker {
         pub fd: Fd,
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     impl LinuxWaker {
         pub fn init() -> Result<Self, bun_core::Error> {
             // TODO(port): std.posix.eventfd(0, 0) → bun_sys::eventfd. Phase B

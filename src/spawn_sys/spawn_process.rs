@@ -521,7 +521,14 @@ pub fn spawn_process_posix(
     let mut attr = PosixSpawnAttr::init()?;
     // defer attr.deinit() — Drop
 
-    let mut flags: i32 = libc::POSIX_SPAWN_SETSIGDEF as i32 | libc::POSIX_SPAWN_SETSIGMASK as i32;
+    // libc 0.2.x exposes the `POSIX_SPAWN_SETSIG*` flags for glibc/musl/macOS
+    // but not for Android. Bionic's `<spawn.h>` uses the same values as glibc
+    // (`0x04`/`0x08`) — they're POSIX-mandated bit flags, not OS-specific.
+    #[cfg(not(target_os = "android"))]
+    let (setsigdef, setsigmask) = (libc::POSIX_SPAWN_SETSIGDEF as i32, libc::POSIX_SPAWN_SETSIGMASK as i32);
+    #[cfg(target_os = "android")]
+    let (setsigdef, setsigmask) = (0x04_i32, 0x08_i32);
+    let mut flags: i32 = setsigdef | setsigmask;
 
     #[cfg(target_os = "macos")]
     {

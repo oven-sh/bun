@@ -19,7 +19,8 @@
 // `WindowsWatcher.rs`. A host build never compiles the non-native backends.
 
 #![warn(unreachable_pub)]
-#[cfg(target_os = "linux")]
+// Android: same kernel inotify ABI as glibc/musl Linux.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "INotifyWatcher.rs"]
 pub mod inotify_watcher;
 

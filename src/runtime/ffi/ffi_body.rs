@@ -1550,7 +1550,8 @@ impl FFI {
         let mut filepath_buf = bun_paths::path_buffer_pool::get();
         let name: &[u8] = 'brk: {
             let _ext: &[u8] = match () {
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                // Android shared libraries are `.so` (ELF, same as Linux/FreeBSD).
+                #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
                 () => b"so",
                 #[cfg(target_os = "macos")]
                 () => b"dylib",

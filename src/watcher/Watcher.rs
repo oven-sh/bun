@@ -11,7 +11,9 @@ use bun_threading::Mutex;
 use crate::watcher_trace as WatcherTrace;
 use crate::Loader;
 
-#[cfg(target_os = "linux")]
+// Android: same kernel inotify ABI as glibc/musl Linux. Zig kept these under
+// `Environment.isLinux`; Rust splits `target_os`, so list both.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::inotify_watcher as platform;
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 use crate::kevent_watcher as platform;
@@ -477,7 +479,7 @@ impl Watcher {
             parent_hash,
             package_json,
             kind: WatchItemKind::File,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index: 0,
         };
 
@@ -485,7 +487,7 @@ impl Watcher {
         {
             self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // Zig builds the `[:0]const u8` from `file_path_` (the dupeZ'd copy when
             // clone_file_path=true), guaranteeing a trailing NUL for inotify. When
@@ -563,7 +565,7 @@ impl Watcher {
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index: 0,
         };
 
@@ -571,7 +573,7 @@ impl Watcher {
         {
             self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let mut buf = bun_paths::path_buffer_pool::get();
             let path: &ZStr = if CLONE_FILE_PATH
@@ -1033,7 +1035,7 @@ pub struct WatchItem {
     pub parent_hash: u32,
     pub kind: WatchItemKind,
     pub package_json: Option<&'static PackageJSON>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
 }
 
@@ -1054,7 +1056,7 @@ pub trait WatchItemColumns {
     fn items_fd_mut(&mut self) -> &mut [Fd];
     fn items_parent_hash(&self) -> &[u32];
     fn items_kind(&self) -> &[WatchItemKind];
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex];
 }
 
@@ -1077,7 +1079,7 @@ impl WatchItemColumns for WatchList {
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
     }
@@ -1102,7 +1104,7 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     fn items_kind(&self) -> &[WatchItemKind] {
         self.items::<"kind", WatchItemKind>()
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
     }

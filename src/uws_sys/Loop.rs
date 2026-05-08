@@ -41,7 +41,9 @@ pub struct PosixLoop {
     pub ready_polls: [EventType; 1024],
 }
 
-#[cfg(target_os = "linux")]
+// Android shares the Linux kernel's epoll ABI (uSockets' `epoll_kqueue.h` only
+// branches on `LIBUS_USE_EPOLL` vs `LIBUS_USE_KQUEUE`, not on libc).
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub type EventType = libc::epoll_event;
 #[cfg(target_os = "macos")]
 pub type EventType = libc::kevent64_s;

@@ -313,7 +313,7 @@ mod platform {
 // ──────────────────────────────────────────────────────────────────────────
 // Linux
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod platform {
     use super::*;
 
@@ -866,7 +866,7 @@ where
                 },
             };
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return Self {
                 iter: NewIterator {

@@ -76,6 +76,7 @@ macro_rules! define_statfs_type {
             pub fn init(statfs_: &RawStatFS) -> Self {
                 #[cfg(any(
                     target_os = "linux",
+                    target_os = "android",
                     target_os = "macos",
                     target_os = "freebsd",
                     windows

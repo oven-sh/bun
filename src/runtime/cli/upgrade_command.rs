@@ -120,7 +120,10 @@ impl Version {
         {
             "darwin"
         }
-        #[cfg(target_os = "linux")]
+        // Android folds under "linux" — `SUFFIX_ABI` below adds "-android",
+        // matching `bun-linux-aarch64-android.zip` on the release page (and the
+        // Zig original where `Environment.os == .linux` for Android).
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             "linux"
         }

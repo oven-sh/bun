@@ -239,14 +239,16 @@ pub mod dir_iterator {
         }
     }
 
-    // ── Linux ────────────────────────────────────────────────────────────
-    #[cfg(target_os = "linux")]
+    // ── Linux / Android ──────────────────────────────────────────────────
+    // Same `getdents64(2)` walk for both — Android is the same kernel, and
+    // `linux_syscall::getdents64` is a raw syscall (no libc wrapper involved).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     struct State {
         buf: Box<AlignedBuf>,
         index: usize,
         end_index: usize,
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     impl State {
         #[inline] fn new() -> State {
             State { buf: Box::new(AlignedBuf([0u8; BUF_SIZE])), index: 0, end_index: 0 }
@@ -775,8 +777,10 @@ pub use bun_core::{Fd, FdNative, FdKind, FdOptional, Stdio, Mode, FileKind, kind
 pub use bun_core::errno_to_zig_err;
 
 // Raw Linux syscalls via rustix (linux_raw backend). Hot-path I/O on Linux
-// routes through here instead of glibc — see module doc.
-#[cfg(target_os = "linux")]
+// routes through here instead of glibc — see module doc. Android: same kernel,
+// same syscall ABI; `linux_syscall.rs` carries its own
+// `#![cfg(any(linux, android))]` so the gates stay in lockstep.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) mod linux_syscall;
 
 /// Zig: `bun.isRegularFile(mode)` (bun.zig) — `S.ISREG(@intCast(mode))`.
@@ -1040,11 +1044,15 @@ pub fn last_errno() -> i32 {
 }
 #[cfg(target_os = "linux")]
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno_location() } }
+// Bionic spells the TLS errno accessor `__errno()` (no `_location` suffix),
+// and `libc` follows suit — same contract, different symbol name.
+#[cfg(target_os = "android")]
+#[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno() } }
 #[cfg(target_os = "macos")]
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__error() } }
 #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__error() } }
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos", target_os = "freebsd", target_os = "dragonfly"))))]
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd", target_os = "dragonfly"))))]
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno_location() } }
 #[cfg(windows)]
 #[inline] pub fn last_errno() -> i32 {
@@ -1555,7 +1563,112 @@ mod posix_impl {
     // ──────────────────────────────────────────────────────────────────────
     // statx (Linux ≥4.11) — sys.zig:614-791. Exposes `birthtime` for node:fs
     // `Stats`. On non-Linux these are absent (callers gate on `cfg(linux)`).
+    //
+    // Zig went through `std.os.linux.statx` (a raw `syscall5`), so it works on
+    // every Linux ABI. The Rust port uses `libc::statx`, which the `libc` crate
+    // only exposes for glibc/Android (and musl behind the build-time
+    // `musl_v1_2_3` cfg the cross-compile build never sets). The `linux_statx`
+    // shim below smooths that over: glibc/android re-export `libc`, musl gets a
+    // hand-rolled struct + raw-`syscall(SYS_statx, …)` wrapper. The kernel ABI
+    // (struct layout, `STATX_*` bits) is identical across libcs.
     // ──────────────────────────────────────────────────────────────────────
+    #[cfg(target_os = "linux")]
+    mod linux_statx {
+        // glibc / Android: libc 0.2.x exposes the full surface directly.
+        #[cfg(not(target_env = "musl"))]
+        pub use libc::{
+            statx, AT_STATX_SYNC_AS_STAT, STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME,
+            STATX_GID, STATX_INO, STATX_MODE, STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE,
+            STATX_UID,
+        };
+
+        // musl: `libc` gates `statx`/`STATX_*` behind a build-script-detected
+        // `musl_v1_2_3` cfg that cross-compiles can't trigger. Define the
+        // kernel-ABI struct + bits ourselves and dispatch via raw `syscall`,
+        // matching what Zig's `std.os.linux.statx` does on every Linux ABI.
+        #[cfg(target_env = "musl")]
+        mod musl {
+            #![allow(non_camel_case_types)]
+            use core::ffi::{c_char, c_int, c_uint};
+
+            // Kernel UAPI `<linux/stat.h>` — same on every arch/libc.
+            pub const AT_STATX_SYNC_AS_STAT: c_int = 0x0000;
+            pub const STATX_TYPE: c_uint = 0x0001;
+            pub const STATX_MODE: c_uint = 0x0002;
+            pub const STATX_NLINK: c_uint = 0x0004;
+            pub const STATX_UID: c_uint = 0x0008;
+            pub const STATX_GID: c_uint = 0x0010;
+            pub const STATX_ATIME: c_uint = 0x0020;
+            pub const STATX_MTIME: c_uint = 0x0040;
+            pub const STATX_CTIME: c_uint = 0x0080;
+            pub const STATX_INO: c_uint = 0x0100;
+            pub const STATX_SIZE: c_uint = 0x0200;
+            pub const STATX_BLOCKS: c_uint = 0x0400;
+            pub const STATX_BTIME: c_uint = 0x0800;
+
+            #[repr(C)]
+            #[derive(Copy, Clone)]
+            pub struct statx_timestamp {
+                pub tv_sec: i64,
+                pub tv_nsec: u32,
+                __pad: i32,
+            }
+
+            // `struct statx` from `<linux/stat.h>` — fixed 256-byte layout the
+            // kernel writes. Only the fields `statx_impl` reads are named; the
+            // rest is reserved padding.
+            #[repr(C)]
+            #[derive(Copy, Clone)]
+            pub struct statx {
+                pub stx_mask: u32,
+                pub stx_blksize: u32,
+                pub stx_attributes: u64,
+                pub stx_nlink: u32,
+                pub stx_uid: u32,
+                pub stx_gid: u32,
+                pub stx_mode: u16,
+                __pad0: [u16; 1],
+                pub stx_ino: u64,
+                pub stx_size: u64,
+                pub stx_blocks: u64,
+                pub stx_attributes_mask: u64,
+                pub stx_atime: statx_timestamp,
+                pub stx_btime: statx_timestamp,
+                pub stx_ctime: statx_timestamp,
+                pub stx_mtime: statx_timestamp,
+                pub stx_rdev_major: u32,
+                pub stx_rdev_minor: u32,
+                pub stx_dev_major: u32,
+                pub stx_dev_minor: u32,
+                __pad1: [u64; 14],
+            }
+            const _: () = assert!(core::mem::size_of::<statx>() == 256);
+
+            /// Raw `statx(2)` via syscall — returns `0` on success or `-1` with
+            /// `errno` set, matching the libc wrapper's contract so callers
+            /// don't need to know which path they got.
+            ///
+            /// # Safety
+            /// `path` must be NUL-terminated and live for the call; `buf` must
+            /// be a valid out-pointer to a `statx`.
+            pub unsafe fn statx(
+                dirfd: c_int,
+                path: *const c_char,
+                flags: c_int,
+                mask: c_uint,
+                buf: *mut statx,
+            ) -> c_int {
+                // SAFETY: caller upholds pointer validity; syscall arg widths
+                // match the kernel's `statx(2)` ABI on every 64-bit arch.
+                unsafe { libc::syscall(libc::SYS_statx, dirfd, path, flags, mask, buf) as c_int }
+            }
+        }
+        #[cfg(target_env = "musl")]
+        pub use musl::*;
+    }
+    #[cfg(target_os = "linux")]
+    use linux_statx as lx;
+
     #[cfg(target_os = "linux")]
     pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(true);
@@ -1564,18 +1677,18 @@ mod posix_impl {
     /// (sys.zig:614 `StatxField` — all variants OR'd, the only mask the Zig
     /// callers ever pass).
     #[cfg(target_os = "linux")]
-    pub const STATX_MASK_FOR_STATS: u32 = libc::STATX_TYPE
-        | libc::STATX_MODE
-        | libc::STATX_NLINK
-        | libc::STATX_UID
-        | libc::STATX_GID
-        | libc::STATX_ATIME
-        | libc::STATX_MTIME
-        | libc::STATX_CTIME
-        | libc::STATX_BTIME
-        | libc::STATX_INO
-        | libc::STATX_SIZE
-        | libc::STATX_BLOCKS;
+    pub const STATX_MASK_FOR_STATS: u32 = lx::STATX_TYPE
+        | lx::STATX_MODE
+        | lx::STATX_NLINK
+        | lx::STATX_UID
+        | lx::STATX_GID
+        | lx::STATX_ATIME
+        | lx::STATX_MTIME
+        | lx::STATX_CTIME
+        | lx::STATX_BTIME
+        | lx::STATX_INO
+        | lx::STATX_SIZE
+        | lx::STATX_BLOCKS;
 
     /// Linux kernel makedev encoding (glibc sys/sysmacros.h / <linux/kdev_t.h>).
     #[cfg(target_os = "linux")]
@@ -1599,7 +1712,7 @@ mod posix_impl {
     #[cfg(target_os = "linux")]
     fn statx_impl(fd: Fd, path: Option<&ZStr>, flags: c_int, mask: u32) -> Maybe<PosixStat> {
         use core::sync::atomic::Ordering;
-        let mut buf = core::mem::MaybeUninit::<libc::statx>::uninit();
+        let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
             Some(p) => p.as_ptr(),
             None => b"\0".as_ptr().cast(),
@@ -1607,7 +1720,7 @@ mod posix_impl {
         loop {
             // SAFETY: `pathname` is NUL-terminated; `buf` is a valid out-param.
             let rc = unsafe {
-                libc::statx(fd.native(), pathname, flags, mask, buf.as_mut_ptr())
+                lx::statx(fd.native(), pathname, flags, mask, buf.as_mut_ptr())
             };
 
             // On some setups (QEMU user-mode, S390 RHEL docker), statx returns a
@@ -1652,7 +1765,7 @@ mod posix_impl {
                 atim: Timespec { sec: buf.stx_atime.tv_sec, nsec: buf.stx_atime.tv_nsec as i64 },
                 mtim: Timespec { sec: buf.stx_mtime.tv_sec, nsec: buf.stx_mtime.tv_nsec as i64 },
                 ctim: Timespec { sec: buf.stx_ctime.tv_sec, nsec: buf.stx_ctime.tv_nsec as i64 },
-                birthtim: if buf.stx_mask & libc::STATX_BTIME != 0 {
+                birthtim: if buf.stx_mask & lx::STATX_BTIME != 0 {
                     Timespec { sec: buf.stx_btime.tv_sec, nsec: buf.stx_btime.tv_nsec as i64 }
                 } else {
                     Timespec { sec: 0, nsec: 0 }
@@ -2030,7 +2143,11 @@ mod posix_impl {
     /// We FFI to the same symbol so the behaviour is identical.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
         unsafe extern "C" {
-            fn is_executable_file(path: *const i8) -> bool;
+            // `c_char`, not `i8` — `char` is unsigned on aarch64/arm/ppc, so
+            // hard-coding `i8` mismatches `ZStr::as_ptr()` (`*const c_char`)
+            // there. The C side is `const char*` regardless; `c_char` tracks
+            // its platform sign.
+            fn is_executable_file(path: *const c_char) -> bool;
         }
         unsafe { is_executable_file(path.as_ptr()) }
     }
@@ -3834,8 +3951,12 @@ pub mod c {
     }
 }
 
-// ── `bun.linux` / `std.os.linux` — raw kernel syscalls (Linux only). ──
-#[cfg(target_os = "linux")]
+// ── `bun.linux` / `std.os.linux` — raw kernel syscalls (Linux + Android). ──
+// Android: same kernel ABI; bionic exposes all the libc wrappers used here
+// (`inotify_*`, `ppoll`, `epoll_*`, `IN_*`, `EPOLL*`, `FUTEX_*`). Zig kept this
+// surface under `Environment.isLinux` (true on Android); list both `target_os`
+// values to mirror that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux {
     use core::ffi::{c_char, c_int, c_uint, c_void};
     pub use libc::pollfd;
@@ -3987,7 +4108,13 @@ pub mod linux {
     }
     #[inline]
     pub unsafe fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
-        unsafe { libc::inotify_rm_watch(fd, wd) }
+        // bionic declares the watch-descriptor param `uint32_t` (libc binds it
+        // `u32`) while glibc/musl use `int`. The kernel ABI is the same `__s32`
+        // either way; cast for the bionic signature.
+        #[cfg(target_os = "android")]
+        return unsafe { libc::inotify_rm_watch(fd, wd as u32) };
+        #[cfg(not(target_os = "android"))]
+        return unsafe { libc::inotify_rm_watch(fd, wd) };
     }
     /// Raw `read(2)` returning kernel `usize` (Zig: `std.os.linux.read`).
     #[inline]
@@ -4078,9 +4205,10 @@ pub mod linux {
         }
     }
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub mod linux {
-    // Empty on non-Linux; callers gate on `cfg(target_os = "linux")`.
+    // Empty on non-Linux; callers gate on `cfg(target_os = "linux")` (or
+    // `linux | android` for the Linux-kernel surface).
 }
 
 // ── `bun.darwin` — Darwin-only platform surface. ──
@@ -6950,9 +7078,10 @@ pub fn renameat_concurrently_without_fallback(
     Ok(())
 }
 
-/// `eventfd(initval, flags)` — kernel notification fd. Linux native; FreeBSD 13+
-/// gained a Linux-compatible `eventfd(2)` via the `libc` shim.
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+/// `eventfd(initval, flags)` — kernel notification fd. Linux native (Android
+/// included since API 8); FreeBSD 13+ gained a Linux-compatible `eventfd(2)`
+/// via the `libc` shim.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
     // SAFETY: eventfd(2) is safe to call with any args.
     let rc = unsafe { libc::eventfd(initval, flags) };

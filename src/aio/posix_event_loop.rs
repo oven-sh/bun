@@ -1669,8 +1669,9 @@ const INVALID_FD: Fd = Fd::INVALID;
 
 #[cfg(target_os = "macos")]
 pub type Waker = KEventWaker;
-// FreeBSD 13+ has eventfd(2), so the Linux waker works as-is.
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+// FreeBSD 13+ has eventfd(2), so the Linux waker works as-is. Android (bionic)
+// has had `eventfd(2)` since API 8 — same kernel ABI as glibc Linux.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub type Waker = LinuxWaker;
 // Windows/wasm define `Waker` in their own event-loop modules; this module is
 // still compiled there for the *shared* scaffolding (`EventLoopCtx`, `Flags`,
@@ -1681,7 +1682,7 @@ pub struct LinuxWaker {
 }
 
 impl LinuxWaker {
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub fn init() -> Result<Self, bun_core::Error> {
         // TODO(port): std.posix.eventfd → bun_sys::eventfd
         let fd = bun_sys::eventfd(0, 0).map_err(|_| bun_core::err!("SystemResources"))?;

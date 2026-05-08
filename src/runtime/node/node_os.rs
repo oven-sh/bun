@@ -263,7 +263,7 @@ impl CPUTimes {
 }
 
 pub fn cpus(global: &JSGlobalObject) -> JsResult<JSValue> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let result = cpus_impl_linux(global);
     #[cfg(target_os = "macos")]
     let result = cpus_impl_darwin(global);
@@ -285,7 +285,7 @@ pub fn cpus(global: &JSGlobalObject) -> JsResult<JSValue> {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     // Create the return array
     let values = JSValue::create_empty_array(global_this, 0)?;
@@ -812,7 +812,7 @@ pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
             if scale == 0.0 { 0.0 } else { avg.ldavg[2] as f64 / scale },
         ]
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let result: [f64; 3] = 'loadavg: {
         // SAFETY: zeroed POD
         let mut info: libc::sysinfo = unsafe { bun_core::ffi::zeroed() };
@@ -895,7 +895,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
     //  extracting the MAC address
     fn is_link_layer(iface: &libc::ifaddrs) -> bool {
         if iface.ifa_addr.is_null() { return false; }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         // SAFETY: ifa_addr is non-null per check above
         return unsafe { (*iface.ifa_addr).sa_family } as c_int == libc::AF_PACKET;
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -1044,7 +1044,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                 // Encode its link-layer address.  We need 2*6 bytes for the
                 //  hex characters and 5 for the colon separators
                 let mut mac_buf = [0u8; 17];
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 // SAFETY: ll_addr is a sockaddr_ll* per is_link_layer check
                 let addr_data: &[u8] = unsafe { &(*ll_addr.cast::<libc::sockaddr_ll>()).sll_addr };
                 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -1256,7 +1256,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
 pub fn release() -> BunString {
     let mut name_buffer = [0u8; HOST_NAME_MAX];
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let value: &[u8] = {
         // TODO(port): std.posix.uname → bun_sys::posix::uname
         // SAFETY: zeroed POD; uname(2) fills the struct on success
@@ -1398,7 +1398,7 @@ pub fn totalmem() -> u64 {
 
         return memory_[0];
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // SAFETY: zeroed POD
         let mut info: libc::sysinfo = unsafe { bun_core::ffi::zeroed() };
@@ -1455,7 +1455,7 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
         // TODO(port): std.time.timestamp() → bun_sys::time::timestamp() (no std::time wallclock)
         return Ok((bun_sys::time::timestamp() - boot_time.tv_sec as i64) as f64);
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let _ = global;
         // SAFETY: zeroed POD
@@ -1524,7 +1524,7 @@ pub fn version() -> JsResult<BunString> {
 
         bun_str::slice_to_nul(&name_buffer)
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     let slice: &[u8] = {
         // SAFETY: zeroed POD; uname(2) fills the struct on success
         let mut uts: libc::utsname = unsafe { bun_core::ffi::zeroed() };

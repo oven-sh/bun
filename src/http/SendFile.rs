@@ -31,7 +31,9 @@ impl SendFile {
         // TODO we should not need this int cast; improve the return type of `@min`
         let adjusted_count: u64 = adjusted_count_temporary; // was @intCast to u63
 
-        #[cfg(target_os = "linux")]
+        // Android: same kernel `sendfile(2)` ABI, dispatched via `bun_sys::linux`'s
+        // raw-syscall thunk (no libc difference matters here).
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = adjusted_count; // unused on Linux path (matches Zig)
             let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
@@ -93,7 +95,7 @@ impl SendFile {
             }
         }
 
-        #[cfg(all(unix, not(target_os = "linux"), not(target_os = "freebsd")))]
+        #[cfg(all(unix, not(any(target_os = "linux", target_os = "android")), not(target_os = "freebsd")))]
         {
             let mut sbytes: i64 = i64::try_from(adjusted_count).expect("int cast"); // std.posix.off_t
             // Zig: `@as(i64, @bitCast(self.offset))` — same-width `as` is the bitcast.

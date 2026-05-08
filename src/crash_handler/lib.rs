@@ -1390,12 +1390,12 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         }
         #[cfg(all(target_os = "linux", target_env = "musl"))]
         {
-            let kernel_version = generate_platform::kernel_version();
+            let kernel_version = bun_analytics::GenerateHeader::generate_platform::kernel_version();
             write!(writer, "Linux Kernel v{}.{}.{} | musl\n", kernel_version.major, kernel_version.minor, kernel_version.patch).map_err(fmt_err)?;
         }
         #[cfg(target_os = "android")]
         {
-            let kernel_version = generate_platform::kernel_version();
+            let kernel_version = bun_analytics::GenerateHeader::generate_platform::kernel_version();
             write!(writer, "Android Kernel v{}.{}.{} | bionic\n", kernel_version.major, kernel_version.minor, kernel_version.patch).map_err(fmt_err)?;
         }
         #[cfg(target_os = "freebsd")]
@@ -1563,11 +1563,15 @@ impl Platform {
     // TODO(port): Zig builds this via @tagName(os) ++ "_" ++ @tagName(arch) ++ baseline.
     // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
     const CURRENT: Platform = {
-        #[cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "baseline")))]
+        // Android folds into the Linux variants — Zig's `@tagName(Environment.os)`
+        // (crash_handler.zig:1153) yields `"linux"` for Android because Zig keeps
+        // it under `os.tag == .linux`. bun.report decodes the same single-char
+        // codes; introducing new ones would break older decoders.
+        #[cfg(all(any(target_os = "linux", target_os = "android"), target_arch = "x86_64", not(feature = "baseline")))]
         { Platform::LinuxX8664 }
-        #[cfg(all(target_os = "linux", target_arch = "x86_64", feature = "baseline"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), target_arch = "x86_64", feature = "baseline"))]
         { Platform::LinuxX8664Baseline }
-        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), target_arch = "aarch64"))]
         { Platform::LinuxAarch64 }
         #[cfg(all(target_os = "macos", target_arch = "x86_64", not(feature = "baseline")))]
         { Platform::MacX8664 }

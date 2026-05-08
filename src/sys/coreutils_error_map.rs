@@ -50,7 +50,10 @@ pub fn get(errno: SystemErrno) -> Option<&'static str> {
 
 // macOS and Linux have slightly different error messages.
 // Since windows is just an emulation of linux, it will derive the linux error messages.
-#[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+// Android shares the Linux kernel errno → strerror() text (bionic copies the
+// glibc strings), so it derives the linux entries too. Zig kept Android under
+// `Environment.isLinux`; Rust splits `target_os`, so list both.
+#[cfg(any(target_os = "linux", target_os = "android", windows, target_family = "wasm"))]
 static ENTRIES: &[(&str, &str)] = &[
     ("EPERM", "Operation not permitted"),
     ("ENOENT", "No such file or directory"),

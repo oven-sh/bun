@@ -2841,7 +2841,10 @@ function generateRust(
   const symbols: string[] = [];
   function thunk(sym: string, sig: string, body: string) {
     symbols.push(sym);
-    thunks.push(`#[unsafe(no_mangle)]\npub unsafe extern "C" fn ${sym}${sig} {\n${body}\n}`);
+    // Rust 2024 `unsafe_op_in_unsafe_fn`: an `unsafe fn` body is safe-by-default
+    // and must wrap unsafe ops in an explicit block. Every thunk body either
+    // dereferences `*mut T` or calls an `unsafe fn host_fn::*`, so wrap once.
+    thunks.push(`#[unsafe(no_mangle)]\npub unsafe extern "C" fn ${sym}${sig} {\n    unsafe {\n${body}\n    }\n}`);
   }
   const T = typeName;
 

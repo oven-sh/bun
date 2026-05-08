@@ -402,8 +402,7 @@ impl S3HttpSimpleTask {
         let is_done = !result.has_more;
         // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`, which
         // lives for the task's lifetime — extending to `'static` here is sound for self-reference.
-        this.result =
-            unsafe { core::mem::transmute::<HTTPClientResult<'_>, HTTPClientResult<'static>>(result) };
+        this.result = unsafe { result.detach_lifetime() };
         // PORT NOTE: Zig does `this.http = async_http.*` (bitwise struct overwrite, no destructor
         // on either side). `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
         // `EntryList`s), so a plain Rust `=` here would (a) drop the old `this.http`, freeing heap

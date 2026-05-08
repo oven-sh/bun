@@ -318,9 +318,7 @@ impl NetworkTask {
         // `this.response_buffer`, which `this` owns and outlives the stored
         // `HTTPClientResult`; erase the callback-scoped `'_` to `'static` to
         // match the field type (Zig stores it lifetime-less).
-        this.response = unsafe {
-            core::mem::transmute::<HTTPClientResult<'_>, HTTPClientResult<'static>>(result)
-        };
+        this.response = unsafe { result.detach_lifetime() };
         if this.response.metadata.is_none() {
             this.response.metadata = saved_metadata;
         }

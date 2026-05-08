@@ -414,7 +414,7 @@ impl HttpThread {
                         }
                     }
                     // PORT NOTE: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
-                    .map(|o| o.map(|s| unsafe { core::mem::transmute_copy(&s) }));
+                    .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
                 }
 
                 // Cache miss - create new SSL context
@@ -479,7 +479,7 @@ impl HttpThread {
                     custom_context.connect(client, hn, pt)
                 };
                 // PORT NOTE: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
-                return result.map(|o| o.map(|s| unsafe { core::mem::transmute_copy(&s) }));
+                return result.map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
             }
         }
         if let Some(url) = client.http_proxy.clone() {

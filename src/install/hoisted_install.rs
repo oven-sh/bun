@@ -51,8 +51,8 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
         // SAFETY: identity cast — narrows the invariant `'a` param to the
         // borrow-local `'x` (`'a: 'x` is implied by `&'x mut PackageInstaller<'a>`).
         // The returned reference cannot outlive `'x`, so all inner `'a` borrows
-        // remain valid.
-        unsafe { core::mem::transmute::<&'x mut PackageInstaller<'a>, &'x mut PackageInstaller<'x>>(ctx) }
+        // remain valid. Inner-lifetime variance cast via raw pointer.
+        unsafe { &mut *core::ptr::from_mut(ctx).cast::<PackageInstaller<'x>>() }
     }
 }
 

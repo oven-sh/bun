@@ -607,7 +607,7 @@ impl FileReader {
                         self.read_inside_on_pull = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
                         // SAFETY: buf outlives the on_pull call that consumes this.
-                        let temp: &'static [u8] = unsafe { mem::transmute(buf) };
+                        let temp: &'static [u8] = unsafe { bun_ptr::detach_lifetime(buf) };
                         self.read_inside_on_pull = ReadDuringJSOnPullResult::Temporary(temp);
                     } else if has_more && !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
                         self.buffered.extend_from_slice(buf);

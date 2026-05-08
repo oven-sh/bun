@@ -1743,9 +1743,7 @@ impl FetchTasklet {
         // `*mut MutableString` we passed into `AsyncHTTP::init` (which lives
         // in `self.response_buffer` for the FetchTasklet's lifetime). Zig had
         // no lifetime here; widen `'_` → `'static` to store it.
-        task_ref.result = unsafe {
-            core::mem::transmute::<HTTPClientResult<'_>, HTTPClientResult<'static>>(result)
-        };
+        task_ref.result = unsafe { result.detach_lifetime() };
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;

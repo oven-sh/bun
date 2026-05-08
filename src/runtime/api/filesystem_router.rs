@@ -782,10 +782,15 @@ impl MatchedRoute {
         // read through it. This is the standard Rust self-referential pattern (no
         // `Pin`/ouroboros because JsClass codegen owns the Box<Self>); it does NOT extend
         // a borrow past its allocation — ownership was transferred, not leaked.
-        let match_static: RouterMatch<'static> =
-            unsafe { core::mem::transmute::<RouterMatch<'_>, RouterMatch<'static>>(match_) };
-        let params_list: route_param::List<'static> = unsafe {
-            core::mem::transmute::<route_param::List<'_>, route_param::List<'static>>(params_list)
+        let match_static: RouterMatch<'static> = unsafe { match_.detach_lifetime() };
+        // `route_param::List<'a>` = `Vec<Param<'a>>`; rebuild from raw parts to
+        // erase the element lifetime (identical layout, no realloc).
+        let params_list: route_param::List<'static> = {
+            let mut v = core::mem::ManuallyDrop::new(params_list);
+            let (ptr, len, cap) = (v.as_mut_ptr(), v.len(), v.capacity());
+            // SAFETY: same allocation, same element layout; per the SAFETY note
+            // above, every `Param`'s borrowed bytes outlive `Self`.
+            unsafe { Vec::from_raw_parts(ptr.cast::<route_param::Param<'static>>(), len, cap) }
         };
 
         let mut route = Box::new(MatchedRoute {

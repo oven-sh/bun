@@ -171,11 +171,7 @@ fn task_callback(
         Data::ClientEntryWrapper(_) => Target::Browser,
     };
     let hmr_api_ref = ab.hmr_api_ref;
-    // SAFETY: `BundledAst` stores arena-backed raw pointers; the elided lifetime
-    // on `to_bundled_ast`'s return only ties it to `&mut ab` borrow-wise, not
-    // semantically. Erase to `'static` to match `Success.ast: JSAst`.
-    let mut bundled_ast: JSAst =
-        unsafe { core::mem::transmute::<_, JSAst>(ab.to_bundled_ast(target)?) };
+    let mut bundled_ast: JSAst = ab.to_bundled_ast(target)?;
 
     // `wrapper_ref` is used to hold the HMR api ref (see comment in
     // `src/ast/Ast.zig`)

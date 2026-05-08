@@ -980,13 +980,7 @@ pub fn download_stream(
         proxy_url: owned_proxy,
         // SAFETY: callers always pass a non-null context (Box-allocated wrapper).
         callback_context: unsafe { NonNull::new_unchecked(callback_context.cast::<()>()) },
-        // SAFETY: fn(..., *mut c_void) → fn(..., *mut ()) — same calling convention.
-        callback: unsafe {
-            core::mem::transmute::<
-                fn(MutableString, bool, Option<Error::S3Error>, *mut c_void),
-                fn(MutableString, bool, Option<Error::S3Error>, *mut ()),
-            >(callback)
-        },
+        callback,
         range: range.map(Vec::into_boxed_slice),
         headers,
         // `VirtualMachine::get()` returns the live per-thread VM singleton (`*mut VirtualMachine`).
@@ -1039,14 +1033,7 @@ pub fn download_stream(
         b"",
         bun_http::HTTPClientResultCallback::new::<S3HttpDownloadStreamingTask>(
             task_ptr,
-            // SAFETY: fn(*mut Self, &mut AsyncHTTP, ...) → fn(*mut Self, *mut AsyncHTTP, ...)
-            // — same calling convention; the receiver never observes a null pointer.
-            unsafe {
-                core::mem::transmute::<
-                    fn(*mut S3HttpDownloadStreamingTask, &mut bun_http::AsyncHTTP<'static>, bun_http::HTTPClientResult<'_>),
-                    fn(*mut S3HttpDownloadStreamingTask, *mut bun_http::AsyncHTTP<'static>, bun_http::HTTPClientResult<'_>),
-                >(S3HttpDownloadStreamingTask::http_callback)
-            },
+            S3HttpDownloadStreamingTask::http_callback,
         ),
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {

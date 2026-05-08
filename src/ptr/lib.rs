@@ -258,6 +258,28 @@ pub unsafe fn detach_lifetime_mut<'a, T: ?Sized>(r: &mut T) -> &'a mut T {
 /// slightly different names; both are kept so callers from either land cleanly.
 pub use detach_lifetime_ref as detach_ref;
 
+/// Reinterpret `&[Box<[T]>]` as `&[&[T]]` for read-only fan-out.
+///
+/// `Box<[T]>` and `&[T]` are both `(NonNull<T>, len: usize)` fat pointers with
+/// identical layout (guaranteed by the unsized-pointer ABI), so a column of
+/// owned boxed slices can be viewed as a column of borrows without copying.
+/// Used by the bundler's SoA columns (`items_unique_key_for_additional_file`)
+/// where the printer API wants `&[&[u8]]`.
+///
+/// The returned borrows are valid for the input borrow `'a` only — the boxes
+/// are not moved or dropped while the view is live.
+#[inline(always)]
+pub fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
+    const {
+        assert!(core::mem::size_of::<Box<[T]>>() == core::mem::size_of::<&[T]>());
+        assert!(core::mem::align_of::<Box<[T]>>() == core::mem::align_of::<&[T]>());
+    }
+    // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
+    // element is a valid non-null `(ptr, len)` pair, which is exactly the
+    // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
+    unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) }
+}
+
 /// Non-owning borrowed slice whose backing storage outlives the holder.
 ///
 /// Runtime sibling of `bun_js_parser::StoreSlice<T>` for `*const [T]` struct

@@ -709,7 +709,9 @@ impl<'a> Printer<'a> {
         // Zig relied on restoring `parent` before return. Phase B: change field to raw
         // `*const StyleContext` or restructure StyleContext as an explicit stack.
         // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
-        self.ctx = Some(unsafe { core::mem::transmute::<&css::StyleContext<'_>, &'a css::StyleContext<'a>>(&ctx) });
+        // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
+        // `StyleContext<'a>` share layout; only the borrow-checker tag differs).
+        self.ctx = Some(unsafe { &*core::ptr::from_ref(&ctx).cast::<css::StyleContext<'a>>() });
         let res = func(closure, self);
         self.ctx = parent;
 

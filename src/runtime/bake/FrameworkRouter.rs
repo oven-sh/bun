@@ -1289,9 +1289,22 @@ impl FrameworkRouter {
 // `to_owned_part` helper exists to detach the borrow lifetime when stored in `Route`.
 impl<'a> Part<'a> {
     fn to_owned_part(self) -> Part<'static> {
-        // SAFETY: payload points into pattern_string_arena which lives as long as FrameworkRouter.
-        // We erase the lifetime to store inside `Route`. Phase B should model this with `'bump`.
-        unsafe { core::mem::transmute::<Part<'a>, Part<'static>>(self) }
+        // SAFETY: payload points into pattern_string_arena which lives as long as
+        // FrameworkRouter. We erase the lifetime to store inside `Route`. Phase B
+        // should model this with `'bump`. Variant-by-variant detach (no bitcast).
+        #[inline(always)]
+        unsafe fn d(s: &[u8]) -> &'static [u8] {
+            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
+        }
+        unsafe {
+            match self {
+                Part::Text(s) => Part::Text(d(s)),
+                Part::Param(s) => Part::Param(d(s)),
+                Part::CatchAllOptional(s) => Part::CatchAllOptional(d(s)),
+                Part::CatchAll(s) => Part::CatchAll(d(s)),
+                Part::Group(s) => Part::Group(d(s)),
+            }
+        }
     }
 }
 

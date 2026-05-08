@@ -3297,12 +3297,8 @@ impl<'a> BundleV2<'a> {
             ..Default::default()
         })?;
 
-        // SAFETY: `BundledAst` stores arena-backed raw pointers; the elided
-        // lifetime on `to_bundled_ast`'s return only ties it to the `&mut`
-        // borrow of the builder, not to any data that drops here. Erase to
-        // `'static` to match `Graph.ast: MultiArrayList<JSAst<'static>>`.
-        let server_ast: JSAst = unsafe { core::mem::transmute::<_, JSAst>(server.to_bundled_ast(Target::Bun)?) };
-        let client_ast: JSAst = unsafe { core::mem::transmute::<_, JSAst>(client.to_bundled_ast(Target::Browser)?) };
+        let server_ast: JSAst = server.to_bundled_ast(Target::Bun)?;
+        let client_ast: JSAst = client.to_bundled_ast(Target::Browser)?;
         self.graph.ast.set(Index::BAKE_SERVER_DATA.get() as usize, server_ast);
         self.graph.ast.set(Index::BAKE_CLIENT_DATA.get() as usize, client_ast);
         Ok(())

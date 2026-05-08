@@ -725,10 +725,7 @@ fn send_sync_callback(
     // response buffer, which is the caller's buffer — outlives the read in
     // `send_sync`.
     unsafe {
-        (*this).write_item(core::mem::transmute::<
-            HTTPClientResult<'_>,
-            HTTPClientResult<'static>,
-        >(result));
+        (*this).write_item(result.detach_lifetime());
     }
 }
 

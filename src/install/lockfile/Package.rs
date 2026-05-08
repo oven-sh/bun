@@ -2833,8 +2833,9 @@ impl Package<u64> {
         self.dependencies.off = off as u32;
         self.dependencies.len = total_dependencies_count as u32;
 
-        // SAFETY: PackageIDSlice and DependencySlice are both #[repr(C)] {off: u32, len: u32}.
-        self.resolutions = unsafe { mem::transmute_copy(&self.dependencies) };
+        // PackageIDSlice and DependencySlice are both `ExternalSlice<_>` — same
+        // `{off: u32, len: u32}` window into different backing buffers.
+        self.resolutions = lockfile::PackageIDSlice::new(self.dependencies.off, self.dependencies.len);
 
         // SAFETY: capacity reserved above.
         unsafe { lockfile.buffers.resolutions.set_len(total_len) };

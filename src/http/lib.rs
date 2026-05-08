@@ -376,6 +376,32 @@ impl<'a> HTTPClientResult<'a> {
     pub fn is_abort(&self) -> bool {
         matches!(self.fail, Some(e) if e == bun_core::err!("Aborted") || e == bun_core::err!("AbortedBeforeConnecting"))
     }
+
+    /// Widen the borrow on `body` to `'static` for self-referential storage.
+    ///
+    /// Field-by-field move (no bitwise reinterpret): the only lifetime-carrying
+    /// field is `body: Option<&'a mut MutableString>`, which always points at a
+    /// buffer owned by the same heap object that will store this result
+    /// (`FetchTasklet.response_buffer`, `NetworkTask.response_buffer`, …).
+    ///
+    /// # Safety
+    /// Caller must guarantee `body`'s pointee outlives the returned value and
+    /// is not aliased exclusively elsewhere for that duration.
+    #[inline]
+    pub unsafe fn detach_lifetime(self) -> HTTPClientResult<'static> {
+        HTTPClientResult {
+            // SAFETY: caller contract — the buffer outlives the stored result.
+            body: self.body.map(|b| unsafe { &mut *core::ptr::from_mut::<MutableString>(b) }),
+            has_more: self.has_more,
+            redirected: self.redirected,
+            can_stream: self.can_stream,
+            is_http2: self.is_http2,
+            fail: self.fail,
+            metadata: self.metadata,
+            body_size: self.body_size,
+            certificate_info: self.certificate_info,
+        }
+    }
 }
 
 pub type HTTPClientResultCallbackFunction =
@@ -2799,9 +2825,7 @@ impl<'a> HTTPClient<'a> {
             // we save the successful parsed response
             // SAFETY: response borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer,
             // both of which outlive this fn; widen to 'static for storage.
-            self.state.pending_response = Some(unsafe {
-                core::mem::transmute::<picohttp::Response<'_>, picohttp::Response<'static>>(response)
-            });
+            self.state.pending_response = Some(unsafe { response.detach_lifetime() });
 
             let bytes_read =
                 (usize::try_from(response.bytes_read).expect("int cast")).min(to_read!().len());

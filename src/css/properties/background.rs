@@ -112,9 +112,13 @@ impl Background {
 
         if clip.is_none() {
             if let Some(o) = origin {
-                // SAFETY: BackgroundOrigin variants (border-box/padding-box/content-box) are a
-                // prefix of BackgroundClip's variants with identical discriminants.
-                clip = Some(unsafe { core::mem::transmute::<BackgroundOrigin, BackgroundClip>(o) });
+                // BackgroundOrigin's three variants are a prefix of BackgroundClip;
+                // map explicitly so the optimizer collapses to the identity move.
+                clip = Some(match o {
+                    BackgroundOrigin::BorderBox => BackgroundClip::BorderBox,
+                    BackgroundOrigin::PaddingBox => BackgroundClip::PaddingBox,
+                    BackgroundOrigin::ContentBox => BackgroundClip::ContentBox,
+                });
             }
         }
 

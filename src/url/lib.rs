@@ -310,9 +310,29 @@ impl<'a> URL<'a> {
     /// for the lifetime of the returned value.
     #[inline(always)]
     pub unsafe fn erase_lifetime<'b>(self) -> URL<'b> {
-        // SAFETY: `URL` is a POD aggregate of `&[u8]` slices; lifetime is a
-        // borrow-checker construct only — bitwise identical across `'a`/`'b`.
-        unsafe { core::mem::transmute::<URL<'a>, URL<'b>>(self) }
+        // Field-by-field reconstruction — every slice is `(ptr, len)`, so the
+        // value is bitwise unchanged; only the borrow-checker tag widens.
+        #[inline(always)]
+        unsafe fn d<'b>(s: &[u8]) -> &'b [u8] {
+            // SAFETY: caller contract on `erase_lifetime`.
+            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
+        }
+        URL {
+            hash: d(self.hash),
+            host: d(self.host),
+            hostname: d(self.hostname),
+            href: d(self.href),
+            origin: d(self.origin),
+            password: d(self.password),
+            pathname: d(self.pathname),
+            path: d(self.path),
+            port: d(self.port),
+            protocol: d(self.protocol),
+            search: d(self.search),
+            search_params: self.search_params,
+            username: d(self.username),
+            port_was_automatically_set: self.port_was_automatically_set,
+        }
     }
 
     pub fn is_file(&self) -> bool {

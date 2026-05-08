@@ -155,13 +155,9 @@ fn generate_compile_result_for_css_chunk_impl(
         &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
     };
     let parse_graph = c.parse_graph();
-    // SAFETY: `Box<[u8]>` and `&[u8]` are both `(ptr, len)` fat pointers with identical
-    // layout; the column slice is reinterpreted read-only for the duration of `to_css`.
-    let unique_keys: &[&[u8]] = unsafe {
-        core::mem::transmute::<&[Box<[u8]>], &[&[u8]]>(
-            parse_graph.input_files.items_unique_key_for_additional_file(),
-        )
-    };
+    let unique_keys: &[&[u8]] = bun_ptr::boxed_slices_as_borrowed(
+        parse_graph.input_files.items_unique_key_for_additional_file(),
+    );
 
     match &css_import.kind {
         CssImportOrderKind::Layers(_) => {

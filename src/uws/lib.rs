@@ -1314,6 +1314,16 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         NewSocketHandler { socket: self.socket }
     }
 
+    /// Reinterpret the const-generic discriminant to an arbitrary `NEW_SSL`.
+    /// Generic counterpart of [`Self::assume_ssl`]/[`Self::assume_tcp`] for
+    /// callers inside an `if IS_SSL { ... }` arm that need to widen a concrete
+    /// `NewSocketHandler<true>` back to the surrounding `NewSocketHandler<IS_SSL>`.
+    #[inline]
+    pub const fn cast_ssl<const NEW_SSL: bool>(self) -> NewSocketHandler<NEW_SSL> {
+        debug_assert!(SSL == NEW_SSL);
+        NewSocketHandler { socket: self.socket }
+    }
+
     #[inline]
     pub fn detach(&mut self) {
         self.socket = InternalSocket::Detached;

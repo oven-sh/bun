@@ -39,13 +39,12 @@ impl Socket {
     /// over a single `InternalSocket` field); only the const generic differs.
     #[inline]
     fn from_generic<const IS_SSL: bool>(socket: HTTPSocket<IS_SSL>) -> Self {
+        // `assume_ssl`/`assume_tcp` are safe field moves with a matching
+        // `debug_assert!(SSL)` — the const generic only gates `get_native_handle`.
         if IS_SSL {
-            // SAFETY: `HTTPSocket<IS_SSL>` and `HTTPSocket<true>` are the same
-            // type when `IS_SSL == true`; the copy bridges the const-generic.
-            Socket::Ssl(unsafe { core::mem::transmute_copy::<HTTPSocket<IS_SSL>, HTTPSocket<true>>(&socket) })
+            Socket::Ssl(socket.assume_ssl())
         } else {
-            // SAFETY: same as above for the `false` arm.
-            Socket::Tcp(unsafe { core::mem::transmute_copy::<HTTPSocket<IS_SSL>, HTTPSocket<false>>(&socket) })
+            Socket::Tcp(socket.assume_tcp())
         }
     }
 }

@@ -268,17 +268,11 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 Some(ImportInfo {
                                     import_records: &entry.condition_import_records,
                                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
-                                    // SAFETY: `Box<[u8]>` and `&[u8]` are both
-                                    // `(ptr, len)` fat pointers with identical
-                                    // layout; the column slice is reinterpreted
-                                    // read-only for the duration of `to_css`.
-                                    ast_unique_key_for_additional_file: unsafe {
-                                        core::mem::transmute::<&[Box<[u8]>], &[&[u8]]>(
-                                            parse_graph
-                                                .input_files
-                                                .items_unique_key_for_additional_file(),
-                                        )
-                                    },
+                                    ast_unique_key_for_additional_file: bun_ptr::boxed_slices_as_borrowed(
+                                        parse_graph
+                                            .input_files
+                                            .items_unique_key_for_additional_file(),
+                                    ),
                                 }),
                                 // `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
                                 // `c.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s

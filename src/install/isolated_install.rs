@@ -177,8 +177,8 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
         // SAFETY: identity cast — narrows the invariant `'a` param to the
         // borrow-local `'x` (`'a: 'x` is implied by `&'x mut Installer<'a>`).
         // The returned reference cannot outlive `'x`, so all inner `'a`
-        // borrows remain valid.
-        unsafe { core::mem::transmute::<&'x mut store::Installer<'a>, &'x mut store::Installer<'x>>(ctx) }
+        // borrows remain valid. Inner-lifetime variance cast via raw pointer.
+        unsafe { &mut *core::ptr::from_mut(ctx).cast::<store::Installer<'x>>() }
     }
 }
 

@@ -146,6 +146,32 @@ unsafe extern "Rust" {
     fn __bun_get_vm_ctx(kind: AllocatorType) -> EventLoopCtx;
 }
 
+/// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
+/// `bun_io` (which now depends on this crate) and `FilePoll::file_type` share
+/// one definition; `bun_io::pipes` re-exports it for downstream callers.
+// PORT NOTE: Zig defines this in src/io/pipes.zig; sunk one tier to break the
+// io↔aio cycle (FilePoll::file_type was the only aio→io edge).
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum FileType {
+    File,
+    Pipe,
+    NonblockingPipe,
+    Socket,
+}
+
+impl FileType {
+    pub fn is_pollable(self) -> bool {
+        matches!(
+            self,
+            FileType::Pipe | FileType::NonblockingPipe | FileType::Socket
+        )
+    }
+
+    pub fn is_blocking(self) -> bool {
+        self == FileType::Pipe
+    }
+}
+
 #[inline]
 pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
     // SAFETY: link-time-resolved Rust-ABI fn; `kind` selects between the
@@ -457,15 +483,15 @@ impl FilePoll {
         self.flags = flags;
     }
 
-    pub fn file_type(&self) -> bun_io::FileType {
+    pub fn file_type(&self) -> FileType {
         let flags = self.flags;
         if flags.contains(Flags::Socket) {
-            return bun_io::FileType::Socket;
+            return FileType::Socket;
         }
         if flags.contains(Flags::Nonblocking) {
-            return bun_io::FileType::NonblockingPipe;
+            return FileType::NonblockingPipe;
         }
-        bun_io::FileType::Pipe
+        FileType::Pipe
     }
 
     // PORT NOTE: Zig `onKQueueEvent`/`onEpollEvent` take `_: *Loop` (unused, raw-pointer

@@ -136,26 +136,9 @@ impl PollOrFd {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum FileType {
-    File,
-    Pipe,
-    NonblockingPipe,
-    Socket,
-}
-
-impl FileType {
-    pub fn is_pollable(self) -> bool {
-        matches!(
-            self,
-            FileType::Pipe | FileType::NonblockingPipe | FileType::Socket
-        )
-    }
-
-    pub fn is_blocking(self) -> bool {
-        self == FileType::Pipe
-    }
-}
+// Sunk to `bun_aio` so `FilePoll::file_type()` needs no aio→io edge; re-export
+// keeps the historical `bun_io::FileType` / `bun_io::pipes::FileType` paths.
+pub use bun_aio::FileType;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ReadState {

@@ -55,6 +55,12 @@ struct PoolStats {
     tasks: AtomicU64,
     /// Times a worker entered the futex sleep path in `idle_event.wait()`.
     sleeps: AtomicU64,
+    /// Monotonic timestamp of the last `dump_stats` call (or pool init), so
+    /// the per-phase wall-clock can be reported alongside the worker sums.
+    /// Lets the dump distinguish "workers idle while the orchestrator runs
+    /// serial work" (busy_ns ≪ wall × workers, but busy_ns ≈ wall × N for
+    /// some N) from "wake-chain too slow".
+    last_dump_ns: AtomicU64,
 }
 
 // PORT NOTE: Zig's `packed struct(u32)` named `Sync` is kept as `Sync` here for
@@ -222,7 +228,13 @@ impl ThreadPool {
             spawned_thread_count: AtomicU32::new(0),
             wait_group: WaitGroup::init(),
             is_running: AtomicBool::new(false),
-            stats: PoolStats::default(),
+            stats: PoolStats {
+                // Seed wall-clock origin so the first `dump_stats` window is
+                // measured from pool creation. Skip the syscall when stats are
+                // disabled (the field is otherwise dead).
+                last_dump_ns: AtomicU64::new(if stats_enabled() { now_ns() } else { 0 }),
+                ..PoolStats::default()
+            },
         }
     }
 
@@ -233,21 +245,32 @@ impl ThreadPool {
         if !stats_enabled() {
             return;
         }
+        let now = now_ns();
         let idle = self.stats.idle_ns.swap(0, Ordering::Relaxed);
         let busy = self.stats.busy_ns.swap(0, Ordering::Relaxed);
         let tasks = self.stats.tasks.swap(0, Ordering::Relaxed);
         let sleeps = self.stats.sleeps.swap(0, Ordering::Relaxed);
+        let last = self.stats.last_dump_ns.swap(now, Ordering::Relaxed);
         let spawned = self.sync.load(Ordering::Relaxed).spawned();
         let total = idle + busy;
         let util = if total > 0 { (busy as f64 / total as f64) * 100.0 } else { 0.0 };
+        // Effective parallelism over the wall-clock window: how many CPUs the
+        // pool kept busy on average. This is the number to compare against
+        // `perf stat`'s "CPUs utilized" — `util` alone is misleading because
+        // a worker that is futex-asleep while the orchestrator does serial
+        // work is correctly counted as 100% idle.
+        let wall = if last == 0 { 0 } else { now.wrapping_sub(last) };
+        let eff = if wall > 0 { busy as f64 / wall as f64 } else { 0.0 };
         eprintln!(
-            "[threadpool {}] workers={} tasks={} busy={:.3}s idle={:.3}s util={:.1}% sleeps={}",
+            "[threadpool {}] workers={} tasks={} wall={:.3}s busy={:.3}s idle={:.3}s util={:.1}% eff_cpus={:.2} sleeps={}",
             label,
             spawned,
             tasks,
+            wall as f64 / 1e9,
             busy as f64 / 1e9,
             idle as f64 / 1e9,
             util,
+            eff,
             sleeps,
         );
     }

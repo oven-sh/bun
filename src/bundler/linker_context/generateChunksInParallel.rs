@@ -136,8 +136,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     i += 1;
                 }
             }
-            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.schedule(batch);
-            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.wait_for_all();
+            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
+            // the link step); `pool` is the arena-allocated bundler ThreadPool.
+            let worker_pool = unsafe { (*c.parse_graph).pool.as_ref() }.worker_pool();
+            worker_pool.schedule(batch);
+            worker_pool.wait_for_all();
 
             debug!("  DONE {} prepare CSS ast (total count)", total_count);
         } else if cfg!(debug_assertions) {
@@ -275,8 +278,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     }
                 }
             }
-            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.schedule(batch);
-            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.wait_for_all();
+            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
+            // the link step); `pool` is the arena-allocated bundler ThreadPool.
+            let worker_pool = unsafe { (*c.parse_graph).pool.as_ref() }.worker_pool();
+            worker_pool.schedule(batch);
+            worker_pool.wait_for_all();
             debug!("  DONE {} compiling part ranges", total_count);
         }
 
@@ -293,7 +299,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert!(chunks_to_do.len() > 0);
             debug!(" START {} postprocess chunks", chunks_to_do.len());
 
-            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.each_ptr(
+            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
+            // the link step); `pool` is the arena-allocated bundler ThreadPool.
+            unsafe { (*c.parse_graph).pool.as_ref() }.worker_pool().each_ptr(
                 chunk_contexts[0],
                 LinkerContext::generate_chunk,
                 chunks_to_do,

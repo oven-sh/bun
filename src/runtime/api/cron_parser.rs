@@ -18,67 +18,6 @@ use bun_jsc::{JSGlobalObject, JsResult};
 use bun_str::strings;
 use phf::phf_map;
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Local shim: `gregorian_date_time_to_ms_utc` lives in the gated
-// here as an extension trait until that file is enabled upstream.
-// Port of `JSGlobalObject.gregorianDateTimeToMSUTC` (JSGlobalObject.zig:30).
-// ──────────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    fn Bun__gregorianDateTimeToMS(
-        global: *const JSGlobalObject,
-        year: core::ffi::c_int,
-        month: core::ffi::c_int,
-        day: core::ffi::c_int,
-        hour: core::ffi::c_int,
-        minute: core::ffi::c_int,
-        second: core::ffi::c_int,
-        millisecond: core::ffi::c_int,
-        input_is_local: bool,
-    ) -> f64;
-}
-
-trait JSGlobalObjectCronExt {
-    fn gregorian_date_time_to_ms_utc(
-        &self,
-        year: i32,
-        month: i32,
-        day: i32,
-        hour: i32,
-        minute: i32,
-        second: i32,
-        millisecond: i32,
-    ) -> JsResult<f64>;
-}
-
-impl JSGlobalObjectCronExt for JSGlobalObject {
-    #[inline]
-    fn gregorian_date_time_to_ms_utc(
-        &self,
-        year: i32,
-        month: i32,
-        day: i32,
-        hour: i32,
-        minute: i32,
-        second: i32,
-        millisecond: i32,
-    ) -> JsResult<f64> {
-        // SAFETY: FFI — `self` is a valid JSGlobalObject*; all integer args by value.
-        Ok(unsafe {
-            Bun__gregorianDateTimeToMS(
-                self,
-                year as core::ffi::c_int,
-                month as core::ffi::c_int,
-                day as core::ffi::c_int,
-                hour as core::ffi::c_int,
-                minute as core::ffi::c_int,
-                second as core::ffi::c_int,
-                millisecond as core::ffi::c_int,
-                false,
-            )
-        })
-    }
-}
-
 #[derive(Clone, Copy)]
 pub struct CronExpression {
     pub minutes: u64, // bits 0-59
@@ -189,9 +128,7 @@ impl CronExpression {
     /// Compute the next UTC time (in ms since epoch) that matches this
     /// expression, strictly after `from_ms`. Returns None if no match found
     /// within 8 years.
-     // TODO(b2-blocked): bun_jsc::JSGlobalObject::ms_to_gregorian_date_time_utc
     pub fn next(&self, global_object: &JSGlobalObject, from_ms: f64) -> JsResult<Option<f64>> {
-        // TODO(port): GregorianDateTime field types assumed i32; verify in bun_jsc
         let mut dt = global_object.ms_to_gregorian_date_time_utc(from_ms);
         let start_year = dt.year;
         dt.minute += 1;

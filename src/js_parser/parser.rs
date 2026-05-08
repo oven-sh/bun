@@ -2175,7 +2175,7 @@ impl DeferredErrors {
 
 pub struct ImportClause<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
-    /// (`S::Import.items: *mut [ClauseItem]`) without a const→mut cast.
+    /// (`S::Import.items: StoreSlice<ClauseItem>`).
     pub items: &'a mut [js_ast::ClauseItem],
     pub is_single_line: bool,
     pub had_type_only_imports: bool,
@@ -2277,7 +2277,7 @@ pub struct FindSymbolResult {
 
 pub struct ExportClauseResult<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
-    /// (`S::Export{From,Clause}.items: *mut [ClauseItem]`) without a const→mut cast.
+    /// (`S::Export{From,Clause}.items: StoreSlice<ClauseItem>`).
     pub clauses: &'a mut [js_ast::ClauseItem],
     pub is_single_line: bool,
     pub had_type_only_exports: bool,

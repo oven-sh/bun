@@ -580,7 +580,7 @@ impl<'a> Parser<'a> {
             loc: expr.loc,
         });
         let part = js_ast::Part {
-            stmts,
+            stmts: stmts.into(),
             symbol_uses: core::mem::take(&mut p.symbol_uses),
             ..Default::default()
         };
@@ -859,7 +859,7 @@ impl<'a> Parser<'a> {
                 loc: logger::Loc::EMPTY,
             });
             before.push(js_ast::Part {
-                stmts: debugger_stmts,
+                stmts: debugger_stmts.into(),
                 ..Default::default()
             });
         }
@@ -1147,7 +1147,7 @@ impl<'a> Parser<'a> {
                     )
                 });
                 before.push(js_ast::Part {
-                    stmts: part_stmts,
+                    stmts: part_stmts.into(),
                     declared_symbols,
                     tag: crate::PartTag::DirnameFilename,
                     ..Default::default()
@@ -1195,10 +1195,7 @@ impl<'a> Parser<'a> {
                             import_record_index: import_record_id,
                             namespace_ref: ns_ref,
                             default_name: None,
-                            items: core::ptr::slice_from_raw_parts_mut(
-                                core::ptr::NonNull::<js_ast::ClauseItem>::dangling().as_ptr(),
-                                0,
-                            ),
+                            items: crate::StoreSlice::EMPTY,
                             is_single_line: false,
                         },
                         ns_loc,
@@ -1211,7 +1208,7 @@ impl<'a> Parser<'a> {
                     });
                     // PERF(port): was assume_capacity
                     before.push(js_ast::Part {
-                        stmts: import_part_stmts,
+                        stmts: import_part_stmts.into(),
                         declared_symbols,
                         tag: crate::PartTag::ImportToConvertFromRequire,
                         // This part has a single symbol, so it may be removed if unused.
@@ -1296,7 +1293,7 @@ impl<'a> Parser<'a> {
             let stmt_and_part: Option<StmtAndPart> = 'brk: {
                 let mut found: Option<StmtAndPart> = None;
                 for (part_idx, part) in parts.iter().enumerate() {
-                    // SAFETY: `Part.stmts` is `*mut [Stmt]` (arena-owned). It is
+                    // `Part.stmts` is a `StoreSlice<Stmt>` (arena-owned). It is
                     // only ever populated from bump-allocated slices in this fn.
                     for s in unsafe { &*part.stmts }.iter() {
                         match s.data {
@@ -1402,8 +1399,11 @@ impl<'a> Parser<'a> {
                     //    module.exports = require('./foo.js');
                     //
                     // An example is react-dom/index.js, which does a DCE check.
-                    // SAFETY: `Part.stmts` is `*mut [Stmt]` (arena slice).
-                    let part_stmts: &mut [Stmt] = unsafe { &mut *part.stmts };
+                    // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
+                    // arena slice doesn't conflict with the `part.stmts = …` rewrite
+                    // below. SAFETY: arena-owned slice valid for 'a.
+                    let part_stmts_ss = part.stmts;
+                    let part_stmts: &mut [Stmt] = unsafe { part_stmts_ss.slice_mut() };
                     if part_stmts.len() > 1 {
                         break;
                     }
@@ -1457,7 +1457,7 @@ impl<'a> Parser<'a> {
                                                 stmt_loc,
                                             ));
                                             new_stmts.extend_from_slice(&part_stmts[j + 1..]);
-                                            new_stmts.into_bump_slice_mut()
+                                            crate::StoreSlice::from_bump(new_stmts)
                                         };
 
                                         part.import_record_indices.push(req.import_record_index);
@@ -1804,7 +1804,7 @@ impl<'a> Parser<'a> {
                 )
             });
             before.push(js_ast::Part {
-                stmts: part_stmts,
+                stmts: part_stmts.into(),
                 declared_symbols,
                 tag: crate::PartTag::DirnameFilename,
                 ..Default::default()
@@ -1892,7 +1892,7 @@ impl<'a> Parser<'a> {
                         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
                     }
                 }
-                let properties: *mut [B::Property] = properties.into_bump_slice_mut();
+                let properties = crate::StoreSlice::from_bump(properties);
 
                 // Create: const { test, expect, ... } = require("bun:test")
                 let binding = p.b(B::Object { properties, is_single_line: false }, logger::Loc::EMPTY);
@@ -1914,7 +1914,7 @@ impl<'a> Parser<'a> {
                 let part_stmts = p.arena.alloc_slice_fill_with(1, |_| local_stmt);
 
                 before.push(js_ast::Part {
-                    stmts: part_stmts,
+                    stmts: part_stmts.into(),
                     declared_symbols,
                     import_record_indices: vec![import_record_id],
                     tag: crate::PartTag::BunTest,
@@ -1942,7 +1942,7 @@ impl<'a> Parser<'a> {
                         declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
                     }
                 }
-                let clauses: *mut [js_ast::ClauseItem] = clauses.into_bump_slice_mut();
+                let clauses = crate::StoreSlice::from_bump(clauses);
 
                 let namespace_ref = p
                     .declare_symbol(
@@ -1965,7 +1965,7 @@ impl<'a> Parser<'a> {
 
                 let part_stmts = p.arena.alloc_slice_fill_with(1, |_| import_stmt);
                 before.push(js_ast::Part {
-                    stmts: part_stmts,
+                    stmts: part_stmts.into(),
                     declared_symbols,
                     import_record_indices: vec![import_record_id],
                     tag: crate::PartTag::BunTest,

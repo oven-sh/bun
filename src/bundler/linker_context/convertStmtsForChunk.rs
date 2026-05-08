@@ -359,7 +359,7 @@ pub fn convert_stmts_for_chunk(
 
                         stmt = Stmt::alloc(
                             S::Import {
-                                items,
+                                items: items.into(),
                                 import_record_index: s.import_record_index,
                                 namespace_ref: s.namespace_ref,
                                 is_single_line: s.is_single_line,

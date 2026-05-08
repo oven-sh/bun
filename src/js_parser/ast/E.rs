@@ -360,7 +360,7 @@ impl Arrow {
     // Zig `pub const noop_return_undefined: Arrow = .{ .body = .{ .stmts = &.{} } };`
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
-        body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::empty_arena_slice_mut() },
+        body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::StoreSlice::EMPTY },
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
@@ -370,7 +370,7 @@ impl Default for Arrow {
     fn default() -> Self {
         Self {
             args: crate::StoreSlice::EMPTY,
-            body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::empty_arena_slice_mut() },
+            body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::StoreSlice::EMPTY },
             is_async: false,
             has_rest_arg: false,
             prefer_expr: false,
@@ -1701,38 +1701,30 @@ pub struct TemplatePart {
 
 pub struct Template {
     pub tag: Option<ExprNodeIndex>,
-    /// Arena-owned mutable slice (Zig: `[]TemplatePart`). Stored as a raw
-    /// `*mut` so writers (`substitute_single_use_symbol_in_expr`, the visit
-    /// pass, `foldStringAddition`) retain mutable provenance — a `&'static [T]`
-    /// here would force `*const→*mut` casts that violate Stacked Borrows. Use
+    /// Arena-owned mutable slice (Zig: `[]TemplatePart`). Stored as a
+    /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
+    /// visit pass, `foldStringAddition`) retain mutable provenance. Use
     /// `parts()` / `parts_mut()` for ergonomic access; never null.
-    pub parts: *mut [TemplatePart],
+    pub parts: crate::StoreSlice<TemplatePart>,
     pub head: TemplateContents,
 }
 
 impl Template {
-    /// Dangling well-aligned empty `*mut [TemplatePart]` for parts-less
-    /// templates (e.g. tagged no-substitution literals).
+    /// Empty `StoreSlice<TemplatePart>` for parts-less templates (e.g. tagged
+    /// no-substitution literals).
     #[inline]
-    pub fn empty_parts() -> *mut [TemplatePart] {
-        core::ptr::slice_from_raw_parts_mut(
-            core::ptr::NonNull::<TemplatePart>::dangling().as_ptr(),
-            0,
-        )
+    pub fn empty_parts() -> crate::StoreSlice<TemplatePart> {
+        crate::StoreSlice::EMPTY
     }
 
     #[inline]
-    pub fn parts(&self) -> &[TemplatePart] {
-        // SAFETY: `parts` is never null (arena-owned or `empty_parts()`); the
-        // caller's `&self` borrow establishes shared access for its duration.
-        unsafe { &*self.parts }
-    }
+    pub fn parts(&self) -> &[TemplatePart] { self.parts.slice() }
 
     #[inline]
     pub fn parts_mut(&mut self) -> &mut [TemplatePart] {
-        // SAFETY: `parts` is never null and was allocated with mutable
-        // provenance; `&mut self` establishes unique access for its duration.
-        unsafe { &mut *self.parts }
+        // SAFETY: `&mut self` establishes unique access; arena-owned slice
+        // valid for the AST arena lifetime.
+        unsafe { self.parts.slice_mut() }
     }
 }
 
@@ -1905,11 +1897,10 @@ impl Template {
 
         // Arena-owned mutable slice; `into_bump_slice_mut()` preserves write
         // provenance for downstream mutators (Zig: `parts.items`).
-        let parts_slice: *mut [TemplatePart] = parts.into_bump_slice_mut();
         Expr::init(
             Template {
                 tag: None,
-                parts: parts_slice,
+                parts: crate::StoreSlice::from_bump(parts),
                 head: TemplateContents::Cooked(head.data.e_string().expect("infallible: variant checked").shallow_clone()),
             },
             loc,

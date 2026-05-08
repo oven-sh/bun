@@ -208,7 +208,7 @@ impl<'a> ImportScanner<'a> {
                         // Remove items if they are unused
                         // SAFETY: `st.items` is an arena-owned slice valid for the AST
                         // arena's lifetime; no aliasing &mut outstanding.
-                        let items: &mut [js_ast::ClauseItem] = unsafe { &mut *st.items };
+                        let items: &mut [js_ast::ClauseItem] = unsafe { st.items.slice_mut() };
                         if !items.is_empty() {
                             found_imports = true;
                             let mut items_end: usize = 0;
@@ -242,10 +242,7 @@ impl<'a> ImportScanner<'a> {
                                 }
                             }
 
-                            st.items = core::ptr::slice_from_raw_parts_mut(
-                                items.as_mut_ptr(),
-                                items_end,
-                            );
+                            st.items.truncate(items_end);
                         }
 
                         // -- Original Comment --
@@ -369,7 +366,7 @@ impl<'a> ImportScanner<'a> {
 
                                 symbol.namespace_alias = Some(G::NamespaceAlias {
                                     namespace_ref,
-                                    alias: std::ptr::from_ref::<[u8]>(*alias),
+                                    alias: js_ast::StoreStr::new(*alias),
                                     import_record_index: st.import_record_index,
                                     was_originally_property_access: st.star_name_loc.is_some()
                                         && existing.contains(original_name),
@@ -490,7 +487,7 @@ impl<'a> ImportScanner<'a> {
                                 let original_name = unsafe { &*symbol.original_name };
                                 symbol.namespace_alias = Some(G::NamespaceAlias {
                                     namespace_ref,
-                                    alias: item.alias,
+                                    alias: js_ast::StoreStr::new(unsafe { &*item.alias }),
                                     import_record_index: st.import_record_index,
                                     was_originally_property_access: st.star_name_loc.is_some()
                                         && existing_items
@@ -507,7 +504,7 @@ impl<'a> ImportScanner<'a> {
                             let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
                             symbol.namespace_alias = Some(G::NamespaceAlias {
                                 namespace_ref,
-                                alias: raw_str(b""),
+                                alias: js_ast::StoreStr::EMPTY,
                                 import_record_index: st.import_record_index,
                                 was_originally_property_access: false,
                             });
@@ -683,8 +680,7 @@ impl<'a> ImportScanner<'a> {
                                 local_parts_with_uses: Default::default(),
                             },
                         )?;
-                        // SAFETY: arena-owned slice valid for 'p.
-                        let original: &'p [u8] = unsafe { &*alias.original_name };
+                        let original: &'p [u8] = alias.original_name.slice();
                         p.record_export(alias.loc, original, st.namespace_ref)?;
                         p.import_records.items_mut()[st.import_record_index as usize]
                             .flags

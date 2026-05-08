@@ -1449,7 +1449,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
                 }
 
-                parts_[first_none_part].stmts = stmts_list;
+                parts_[first_none_part].stmts = crate::StoreSlice::new_mut(stmts_list);
                 parts_ = &mut parts_[..first_none_part + 1];
             }
         }
@@ -1701,8 +1701,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 .as_ref()
                 .map(|a| (a.namespace_ref, a.alias));
             if let Some((ns_ref, alias_ptr)) = ns_alias_opt {
-                // SAFETY: alias is an arena-owned slice valid for 'a.
-                let alias: &'a [u8] = unsafe { &*alias_ptr };
+                let alias: &'a [u8] = alias_ptr.slice();
                 if let Some(js_ast::ts::Data::Namespace(ns)) =
                     self.ref_to_ts_namespace_member.get(&ns_ref)
                 {
@@ -1871,7 +1870,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let import_stmt = self.s(
             S::Import {
                 namespace_ref: self.bun_app_namespace_ref,
-                items: clause_items,
+                items: clause_items.into(),
                 import_record_index: import_record_i,
                 is_single_line: true,
                 default_name: None,
@@ -1885,7 +1884,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // the bundler ends up re-ordering this to be after... The order
         // does not matter as ESM imports are always hoisted.
         parts.push(js_ast::Part {
-            stmts,
+            stmts: stmts.into(),
             declared_symbols,
             import_record_indices: vec![import_record_i],
             tag: crate::PartTag::Runtime,
@@ -1972,7 +1971,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if symbol.namespace_alias.is_none() {
                     symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                         namespace_ref,
-                        alias: std::ptr::from_ref::<[u8]>(alias_name),
+                        alias: js_ast::StoreStr::new(alias_name),
                         import_record_index: import_record_i,
                         was_originally_property_access: false,
                     });
@@ -1997,7 +1996,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let import_stmt = self.s(
             S::Import {
                 namespace_ref,
-                items: clause_items,
+                items: clause_items.into(),
                 import_record_index: import_record_i,
                 is_single_line: true,
                 default_name: None,
@@ -2015,7 +2014,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // the bundler ends up re-ordering this to be after... The order
         // does not matter as ESM imports are always hoisted.
         parts.push(js_ast::Part {
-            stmts,
+            stmts: stmts.into(),
             declared_symbols,
             import_record_indices: vec![import_record_i],
             tag: crate::PartTag::Runtime,
@@ -2117,7 +2116,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let stmt = if HOT_MODULE_RELOADING {
             let binding = self.b(
-                B::Object { properties: items_hmr.into_bump_slice_mut(), is_single_line: false },
+                B::Object { properties: crate::StoreSlice::from_bump(items_hmr), is_single_line: false },
                 logger::Loc::EMPTY,
             );
             let value = self.new_expr(
@@ -2136,7 +2135,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.s(
                 S::Import {
                     namespace_ref,
-                    items: items_import.into_bump_slice_mut(),
+                    items: crate::StoreSlice::from_bump(items_import),
                     import_record_index,
                     is_single_line: false,
                     default_name: None,
@@ -2148,7 +2147,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let stmts = arena.alloc_slice_fill_with::<Stmt, _>(1, |_| stmt);
 
         parts.push(js_ast::Part {
-            stmts,
+            stmts: stmts.into(),
             declared_symbols,
             import_record_indices: vec![import_record_index],
             tag: crate::PartTag::Runtime,
@@ -2608,8 +2607,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // provenance preserved end-to-end) so derive the unique view directly.
                     // SAFETY: arena-owned slice; single-threaded visit pass has exclusive
                     // access and no other borrow of this slice is live across the loop body.
-                    let parts = unsafe { &mut *e.parts };
-                    for part in parts.iter_mut() {
+                    for part in e.parts_mut().iter_mut() {
                         match self.substitute_single_use_symbol_in_expr(part.value, r#ref, replacement, replacement_can_be_removed) {
                             Substitution::Continue(_) => {}
                             Substitution::Success(result) => {
@@ -2835,7 +2833,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
                 symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                     namespace_ref: self.bun_app_namespace_ref,
-                    alias: std::ptr::from_ref::<[u8]>(b"Response" as &[u8]),
+                    alias: js_ast::StoreStr::new(b"Response"),
                     was_originally_property_access: false,
                     import_record_index: u32::MAX,
                 });
@@ -3270,7 +3268,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 return Some(self.b(
-                    B::Array { items: std::ptr::from_mut::<[_]>(items.into_bump_slice_mut()), has_spread: is_spread, is_single_line: ex.is_single_line },
+                    B::Array { items: crate::StoreSlice::new_mut(items.into_bump_slice_mut()), has_spread: is_spread, is_single_line: ex.is_single_line },
                     expr.loc,
                 ));
             }
@@ -3322,7 +3320,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 return Some(self.b(
-                    B::Object { properties: std::ptr::from_mut::<[_]>(properties.into_bump_slice_mut()), is_single_line: ex.is_single_line },
+                    B::Object { properties: crate::StoreSlice::new_mut(properties.into_bump_slice_mut()), is_single_line: ex.is_single_line },
                     expr.loc,
                 ));
             }
@@ -3575,7 +3573,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     if symbol.namespace_alias.is_none() {
                         symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                             namespace_ref: stmt.namespace_ref,
-                            alias: std::ptr::from_ref::<[u8]>(b"default" as &[u8]),
+                            alias: js_ast::StoreStr::new(b"default"),
                             import_record_index: stmt.import_record_index,
                             was_originally_property_access: false,
                         });
@@ -3620,8 +3618,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         let mut end: usize = 0;
 
-        // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
-        let items_slice: &mut [js_ast::ClauseItem] = unsafe { &mut *stmt.items };
+        // SAFETY: arena-owned slice valid for parser 'a lifetime; exclusive via `stmt`.
+        let items_slice: &mut [js_ast::ClauseItem] = unsafe { stmt.items.slice_mut() };
         for i in 0..items_slice.len() {
             // PORT NOTE: Zig copied `ClauseItem` by value (POD struct). Rust's
             // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
@@ -3644,7 +3642,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if symbol.namespace_alias.is_none() {
                     symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                         namespace_ref: stmt.namespace_ref,
-                        alias: std::ptr::from_ref::<[u8]>(alias),
+                        alias: js_ast::StoreStr::new(alias),
                         import_record_index: stmt.import_record_index,
                         was_originally_property_access: false,
                     });
@@ -3682,7 +3680,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             items_slice[end] = item;
             end += 1;
         }
-        stmt.items = &raw mut items_slice[..end];
+        stmt.items = crate::StoreSlice::new_mut(&mut items_slice[..end]);
 
         // If we remapped the entire import away
         // i.e. import {graphql} "react-relay"
@@ -4340,13 +4338,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             js_ast::b::B::BArray(bind) => {
                 // SAFETY: B::Array payload + items slice are arena-allocated; valid for 'a.
-                for item in unsafe { (*(**bind).items).iter_mut() } {
+                for item in unsafe { (**bind).items_mut() }.iter_mut() {
                     self.declare_binding(kind, &mut item.binding, opts).expect("unreachable");
                 }
             }
             js_ast::b::B::BObject(bind) => {
                 // SAFETY: B::Object payload + properties slice are arena-allocated; valid for 'a.
-                for prop in unsafe { (*(**bind).properties).iter_mut() } {
+                for prop in unsafe { (**bind).properties_mut() }.iter_mut() {
                     self.declare_binding(kind, &mut prop.value, opts).expect("unreachable");
                 }
             }
@@ -4646,9 +4644,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // `can_be_removed_if_unused` while the `&mut` is live (reborrowed as
             // shared), then decay it to a raw `*mut` for storage in `Part` so no
             // outstanding `&mut` aliases the stored pointer afterwards.
-            let final_stmts = part_stmts.into_bump_slice_mut();
-            let can_be_removed_if_unused = self.stmts_can_be_removed_if_unused(&*final_stmts);
-            let final_stmts: *mut [Stmt] = final_stmts;
+            let final_stmts = crate::StoreSlice::from_bump(part_stmts);
+            let can_be_removed_if_unused = self.stmts_can_be_removed_if_unused(final_stmts.slice());
 
             parts.push(js_ast::Part {
                 stmts: final_stmts,
@@ -4663,7 +4660,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     v.as_slice().to_vec()
                 },
                 // SAFETY: fresh bump allocation, uniquely owned by the new Part.
-                scopes: std::ptr::from_mut::<[*mut js_ast::Scope]>(core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.arena))
+                scopes: crate::StoreSlice::new_mut(core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.arena))
                     .into_bump_slice_mut()),
                 can_be_removed_if_unused,
                 tag: if self.had_commonjs_named_exports_this_visit {
@@ -5563,7 +5560,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if statement_cares_about_scope(&body) {
             let block_stmts = self.arena.alloc_slice_copy(&[body]);
             stmts.push(self.s(
-                S::Block { stmts: block_stmts, close_brace_loc: logger::Loc::EMPTY },
+                S::Block { stmts: block_stmts.into(), close_brace_loc: logger::Loc::EMPTY },
                 body.loc,
             ));
             return Ok(());
@@ -5725,7 +5722,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             break 'target self.new_expr(
                 E::Arrow {
                     args: func_args,
-                    body: G::FnBody { loc: stmt_loc, stmts: arena.alloc_slice_copy(stmts_inside_closure) },
+                    body: G::FnBody { loc: stmt_loc, stmts: arena.alloc_slice_copy(stmts_inside_closure).into() },
                     prefer_expr: true,
                     ..Default::default()
                 },
@@ -5998,7 +5995,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
                 // SAFETY: `class.properties` is an arena-owned slice valid for 'a.
-                for prop in unsafe { (*(*class).properties).iter_mut() } {
+                for prop in unsafe { (*class).properties.slice_mut() }.iter_mut() {
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = prop.value {
@@ -6148,16 +6145,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 // SAFETY: re-borrow arena class.
-                unsafe { (*class).properties = std::ptr::from_mut::<[G::Property]>(class_properties.into_bump_slice_mut()) };
+                unsafe { (*class).properties = crate::StoreSlice::new_mut(class_properties.into_bump_slice_mut()) };
 
                 if !instance_members.is_empty() {
                     if constructor_function.is_none() {
                         // PORT NOTE: Zig `Property.List.fromList(class.properties)` re-wraps the
                         // freshly-installed slice and inserts at index 0. We rebuild instead
                         // (Property is not Clone in Rust).
-                        let old_props: *mut [G::Property] = unsafe { (*class).properties };
-                        // SAFETY: arena-owned slice valid for 'a; explicit reborrow to avoid implicit autoref.
-                        let old_len = unsafe { &*old_props }.len();
+                        let old_props: crate::StoreSlice<G::Property> = unsafe { (*class).properties };
+                        let old_len = old_props.len();
                         let mut properties = BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.arena);
                         let mut constructor_stmts = BumpVec::<Stmt>::new_in(self.arena);
 
@@ -6185,8 +6181,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 func: G::Fn {
                                     name: None,
                                     open_parens_loc: logger::Loc::EMPTY,
-                                    args: crate::empty_arena_slice_mut(),
-                                    body: G::FnBody { loc: stmt.loc, stmts: std::ptr::from_mut::<[Stmt]>(constructor_stmts.into_bump_slice_mut()) },
+                                    args: crate::StoreSlice::EMPTY,
+                                    body: G::FnBody { loc: stmt.loc, stmts: crate::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut()) },
                                     flags: Flags::FUNCTION_NONE,
                                     ..Default::default()
                                 },
@@ -6200,11 +6196,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             ..Default::default()
                         });
                         // SAFETY: arena-owned slice valid for 'a; moved (not copied) into new list.
-                        for old in unsafe { (*old_props).iter_mut() } {
+                        for old in unsafe { old_props.slice_mut() }.iter_mut() {
                             properties.push(core::mem::take(old));
                         }
 
-                        unsafe { (*class).properties = std::ptr::from_mut::<[G::Property]>(properties.into_bump_slice_mut()) };
+                        unsafe { (*class).properties = crate::StoreSlice::new_mut(properties.into_bump_slice_mut()) };
                     } else {
                         // SAFETY: arena-owned E.Function node valid for 'a.
                         let cf = unsafe { &mut *constructor_function.unwrap() };
@@ -6230,7 +6226,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             constructor_stmts.insert(i + off, *m);
                         }
 
-                        cf.func.body.stmts = std::ptr::from_mut::<[Stmt]>(constructor_stmts.into_bump_slice_mut());
+                        cf.func.body.stmts = crate::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut());
                     }
 
                     // TODO: make sure "super()" comes before instance field initializers
@@ -6583,7 +6579,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             return stmts[0];
         }
 
-        self.s(S::Block { stmts: std::ptr::from_mut::<[Stmt]>(stmts), close_brace_loc: logger::Loc::EMPTY }, loc)
+        self.s(S::Block { stmts: crate::StoreSlice::new_mut(stmts), close_brace_loc: logger::Loc::EMPTY }, loc)
     }
 
     pub fn find_label_symbol(&mut self, loc: logger::Loc, name: &[u8]) -> FindLabelSymbolResult {
@@ -7107,7 +7103,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let ret = self.s(S::Return { value: Some(array) }, loc);
             args.push(self.new_expr(
                 E::Arrow {
-                    body: G::FnBody { stmts: std::ptr::from_mut::<[Stmt]>(self.arena.alloc_slice_copy(&[ret])), loc },
+                    body: G::FnBody { stmts: crate::StoreSlice::new_mut(self.arena.alloc_slice_copy(&[ret])), loc },
                     prefer_expr: true,
                     ..Default::default()
                 },
@@ -7204,19 +7200,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let _ = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, true>(
                     self,
                     // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                    unsafe { &mut *part.stmts },
+                    unsafe { part.stmts.slice_mut() },
                     wrap_mode != WrapMode::None,
                     Some(&mut hmr_transform_ctx),
                 )?;
             }
             // Re-run for the last part (Zig iterated all `parts.items` including last).
             {
-                // SAFETY: arena-owned slice valid for 'a; `last_part` is uniquely
-                // borrowed inside `hmr_transform_ctx` so go through a raw ptr.
-                let last_stmts: *mut [Stmt] = hmr_transform_ctx.last_part.stmts;
+                let last_stmts = hmr_transform_ctx.last_part.stmts;
                 let _ = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, true>(
                     self,
-                    unsafe { &mut *last_stmts },
+                    // SAFETY: arena-owned slice valid for 'a; `last_part` is uniquely
+                    // borrowed inside `hmr_transform_ctx`.
+                    unsafe { last_stmts.slice_mut() },
                     wrap_mode != WrapMode::None,
                     Some(&mut hmr_transform_ctx),
                 )?;
@@ -7252,7 +7248,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let result = match ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, false>(
                         self,
                         // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
-                        unsafe { &mut *part.stmts },
+                        unsafe { part.stmts.slice_mut() },
                         wrap_mode != WrapMode::None,
                         None,
                     ) {
@@ -7268,7 +7264,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     kept_import_equals = kept_import_equals || result.kept_import_equals;
                     removed_import_equals = removed_import_equals || result.removed_import_equals;
 
-                    part.stmts = std::ptr::from_mut::<[Stmt]>(result.stmts);
+                    part.stmts = crate::StoreSlice::new_mut(result.stmts);
                     // SAFETY: just assigned from a live &mut [Stmt].
                     if unsafe { &*part.stmts }.len() > 0 {
                         if self.module_scope().contains_direct_eval && part.declared_symbols.len() > 0 {
@@ -7398,7 +7394,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
                 if preserve_strict_mode {
-                    remaining_stmts[0] = self.s(S::Directive { value: b"use strict" }, self.module_scope_directive_loc);
+                    remaining_stmts[0] = self.s(S::Directive { value: b"use strict".into() }, self.module_scope_directive_loc);
                     remaining_stmts = &mut remaining_stmts[1..];
                 }
 
@@ -7416,8 +7412,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     func: G::Fn {
                         name: None,
                         open_parens_loc: logger::Loc::EMPTY,
-                        args: std::ptr::from_mut::<[Arg]>(args),
-                        body: G::FnBody { loc: logger::Loc::EMPTY, stmts: std::ptr::from_mut::<[Stmt]>(stmts_to_copy) },
+                        args: crate::StoreSlice::new_mut(args),
+                        body: G::FnBody { loc: logger::Loc::EMPTY, stmts: crate::StoreSlice::new_mut(stmts_to_copy) },
                         // PORT NOTE: Zig `Flags.Function.init(.{ .is_export = false })` →
                         // empty FunctionSet (no flags set).
                         flags: Flags::FUNCTION_NONE,
@@ -7436,7 +7432,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 parts.push(js_ast::Part::default());
             }
             parts.truncate(1);
-            parts[0].stmts = std::ptr::from_mut::<[Stmt]>(top_level_stmts);
+            parts[0].stmts = crate::StoreSlice::new_mut(top_level_stmts);
         }
 
         // REPL mode transforms
@@ -7880,10 +7876,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
-            commonjs_replacement_stmts: core::ptr::slice_from_raw_parts_mut(
-                core::ptr::NonNull::<Stmt>::dangling().as_ptr(),
-                0,
-            ),
+            commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
@@ -8151,7 +8144,7 @@ impl LowerUsingDeclarationsContext {
             end += 1;
         }
 
-        let non_exported_statements: *mut [Stmt] = &raw mut stmts[..end as usize];
+        let non_exported_statements = crate::StoreSlice::new_mut(&mut stmts[..end as usize]);
 
         let caught_ref = p.generate_temp_ref(Some(b"_catch"));
         let err_ref = p.generate_temp_ref(Some(b"_err"));
@@ -8250,7 +8243,7 @@ impl LowerUsingDeclarationsContext {
         ));
         // PERF(port): was assume_capacity
         let catch_binding = p.b(B::Identifier { r#ref: caught_ref }, loc);
-        let catch_body: *mut [Stmt] = {
+        let catch_body: js_ast::StmtNodeList = {
             let err_binding = p.b(B::Identifier { r#ref: err_ref }, loc);
             let err_value = p.new_expr(E::Identifier { ref_: caught_ref, ..Default::default() }, loc);
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
@@ -8259,7 +8252,7 @@ impl LowerUsingDeclarationsContext {
             VecExt::append(&mut decls, Decl { binding: err_binding, value: Some(err_value) }).expect("oom");
             VecExt::append(&mut decls, Decl { binding: has_err_binding, value: Some(has_err_value) }).expect("oom");
             let stmt0 = p.s(S::Local { decls, ..Default::default() }, loc);
-            std::ptr::from_mut::<[Stmt]>(p.arena.alloc_slice_copy(&[stmt0]))
+            crate::StoreSlice::new_mut(p.arena.alloc_slice_copy(&[stmt0]))
         };
         result.push(p.s(
             S::Try {
@@ -8271,14 +8264,14 @@ impl LowerUsingDeclarationsContext {
                     body_loc: loc,
                     loc,
                 }),
-                finally: Some(js_ast::Finally { loc, stmts: std::ptr::from_mut::<[Stmt]>(finally_stmts) }),
+                finally: Some(js_ast::Finally { loc, stmts: crate::StoreSlice::new_mut(finally_stmts) }),
             },
             loc,
         ));
 
         if !exports.is_empty() {
             result.push(p.s(
-                S::ExportClause { items: std::ptr::from_mut::<[js_ast::ClauseItem]>(exports.into_bump_slice_mut()), is_single_line: false },
+                S::ExportClause { items: crate::StoreSlice::new_mut(exports.into_bump_slice_mut()), is_single_line: false },
                 loc,
             ));
         }

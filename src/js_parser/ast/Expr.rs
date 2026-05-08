@@ -151,7 +151,7 @@ impl Expr {
             E::Arrow {
                 body: G::FnBody {
                     loc: this.loc,
-                    stmts: std::ptr::from_mut::<[Stmt]>(stmts),
+                    stmts: crate::StoreSlice::new_mut(stmts),
                 },
                 ..Default::default()
             },
@@ -2243,14 +2243,14 @@ impl Data {
                 Ok(Data::EBinary(StoreRef::from_bump(item)))
             }
             Data::EClass(el) => {
-                // SAFETY: `properties` is an arena-owned `*mut [Property]` (Zig: `[]Property`).
+                // `properties` is an arena-owned `StoreSlice<Property>` (Zig: `[]Property`).
                 let src_props: &[G::Property] = unsafe { &*el.properties };
                 let mut properties =
                     bun_alloc::ArenaVec::with_capacity_in(src_props.len(), bump);
                 for prop in src_props.iter() {
                     properties.push(prop.deep_clone(bump)?);
                 }
-                let properties = std::ptr::from_mut::<[G::Property]>(properties.into_bump_slice_mut());
+                let properties = crate::StoreSlice::new_mut(properties.into_bump_slice_mut());
 
                 let item = bump.alloc(E::Class {
                     class_keyword: el.class_keyword,

@@ -1764,7 +1764,7 @@ impl<'a> LinkerContext<'a> {
         source_index: Index,
         source: &Source,
     ) -> js_printer::PrintResult {
-        let parts_to_print = &[Part { stmts: std::ptr::from_mut::<[Stmt]>(out_stmts), ..Default::default() }];
+        let parts_to_print = &[Part { stmts: js_ast::StoreSlice::new_mut(out_stmts), ..Default::default() }];
 
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
         // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
@@ -3356,7 +3356,8 @@ impl<'a> LinkerContext<'a> {
                     unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
-                            alias: result.alias,
+                            // SAFETY: `result.alias` is an arena-owned `*const [u8]` valid for the link pass.
+                            alias: js_ast::StoreStr::new(unsafe { &*result.alias }),
                             ..Default::default()
                         });
                 }
@@ -3380,7 +3381,8 @@ impl<'a> LinkerContext<'a> {
                     unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
-                            alias: result.alias,
+                            // SAFETY: `result.alias` is an arena-owned `*const [u8]` valid for the link pass.
+                            alias: js_ast::StoreStr::new(unsafe { &*result.alias }),
                             ..Default::default()
                         });
                 }

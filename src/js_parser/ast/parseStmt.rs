@@ -379,7 +379,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 cases.push(js_ast::Case {
                     value,
-                    body: body.into_bump_slice_mut(),
+                    body: crate::StoreSlice::from_bump(body),
                     loc: logger::Loc::EMPTY,
                 });
             }
@@ -388,7 +388,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 S::Switch {
                     test_,
                     body_loc,
-                    cases: cases.into_bump_slice_mut(),
+                    cases: crate::StoreSlice::from_bump(cases),
                 },
                 loc,
             ))
@@ -452,7 +452,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             catch_ = Some(js_ast::Catch {
                 loc: catch_loc,
                 binding,
-                body: stmts.into_bump_slice_mut(),
+                body: crate::StoreSlice::from_bump(stmts),
                 body_loc: catch_body_loc,
             });
             p.pop_scope();
@@ -467,7 +467,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
-                stmts: stmts.into_bump_slice_mut(),
+                stmts: crate::StoreSlice::from_bump(stmts),
             });
             p.pop_scope();
         }
@@ -475,7 +475,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(
             S::Try {
                 body_loc,
-                body: body.into_bump_slice_mut(),
+                body: crate::StoreSlice::from_bump(body),
                 catch_,
                 finally,
             },
@@ -781,7 +781,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
             Ok(p.s(
                 S::Block {
-                    stmts: stmts.into_bump_slice_mut(),
+                    stmts: crate::StoreSlice::from_bump(stmts),
                     close_brace_loc,
                 },
                 loc,
@@ -1145,7 +1145,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     namespace_ref = p.store_name_in_ref(name)?;
                     alias = Some(G::ExportStarAlias {
                         loc: p.lexer.loc(),
-                        original_name: std::ptr::from_ref::<[u8]>(name),
+                        original_name: crate::StoreStr::new(name),
                     });
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"from")?;
@@ -1270,7 +1270,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         S::ExportFrom {
                             // SAFETY: sole owner — fresh arena slice from parse_export_clause,
                             // moved into the AST node here; no other &mut alias exists.
-                            items: export_clause.clauses,
+                            items: export_clause.clauses.into(),
                             is_single_line: export_clause.is_single_line,
                             namespace_ref,
                             import_record_index,
@@ -1294,7 +1294,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     S::ExportClause {
                         // SAFETY: sole owner — fresh arena slice from parse_export_clause,
                         // moved into the AST node here; no other &mut alias exists.
-                        items: export_clause.clauses,
+                        items: export_clause.clauses.into(),
                         is_single_line: export_clause.is_single_line,
                     },
                     loc,
@@ -1402,7 +1402,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     import_record_index: u32::MAX,
                     // SAFETY: sole owner — fresh arena slice from parse_import_clause,
                     // moved into the AST node here; no other &mut alias exists.
-                    items: import_clause.items,
+                    items: import_clause.items.into(),
                     is_single_line: import_clause.is_single_line,
                     ..Default::default()
                 };
@@ -1513,7 +1513,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             // SAFETY: sole owner — fresh arena slice from parse_import_clause,
                             // moved into the AST node here; no other &mut alias exists.
-                            stmt.items = import_clause.items;
+                            stmt.items = import_clause.items.into();
                             stmt.is_single_line = import_clause.is_single_line;
                         }
                         _ => {

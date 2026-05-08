@@ -1467,14 +1467,12 @@ use bun_options_types::import_record::Tag as ImportRecordTag;
 // lower-tier crate API surface without editing those crates.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Dereference an arena-owned `*mut [T]` into a slice. Phase A stores AST
-/// child lists as raw `*mut [T]` (PORTING.md §Allocators: ARENA → raw); the
-/// printer only ever reads them.
+/// Re-borrow an arena-owned `StoreSlice<T>` for the print pass. Kept as a
+/// free fn (vs. calling `.slice()` inline) so the ~50 call sites stay
+/// `.zig`-diffable; the printer only ever reads these.
 #[inline(always)]
-pub(crate) fn slice_of<'a, T>(p: *mut [T]) -> &'a [T] {
-    if p.is_null() { return &[]; }
-    // SAFETY: arena-owned slice; outlives the print pass; Phase B threads 'bump.
-    unsafe { &*p }
+pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
+    p.slice()
 }
 #[inline(always)]
 pub(crate) fn slice_of_const<'a, T>(p: *const [T]) -> &'a [T] {
@@ -2172,7 +2170,7 @@ where
                     let mut b_object = B::Object {
                         // SAFETY: `temp_bindings`' heap buffer is stable until the
                         // matching clear()/drop below; `print_binding` only reads it.
-                        properties: std::ptr::from_mut::<[B::Property]>(temp_bindings.as_mut_slice()),
+                        properties: js_ast::StoreSlice::new_mut(temp_bindings.as_mut_slice()),
                         is_single_line: true,
                     };
                     // PORT NOTE: `Binding::init(*B.Object, loc)` is gated upstream;
@@ -3693,9 +3691,9 @@ where
                         // Zig: `var copy = e.*; copy.parts = &replaced;` — build a
                         // local `Template` (not a StoreRef alias) so `fold`'s
                         // `mem::take(self.head)` doesn't clobber the AST node.
-                        // `replaced` outlives `copy`/`fold()`; store a raw `*mut`
-                        // into the local Vec to match `Template.parts: *mut [_]`.
-                        let parts_slice: *mut [E::TemplatePart] = replaced.as_mut_slice();
+                        // `replaced` outlives `copy`/`fold()`; wrap as a StoreSlice
+                        // over the local Vec to match `Template.parts`.
+                        let parts_slice = js_ast::StoreSlice::new_mut(replaced.as_mut_slice());
                         let mut copy = E::Template {
                             tag: e.tag,
                             parts: parts_slice,
@@ -3875,7 +3873,7 @@ where
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
                         self.print_symbol(namespace.namespace_ref);
-                        let alias = slice_of_const(namespace.alias);
+                        let alias = namespace.alias.slice();
                         if js_ast::lexer::is_identifier(alias) {
                             self.print(b".");
                             // TODO: addSourceMappingForName
@@ -4097,12 +4095,12 @@ where
         // that means the namespace alias is empty
         if namespace.alias.is_empty() { return; }
 
-        if js_ast::lexer::is_identifier(slice_of_const(namespace.alias)) {
+        if js_ast::lexer::is_identifier(namespace.alias.slice()) {
             self.print(b".");
-            self.print_identifier(slice_of_const(namespace.alias));
+            self.print_identifier(namespace.alias.slice());
         } else {
             self.print(b"[");
-            self.print_string_literal_utf8(slice_of_const(namespace.alias), false);
+            self.print_string_literal_utf8(namespace.alias.slice(), false);
             self.print(b"]");
         }
     }
@@ -4619,7 +4617,7 @@ where
             StmtData::SComment(s) => {
                 self.print_indent();
                 self.add_source_mapping(stmt.loc);
-                self.print_indented_comment(slice_of_const(s.text));
+                self.print_indented_comment(s.text.slice());
             }
             StmtData::SFunction(s) => {
                 self.print_indent();
@@ -4827,7 +4825,7 @@ where
                 }
 
                 if let Some(alias) = &s.alias {
-                    self.print_clause_alias(slice_of_const(alias.original_name));
+                    self.print_clause_alias(alias.original_name.slice());
                     self.print(b" ");
                     self.print_whitespacer(ws!(b"from "));
                 }
@@ -4841,7 +4839,7 @@ where
                         let irp_id = mi.str(irp);
                         mi.request_module(irp_id, analyze_transpiled_module::FetchParameters::None);
                         if let Some(alias) = &s.alias {
-                            let alias_id = mi.str(slice_of_const(alias.original_name));
+                            let alias_id = mi.str(alias.original_name.slice());
                             mi.add_export_info_namespace(alias_id, irp_id);
                         } else {
                             mi.add_export_info_star(irp_id);
@@ -5543,7 +5541,7 @@ where
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
-                self.print_string_literal_utf8(slice_of_const(s.value), false);
+                self.print_string_literal_utf8(s.value.slice(), false);
                 self.print_semicolon_after_statement();
             }
             StmtData::SBreak(s) => {

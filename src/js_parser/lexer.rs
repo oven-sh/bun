@@ -2473,7 +2473,7 @@ lexer_impl_header! {
             }
 
             self.comments_to_preserve_before.push(js_ast::G::Comment {
-                text,
+                text: text.into(),
                 loc: self.loc(),
             });
             // TODO(port): lifetime — `text` borrows source.contents

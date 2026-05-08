@@ -559,10 +559,8 @@ impl SideEffects {
         }
     }
 
-    fn should_keep_stmts_in_dead_control_flow(stmts: *mut [Stmt], bump: &Bump) -> bool {
-        // SAFETY: arena-owned slice; pointer is non-null while the AST is live.
-        let stmts = unsafe { &*stmts };
-        for child in stmts {
+    fn should_keep_stmts_in_dead_control_flow(stmts: crate::StmtNodeList, bump: &Bump) -> bool {
+        for child in stmts.slice() {
             if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
                 return true;
             }

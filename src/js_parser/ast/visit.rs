@@ -124,13 +124,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         let body_loc = func.body.loc;
-        // SAFETY: arena-owned slice valid for 'a (Zig: `body.stmts`).
-        let body_stmts: &'a [Stmt] = unsafe { &*func.body.stmts };
+        let body_stmts: &'a [Stmt] = func.body.stmts.slice();
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
             .expect("unreachable");
-        // SAFETY: arena-owned slice valid for 'a (Zig: `func.args` is []G.Arg).
-        let args: &mut [G::Arg] = unsafe { &mut *func.args };
+        // SAFETY: arena-owned slice valid for 'a; exclusive via `&mut func`.
+        let args: &mut [G::Arg] = unsafe { func.args.slice_mut() };
         self.visit_args(
             args,
             VisitArgsOpts {
@@ -178,7 +177,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         func.body = G::FnBody {
-            stmts: std::ptr::from_mut::<[Stmt]>(stmts.into_bump_slice_mut()),
+            stmts: crate::StoreSlice::new_mut(stmts.into_bump_slice_mut()),
             loc: body_loc,
         };
 
@@ -751,7 +750,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         self.s(
-            S::Block { stmts: std::ptr::from_mut::<[Stmt]>(stmts), close_brace_loc: logger::Loc::EMPTY },
+            S::Block { stmts: crate::StoreSlice::new_mut(stmts), close_brace_loc: logger::Loc::EMPTY },
             loc,
         )
     }
@@ -769,9 +768,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut new_stmt = stmt;
         self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
             .expect("unreachable");
-        // SAFETY: caller guarantees `stmt.data` is `SBlock`; stmts is arena-owned.
         let block_stmts: &[Stmt] = match stmt.data {
-            StmtData::SBlock(b) => unsafe { &*b.stmts },
+            StmtData::SBlock(b) => b.stmts.slice(),
             _ => unreachable!(),
         };
         let mut stmts = BumpVec::with_capacity_in(block_stmts.len(), self.arena);
@@ -780,7 +778,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.pop_scope();
         let items: &'a mut [Stmt] = stmts.into_bump_slice_mut();
         if let StmtData::SBlock(mut b) = new_stmt.data {
-            b.stmts = std::ptr::from_mut::<[Stmt]>(items);
+            b.stmts = crate::StoreSlice::new_mut(items);
         }
         if self.options.features.minify_syntax {
             // PORT NOTE: reshaped for borrowck — `stmts` was consumed above; in Zig
@@ -903,7 +901,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             let mut constructor_function: Option<*mut E::Function> = None;
             // SAFETY: arena-owned slice valid for 'a; exclusive during visit pass.
-            let properties: &mut [G::Property] = unsafe { &mut *class.properties };
+            let properties: &mut [G::Property] = unsafe { class.properties.slice_mut() };
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
                     let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
@@ -1077,10 +1075,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // per-property `&mut [Property]` borrow has been released. Moving the
                     // `Property` structs below does not invalidate this pointer (it points to
                     // a separate Store allocation, not into the Property slice itself).
-                    let func_args: *mut [G::Arg] = unsafe { (*constructor).func.args };
+                    let func_args: crate::StoreSlice<G::Arg> = unsafe { (*constructor).func.args };
                     let mut to_add: usize = 0;
-                    // SAFETY: arena-owned slice valid for 'a.
-                    for arg in unsafe { &*func_args }.iter() {
+                    for arg in func_args.iter() {
                         if arg.is_typescript_ctor_field
                             && matches!(arg.binding.data, BData::BIdentifier(_))
                         {
@@ -1091,8 +1088,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // if this is an expression, we can move statements after super() because there will be 0 decorators
                     let mut super_index: Option<usize> = None;
                     if class.extends.is_some() {
-                        // SAFETY: arena-owned slice valid for 'a.
-                        let body_stmts = unsafe { &*(*constructor).func.body.stmts };
+                        // SAFETY: see `constructor` SAFETY note above.
+                        let body_stmts = unsafe { (*constructor).func.body.stmts }.slice();
                         for (index, stmt) in body_stmts.iter().enumerate() {
                             let is_super = match &stmt.data {
                                 StmtData::SExpr(se) => match &se.value.data {
@@ -1113,44 +1110,39 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     if to_add > 0 {
                         // to match typescript behavior, we also must prepend to the class body
-                        // SAFETY: arena-owned slice valid for 'a.
-                        let old_body: &[Stmt] = unsafe { &*(*constructor).func.body.stmts };
+                        // SAFETY: see `constructor` SAFETY note above.
+                        let old_body: &[Stmt] = unsafe { (*constructor).func.body.stmts }.slice();
                         let mut stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_body.len() + to_add,
                             self.arena,
                         );
                         stmts.extend_from_slice(old_body);
 
-                        let old_props: *mut [G::Property] = class.properties;
-                        // SAFETY: arena-owned slice valid for 'a.
-                        let old_props_len = unsafe { &*old_props }.len();
+                        let old_props: crate::StoreSlice<G::Property> = class.properties;
+                        let old_props_len = old_props.len();
                         let mut class_body = BumpVec::<G::Property>::with_capacity_in(
                             old_props_len + to_add,
                             self.arena,
                         );
                         // PORT NOTE: Zig `fromOwnedSlice` adopts the existing buffer in-place.
-                        // Rust BumpVec can't adopt a foreign `*mut [T]`, so move each element
+                        // Rust BumpVec can't adopt a foreign arena slice, so move each element
                         // out by `ptr::read` (G::Property has no Drop; old slice becomes dead
                         // arena bytes).
                         for i in 0..old_props_len {
                             // SAFETY: in-bounds; arena-owned; no Drop on Property.
                             unsafe {
-                                class_body.push(core::ptr::read(
-                                    old_props.cast::<G::Property>().add(i),
-                                ));
+                                class_body.push(core::ptr::read(old_props.as_ptr().add(i)));
                             }
                         }
                         let mut j: usize = 0;
 
-                        // SAFETY: arena-owned slice valid for 'a.
-                        let args_len = unsafe { &*func_args }.len();
+                        let args_len = func_args.len();
                         for arg_idx in 0..args_len {
                             // PORT NOTE: reshaped for borrowck — copy the scalars we need
                             // (id_ref, bind_loc) out of the arg before calling `&mut self`
                             // helpers, so no live `&Arg` overlaps `self.new_expr`/`declare_symbol`.
                             let (id_ref, bind_loc) = {
-                                // SAFETY: in-bounds; arena-owned.
-                                let arg = unsafe { &(*func_args)[arg_idx] };
+                                let arg = &func_args[arg_idx];
                                 if !arg.is_typescript_ctor_field {
                                     continue;
                                 }
@@ -1212,10 +1204,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             j += 1;
                         }
 
-                        class.properties = class_body.into_bump_slice_mut();
+                        class.properties = crate::StoreSlice::from_bump(class_body);
                         // SAFETY: see `constructor` SAFETY note at top of this block.
                         unsafe {
-                            (*constructor).func.body.stmts = stmts.into_bump_slice_mut();
+                            (*constructor).func.body.stmts = crate::StoreSlice::from_bump(stmts);
                         }
                     }
                 }
@@ -1450,7 +1442,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             // The last function statement for a given symbol wins
                             data.func.name = None;
-                            // SAFETY: `G::Fn`'s fields are POD (`*mut [T]`, ints, flags) but
+                            // SAFETY: `G::Fn`'s fields are POD (`StoreSlice<T>`, ints, flags) but
                             // lacks `derive(Copy)`; bitwise read matches Zig struct copy.
                             let func = unsafe { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =

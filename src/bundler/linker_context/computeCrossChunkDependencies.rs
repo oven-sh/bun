@@ -545,8 +545,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let mut stmts = Vec::<js_ast::Stmt>::init_capacity(1)?;
                         // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
                         // Vec buffer (arena-lifetime) into a raw fat ptr.
-                        let items_ptr: *mut [js_ast::ClauseItem] =
-                            std::ptr::from_mut::<[js_ast::ClauseItem]>(clause_items.slice_mut());
+                        let items_ptr =
+                            js_ast::StoreSlice::new_mut(clause_items.slice_mut());
                         core::mem::forget(clause_items);
                         stmts.push(js_ast::Stmt::alloc(
                             js_ast::S::ExportClause {
@@ -626,8 +626,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             import_kind: bun_options_types::ImportKind::Stmt,
                             chunk_index: cross_chunk_import.chunk_index,
                         });
-                        let items_ptr: *mut [js_ast::ClauseItem] =
-                            std::ptr::from_mut::<[js_ast::ClauseItem]>(clauses.into_bump_slice_mut());
+                        let items_ptr =
+                            js_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
                         cross_chunk_prefix_stmts.push(js_ast::Stmt::alloc(
                             js_ast::S::Import {
                                 items: items_ptr,

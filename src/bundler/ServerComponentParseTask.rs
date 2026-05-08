@@ -344,7 +344,7 @@ fn generate_client_reference_proxy(
             args: ExprNodeList::from_slice(&[
                 b.new_expr(E::Arrow {
                     body: G::FnBody {
-                        stmts: std::ptr::from_mut::<[Stmt]>(arrow_body_stmts),
+                        stmts: js_ast::StoreSlice::new_mut(arrow_body_stmts),
                         loc: Loc::EMPTY,
                     },
                     ..Default::default()

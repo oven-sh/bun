@@ -40,7 +40,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         // Collect all statements
         let mut total_stmts_count: usize = 0;
         for part in parts.iter() {
-            // SAFETY: arena-owned `*mut [Stmt]` valid for 'a; read-only iteration.
+            // arena-owned `StoreSlice<Stmt>` valid for 'a; read-only iteration.
             total_stmts_count += unsafe { &*part.stmts }.len();
         }
 
@@ -250,7 +250,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     );
                     let await_expr = self.new_expr(E::Await { value: import_expr }, stmt.loc);
 
-                    // SAFETY: `items` is an arena-owned `*mut [ClauseItem]` valid for 'a.
+                    // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[crate::ClauseItem] = unsafe { &*import_data.items };
 
                     if import_data.star_name_loc.is_some() {
@@ -395,9 +395,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     }
                 }
                 StmtData::SDirective(directive) => {
-                    // In REPL mode, treat directives (string literals) as expressions
-                    // SAFETY: arena-owned `*const [u8]` valid for 'a; Phase-A `Str` is `&'static [u8]`.
-                    let value_str: &'static [u8] = unsafe { &*directive.value };
+                    // In REPL mode, treat directives (string literals) as expressions.
+                    let value_str: &'static [u8] = directive.value.slice();
                     let str_expr = self.new_expr(
                         E::String { data: value_str.into(), ..Default::default() },
                         stmt.loc,
@@ -421,7 +420,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             E::Arrow {
                 body: G::FnBody {
                     loc: logger::Loc::EMPTY,
-                    stmts: std::ptr::from_mut::<[Stmt]>(inner_slice),
+                    stmts: crate::StoreSlice::new_mut(inner_slice),
                 },
                 is_async,
                 ..Default::default()
@@ -448,7 +447,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
         // Update parts
         if !parts.is_empty() {
-            parts[0].stmts = std::ptr::from_mut::<[Stmt]>(final_slice);
+            parts[0].stmts = crate::StoreSlice::new_mut(final_slice);
             parts.truncate(1);
         }
 
@@ -773,7 +772,7 @@ fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
 //   todos:      0
 //   notes:      Generic-P mixin lowered to direct `impl P<'a, TS, J, SCAN>`. Zig nested type
 //               paths (`S.Local.Kind`, `Decl.List`, `G.Property.List`) mapped to free aliases
-//               (`S::Kind`, `G::DeclList`, `G::PropertyList`). All `*mut [T]` arena slices
+//               (`S::Kind`, `G::DeclList`, `G::PropertyList`). All `StoreSlice<T>` arena slices
 //               accessed via `unsafe { &* }` per Phase-A raw-pointer convention; `&'static [u8]`
 //               assignments to `E::Dot.name` / `E::String.data` lean on the Phase-A `Str` lie.
 // ──────────────────────────────────────────────────────────────────────────

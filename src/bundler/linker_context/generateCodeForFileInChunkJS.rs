@@ -111,8 +111,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // SAFETY: `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
             // subsequent pushes only append past this range and capacity was reserved above
             // so no reallocation occurs. Matches Zig which slices then continues appending.
-            let inner: *mut [Stmt] =
-                core::ptr::addr_of_mut!(stmts.all_stmts.as_mut_slice()[0..main_stmts_len]);
+            let inner =
+                js_ast::StoreSlice::new_mut(&mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len]);
 
             let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::default();
             clousure_args.append_assume_capacity(G::Arg {
@@ -161,7 +161,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Expr::init(
                     E::Function {
                         func: G::Fn {
-                            args: std::ptr::from_mut::<[G::Arg]>(dup_args),
+                            args: js_ast::StoreSlice::new_mut(dup_args),
                             body: G::FnBody {
                                 stmts: inner,
                                 loc: logger::Loc::EMPTY,
@@ -263,7 +263,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .inside_wrapper_prefix
             .append_non_dependency(Stmt::alloc(
                 S::Directive {
-                    value: std::ptr::from_ref::<[u8]>(b"use strict"),
+                    value: js_ast::StoreStr::new(b"use strict"),
                 },
                 logger::Loc::EMPTY,
             ))
@@ -506,7 +506,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
-    let mut out_stmts: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts.all_stmts.as_mut_slice());
+    let mut out_stmts = js_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
     // Optionally wrap all statements in a closure
     if needs_wrapper {
@@ -548,7 +548,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 // TODO: variants of the runtime functions
-                let body_stmts: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts.all_stmts.as_mut_slice());
+                let body_stmts = js_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
                 let cjs_args = bun_core::handle_oom(Vec::<Expr>::from_slice(&[Expr::init(
                     E::Arrow {
                         args: js_ast::StoreSlice::new(args.into_bump_slice()),
@@ -643,7 +643,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 };
                 let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 
-                let mut inner_stmts: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts.all_stmts.as_mut_slice());
+                let mut inner_stmts = js_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
@@ -740,11 +740,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                         // SAFETY: `inner_stmts` aliases `stmts.all_stmts.items` which is not
                         // resized in this loop; `end <= i < len`.
-                        unsafe { (*inner_stmts)[end] = transformed };
+                        unsafe { inner_stmts.slice_mut()[end] = transformed };
                         end += 1;
                     }
-                    // SAFETY: inner_stmts aliases stmts.all_stmts.items which was not resized.
-                    inner_stmts = std::ptr::from_mut::<[Stmt]>(unsafe { &mut (&mut *inner_stmts)[..end] });
+                    inner_stmts.truncate(end);
                 }
 
                 if !hoist.decls.is_empty() {
@@ -765,8 +764,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     hoist.decls.clear();
                 }
 
-                // SAFETY: `inner_stmts` is a sub-slice of `stmts.all_stmts.items` (still live).
-                let inner_len = unsafe { (&*inner_stmts).len() };
+                let inner_len = inner_stmts.len();
                 if inner_len > 0 {
                     // See the comment in needsWrapperRef for why the symbol
                     // is sometimes not generated.
@@ -870,12 +868,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             _ => {}
         }
 
-        out_stmts = std::ptr::from_mut::<[Stmt]>(stmts.outside_wrapper_prefix.as_mut_slice());
+        out_stmts = js_ast::StoreSlice::new_mut(stmts.outside_wrapper_prefix.as_mut_slice());
     }
 
     // SAFETY: `out_stmts` aliases either `stmts.all_stmts` or `stmts.outside_wrapper_prefix`,
     // both of which remain live for the rest of this function.
-    let out_stmts: &mut [Stmt] = unsafe { &mut *out_stmts };
+    let out_stmts: &mut [Stmt] = unsafe { out_stmts.slice_mut() };
 
     if out_stmts.is_empty() {
         return PrintResult::Result(PrintResultSuccess {

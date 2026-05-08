@@ -153,12 +153,12 @@ pub fn post_process_js_chunk(
         let source = c.get_source(chunk.entry_point.source_index());
         let target = c.resolver().opts.target;
 
-        // Hoist `*mut [Stmt]` extraction so the two `&mut chunk` borrows below
+        // Hoist the StoreSlice extraction so the two `&mut chunk` borrows below
         // (content vs renamer) don't overlap inside a single expression.
-        let prefix_stmts: *mut [Stmt] =
-            std::ptr::from_mut::<[Stmt]>(chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut());
-        let suffix_stmts: *mut [Stmt] =
-            std::ptr::from_mut::<[Stmt]>(chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut());
+        let prefix_stmts =
+            js_ast::StoreSlice::new_mut(chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut());
+        let suffix_stmts =
+            js_ast::StoreSlice::new_mut(chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut());
 
         cross_chunk_prefix = js_printer::print::<false>(
             worker_arena,
@@ -1082,7 +1082,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         let items: &mut [js_ast::ClauseItem] = Box::leak(items.into_boxed_slice());
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
-                                items: std::ptr::from_mut::<[js_ast::ClauseItem]>(items),
+                                items: js_ast::StoreSlice::new_mut(items),
                                 is_single_line: false,
                             },
                             Logger::Loc::EMPTY,
@@ -1127,7 +1127,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                             func: G::Fn {
                                                 body: G::FnBody {
                                                     loc: Logger::Loc::EMPTY,
-                                                    stmts: std::ptr::from_mut::<[Stmt]>(fn_body),
+                                                    stmts: js_ast::StoreSlice::new_mut(fn_body),
                                                 },
                                                 ..Default::default()
                                             },
@@ -1290,7 +1290,7 @@ pub fn generate_entry_point_tail_js<'a>(
             print_options,
             import_records,
             &[Part {
-                stmts: std::ptr::from_mut::<[Stmt]>(stmts.as_mut_slice()),
+                stmts: js_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
                 ..Default::default()
             }],
             r,

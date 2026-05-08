@@ -749,11 +749,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        // `Template.parts` is `*mut [TemplatePart]` (arena-owned, mutable provenance
-        // preserved end-to-end; Zig: `[]E.TemplatePart`).
-        // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
-        let parts: &mut [E::TemplatePart] = unsafe { &mut *e_.parts };
-        for part in parts.iter_mut() {
+        // `Template.parts` is arena-owned (Zig: `[]E.TemplatePart`).
+        for part in e_.parts_mut().iter_mut() {
             part.value = p.visit_expr(part.value);
         }
 
@@ -2291,7 +2288,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         // PERF(port): was arena dupe — profile in Phase B
-        // SAFETY: `body.stmts` is an arena-owned slice (StmtNodeList = *mut [Stmt]).
+        // SAFETY: `body.stmts` is an arena-owned slice (StmtNodeList = StoreSlice<Stmt>).
         let body_slice: &[Stmt] = unsafe { &*e_.body.stmts };
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(body_slice);
 
@@ -2349,12 +2346,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 unsafe { stmts.as_mut().push(decl) };
 
                 p.handle_react_refresh_post_visit_function_body(&mut stmts_list, hook);
-                e_.body.stmts = std::ptr::from_mut::<[Stmt]>(stmts_list.into_bump_slice_mut());
+                e_.body.stmts = crate::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
 
                 return p.get_react_refresh_hook_signal_init(hook, expr);
             }
         }
-        e_.body.stmts = std::ptr::from_mut::<[Stmt]>(stmts_list.into_bump_slice_mut());
+        e_.body.stmts = crate::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
         expr
     }
     fn e_function(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {

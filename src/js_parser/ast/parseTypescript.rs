@@ -421,13 +421,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .insert(name.ref_.expect("infallible: ref bound"), ns_member_data);
         }
 
-        // PORT NOTE: S::Namespace.stmts is `*mut [Stmt]` (arena slice). BumpVec → bump slice.
+        // PORT NOTE: S::Namespace.stmts is `StoreSlice<Stmt>` (arena slice). BumpVec → bump slice.
         let stmts_slice: &'a mut [Stmt] = stmts.into_bump_slice_mut();
         Ok(p.s(
             S::Namespace {
                 name,
                 arg: arg_ref,
-                stmts: std::ptr::from_mut::<[Stmt]>(stmts_slice),
+                stmts: crate::StoreSlice::new_mut(stmts_slice),
                 is_export: opts.is_export,
             },
             loc,
@@ -731,7 +731,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             S::Enum {
                 name,
                 arg: arg_ref,
-                values: std::ptr::from_mut::<[EnumValue]>(values.into_bump_slice_mut()),
+                values: crate::StoreSlice::new_mut(values.into_bump_slice_mut()),
                 is_export: opts.is_export,
             },
             loc,

@@ -1079,10 +1079,7 @@ fn get_ast(
             // this feature could ship.
             ast.has_lazy_export = false;
             ast.parts.slice_mut()[1] = Part {
-                stmts: core::ptr::slice_from_raw_parts_mut(
-                    core::ptr::NonNull::<ast::Stmt>::dangling().as_ptr(),
-                    0,
-                ),
+                stmts: ast::StoreSlice::EMPTY,
                 is_live: true,
                 import_record_indices: 'brk2: {
                     // Generate a single part that depends on all the import records.

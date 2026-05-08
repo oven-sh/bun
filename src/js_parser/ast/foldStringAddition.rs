@@ -125,17 +125,17 @@ fn concat_parts(
     bump: &Arena,
     a: &[e::TemplatePart],
     b: &[e::TemplatePart],
-) -> *mut [e::TemplatePart] {
+) -> crate::StoreSlice<e::TemplatePart> {
     let len = a.len() + b.len();
     let layout = core::alloc::Layout::array::<e::TemplatePart>(len).expect("OOM");
     // SAFETY: arena alloc + bitwise copy of POD-like elements. `alloc_layout`
-    // returns a fresh `NonNull<u8>` with mutable provenance; build the fat
-    // `*mut [T]` directly so writers downstream retain that provenance.
+    // returns a fresh `NonNull<u8>` with mutable provenance; build the slice
+    // directly so writers downstream retain that provenance.
     unsafe {
         let ptr = bump.alloc_layout(layout).as_ptr().cast::<e::TemplatePart>();
         core::ptr::copy_nonoverlapping(a.as_ptr(), ptr, a.len());
         core::ptr::copy_nonoverlapping(b.as_ptr(), ptr.add(a.len()), b.len());
-        core::ptr::slice_from_raw_parts_mut(ptr, len)
+        crate::StoreSlice::new_mut(core::slice::from_raw_parts_mut(ptr, len))
     }
 }
 
@@ -249,7 +249,7 @@ pub fn fold_string_addition(
                             // be treated by enums as strings, but will not be
                             // inlined unless they could be converted into
                             // .e_string.
-                            // `parts` is `*mut [T]` (arena-owned, mutable
+                            // `parts` is `StoreSlice<T>` (arena-owned, mutable
                             // provenance) — write through `parts_mut()`.
                             if !left.parts().is_empty() {
                                 let i = left.parts().len() - 1;
@@ -340,7 +340,7 @@ use js_ast as _;
 //   source:     src/js_parser/ast/foldStringAddition.zig (233 lines)
 //   confidence: medium
 //   notes:      Rope `push`/`clone_rope_nodes` inlined locally pending E.rs
-//               round-C un-gate. `Template.parts` is `*mut [TemplatePart]`
+//               round-C un-gate. `Template.parts` is `StoreSlice<TemplatePart>`
 //               (arena-owned, mutable provenance) — element writes use
 //               `parts_mut()`.
 // ──────────────────────────────────────────────────────────────────────────

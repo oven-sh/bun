@@ -716,17 +716,20 @@ pub fn migrate_yarn_lockfile<'a>(
         // package_json_fd closed on drop / explicit close below
         // TODO(port): explicit close ordering — Zig closes fd via defer after readToEnd
 
-        let package_json_source = 'brk: {
-            let mut package_json_path_buf = PathBuffer::uninit();
+        // The path buffer must outlive `package_json_source`: `Source.path.text`
+        // borrows into it (lifetime-erased) and is read when `parse_append`
+        // emits a warning (`Location::clone` deep-copies the file path).
+        let mut package_json_path_buf = PathBuffer::uninit();
+        let package_json_source = {
             let Ok(package_json_path) =
                 bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
             else {
                 return Err(bun_core::err!("InvalidPackageJSON"));
             };
-            break 'brk logger::Source::init_path_string(
+            logger::Source::init_path_string(
                 &*package_json_path,
                 package_json_contents.as_slice(),
-            );
+            )
         };
         let _ = package_json_fd.close(); // close error is non-actionable (Zig parity: discarded)
 

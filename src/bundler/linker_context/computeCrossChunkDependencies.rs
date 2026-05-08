@@ -43,12 +43,21 @@ pub fn compute_cross_chunk_dependencies(
         // scope end; in Rust we construct on the stack and let it drop.
         //
         // `ctx` / `symbols` / `chunks` are stored as raw pointers so the struct does not
-        // hold a borrow on `c` or `chunks` across the `each_ptr` call. Take them before
-        // `split_mut` borrows `&mut c.graph.{ast,meta,files}`.
+        // hold a borrow on `c` or `chunks` across the `each_ptr` call.
+        //
+        // Derive `ctx_ptr` from the `&mut` (not `from_ref`) so the raw carries `c`'s own
+        // Unique provenance: under Stacked Borrows the subsequent `split_mut` reborrows
+        // are children of that tag, so `&*ctx_ptr` in `walk()` (which reads
+        // `c.graph.files.{ptrs,len}` via `is_external_dynamic_import`) stays valid.
+        // `from_ref(c)` would push a SharedRO tag that the `&mut c.graph.X` reborrows
+        // pop, leaving the raw dangling under SB.
+        //
         // SAFETY: lifetime-erase the `*const LinkerContext<'_>` so the struct's `'a`
         // (which ties only the local SoA-column borrows) is not forced to equal the
         // LinkerContext's invariant `'_`.
-        let ctx_ptr = std::ptr::from_ref::<LinkerContext<'_>>(c).cast::<LinkerContext<'static>>();
+        let ctx_ptr = std::ptr::from_mut::<LinkerContext<'_>>(c)
+            .cast_const()
+            .cast::<LinkerContext<'static>>();
         let symbols_ptr: *const _ = &raw const c.graph.symbols;
         let parse_graph = c.parse_graph;
 

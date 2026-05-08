@@ -525,9 +525,10 @@ pub struct HTTPClient<'a> {
     pub tls_props: Option<ssl_config::SharedPtr>,
     /// The custom SSL context used for this request (None = default context).
     /// Set by HTTPThread.connect() when using custom TLS configs.
-    // TODO(port): was Arc<HttpsContext>; HttpsContext is intrusive-refcounted and
-    // recovered from socket ext, so kept raw + manual ref/deref for now.
-    pub custom_ssl_ctx: Option<NonNull<HttpsContext>>,
+    /// Holds one owned strong ref (taken in `set_custom_ssl_ctx`, released on
+    /// drop). `HttpsContext` is intrusive-refcounted (also recovered from socket
+    /// ext), so this is an `IntrusiveRc`, not an `Arc`.
+    pub custom_ssl_ctx: Option<http_context::HTTPContextRc<true>>,
     pub result_callback: HTTPClientResultCallback,
 
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -585,8 +586,8 @@ impl Drop for HTTPClient<'_> {
         debug_assert!(self.h2.is_none());
         // tls_props: Option<SharedPtr> — Drop releases strong ref.
         if let Some(ctx) = self.custom_ssl_ctx.take() {
-            // SAFETY: we hold one strong ref taken in set_custom_ssl_ctx.
-            unsafe { HttpsContext::deref(ctx.as_ptr()) };
+            // Release the strong ref taken in set_custom_ssl_ctx.
+            ctx.deref();
         }
         self.unix_socket_path = ZigStringSlice::EMPTY;
     }
@@ -1905,7 +1906,7 @@ impl<'a> HTTPClient<'a> {
         // TODO(port): returns raw ptr because the global/Arc lifetimes differ;
         // Phase B should unify behind a borrow.
         if IS_SSL {
-            if let Some(ctx) = self.custom_ssl_ctx {
+            if let Some(ctx) = self.custom_ssl_ctx.as_ref() {
                 return ctx.as_ptr().cast::<GenHttpContext<IS_SSL>>();
             }
             (&raw mut http_thread().https_context).cast::<GenHttpContext<IS_SSL>>()
@@ -1918,10 +1919,10 @@ impl<'a> HTTPClient<'a> {
         // Intrusive-refcounted: this fn takes ownership of one strong ref by
         // bumping it here (matches http.zig:821-825). Callers do NOT pre-bump.
         // SAFETY: ctx points at a live HttpsContext.
-        unsafe { (*ctx.as_ptr()).ref_() };
-        if let Some(old) = self.custom_ssl_ctx.replace(ctx) {
-            // SAFETY: old points at a live HttpsContext we held a ref on.
-            unsafe { HttpsContext::deref(old.as_ptr()) };
+        let new_ref = unsafe { http_context::HTTPContextRc::<true>::init_ref(ctx.as_ptr()) };
+        if let Some(old) = self.custom_ssl_ctx.replace(new_ref) {
+            // Release the ref we previously held.
+            old.deref();
         }
     }
 

@@ -831,8 +831,8 @@ impl<'a> AsyncHTTP<'a> {
                     }
                     debug_assert!(client.h2.is_none());
                     if let Some(ctx) = client.custom_ssl_ctx.take() {
-                        // SAFETY: clone took one strong ref in set_custom_ssl_ctx.
-                        crate::HttpsContext::deref(ctx.as_ptr());
+                        // Release the strong ref the clone took in set_custom_ssl_ctx.
+                        ctx.deref();
                     }
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it

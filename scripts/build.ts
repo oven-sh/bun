@@ -100,7 +100,7 @@ async function main(): Promise<void> {
     const result = (await startGroup("Configure", () => configure(partial))) as ConfigureResult;
     if (args.configureOnly) return;
 
-    // link-only: download cpp-only + zig-only artifacts before ninja.
+    // link-only: download cpp-only + rust-only artifacts before ninja.
     if (result.cfg.buildkite && result.cfg.mode === "link-only") {
       await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
     }
@@ -109,10 +109,10 @@ async function main(): Promise<void> {
       spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.env) }),
     );
 
-    // cpp-only/zig-only: upload build outputs for downstream link-only.
+    // cpp-only/rust-only: upload build outputs for downstream link-only.
     // link-only: package + upload zips for downstream test steps.
     if (result.cfg.buildkite) {
-      if (result.cfg.mode === "cpp-only" || result.cfg.mode === "zig-only") {
+      if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
         await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
       }
       if (result.cfg.mode === "link-only") {
@@ -506,6 +506,6 @@ Examples:
   bun scripts/build.ts --profile=release --lto=off
   bun scripts/build.ts test foo.test.ts
   bun scripts/build.ts --profile=debug-local run script.ts
-  bun scripts/build.ts --target=bun-zig
+  bun scripts/build.ts --target=bun-rust
   bun scripts/build.ts --configure-only
 `;

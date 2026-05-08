@@ -1,11 +1,10 @@
 /**
- * Rust build step — cargo as a ninja edge, parallel to `emitZig`.
+ * Rust build step — cargo as a ninja edge.
  *
  * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`;
  * the leaf crate is `src/bun_bin` (`crate-type = ["staticlib"]`). One
  * `cargo build -p bun_bin` produces `libbun_rust.a` containing the entire
- * Rust crate graph plus libstd, with `main` exported `#[no_mangle] extern "C"`
- * — the same role `bun-zig.o` filled.
+ * Rust crate graph plus libstd, with `main` exported `#[no_mangle] extern "C"`.
  *
  * Cargo's own incremental compilation handles per-file tracking; our ninja
  * rule just invokes it and declares the output. `restat` lets cargo's no-op
@@ -16,8 +15,8 @@
  * A single `.o` would need either full LTO (`-C lto=fat --emit=obj`, which
  * recompiles the whole crate graph from bitcode every build — minutes in
  * debug) or an `ld -r --whole-archive` post-merge (extra platform-specific
- * step). The staticlib goes into the link's `$in` list at the same position
- * `bun-zig.o` did, between the C++ objects and the dependency archives;
+ * step). The staticlib goes into the link's `$in` list between the C++
+ * objects and the dependency archives;
  * crt1.o's undefined `main` plus the C++ side's hundreds of `extern "C"`
  * `Bun__*`/`Zig*` references pull every reachable member, and the release
  * link's `--gc-sections` still DCEs per-function. `rustLinkFlags()` wraps
@@ -37,8 +36,7 @@ import { streamPath } from "./stream.ts";
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Rust target triple. Mirrors `zigTarget()` — arch is `x86_64`/`aarch64`,
- * not `x64`/`arm64`.
+ * Rust target triple. Arch is `x86_64`/`aarch64`, not `x64`/`arm64`.
  *
  * Passed explicitly via `--target` for two reasons:
  *   - `-Z sanitizer=address` requires it (rustc refuses on the implicit
@@ -70,11 +68,58 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
   return cfg.buildType === "Debug" ? { name: "dev", subdir: "debug" } : { name: "release", subdir: "release" };
 }
 
+/**
+ * Can a linux host cross-compile the Rust staticlib for `cfg`'s target
+ * without a native runner?
+ *
+ * Used by CI's `build-rust` step to decide fan-out: targets that return
+ * `true` here share one fast linux box (one `cargo build --target <triple>`
+ * each); targets that return `false` get a native agent.
+ *
+ *   linux-{gnu,musl,android} × {x64,aarch64}: yes — `rustup target add`
+ *     installs prebuilt std, no foreign linker needed for a staticlib.
+ *   freebsd × {x64,aarch64}: yes — Tier 2/3 (`-Zbuild-std` for aarch64),
+ *     staticlib needs no FreeBSD libc to produce.
+ *   darwin × {x64,aarch64}: NOT from a stock linux box. rustc itself is
+ *     fine, but any `cc`-crate build script in the dep graph needs an
+ *     osxcross SDK + `cctools` ar. CI runs these on a darwin agent.
+ *   windows-msvc × {x64,aarch64}: NOT from linux without `cargo-xwin`
+ *     (or wine + the MSVC SDK). CI runs these on a Windows agent.
+ *
+ * Unlike zig (which bundled its own libc/SDK for every target), cargo
+ * delegates to a system C toolchain for any `cc`/`bindgen`/link step, so
+ * the cross-compile boundary is "does the host have a C cross-toolchain
+ * for the target", not "does rustc support the triple".
+ */
+export function rustCanCrossFromLinux(cfg: Config): boolean {
+  if (cfg.linux) return true; // gnu, musl, android — all archs
+  if (cfg.freebsd) return true;
+  // darwin, windows: native agent required.
+  return false;
+}
+
+/**
+ * All target triples CI builds. Exposed so `rust:check-all` can iterate
+ * `cargo check --target <t>` without re-deriving the list.
+ */
+export const allRustTargets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "aarch64-pc-windows-msvc",
+  "x86_64-unknown-freebsd",
+  "aarch64-linux-android",
+] as const;
+
 // ───────────────────────────────────────────────────────────────────────────
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
 
-/** `<buildDir>/rust-target` — sibling of `obj/`, `pch/`, `bun-zig.o`. */
+/** `<buildDir>/rust-target` — sibling of `obj/`, `pch/`. */
 function rustTargetDir(cfg: Config): string {
   return resolve(cfg.buildDir, "rust-target");
 }
@@ -152,8 +197,8 @@ export interface RustBuildInputs {
 
 /**
  * Emit the cargo build step. Returns the output staticlib path as a
- * one-element array (same shape as `emitZig`'s return) so the link step
- * can spread it where `zigObjects` went.
+ * one-element array so the link step can spread it alongside the C++
+ * object list.
  */
 export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {

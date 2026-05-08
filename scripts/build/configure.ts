@@ -208,8 +208,8 @@ export async function configure(partial: PartialConfig): Promise<ConfigureResult
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
   // perl script from JSC. If perl is missing, codegen fails cryptically.
   // Check here so the error is at configure time with a clear hint.
-  // zig-only/link-only don't run LUT codegen — skip the check so split-CI
-  // steps don't require perl on the zig cross-compile box.
+  // rust-only/link-only don't run LUT codegen — skip the check so split-CI
+  // steps don't require perl on the rust cross-compile box.
   if (cfg.mode === "full" || cfg.mode === "cpp-only") {
     if (findSystemTool("perl") === undefined) {
       throw new BuildError("perl not found in PATH", {

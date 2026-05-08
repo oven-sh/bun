@@ -508,7 +508,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
   // in "C:\Program Files\Rust\..."). quote() passes through safe paths
   // unchanged so there's no cost on the common case. Host shell syntax
-  // (dep rules don't run in zig-only cross-compile, so host == target,
+  // (dep rules don't run in rust-only cross-compile, so host == target,
   // but use host.os for consistency with other modules).
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
@@ -666,7 +666,7 @@ export function depSourceDir(cfg: Config, name: string): string {
 }
 
 /**
- * Path to a dep's fetch stamp. Used by zig-only mode to depend on zstd's
+ * Path to a dep's fetch stamp. Used by rust-only mode to depend on lolhtml's
  * source being on disk without resolving the full dep graph.
  */
 export function depSourceStamp(cfg: Config, name: string): string {
@@ -1149,7 +1149,7 @@ function emitNestedCmake(
     args.push(`-DCMAKE_C_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
     args.push(`-DCMAKE_CXX_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
   }
-  // Both may be undefined in zig-only cross-compile (no xcode on the linux
+  // Both may be undefined in rust-only cross-compile (no xcode on the linux
   // CI box); that's fine — the cmake rules are emitted but never pulled.
   // If pulled without an SDK, cmake fails with its own clear error.
   if (cfg.darwin && cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined) {

@@ -50,8 +50,7 @@ import { quote, quoteArgs } from "./shell.ts";
  * generated `.zig` files live in `src/jsc/bindings/` (gitignored).
  *
  * Consumers of `sources.zig` (the `src/**\/*.zig` glob) must filter these
- * out — they're OUTPUTS of codegen, not inputs. bun.ts does this before
- * passing the zig list to emitZig().
+ * out — they're OUTPUTS of codegen, not inputs.
  *
  * Paths are relative to repo root. This list is the single source of truth;
  * `globAllSources()` does NOT hardcode these.
@@ -114,8 +113,8 @@ function codegenTarget(cfg: Config): { platform: string; arch: string } {
 }
 
 export function registerCodegenRules(n: Ninja, cfg: Config): void {
-  // Shell syntax: HOST platform, not target. zig-only cross-compiles on
-  // a linux box for darwin/windows; these rules run on the linux box.
+  // Shell syntax: HOST platform, not target. rust-only cross-compiles on
+  // a linux box for other linux/freebsd targets; these rules run on the host.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const bun = q(cfg.bun);
@@ -230,7 +229,7 @@ export interface CodegenOutputs {
   /**
    * ALL cpp-relevant codegen outputs — the union of cppHeaders, cppSources,
    * bindgenV2Cpp. cxx compilation order-depends on THIS (not `all`): cxx
-   * doesn't need bake.*.js, cpp.zig, runtime.out.js, or any other zig-only
+   * doesn't need bake.*.js, runtime.out.js, or any other rust-side embedded
    * outputs. Using `all` would pull bake-codegen in cpp-only CI mode, which
    * fails on old CI bun versions (bake-codegen shells out to `bun build`
    * whose CSS url() handling changed between versions). cmake only wired

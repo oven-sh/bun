@@ -21,17 +21,18 @@ export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
-export type BuildMode = "full" | "cpp-only" | "zig-only" | "link-only";
+export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only";
 export type WebKitMode = "prebuilt" | "local";
 
 /**
  * Host platform — what's running the build. Distinguish from target
  * (Config.os/arch/windows) which is what we're building FOR.
  *
- * Host vs target matters for zig-only cross-compile: a linux CI box
- * can cross-compile bun-zig.o for darwin/windows. Target determines
- * zig's triple and compile flags; host determines shell syntax (cmd
- * vs sh), quoting, and tool executable suffixes.
+ * Host vs target matters for rust-only cross-compile: a linux CI box
+ * can cross-compile libbun_rust.a for any linux abi/arch and (with the
+ * right SDK) darwin. Target determines cargo's `--target` triple and
+ * rustflags; host determines shell syntax (cmd vs sh), quoting, and
+ * tool executable suffixes.
  *
  * For all other modes (full, cpp-only, link-only), host == target
  * unless cfg.crossTarget is set (currently: Android), in which case
@@ -82,7 +83,7 @@ export interface Config {
 
   /**
    * What's running the build. Differs from os/arch/windows (target) in
-   * zig-only cross-compile. Use for: shell syntax in rule commands,
+   * rust-only cross-compile. Use for: shell syntax in rule commands,
    * quoteArgs(), tool executable suffixes. See Host type docs.
    */
   host: Host;
@@ -523,7 +524,7 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    // Don't throw — zig-only mode doesn't need these, and on CI bootstrap.sh
+    // Don't throw — rust-only mode doesn't need these, and on CI bootstrap.sh
     // creates them as root during image build. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)

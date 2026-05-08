@@ -1988,7 +1988,7 @@ pub fn install_isolated_packages(
         // shadow-reborrow below.
         let manager_ptr: *mut PackageManager = manager;
         let mut installer = store::Installer {
-            lockfile,
+            lockfile: lockfile_ptr,
             manager: manager_ptr,
             command_ctx,
             installed,

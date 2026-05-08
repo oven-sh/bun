@@ -78,13 +78,17 @@ pub mod js_bundler {
             let property_value = files_iter.value;
 
             // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
-            let mut blob_or_string =
-                match crate::node::BlobOrStringOrBuffer::from_js_async(global_this, property_value)? {
-                    Some(v) => v,
-                    None => {
-                        return Err(global_this.throw_invalid_arguments(format_args!("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer")));
-                    }
-                };
+            // Async mode `protect()`s any JS-backed buffer; adopt into a
+            // `ThreadSafe` so the guard unprotects + drops at end of iteration.
+            let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js_async(
+                global_this,
+                property_value,
+            )? {
+                Some(v) => bun_jsc::ThreadSafe::adopt(v),
+                None => {
+                    return Err(global_this.throw_invalid_arguments(format_args!("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer")));
+                }
+            };
             // Async mode guarantees `blob_or_string` owns its bytes (Blob data is
             // copied, JS strings are decoded). Extract them into the lower-tier
             // map and release the wrapper immediately so no JSC handle crosses
@@ -92,7 +96,7 @@ pub mod js_bundler {
             // PERF(port): Zig stores the `BlobOrStringOrBuffer` directly; here we
             // make one extra owned copy to keep `bun_bundler` free of JSC types.
             let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
-            blob_or_string.deinit_and_unprotect();
+            drop(blob_or_string);
 
             // Clone the key since we need to own it.
             let mut key = prop.to_owned_slice();

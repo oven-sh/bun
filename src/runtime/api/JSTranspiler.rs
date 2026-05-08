@@ -681,7 +681,9 @@ impl Config {
 
 // This is going to be hard to not leak
 pub struct TransformTask<'a> {
-    pub input_code: StringOrBuffer,
+    /// Created with `is_async=true` (JS-backed buffer protected); the
+    /// [`bun_jsc::ThreadSafe`] guard unprotects on drop.
+    pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
     pub output_code: BunString,
     /// Bitwise copy of `js_instance.transpiler` (Zig: `= transpiler.transpiler`).
     /// Heap-owned fields (`Box<Define>`, resolver caches, …) are *shared* with
@@ -721,7 +723,7 @@ impl<'a> TransformTask<'a> {
 
     pub fn create(
         transpiler: &'a mut JSTranspiler,
-        input_code: StringOrBuffer,
+        input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
         global: &'a JSGlobalObject,
         loader: Loader,
     ) -> Box<AsyncTransformTask<'a>> {
@@ -910,18 +912,13 @@ impl<'a> TransformTask<'a> {
     }
 }
 
-impl<'a> Drop for TransformTask<'a> {
-    fn drop(&mut self) {
-        // log.deinit() → logger::Log: Drop
-        let mut input_code = core::mem::take(&mut self.input_code);
-        input_code.deinit_and_unprotect();
-        // output_code.deref() → BunString: Drop
-        // tsconfig is owned by JSTranspiler, not by TransformTask.
-        // Do not free it here — JSTranspiler::drop handles it.
-        // js_instance.deref() → IntrusiveRc::drop
-        // bun.destroy(this) → Box drop by owner
-    }
-}
+// `Drop for TransformTask` is implicit:
+//   log.deinit() → logger::Log: Drop
+//   input_code → ThreadSafe<StringOrBuffer>: unprotect + Drop
+//   output_code.deref() → BunString: Drop
+//   tsconfig is owned by JSTranspiler, not by TransformTask — JSTranspiler::drop handles it.
+//   js_instance.deref() → IntrusiveRc::drop
+//   bun.destroy(this) → Box drop by owner
 
 fn export_replacement_value(
     value: JSValue,
@@ -1389,9 +1386,10 @@ impl JSTranspiler {
                 global.throw_invalid_argument_type("transform", "code", "string or Uint8Array"),
             );
         };
-        // errdefer code.deinitAndUnprotect() — TransformTask takes ownership; on early error
-        // before that, Drop on `code` runs deinit_and_unprotect.
-        // TODO(port): ensure StringOrBuffer::drop calls deinit_and_unprotect.
+        // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
+        // (is_async=true) already protected; adopt into a `ThreadSafe` so any
+        // early-return drop unprotects. `TransformTask::create` takes the guard.
+        let code = bun_jsc::ThreadSafe::adopt(code);
 
         args.eat();
         let loader: Option<Loader> = 'brk: {

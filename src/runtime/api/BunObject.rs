@@ -2872,7 +2872,9 @@ pub mod JSZstd {
     // --- Async versions ---
 
     pub struct ZstdJob {
-        pub buffer: node::StringOrBuffer,
+        /// Created with `is_async=true` (JS-backed buffer protected); the
+        /// [`bun_jsc::ThreadSafe`] guard unprotects on drop.
+        pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
         pub is_compress: bool,
         pub level: i32,
         pub task: jsc::WorkPoolTask,
@@ -2997,7 +2999,7 @@ pub mod JSZstd {
             boxed.poll.unref(bun_aio::posix_event_loop::get_vm_ctx(
                 bun_aio::AllocatorType::Js,
             ));
-            boxed.buffer.deinit_and_unprotect();
+            // `buffer: ThreadSafe<StringOrBuffer>` unprotects + drops with `boxed`.
             boxed.promise = Default::default();
             boxed.output = Vec::new();
             // `boxed` drops here, freeing the allocation.
@@ -3011,7 +3013,9 @@ pub mod JSZstd {
             level: i32,
         ) -> *mut ZstdJob {
             let job = ZstdJob::new(ZstdJob {
-                buffer,
+                // Caller passed `from_js_maybe_async(.., is_async=true)`; adopt
+                // so the protect ref is paired with drop.
+                buffer: bun_jsc::ThreadSafe::adopt(buffer),
                 is_compress,
                 level,
                 task: jsc::WorkPoolTask {

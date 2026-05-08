@@ -800,8 +800,10 @@ pub mod random {
 // Scrypt
 // ───────────────────────────────────────────────────────────────────────────
 pub struct Scrypt {
-    password: StringOrBuffer,
-    salt: StringOrBuffer,
+    /// `ThreadSafe` so the `protect()` taken by `from_js_maybe_async(.., is_async)`
+    /// is released on drop. Sync path: `unprotect()` is a no-op (no protect taken).
+    password: bun_jsc::ThreadSafe<StringOrBuffer>,
+    salt: bun_jsc::ThreadSafe<StringOrBuffer>,
     n: u32,
     r: u32,
     p: u32,
@@ -858,12 +860,10 @@ impl Scrypt {
             ));
         };
 
-        let password = scopeguard::guard(password, |mut p| {
-            if IS_ASYNC {
-                p.deinit_and_unprotect();
-            }
-            // sync: `Drop for StringOrBuffer` releases.
-        });
+        // `from_js_maybe_async(.., IS_ASYNC)` already protected when async;
+        // adopt into a `ThreadSafe` guard so drop unprotects on early return.
+        // Sync path: `unprotect()` is a no-op (no protect was taken).
+        let password = bun_jsc::ThreadSafe::adopt(password);
 
         let Some(salt) =
             StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
@@ -875,12 +875,7 @@ impl Scrypt {
             ));
         };
 
-        let salt = scopeguard::guard(salt, |mut s| {
-            if IS_ASYNC {
-                s.deinit_and_unprotect();
-            }
-            // sync: `Drop for StringOrBuffer` releases.
-        });
+        let salt = bun_jsc::ThreadSafe::adopt(salt);
 
         let keylen =
             validators::validate_int32(global, keylen_value, format_args!("keylen"), Some(0), None)?;
@@ -971,8 +966,8 @@ impl Scrypt {
         }
 
         let ctx = Scrypt {
-            password: scopeguard::ScopeGuard::into_inner(password),
-            salt: scopeguard::ScopeGuard::into_inner(salt),
+            password,
+            salt,
             n: n.unwrap(),
             r: r.unwrap(),
             p: p.unwrap(),
@@ -982,22 +977,14 @@ impl Scrypt {
             result: std::ptr::from_mut::<[u8]>(&mut []),
             err: None,
         };
-        // Re-arm errdefer guards now that ownership moved into `ctx`.
-        let ctx = scopeguard::guard(ctx, |mut c| {
-            if IS_ASYNC {
-                c.salt.deinit_and_unprotect();
-                c.password.deinit_and_unprotect();
-            }
-            // sync: `Drop for StringOrBuffer` (on `c.salt`/`c.password`) releases.
-        });
+        // `password`/`salt` are `ThreadSafe<StringOrBuffer>`; dropping `ctx` on
+        // any `?`-propagated error below already unprotects + releases.
 
         if IS_ASYNC {
             let _ = validators::validate_function(global, "callback", callback)?;
         }
 
         ctx.check_scrypt_params(global)?;
-
-        let ctx = scopeguard::ScopeGuard::into_inner(ctx);
 
         if IS_ASYNC {
             return Ok((ctx, callback));
@@ -1133,8 +1120,7 @@ impl CryptoJobCtx for Scrypt {
     }
 
     fn deinit(&mut self) {
-        self.salt.deinit_and_unprotect();
-        self.password.deinit_and_unprotect();
+        // `password`/`salt: ThreadSafe<StringOrBuffer>` unprotect + drop with `self`.
         self.buf.deinit();
     }
 }

@@ -87,16 +87,9 @@ impl PBKDF2 {
 
     // Zig `deinit()` only freed `password`/`salt`; both are `StringOrBuffer`
     // whose `Drop` releases the slice/WTF ref, so the explicit hook is gone —
-    // dropping `PBKDF2` is sufficient for the sync path.
-
-    // `deinit_and_unprotect` is kept as an explicit method because async callers must additionally
-    // unprotect JS-rooted buffers. The fields are moved out and replaced with empty sentinels so
-    // that the subsequent `Drop` of `PBKDF2` (which still runs after this — e.g. via the
-    // `scopeguard` in `from_js`'s async error path) is a no-op and does not double-free.
-    pub fn deinit_and_unprotect(&mut self) {
-        core::mem::take(&mut self.password).deinit_and_unprotect();
-        core::mem::take(&mut self.salt).deinit_and_unprotect();
-    }
+    // dropping `PBKDF2` is sufficient for the sync path. The async path holds
+    // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
+    // buffers via the `Unprotect` impl below.
 
     pub fn from_js(
         global_this: &JSGlobalObject,
@@ -207,7 +200,7 @@ impl PBKDF2 {
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
             if global_this.has_exception() && is_async {
-                out.deinit_and_unprotect();
+                bun_jsc::Unprotect::unprotect(out);
             }
         });
 
@@ -265,8 +258,21 @@ impl PBKDF2 {
     }
 }
 
+impl bun_jsc::Unprotect for PBKDF2 {
+    /// Zig `PBKDF2.deinitAndUnprotect`, JS-side half — owned slices are
+    /// released by `Drop for StringOrBuffer`.
+    #[inline]
+    fn unprotect(&mut self) {
+        self.password.unprotect();
+        self.salt.unprotect();
+    }
+}
+
 pub struct Job {
-    pub pbkdf2: PBKDF2,
+    /// Wrapped in [`bun_jsc::ThreadSafe`] so the paired `unprotect()` runs on
+    /// drop — `Job` is only constructed on the async path
+    /// (`from_js(.., is_async=true)` already protected the buffers).
+    pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
     pub output: Vec<u8>,
     pub task: WorkPoolTask,
     pub promise: JSPromiseStrong,
@@ -357,7 +363,8 @@ impl Job {
         data: PBKDF2,
     ) -> *mut Job {
         let job = bun_core::heap::into_raw(Box::new(Job {
-            pbkdf2: data,
+            // `from_js(.., is_async=true)` already protected — adopt, don't re-protect.
+            pbkdf2: bun_jsc::ThreadSafe::adopt(data),
             output: Vec::new(),
             task: WorkPoolTask {
                 node: Default::default(),
@@ -396,7 +403,7 @@ impl Job {
 impl Drop for Job {
     fn drop(&mut self) {
         self.poll.unref(get_vm_ctx(AllocatorType::Js));
-        self.pbkdf2.deinit_and_unprotect();
+        // `pbkdf2: ThreadSafe<PBKDF2>` unprotects + drops via field drop.
         // `promise` (JSPromiseStrong) and `output` (Vec) drop via their own `Drop` impls.
     }
 }

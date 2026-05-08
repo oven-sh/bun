@@ -1510,6 +1510,9 @@ pub type ZigStringSlice = bun_string::ZigStringSlice;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "webcore_types.rs"] pub mod webcore_types;
 #[path = "node_path.rs"] pub mod node_path;
+// RAII pair for `to_thread_safe()`/`unprotect()` — re-exported at crate root
+// so `bun_runtime` callers don't reach through `node_path`.
+pub use self::node_path::{ThreadSafe, Unprotect};
 
 /// `jsc.WebCore` (jsc.zig:163, deprecated alias) — only the data-shape subset
 /// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the

@@ -11,11 +11,20 @@
 // c_cc[VLNEXT] and toggles ECHO via bun.sys.tcsetattr, then reads both
 // back via bun.sys.tcgetattr. That round-trip holds iff the Zig struct
 // agrees with libc's on this platform.
-import { termiosLayout } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { isPosix } from "harness";
 
 test.skipIf(!isPosix)("bun.sys.termios matches the host libc's struct termios", () => {
+  // Resolve lazily: a static `import { termiosLayout }` throws
+  // `SyntaxError: Export named 'termiosLayout' not found` at module
+  // load on a binary without the binding. bun:test's console output
+  // counts that as "1 fail", but the JUnit reporter emits zero
+  // testcases — so a fail-before gate that parses JUnit sees 0
+  // failures and concludes the test doesn't exercise the fix.
+  // Requiring inside the test body turns the missing export into an
+  // ordinary assertion failure that JUnit records. This mirrors
+  // sigaction-layout.test.ts.
+  const { termiosLayout } = require("bun:internal-for-testing") as typeof import("bun:internal-for-testing");
   expect(termiosLayout).toBeFunction();
 
   const result = termiosLayout();

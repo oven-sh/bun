@@ -266,12 +266,13 @@ impl CreateOptions {
         };
 
         let mut opts = CreateOptions {
-            // PORT NOTE: clap positionals borrow from process argv; copy+leak each
-            // entry to obtain `&'static [u8]` (mirrors Zig where argv is process-static).
+            // PORT NOTE: clap positionals borrow from process argv; dupe each
+            // entry into the process-lifetime CLI arena to obtain
+            // `&'static [u8]` (mirrors Zig where argv is process-static).
             positionals: args
                 .positionals()
                 .iter()
-                .map(|p| &*Box::leak(Box::<[u8]>::from(*p)))
+                .map(|p| crate::cli::cli_dupe(p))
                 .collect::<Vec<&'static [u8]>>()
                 .into_boxed_slice(),
             ..Default::default()
@@ -323,8 +324,7 @@ impl CreateCommand {
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
         let mut env_loader: DotEnv::Loader = {
-            let map = Box::new(DotEnv::Map::init());
-            DotEnv::Loader::init(Box::leak(map))
+            DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
         };
 
         env_loader.load_process()?;
@@ -1595,8 +1595,7 @@ impl CreateCommand {
         }
 
         let mut env_loader: DotEnv::Loader = {
-            let map = Box::new(DotEnv::Map::init());
-            DotEnv::Loader::init(Box::leak(map))
+            DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
         };
 
         env_loader.load_process()?;
@@ -1623,7 +1622,7 @@ impl CreateCommand {
                         let extension = bun_paths::extension(positional);
                         if let Some(tag) = ExampleTag::from_file_extension(extension) {
                             example_tag = tag;
-                            break 'brk Box::leak(Box::<[u8]>::from(&home_dir_buf[..len]));
+                            break 'brk crate::cli::cli_dupe(&home_dir_buf[..len]);
                         }
                         // Show a warning when the local file exists and it's not a .js file
                         // A lot of create-* npm packages have .js in the name, so you could end up with that warning.
@@ -2200,7 +2199,7 @@ impl Example {
             if !access_token.is_empty() {
                 let mut buf = Vec::new();
                 write!(&mut buf, "AuthorizationBearer {}", bstr::BStr::new(access_token))?;
-                headers_buf = Box::leak(buf.into_boxed_slice());
+                headers_buf = crate::cli::cli_dupe(&buf);
                 header_entries.append(bun_http::headers::Entry {
                     name: bun_http_types::ETag::StringPointer {
                         offset: 0,
@@ -2215,7 +2214,8 @@ impl Example {
         }
 
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
-        let mutable = Box::leak(Box::new(MutableString::init(8192)?));
+        let mutable: &'static mut MutableString =
+            crate::cli::cli_arena().alloc(MutableString::init(8192)?);
 
         // ensure very stable memory address
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
@@ -2300,7 +2300,8 @@ impl Example {
 
         // SAFETY: single-threaded CLI access to static buffer.
         let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
-        let mutable = Box::leak(Box::new(MutableString::init(2048)?));
+        let mutable: &'static mut MutableString =
+            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
 
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
@@ -2321,15 +2322,16 @@ impl Example {
             *URL_.get() = Some(core::mem::transmute::<URL<'_>, URL<'static>>(api_url));
         }
 
-        // SAFETY: `http_proxy` borrows from `env_loader`'s leaked map (see
-        // `DotEnv::Loader::init(Box::leak(map))` in `exec`); erase to `'static`
-        // for `AsyncHTTP::init_sync` — same as `fetch_from_github` above.
+        // SAFETY: `http_proxy` borrows from `env_loader`'s arena-backed map
+        // (see `DotEnv::Loader::init(cli_arena().alloc(...))` in `exec`); erase
+        // to `'static` for `AsyncHTTP::init_sync` — same as `fetch_from_github`.
         let mut http_proxy: Option<URL<'static>> = env_loader
             .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
             .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
 
         // ensure very stable memory address
-        let async_http: &mut HTTP::AsyncHTTP = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
+        let async_http: &mut HTTP::AsyncHTTP =
+            crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             // SAFETY: single-threaded CLI access to static URL_ (set just above)
             unsafe { (*URL_.get()).clone() }.unwrap(),
@@ -2340,7 +2342,7 @@ impl Example {
             http_proxy,
             None,
             HTTP::FetchRedirect::Follow,
-        )));
+        ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
@@ -2361,7 +2363,7 @@ impl Example {
         let source = logger::Source::init_path_string(b"package.json", mutable.list.as_slice());
         // SAFETY: ctx.log is set in single-threaded CLI startup; non-null for process lifetime.
         let log = unsafe { &mut *ctx.log };
-        let bump = Box::leak(Box::new(bun_alloc::Arena::new()));
+        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
@@ -2400,7 +2402,7 @@ impl Example {
                         if !s.is_empty()
                             && (strings::starts_with(s, b"https://") || strings::starts_with(s, b"http://"))
                         {
-                            break 'brk Box::leak(Box::<[u8]>::from(s));
+                            break 'brk crate::cli::cli_dupe(s);
                         }
                     }
                 }
@@ -2474,7 +2476,8 @@ impl Example {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
 
-        let mutable = Box::leak(Box::new(MutableString::init(2048)?));
+        let mutable: &'static mut MutableString =
+            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
 
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
@@ -2522,10 +2525,10 @@ impl Example {
 
         initialize_store();
         let source = logger::Source::init_path_string(b"examples.json", mutable.list.as_slice());
-        // PORT NOTE: Zig passed `ctx.allocator`; ContextData dropped the allocator field
-        // (global mimalloc), so allocate a leaked Bump arena — examples slices borrow from it
-        // and the CLI exits shortly after.
-        let bump: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
+        // PORT NOTE: Zig passed `ctx.allocator`; ContextData dropped the allocator
+        // field (global mimalloc) — use the process-lifetime CLI arena (examples
+        // slices borrow from it and the CLI exits shortly after).
+        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         // SAFETY: ctx.log is set by Command::create() before any subcommand runs.
         let log = unsafe { &mut *ctx.log };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
@@ -2619,8 +2622,7 @@ impl CreateListExamplesCommand {
     pub fn exec(ctx: &Command::Context) -> Result<(), bun_core::Error> {
         let filesystem = fs::FileSystem::init(None)?;
         let mut env_loader: DotEnv::Loader = {
-            let map = Box::new(DotEnv::Map::init());
-            DotEnv::Loader::init(Box::leak(map))
+            DotEnv::Loader::init(crate::cli::cli_arena().alloc(DotEnv::Map::init()))
         };
 
         env_loader.load_process()?;

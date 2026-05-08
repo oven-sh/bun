@@ -3089,7 +3089,7 @@ pub struct Source {
     pub path: fs::Path,
 
     /// PORT NOTE: `Cow` so `source_from_file` / `File::to_source_at` can hand
-    /// back a heap buffer without `Box::leak` (PORTING.md §Forbidden). Borrowed
+    /// back a heap buffer without leaking (PORTING.md §Forbidden). Borrowed
     /// arm covers the Zig `[]const u8`-field default (parser/transpiler feed
     /// arena slices via `IntoStr`). Prefer the `.contents()` accessor at
     /// call-sites — it derefs to `&[u8]` regardless of arm.
@@ -3102,7 +3102,7 @@ pub struct Source {
     /// PORT NOTE: `Cow` because the cached value is produced by
     /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); the Zig
     /// freed it in `deinit`, so per PORTING.md §Forbidden this cannot be
-    /// `&'static [u8]` + `Box::leak`.
+    /// `&'static [u8]` + leak.
     pub identifier_name: Cow<'static, [u8]>,
 
     pub index: Index,
@@ -3457,7 +3457,7 @@ pub fn source_from_file_at(
     }
     // `path` is caller-owned; goes through the Phase-A `IntoStr` borrow shim
     // (same as every other `Source` constructor). `bytes` is owned by the
-    // returned `Source` via `Cow::Owned` — no `Box::leak`.
+    // returned `Source` via `Cow::Owned` — no leaking.
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 

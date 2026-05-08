@@ -1362,15 +1362,15 @@ impl Template {
     ) -> Result<(), Error> {
         type Rope = js_ast::E::object::Rope;
         fields.name = self.name().to_vec();
-        let key = Box::new(Rope {
+        // PORT NOTE: Zig `alloc.create(Rope)` against the default allocator and
+        // never frees; allocate in the process-lifetime CLI arena instead.
+        let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
             head: js_ast::Expr::init(
                 js_ast::E::String::init(b"scripts"),
                 logger::Loc::EMPTY,
             ),
             next: core::ptr::null_mut(),
         });
-        // TODO(port): Zig leaked `key` (alloc.create) — Box::leak matches that.
-        let key = Box::leak(key);
         // SAFETY: object is arena-allocated and live for the command duration.
         let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
         let mut scripts_json = object.get_or_put_object(key, bump)?;

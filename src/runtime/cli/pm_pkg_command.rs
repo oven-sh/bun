@@ -14,14 +14,12 @@ use bun_sys;
 
 pub struct PmPkgCommand;
 
-/// Process-lifetime bump arena for E::Object::put() / json::parse calls.
-/// `bumpalo::Bump` is `!Sync`, so a `static OnceLock` is out; the CLI is
-/// single-threaded one-shot, so we cache a leaked arena per thread instead.
+/// Process-lifetime arena for `E::Object::put()` / `json::parse` calls.
+/// Route through the shared CLI arena (`MimallocArena` is `Sync`, so this is
+/// just a `LazyLock` borrow).
+#[inline]
 fn dummy_bump() -> &'static bun_alloc::Arena {
-    thread_local! {
-        static BUMP: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
-    }
-    BUMP.with(|b| *b)
+    crate::cli::cli_arena()
 }
 
 /// `bun_logger::js_printer::Indentation` and `bun_js_printer::Indentation` are
@@ -170,11 +168,10 @@ impl PmPkgCommand {
         };
 
         let source = Source::init_path_string(path, &contents[..]);
-        // Zig passes the global allocator; leak an arena so the returned Expr
-        // (which may reference arena-owned nodes) outlives this frame. CLI is
-        // one-shot, so the leak is intentional.
-        let bump: &'static bun_alloc::Arena =
-            Box::leak(Box::new(bun_alloc::Arena::new()));
+        // Zig passes the global allocator; use the process-lifetime CLI arena
+        // so the returned `Expr` (which may reference arena-owned nodes)
+        // outlives this frame. CLI is one-shot.
+        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         // SAFETY: ctx.log is set by `command::create_context_data()` before any
         // subcommand runs (single-threaded CLI startup invariant).
         let log: &mut Log = unsafe { &mut *ctx.log };

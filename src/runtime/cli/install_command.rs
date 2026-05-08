@@ -58,7 +58,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                 // Process-lifetime storage for the rewritten positionals.
                 // Zig: `bun.default_allocator.alloc(string, keys.len + 1)` with
                 // no matching free — `Global::exit(0)` follows immediately.
-                // `OnceLock` (not `Box::leak`) per PORTING.md §Forbidden.
+                // `OnceLock` (not leaking) per PORTING.md §Forbidden.
                 static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> =
                     std::sync::OnceLock::new();
                 static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =

@@ -604,7 +604,8 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
             tracker: AsyncTaskTracker::init(vm),
         });
         // Transfer ownership to libuv: the box outlives the async request and is
-        // reclaimed in `destroy()` (run_from_js_thread → scopeguard).
+        // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `Box::leak`
+        // is the safe spelling of this paired `into_raw`/`from_raw` hand-off.
         let task: &mut Self = Box::leak(task);
         // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
         // event loop is the only one that owns AsyncFSTask/UVFSRequest.
@@ -2105,7 +2106,7 @@ impl AsyncReaddirRecursiveTask {
                 next: core::ptr::null_mut(),
                 value: ResultListEntryValue::from_vec(clone),
             });
-            self.result_list_queue.push(Box::leak(list));
+            self.result_list_queue.push(Box::into_raw(list));
         }
 
         if self.subtask_count.fetch_sub(1, Ordering::Relaxed) == 1 {
@@ -2148,7 +2149,7 @@ impl AsyncReaddirRecursiveTask {
                 let val = iter.next();
                 if val.is_null() { break; }
                 if let Some(dest) = to_destroy {
-                    // SAFETY: paired with Box::leak in write_results()
+                    // SAFETY: paired with Box::into_raw in write_results()
                     unsafe { drop(Box::from_raw(dest)) };
                 }
                 to_destroy = Some(val);
@@ -2156,7 +2157,7 @@ impl AsyncReaddirRecursiveTask {
                 self.result_list.append_from(&mut unsafe { &mut *val }.value);
             }
             if let Some(dest) = to_destroy {
-                // SAFETY: paired with Box::leak in write_results()
+                // SAFETY: paired with Box::into_raw in write_results()
                 unsafe { drop(Box::from_raw(dest)) };
             }
         }
@@ -2179,11 +2180,11 @@ impl AsyncReaddirRecursiveTask {
             if val.is_null() { break; }
             // SAFETY: `val` is a live queue node until freed below
             unsafe { &mut *val }.value.deinit();
-            // SAFETY: paired with Box::leak in write_results()
+            // SAFETY: paired with Box::into_raw in write_results()
             if let Some(dest) = to_destroy { unsafe { drop(Box::from_raw(dest)) }; }
             to_destroy = Some(val);
         }
-        // SAFETY: paired with Box::leak in write_results()
+        // SAFETY: paired with Box::into_raw in write_results()
         if let Some(dest) = to_destroy { unsafe { drop(Box::from_raw(dest)) }; }
         self.result_list_count.store(0, Ordering::Relaxed);
     }

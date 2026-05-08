@@ -275,11 +275,14 @@ impl Readable {
                     Err(_) => return Err(global.throw_out_of_memory()),
                 };
 
-                // PORT NOTE: `from_bytes` takes `&mut [u8]` and assumes ownership of the
-                // mimalloc-backed buffer (freed via MarkedArrayBuffer_deallocator). Leak the
-                // Box so the JS side controls the lifetime — matches Zig `fromBytes(own, .Uint8Array)`.
-                Ok(jsc::MarkedArrayBuffer::from_bytes(Box::leak(own), jsc::JSType::Uint8Array)
-                    .to_node_buffer(global))
+                // PORT NOTE: ownership of the mimalloc-backed buffer transfers to
+                // JSC (freed via `MarkedArrayBuffer_deallocator`) — matches Zig
+                // `fromBytes(own, .Uint8Array)`.
+                Ok(jsc::MarkedArrayBuffer {
+                    buffer: jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
+                    owns_buffer: true,
+                }
+                .to_node_buffer(global))
             }
             _ => Ok(JSValue::UNDEFINED),
         }

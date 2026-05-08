@@ -96,9 +96,9 @@ impl<'a> HTMLScanner<'a> {
 
     pub fn on_html_parse_error(&mut self, message: &[u8]) {
         // bun.handleOom → Rust Vec/Box allocations abort on OOM; just call.
-        // logger::Str = &'static [u8], so dupe (matches Zig addError allocating).
-        let text: &'static [u8] = message.to_vec().leak();
-        let _ = self.log.add_error(Some(self.source), Loc::EMPTY, text);
+        // Zig `Log.addError` dupes via `log.msgs.allocator`; here `IntoText for
+        // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
+        let _ = self.log.add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
     pub fn on_tag(

@@ -257,6 +257,56 @@ pub static START_TIME: bun_core::RacyCell<i128> = bun_core::RacyCell::new(0);
 pub static Bun__Node__ProcessTitle: bun_core::RacyCell<Option<Box<[u8]>>> =
     bun_core::RacyCell::new(None);
 
+/// Process-lifetime arena for one-shot CLI commands. Zig passed
+/// `bun.default_allocator` (or a per-command `ArenaAllocator` never `deinit`'d)
+/// and let allocations live until exit.
+///
+/// **Main-thread only.** `MimallocArena`'s `Sync` impl is *contract-only*:
+/// `mi_heap_*` allocation calls are thread-local, and
+/// `MimallocArena::assert_owning_thread()` debug-panics on cross-thread alloc.
+/// The heap is pinned to whichever thread first touches `cli_arena()` (the CLI
+/// dispatch thread). Do not call from worker/watcher threads.
+#[inline]
+pub fn cli_arena() -> &'static bun_alloc::Arena {
+    static ARENA: std::sync::LazyLock<bun_alloc::Arena> =
+        std::sync::LazyLock::new(bun_alloc::Arena::new);
+    &ARENA
+}
+
+/// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
+/// `s.to_vec().into_boxed_slice()` leaks at CLI sites where Zig used
+/// `allocator.dupe(u8, s)` with the default allocator. Main-thread only
+/// (see [`cli_arena`]).
+#[inline]
+pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
+    cli_arena().alloc_slice_copy(s)
+}
+
+/// Adopt an already-owned `Box<[u8]>` into a process-lifetime side-table and
+/// return a `&'static [u8]` borrow — zero-copy (the `Box`'s heap allocation has
+/// a stable address; only the `Box` value moves into the table). Use when the
+/// caller already owns a large buffer (e.g. tarball, request body) so
+/// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
+pub fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
+    static ADOPTED: std::sync::Mutex<Vec<Box<[u8]>>> = std::sync::Mutex::new(Vec::new());
+    // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
+    // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
+    // `Box` pointer-value moves), so the returned slice stays valid `'static`.
+    let (ptr, len) = (b.as_ptr(), b.len());
+    ADOPTED.lock().unwrap().push(b);
+    unsafe { core::slice::from_raw_parts(ptr, len) }
+}
+
+/// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
+/// return the C-string pointer (for argv/envp construction).
+#[inline]
+pub fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
+    let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
+    buf[..s.len()].copy_from_slice(s);
+    // buf[s.len()] is already 0 (Default for u8).
+    buf.as_ptr().cast::<core::ffi::c_char>()
+}
+
 thread_local! {
     pub static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
 }
@@ -1321,7 +1371,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             // `bun create` is a one-shot CLI subcommand (ends in exec/exit), so
             // the prefixed package name is a process singleton — park the owning
             // `ZBox` in a `OnceLock` so the `&'static ZStr` borrow is sound
-            // without `Box::leak` (PORTING.md §Forbidden patterns).
+            // without leaking (PORTING.md §Forbidden patterns).
             static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> =
                 std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;

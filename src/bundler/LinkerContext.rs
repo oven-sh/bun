@@ -2015,7 +2015,8 @@ impl<'a> LinkerContext<'a> {
         // recurse on those too.
         // PORT NOTE: reshaped for borrowck — collect piece queries first so the
         // `&chunks[index]` borrow is dropped before the recursive `&mut chunks`
-        // calls in the Chunk/Scb arms below.
+        // calls in the Chunk/Scb arms below. `final_rel_path` is re-indexed per
+        // Asset arm (not hoisted) because it is now `Box<[u8]>` (not `Copy`).
         let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
             if let crate::chunk::IntermediateOutput::Pieces(pieces) =
                 &chunks[index as usize].intermediate_output

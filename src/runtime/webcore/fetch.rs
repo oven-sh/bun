@@ -223,7 +223,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     // PORT NOTE: `mime_type.value` is `Cow<'static, [u8]>`; Blob.content_type is
     // `*const [u8]` discriminated by `content_type_allocated` (Blob's Drop reclaims
     // via `Box::from_raw` when set). Use `Box::into_raw` (paired alloc/free), not
-    // `Box::leak`.
+    // leaking.
     blob.content_type = match mime_type.value {
         std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
         std::borrow::Cow::Owned(v) => {

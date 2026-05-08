@@ -329,10 +329,11 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let package_json_contents =
             maybe_package_json_contents.ok_or(FromTarballError::MissingPackageJSON)?;
 
-        // PORT NOTE: leak `package_json_contents` so the `Source` borrow stays
-        // alive across `normalized_package` (Zig held an arena slice).
+        // PORT NOTE: adopt `package_json_contents` (already an owned `Box<[u8]>`)
+        // into the process-lifetime side-table so the `Source` borrow stays
+        // alive across `normalized_package` (Zig held an arena slice). Zero-copy.
         let package_json_contents: &'static [u8] =
-            Box::leak(package_json_contents);
+            crate::cli::cli_adopt(package_json_contents);
 
         let bump = bun_alloc::Arena::new();
         let (package_name, package_version, json, json_source) = {
@@ -360,9 +361,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             if let Some(config) = json.get(b"publishConfig") {
                 if manager.options.publish_config.tag.is_empty() {
                     if let Some(tag) = json_get_string_cloned(&config, &bump, b"tag")? {
-                        // PORT NOTE: `PublishConfig.tag` is `&'static [u8]`; leak the
-                        // bump-owned slice (single-shot CLI; freed at process exit).
-                        manager.options.publish_config.tag = Box::leak(Box::<[u8]>::from(tag));
+                        // PORT NOTE: `PublishConfig.tag` is `&'static [u8]`; dupe the
+                        // bump-owned slice into the process-lifetime CLI arena.
+                        manager.options.publish_config.tag = crate::cli::cli_dupe(tag);
                     }
                 }
 
@@ -759,9 +760,10 @@ impl PublishCommand {
             return false;
         }
 
-        // PORT NOTE: `URL::parse` borrows; leak so the URL outlives the local Vec
-        // (mirrors `allocPrint` ownership in the Zig spec).
-        let package_url = URL::parse(Box::leak(url_buf.into_boxed_slice()));
+        // PORT NOTE: `URL::parse` borrows; dupe into the process-lifetime CLI
+        // arena so the URL outlives the local Vec (mirrors `allocPrint`
+        // ownership in the Zig spec).
+        let package_url = URL::parse(crate::cli::cli_dupe(&url_buf));
 
         let Ok(mut response_buf) = MutableString::init(1024) else {
             return false;
@@ -891,10 +893,12 @@ impl PublishCommand {
         }
 
         // PORT NOTE: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
-        // request body (Zig had no lifetimes). Single-shot CLI path — leak the
-        // body buffer; freed at process exit.
-        let publish_req_body: &'static [u8] =
-            Box::leak(Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?);
+        // request body (Zig had no lifetimes). Single-shot CLI path — adopt the
+        // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
+        // into the process-lifetime side-table. Zero-copy.
+        let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
+            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
+        );
 
         let mut print_buf: Vec<u8> = Vec::new();
 
@@ -919,9 +923,10 @@ impl PublishCommand {
             bstr::BStr::new(strings::without_trailing_slash(registry.url.href())),
             bun_fmt::dependency_url(&ctx.package_name),
         ).map_err(|_| AllocError)?;
-        // PORT NOTE: `URL::parse` borrows; clone-and-leak so the URL outlives
-        // `print_buf.clear()` below (Zig's allocPrint owned its buffer).
-        let publish_url = URL::parse(Box::leak(Box::<[u8]>::from(&print_buf[..])));
+        // PORT NOTE: `URL::parse` borrows; dupe into the process-lifetime CLI
+        // arena so the URL outlives `print_buf.clear()` below (Zig's
+        // `allocPrint` owned its buffer).
+        let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
         print_buf.clear();
 
         let mut req = http::AsyncHTTP::init_sync(
@@ -1122,15 +1127,16 @@ impl PublishCommand {
                 let Some(auth_url_str) = json_get_string_cloned(&json, &bump, b"authUrl")? else {
                     break 'try_web;
                 };
-                // PORT NOTE: bump-owned `&[u8]` — leak a heap copy so the spawned thread
-                // (which outlives `bump`) can borrow it `'static`.
+                // PORT NOTE: bump-owned `&[u8]` — dupe into the process-lifetime
+                // CLI arena so the spawned thread (which outlives `bump`) can
+                // borrow it `'static`.
                 let auth_url_str: &'static ZStr = {
-                    let mut v = auth_url_str.to_vec();
-                    v.push(0);
-                    let len = v.len() - 1;
-                    let leaked = Box::leak(v.into_boxed_slice());
-                    // SAFETY: leaked is NUL-terminated; `'static` view safe for the detached thread.
-                    unsafe { ZStr::from_raw(leaked.as_ptr(), len) }
+                    let len = auth_url_str.len();
+                    let buf: &'static mut [u8] =
+                        crate::cli::cli_arena().alloc_slice_fill_default(len + 1);
+                    buf[..len].copy_from_slice(auth_url_str);
+                    // SAFETY: `buf[len] == 0`; arena-backed `'static`.
+                    unsafe { ZStr::from_raw(buf.as_ptr(), len) }
                 };
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
@@ -1138,8 +1144,7 @@ impl PublishCommand {
                 let Some(done_url_str) = json_get_string_cloned(&json, &bump, b"doneUrl")? else {
                     break 'try_web;
                 };
-                let done_url_str: Box<[u8]> = done_url_str.into();
-                let done_url = URL::parse(Box::leak(done_url_str));
+                let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
 
                 Output::prettyln(format_args!(
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
@@ -1314,11 +1319,12 @@ impl PublishCommand {
         debug_assert!(json.is_object());
 
         let bump = bun_alloc::Arena::new();
-        // PORT NOTE: `E::String` stores `&'static [u8]` (Phase-A erasure); leak the
-        // formatted buffers so they outlive the AST nodes through printing.
+        // PORT NOTE: `E::String` stores `&'static [u8]` (Phase-A erasure); dupe
+        // formatted buffers into the process-lifetime CLI arena so they outlive
+        // the AST nodes through printing.
         macro_rules! leak {
             ($v:expr) => {
-                Box::leak($v.into_boxed_slice()) as &'static [u8]
+                crate::cli::cli_dupe(&$v) as &'static [u8]
             };
         }
 
@@ -1490,11 +1496,12 @@ impl PublishCommand {
         package_name: &[u8],
         workspace_root: Fd,
     ) -> Result<(), AllocError> {
-        // PORT NOTE: see `normalized_package` — `E::String` stores `&'static [u8]`
-        // (Phase-A erasure); leak owned buffers that flow into AST nodes.
+        // PORT NOTE: see `normalized_package` — `E::String` stores
+        // `&'static [u8]` (Phase-A erasure); dupe into the process-lifetime
+        // CLI arena for buffers that flow into AST nodes.
         macro_rules! leak {
             ($v:expr) => {
-                Box::leak(Box::<[u8]>::from($v)) as &'static [u8]
+                crate::cli::cli_dupe($v) as &'static [u8]
             };
         }
         let mut path_buf = PathBuffer::uninit();
@@ -1591,7 +1598,7 @@ impl PublishCommand {
                         }
 
                         bin_props.push(G::Property {
-                            key: Some(Expr::init(E::String::init(Box::leak(key)), logger::Loc::EMPTY)),
+                            key: Some(Expr::init(E::String::init(crate::cli::cli_dupe(&key)), logger::Loc::EMPTY)),
                             value: Some(Expr::init(E::String::init(leak!(value.as_bytes())), logger::Loc::EMPTY)),
                             ..Default::default()
                         });
@@ -1679,13 +1686,13 @@ impl PublishCommand {
                             join.push(0);
                             let join_len = join.len() - 1;
                             // PORT NOTE: reshaped for borrowck — Zig sliced into the same allocation for both name and subpath.
-                            // The buffer is leaked (its bytes flow into long-lived `E::String` nodes).
-                            let leaked = Box::leak(join.into_boxed_slice());
-                            // SAFETY: NUL terminator written at leaked[join_len]
-                            let join_z = unsafe { ZStr::from_raw(leaked.as_ptr(), join_len) };
+                            // Dupe into the process-lifetime CLI arena (bytes flow into long-lived `E::String` nodes).
+                            let interned: &'static [u8] = crate::cli::cli_dupe(&join);
+                            // SAFETY: NUL terminator at interned[join_len] (copied from `join`).
+                            let join_z = unsafe { ZStr::from_raw(interned.as_ptr(), join_len) };
                             let name_slice_start = join_len - name.len();
-                            // SAFETY: name is the trailing segment of `leaked`, NUL-terminated
-                            let name_z = unsafe { ZStr::from_raw(leaked.as_ptr().add(name_slice_start), name.len()) };
+                            // SAFETY: name is the trailing segment of `interned`, NUL-terminated
+                            let name_z = unsafe { ZStr::from_raw(interned.as_ptr().add(name_slice_start), name.len()) };
                             (name_z, join_z)
                         };
 

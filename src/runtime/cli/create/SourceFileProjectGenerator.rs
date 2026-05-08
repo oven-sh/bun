@@ -717,9 +717,11 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 
             if filename[0] >= b'a' && filename[0] <= b'z' {
                 // PORT NOTE: Zig leaked `duped` on the success returns below
-                // (only freed on the fall-through). We Box::leak to match the
-                // returned-slice lifetime; the fall-through `free` is dropped.
-                let duped: &mut [u8] = Box::leak(Box::<[u8]>::from(filename));
+                // (only freed on the fall-through). Route through the process-
+                // lifetime CLI arena to match the returned-slice lifetime; the
+                // fall-through `free` is a no-op (arena-backed).
+                let duped: &'static mut [u8] =
+                    crate::cli::cli_arena().alloc_slice_copy(filename);
                 duped[0] = duped[0] - 32;
                 if js_lexer::is_identifier(duped) {
                     if exports.contains(duped) {
@@ -794,8 +796,9 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 return None;
             };
             if exports.contains(&name_to_try) {
-                // TODO(port): lifetime — Zig returns an allocator-owned slice; we leak to match.
-                return Some(Box::leak(name_to_try));
+                // Zig returns an allocator-owned slice; route through the
+                // process-lifetime CLI arena.
+                return Some(crate::cli::cli_dupe(&name_to_try));
             }
 
             // Okay we really have no idea now.

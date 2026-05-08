@@ -399,15 +399,16 @@ impl OutputFile {
         // PORT NOTE: Zig `Fs.Path.init(options.input_path)` stored the borrowed
         // slice and `OutputFile.deinit` freed it via `default_allocator` — i.e.
         // `OutputFile` *owns* `src_path.text`. `bun_logger::fs::Path` currently
-        // borrows `&'static [u8]`, so route through the `relative_paths_list`
-        // process-lifetime interner (PORTING.md §Forbidden carve-out for
-        // OnceLock-backed singletons) instead of leaking the Box. TODO(port):
-        // give `fs::Path` an owning `text` so this becomes a plain move and
-        // Drop frees it.
+        // borrows `&'static [u8]`, so we leak the box here; ownership is
+        // logically held by `OutputFile`. Do NOT route through
+        // `linker::relative_paths_list` — that is an extra memcpy plus a forged
+        // `&mut` on a shared global per output file, and still never frees.
+        // TODO(port): give `fs::Path` an owning `text: Cow<'static,[u8]>` so
+        // this becomes a plain move and Drop frees it (matches Zig deinit).
         let input_path: &'static [u8] = if options.input_path.is_empty() {
             b""
         } else {
-            crate::linker::dupe(&options.input_path)
+            Box::leak(options.input_path)
         };
         OutputFile {
             loader: options.loader,

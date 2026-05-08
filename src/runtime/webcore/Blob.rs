@@ -371,7 +371,7 @@ impl BlobExt for Blob {
         ) -> JSValue {
             // SAFETY: `g` is the `&JSGlobalObject` stored on the task in `init`.
             let g = unsafe { &*g };
-            jsc::host_fn::to_js_host_call(g, || F::call(b, g, by, Lifetime::Clone))
+            jsc::host_fn::to_js_host_call(g, || F::call(b, g, std::ptr::from_mut::<[u8]>(by), Lifetime::Clone))
         }
         S3BlobDownloadTask::init(global, self, wrapped::<F>)
     }
@@ -460,12 +460,10 @@ impl BlobExt for Blob {
                     H::on_read_bytes(
                         c,
                         match r {
-                            // `is_temporary` ⇒ `r.buf` is the ReadFile Vec's
-                            // items handed over (default allocator) — we own it.
-                            // SAFETY: `buf` was leaked from a `Box<[u8]>` by the
-                            // ReadFile finisher; reclaim it here.
+                            // SAFETY: `buf` is `Box::<[u8]>::into_raw` from the
+                            // ReadFile finisher; reclaim ownership here.
                             read_file::ReadFileResultType::Result(b) => ReadBytesResult::Ok(
-                                unsafe { Box::from_raw(std::ptr::from_mut::<[u8]>(b.buf)) }.into_vec(),
+                                unsafe { Box::from_raw(b.buf) }.into_vec(),
                             ),
                             read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(e),
                         },
@@ -5636,49 +5634,49 @@ pub struct ToUint8ArrayWithBytesFn;
 pub struct ToFormDataWithBytesFn;
 
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
-    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         match l {
-            Lifetime::Clone => b.to_string_with_bytes::<{ Lifetime::Clone }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Temporary => b.to_string_with_bytes::<{ Lifetime::Temporary }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Share => b.to_string_with_bytes::<{ Lifetime::Share }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Transfer => b.to_string_with_bytes::<{ Lifetime::Transfer }>(g, std::ptr::from_mut::<[u8]>(by)),
+            Lifetime::Clone => b.to_string_with_bytes::<{ Lifetime::Clone }>(g, by),
+            Lifetime::Temporary => b.to_string_with_bytes::<{ Lifetime::Temporary }>(g, by),
+            Lifetime::Share => b.to_string_with_bytes::<{ Lifetime::Share }>(g, by),
+            Lifetime::Transfer => b.to_string_with_bytes::<{ Lifetime::Transfer }>(g, by),
         }
     }
 }
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
-    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         match l {
-            Lifetime::Clone => b.to_json_with_bytes::<{ Lifetime::Clone }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Temporary => b.to_json_with_bytes::<{ Lifetime::Temporary }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Share => b.to_json_with_bytes::<{ Lifetime::Share }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, std::ptr::from_mut::<[u8]>(by)),
+            Lifetime::Clone => b.to_json_with_bytes::<{ Lifetime::Clone }>(g, by),
+            Lifetime::Temporary => b.to_json_with_bytes::<{ Lifetime::Temporary }>(g, by),
+            Lifetime::Share => b.to_json_with_bytes::<{ Lifetime::Share }>(g, by),
+            Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, by),
         }
     }
 }
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
-    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         match l {
-            Lifetime::Clone => b.to_array_buffer_with_bytes::<{ Lifetime::Clone }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Temporary => b.to_array_buffer_with_bytes::<{ Lifetime::Temporary }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Share => b.to_array_buffer_with_bytes::<{ Lifetime::Share }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Transfer => b.to_array_buffer_with_bytes::<{ Lifetime::Transfer }>(g, std::ptr::from_mut::<[u8]>(by)),
+            Lifetime::Clone => b.to_array_buffer_with_bytes::<{ Lifetime::Clone }>(g, by),
+            Lifetime::Temporary => b.to_array_buffer_with_bytes::<{ Lifetime::Temporary }>(g, by),
+            Lifetime::Share => b.to_array_buffer_with_bytes::<{ Lifetime::Share }>(g, by),
+            Lifetime::Transfer => b.to_array_buffer_with_bytes::<{ Lifetime::Transfer }>(g, by),
         }
     }
 }
 impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
-    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         match l {
-            Lifetime::Clone => b.to_uint8_array_with_bytes::<{ Lifetime::Clone }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Temporary => b.to_uint8_array_with_bytes::<{ Lifetime::Temporary }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Share => b.to_uint8_array_with_bytes::<{ Lifetime::Share }>(g, std::ptr::from_mut::<[u8]>(by)),
-            Lifetime::Transfer => b.to_uint8_array_with_bytes::<{ Lifetime::Transfer }>(g, std::ptr::from_mut::<[u8]>(by)),
+            Lifetime::Clone => b.to_uint8_array_with_bytes::<{ Lifetime::Clone }>(g, by),
+            Lifetime::Temporary => b.to_uint8_array_with_bytes::<{ Lifetime::Temporary }>(g, by),
+            Lifetime::Share => b.to_uint8_array_with_bytes::<{ Lifetime::Share }>(g, by),
+            Lifetime::Transfer => b.to_uint8_array_with_bytes::<{ Lifetime::Transfer }>(g, by),
         }
     }
 }
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
-    fn call(b: &mut Blob, g: &JSGlobalObject, by: &mut [u8], l: Lifetime) -> JsResult<JSValue> {
+    fn call(b: &mut Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         let _ = l; // FormData ignores lifetime — bytes are read-only.
-        Ok(b.to_form_data_with_bytes::<{ Lifetime::Temporary }>(g, std::ptr::from_mut::<[u8]>(by)))
+        Ok(b.to_form_data_with_bytes::<{ Lifetime::Temporary }>(g, by))
     }
 }
 

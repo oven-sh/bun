@@ -1698,7 +1698,7 @@ To create a project with the official Next.js scaffolding tool, run
             // create` is a one-shot CLI subcommand that ends in `exec()`/`exit()`,
             // so the prefixed package name is a true process singleton — park the
             // owning `ZBox` in a `OnceLock` so the `&'static ZStr` borrow is sound
-            // without `Box::leak`/`transmute` (PORTING.md §Forbidden patterns).
+            // without leaking/transmute (PORTING.md §Forbidden patterns).
             static CREATE_PREFIX: std::sync::OnceLock<bun_core::ZBox> =
                 std::sync::OnceLock::new();
             let prefixed = BunxCommand::add_create_prefix(template_name)?;

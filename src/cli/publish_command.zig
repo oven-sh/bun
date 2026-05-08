@@ -50,6 +50,11 @@ pub const PublishCommand = struct {
                 };
 
                 var maybe_package_json_contents: ?[]const u8 = null;
+                var maybe_readme: ?ReadmeInfo = null;
+                errdefer if (maybe_readme) |r| {
+                    ctx.allocator.free(r.filename);
+                    ctx.allocator.free(r.contents);
+                };
 
                 var iter = switch (Archive.Iterator.init(tarball_bytes)) {
                     .err => |err| {
@@ -110,6 +115,20 @@ pub const PublishCommand = struct {
                                     },
                                     .result => |bytes| bytes,
                                 };
+                            } else if (maybe_readme == null and isReadmeOSPath(filename)) {
+                                // First matching README wins — libarchive iteration is one-shot.
+                                const bytes = switch (try next.readEntryData(ctx.allocator, iter.archive)) {
+                                    .err => |err| {
+                                        Output.errGeneric("{s}: {s}", .{ err.message, err.archive.errorString() });
+                                        Global.crash();
+                                    },
+                                    .result => |bytes| bytes,
+                                };
+                                const filename_utf8 = if (comptime bun.OSPathChar == u8)
+                                    try ctx.allocator.dupe(u8, filename)
+                                else
+                                    try strings.toUTF8Alloc(ctx.allocator, filename);
+                                maybe_readme = .{ .filename = filename_utf8, .contents = bytes };
                             }
                         }
                     } else {
@@ -204,6 +223,7 @@ pub const PublishCommand = struct {
                     json_source,
                     shasum,
                     integrity,
+                    maybe_readme,
                 );
 
                 Pack.Context.printSummary(
@@ -919,6 +939,11 @@ pub const PublishCommand = struct {
         };
     }
 
+    pub const ReadmeInfo = struct {
+        filename: string,
+        contents: string,
+    };
+
     pub fn normalizedPackage(
         allocator: std.mem.Allocator,
         manager: *PackageManager,
@@ -928,6 +953,7 @@ pub const PublishCommand = struct {
         json_source: *const logger.Source,
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
+        readme: ?ReadmeInfo,
     ) OOM!string {
         bun.assertWithLocation(json.isObject(), @src());
 
@@ -944,6 +970,16 @@ pub const PublishCommand = struct {
         try json.setString(allocator, "_npmVersion", "10.8.3");
         try json.setString(allocator, "integrity", integrity_fmt);
         try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}));
+
+        // Include README contents in the registry payload so `npm view <pkg>
+        // readme` shows something, matching `npm publish`. User-provided
+        // `readme` in package.json wins.
+        if (readme) |r| {
+            if (json.get("readme") == null) {
+                try json.setString(allocator, "readme", r.contents);
+                try json.setString(allocator, "readmeFilename", r.filename);
+            }
+        }
 
         var dist_props = try allocator.alloc(G.Property, 3);
         dist_props[0] = .{
@@ -1040,6 +1076,53 @@ pub const PublishCommand = struct {
         _ = written;
 
         return writer.ctx.writtenWithoutTrailingZero();
+    }
+
+    /// Matches npm's `{README,README.*}` glob case-insensitively. Generic
+    /// over char type so it works for both UTF-8 readdir entries and UTF-16
+    /// tar entry names on Windows.
+    fn isReadmeFilenameT(comptime T: type, name: []const T) bool {
+        const README = "README";
+        if (name.len < README.len) return false;
+        if (!strings.eqlCaseInsensitiveT(T, name[0..README.len], README)) return false;
+        return name.len == README.len or name[README.len] == '.';
+    }
+
+    fn isReadmeFilename(name: []const u8) bool {
+        return isReadmeFilenameT(u8, name);
+    }
+
+    fn isReadmeOSPath(name: []const bun.OSPathChar) bool {
+        return isReadmeFilenameT(bun.OSPathChar, name);
+    }
+
+    /// Searches `abs_workspace_path` for a README, matching `npm publish`. Returns
+    /// the first match from `readdir` (same ordering npm's glob walks, in practice),
+    /// or null if none is present.
+    pub fn findWorkspaceReadme(
+        allocator: std.mem.Allocator,
+        abs_workspace_path: string,
+    ) OOM!?ReadmeInfo {
+        var workspace_dir = std.fs.openDirAbsolute(abs_workspace_path, .{ .iterate = true }) catch return null;
+        defer workspace_dir.close();
+
+        var iter = bun.DirIterator.iterate(.fromStdDir(workspace_dir), .u8);
+        while (iter.next().unwrap() catch null) |entry| {
+            if (entry.kind == .directory) continue;
+            const name = entry.name.slice();
+            if (!isReadmeFilename(name)) continue;
+
+            const name_dup = try allocator.dupe(u8, name);
+            const contents = switch (bun.sys.File.readFrom(bun.FD.fromStdDir(workspace_dir), name_dup, allocator)) {
+                .result => |bytes| bytes,
+                .err => {
+                    allocator.free(name_dup);
+                    return null;
+                },
+            };
+            return .{ .filename = name_dup, .contents = contents };
+        }
+        return null;
     }
 
     fn normalizeBin(

@@ -74,6 +74,26 @@ impl Node {
 unsafe impl Send for Node {}
 unsafe impl Sync for Node {}
 
+impl Node {
+    /// Consume the singly-linked chain rooted at `head`, yielding each node's
+    /// slice in insertion order to `sink`, then dropping the node (which frees
+    /// an owned slice if any). Centralises the
+    /// `while !cur.is_null() { read; advance; free }` walk that `done`,
+    /// `done_with_end`, and `Drop` previously open-coded.
+    fn drain_chain(head: Box<Node>, mut sink: impl FnMut(&[u8])) {
+        let mut current: *mut Node = bun_core::heap::into_raw(head);
+        while !current.is_null() {
+            // SAFETY: `current` walks a chain of `Box`-allocated nodes
+            // uniquely owned by the caller (handed in via `head`); each is
+            // reclaimed exactly once here and never touched again.
+            let node = unsafe { bun_core::heap::take(current) };
+            current = node.next;
+            sink(node.slice());
+            // `drop(node)` runs `Node::drop`, freeing `slice` when owned.
+        }
+    }
+}
+
 impl Drop for Node {
     fn drop(&mut self) {
         if self.owns_slice {
@@ -169,38 +189,15 @@ impl StringJoiner {
         self.tail = None;
         let len = self.len;
         self.len = 0;
-        let mut current: *mut Node = bun_core::heap::into_raw(head);
 
         // Zig: `allocator.alloc(u8, this.len)` — allocates uninitialized.
-        // Avoid the redundant zero-fill of `vec![0u8; len]`.
-        let mut slice = Box::<[u8]>::new_uninit_slice(len);
-
-        let mut off = 0usize;
-        while !current.is_null() {
-            // SAFETY: `current` walks the singly-linked chain of Box-allocated nodes.
-            let node = unsafe { &*current };
-            let s = node.slice();
-            // SAFETY: `off + s.len() <= len` by construction (`self.len` summed
-            // these slices); `slice` is a fresh uninit allocation owned here.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    s.as_ptr(),
-                    slice.as_mut_ptr().add(off).cast::<u8>(),
-                    s.len(),
-                );
-            }
-            off += s.len();
-
-            let prev = current;
-            current = node.next;
-            // SAFETY: `prev` is a Box-allocated node not yet freed.
-            drop(unsafe { bun_core::heap::take(prev) });
-        }
-
-        debug_assert_eq!(off, len);
-
-        // SAFETY: every byte in [0, len) was written exactly once above.
-        Ok(unsafe { slice.assume_init() })
+        // `Vec::with_capacity` + `extend_from_slice` is also zero-fill-free
+        // (each push is a `memcpy` into spare capacity), and since the final
+        // `len == capacity` the `into_boxed_slice` is a no-realloc move.
+        let mut out = Vec::<u8>::with_capacity(len);
+        Node::drain_chain(head, |s| out.extend_from_slice(s));
+        debug_assert_eq!(out.len(), len);
+        Ok(out.into_boxed_slice())
     }
 
     /// Same as `.done`, but appends extra slice `end`
@@ -218,30 +215,12 @@ impl StringJoiner {
         self.tail = None;
         let len = self.len;
         self.len = 0;
-        let mut current: *mut Node = bun_core::heap::into_raw(head);
 
-        let mut slice = vec![0u8; len + end.len()].into_boxed_slice();
-
-        let mut remaining: &mut [u8] = &mut slice[..];
-        while !current.is_null() {
-            // SAFETY: `current` walks the singly-linked chain of Box-allocated nodes.
-            let node = unsafe { &*current };
-            let s = node.slice();
-            remaining[..s.len()].copy_from_slice(s);
-            // PORT NOTE: reshaped for borrowck — capture len before reborrow.
-            let n = s.len();
-            remaining = &mut remaining[n..];
-
-            let prev = current;
-            current = node.next;
-            // SAFETY: `prev` is a Box-allocated node not yet freed.
-            drop(unsafe { bun_core::heap::take(prev) });
-        }
-
-        debug_assert!(remaining.len() == end.len());
-        remaining.copy_from_slice(end);
-
-        Ok(slice)
+        let mut out = Vec::<u8>::with_capacity(len + end.len());
+        Node::drain_chain(head, |s| out.extend_from_slice(s));
+        debug_assert_eq!(out.len(), len);
+        out.extend_from_slice(end);
+        Ok(out.into_boxed_slice())
     }
 
     pub fn last_byte(&self) -> u8 {
@@ -272,20 +251,7 @@ impl StringJoiner {
     }
 
     pub fn contains(&self, slice: &[u8]) -> bool {
-        let mut el: *const Node = match &self.head {
-            Some(h) => &raw const **h,
-            None => ptr::null(),
-        };
-        while !el.is_null() {
-            // SAFETY: `el` walks the live node chain owned by `self`.
-            let node = unsafe { &*el };
-            el = node.next;
-            if strings::index_of(node.slice(), slice).is_some() {
-                return true;
-            }
-        }
-
-        false
+        self.node_slices().any(|s| strings::index_of(s, slice).is_some())
     }
 }
 
@@ -305,8 +271,7 @@ impl<'a> Iterator for NodeSlices<'a> {
         // `StringJoiner`; nodes are not freed while the borrow is held.
         let node = unsafe { &*self.cur };
         self.cur = node.next;
-        // SAFETY: node slice valid for the borrow of the joiner (`'a`).
-        Some(unsafe { &*node.slice })
+        Some(node.slice())
     }
 }
 
@@ -318,15 +283,7 @@ impl Drop for StringJoiner {
             return;
         };
         self.tail = None;
-        let mut current: *mut Node = bun_core::heap::into_raw(head);
-
-        while !current.is_null() {
-            // SAFETY: `current` walks the singly-linked chain of Box-allocated nodes.
-            let next = unsafe { (*current).next };
-            // SAFETY: each node was Box-allocated and not yet freed.
-            drop(unsafe { bun_core::heap::take(current) });
-            current = next;
-        }
+        Node::drain_chain(head, |_| {});
     }
 }
 

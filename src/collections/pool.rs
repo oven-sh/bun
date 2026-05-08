@@ -38,6 +38,19 @@ pub struct Node<T> {
 // callers can write `T` directly.
 
 impl<T> Node<T> {
+    /// Read `(*p).next` for a known-non-null, live node pointer. Centralises
+    /// the `unsafe { (*p).next }` walk that appears throughout this module's
+    /// list traversals. Caller contract: `p` points at a live `Node<T>` (never
+    /// null — debug-asserted).
+    #[inline(always)]
+    fn next_of(p: *const Node<T>) -> *mut Node<T> {
+        debug_assert!(!p.is_null());
+        // SAFETY: every call site passes a node either just popped from the
+        // free list, just compared non-null in the surrounding `while`/`if`,
+        // or `&self`/`self.first` after an explicit null check.
+        unsafe { (*p).next }
+    }
+
     /// Access the pooled value.
     ///
     /// # Safety
@@ -78,8 +91,7 @@ impl<T> Node<T> {
         } else {
             self.next
         };
-        // SAFETY: next_node is non-null (checked above) and points to a live Node
-        self.next = unsafe { (*next_node).next };
+        self.next = Node::next_of(next_node);
         Some(next_node)
     }
 
@@ -88,8 +100,7 @@ impl<T> Node<T> {
     pub fn find_last(&mut self) -> *mut Node<T> {
         let mut it: *mut Node<T> = std::ptr::from_mut::<Node<T>>(self);
         loop {
-            // SAFETY: `it` is always a valid live node in the list
-            let next = unsafe { (*it).next };
+            let next = Node::next_of(it);
             if next.is_null() {
                 return it;
             }
@@ -104,8 +115,7 @@ impl<T> Node<T> {
         let mut it: *const Node<T> = self.next;
         while !it.is_null() {
             count += 1;
-            // SAFETY: `it` is non-null and points to a live Node
-            it = unsafe { (*it).next };
+            it = Node::next_of(it);
         }
         count
     }
@@ -143,8 +153,7 @@ impl<T> SinglyLinkedList<T> {
     ///     node: Pointer to the node to be removed.
     pub fn remove(&mut self, node: *mut Node<T>) {
         if self.first == node {
-            // SAFETY: node == self.first which is non-null and live
-            self.first = unsafe { (*node).next };
+            self.first = Node::next_of(node);
         } else {
             // SAFETY: self.first is non-null (else the `==` above would have
             // matched the null `node`, which callers never pass)
@@ -170,8 +179,7 @@ impl<T> SinglyLinkedList<T> {
         } else {
             self.first
         };
-        // SAFETY: first is non-null and live
-        self.first = unsafe { (*first).next };
+        self.first = Node::next_of(first);
         Some(first)
     }
 
@@ -494,8 +502,7 @@ where
         });
         while !next.is_null() {
             let node = next;
-            // SAFETY: node is non-null and was on the free list
-            next = unsafe { (*node).next };
+            next = Node::next_of(node);
             Self::destroy_node(node);
         }
     }

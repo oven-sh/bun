@@ -569,12 +569,7 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
                     // vecs either patches the index in place
                     // (`index_swap_remove`/`index_remove_tail`) or calls
                     // `drop_index()` first.
-                    let kh = unsafe { *hashes.add(i) };
-                    kh == h && {
-                        // SAFETY: same invariant — `i < keys.len()`.
-                        let k = unsafe { &*keys.add(i) };
-                        eq(k, i)
-                    }
+                    unsafe { *hashes.add(i) == h && eq(&*keys.add(i), i) }
                 })
                 .map(|&i| i as usize);
         }
@@ -720,8 +715,15 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
     fn gop_at(&mut self, index: usize, found_existing: bool) -> GetOrPutResult<'_, K, V> {
         // SAFETY: `keys` and `values` are distinct allocations; producing one
         // `&mut` into each is sound even though both derive from `&mut self`.
-        let key_ptr = unsafe { &mut *self.keys.as_mut_ptr().add(index) };
-        let value_ptr = unsafe { &mut *self.values.as_mut_ptr().add(index) };
+        // `index < self.keys.len() == self.values.len()` — every caller
+        // (`get_or_put*`/`put_index`) passes the index just returned by
+        // `push_entry` or `find_hash`.
+        let (key_ptr, value_ptr) = unsafe {
+            (
+                &mut *self.keys.as_mut_ptr().add(index),
+                &mut *self.values.as_mut_ptr().add(index),
+            )
+        };
         GetOrPutResult { found_existing, index, key_ptr, value_ptr }
     }
 
@@ -731,11 +733,9 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         if index >= self.keys.len() {
             return None;
         }
-        // SAFETY: `keys` and `values` are distinct allocations; one `&mut` into
-        // each is sound even though both derive from `&mut self`.
-        let key_ptr = unsafe { &mut *self.keys.as_mut_ptr().add(index) };
-        let value_ptr = unsafe { &mut *self.values.as_mut_ptr().add(index) };
-        Some((key_ptr, value_ptr))
+        // `keys` and `values` are distinct struct fields; borrowck permits one
+        // `&mut` into each simultaneously. Bound proven above.
+        Some((&mut self.keys[index], &mut self.values[index]))
     }
 
     /// Zig `swapRemoveAt` — remove the entry at `index` by swapping in the last

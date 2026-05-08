@@ -289,11 +289,9 @@ impl MutableString {
         }
         // Zig: ensureTotalCapacityPrecise(len + items.len) → reserve_exact(items.len())
         self.list.reserve_exact(items.len());
-        // PORT NOTE: reshaped for borrowck — Zig wrote via raw end ptr then bumped len.
-        let old = self.list.len();
-        // SAFETY: capacity reserved above for `items.len()` more bytes.
-        unsafe { self.list.set_len(old + items.len()) };
-        self.list[old..].copy_from_slice(items);
+        // After `reserve_exact`, `extend_from_slice` is a single memcpy with
+        // no further reallocation — same codegen as the raw `set_len` path.
+        self.list.extend_from_slice(items);
         Ok(())
     }
 
@@ -407,8 +405,7 @@ impl MutableString {
             self.list.push(0);
         }
         let len = self.list.len() - 1;
-        // SAFETY: self.list[len] == 0 (just pushed or was already there).
-        unsafe { ZStr::from_raw_mut(self.list.as_mut_ptr(), len) }
+        ZStr::from_buf_mut(&mut self.list, len)
     }
 
     pub fn to_owned_slice_length(&mut self, length: usize) -> Box<[u8]> {
@@ -452,14 +449,11 @@ impl MutableString {
         // PORT NOTE: `std.posix.iovec_const` is just `libc::iovec` (the
         // `iov_base` is `*mut` in libc but writev/sendmsg never write through it).
         // PERF(port): Zig used `inline for` (unrolled); plain loop here.
-        let mut buffers: [libc::iovec; COUNT] =
-            // SAFETY: every element is written in the loop below before return.
-            unsafe { bun_core::ffi::zeroed() };
-        for (b, r) in buffers.iter_mut().zip(ranges.iter()) {
+        core::array::from_fn(|i| {
+            let r = ranges[i];
             let s = &self.list[r.0..r.1];
-            *b = libc::iovec { iov_base: s.as_ptr().cast_mut().cast::<_>(), iov_len: s.len() };
-        }
-        buffers
+            libc::iovec { iov_base: s.as_ptr().cast_mut().cast::<_>(), iov_len: s.len() }
+        })
     }
 
     /// Windows variant — `std.posix.iovec_const` aliases `uv_buf_t` there
@@ -471,14 +465,11 @@ impl MutableString {
         &self,
         ranges: [(usize, usize); COUNT],
     ) -> [SocketBuffer; COUNT] {
-        let mut buffers: [SocketBuffer; COUNT] =
-            // SAFETY: every element is written in the loop below before return.
-            unsafe { bun_core::ffi::zeroed() };
-        for (b, r) in buffers.iter_mut().zip(ranges.iter()) {
+        core::array::from_fn(|i| {
+            let r = ranges[i];
             let s = &self.list[r.0..r.1];
-            *b = SocketBuffer { len: s.len() as u32, base: s.as_ptr() as *mut _ };
-        }
-        buffers
+            SocketBuffer { len: s.len() as u32, base: s.as_ptr() as *mut _ }
+        })
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, AllocError> {

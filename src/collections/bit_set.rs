@@ -857,6 +857,27 @@ impl DynamicBitSetUnmanaged {
         self.masks
     }
 
+    /// `self.masks[i] = f(self.masks[i], other.masks[i])` for every mask word.
+    /// Centralises the binary set-op loop (`set_union` / `set_intersection` /
+    /// `set_exclude` / `toggle_set` / `copy_into`) behind a single audited
+    /// raw-pointer access. Raw pointers — not `masks_slice{,_mut}` — because
+    /// `other.masks` may alias `self.masks` when both are views from the same
+    /// `DynamicBitSetList`; forming overlapping `&mut [usize]` / `&[usize]`
+    /// would be UB. `f` receives copied `usize` values, so the per-index read
+    /// happens-before the write even when `src == dst`.
+    #[inline(always)]
+    fn zip_masks_raw(&mut self, other: &Self, mut f: impl FnMut(usize, usize) -> usize) {
+        let num_masks = Self::num_masks(self.bit_length);
+        let dst = self.masks;
+        let src = other.masks;
+        for i in 0..num_masks {
+            // SAFETY: `i < num_masks(self.bit_length)`; `dst`/`src` each point
+            // at ≥ `num_masks` initialized words (`resize`/`List::at` invariant).
+            // The two pointers may be equal — see method doc.
+            unsafe { *dst.add(i) = f(*dst.add(i), *src.add(i)) };
+        }
+    }
+
     /// Creates a bit set with no elements present.
     /// If bit_length is not zero, deinit must eventually be called.
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
@@ -1117,12 +1138,7 @@ impl DynamicBitSetUnmanaged {
             return;
         }
         let num_masks = Self::num_masks(self.bit_length);
-        for i in 0..num_masks {
-            // SAFETY: i < num_masks for both. Raw-pointer access (not
-            // `masks_slice_mut`) because `toggles.masks` may alias `self.masks`
-            // when both are views from the same `DynamicBitSetList`.
-            unsafe { *self.masks_ptr().add(i) ^= *toggles.masks_ptr().add(i) };
-        }
+        self.zip_masks_raw(toggles, |a, b| a ^ b);
 
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
@@ -1173,12 +1189,7 @@ impl DynamicBitSetUnmanaged {
         }
 
         let num_masks = Self::num_masks(self.bit_length);
-        for i in 0..num_masks {
-            // SAFETY: i < num_masks for both (Zig zips with other.masks).
-            // Raw-pointer access because `other.masks` may alias `self.masks`
-            // when both are views from the same `DynamicBitSetList`.
-            unsafe { *self.masks_ptr().add(i) = *other.masks_ptr().add(i) };
-        }
+        self.zip_masks_raw(other, |_, b| b);
 
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
@@ -1192,12 +1203,7 @@ impl DynamicBitSetUnmanaged {
     /// The two sets must both be the same bit_length.
     pub fn set_union(&mut self, other: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
-        let num_masks = Self::num_masks(self.bit_length);
-        for i in 0..num_masks {
-            // SAFETY: i < num_masks for both. Raw-pointer access because
-            // `other.masks` may alias `self.masks` (see `DynamicBitSetList`).
-            unsafe { *self.masks_ptr().add(i) |= *other.masks_ptr().add(i) };
-        }
+        self.zip_masks_raw(other, |a, b| a | b);
     }
 
     /// Performs an intersection of two bit sets, and stores
@@ -1206,35 +1212,20 @@ impl DynamicBitSetUnmanaged {
     /// The two sets must both be the same bit_length.
     pub fn set_intersection(&mut self, other: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
-        let num_masks = Self::num_masks(self.bit_length);
-        for i in 0..num_masks {
-            // SAFETY: i < num_masks for both. Raw-pointer access because
-            // `other.masks` may alias `self.masks` (see `DynamicBitSetList`).
-            unsafe { *self.masks_ptr().add(i) &= *other.masks_ptr().add(i) };
-        }
+        self.zip_masks_raw(other, |a, b| a & b);
     }
 
     pub fn set_exclude_two(&mut self, other: &Self, third: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
-        let num_masks = Self::num_masks(self.bit_length);
-        for i in 0..num_masks {
-            // SAFETY: i < num_masks for all three. Raw-pointer access because
-            // `other`/`third` may alias `self` (see `DynamicBitSetList`).
-            unsafe {
-                *self.masks_ptr().add(i) &= !*other.masks_ptr().add(i);
-                *self.masks_ptr().add(i) &= !*third.masks_ptr().add(i);
-            }
-        }
+        // Two passes is equivalent to the original fused loop: each word is
+        // independent, so `(a & !b) & !c` per index is associative across passes.
+        self.zip_masks_raw(other, |a, b| a & !b);
+        self.zip_masks_raw(third, |a, c| a & !c);
     }
 
     pub fn set_exclude(&mut self, other: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
-        let num_masks = Self::num_masks(self.bit_length);
-        for i in 0..num_masks {
-            // SAFETY: i < num_masks for both. Raw-pointer access because
-            // `other.masks` may alias `self.masks` (see `DynamicBitSetList`).
-            unsafe { *self.masks_ptr().add(i) &= !*other.masks_ptr().add(i) };
-        }
+        self.zip_masks_raw(other, |a, b| a & !b);
     }
 
     /// Finds the index of the first set bit.

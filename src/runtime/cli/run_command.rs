@@ -832,7 +832,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mini = unsafe { &mut *mini };
         mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
-        // `initAndRunFromFile`: read source then delegate to `..._from_source`.
+        // `initAndRunFromFile`: read source then hand off to the interpreter.
         let mut path_buf = PathBuffer::uninit();
         path_buf[..entry_path.len()].copy_from_slice(entry_path);
         path_buf[entry_path.len()] = 0;
@@ -843,13 +843,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Err(err) => return Err(err.into()),
         };
 
-        crate::shell::Interpreter::init_and_run_from_source(
-            ctx,
-            mini,
-            bun_paths::basename(entry_path),
-            &src,
-            None,
-        )
+        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
 
     /// Port of `bun_js.Run.boot` (src/bun.js.zig) — `VirtualMachine::init`,

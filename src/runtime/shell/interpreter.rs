@@ -648,6 +648,104 @@ impl Interpreter {
         // impl that derefs the WTF backing); the Vec frees on box drop.
     }
 
+    /// Spec: interpreter.zig `initAndRunFromFile`.
+    ///
+    /// Standalone-shell entrypoint for `bun <file>.sh`: parse `src` (already
+    /// read by the caller), construct an interpreter on a `MiniEventLoop`,
+    /// drive it to completion, and return the exit code. Differs from
+    /// `init_and_run_from_source` only in the parse-error diagnostic wording
+    /// ("Failed to run <basename>" vs "Failed to run script <name>").
+    pub fn init_and_run_from_file(
+        ctx: &mut bun_options_types::Context::ContextData,
+        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
+        path: &[u8],
+        src: &[u8],
+    ) -> Result<ExitCode, bun_core::Error> {
+        bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
+
+        let mut shargs = ShellArgs::init();
+
+        let arena_ptr: *const bun_alloc::Arena = shargs.arena();
+        let script = {
+            // SAFETY: `shargs` lives on this stack frame for the whole block;
+            // arena is not moved/dropped while `out_parser`/`out_lex_result`
+            // borrow it.
+            let arena = unsafe { &*arena_ptr };
+            let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
+            let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
+            match Self::parse(
+                arena,
+                src,
+                &mut [],
+                &mut [],
+                &mut out_parser,
+                &mut out_lex_result,
+            ) {
+                Ok(s) => s,
+                Err(err) => {
+                    let basename = bun_paths::basename(path);
+                    if let Some(lex) = out_lex_result.as_ref() {
+                        let str_ = lex.combine_errors(arena);
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
+                            bstr::BStr::new(basename),
+                            bstr::BStr::new(str_),
+                        );
+                        bun_core::Global::exit(1);
+                    }
+                    if let Some(p) = out_parser.as_mut() {
+                        let errstr = p.combine_errors();
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
+                            bstr::BStr::new(basename),
+                            bstr::BStr::new(errstr),
+                        );
+                        bun_core::Global::exit(1);
+                    }
+                    return Err(err);
+                }
+            }
+        };
+        shargs.set_script_ast(script);
+
+        let evtloop = EventLoopHandle::init_mini(std::ptr::from_mut(mini));
+        let mut interp = match Self::init(
+            std::ptr::from_mut(ctx),
+            evtloop,
+            shargs,
+            Vec::new(),
+            None,
+            None,
+        ) {
+            Ok(i) => i,
+            Err(e) => e.throw_mini(),
+        };
+
+        interp.exit_code = Some(1);
+        if let Err(e) = interp.run() {
+            let name = e.name();
+            interp.deinit_from_exec();
+            bun_core::output::err(
+                name,
+                "Failed to run script <b>{}<r>",
+                (bstr::BStr::new(bun_paths::basename(path)),),
+            );
+            bun_core::Global::exit(1);
+        }
+
+        let interp_ptr: *const Interpreter = &raw const *interp;
+        mini.tick(core::ptr::null_mut(), |_ctx| {
+            // SAFETY: `interp` lives in this stack frame for the whole tick
+            // loop; `flags` is plain data with no concurrent mutation on the
+            // mini path.
+            unsafe { (*interp_ptr).flags.done() }
+        });
+
+        let code = interp.exit_code.expect("exit_code set by finish()");
+        interp.deinit_from_exec();
+        Ok(code)
+    }
+
     /// Spec: interpreter.zig `initAndRunFromSource`.
     ///
     /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when

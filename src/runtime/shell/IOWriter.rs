@@ -157,12 +157,10 @@ pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     use bun_io::pipe_writer::PosixPipeWriter;
     let parent = writer.parent as *const IOWriter;
     debug_assert!(!parent.is_null());
-    // SAFETY: `parent` is `Arc::as_ptr` stashed in `IOWriter::init` (the sole
-    // constructor); the `ArcInner` is live because `writer` is a field of it.
-    let _keepalive = unsafe {
-        std::sync::Arc::increment_strong_count(parent);
-        std::sync::Arc::from_raw(parent)
-    };
+    // SAFETY: `parent` is the backref stashed via `set_parent` in
+    // `IOWriter::init`; `writer` is a field of `*parent`, so the pointee is
+    // live. Re-enter via `&self` (UnsafeCell aliasing model).
+    let _keepalive = unsafe { &*parent }.keepalive();
     writer.on_poll(size_hint, hup);
 }
 
@@ -205,6 +203,10 @@ struct State {
     is_writing: bool,
     started: bool,
     flags: Flags,
+    /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
+    /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
+    /// `init()` (the sole constructor).
+    self_weak: std::sync::Weak<IOWriter>,
     /// Backref to the owning interpreter for async-poll callbacks (which must
     /// drive `Yield::run`). Set by the first `enqueue`/`set_interp`; null
     /// until then. Spec: implicit in Zig (children held `*Interpreter` via
@@ -230,19 +232,16 @@ impl IOWriter {
         unsafe { &mut *self.state.get() }
     }
 
-    /// Bump our own Arc strong count. Every `IOWriter` lives inside an `Arc`
-    /// (`init` is the sole constructor), so `self` is always a valid Arc data
-    /// pointer. Held across re-entrant `run_yield` calls whose child callback
-    /// may drop the last external ref and free us mid-method.
+    /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
+    /// whose child callback may drop the last external ref and free us
+    /// mid-method. Spec gets the same guarantee from `asyncDeinit`'s next-tick
+    /// hop; here we keep a strong ref on the stack instead.
     #[inline]
     fn keepalive(&self) -> std::sync::Arc<IOWriter> {
-        let ptr = self as *const IOWriter;
-        // SAFETY: see doc comment — `init()` is the only constructor and
-        // returns `Arc<IOWriter>`.
-        unsafe {
-            std::sync::Arc::increment_strong_count(ptr);
-            std::sync::Arc::from_raw(ptr)
-        }
+        self.state()
+            .self_weak
+            .upgrade()
+            .expect("IOWriter::keepalive after last Arc dropped")
     }
 
     /// Read-only accessor for the `is_socket` flag (used by
@@ -263,7 +262,7 @@ impl IOWriter {
         {
             writer.owns_fd = false;
         }
-        let this = std::sync::Arc::new(IOWriter {
+        let this = std::sync::Arc::new_cyclic(|w| IOWriter {
             state: UnsafeCell::new(State {
                 writer,
                 fd,
@@ -278,11 +277,11 @@ impl IOWriter {
                 is_writing: false,
                 started: false,
                 flags,
+                self_weak: w.clone(),
                 interp: core::ptr::null_mut(),
             }),
         });
-        // PORT NOTE: reshaped for borrowck — set the parent backref after Arc
-        // allocation so the address is stable.
+        // Set the parent backref after Arc allocation so the address is stable.
         // SAFETY: `Arc::as_ptr` yields `*const IOWriter`; cast to `*mut` only
         // because the `BufferedWriterParent` callback ABI is `*mut Self`. The
         // pointer is never used to materialize `&mut IOWriter` — every callback

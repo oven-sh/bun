@@ -764,7 +764,92 @@ pub mod command {
     /// `*_command.rs` that is itself still gated, plus `bun_bun_js::Run`,
     /// `StandaloneModuleGraph`, etc.
     pub fn start(log: &mut logger::Log) -> Result<(), bun_core::Error> {
-        let _ = log;
+        // bun build --compile entry point
+        if !bun_core::env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
+            if let Some(graph) = bun_standalone_graph::Graph::from_executable()? {
+                // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
+                // backing storage is process-static (owned by the executable image).
+                let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
+                let mut offset_for_passthrough: usize = 0;
+
+                let ctx: &mut ContextData = 'brk: {
+                    let bun_options_argc = bun::bun_options_argc();
+                    if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
+                        let original_argv_len = bun::argv().len();
+                        let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
+                        if !graph.compile_exec_argv.is_empty() {
+                            bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
+                        }
+
+                        // Store the full argv including user arguments
+                        let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
+                        let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
+
+                        // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
+                        let num_parsed_options = num_exec_argv_options + bun_options_argc;
+                        offset_for_passthrough = if full_argv.len() > 1 {
+                            1 + num_parsed_options
+                        } else {
+                            0
+                        };
+
+                        // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
+                        // This prevents user arguments like --version/--help from being intercepted
+                        // by Bun's argument parser (they should be passed through to user code).
+                        // SAFETY: single-threaded startup; `full_argv` is process-static.
+                        unsafe {
+                            bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
+                        }
+
+                        // Handle actual options to parse.
+                        let result = init(Tag::AutoCommand, log)?;
+
+                        // Restore full argv so passthrough calculation works correctly
+                        // SAFETY: single-threaded startup.
+                        unsafe { bun::set_argv(full_argv) };
+
+                        // SAFETY: single-threaded startup; `init` published this ctx.
+                        break 'brk unsafe { &mut *result };
+                    }
+
+                    // SAFETY: single-threaded CLI startup; first and only write to
+                    // `CONTEXT_DATA` for the process lifetime.
+                    let ctx_ptr: *mut ContextData = unsafe {
+                        (*CONTEXT_DATA.get()).write(ContextData {
+                            log: std::ptr::from_mut::<logger::Log>(log),
+                            start_time: START_TIME.read(),
+                            ..Default::default()
+                        });
+                        (*CONTEXT_DATA.get()).assume_init_mut()
+                    };
+                    // SAFETY: single-threaded CLI startup; publishes the just-initialized ctx.
+                    unsafe { bun_options_types::Context::set_global(ctx_ptr) };
+
+                    // If no compile_exec_argv, skip executable name if present
+                    offset_for_passthrough = 1.min(bun::argv().len());
+
+                    // SAFETY: just initialized
+                    break 'brk unsafe { &mut *ctx_ptr };
+                };
+
+                ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+                use bun_options_types::GlobalCache::GlobalCache;
+                if ctx.debug.global_cache == GlobalCache::auto {
+                    ctx.debug.global_cache = GlobalCache::disable;
+                }
+
+                ctx.passthrough = bun::argv()
+                    .iter()
+                    .skip(offset_for_passthrough)
+                    .map(|a| a.to_vec().into_boxed_slice())
+                    .collect();
+
+                let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
+                super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
+                return Ok(());
+            }
+        }
+
         let tag = which();
 
         // Phase-C: `Arguments::parse` (which normally handles `--help`/`-v`

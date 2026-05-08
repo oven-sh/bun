@@ -824,10 +824,12 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));
                     if let Some(tunnel) = client.proxy_tunnel.take() {
-                        // SAFETY: tunnel was created by ProxyTunnel::new
-                        // (heap::alloc) and refcounted; this releases the
-                        // clone's strong ref.
-                        (*tunnel.as_ptr()).detach_and_deref();
+                        // SAFETY: tunnel was created by ProxyTunnel::start
+                        // (heap::alloc) and is refcounted; detach the socket
+                        // (the first half of the old `detach_and_deref`)
+                        // before releasing the clone's strong ref below.
+                        (*tunnel.as_ptr()).detach_socket();
+                        tunnel.deref();
                     }
                     debug_assert!(client.h2.is_none());
                     if let Some(ctx) = client.custom_ssl_ctx.take() {

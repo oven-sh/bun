@@ -251,7 +251,7 @@ fn on_open(ctx: *mut HTTPClient) {
     bun_analytics::features::http_client_proxy.fetch_add(1, Ordering::Relaxed);
     this.state.response_stage = HTTPStage::ProxyHandshake;
     this.state.request_stage = HTTPStage::ProxyHandshake;
-    let Some(proxy_nn) = this.proxy_tunnel else { return };
+    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
     // Live intrusive-refcounted tunnel allocated in `start()`. Do NOT form
     // `&mut ProxyTunnel` — see ALIASING NOTE. ProxyRefGuard bumps via raw
     // field projection.
@@ -298,7 +298,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // ends this borrow before any reentrant call below that re-derives
     // `&mut *ctx` (close → on_close, progress_update).
     let this = client_from_ctx(ctx);
-    let Some(proxy_nn) = this.proxy_tunnel else { return };
+    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
     let _guard = ProxyRefGuard::new(proxy_nn);
     match this.state.response_stage {
         HTTPStage::Body => {
@@ -369,7 +369,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
 fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::us_bun_verify_error_t) {
     // NLL ends `this` before any reentrant call below.
     let this = client_from_ctx(ctx);
-    let Some(proxy_nn) = this.proxy_tunnel else { return };
+    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
     let _guard = ProxyRefGuard::new(proxy_nn);
@@ -457,11 +457,13 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
 }
 
 pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
-    // SAFETY: see on_open. Read `proxy_tunnel` (a Copy `Option<NonNull>`) via
-    // raw place so we never hold `&mut HTTPClient` here — write_encrypted is
-    // fired from inside SSLWrapper::flush/handle_traffic whose caller may
-    // already hold `&mut HTTPClient` (e.g. on_handshake → on_writable).
-    let Some(proxy_nn) = (unsafe { (*ctx).proxy_tunnel }) else { return };
+    // SAFETY: see on_open. Only the `data` `NonNull` is copied out of the
+    // `proxy_tunnel` `RefPtr` — we never form `&mut HTTPClient` here, because
+    // write_encrypted is fired from inside SSLWrapper::flush/handle_traffic
+    // whose caller may already hold `&mut HTTPClient` (e.g. on_handshake →
+    // on_writable). The pointee is alive: this client holds a strong ref while
+    // tunneling.
+    let Some(proxy_nn) = (unsafe { (*ctx).proxy_tunnel.as_ref().map(|p| p.data) }) else { return };
     // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
     // disjoint field accessors only — never form `&mut ProxyTunnel`, because
     // the caller (flush/handle_traffic) holds `&mut SSLWrapper` which IS
@@ -500,7 +502,7 @@ fn on_close(ctx: *mut HTTPClient) {
         "ProxyTunnel onClose {}",
         if this.proxy_tunnel.is_none() { "tunnel is detached" } else { "tunnel exists" }
     );
-    let Some(proxy_nn) = this.proxy_tunnel else { return };
+    let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else { return };
     let proxy_ptr = proxy_nn.as_ptr();
     // close_raw still holds `&mut SSLWrapper` on `(*proxy_ptr).wrapper`, so
     // bump refcount via the disjoint Cell projection.
@@ -618,7 +620,10 @@ impl ProxyTunnel {
                 return;
             }
         }
-        this.proxy_tunnel = Some(proxy_nn);
+        // Move the sole strong ref (refcount == 1 from `ProxyTunnel::default`)
+        // into the client field; no bump (matches the bare `this.proxy_tunnel =
+        // tunnel` in http.zig — Zig's `RefPtr.create` returns the owned ref).
+        this.proxy_tunnel = Some(unsafe { RefPtr::adopt_ref(proxy_nn.as_ptr()) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
         // End the named &mut borrows before calling into the SSLWrapper. start()
         // synchronously fires on_open()/write_encrypted(), which re-derive
@@ -792,9 +797,11 @@ impl ProxyTunnel {
             wrapper.handlers.ctx = client.as_erased_ptr().as_ptr();
         }
         self.socket = Socket::from_generic::<IS_SSL>(socket);
-        // SAFETY: `self` was created by `start` (heap::alloc); we transfer the
-        // pool's strong ref to the client by storing the raw pointer here.
-        client.proxy_tunnel = Some(NonNull::from(&mut *self));
+        // SAFETY: `self` was created by `start` (heap::alloc) and is live; we
+        // transfer the pool's strong ref to the client WITHOUT bumping it
+        // (`from_raw` == `take_ref`), matching `existingSocket` in
+        // HTTPContext.zig which moves the parked ref into the new client.
+        client.proxy_tunnel = Some(unsafe { RefPtr::from_raw(core::ptr::from_mut(&mut *self)) });
         client.flags.proxy_tunneling = false;
         // Restore the cert-error flag captured in detachOwner() — no handshake
         // runs here, so the client's own flag would otherwise stay false and

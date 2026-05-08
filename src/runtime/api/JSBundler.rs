@@ -1736,24 +1736,12 @@ pub mod js_bundler {
     /// pending-item counter is decremented. Returning early here would cause
     /// `Bun.build` to hang forever waiting on the counter.
     ///
-    /// `arena` is `BundleV2::allocator()`; `file` is copied into it so the
-    /// `logger::Location.file: &'static [u8]` it produces borrows arena memory
-    /// (lives for the entire build pass) instead of the `Resolve`/`Load` field
-    /// it came from.
-    fn plugin_msg_from_js(
-        plugin: &mut Plugin,
-        arena: &bun_alloc::Arena,
-        file: &[u8],
-        exception: JSValue,
-    ) -> logger::Msg {
-        // SAFETY: ARENA — `arena` is the build-pass bump allocator (never
-        // freed before the `Msg` is consumed); detaching the borrow lifetime
-        // matches the `Location.file: &'static [u8]` porting convention used
-        // throughout `bun_logger` (PORTING.md §Lifetimes: ARENA → `&'bump T`).
-        let file: &'static [u8] =
-            unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(file)) };
+    /// Runs on the JS thread, so allocations go through the global heap (Zig
+    /// passes `bun.default_allocator`); the bundler arena is owned by another
+    /// thread.
+    fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> logger::Msg {
         let global = plugin.global_object();
-        match bun_logger_jsc::msg_from_js(global, file, exception) {
+        match bun_logger_jsc::msg_from_js(global, file.to_vec(), exception) {
             Ok(msg) => msg,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(_) => {
@@ -1768,7 +1756,7 @@ pub mod js_bundler {
                                 .to_vec(),
                         ),
                         location: Some(logger::Location {
-                            file: std::borrow::Cow::Borrowed(file),
+                            file: std::borrow::Cow::Owned(file.to_vec()),
                             line: -1,
                             column: -1,
                             ..Default::default()
@@ -1793,19 +1781,15 @@ pub mod js_bundler {
         match which.as_int32() {
             0 => {
                 let resolve = unsafe { &mut *ctx.cast::<Resolve>() };
-                // SAFETY: bv2 backref is valid for the duration of the bundle.
-                let arena = unsafe { (*resolve.bv2).arena() };
                 let msg =
-                    plugin_msg_from_js(plugin, arena, &resolve.import_record.source_file, exception);
+                    plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 // SAFETY: bv2 backref is valid
                 unsafe { (*resolve.bv2).on_resolve_async(resolve) };
             }
             1 => {
                 let load = unsafe { &mut *ctx.cast::<Load>() };
-                // SAFETY: bv2 backref is valid for the duration of the bundle.
-                let arena = unsafe { (*load.bv2).arena() };
-                let msg = plugin_msg_from_js(plugin, arena, &load.path, exception);
+                let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 // SAFETY: bv2 backref is valid
                 unsafe { (*load.bv2).on_load_async(load) };

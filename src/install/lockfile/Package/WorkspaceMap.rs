@@ -53,17 +53,11 @@ impl WorkspaceMap {
     }
 
     pub fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
-        #[cfg(debug_assertions)]
-        {
-            if !bun_sys::exists(key) {
-                bun_core::Output::debug_warn(format_args!(
-                    "WorkspaceMap.insert: key {} does not exist",
-                    BStr::new(key)
-                ));
-            }
-        }
-
-        // TODO(port): ArrayHashMap::get_or_put exact API — mirrors Zig getOrPut
+        // Zig has a debug-only `bun.sys.exists(key)` check here, but `key` is
+        // relative to the workspace root while `exists` resolves against process
+        // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
+        // workspace package). Existence is already verified by the caller via
+        // `process_workspace_name`, so the check is dropped.
         let entry = self.map.get_or_put(key)?;
         if !entry.found_existing {
             *entry.key_ptr = Box::<[u8]>::from(key);

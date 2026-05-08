@@ -45,7 +45,7 @@ impl JSValuePromisePtrExt for JSValue {
 /// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
 /// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
 #[inline]
-fn vm_timer<'a>() -> &'a mut crate::timer::All {
+pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
     // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
     unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }

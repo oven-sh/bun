@@ -281,19 +281,17 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
 
-#if ASAN_ENABLED && OS(LINUX)
-        {
-            JSC::Options::AllowUnfinalizedAccessScope scope;
-
-            // ASAN interferes with JSC's signal handlers
-            JSC::Options::useWasmFaultSignalHandler() = false;
-            JSC::Options::useWasmFastMemory() = false;
-        }
-#endif
-
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
         JSC::initialize([&] {
+#if ASAN_ENABLED && OS(LINUX)
+            // ASAN interferes with JSC's signal handlers. Must run inside the
+            // customization callback — Options::initialize() resets every option
+            // to its default before invoking us, so setting it earlier is a no-op
+            // and notifyOptionsChanged() then dataLogLn()s a WARNING to stderr.
+            JSC::Options::useWasmFaultSignalHandler() = false;
+            JSC::Options::useWasmFastMemory() = false;
+#endif
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;

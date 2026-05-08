@@ -775,9 +775,14 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                let mut properties_list: Vec<logger::js_ast::G::Property> =
-                    package_json_expr.data.e_object_mut().expect("infallible: variant checked").properties.move_to_list_managed();
-                // PORT NOTE: Zig used fromOwnedSlice; here we move into Vec for mutation.
+                // Zig builds a `properties_list` here via `fromOwnedSlice(.slice())`,
+                // which *aliases* the BabyList storage so subsequent
+                // `package_json_expr.asProperty(...)` reads still see the data. The
+                // commented-out injection logic below would append to it before the
+                // `moveFromList` round-trip. With those appends disabled the
+                // round-trip is a no-op, so leave `properties` in place — moving it
+                // out would make every `as_property` lookup below see an empty
+                // object and skip dependency detection / install.
 
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -1174,8 +1179,9 @@ impl CreateCommand {
 
                 package_json_expr.data.e_object_mut().expect("infallible: variant checked").is_single_line = false;
 
-                package_json_expr.data.e_object_mut().expect("infallible: variant checked").properties =
-                    bun_logger::js_ast::G::PropertyList::move_from_list(properties_list);
+                // (Zig: `properties = .moveFromList(&properties_list)` — see note
+                // above; the aliasing round-trip is a no-op while the injection
+                // appends remain commented out, so `properties` is already current.)
                 {
                     use bun_logger::js_ast::expr::Data as LExprData;
                     let mut i: usize = 0;

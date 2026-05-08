@@ -191,10 +191,8 @@ impl<'a> TestRunner<'a> {
         {
             return;
         }
-        // TODO(blocked_on: bun_jsc::VirtualMachine::timer): `vm.timer` is a
-        // `()` stub upstream; the real `All::remove` lives in
-        // src/runtime/timer/mod.rs but isn't wired through VirtualMachine yet.
-        let _ = (vm, &mut active_file.timer);
+        let _ = vm;
+        bun_test::vm_timer().remove(&raw mut active_file.timer);
     }
 
     pub fn has_test_filter(&self) -> bool {

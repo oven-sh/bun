@@ -93,9 +93,7 @@ fn write_entry_item<W: Write + ?Sized>(
     bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(path, writer)?;
 
     writer.write_all(b",\"loader\":\"")?;
-    // Zig: @tagName(loader). TODO(port): strum::IntoStaticStr yields the Rust
-    // variant name (e.g. "Js"); Zig tags are lowercase (e.g. "js"). Phase B
-    // should add a `tag_name()` returning the lowercase form.
+    // Zig: @tagName(loader) — strum is configured snake_case to match.
     writer.write_all(<&'static str>::from(loader).as_bytes())?;
     writer.write_all(b"\",\"isEntry\":")?;
     writer.write_all(if kind == OutputKind::EntryPoint { b"true" as &[u8] } else { b"false" })?;

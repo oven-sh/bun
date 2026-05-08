@@ -103,12 +103,13 @@ impl ArgIter<'static> for OsIterator {
 
 /// Process argv as a `&'static` slice of `&'static [u8]`.
 ///
-/// Zig: `bun.argv: [][:0]const u8` (process-lifetime). `bun_core::Output::argv()`
-/// only exposes an iterator, so we materialize it once into a `OnceLock` (per
-/// PORTING.md §Concurrency: OnceLock for `&'static`, never `Box::leak`).
+/// Zig: `bun.argv: [][:0]const u8` — the process-global view that includes
+/// `BUN_OPTIONS` injection. The single `OsIterator::init()` caller in
+/// `clap::parse` runs before any `set_argv()` swap, so caching the byte-slice
+/// projection in a `OnceLock` is safe.
 fn os_argv() -> &'static [&'static [u8]] {
     static ARGV: OnceLock<Vec<&'static [u8]>> = OnceLock::new();
-    ARGV.get_or_init(|| bun_core::Output::argv().collect()).as_slice()
+    ARGV.get_or_init(|| bun_core::argv().into_iter().collect()).as_slice()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]

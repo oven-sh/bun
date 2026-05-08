@@ -1025,10 +1025,10 @@ pub fn merge_style_rules<R>(
             // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
             if sty.is_compatible(*context.targets) && last_style_rule.is_compatible(*context.targets) {
                 let moved = core::mem::take(&mut sty.selectors.v);
-                last_style_rule
-                    .selectors
-                    .v
-                    .ensure_total_capacity(last_style_rule.selectors.v.len() + moved.len());
+                // `reserve` (not `ensure_total_capacity`) so capacity grows
+                // super-linearly across repeated merges — matches .zig
+                // `appendSlice` and keeps the N-way merge amortized O(N).
+                last_style_rule.selectors.v.reserve(moved.len());
                 for sel in moved {
                     last_style_rule.selectors.v.append_assume_capacity(sel);
                 }

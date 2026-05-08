@@ -301,6 +301,11 @@ unsafe fn init_runtime_state(
                     t.options.emit_dce_annotations = false;
                     t.resolver.store_fd = opts.store_fd;
                     t.resolver.prefer_module_field = false;
+                    t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
+                        context: core::ptr::NonNull::new(ptr::addr_of_mut!((*vm).modules).cast()),
+                        handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
+                        on_dependency_error: Some(bun_jsc::async_module::Queue::on_dependency_error),
+                    };
                     t.configure_linker();
                 }
             }

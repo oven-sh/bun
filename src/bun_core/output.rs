@@ -1747,26 +1747,26 @@ pub const BOLD: &str = "\x1b[1m";
 pub const DIM: &str = "\x1b[2m";
 
 /// `bun.Output.pretty(fmt, args)` — write to stdout with `<tag>` color expansion.
-/// Resolves the `pretty_fmt!` template at the call site via the `pretty!` macro;
-/// this fn is the dynamic-args entry point used by `bun.fmt`.
+/// Function form: performs the `<tag>` → ANSI rewrite at runtime on the rendered
+/// payload (using stdout's colour state). Prefer the `pretty!` macro for literal
+/// templates so the rewrite stays comptime.
 #[inline]
-pub fn pretty(args: fmt::Arguments<'_>) {
-    print_to(Destination::Stdout, args);
+pub fn pretty(payload: impl PrettyFmtInput) {
+    let buf = payload.into_pretty_buf(enable_ansi_colors_stdout());
+    write_bytes(Destination::Stdout, &buf);
 }
 
 /// `bun.Output.prettyln(fmt, args)` — `pretty()` with a trailing newline.
-/// Dynamic-args entry point; the compile-time `<tag>` rewrite happens at the
-/// call site (Phase-A drafts pass a pre-built `format_args!`). For the
-/// literal-template form use the `prettyln!` macro instead.
-///
-/// NOTE: unlike the macro (and Zig output.zig:1090-1093), this fn form cannot
-/// inspect the comptime template and therefore *always* appends `\n`. Callers
-/// must NOT pass a template that already ends in `\n` or output will contain a
-/// doubled newline. Prefer the `prettyln!` macro where possible.
+/// Function form: performs the `<tag>` → ANSI rewrite at runtime on the rendered
+/// payload and appends `\n` if the result does not already end in one (matches
+/// Zig output.zig:1090-1093). Prefer the `prettyln!` macro for literal templates.
 #[inline]
-pub fn prettyln(args: fmt::Arguments<'_>) {
-    print_to(Destination::Stdout, args);
-    print_to(Destination::Stdout, format_args!("\n"));
+pub fn prettyln(payload: impl PrettyFmtInput) {
+    let buf = payload.into_pretty_buf(enable_ansi_colors_stdout());
+    write_bytes(Destination::Stdout, &buf);
+    if buf.0.last() != Some(&b'\n') {
+        write_bytes(Destination::Stdout, b"\n");
+    }
 }
 
 /// Compile-time `<tag>` → ANSI escape rewriter.

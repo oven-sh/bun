@@ -1,3 +1,4 @@
+use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use std::sync::Once;
@@ -20,7 +21,11 @@ impl Default for Options {
 }
 
 unsafe extern "C" {
-    pub fn libdeflate_alloc_compressor(compression_level: c_int) -> *mut Compressor;
+    // Allocation: scalar arg, no preconditions; returns null on OOM.
+    pub safe fn libdeflate_alloc_compressor(compression_level: c_int) -> *mut Compressor;
+    // NOT safe: `Options` carries caller-supplied `malloc_func`/`free_func`
+    // callbacks that libdeflate will invoke and write through. A bogus callback
+    // (constructible in 100% safe code) would cause UB inside the C library.
     pub fn libdeflate_alloc_compressor_ex(
         compression_level: c_int,
         options: *const Options,
@@ -32,8 +37,11 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub fn libdeflate_deflate_compress_bound(
-        compressor: *mut Compressor,
+    // Bound queries: opaque handle + scalar. The C API documents `compressor`
+    // may be NULL (returns a library-wide upper bound), so expose it as
+    // `Option<&mut Compressor>` (NPO-ABI-compatible with `*mut Compressor`).
+    pub safe fn libdeflate_deflate_compress_bound(
+        compressor: Option<&mut Compressor>,
         in_nbytes: usize,
     ) -> usize;
     pub fn libdeflate_zlib_compress(
@@ -43,7 +51,7 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub fn libdeflate_zlib_compress_bound(compressor: *mut Compressor, in_nbytes: usize) -> usize;
+    pub safe fn libdeflate_zlib_compress_bound(compressor: Option<&mut Compressor>, in_nbytes: usize) -> usize;
     pub fn libdeflate_gzip_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
@@ -51,7 +59,7 @@ unsafe extern "C" {
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub fn libdeflate_gzip_compress_bound(compressor: *mut Compressor, in_nbytes: usize) -> usize;
+    pub safe fn libdeflate_gzip_compress_bound(compressor: Option<&mut Compressor>, in_nbytes: usize) -> usize;
     pub fn libdeflate_free_compressor(compressor: *mut Compressor);
 }
 
@@ -71,24 +79,28 @@ pub fn load() {
     LOADED_ONCE.call_once(load_once);
 }
 
+/// Opaque libdeflate compressor handle. `UnsafeCell` makes the type `!Freeze`
+/// so a `&Compressor` does not assert immutability of the C-owned state.
 #[repr(C)]
 pub struct Compressor {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 impl Compressor {
     pub fn alloc(compression_level: c_int) -> *mut Compressor {
-        // SAFETY: FFI call; returns null on failure.
-        unsafe { libdeflate_alloc_compressor(compression_level) }
+        libdeflate_alloc_compressor(compression_level)
     }
 
-    pub fn alloc_ex(compression_level: c_int, options: Option<&Options>) -> *mut Compressor {
-        // SAFETY: FFI call; options pointer is valid for the call duration or null.
+    /// # Safety
+    /// `options.malloc_func`/`free_func` (if set) must be sound allocator
+    /// callbacks — libdeflate writes through their return values.
+    pub unsafe fn alloc_ex(compression_level: c_int, options: Option<&Options>) -> *mut Compressor {
+        // SAFETY: caller upholds the callback contract; `Option<&T>` → `*const T` is NPO-compatible.
         unsafe {
             libdeflate_alloc_compressor_ex(
                 compression_level,
-                options.map_or(core::ptr::null(), |o| std::ptr::from_ref::<Options>(o)),
+                options.map_or(core::ptr::null(), |o| o),
             )
         }
     }
@@ -120,13 +132,10 @@ impl Compressor {
     }
 
     pub fn max_bytes_needed(&mut self, input: &[u8], encoding: Encoding) -> usize {
-        // SAFETY: self is a valid *mut Compressor.
-        unsafe {
-            match encoding {
-                Encoding::Deflate => libdeflate_deflate_compress_bound(self, input.len()),
-                Encoding::Zlib => libdeflate_zlib_compress_bound(self, input.len()),
-                Encoding::Gzip => libdeflate_gzip_compress_bound(self, input.len()),
-            }
+        match encoding {
+            Encoding::Deflate => libdeflate_deflate_compress_bound(Some(self), input.len()),
+            Encoding::Zlib => libdeflate_zlib_compress_bound(Some(self), input.len()),
+            Encoding::Gzip => libdeflate_gzip_compress_bound(Some(self), input.len()),
         }
     }
 
@@ -175,16 +184,16 @@ impl Compressor {
     }
 }
 
+/// Opaque libdeflate decompressor handle. `UnsafeCell` makes the type `!Freeze`.
 #[repr(C)]
 pub struct Decompressor {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 impl Decompressor {
     pub fn alloc() -> *mut Decompressor {
-        // SAFETY: FFI call; returns null on failure.
-        unsafe { libdeflate_alloc_decompressor() }
+        libdeflate_alloc_decompressor()
     }
 
     /// Frees the decompressor. `this` must not be used afterward.
@@ -283,7 +292,8 @@ pub enum Encoding {
 }
 
 unsafe extern "C" {
-    pub fn libdeflate_alloc_decompressor() -> *mut Decompressor;
+    pub safe fn libdeflate_alloc_decompressor() -> *mut Decompressor;
+    // NOT safe: `Options` carries allocator callbacks (see `libdeflate_alloc_compressor_ex`).
     pub fn libdeflate_alloc_decompressor_ex(options: *const Options) -> *mut Decompressor;
 }
 

@@ -52,8 +52,7 @@ pub fn pbkdf2<'a>(
     use core::ffi::c_uint;
 
     output.fill(0);
-    // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
-    unsafe { boringssl::ERR_clear_error() };
+    boringssl::ERR_clear_error();
     // `Algorithm::md()` lives in the lowered `bun_sha_hmac` crate and returns its
     // own opaque `EVP_MD` newtype; both name the same BoringSSL `env_md_st`, so
     // cast through to the `bun_boringssl_sys` spelling that `PKCS5_PBKDF2_HMAC`

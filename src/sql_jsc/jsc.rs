@@ -182,10 +182,7 @@ pub fn create_bun_socket_error_to_js(
         // bad cert/key/DH return NULL with `.none` and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `getOrCreateOpts(...) orelse return err.toJS()` site correct.
-        E::none => {
-            // SAFETY: ERR_get_error reads the thread-local error queue; always safe.
-            boringssl_err_to_js(global, unsafe { bun_boringssl_sys::ERR_get_error() })
-        }
+        E::none => boringssl_err_to_js(global, bun_boringssl_sys::ERR_get_error()),
         E::load_ca_file => global
             .err(ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
             .to_js(),

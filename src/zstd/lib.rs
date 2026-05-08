@@ -11,20 +11,24 @@ use bun_core::ZStr;
 // "If your file has externs and isn't already *_sys, leave them in place".
 #[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 pub mod c {
+    use core::cell::UnsafeCell;
     use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
     use core::marker::{PhantomData, PhantomPinned};
 
     /// `ZSTD_DStream` — opaque streaming-decompression context (Nomicon FFI pattern).
+    ///
+    /// `UnsafeCell` makes the type `!Freeze` so a `&ZSTD_DStream` does not assert
+    /// immutability of the C-owned state (zstd mutates internally on every call).
     #[repr(C)]
     pub struct ZSTD_DStream {
-        _p: [u8; 0],
+        _p: UnsafeCell<[u8; 0]>,
         _m: PhantomData<(*mut u8, PhantomPinned)>,
     }
 
     /// `ZSTD_CCtx` — opaque streaming-compression context.
     #[repr(C)]
     pub struct ZSTD_CCtx {
-        _p: [u8; 0],
+        _p: UnsafeCell<[u8; 0]>,
         _m: PhantomData<(*mut u8, PhantomPinned)>,
     }
 
@@ -101,18 +105,19 @@ pub mod c {
             src_size: usize,
             compression_level: c_int,
         ) -> usize;
-        pub fn ZSTD_compressBound(src_size: usize) -> usize;
+        pub safe fn ZSTD_compressBound(src_size: usize) -> usize;
         pub fn ZSTD_decompress(
             dst: *mut c_void,
             dst_capacity: usize,
             src: *const c_void,
             compressed_size: usize,
         ) -> usize;
-        pub fn ZSTD_isError(code: usize) -> c_uint;
-        pub fn ZSTD_getErrorName(code: usize) -> *const c_char;
-        pub fn ZSTD_defaultCLevel() -> c_int;
+        // Pure scalar fns — no preconditions.
+        pub safe fn ZSTD_isError(code: usize) -> c_uint;
+        pub safe fn ZSTD_getErrorName(code: usize) -> *const c_char;
+        pub safe fn ZSTD_defaultCLevel() -> c_int;
 
-        pub fn ZSTD_createDStream() -> *mut ZSTD_DStream;
+        pub safe fn ZSTD_createDStream() -> *mut ZSTD_DStream;
         pub fn ZSTD_freeDStream(zds: *mut ZSTD_DStream) -> usize;
         pub fn ZSTD_initDStream(zds: *mut ZSTD_DStream) -> usize;
         pub fn ZSTD_decompressStream(
@@ -145,9 +150,9 @@ pub mod c {
         pub fn ZSTD_findDecompressedSize(src: *const c_void, src_size: usize) -> c_ulonglong;
 
         // ── streaming-compress / advanced API (used by NativeZstd) ───────
-        pub fn ZSTD_createCCtx() -> *mut ZSTD_CCtx;
+        pub safe fn ZSTD_createCCtx() -> *mut ZSTD_CCtx;
         pub fn ZSTD_freeCCtx(cctx: *mut ZSTD_CCtx) -> usize;
-        pub fn ZSTD_createDCtx() -> *mut ZSTD_DCtx;
+        pub safe fn ZSTD_createDCtx() -> *mut ZSTD_DCtx;
         pub fn ZSTD_freeDCtx(dctx: *mut ZSTD_DCtx) -> usize;
         pub fn ZSTD_CCtx_setPledgedSrcSize(cctx: *mut ZSTD_CCtx, pledged_src_size: c_ulonglong) -> usize;
         pub fn ZSTD_CCtx_setParameter(cctx: *mut ZSTD_CCtx, param: ZSTD_cParameter, value: c_int) -> usize;
@@ -160,8 +165,8 @@ pub mod c {
             input: *mut ZSTD_inBuffer,
             end_op: ZSTD_EndDirective,
         ) -> usize;
-        pub fn ZSTD_getErrorCode(function_result: usize) -> ZSTD_ErrorCode;
-        pub fn ZSTD_getErrorString(code: ZSTD_ErrorCode) -> *const c_char;
+        pub safe fn ZSTD_getErrorCode(function_result: usize) -> ZSTD_ErrorCode;
+        pub safe fn ZSTD_getErrorString(code: ZSTD_ErrorCode) -> *const c_char;
     }
 }
 
@@ -223,14 +228,12 @@ pub fn compress(dest: &mut [u8], src: &[u8], level: Option<i32>) -> Result {
             dest.len(),
             src.as_ptr().cast::<c_void>(),
             src.len(),
-            level.unwrap_or_else(|| {
-                // SAFETY: pure FFI fn, no preconditions.
-                unsafe { c::ZSTD_defaultCLevel() }
-            }),
+            // Not redundant_closure: extern "C" fn items don't implement FnOnce
+            // (Fn* traits are only blanket-impl'd for the Rust ABI).
+            level.unwrap_or_else(|| c::ZSTD_defaultCLevel()),
         )
     };
-    // SAFETY: pure FFI fn, no preconditions.
-    if unsafe { c::ZSTD_isError(result) } != 0 {
+    if c::ZSTD_isError(result) != 0 {
         // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
         return Result::Err(unsafe { zstr_from_c_ptr(c::ZSTD_getErrorName(result)) });
     }
@@ -238,8 +241,7 @@ pub fn compress(dest: &mut [u8], src: &[u8], level: Option<i32>) -> Result {
 }
 
 pub fn compress_bound(src_size: usize) -> usize {
-    // SAFETY: pure function on a size value.
-    unsafe { c::ZSTD_compressBound(src_size) }
+    c::ZSTD_compressBound(src_size)
 }
 
 /// ZSTD_decompress() :
@@ -260,8 +262,7 @@ pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
             src.len(),
         )
     };
-    // SAFETY: pure FFI fn, no preconditions.
-    if unsafe { c::ZSTD_isError(result) } != 0 {
+    if c::ZSTD_isError(result) != 0 {
         // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
         return Result::Err(unsafe { zstr_from_c_ptr(c::ZSTD_getErrorName(result)) });
     }
@@ -354,8 +355,7 @@ impl<'a> ZstdReaderArrayList<'a> {
         list: &'a mut Vec<u8>,
         // PORT NOTE: list_allocator / allocator params deleted (global mimalloc).
     ) -> core::result::Result<Box<ZstdReaderArrayList<'a>>, ZstdError> {
-        // SAFETY: ZSTD_createDStream has no preconditions; returns null on failure.
-        let zstd = unsafe { c::ZSTD_createDStream() };
+        let zstd = c::ZSTD_createDStream();
         if zstd.is_null() {
             return Err(ZstdError::ZstdFailedToCreateInstance);
         }
@@ -437,8 +437,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             // SAFETY: self.zstd is a valid DStream (state != End); in_buf/out_buf point
             // into live slices with correct sizes.
             let rc = unsafe { c::ZSTD_decompressStream(self.zstd, &raw mut out_buf, &raw mut in_buf) };
-            // SAFETY: pure FFI fn, no preconditions.
-            if unsafe { c::ZSTD_isError(rc) } != 0 {
+            if c::ZSTD_isError(rc) != 0 {
                 self.state = State::Error;
                 return Err(ZstdError::ZstdDecompressionError);
             }

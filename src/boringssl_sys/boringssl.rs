@@ -8,11 +8,18 @@
 //
 // ported from: src/boringssl_sys/boringssl.zig
 
+use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque-type helper
+//
+// `_p: UnsafeCell<[u8; 0]>` makes the type `!Freeze`, so a `&T` does not
+// assert immutability of the (C-owned) pointee. BoringSSL mutates internal
+// state through both `const T*` and `T*` handles; without `UnsafeCell`,
+// deriving a `*mut` from `&T` and writing through it (via FFI) is UB under
+// Stacked Borrows. See `Zone` in `bun_alloc::heap_breakdown` for the pattern.
 // ═══════════════════════════════════════════════════════════════════════════
 
 macro_rules! opaque {
@@ -20,7 +27,7 @@ macro_rules! opaque {
         $(#[$m])*
         #[repr(C)]
         pub struct $name {
-            _p: [u8; 0],
+            _p: UnsafeCell<[u8; 0]>,
             _m: PhantomData<(*mut u8, PhantomPinned)>,
         }
     };
@@ -303,37 +310,40 @@ unsafe extern "C" {
 
 unsafe extern "C" {
     // ── crypto / err ──────────────────────────────────────────────────────
-    pub fn CRYPTO_library_init();
+    // No-arg init calls — no preconditions, idempotent.
+    pub safe fn CRYPTO_library_init();
     pub fn CRYPTO_memcmp(a: *const c_void, b: *const c_void, len: usize) -> c_int;
     pub fn ERR_error_string_n(packed_error: u32, buf: *mut c_char, len: usize) -> *mut c_char;
-    pub fn ERR_load_BIO_strings();
-    pub fn OpenSSL_add_all_algorithms();
+    pub safe fn ERR_load_BIO_strings();
+    pub safe fn OpenSSL_add_all_algorithms();
 
     // ── ASN1 ──────────────────────────────────────────────────────────────
     pub fn ASN1_STRING_get0_data(str: *const ASN1_STRING) -> *const u8;
     pub fn ASN1_STRING_length(str: *const ASN1_STRING) -> c_int;
 
     // ── EVP digest getters (infallible, return static singletons) ────────
-    pub fn EVP_md4() -> *const EVP_MD;
-    pub fn EVP_md5() -> *const EVP_MD;
-    pub fn EVP_md5_sha1() -> *const EVP_MD;
-    pub fn EVP_ripemd160() -> *const EVP_MD;
-    pub fn EVP_sha1() -> *const EVP_MD;
-    pub fn EVP_sha224() -> *const EVP_MD;
-    pub fn EVP_sha256() -> *const EVP_MD;
-    pub fn EVP_sha384() -> *const EVP_MD;
-    pub fn EVP_sha512() -> *const EVP_MD;
-    pub fn EVP_sha512_224() -> *const EVP_MD;
-    pub fn EVP_sha512_256() -> *const EVP_MD;
-    pub fn EVP_sha3_224() -> *const EVP_MD;
-    pub fn EVP_sha3_256() -> *const EVP_MD;
-    pub fn EVP_sha3_384() -> *const EVP_MD;
-    pub fn EVP_sha3_512() -> *const EVP_MD;
-    pub fn EVP_blake2b256() -> *const EVP_MD;
-    pub fn EVP_blake2b512() -> *const EVP_MD;
+    pub safe fn EVP_md4() -> *const EVP_MD;
+    pub safe fn EVP_md5() -> *const EVP_MD;
+    pub safe fn EVP_md5_sha1() -> *const EVP_MD;
+    pub safe fn EVP_ripemd160() -> *const EVP_MD;
+    pub safe fn EVP_sha1() -> *const EVP_MD;
+    pub safe fn EVP_sha224() -> *const EVP_MD;
+    pub safe fn EVP_sha256() -> *const EVP_MD;
+    pub safe fn EVP_sha384() -> *const EVP_MD;
+    pub safe fn EVP_sha512() -> *const EVP_MD;
+    pub safe fn EVP_sha512_224() -> *const EVP_MD;
+    pub safe fn EVP_sha512_256() -> *const EVP_MD;
+    pub safe fn EVP_sha3_224() -> *const EVP_MD;
+    pub safe fn EVP_sha3_256() -> *const EVP_MD;
+    pub safe fn EVP_sha3_384() -> *const EVP_MD;
+    pub safe fn EVP_sha3_512() -> *const EVP_MD;
+    pub safe fn EVP_blake2b256() -> *const EVP_MD;
+    pub safe fn EVP_blake2b512() -> *const EVP_MD;
 
     // ── EVP digest ctx ───────────────────────────────────────────────────
-    pub fn EVP_MD_CTX_init(ctx: *mut EVP_MD_CTX);
+    // POD context by exclusive reference: BoringSSL only zero-initialises the
+    // struct (no deref of its raw-ptr fields), so any `&mut EVP_MD_CTX` is sound.
+    pub safe fn EVP_MD_CTX_init(ctx: &mut EVP_MD_CTX);
     pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_size(ctx: *const EVP_MD_CTX) -> usize;
@@ -368,6 +378,9 @@ unsafe extern "C" {
     ) -> *mut u8;
 
     // ── SHA-1 ────────────────────────────────────────────────────────────
+    // `*_Init` are write-only initialisers but stay `*mut`: callers feed
+    // `MaybeUninit::as_mut_ptr()`, and forcing `&mut CTX` would require a
+    // valid (initialised) `CTX` first — defeating the point.
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;
@@ -404,8 +417,8 @@ unsafe extern "C" {
     pub fn RIPEMD160(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
 
     // ── SSL ──────────────────────────────────────────────────────────────
-    pub fn SSL_library_init() -> c_int;
-    pub fn SSL_load_error_strings();
+    pub safe fn SSL_library_init() -> c_int;
+    pub safe fn SSL_load_error_strings();
     pub fn SSL_CTX_up_ref(ctx: *mut SSL_CTX) -> c_int;
     pub fn SSL_get_peer_cert_chain(ssl: *const SSL) -> *mut struct_stack_st_X509;
 
@@ -420,7 +433,7 @@ unsafe extern "C" {
     pub fn X509_NAME_ENTRY_get_data(entry: *const X509_NAME_ENTRY) -> *mut ASN1_STRING;
     pub fn X509V3_EXT_d2i(ext: *mut X509_EXTENSION) -> *mut c_void;
     pub fn X509V3_EXT_get(ext: *mut X509_EXTENSION) -> *const X509V3_EXT_METHOD;
-    pub fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
+    pub safe fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -629,10 +642,10 @@ pub type pem_password_cb =
 
 unsafe extern "C" {
     // ── SSL_METHOD ───────────────────────────────────────────────────────
-    pub fn TLS_with_buffers_method() -> *const SSL_METHOD;
+    pub safe fn TLS_with_buffers_method() -> *const SSL_METHOD;
 
     // ── ENGINE ───────────────────────────────────────────────────────────
-    pub fn ENGINE_new() -> *mut ENGINE;
+    pub safe fn ENGINE_new() -> *mut ENGINE;
     pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
 
     // ── SSL_CTX ──────────────────────────────────────────────────────────
@@ -697,25 +710,26 @@ unsafe extern "C" {
     pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
     pub fn BIO_ctrl(bio: *mut BIO, cmd: c_int, larg: c_long, parg: *mut c_void) -> c_long;
     pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
-    pub fn BIO_s_mem() -> *const BIO_METHOD;
+    pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
 
     // ── ERR ──────────────────────────────────────────────────────────────
-    pub fn ERR_clear_error();
-    pub fn ERR_get_error() -> u32;
-    pub fn ERR_peek_error() -> u32;
-    pub fn ERR_peek_last_error() -> u32;
+    // Thread-local error queue — no pointer args, no preconditions.
+    pub safe fn ERR_clear_error();
+    pub safe fn ERR_get_error() -> u32;
+    pub safe fn ERR_peek_error() -> u32;
+    pub safe fn ERR_peek_last_error() -> u32;
     pub fn ERR_error_string(packed_error: u32, buf: *mut c_char) -> *mut c_char;
     // `ERR_error_string_n` declared once in the crypto/err block above.
     /// Returns a static NUL-terminated string, or NULL if unknown.
-    pub fn ERR_lib_error_string(packed_error: u32) -> *const c_char;
+    pub safe fn ERR_lib_error_string(packed_error: u32) -> *const c_char;
     /// Returns a static NUL-terminated string, or NULL if unknown.
-    pub fn ERR_func_error_string(packed_error: u32) -> *const c_char;
+    pub safe fn ERR_func_error_string(packed_error: u32) -> *const c_char;
     /// Returns a static NUL-terminated string, or NULL if unknown.
-    pub fn ERR_reason_error_string(packed_error: u32) -> *const c_char;
-    pub fn ERR_load_ERR_strings();
-    pub fn ERR_load_crypto_strings();
+    pub safe fn ERR_reason_error_string(packed_error: u32) -> *const c_char;
+    pub safe fn ERR_load_ERR_strings();
+    pub safe fn ERR_load_crypto_strings();
 
     // ── HMAC (streaming) ─────────────────────────────────────────────────
     pub fn HMAC_CTX_init(ctx: *mut HMAC_CTX);

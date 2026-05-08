@@ -2742,14 +2742,12 @@ mod ffi {
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on
 /// `global` and return true. Mirrors `throwSSLErrorIfNecessary` in server.zig.
 fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
-    // SAFETY: FFI into BoringSSL; ERR_get_error reads the thread-local queue.
-    let err_code = unsafe { bun_boringssl_sys::ERR_get_error() };
+    let err_code = bun_boringssl_sys::ERR_get_error();
     if err_code != 0 {
         let _ = global.throw_value(crate::crypto::create_crypto_error(global, err_code));
         // PORT NOTE: Zig had `defer ERR_clear_error()`; no early return
         // between there and here, so a tail call is equivalent.
-        // SAFETY: ERR_clear_error has no preconditions.
-        unsafe { bun_boringssl_sys::ERR_clear_error() };
+        bun_boringssl_sys::ERR_clear_error();
         return true;
     }
     false

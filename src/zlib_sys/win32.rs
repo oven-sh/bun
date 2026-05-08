@@ -92,7 +92,7 @@ pub struct struct_gzFile_s {
 pub type gzFile = *mut struct_gzFile_s;
 
 unsafe extern "C" {
-    pub fn zlibVersion() -> *const c_char;
+    pub safe fn zlibVersion() -> *const c_char;
     pub fn deflate(strm: z_streamp, flush: FlushValue) -> ReturnCode;
     pub fn deflateEnd(strm: z_streamp) -> ReturnCode;
     pub fn inflate(strm: z_streamp, flush: FlushValue) -> ReturnCode;
@@ -118,10 +118,10 @@ unsafe extern "C" {
     pub fn inflateGetHeader(strm: z_streamp, head: gz_headerp) -> ReturnCode;
     pub fn inflateBack(strm: z_streamp, in_: in_func, in_desc: *mut c_void, out: out_func, out_desc: *mut c_void) -> ReturnCode;
     pub fn inflateBackEnd(strm: z_streamp) -> ReturnCode;
-    pub fn zlibCompileFlags() -> uLong;
+    pub safe fn zlibCompileFlags() -> uLong;
     pub fn compress(dest: *mut Bytef, destLen: *mut uLongf, source: *const Bytef, sourceLen: uLong) -> ReturnCode;
     pub fn compress2(dest: *mut Bytef, destLen: *mut uLongf, source: *const Bytef, sourceLen: uLong, level: c_int) -> ReturnCode;
-    pub fn compressBound(sourceLen: uLong) -> uLong;
+    pub safe fn compressBound(sourceLen: uLong) -> uLong;
     pub fn uncompress(dest: *mut Bytef, destLen: *mut uLongf, source: *const Bytef, sourceLen: uLong) -> ReturnCode;
     pub fn uncompress2(dest: *mut Bytef, destLen: *mut uLongf, source: *const Bytef, sourceLen: *mut uLong) -> ReturnCode;
     pub fn gzdopen(fd: c_int, mode: *const u8) -> gzFile;
@@ -150,7 +150,7 @@ unsafe extern "C" {
     pub fn adler32_z(adler: uLong, buf: *const Bytef, len: z_size_t) -> uLong;
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
     pub fn crc32_z(crc: uLong, buf: *const Bytef, len: z_size_t) -> uLong;
-    pub fn crc32_combine_op(crc1: uLong, crc2: uLong, op: uLong) -> uLong;
+    pub safe fn crc32_combine_op(crc1: uLong, crc2: uLong, op: uLong) -> uLong;
     pub fn deflateInit_(strm: z_streamp, level: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
     pub fn inflateInit_(strm: z_streamp, version: *const c_char, stream_size: c_int) -> ReturnCode;
     pub fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
@@ -161,10 +161,10 @@ unsafe extern "C" {
     pub fn gzseek(file: gzFile, offset: c_long, whence: c_int) -> c_long;
     pub fn gztell(file: gzFile) -> c_long;
     pub fn gzoffset(file: gzFile) -> c_long;
-    pub fn adler32_combine(a: uLong, b: uLong, len: c_long) -> uLong;
-    pub fn crc32_combine(a: uLong, b: uLong, len: c_long) -> uLong;
-    pub fn crc32_combine_gen(len: c_long) -> uLong;
-    pub fn zError(err: c_int) -> *const u8;
+    pub safe fn adler32_combine(a: uLong, b: uLong, len: c_long) -> uLong;
+    pub safe fn crc32_combine(a: uLong, b: uLong, len: c_long) -> uLong;
+    pub safe fn crc32_combine_gen(len: c_long) -> uLong;
+    pub safe fn zError(err: c_int) -> *const u8;
     pub fn inflateSyncPoint(strm: z_streamp) -> ReturnCode;
     // pub fn get_crc_table() -> *const z_crc_t;
     pub fn inflateUndermine(strm: z_streamp, subvert: c_int) -> ReturnCode;

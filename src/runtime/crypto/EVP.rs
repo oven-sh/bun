@@ -166,11 +166,10 @@ impl EVP {
 
         // SAFETY: ctx is fully initialized by EVP_MD_CTX_init before any read.
         let mut ctx: boringssl::EVP_MD_CTX = unsafe { bun_core::ffi::zeroed() };
-        // SAFETY: FFI into BoringSSL; ctx is zeroed above and EVP_MD_CTX_init has no
-        // preconditions on a zeroed ctx. md/engine are caller-validated (md is a static
-        // singleton, engine may be null).
+        boringssl::EVP_MD_CTX_init(&mut ctx);
+        // SAFETY: FFI into BoringSSL; ctx is initialised above. md/engine are
+        // caller-validated (md is a static singleton, engine may be null).
         unsafe {
-            boringssl::EVP_MD_CTX_init(&raw mut ctx);
             let _ = boringssl::EVP_DigestInit_ex(&raw mut ctx, md, engine);
         }
         EVP { ctx, md, algorithm }
@@ -187,8 +186,7 @@ impl EVP {
     }
 
     pub fn hash(&mut self, engine: *mut boringssl::ENGINE, input: &[u8], output: &mut [u8]) -> Option<u32> {
-        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
-        unsafe { boringssl::ERR_clear_error() };
+        boringssl::ERR_clear_error();
         let mut outsize: c_uint = (output.len() as u16).min(self.size()) as c_uint;
         // SAFETY: input/output point to valid slices of the given lengths; outsize bounded by output.len().
         if unsafe {
@@ -209,8 +207,7 @@ impl EVP {
     }
 
     pub fn r#final<'a>(&mut self, engine: *mut boringssl::ENGINE, output: &'a mut [u8]) -> &'a mut [u8] {
-        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
-        unsafe { boringssl::ERR_clear_error() };
+        boringssl::ERR_clear_error();
         let mut outsize: u32 = (output.len() as u16).min(self.size()) as u32;
         // SAFETY: output points to a valid mutable slice; outsize bounded by output.len().
         if unsafe { boringssl::EVP_DigestFinal_ex(&raw mut self.ctx, output.as_mut_ptr(), &raw mut outsize) } != 1 {
@@ -238,8 +235,7 @@ impl EVP {
     }
 
     pub fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
-        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
-        unsafe { boringssl::ERR_clear_error() };
+        boringssl::ERR_clear_error();
         let mut new = EVP::init(self.algorithm, self.md, engine);
         // SAFETY: FFI into BoringSSL; both new.ctx and self.ctx are initialized EVP_MD_CTX
         // values (new.ctx via EVP::init above, self.ctx via the invariant on EVP).

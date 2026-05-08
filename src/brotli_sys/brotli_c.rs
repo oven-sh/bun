@@ -2,6 +2,7 @@
 
 #![allow(non_camel_case_types, non_snake_case)]
 
+use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -12,7 +13,7 @@ pub type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, add
 
 #[repr(C)]
 pub struct struct_BrotliSharedDictionaryStruct {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 pub type BrotliSharedDictionary = struct_BrotliSharedDictionaryStruct;
@@ -27,24 +28,29 @@ pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 // pub extern fn BrotliSharedDictionaryAttach(dict: ?*BrotliSharedDictionary, type: BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) c_int;
 
 unsafe extern "C" {
-    pub fn BrotliDecoderSetParameter(state: *mut BrotliDecoder, param: c_uint, value: u32) -> c_int;
+    // Opaque handle by reference + scalars only.
+    pub safe fn BrotliDecoderSetParameter(state: &mut BrotliDecoder, param: c_uint, value: u32) -> c_int;
     pub fn BrotliDecoderAttachDictionary(state: *mut BrotliDecoder, type_: BrotliSharedDictionaryType, data_size: usize, data: *const u8) -> c_int;
     pub fn BrotliDecoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: *mut c_void) -> *mut BrotliDecoder;
     pub fn BrotliDecoderDestroyInstance(state: *mut BrotliDecoder);
     pub fn BrotliDecoderDecompress(encoded_size: usize, encoded_buffer: *const u8, decoded_size: *mut usize, decoded_buffer: *mut u8) -> BrotliDecoderResult;
     pub fn BrotliDecoderDecompressStream(state: *mut BrotliDecoder, available_in: *mut usize, next_in: *mut *const u8, available_out: *mut usize, next_out: *mut *mut u8, total_out: *mut usize) -> BrotliDecoderResult;
-    pub fn BrotliDecoderHasMoreOutput(state: *const BrotliDecoder) -> c_int;
-    pub fn BrotliDecoderTakeOutput(state: *mut BrotliDecoder, size: *mut usize) -> *const u8;
-    pub fn BrotliDecoderIsUsed(state: *const BrotliDecoder) -> c_int;
-    pub fn BrotliDecoderIsFinished(state: *const BrotliDecoder) -> c_int;
-    pub fn BrotliDecoderGetErrorCode(state: *const BrotliDecoder) -> BrotliDecoderErrorCode2;
-    pub fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
-    pub fn BrotliDecoderVersion() -> u32;
+    // Query fns: opaque handle by reference + scalars only — `BrotliDecoder` is
+    // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
+    pub safe fn BrotliDecoderHasMoreOutput(state: &BrotliDecoder) -> c_int;
+    pub safe fn BrotliDecoderTakeOutput(state: &mut BrotliDecoder, size: &mut usize) -> *const u8;
+    pub safe fn BrotliDecoderIsUsed(state: &BrotliDecoder) -> c_int;
+    pub safe fn BrotliDecoderIsFinished(state: &BrotliDecoder) -> c_int;
+    pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
+    pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
+    pub safe fn BrotliDecoderVersion() -> u32;
 }
 
+/// Opaque brotli decoder state. `UnsafeCell` makes the type `!Freeze` so a
+/// `&BrotliDecoder` does not assert immutability of the C-owned state.
 #[repr(C)]
 pub struct BrotliDecoder {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -57,8 +63,7 @@ type brotli_decoder_metadata_chunk_func = Option<unsafe extern "C" fn(opaque: *m
 
 impl BrotliDecoder {
     pub fn set_parameter(state: &mut BrotliDecoder, param: BrotliDecoderParameter, value: u32) -> bool {
-        // SAFETY: state is a valid &mut BrotliDecoder
-        unsafe { BrotliDecoderSetParameter(state, param as c_uint, value) > 0 }
+        BrotliDecoderSetParameter(state, param as c_uint, value) > 0
     }
 
     pub fn attach_dictionary(state: &mut BrotliDecoder, type_: BrotliSharedDictionaryType, data: &[u8]) -> c_int {
@@ -102,14 +107,12 @@ impl BrotliDecoder {
     }
 
     pub fn has_more_output(state: &BrotliDecoder) -> bool {
-        // SAFETY: state is a valid &BrotliDecoder
-        unsafe { BrotliDecoderHasMoreOutput(state) != 0 }
+        BrotliDecoderHasMoreOutput(state) != 0
     }
 
     pub fn take_output(state: &mut BrotliDecoder) -> &[u8] {
         let mut max_size: usize = usize::MAX;
-        // SAFETY: state is a valid &mut BrotliDecoder; max_size is in-out
-        let ptr = unsafe { BrotliDecoderTakeOutput(state, &raw mut max_size) };
+        let ptr = BrotliDecoderTakeOutput(state, &mut max_size);
         if ptr.is_null() {
             return b"";
         }
@@ -119,59 +122,20 @@ impl BrotliDecoder {
     }
 
     pub fn is_used(state: &BrotliDecoder) -> bool {
-        // SAFETY: state is a valid &BrotliDecoder
-        unsafe { BrotliDecoderIsUsed(state) != 0 }
+        BrotliDecoderIsUsed(state) != 0
     }
 
     pub fn is_finished(state: &BrotliDecoder) -> bool {
-        // SAFETY: state is a valid &BrotliDecoder
-        unsafe { BrotliDecoderIsFinished(state) != 0 }
+        BrotliDecoderIsFinished(state) != 0
     }
 
     pub fn get_error_code(state: &BrotliDecoder) -> BrotliDecoderErrorCode {
-        // SAFETY: state is a valid &BrotliDecoder.
-        let raw = unsafe { BrotliDecoderGetErrorCode(state) } as i32;
-        // Zig: `@enumFromInt(@intFromEnum(...))` — safety-checked in debug.
-        // `BrotliDecoderErrorCode2` is a superset (adds 0..=3 non-error
-        // states); this is only called after `BROTLI_DECODER_RESULT_ERROR`,
-        // so brotli returns one of the negative codes below. Exhaustive
-        // match traps on contract violation instead of producing an invalid
-        // discriminant.
-        use BrotliDecoderErrorCode as E;
-        match raw {
-            -1 => E::FORMAT_EXUBERANT_NIBBLE,
-            -2 => E::FORMAT_RESERVED,
-            -3 => E::FORMAT_EXUBERANT_META_NIBBLE,
-            -4 => E::FORMAT_SIMPLE_HUFFMAN_ALPHABET,
-            -5 => E::FORMAT_SIMPLE_HUFFMAN_SAME,
-            -6 => E::FORMAT_CL_SPACE,
-            -7 => E::FORMAT_HUFFMAN_SPACE,
-            -8 => E::FORMAT_CONTEXT_MAP_REPEAT,
-            -9 => E::FORMAT_BLOCK_LENGTH_1,
-            -10 => E::FORMAT_BLOCK_LENGTH_2,
-            -11 => E::FORMAT_TRANSFORM,
-            -12 => E::FORMAT_DICTIONARY,
-            -13 => E::FORMAT_WINDOW_BITS,
-            -14 => E::FORMAT_PADDING_1,
-            -15 => E::FORMAT_PADDING_2,
-            -16 => E::FORMAT_DISTANCE,
-            -18 => E::COMPOUND_DICTIONARY,
-            -19 => E::DICTIONARY_NOT_SET,
-            -20 => E::INVALID_ARGUMENTS,
-            -21 => E::ALLOC_CONTEXT_MODES,
-            -22 => E::ALLOC_TREE_GROUPS,
-            -25 => E::ALLOC_CONTEXT_MAP,
-            -26 => E::ALLOC_RING_BUFFER_1,
-            -27 => E::ALLOC_RING_BUFFER_2,
-            -30 => E::ALLOC_BLOCK_TYPE_TREES,
-            -31 => E::UNREACHABLE,
-            _ => unreachable!("BrotliDecoderGetErrorCode returned non-error {raw}"),
-        }
+        // SAFETY: BrotliDecoderErrorCode2 is a superset of BrotliDecoderErrorCode discriminants (both repr(i32))
+        unsafe { core::mem::transmute::<i32, BrotliDecoderErrorCode>(BrotliDecoderGetErrorCode(state) as i32) }
     }
 
     pub fn error_string(c: BrotliDecoderErrorCode) -> &'static core::ffi::CStr {
-        // SAFETY: BrotliDecoderErrorString returns a static NUL-terminated string (or null)
-        let ptr = unsafe { BrotliDecoderErrorString(c) };
+        let ptr = BrotliDecoderErrorString(c);
         if ptr.is_null() {
             return c"";
         }
@@ -180,8 +144,7 @@ impl BrotliDecoder {
     }
 
     pub fn version() -> u32 {
-        // SAFETY: pure FFI getter
-        unsafe { BrotliDecoderVersion() }
+        BrotliDecoderVersion()
     }
 
     pub fn initialize_brotli() -> bool {
@@ -312,7 +275,7 @@ pub type BrotliSharedDictionaryStruct = struct_BrotliSharedDictionaryStruct;
 
 #[repr(C)]
 pub struct struct_BrotliEncoderPreparedDictionaryStruct {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 pub type BrotliEncoderPreparedDictionary = struct_BrotliEncoderPreparedDictionaryStruct;
@@ -368,26 +331,30 @@ pub enum BrotliEncoderParameter {
 }
 
 unsafe extern "C" {
-    pub fn BrotliEncoderSetParameter(state: *mut BrotliEncoder, param: c_uint, value: u32) -> c_int;
+    // Opaque handle by reference + scalars only.
+    pub safe fn BrotliEncoderSetParameter(state: &mut BrotliEncoder, param: c_uint, value: u32) -> c_int;
     pub fn BrotliEncoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: *mut c_void) -> *mut BrotliEncoder;
     pub fn BrotliEncoderDestroyInstance(state: *mut BrotliEncoder);
     pub fn BrotliEncoderPrepareDictionary(type_: BrotliSharedDictionaryType, data_size: usize, data: *const u8, quality: c_int, alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: *mut c_void) -> *mut BrotliEncoderPreparedDictionary;
     pub fn BrotliEncoderDestroyPreparedDictionary(dictionary: *mut BrotliEncoderPreparedDictionary);
     pub fn BrotliEncoderAttachPreparedDictionary(state: *mut BrotliEncoder, dictionary: *const BrotliEncoderPreparedDictionary) -> c_int;
-    pub fn BrotliEncoderMaxCompressedSize(input_size: usize) -> usize;
+    pub safe fn BrotliEncoderMaxCompressedSize(input_size: usize) -> usize;
     pub fn BrotliEncoderCompress(quality: c_int, lgwin: c_int, mode: BrotliEncoderMode, input_size: usize, input_buffer: *const u8, encoded_size: *mut usize, encoded_buffer: *mut u8) -> c_int;
     pub fn BrotliEncoderCompressStream(state: *mut BrotliEncoder, op: BrotliEncoderOperation, available_in: *mut usize, next_in: *mut *const u8, available_out: *mut usize, next_out: *mut *mut u8, total_out: *mut usize) -> c_int;
-    pub fn BrotliEncoderIsFinished(state: *mut BrotliEncoder) -> c_int;
-    pub fn BrotliEncoderHasMoreOutput(state: *mut BrotliEncoder) -> c_int;
-    pub fn BrotliEncoderTakeOutput(state: *mut BrotliEncoder, size: *mut usize) -> *const u8;
-    pub fn BrotliEncoderEstimatePeakMemoryUsage(quality: c_int, lgwin: c_int, input_size: usize) -> usize;
+    // Query fns: opaque handle by reference + scalars only.
+    pub safe fn BrotliEncoderIsFinished(state: &BrotliEncoder) -> c_int;
+    pub safe fn BrotliEncoderHasMoreOutput(state: &BrotliEncoder) -> c_int;
+    pub safe fn BrotliEncoderTakeOutput(state: &mut BrotliEncoder, size: &mut usize) -> *const u8;
+    pub safe fn BrotliEncoderEstimatePeakMemoryUsage(quality: c_int, lgwin: c_int, input_size: usize) -> usize;
     pub fn BrotliEncoderGetPreparedDictionarySize(dictionary: *const BrotliEncoderPreparedDictionary) -> usize;
-    pub fn BrotliEncoderVersion() -> u32;
+    pub safe fn BrotliEncoderVersion() -> u32;
 }
 
+/// Opaque brotli encoder state. `UnsafeCell` makes the type `!Freeze` so a
+/// `&BrotliEncoder` does not assert immutability of the C-owned state.
 #[repr(C)]
 pub struct BrotliEncoder {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
@@ -429,14 +396,12 @@ impl BrotliEncoder {
     }
 
     pub fn has_more_output(state: &mut BrotliEncoder) -> bool {
-        // SAFETY: state is a valid &mut BrotliEncoder
-        unsafe { BrotliEncoderHasMoreOutput(state) > 0 }
+        BrotliEncoderHasMoreOutput(state) > 0
     }
 
     pub fn take_output(state: &mut BrotliEncoder) -> &[u8] {
         let mut size: usize = 0;
-        // SAFETY: state is a valid &mut BrotliEncoder; size is in-out
-        let ptr = unsafe { BrotliEncoderTakeOutput(state, &raw mut size) };
+        let ptr = BrotliEncoderTakeOutput(state, &mut size);
         if !ptr.is_null() {
             // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
             // valid until the next encoder call
@@ -448,10 +413,6 @@ impl BrotliEncoder {
 
     // https://github.com/google/brotli/blob/2ad58d8603294f5ee33d23bb725e0e6a17c1de50/go/cbrotli/writer.go#L23-L40
     pub fn compress_stream<'a>(state: &'a mut BrotliEncoder, op: BrotliEncoderOperation, data: &[u8]) -> CompressionResult<'a> {
-        // PORT NOTE: reshaped for borrowck — drive FFI via raw ptr so `output`
-        // can borrow the encoder's internal buffer for `'a` while we still
-        // query has_more_output afterward (matching Zig call order).
-        let state: *mut BrotliEncoder = state;
         let mut available_in = data.len();
         let mut next_in: *const u8 = data.as_ptr();
 
@@ -459,7 +420,7 @@ impl BrotliEncoder {
 
         let mut result = CompressionResult::default();
 
-        // SAFETY: state is a valid *mut BrotliEncoder for 'a; in/out pointers are valid;
+        // SAFETY: state is a valid &mut BrotliEncoder; in/out pointers are valid;
         // next_out is null (we use take_output below); total_out is null (unused)
         result.success = unsafe {
             BrotliEncoderCompressStream(state, op, &raw mut available_in, &raw mut next_in, &raw mut available_out, core::ptr::null_mut(), core::ptr::null_mut()) > 0
@@ -467,8 +428,7 @@ impl BrotliEncoder {
 
         if result.success {
             let mut size: usize = 0;
-            // SAFETY: state is a valid *mut BrotliEncoder; size is in-out
-            let ptr = unsafe { BrotliEncoderTakeOutput(state, &raw mut size) };
+            let ptr = BrotliEncoderTakeOutput(state, &mut size);
             if !ptr.is_null() {
                 // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
                 // valid until the next encoder call (bounded by 'a)
@@ -476,15 +436,13 @@ impl BrotliEncoder {
             }
         }
 
-        // SAFETY: state is a valid *mut BrotliEncoder
-        result.has_more = unsafe { BrotliEncoderHasMoreOutput(state) > 0 };
+        result.has_more = BrotliEncoderHasMoreOutput(state) > 0;
 
         result
     }
 
     pub fn set_parameter(state: &mut BrotliEncoder, param: BrotliEncoderParameter, value: u32) -> bool {
-        // SAFETY: state is a valid &mut BrotliEncoder
-        unsafe { BrotliEncoderSetParameter(state, param as c_uint, value) > 0 }
+        BrotliEncoderSetParameter(state, param as c_uint, value) > 0
     }
 }
 

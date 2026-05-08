@@ -55,8 +55,7 @@ impl PBKDF2 {
 
         output.fill(0);
         debug_assert!(self.length <= i32::try_from(output.len()).expect("int cast"));
-        // SAFETY: FFI call into BoringSSL; clears the thread-local error queue.
-        unsafe { boringssl::ERR_clear_error() };
+        boringssl::ERR_clear_error();
         // SAFETY: password/salt point to valid slices for the given lengths;
         // algorithm.md() returns a non-null EVP_MD; output is writable for `length` bytes.
         let rc = unsafe {
@@ -314,10 +313,8 @@ impl Job {
         job.output = buf;
 
         if !job.pbkdf2.run(&mut job.output) {
-            // SAFETY: FFI call into BoringSSL thread-local error queue.
-            job.err = Some(unsafe { boringssl::ERR_get_error() });
-            // SAFETY: FFI call into BoringSSL; clears the thread-local error queue.
-            unsafe { boringssl::ERR_clear_error() };
+            job.err = Some(boringssl::ERR_get_error());
+            boringssl::ERR_clear_error();
 
             job.output = Vec::new();
         }

@@ -813,8 +813,7 @@ pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
 
 pub fn renegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
-    // SAFETY: ERR_clear_error has no preconditions; clears the calling thread's BoringSSL error queue.
-    unsafe { boringssl::ERR_clear_error() };
+    boringssl::ERR_clear_error();
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     if unsafe { boringssl::SSL_renegotiate(ssl_ptr) } != 1 {
         return Err(global.throw_value(get_ssl_exception(global, b"SSL_renegotiate error")));
@@ -881,8 +880,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
 
     output_buf[0] = 0;
     let mut written: usize = 0;
-    // SAFETY: ERR_get_error has no preconditions; reads the calling thread's BoringSSL error queue.
-    let mut ssl_error = unsafe { boringssl::ERR_get_error() };
+    let mut ssl_error = boringssl::ERR_get_error();
     while ssl_error != 0 && written < output_buf.len() {
         if written > 0 {
             output_buf[written] = b'\n';
@@ -928,8 +926,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
             }
         }
 
-        // SAFETY: ERR_get_error has no preconditions; reads the calling thread's BoringSSL error queue.
-        ssl_error = unsafe { boringssl::ERR_get_error() };
+        ssl_error = boringssl::ERR_get_error();
     }
 
     if written > 0 {
@@ -947,8 +944,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         let _ = encoded_str;
 
         // We shouldn't *need* to do this but it's not entirely clear.
-        // SAFETY: ERR_clear_error has no preconditions; clears the calling thread's BoringSSL error queue.
-        unsafe { boringssl::ERR_clear_error() };
+        boringssl::ERR_clear_error();
     }
 
     if zig_str.len == 0 {

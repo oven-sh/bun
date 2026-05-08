@@ -642,9 +642,13 @@ impl RareData {
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
-        // SAFETY: BoringSSL is linked into the binary; ENGINE_new returns a
-        // fresh non-null handle (mirrors Zig `BoringSSL.ENGINE_new().?`).
-        *self.boring_ssl_engine.get_or_insert_with(|| unsafe { boring::ENGINE_new() })
+        // PORT NOTE: Zig spec is `ENGINE_new().?` (panic on null). We cache the
+        // raw result; `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here
+        // degrades to "no engine" rather than crashing. Debug-assert to surface
+        // the divergence without altering release behavior.
+        let ptr = *self.boring_ssl_engine.get_or_insert_with(|| boring::ENGINE_new());
+        debug_assert!(!ptr.is_null(), "ENGINE_new returned null");
+        ptr
     }
 
     pub fn default_csrf_secret(&mut self) -> &[u8] {

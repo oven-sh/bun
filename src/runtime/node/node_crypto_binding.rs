@@ -1071,8 +1071,7 @@ impl Scrypt {
         };
 
         if res == 0 {
-            // SAFETY: FFI; ERR_peek_last_error has no preconditions.
-            self.err = Some(unsafe { boringssl::c::ERR_peek_last_error() });
+            self.err = Some(boringssl::c::ERR_peek_last_error());
             return;
         }
     }
@@ -1186,9 +1185,8 @@ fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
     };
 
     if !data.run(output.slice_mut()) {
-        // SAFETY: FFI; ERR_get_error / ERR_clear_error have no preconditions.
-        let err = create_crypto_error(global_this, unsafe { boringssl::c::ERR_get_error() });
-        unsafe { boringssl::c::ERR_clear_error() };
+        let err = create_crypto_error(global_this, boringssl::c::ERR_get_error());
+        boringssl::c::ERR_clear_error();
         return Err(global_this.throw_value(err));
     }
 

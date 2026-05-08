@@ -2021,7 +2021,10 @@ fn transpile_source_code_inner(
             // default_allocator`. The bundler-side `cache::RuntimeTranspilerCache`
             // dropped those fields per PORTING.md §Allocators (cache buffers use
             // global mimalloc), so `Default::default()` matches.
-            let mut cache = bun_bundler::cache::RuntimeTranspilerCache::default();
+            let mut cache = bun_bundler::cache::RuntimeTranspilerCache {
+                vtable: Some(&bun_jsc::runtime_transpiler_cache::JSC_PARSER_CACHE_VTABLE),
+                ..Default::default()
+            };
 
             // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
             // Spec :184-199. `parse_maybe_return_file_only` writes diagnostics

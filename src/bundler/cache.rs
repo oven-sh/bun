@@ -67,24 +67,20 @@ impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
         DISABLED.store(v, Ordering::Relaxed);
     }
 
-    /// Bundler-tier body stores the printer output on `self` (Zig:
-    /// `bun.String.cloneLatin1` → owned bytes here per the MOVE_DOWN note at
-    /// the top of this block). The disk-persist tail (`toFile(...)`) lives in
-    /// T6 (`src/jsc/RuntimeTranspilerCache.rs::to_file`) — it pulls in
-    /// `bun.String`/`bun_sys::Dir` and the cache-dir resolver, none of which
-    /// belong below T6. Zig swallows `toFile` errors, so omitting it here is
-    /// observationally the "write failed" path; the in-memory `output_code`
-    /// hand-off to T6 (RuntimeTranspilerStore reads `cache.output_code.take()`)
-    /// is preserved.
+    /// Dispatches through the parser-side vtable so T6's `to_file` disk write
+    /// runs. Falls back to in-memory only when no vtable is wired (e.g. unit
+    /// tests that construct the cache without a JSC owner).
     fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
+        if let Some(vt) = self.vtable {
+            // SAFETY: vtable contract per §Dispatch — `self` is a valid &mut.
+            unsafe { (vt.put)(core::ptr::from_mut(self), output_code_bytes, sourcemap, esm_record) }
+            return;
+        }
         if self.input_hash.is_none() || <Self as RuntimeTranspilerCacheExt>::disabled() {
             return;
         }
         debug_assert!(self.entry.is_none());
         self.output_code = Some(Box::<[u8]>::from(output_code_bytes));
-        // `toFile(self.input_byte_length.?, self.input_hash.?, self.features_hash.?,
-        //   sourcemap, esm_record, output_code, self.exports_kind)` — T6.
-        let _ = (sourcemap, esm_record);
     }
 
     #[inline]

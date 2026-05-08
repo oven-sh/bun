@@ -1566,6 +1566,14 @@ pub struct RuntimeTranspilerCacheVTable {
         parser_options: *const (),
         used_jsx: bool,
     ) -> bool,
+    /// Zig `RuntimeTranspilerCache.put(output_code, sourcemap, esm_record)` —
+    /// writes the cache entry to disk and stores `output_code` on `this`.
+    pub put: unsafe fn(
+        this: *mut RuntimeTranspilerCache,
+        output_code: &[u8],
+        sourcemap: &[u8],
+        esm_record: &[u8],
+    ),
     /// Zig `RuntimeTranspilerCache.is_disabled` — runtime flag, not const.
     pub is_disabled: fn() -> bool,
 }

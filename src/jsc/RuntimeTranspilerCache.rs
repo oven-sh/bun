@@ -1067,9 +1067,40 @@ unsafe fn jsc_cache_vtable_get(
     hit
 }
 
+unsafe fn jsc_cache_vtable_put(
+    this: *mut bun_js_parser::RuntimeTranspilerCache,
+    output_code_bytes: &[u8],
+    sourcemap: &[u8],
+    esm_record: &[u8],
+) {
+    // SAFETY: vtable contract — `this` is the live `&mut` the printer holds.
+    let this = unsafe { &mut *this };
+    if this.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    debug_assert!(this.entry.is_none());
+    this.output_code = Some(Box::<[u8]>::from(output_code_bytes));
+
+    let output_code = BunString::clone_latin1(output_code_bytes);
+    let result = RuntimeTranspilerCache::to_file(
+        this.input_byte_length.unwrap(),
+        this.input_hash.unwrap(),
+        this.features_hash.unwrap(),
+        sourcemap,
+        esm_record,
+        &output_code,
+        this.exports_kind,
+    );
+    output_code.deref();
+    if let Err(err) = result {
+        bun_core::scoped_log!(cache, "put() = {}", err.name());
+    }
+}
+
 pub static JSC_PARSER_CACHE_VTABLE: bun_js_parser::RuntimeTranspilerCacheVTable =
     bun_js_parser::RuntimeTranspilerCacheVTable {
         get: jsc_cache_vtable_get,
+        put: jsc_cache_vtable_put,
         is_disabled: RuntimeTranspilerCache::is_disabled,
     };
 

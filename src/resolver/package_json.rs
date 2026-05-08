@@ -1458,22 +1458,27 @@ impl PackageJSON {
                                     let Some(version_str) = version_value.as_utf8_string_literal() else { continue };
                                     let sliced_str = Semver::SlicedString::init(version_str, version_str);
 
-                                    // PORT NOTE: Zig threads `?*PackageManager`
-                                    // into `Dependency.parse` — the parser is
-                                    // install-tier. When no auto-installer is
-                                    // wired, the dependencies map is only ever
-                                    // read by the auto-install path itself, so
-                                    // skip filling it.
-                                    let Some(mut pm) = r.package_manager else { break };
-                                    // SAFETY: see BACKREF note above.
-                                    let pm: &mut dyn AutoInstaller = unsafe { pm.as_mut() };
-                                    if let Some(dependency_version) = pm.parse_dependency(
-                                        name,
-                                        Some(name_hash),
-                                        version_str,
-                                        &sliced_str,
-                                        r.log,
-                                    ) {
+                                    // Zig's `Dependency.parse` accepts `?*PackageManager`;
+                                    // the parser body lives in install-tier so route through
+                                    // the AutoInstaller vtable when one is wired. When it
+                                    // isn't, still record the dependency name (with an
+                                    // uninitialized-tag version) — `bun run --filter` reads
+                                    // only the map keys to compute workspace ordering.
+                                    let dependency_version = match r.package_manager {
+                                        Some(mut pm) => {
+                                            // SAFETY: see BACKREF note above.
+                                            let pm: &mut dyn AutoInstaller = unsafe { pm.as_mut() };
+                                            pm.parse_dependency(
+                                                name,
+                                                Some(name_hash),
+                                                version_str,
+                                                &sliced_str,
+                                                r.log,
+                                            )
+                                        }
+                                        None => Some(DependencyVersion::default()),
+                                    };
+                                    if let Some(dependency_version) = dependency_version {
                                         let dependency = Dependency {
                                             name,
                                             version: dependency_version,

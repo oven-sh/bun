@@ -362,11 +362,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // pointer (`StringOrTinyString` is self-referential and not
                 // `Clone`) so the loop body can read `name` after the
                 // `&mut task.callback` borrow ends.
-                let name_ptr: *const [u8] = name.slice();
-                // SAFETY: `name` lives in `task.callback` which outlives this
-                // match arm (the task is only `put` back to the pool by a later
+                // `name` lives in `task.callback` which outlives this match arm
+                // (the task is only `put` back to the pool by a later
                 // resolve-task pass, never inside this loop iteration).
-                let name = unsafe { &*name_ptr };
+                let name = bun_ptr::RawSlice::new(name.slice());
+                let name = name.slice();
                 let is_extended_manifest = *is_extended_manifest;
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
@@ -494,9 +494,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             None,
                             logger::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            // SAFETY: `metadata.url` borrows the `url_buf` we own
-                            // on this `task`; live for the whole arm.
-                            bstr::BStr::new(unsafe { &*metadata.url }),
+                            bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
                         ));
                     } else {
@@ -505,9 +503,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             None,
                             logger::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            // SAFETY: `metadata.url` borrows the `url_buf` we own
-                            // on this `task`; live for the whole arm.
-                            bstr::BStr::new(unsafe { &*metadata.url }),
+                            bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
                         ));
                     }
@@ -848,9 +844,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             None,
                             logger::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            // SAFETY: `metadata.url` borrows the `url_buf` we own
-                            // on this `task`; live for the whole arm.
-                            bstr::BStr::new(unsafe { &*metadata.url }),
+                            bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
                         ));
                     } else {
@@ -859,9 +853,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             None,
                             logger::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            // SAFETY: `metadata.url` borrows the `url_buf` we own
-                            // on this `task`; live for the whole arm.
-                            bstr::BStr::new(unsafe { &*metadata.url }),
+                            bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
                         ));
                     }
@@ -1068,9 +1060,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // `task.request` which is reborrowed `&mut` below. The backing
                 // `StringOrTinyString` lives in the pooled `Task` for the whole
                 // iteration.
-                let alias: *const [u8] = tarball.name.slice();
-                // SAFETY: see PORT NOTE above.
-                let alias: &[u8] = unsafe { &*alias };
+                let alias = bun_ptr::RawSlice::new(tarball.name.slice());
+                let alias: &[u8] = alias.slice();
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
@@ -1384,12 +1375,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
                     // enqueued for git resolutions; `value.git` is the active arm.
                     let git = *clone.res.git();
-                    let string_buf_ptr: *const [u8] =
-                        manager.lockfile.buffers.string_bytes.as_slice();
-                    // SAFETY: `string_bytes` lives as long as `manager.lockfile`
-                    // and is not reallocated while resolve tasks are draining
-                    // (Zig: same buffer is read after `enqueueGitCheckout`).
-                    let string_buf = unsafe { &*string_buf_ptr };
+                    // `string_bytes` lives as long as `manager.lockfile` and is
+                    // not reallocated while resolve tasks are draining (Zig:
+                    // same buffer is read after `enqueueGitCheckout`).
+                    let string_buf =
+                        bun_ptr::RawSlice::new(manager.lockfile.buffers.string_bytes.as_slice());
+                    let string_buf = string_buf.slice();
                     let dep_name = dep_name_handle.slice(string_buf);
                     let committish = git.committish.slice(string_buf);
                     let repo = git.repo.slice(string_buf);

@@ -1170,8 +1170,8 @@ impl<'a> PackageInstaller<'a> {
         // across `&mut self` method calls below (Zig accessed `lockfile.buffers.string_bytes`
         // freely inline). SAFETY: `buffers.string_bytes` is append-only and never freed
         // for the lifetime of this `PackageInstaller`.
-        let string_buf_ptr: *const [u8] = self.lockfile().buffers.string_bytes.as_slice();
-        macro_rules! string_buf { () => { unsafe { &*string_buf_ptr } }; }
+        let string_buf_ptr = bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
+        macro_rules! string_buf { () => { string_buf_ptr.slice() }; }
 
         let alias = self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize].name;
         // PORT NOTE: `PackageInstall` stores both `destination_dir_subpath: &mut ZStr`

@@ -22,26 +22,25 @@ pub fn write_request(
     stream: &mut Stream,
     qs: &mut quic::Stream,
 ) -> Result<(), bun_core::Error> {
-    let Some(client_ptr) = stream.client else {
+    let Some(mut client_ptr) = stream.client else {
         return Err(err!(Aborted));
     };
     // SAFETY: stream.client is a live backref while the stream is attached.
-    let client: &mut HTTPClient = unsafe { &mut *client_ptr.as_ptr() };
+    let client: &mut HTTPClient = unsafe { client_ptr.as_mut() };
     // PORT NOTE: reshaped for borrowck — `build_request` returns a `Request<'_>`
     // that mutably borrows `client`; capture every field we need first.
     let verbose = client.verbose;
     let href: &[u8] = client.url.href;
     let host: &[u8] = client.url.host;
     let reject_unauthorized = client.flags.reject_unauthorized;
-    let req_body_ptr: *const [u8] = client.state.request_body;
+    let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
     let body_len = client.state.original_request_body.len();
     let is_streaming = client.state.original_request_body.is_stream();
     let is_bytes = matches!(client.state.original_request_body, HTTPRequestBody::Bytes(_));
 
     let request = client.build_request(body_len);
     if verbose != HTTPVerboseLevel::None {
-        // SAFETY: request_body is set from a live owned slice (Zig: `[]const u8`).
-        let body = unsafe { &*req_body_ptr };
+        let body = req_body.slice();
         crate::print_request(
             Protocol::Http3,
             &request,
@@ -105,9 +104,7 @@ pub fn write_request(
         Some(Qpack::Path),
     );
 
-    // SAFETY: request_body is set from a live owned slice.
-    let body: &[u8] = unsafe { &*req_body_ptr };
-    let has_inline_body = is_bytes && !body.is_empty();
+    let has_inline_body = is_bytes && !req_body.is_empty();
 
     let end_stream = !has_inline_body && !is_streaming;
     if qs.send_headers(&headers, end_stream) != 0 {
@@ -119,7 +116,7 @@ pub fn write_request(
     drop(headers);
 
     if has_inline_body {
-        stream.pending_body = req_body_ptr;
+        stream.pending_body = req_body;
         drain_send_body(stream, qs);
     } else if is_streaming {
         stream.is_streaming_body = true;
@@ -150,21 +147,21 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
     if stream.request_body_done {
         return;
     }
-    let Some(client_ptr) = stream.client else {
+    let Some(mut client_ptr) = stream.client else {
         return;
     };
     // SAFETY: stream.client is a live backref while the stream is attached.
-    let client: &mut HTTPClient = unsafe { &mut *client_ptr.as_ptr() };
+    let client: &mut HTTPClient = unsafe { client_ptr.as_mut() };
 
     if stream.is_streaming_body {
         let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {
             unreachable!()
         };
-        let Some(sb) = body.buffer else {
+        let Some(mut sb) = body.buffer else {
             return;
         };
         // SAFETY: ThreadSafeStreamBuffer is intrusive-refcounted; this side holds a ref.
-        let sb = unsafe { &mut *sb.as_ptr() };
+        let sb = unsafe { sb.as_mut() };
         let buffer = sb.acquire();
         let data_len = buffer.slice().len();
         let mut written: usize = 0;
@@ -196,16 +193,15 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         return;
     }
 
-    // SAFETY: pending_body is set from a live owned slice (request_body).
-    let mut remaining = unsafe { &*stream.pending_body };
+    let mut remaining = stream.pending_body;
     while !remaining.is_empty() {
-        let w = qs.write(remaining);
+        let w = qs.write(remaining.slice());
         if w <= 0 {
             break;
         }
-        remaining = &remaining[usize::try_from(w).expect("int cast")..];
+        remaining = bun_ptr::RawSlice::new(&remaining.slice()[usize::try_from(w).expect("int cast")..]);
     }
-    stream.pending_body = std::ptr::from_ref::<[u8]>(remaining);
+    stream.pending_body = remaining;
     if remaining.is_empty() {
         stream.request_body_done = true;
         qs.shutdown();

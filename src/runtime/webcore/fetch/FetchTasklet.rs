@@ -982,8 +982,7 @@ impl FetchTasklet {
 
         // some times we don't have metadata so we also check http.url
         let path = if let Some(metadata) = &self.metadata {
-            // SAFETY: metadata.url borrows owned_buf inside metadata; valid while &self.metadata.
-            BunString::clone_utf8(unsafe { &*metadata.url })
+            BunString::clone_utf8(metadata.url.slice())
         } else if let Some(http_) = &self.http {
             BunString::clone_utf8(http_.url.href.as_ref())
         } else {
@@ -1202,8 +1201,7 @@ impl FetchTasklet {
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
         let status_text = BunString::create_atom_if_possible(&http_response.status);
-        // SAFETY: metadata.url borrows owned_buf inside metadata; valid while &self.metadata.
-        let url = BunString::create_atom_if_possible(unsafe { &*metadata.url });
+        let url = BunString::create_atom_if_possible(metadata.url.slice());
         let redirected = self.result.redirected;
         Response::init(
             crate::webcore::response::Init {

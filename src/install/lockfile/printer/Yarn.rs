@@ -119,13 +119,10 @@ fn packages(
     }
 
     {
-        // PORT NOTE: explicit `<u64>` — `Alphabetizer<SemverIntType>` stores
-        // raw `*const [Resolution<_>]`, and ref→raw-ptr coercion blocks
-        // inference of the generic from `resolved: &[Resolution /* = u64 */]`.
         let alphabetizer = Alphabetizer::<u64> {
-            names,
-            buf: string_buf,
-            resolutions: resolved,
+            names: names.into(),
+            buf: string_buf.into(),
+            resolutions: resolved.into(),
         };
         // PERF(port): std.sort.pdq → sort_unstable_by (Rust uses pdqsort internally)
         alphabetized_names.sort_unstable_by(|&a, &b| alphabetizer.order(a, b));

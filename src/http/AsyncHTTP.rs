@@ -705,9 +705,9 @@ fn send_sync_callback(
     // enumerate every field `on_async_http_callback` (and the client path) writes
     // and that callers of `send_sync` can observe, moving owned values out of
     // the HTTP-thread copy where necessary.
-    if let Some(real) = async_http.real {
+    if let Some(mut real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
-        let real = unsafe { &mut *real.as_ptr() };
+        let real = unsafe { real.as_mut() };
         real.response = async_http.response;
         real.request = async_http.request.take();
         real.response_headers = core::mem::take(&mut async_http.response_headers);

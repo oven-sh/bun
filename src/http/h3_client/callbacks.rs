@@ -36,9 +36,9 @@ pub fn register(qctx: &mut quic::Context) {
 unsafe extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
-    let Some(session) = *qs.ext::<ClientSession>() else { return };
+    let Some(mut session) = *qs.ext::<ClientSession>() else { return };
     // SAFETY: ext slot was set by ClientContext::connect; live until on_conn_close clears it.
-    let session = unsafe { &mut *session.as_ptr() };
+    let session = unsafe { session.as_mut() };
     bun_core::scoped_log!(h3_client, "hsk_done ok={} pending={}", ok, session.pending.len());
     if ok == 0 {
         session.closed = true;
@@ -58,9 +58,9 @@ unsafe extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
 unsafe extern "C" fn on_goaway(qs: *mut quic::Socket) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
-    let Some(session) = *qs.ext::<ClientSession>() else { return };
+    let Some(mut session) = *qs.ext::<ClientSession>() else { return };
     // SAFETY: ext slot is live until on_conn_close clears it.
-    let session = unsafe { &mut *session.as_ptr() };
+    let session = unsafe { session.as_mut() };
     bun_core::scoped_log!(
         h3_client,
         "goaway {}:{}",
@@ -73,9 +73,9 @@ unsafe extern "C" fn on_goaway(qs: *mut quic::Socket) {
 unsafe extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
-    let Some(session) = *qs.ext::<ClientSession>() else { return };
+    let Some(mut session) = *qs.ext::<ClientSession>() else { return };
     // SAFETY: ext slot is live; this callback is the one that tears it down.
-    let session = unsafe { &mut *session.as_ptr() };
+    let session = unsafe { session.as_mut() };
     session.closed = true;
     session.qsocket = None;
     let mut buf = [0u8; 256];
@@ -116,16 +116,16 @@ unsafe extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     if is_client == 0 {
         return;
     }
-    let Some(qs) = s.socket() else { return };
+    let Some(mut qs) = s.socket() else { return };
     // SAFETY: parent connection outlives this stream callback; single-threaded
     // event loop, no other &mut Socket live across this reborrow.
-    let qs = unsafe { &mut *qs.as_ptr() };
-    let Some(session) = *qs.ext::<ClientSession>() else {
+    let qs = unsafe { qs.as_mut() };
+    let Some(mut session) = *qs.ext::<ClientSession>() else {
         s.close();
         return;
     };
     // SAFETY: ext slot is live until on_conn_close clears it.
-    let session = unsafe { &mut *session.as_ptr() };
+    let session = unsafe { session.as_mut() };
     // Bind the next pending request to this stream.
     let stream: *mut Stream = 'find: {
         for &st in session.pending.iter() {
@@ -152,9 +152,9 @@ unsafe extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
 unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
-    let Some(stream) = *s.ext::<Stream>() else { return };
+    let Some(mut stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; live until on_stream_close clears it.
-    let stream = unsafe { &mut *stream.as_ptr() };
+    let stream = unsafe { stream.as_mut() };
     let n = s.header_count();
 
     stream.decoded_headers.clear();
@@ -206,9 +206,9 @@ unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
 unsafe extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
-    let Some(stream) = *s.ext::<Stream>() else { return };
+    let Some(mut stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; live until on_stream_close clears it.
-    let stream = unsafe { &mut *stream.as_ptr() };
+    let stream = unsafe { stream.as_mut() };
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
@@ -219,18 +219,18 @@ unsafe extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: 
 unsafe extern "C" fn on_stream_writable(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
-    let Some(stream) = *s.ext::<Stream>() else { return };
+    let Some(mut stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; live until on_stream_close clears it.
-    let stream = unsafe { &mut *stream.as_ptr() };
+    let stream = unsafe { stream.as_mut() };
     encode::drain_send_body(stream, s);
 }
 
 unsafe extern "C" fn on_stream_close(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
-    let Some(stream) = *s.ext::<Stream>() else { return };
+    let Some(mut stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; this callback clears it.
-    let stream = unsafe { &mut *stream.as_ptr() };
+    let stream = unsafe { stream.as_mut() };
     *s.ext::<Stream>() = None;
     stream.qstream = None;
     bun_core::scoped_log!(

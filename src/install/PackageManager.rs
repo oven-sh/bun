@@ -734,11 +734,11 @@ impl PackageManager {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn scripts_node_mut<'a>(&self) -> Option<&'a mut ProgressNode> {
-        let p = self.scripts_node?;
+        let mut p = self.scripts_node?;
         // SAFETY: `scripts_node` is `Some(NonNull)` pointing at a caller
         // stack-local `ProgressNode` that outlives the install pass; access is
         // single-threaded (main install loop only).
-        Some(unsafe { &mut *p.as_ptr() })
+        Some(unsafe { p.as_mut() })
     }
 
     /// Port of Zig `pub fn get() *PackageManager` (PackageManager.zig:442) —

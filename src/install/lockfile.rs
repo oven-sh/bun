@@ -1227,7 +1227,7 @@ impl Lockfile {
             // (ptr, len) and let `UpdateRequest::version_buf()` reborrow at
             // each read site.
             let string_buf = new.buffers.string_bytes.as_slice();
-            let string_buf_ptr: *const [u8] = core::ptr::from_ref(string_buf);
+            let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
             let slice = new.packages.slice();
 
             // updates might be applied to the root package.json or one
@@ -2720,16 +2720,15 @@ pub struct EqlSorter<'a> {
 #[derive(Clone, Copy)]
 pub struct PathToId {
     pub pkg_id: PackageID,
-    pub tree_path: *const [u8],
-    // TODO(port): Zig stores a borrowed slice (allocated and freed via sort_buf scope).
-    // Using *const [u8] to avoid lifetime threading on the sort buffer; revisit in Phase B.
+    /// Borrows a `Box<[u8]>` parked in `tree_paths` for the duration of
+    /// `Lockfile::eql` — `RawSlice` carries the outlives-holder invariant.
+    pub tree_path: bun_ptr::RawSlice<u8>,
 }
 
 impl<'a> EqlSorter<'a> {
     pub fn order(&self, l: PathToId, r: PathToId) -> Ordering {
-        // SAFETY: tree_path points into allocations alive for the duration of `eql`.
-        let l_path = unsafe { &*l.tree_path };
-        let r_path = unsafe { &*r.tree_path };
+        let l_path = l.tree_path.slice();
+        let r_path = r.tree_path.slice();
         // they exist in the same tree, name can't be the same so string compare.
         strings::order(l_path, r_path).then_with(|| {
             let l_name = self.pkg_names[l.pkg_id as usize];
@@ -2787,7 +2786,7 @@ impl Lockfile {
                 &mut depth_buf,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr: *const [u8] = &raw const *tree_path;
+            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
             tree_paths.push(tree_path);
             for &l_dep_id in l_tree.dependencies.get(l_hoisted_deps) {
                 if l_dep_id == invalid_dependency_id {
@@ -2817,7 +2816,7 @@ impl Lockfile {
                 &mut depth_buf,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr: *const [u8] = &raw const *tree_path;
+            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
             tree_paths.push(tree_path);
             for &r_dep_id in r_tree.dependencies.get(r_hoisted_deps) {
                 if r_dep_id == invalid_dependency_id {
@@ -3003,9 +3002,9 @@ impl Lockfile {
 
         {
             let alphabetizer = package::Alphabetizer::<u64> {
-                names,
-                buf: bytes,
-                resolutions,
+                names: names.into(),
+                buf: bytes.into(),
+                resolutions: resolutions.into(),
             };
             alphabetized_names.sort_unstable_by(|a, b| alphabetizer.order(*a, *b));
         }

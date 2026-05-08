@@ -34,8 +34,8 @@ pub struct Stream {
     pub status_code: u16,
 
     // BACKREF: borrows the request body owned by `client`; not freed here.
-    // TODO(port): lifetime — raw slice; default to `b"" as *const [u8]` at construction sites.
-    pub pending_body: *const [u8],
+    // `RawSlice` carries the outlives-holder invariant.
+    pub pending_body: bun_ptr::RawSlice<u8>,
     pub request_body_done: bool,
     pub is_streaming_body: bool,
     pub headers_delivered: bool,
@@ -54,7 +54,7 @@ impl Stream {
             decoded_headers: Vec::new(),
             body_buffer: Vec::new(),
             status_code: 0,
-            pending_body: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
+            pending_body: bun_ptr::RawSlice::EMPTY,
             request_body_done: false,
             is_streaming_body: false,
             headers_delivered: false,

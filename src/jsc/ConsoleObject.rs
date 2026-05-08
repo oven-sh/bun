@@ -1447,7 +1447,7 @@ pub fn format2(
     let mut this_value: JSValue = vals[0];
     // PORT NOTE: see E0509 note above.
     let mut fmt = Formatter::new(global);
-    fmt.remaining_values = &raw const vals[1..];
+    fmt.remaining_values = bun_ptr::RawSlice::new(&vals[1..]);
     fmt.ordered_properties = options.ordered_properties;
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
@@ -1622,11 +1622,12 @@ pub mod formatter {
     pub struct Formatter<'a> {
         pub global_this: &'a JSGlobalObject,
 
-        /// Raw pointer because callers seat this to a stack slice and reset it
-        /// to `&[]` before the backing storage goes away (mirrors the Zig
+        /// Callers seat this to a stack slice and reset it to `EMPTY` before
+        /// the backing storage goes away (mirrors the Zig
         /// `defer self.formatter.remaining_values = &.{}` pattern). A `&'a`
-        /// slice cannot express that without forcing `'a` to outlive locals.
-        pub remaining_values: *const [JSValue],
+        /// slice cannot express that without forcing `'a` to outlive locals;
+        /// `RawSlice` carries the outlives-holder invariant instead.
+        pub remaining_values: bun_ptr::RawSlice<JSValue>,
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
@@ -1661,7 +1662,7 @@ pub mod formatter {
         pub fn new(global_this: &'a JSGlobalObject) -> Self {
             Self {
                 global_this,
-                remaining_values: &[],
+                remaining_values: bun_ptr::RawSlice::EMPTY,
                 map: visited::Map::default(),
                 map_node: None,
                 hide_native: false,
@@ -1725,21 +1726,19 @@ pub mod formatter {
 
         /// View the queued `%`-format arguments as a slice.
         ///
-        /// SAFETY: callers always seat `remaining_values` to a slice that
-        /// outlives the dereference site and reset it to `&[]` before the
-        /// backing storage is released.
+        /// Callers always seat `remaining_values` to a slice that outlives the
+        /// dereference site and reset it to `EMPTY` before the backing storage
+        /// is released (RawSlice invariant).
         #[inline]
         pub fn remaining(&self) -> &[JSValue] {
-            unsafe { &*self.remaining_values }
+            self.remaining_values.slice()
         }
 
         /// Drop the first queued `%`-format argument.
         #[inline]
         pub fn advance_remaining(&mut self) {
-            unsafe {
-                let s = &*self.remaining_values;
-                self.remaining_values = &raw const s[1..];
-            }
+            let s = self.remaining_values;
+            self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
         }
     }
 
@@ -1817,7 +1816,7 @@ pub mod formatter {
                 .expect("ZigFormatter::fmt re-entered or used after consumption");
 
             let one = [self.value];
-            formatter.remaining_values = &one;
+            formatter.remaining_values = bun_ptr::RawSlice::new(&one);
 
             let result = (|| {
                 let tag = Tag::get(self.value, formatter.global_this)
@@ -1831,7 +1830,7 @@ pub mod formatter {
             })();
 
             // Mirrors Zig `defer self.formatter.remaining_values = &.{}`.
-            formatter.remaining_values = &[];
+            formatter.remaining_values = bun_ptr::RawSlice::EMPTY;
             self.formatter.set(Some(formatter));
             result
         }
@@ -2386,9 +2385,9 @@ pub mod formatter {
                         }
 
                         // PORT NOTE: borrowck — `writer` holds `&mut self.estimated_line_length`,
-                        // so route `remaining_values` reads/writes through the raw-pointer
+                        // so route `remaining_values` reads/writes through the `RawSlice`
                         // field directly instead of the `&self` helper methods.
-                        if unsafe { (&*self.remaining_values).is_empty() } {
+                        if self.remaining_values.is_empty() {
                             break;
                         }
 
@@ -2428,10 +2427,10 @@ pub mod formatter {
                         i = 0;
                         hit_percent = true;
                         len = slice.len() as u32;
-                        let next_value = unsafe {
-                            let s = &*self.remaining_values;
-                            self.remaining_values = &raw const s[1..];
-                            s[0]
+                        let next_value = {
+                            let s = self.remaining_values;
+                            self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
+                            s.slice()[0]
                         };
 
                         // https://console.spec.whatwg.org/#formatter
@@ -2634,7 +2633,7 @@ pub mod formatter {
                                 writer.print(format_args!("{str}"));
                             }
                         }
-                        if unsafe { (&*self.remaining_values).is_empty() } {
+                        if self.remaining_values.is_empty() {
                             break;
                         }
                     }

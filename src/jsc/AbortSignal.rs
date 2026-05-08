@@ -195,7 +195,7 @@ impl AbortSignal {
         // TODO(port): lifetime — callers that run/cancel/deinit need `*mut`; revisit
         // whether `&mut Timeout` (or raw ptr) is the right shape once call sites port.
         let ptr = unsafe { WebCore__AbortSignal__getTimeout(self.as_mut_ptr()) };
-        NonNull::new(ptr).map(|p| unsafe { &*p.as_ptr() })
+        NonNull::new(ptr).map(|p| unsafe { p.as_ref() })
     }
 
     #[inline(always)]

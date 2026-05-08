@@ -63,9 +63,9 @@ pub struct Stream {
     pub send_window: i32,
     /// Unsent suffix of a `.bytes` request body, parked while the send
     /// window is exhausted. Borrows from `client.state.request_body`.
-    // PORT NOTE: lifetime — borrows from client.state.request_body; raw slice
-    // ptr to avoid threading a self-referential lifetime.
-    pub pending_body: *const [u8],
+    // BACKREF: borrows from `client.state.request_body`; `RawSlice` carries
+    // the outlives-holder invariant (client outlives every Stream it owns).
+    pub pending_body: bun_ptr::RawSlice<u8>,
 }
 
 /// RFC 9113 §5.1. A `Stream` is created by sending HEADERS, so it starts
@@ -119,16 +119,15 @@ impl Stream {
             unacked_bytes: 0,
             data_bytes_received: 0,
             send_window,
-            pending_body: std::ptr::from_ref::<[u8]>(b""),
+            pending_body: bun_ptr::RawSlice::EMPTY,
         })
     }
 
     #[inline]
-    pub fn pending_body(&self) -> &'static [u8] {
-        // SAFETY: pending_body points into client.state.request_body which
-        // outlives the stream. Lifetime erased to thread through Zig-shaped
-        // borrowck (session mutated while reading this).
-        unsafe { &*self.pending_body }
+    pub fn pending_body(&self) -> &[u8] {
+        // `pending_body` is a `RawSlice` into `client.state.request_body`,
+        // which outlives the stream (RawSlice invariant).
+        self.pending_body.slice()
     }
 
     // PORT NOTE: Stream.zig:rst() re-entered the session via the `session`

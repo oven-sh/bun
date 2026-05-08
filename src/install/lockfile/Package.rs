@@ -300,18 +300,19 @@ impl DependencyGroup {
     };
 }
 
-// TODO(port): lifetime — Phase A forbids lifetime params on structs; these are
-// borrows into lockfile.packages SoA columns + string_bytes (no LIFETIMES.tsv entry).
+// Borrows into lockfile.packages SoA columns + string_bytes; `RawSlice`
+// carries the outlives-holder invariant (the lockfile outlives every sort
+// pass that constructs an Alphabetizer).
 pub struct Alphabetizer<SemverIntType: VersionInt> {
-    pub names: *const [String],
-    pub buf: *const [u8],
-    pub resolutions: *const [Resolution<SemverIntType>],
+    pub names: bun_ptr::RawSlice<String>,
+    pub buf: bun_ptr::RawSlice<u8>,
+    pub resolutions: bun_ptr::RawSlice<Resolution<SemverIntType>>,
 }
 
 impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
     pub fn order(&self, lhs: PackageID, rhs: PackageID) -> core::cmp::Ordering {
-        // SAFETY: caller constructs Alphabetizer with slices that outlive the sort call.
-        let (names, buf, resolutions) = unsafe { (&*self.names, &*self.buf, &*self.resolutions) };
+        let (names, buf, resolutions) =
+            (self.names.slice(), self.buf.slice(), self.resolutions.slice());
         names[lhs as usize]
             .order(&names[rhs as usize], buf, buf)
             .then_with(|| resolutions[lhs as usize].order(&resolutions[rhs as usize], buf, buf))
@@ -956,16 +957,16 @@ impl Diff {
         // recursive call only sorts `overrides`/`catalogs` and never reallocates
         // either lockfile's `buffers.dependencies`/`resolutions`, so the raw
         // pointers remain valid for the loop body.
-        let mut to_deps: *const [Dependency] =
-            to.dependencies.get(to_lockfile.buffers.dependencies.as_slice());
-        macro_rules! to_deps { () => { unsafe { &*to_deps } } }
-        let from_deps: *const [Dependency] =
-            from.dependencies.get(from_lockfile.buffers.dependencies.as_slice());
-        let from_resolutions: *const [PackageID] =
-            from.resolutions.get(from_lockfile.buffers.resolutions.as_slice());
-        // SAFETY: see PORT NOTE above — `from_lockfile.buffers` is not
-        // reallocated for the lifetime of these references.
-        let (from_deps, from_resolutions) = unsafe { (&*from_deps, &*from_resolutions) };
+        let mut to_deps: bun_ptr::RawSlice<Dependency> =
+            to.dependencies.get(to_lockfile.buffers.dependencies.as_slice()).into();
+        macro_rules! to_deps { () => { to_deps.slice() } }
+        let from_deps: bun_ptr::RawSlice<Dependency> =
+            from.dependencies.get(from_lockfile.buffers.dependencies.as_slice()).into();
+        let from_resolutions: bun_ptr::RawSlice<PackageID> =
+            from.resolutions.get(from_lockfile.buffers.resolutions.as_slice()).into();
+        // See PORT NOTE above — `from_lockfile.buffers` is not reallocated for
+        // the lifetime of these references.
+        let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
 
         if from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count() {
@@ -1382,7 +1383,7 @@ impl Diff {
                         // `parse_with_json` may have grown `to_lockfile.buffers
                         // .dependencies` — re-derive the slice (Zig did the same).
                         to_deps =
-                            to.dependencies.get(to_lockfile.buffers.dependencies.as_slice());
+                            to.dependencies.get(to_lockfile.buffers.dependencies.as_slice()).into();
 
                         let from_pkg =
                             from_lockfile.packages.get(from_resolutions[i] as usize);
@@ -1586,9 +1587,9 @@ impl Package<u64> {
         // `string_builder.append()` calls write into the *pre-reserved* tail
         // (`allocate()` ran before this fn). No realloc occurs, so the raw
         // pointer stays valid; a `&[u8]` would needlessly lock the builder.
-        let buf_ptr: *const [u8] = string_builder.string_bytes.as_slice();
-        // SAFETY: see note above — capacity was reserved by `allocate()`.
-        let buf: &[u8] = unsafe { &*buf_ptr };
+        let buf_ptr = bun_ptr::RawSlice::new(string_builder.string_bytes.as_slice());
+        // Capacity was reserved by `allocate()`; see note above.
+        let buf: &[u8] = buf_ptr.slice();
         let sliced = external_version.sliced(buf);
 
         let mut dependency_version = Dependency::parse_with_optional_tag(

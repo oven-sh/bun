@@ -572,7 +572,7 @@ impl TranspilerJob {
             return;
         }
 
-        let ast_store_ptr = AST_MEMORY_STORE.with(|cell| {
+        let mut ast_store_ptr = AST_MEMORY_STORE.with(|cell| {
             if cell.get().is_none() {
                 let boxed = Box::new(ASTMemoryAllocator::new(arena_ref));
                 // SAFETY: heap::alloc never null
@@ -581,7 +581,7 @@ impl TranspilerJob {
             cell.get().unwrap()
         });
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let ast_memory_store = unsafe { &mut *ast_store_ptr.as_ptr() };
+        let ast_memory_store = unsafe { ast_store_ptr.as_mut() };
         // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
         // PORT NOTE: Zig passed `allocator` to `enter()`; Rust signature folds the arena
         // into `ASTMemoryAllocator::new`. `Scope` restores the previous
@@ -965,7 +965,7 @@ impl TranspilerJob {
             }
         }
 
-        let printer_ptr = SOURCE_CODE_PRINTER.with(|cell| {
+        let mut printer_ptr = SOURCE_CODE_PRINTER.with(|cell| {
             if cell.get().is_none() {
                 let writer = BufferWriter::init();
                 let mut bp = Box::new(BufferPrinter::init(writer));
@@ -976,7 +976,7 @@ impl TranspilerJob {
             cell.get().unwrap()
         });
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let source_code_printer = unsafe { &mut *printer_ptr.as_ptr() };
+        let source_code_printer = unsafe { printer_ptr.as_mut() };
 
         // PORT NOTE: Zig copies BufferPrinter by value here (`var printer = source_code_printer.?.*`)
         // and writes it back later. We swap the buffer out instead and write it back via the

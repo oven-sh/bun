@@ -145,7 +145,7 @@ impl AsyncModule {
     fn global_this<'a>(&self) -> &'a JSGlobalObject {
         // SAFETY: see doc comment — `global_this` set in `init` from the live
         // per-thread global; never null, never freed before this struct.
-        unsafe { &*self.global_this.as_ptr() }
+        unsafe { self.global_this.as_ref() }
     }
 
     #[inline]
@@ -365,14 +365,13 @@ impl Queue {
                 // `&mut vm` to `resolve_error`. The lockfile string buffer is
                 // stable across `resolve_error` (no realloc on the error
                 // path); detach the borrow via raw ptr.
-                let name: *const [u8] = vm.package_manager().lockfile.str(&dependency.name);
+                let name = bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
                 module
                     .resolve_error(
                         vm,
                         import_record_id,
                         PackageResolveError {
-                            // SAFETY: see PORT NOTE above.
-                            name: unsafe { &*name },
+                            name: name.slice(),
                             err,
                             url: b"",
                             version: dependency.version.clone(),
@@ -1000,20 +999,16 @@ impl AsyncModule {
     ) -> Result<(), bun_core::Error> {
         let global_this = self.global_this();
 
-        let string_bytes: *const [u8] = vm
-            .package_manager()
-            .lockfile
-            .buffers
-            .string_bytes
-            .as_slice();
-        // SAFETY: `string_bytes` is borrowed from the per-VM lockfile arena
-        // which outlives this stack frame; reborrow as `&[u8]` so
-        // `Resolution::fmt` doesn't extend the `&mut vm` borrow across the
-        // `match e` body (the `else` arm calls `vm.package_manager()`
-        // again).
+        // `string_bytes` borrows the per-VM lockfile arena which outlives this
+        // stack frame; capture as `RawSlice` so `Resolution::fmt` doesn't
+        // extend the `&mut vm` borrow across the `match e` body (the `else`
+        // arm calls `vm.package_manager()` again).
+        let string_bytes = bun_ptr::RawSlice::new(
+            vm.package_manager().lockfile.buffers.string_bytes.as_slice(),
+        );
         let resolution_fmt = result
             .resolution
-            .fmt(unsafe { &*string_bytes }, bun_core::fmt::PathSep::Any);
+            .fmt(string_bytes.slice(), bun_core::fmt::PathSep::Any);
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
@@ -1291,12 +1286,12 @@ impl AsyncModule {
         // swap the buffer out instead and write it back via the `_writeback`
         // guard — same observable effect (the thread-local's buffer is
         // reused). Matches RuntimeTranspilerStore.rs.
-        let printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
+        let mut printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
             .get()
             .expect("source_code_printer not initialized");
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
         let mut printer = core::mem::replace(
-            unsafe { &mut *printer_ptr.as_ptr() },
+            unsafe { printer_ptr.as_mut() },
             bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         );
         printer.ctx.reset();

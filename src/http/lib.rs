@@ -112,8 +112,9 @@ pub const extremely_verbose: bool = false;
 // PORT NOTE: extracted from the gated `the gated draft block (now dissolved)` block so `InternalState`
 // can name it. The `picohttp::Response<'static>` borrows into `owned_buf`.
 pub struct HTTPResponseMetadata {
-    // TODO(port): borrows owned_buf — raw slice ptr to avoid a self-referential lifetime.
-    pub url: *const [u8],
+    // Borrows `owned_buf` (sibling field) — `RawSlice` carries the
+    // outlives-holder invariant for the self-referential borrow.
+    pub url: bun_ptr::RawSlice<u8>,
     pub owned_buf: Box<[u8]>,
     pub response: bun_picohttp::Response<'static>,
 }
@@ -121,7 +122,7 @@ pub struct HTTPResponseMetadata {
 impl Default for HTTPResponseMetadata {
     fn default() -> Self {
         Self {
-            url: std::ptr::from_ref::<[u8]>(b""),
+            url: bun_ptr::RawSlice::EMPTY,
             owned_buf: Box::default(),
             response: bun_picohttp::Response::default(),
         }
@@ -549,7 +550,7 @@ impl Drop for HTTPClient<'_> {
         // redirect / prev_redirect are Vec<u8> — dropped automatically.
         // proxy_authorization: Option<Vec<u8>> — dropped automatically.
         // proxy_headers: Option<Headers> — dropped automatically.
-        if let Some(tunnel) = self.proxy_tunnel.take() {
+        if let Some(mut tunnel) = self.proxy_tunnel.take() {
             // SAFETY: tunnel was created by ProxyTunnel::new (heap::alloc) and
             // refcounted; detach_and_deref releases this client's strong ref.
             unsafe { (*tunnel.as_ptr()).detach_and_deref() };
@@ -1233,36 +1234,35 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
 impl<'a> HTTPClient<'a> {
     #[inline]
     fn request_body(&self) -> &[u8] {
-        // SAFETY: request_body is a slice into `original_request_body` which is
-        // a field of `self`. Lifetime erased only to thread through Zig-shaped
-        // borrowck (mutates other state fields while reading this).
-        unsafe { &*self.state.request_body }
+        // `request_body` is a `RawSlice` into `original_request_body` (sibling
+        // field of `self`); the RawSlice invariant centralises the unsafe.
+        self.state.request_body.slice()
     }
     #[inline]
     fn set_request_body(&mut self, slice: &[u8]) {
-        self.state.request_body = std::ptr::from_ref::<[u8]>(slice);
+        self.state.request_body = bun_ptr::RawSlice::new(slice);
     }
     #[inline]
     fn body_out_str(&self) -> Option<&MutableString> {
         // SAFETY: body_out_str is set in `start()` and lives for the request.
-        self.state.body_out_str.map(|p| unsafe { &*p.as_ptr() })
+        self.state.body_out_str.map(|p| unsafe { p.as_ref() })
     }
     #[inline]
     fn body_out_str_mut(&mut self) -> Option<&mut MutableString> {
         // SAFETY: see body_out_str()
-        self.state.body_out_str.map(|p| unsafe { &mut *p.as_ptr() })
+        self.state.body_out_str.map(|mut p| unsafe { p.as_mut() })
     }
     #[inline]
     fn proxy_tunnel_mut(&mut self) -> Option<&mut ProxyTunnel> {
         // SAFETY: proxy_tunnel is intrusive-refcounted; this borrow does not
         // outlive `self` and the tunnel is not dropped while borrowed.
-        self.proxy_tunnel.map(|p| unsafe { &mut *p.as_ptr() })
+        self.proxy_tunnel.map(|mut p| unsafe { p.as_mut() })
     }
     #[inline]
     fn progress_node_mut(&mut self) -> Option<&mut bun_core::Progress::Node> {
         // SAFETY: progress_node is owned by the caller (e.g. `bun install`'s
         // Progress) and outlives this client.
-        self.progress_node.map(|p| unsafe { &mut *p.as_ptr() })
+        self.progress_node.map(|mut p| unsafe { p.as_mut() })
     }
 }
 
@@ -1534,10 +1534,10 @@ impl<'a> HTTPClient<'a> {
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
         );
-        let body_out = self.state.body_out_str.take().unwrap();
+        let mut body_out = self.state.body_out_str.take().unwrap();
         self.state.reset();
         // SAFETY: body_out_str points at the caller-owned MutableString, valid for the request.
-        self.start(body, unsafe { &mut *body_out.as_ptr() });
+        self.start(body, unsafe { body_out.as_mut() });
     }
 
     /// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
@@ -1574,9 +1574,9 @@ impl<'a> HTTPClient<'a> {
             self.fail(err!(Aborted));
             return;
         }
-        if let Some(tunnel) = self.proxy_tunnel.take() {
+        if let Some(mut tunnel) = self.proxy_tunnel.take() {
             // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel
-            let tunnel = unsafe { &mut *tunnel.as_ptr() };
+            let tunnel = unsafe { tunnel.as_mut() };
             tunnel.shutdown();
             tunnel.detach_and_deref();
         }
@@ -1623,9 +1623,9 @@ impl<'a> HTTPClient<'a> {
                 &mut self.state.original_request_body,
                 HTTPRequestBody::Bytes(b""),
             );
-            let body_out = self.state.body_out_str.take().unwrap();
+            let mut body_out = self.state.body_out_str.take().unwrap();
             // SAFETY: body_out points at the caller-owned MutableString
-            self.start(body, unsafe { &mut *body_out.as_ptr() });
+            self.start(body, unsafe { body_out.as_mut() });
             return;
         }
 
@@ -2024,7 +2024,7 @@ impl<'a> HTTPClient<'a> {
         // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:1098 reads
         // `this.state.body_out_str.?` without clearing it, so the
         // TooManyRedirects `fail()` below still sees a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        let mut body_out_str = self.state.body_out_str.unwrap();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -2035,10 +2035,10 @@ impl<'a> HTTPClient<'a> {
         // store it under the WRONG target hostname — a follow-up request to the
         // redirect destination could then reuse a TLS session negotiated with the
         // original host. Close the tunnel on redirect; only pool the raw socket.
-        if let Some(tunnel) = self.proxy_tunnel.take() {
+        if let Some(mut tunnel) = self.proxy_tunnel.take() {
             bun_core::scoped_log!(fetch, "close the tunnel");
             // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel
-            let tunnel = unsafe { &mut *tunnel.as_ptr() };
+            let tunnel = unsafe { tunnel.as_mut() };
             tunnel.shutdown();
             tunnel.detach_and_deref();
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -2085,14 +2085,14 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "doRedirect state reset");
         // also reset proxy to redirect
         self.flags.proxy_tunneling = false;
-        if let Some(tunnel) = self.proxy_tunnel.take() {
+        if let Some(mut tunnel) = self.proxy_tunnel.take() {
             // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel
             unsafe { (*tunnel.as_ptr()).detach_and_deref() };
         }
         self.flags.protocol = Protocol::Http1_1;
 
         // SAFETY: body_out_str points at the caller-owned MutableString.
-        self.start(HTTPRequestBody::Bytes(request_body), unsafe { &mut *body_out_str.as_ptr() });
+        self.start(HTTPRequestBody::Bytes(request_body), unsafe { body_out_str.as_mut() });
     }
 
     /// **Not thread safe while request is in-flight**
@@ -2331,8 +2331,9 @@ impl<'a> HTTPClient<'a> {
         }
 
         if has_sent_headers && !self.request_body().is_empty() {
-            self.state.request_body =
-                &raw const self.request_body()[self.state.request_sent_len - headers_len..];
+            self.state.request_body = bun_ptr::RawSlice::new(
+                &self.state.request_body.slice()[self.state.request_sent_len - headers_len..],
+            );
         }
 
         let has_sent_body = if matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2401,12 +2402,12 @@ impl<'a> HTTPClient<'a> {
         let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body else {
             return;
         };
-        let Some(stream_buffer_ptr) = stream.buffer else {
+        let Some(mut stream_buffer_ptr) = stream.buffer else {
             return;
         };
         // SAFETY: ThreadSafeStreamBuffer is owned by the JS-side request body
         // stream and outlives this call (intrusive-refcounted).
-        let stream_buffer = unsafe { &mut *stream_buffer_ptr.as_ptr() };
+        let stream_buffer = unsafe { stream_buffer_ptr.as_mut() };
         // SAFETY: this_ptr == self; flags is disjoint from `stream`.
         if unsafe { (*this_ptr).flags.upgrade_state } == HTTPUpgradeState::Pending {
             // cannot drain yet, upgrade is waiting for upgrade
@@ -2568,7 +2569,8 @@ impl<'a> HTTPClient<'a> {
                             };
 
                             self.state.request_sent_len += sent;
-                            self.state.request_body = &raw const self.request_body()[sent..];
+                            self.state.request_body =
+                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
                         }
 
                         if self.request_body().is_empty() {
@@ -2606,9 +2608,9 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
-                if let Some(proxy_ptr) = self.proxy_tunnel {
+                if let Some(mut proxy_ptr) = self.proxy_tunnel {
                     // SAFETY: proxy_ptr is a live intrusive-refcounted ProxyTunnel
-                    let proxy = unsafe { &mut *proxy_ptr.as_ptr() };
+                    let proxy = unsafe { proxy_ptr.as_mut() };
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) | HTTPRequestBody::Owned(_) => {
                             self.set_timeout(socket, 5);
@@ -2618,7 +2620,8 @@ impl<'a> HTTPClient<'a> {
                             let Ok(sent) = ProxyTunnel::write(proxy, to_send) else { return };
 
                             self.state.request_sent_len += sent;
-                            self.state.request_body = &raw const self.request_body()[sent..];
+                            self.state.request_body =
+                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
 
                             if self.request_body().is_empty() {
                                 self.state.request_stage = RequestStage::Done;
@@ -2636,9 +2639,9 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyHeaders => {
                 bun_core::scoped_log!(fetch, "send proxy headers");
-                if let Some(proxy_ptr) = self.proxy_tunnel {
+                if let Some(mut proxy_ptr) = self.proxy_tunnel {
                     // SAFETY: proxy_ptr is a live intrusive-refcounted ProxyTunnel
-                    let proxy = unsafe { &mut *proxy_ptr.as_ptr() };
+                    let proxy = unsafe { proxy_ptr.as_mut() };
                     self.set_timeout(socket, 5);
                     // PERF(port): was stack-fallback alloc (16KB) — profile in Phase B
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
@@ -2686,8 +2689,10 @@ impl<'a> HTTPClient<'a> {
                     let has_sent_headers = self.state.request_sent_len >= headers_len;
 
                     if has_sent_headers && !self.request_body().is_empty() {
-                        self.state.request_body =
-                            &raw const self.request_body()[self.state.request_sent_len - headers_len..];
+                        self.state.request_body = bun_ptr::RawSlice::new(
+                            &self.state.request_body.slice()
+                                [self.state.request_sent_len - headers_len..],
+                        );
                     }
 
                     let has_sent_body = self.request_body().is_empty();
@@ -3054,9 +3059,9 @@ impl<'a> HTTPClient<'a> {
         };
         // pc drops at scope exit (was `defer pc.deinit()`)
 
-        for waiter_ptr in pc.waiters.iter() {
+        for mut waiter_ptr in pc.waiters.iter().copied() {
             // SAFETY: waiters are live HTTPClients pinned in their AsyncHTTP slots
-            let waiter = unsafe { &mut *waiter_ptr.as_ptr() };
+            let waiter = unsafe { waiter_ptr.as_mut() };
             if waiter.signals.get(signals::Field::Aborted) {
                 waiter.fail(err!(Aborted));
                 continue;
@@ -3090,9 +3095,9 @@ impl<'a> HTTPClient<'a> {
         self.unregister_abort_tracker();
         self.resolve_pending_h2(PendingH2Resolution::LeaderFailed);
 
-        if let Some(tunnel) = self.proxy_tunnel.take() {
+        if let Some(mut tunnel) = self.proxy_tunnel.take() {
             // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel
-            let tunnel = unsafe { &mut *tunnel.as_ptr() };
+            let tunnel = unsafe { tunnel.as_mut() };
             tunnel.shutdown();
             tunnel.detach_and_deref();
         }
@@ -3145,7 +3150,7 @@ impl<'a> HTTPClient<'a> {
             // we clean the temporary response since cloned_metadata is now the owner
             self.state.pending_response = None;
 
-            let href = std::ptr::from_ref::<[u8]>(builder.append(self.url.href));
+            let href = bun_ptr::RawSlice::new(builder.append(self.url.href));
             // Transfer the single backing allocation out of the builder
             // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
             let cap = builder.cap;
@@ -3271,7 +3276,7 @@ impl<'a> HTTPClient<'a> {
             // next request (proxy.write() → error.ConnectionClosed, swallowed).
             let tunnel_poolable = if let Some(t) = self.proxy_tunnel {
                 // SAFETY: t is a live intrusive-refcounted ProxyTunnel
-                let t = unsafe { &*t.as_ptr() };
+                let t = unsafe { t.as_ref() };
                 self.state.request_stage == RequestStage::Done
                     && t.write_buffer.is_empty()
                     && t.wrapper.as_ref().map(|w| !w.is_shutdown()).unwrap_or(false)
@@ -3310,10 +3315,10 @@ impl<'a> HTTPClient<'a> {
                     );
                 }
             } else {
-                if let Some(tunnel) = self.proxy_tunnel.take() {
+                if let Some(mut tunnel) = self.proxy_tunnel.take() {
                     bun_core::scoped_log!(fetch, "close the tunnel");
                     // SAFETY: tunnel is a live intrusive-refcounted ProxyTunnel
-                    let tunnel = unsafe { &mut *tunnel.as_ptr() };
+                    let tunnel = unsafe { tunnel.as_mut() };
                     tunnel.shutdown();
                     tunnel.detach_and_deref();
                 }
@@ -3338,7 +3343,7 @@ impl<'a> HTTPClient<'a> {
         // mutations are finished — no aliased borrows remain.
         let result = HTTPClientResult {
             // SAFETY: body points at the caller-owned MutableString which outlives the callback.
-            body: body.map(|p| unsafe { &mut *p.as_ptr() }),
+            body: body.map(|mut p| unsafe { p.as_mut() }),
             has_more,
             redirected,
             can_stream,
@@ -3412,7 +3417,7 @@ impl<'a> HTTPClient<'a> {
         // mutations are finished — no aliased borrows remain.
         let result = HTTPClientResult {
             // SAFETY: body points at the caller-owned MutableString which outlives the callback.
-            body: body.map(|p| unsafe { &mut *p.as_ptr() }),
+            body: body.map(|mut p| unsafe { p.as_mut() }),
             has_more,
             redirected,
             can_stream,
@@ -3449,7 +3454,7 @@ impl<'a> HTTPClient<'a> {
         // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:2360 reads
         // `this.state.body_out_str.?` without clearing it, so the
         // TooManyRedirects `fail()` below still sees a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        let mut body_out_str = self.state.body_out_str.unwrap();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -3464,7 +3469,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
         // SAFETY: body_out_str points at the caller-owned MutableString.
-        self.start(HTTPRequestBody::Bytes(request_body), unsafe { &mut *body_out_str.as_ptr() });
+        self.start(HTTPRequestBody::Bytes(request_body), unsafe { body_out_str.as_mut() });
     }
 
     pub fn progress_update_h3(&mut self) {
@@ -3565,7 +3570,7 @@ impl<'a> HTTPClient<'a> {
             return HTTPClientResult {
                 metadata: Some(metadata),
                 // SAFETY: body_out_str points at the caller-owned MutableString
-                body: self.state.body_out_str.map(|p| unsafe { &mut *p.as_ptr() }),
+                body: self.state.body_out_str.map(|mut p| unsafe { p.as_mut() }),
                 redirected: self.flags.redirected,
                 fail: self.state.fail,
                 // check if we are reporting cert errors, do not have a fail state and we are not done
@@ -3581,7 +3586,7 @@ impl<'a> HTTPClient<'a> {
         }
         HTTPClientResult {
             // SAFETY: body_out_str points at the caller-owned MutableString
-                body: self.state.body_out_str.map(|p| unsafe { &mut *p.as_ptr() }),
+                body: self.state.body_out_str.map(|mut p| unsafe { p.as_mut() }),
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,
@@ -3635,10 +3640,10 @@ impl<'a> HTTPClient<'a> {
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
-                let body_out = self.state.body_out_str.unwrap();
+                let mut body_out = self.state.body_out_str.unwrap();
                 // SAFETY: body_out points at the caller-owned MutableString
                 self.state
-                    .decompress_bytes(incoming_data, unsafe { &mut *body_out.as_ptr() }, true)?;
+                    .decompress_bytes(incoming_data, unsafe { body_out.as_mut() }, true)?;
             } else {
                 self.state.get_body_buffer().append_slice_exact(incoming_data)?;
             }

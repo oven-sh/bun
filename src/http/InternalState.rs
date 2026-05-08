@@ -40,8 +40,10 @@ pub struct InternalState<'a> {
     pub compressed_body: MutableString,
     pub content_length: Option<usize>,
     pub total_body_received: usize,
-    // TODO(port): self-borrow into `original_request_body.bytes`; raw slice ptr to avoid lifetime on struct
-    pub request_body: *const [u8],
+    // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
+    // outlives-holder invariant (the backing `original_request_body` is a
+    // sibling field, so it lives exactly as long as this struct).
+    pub request_body: bun_ptr::RawSlice<u8>,
     pub original_request_body: HTTPRequestBody<'a>,
     pub request_sent_len: usize,
     pub fail: Option<Error>,
@@ -101,7 +103,7 @@ impl Default for InternalState<'_> {
             compressed_body: MutableString::init_empty(),
             content_length: None,
             total_body_received: 0,
-            request_body: std::ptr::from_ref::<[u8]>(b""),
+            request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             fail: None,
@@ -114,7 +116,7 @@ impl Default for InternalState<'_> {
 
 impl<'a> InternalState<'a> {
     pub fn init(body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) -> InternalState<'a> {
-        let request_body: *const [u8] = std::ptr::from_ref::<[u8]>(body.slice());
+        let request_body = bun_ptr::RawSlice::new(body.slice());
         InternalState {
             original_request_body: body,
             request_body,
@@ -158,7 +160,7 @@ impl<'a> InternalState<'a> {
             compressed_body: MutableString::init_empty(),
             response_message_buffer: MutableString::init_empty(),
             original_request_body: HTTPRequestBody::Bytes(b""),
-            request_body: std::ptr::from_ref::<[u8]>(b""),
+            request_body: bun_ptr::RawSlice::EMPTY,
             certificate_info: None,
             flags: InternalStateFlags::new(),
             total_body_received: 0,
@@ -172,7 +174,7 @@ impl<'a> InternalState<'a> {
         }
 
         // SAFETY: body_out_str is a live user-owned buffer for the lifetime of this state
-        unsafe { &mut *self.body_out_str.unwrap().as_ptr() }
+        unsafe { self.body_out_str.unwrap().as_mut() }
     }
 
     pub fn is_done(&self) -> bool {
@@ -380,7 +382,7 @@ impl<'a> InternalState<'a> {
         }
 
         // SAFETY: body_out_str is a live user-owned buffer for the lifetime of this state
-        let body_out_str = unsafe { &mut *self.body_out_str.unwrap().as_ptr() };
+        let body_out_str = unsafe { self.body_out_str.unwrap().as_mut() };
 
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {

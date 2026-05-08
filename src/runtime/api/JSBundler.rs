@@ -1823,6 +1823,14 @@ pub struct BuildArtifact {
 /// callers stay unchanged.
 pub use bun_bundler::options::OutputKind;
 
+/// `JSValue::as(Blob)` BuildArtifact fallback (JSValue.zig:467) — declared
+/// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
+#[unsafe(no_mangle)]
+pub fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
+    <BuildArtifact as bun_jsc::JsClass>::from_js(value)
+        .map(|b| unsafe { core::ptr::addr_of_mut!((*b).blob) })
+}
+
 impl BuildArtifact {
     /// `BuildArtifact` is not user-constructible (`noConstructor` in .classes.ts).
     pub fn constructor(

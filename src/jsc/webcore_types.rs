@@ -115,9 +115,17 @@ impl Default for Blob {
 const _: () = {
     use crate::generated::JSBlob;
 
+    // `JSValue::as(Blob)` (JSValue.zig:462-472) special-case: a `BuildArtifact`
+    // wraps a `Blob`, so downcasting to `Blob` must also match it. The struct
+    // lives in `bun_runtime`, so resolve the fallback at link time.
+    unsafe extern "Rust" {
+        fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
+    }
+
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js(value)
+                .or_else(|| unsafe { __bun_blob_from_build_artifact(value) })
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js_direct(value)

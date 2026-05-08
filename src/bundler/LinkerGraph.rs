@@ -359,13 +359,18 @@ impl LinkerGraph {
     /// `namespace_alias`, `import_item_status`, ...) through shared
     /// `&LinkerContext`/`&LinkerGraph` paths while iterating disjoint graph
     /// columns, mirroring the prior open-coded `unsafe { &mut *get(r) }`.
-    /// Callers must ensure no other live borrow aliases the same symbol slot.
+    ///
+    /// # Safety
+    /// Caller must ensure no other live `&`/`&mut` borrow aliases the same
+    /// symbol slot for the returned reference's lifetime (the `&self` signature
+    /// alone cannot enforce this — two calls with the same `Ref` while both
+    /// results are live is UB). Mirrors the prior open-coded
+    /// `unsafe { &mut *get(r) }` call-site obligation.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
-        // SAFETY: see `symbol`. The mutated slot is disjoint from any other
-        // borrow held at the call site (graph columns / parse-graph sources /
-        // log live in separate allocations).
+    pub unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
+        // SAFETY: see `symbol` for liveness/validity; caller guarantees the
+        // mutated slot is disjoint from any other borrow held at the call site.
         unsafe { &mut *self.symbols.get(ref_).expect("infallible: ref in symbol table") }
     }
 

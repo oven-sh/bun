@@ -603,7 +603,7 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                self.graph.symbol_mut(original_ref).link = actual_ref;
+                unsafe { self.graph.symbol_mut(original_ref) }.link = actual_ref;
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph.generate_symbol_import_and_use(
@@ -3151,7 +3151,7 @@ impl<'a> LinkerContext<'a> {
                     if named_import.namespace_ref.is_some() && named_import.namespace_ref.expect("infallible: checked is_some").is_valid() {
                         // `named_import` borrows `graph.ast`; the symbol slot is a
                         // disjoint allocation, so no aliasing with this `&mut`.
-                        let symbol = self.graph.symbol_mut(tracker.import_ref);
+                        let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
                         symbol.import_item_status = ImportItemStatus::Missing;
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
@@ -3184,7 +3184,7 @@ impl<'a> LinkerContext<'a> {
                     // The mutated symbol slot is disjoint from the later borrows
                     // (`named_import` from graph.ast, `get_source` from parse_graph,
                     // `self.log`) — all separate allocations.
-                    let symbol = self.graph.symbol_mut(tracker.import_ref);
+                    let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();
                     let source = self.get_source(prev_source_index);
@@ -3415,7 +3415,7 @@ impl<'a> LinkerContext<'a> {
                     ).expect("unreachable");
                 }
                 MatchImportKind::Namespace => {
-                    self.graph.symbol_mut(import_ref).namespace_alias =
+                    unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
@@ -3437,7 +3437,7 @@ impl<'a> LinkerContext<'a> {
 
                     // One-shot field store after `imports_to_bind.put` (disjoint
                     // map) has fully returned.
-                    self.graph.symbol_mut(import_ref).namespace_alias =
+                    unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
@@ -3471,7 +3471,7 @@ impl<'a> LinkerContext<'a> {
                     // The mutated symbol slot is disjoint from `source`/`r`
                     // (parse_graph), `named_import`/`alias` (arena slices), and
                     // `self.log` — all separate allocations.
-                    let symbol = self.graph.symbol_mut(import_ref);
+                    let symbol = unsafe { self.graph.symbol_mut(import_ref) };
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import.alias.expect("infallible: alias present").slice();
                     if symbol.import_item_status == ImportItemStatus::Generated {

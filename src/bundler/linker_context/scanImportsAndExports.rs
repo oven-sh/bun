@@ -466,8 +466,8 @@ pub fn scan_imports_and_exports(
                 {
                     let exports_ref = this.graph.symbols.follow(col_ref!(exports_refs)[source_index]);
                     let module_ref = this.graph.symbols.follow(col_ref!(module_refs)[source_index]);
-                    this.graph.symbol_mut(exports_ref).kind = SymbolKind::Unbound;
-                    this.graph.symbol_mut(module_ref).kind = SymbolKind::Unbound;
+                    unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
+                    unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
                 {
@@ -641,7 +641,7 @@ pub fn scan_imports_and_exports(
                 if r#ref.is_valid() {
                     let original_name =
                         builder.fmt(format_args!("init_{}", source.fmt_identifier()));
-                    this.graph.symbol_mut(r#ref).original_name =
+                    unsafe { this.graph.symbol_mut(r#ref) }.original_name =
                         js_ast::StoreStr::new(original_name);
                 }
             }

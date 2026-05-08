@@ -13,11 +13,11 @@ pub const MIN_WBITS: c_int = 8;
 pub const MAX_WBITS: c_int = 15;
 
 unsafe extern "C" {
-    pub fn zlibVersion() -> *const c_char;
+    pub safe fn zlibVersion() -> *const c_char;
 
     pub fn compress(dest: *mut Bytef, dest_len: *mut uLongf, source: *const Bytef, source_len: uLong) -> c_int;
     pub fn compress2(dest: *mut Bytef, dest_len: *mut uLongf, source: *const Bytef, source_len: uLong, level: c_int) -> c_int;
-    pub fn compressBound(source_len: uLong) -> uLong;
+    pub safe fn compressBound(source_len: uLong) -> uLong;
     pub fn uncompress(dest: *mut Bytef, dest_len: *mut uLongf, source: *const Bytef, source_len: uLong) -> c_int;
 }
 

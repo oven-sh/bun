@@ -24,7 +24,7 @@ pub(crate) mod winsock {
     pub struct iovec { pub iov_len: u32, pub iov_base: *mut u8 }
 }
 
-#[repr(C)] pub struct Opaque { _p: [u8; 0], _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+#[repr(C)] pub struct Opaque { _p: core::cell::UnsafeCell<[u8; 0]>, _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)> }
 
 /// Minimal un-gated surface of the c-ares FFI needed by downstream crates while
 /// the full Phase-A draft (`c_ares.rs`) remains gated. Once `c_ares_draft` is

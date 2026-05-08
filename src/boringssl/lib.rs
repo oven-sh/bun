@@ -64,17 +64,15 @@ pub fn load() {
     if LOADED.swap(true, core::sync::atomic::Ordering::AcqRel) {
         return;
     }
-    // SAFETY: BoringSSL FFI init calls.
-    unsafe {
-        boring::CRYPTO_library_init();
-        // NB: do NOT fold this into `debug_assert!` — that macro elides its
-        // argument entirely in release builds, which would skip the call.
-        let rc = boring::SSL_library_init();
-        debug_assert!(rc > 0);
-        boring::SSL_load_error_strings();
-        boring::ERR_load_BIO_strings();
-        boring::OpenSSL_add_all_algorithms();
-    }
+    // BoringSSL no-arg init calls — declared `safe fn` in `bun_boringssl_sys`.
+    boring::CRYPTO_library_init();
+    // NB: do NOT fold this into `debug_assert!` — that macro elides its
+    // argument entirely in release builds, which would skip the call.
+    let rc = boring::SSL_library_init();
+    debug_assert!(rc > 0);
+    boring::SSL_load_error_strings();
+    boring::ERR_load_BIO_strings();
+    boring::OpenSSL_add_all_algorithms();
 
     if !cfg!(test) {
         core::hint::black_box(OPENSSL_memory_alloc as *const ());
@@ -100,7 +98,8 @@ const SSL_DEFAULT_CIPHER_LIST: *const c_char = c"ALL".as_ptr();
 
 #[repr(C)]
 struct CRYPTO_BUFFER_POOL {
-    _opaque: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
 type SslCustomVerifyCb =

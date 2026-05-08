@@ -20,10 +20,11 @@ pub type ares_socket_t = c_int;
 pub type ares_sock_state_cb =
     Option<unsafe extern "C" fn(*mut c_void, ares_socket_t, c_int, c_int)>;
 
-/// Nomicon opaque-FFI pattern.
+/// Nomicon opaque-FFI pattern. `UnsafeCell` makes the type `!Freeze` so a
+/// shared reference does not assert immutability of the C-owned state.
 #[repr(C)]
 pub struct struct_apattern {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
@@ -591,7 +592,7 @@ pub type struct_timeval = timeval;
 
 #[repr(C)]
 pub struct struct_Channeldata {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
@@ -701,10 +702,12 @@ pub struct ChannelOptions {
     pub tries: Option<i32>,
 }
 
-/// Opaque c-ares channel handle.
+/// Opaque c-ares channel handle. `UnsafeCell` makes the type `!Freeze` so a
+/// `&Channel` does not assert immutability of the C-owned state (c-ares
+/// mutates the channel on every dispatch/process call).
 #[repr(C)]
 pub struct Channel {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
@@ -770,8 +773,7 @@ impl Channel {
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         if let Some(err) = Error::get(unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) }) {
-            // SAFETY: c-ares FFI; library was initialized above.
-            unsafe { ares_library_cleanup() };
+            ares_library_cleanup();
             return Some(err);
         }
 
@@ -1000,8 +1002,8 @@ unsafe extern "C" {
         afree: Option<unsafe extern "C" fn(*mut c_void)>,
         arealloc: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     ) -> c_int;
-    pub fn ares_library_initialized() -> c_int;
-    pub fn ares_library_cleanup();
+    pub safe fn ares_library_initialized() -> c_int;
+    pub safe fn ares_library_cleanup();
     pub fn ares_version(version: *mut c_int) -> *const u8;
     pub fn ares_init(channelptr: *mut *mut Channel) -> c_int;
     pub fn ares_init_options(channelptr: *mut *mut Channel, options: *mut Options, optmask: c_int) -> c_int;
@@ -1561,7 +1563,7 @@ unsafe extern "C" {
     pub fn ares_free_string(str_: *mut c_void);
     pub fn ares_free_hostent(host: *mut struct_hostent);
     pub fn ares_free_data(dataptr: *mut c_void);
-    pub fn ares_strerror(code: c_int) -> *const u8;
+    pub safe fn ares_strerror(code: c_int) -> *const u8;
 }
 
 #[repr(C)]

@@ -526,11 +526,14 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let items_ptr: *mut [js_ast::ClauseItem] =
                             std::ptr::from_mut::<[js_ast::ClauseItem]>(clause_items.slice_mut());
                         core::mem::forget(clause_items);
-                        stmts.push(js_ast::Stmt::alloc(
-                            js_ast::S::ExportClause {
-                                items: items_ptr,
-                                is_single_line: true,
-                            },
+                        // Zig: `c.allocator().create(S.ExportClause)` + struct literal —
+                        // bypasses Stmt.Data.Store (not pushed on this thread here).
+                        let export_clause = c.arena().alloc(js_ast::S::ExportClause {
+                            items: items_ptr,
+                            is_single_line: true,
+                        });
+                        stmts.push(js_ast::Stmt::init(
+                            js_ast::ast::StoreRef::from_bump(export_clause),
                             Logger::Loc::EMPTY,
                         ));
                         // PERF(port): was appendAssumeCapacity — profile in Phase B
@@ -606,13 +609,16 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         });
                         let items_ptr: *mut [js_ast::ClauseItem] =
                             std::ptr::from_mut::<[js_ast::ClauseItem]>(clauses.into_bump_slice_mut());
-                        cross_chunk_prefix_stmts.push(js_ast::Stmt::alloc(
-                            js_ast::S::Import {
-                                items: items_ptr,
-                                import_record_index,
-                                namespace_ref: Ref::NONE,
-                                ..Default::default()
-                            },
+                        // Zig: `c.allocator().create(S.Import)` + struct literal —
+                        // bypasses Stmt.Data.Store (not pushed on this thread here).
+                        let import = c.arena().alloc(js_ast::S::Import {
+                            items: items_ptr,
+                            import_record_index,
+                            namespace_ref: Ref::NONE,
+                            ..Default::default()
+                        });
+                        cross_chunk_prefix_stmts.push(js_ast::Stmt::init(
+                            js_ast::ast::StoreRef::from_bump(import),
                             Logger::Loc::EMPTY,
                         ));
                     }

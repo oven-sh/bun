@@ -3,11 +3,11 @@
 use core::ffi::{c_int, c_void};
 
 // TODO(port): confirm cfg name — Zig's `bun.Environment.enable_asan` is a build-time bool;
-// mapped here to `feature = "asan"`. Nightly Rust has `cfg(sanitize = "address")` (unstable,
+// mapped here to `bun_asan`. Nightly Rust has `cfg(sanitize = "address")` (unstable,
 // tracking #39699) which would be the direct equivalent; Phase B may switch to that or a
 // custom `--cfg enable_asan` set by the build script.
 
-#[cfg(feature = "asan")]
+#[cfg(bun_asan)]
 mod c {
     use core::ffi::{c_int, c_void};
 
@@ -61,7 +61,7 @@ mod c {
     }
 }
 
-#[cfg(not(feature = "asan"))]
+#[cfg(not(bun_asan))]
 mod c {
     use core::ffi::{c_int, c_void};
 
@@ -88,7 +88,7 @@ mod c {
     pub fn unregister_root_region(_: *const c_void, _: usize) {}
 }
 
-pub const ENABLED: bool = cfg!(feature = "asan");
+pub const ENABLED: bool = cfg!(bun_asan);
 
 // `__asan_default_options` lives in `src/bun_bin/main.rs` — it must be in the
 // binary crate (a direct link input) to override the ASAN runtime's weak

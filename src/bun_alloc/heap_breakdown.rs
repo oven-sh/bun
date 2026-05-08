@@ -11,7 +11,7 @@ type vm_size_t = usize;
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan
 // TODO(port): `enable_asan` mapped to a cargo feature; verify Phase B wires this the same way.
 pub const ENABLED: bool =
-    cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(feature = "asan");
+    cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
 /// Zig: `fn heapLabel(comptime T: type) [:0]const u8`
 ///

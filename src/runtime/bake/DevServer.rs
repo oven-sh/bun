@@ -3053,6 +3053,10 @@ impl DevServer {
         )?;
         bv2.bun_watcher = Some(bake_watcher_handle(&mut self.bun_watcher));
         bv2.asynchronous = true;
+        // Zig: `linker.dev_server = transpiler.options.dev_server` inside init.
+        let dev_handle = self.bundler_handle();
+        bv2.dev_server = Some(dev_handle);
+        bv2.linker.dev_server = Some(dev_handle);
 
         {
             self.graph_safety_lock.lock();

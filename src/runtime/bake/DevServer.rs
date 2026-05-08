@@ -5499,7 +5499,7 @@ mod c {
     // BakeSourceProvider.cpp
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        pub fn BakeGetDefaultExportFromModule(global: *const JSGlobalObject, module: JSValue) -> JSValue;
+        pub safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, module: JSValue) -> JSValue;
     }
 
     pub fn bake_load_server_hmr_patch(global: &JSGlobalObject, code: BunString) -> JsResult<JSValue> {
@@ -6481,9 +6481,11 @@ fn bundle_new_route_js_function_impl(
 }
 
 // TODO(port): move to <area>_sys; callconv(jsc.conv)
+// `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`; remaining args
+// are by-value `JSValue`s — validity is encoded in the signature.
 unsafe extern "C" {
-    fn Bake__createDevServerFrameworkRequestArgsObject(
-        global: *const JSGlobalObject,
+    safe fn Bake__createDevServerFrameworkRequestArgsObject(
+        global: &JSGlobalObject,
         router_type_main: JSValue,
         route_modules: JSValue,
         client_entry_url: JSValue,
@@ -6500,8 +6502,7 @@ pub fn create_dev_server_framework_request_args_object(
     styles: JSValue,
     params: JSValue,
 ) -> JsResult<JSValue> {
-    // SAFETY: extern "C" FFI; global is a valid &JSGlobalObject; JSValue args are stack-rooted
-    jsc::from_js_host_call(global, || unsafe {
+    jsc::from_js_host_call(global, || {
         Bake__createDevServerFrameworkRequestArgsObject(
             global,
             router_type_main,

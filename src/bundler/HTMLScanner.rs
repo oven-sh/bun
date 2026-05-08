@@ -271,15 +271,11 @@ struct TagUserData<T> {
 impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserData<T> {
     fn call(&mut self, element: &mut lol::Element) -> bool {
         let tag_info = &TAG_HANDLERS[self.tag_index];
-        let element: *mut lol::Element = element;
         // Handle URL attribute if present
         if !tag_info.url_attribute.is_empty() {
-            // SAFETY: `element` is the live FFI handle passed to this handler.
-            let has = unsafe { lol::Element::has_attribute(element, tag_info.url_attribute) }
-                .unwrap_or(false);
+            let has = element.has_attribute(tag_info.url_attribute).unwrap_or(false);
             if has {
-                // SAFETY: same as above.
-                let value = unsafe { lol::Element::get_attribute(element, tag_info.url_attribute) };
+                let value = element.get_attribute(tag_info.url_attribute);
                 // Zig: defer value.deinit()
                 let _value_guard = scopeguard::guard(value, |v| v.deinit());
                 if value.len > 0 {
@@ -290,10 +286,9 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserDa
                         bstr::BStr::new(value.slice())
                     );
                     // SAFETY: `self.this` was set from `&mut T` in `run` and is
-                    // valid for the lifetime of the rewriter; `element` is the
-                    // live FFI handle passed to this handler.
+                    // valid for the lifetime of the rewriter.
                     unsafe {
-                        (*self.this).on_tag(&mut *element, value.slice(), tag_info.url_attribute, tag_info.kind);
+                        (*self.this).on_tag(element, value.slice(), tag_info.url_attribute, tag_info.kind);
                     }
                 }
             }

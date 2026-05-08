@@ -17,9 +17,13 @@ pub use bun_jsc::ipc::InternalMsgHolder;
 
 bun_output::declare_scope!(IPC, visible);
 
+// `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` — `&JSGlobalObject`
+// is ABI-identical to a non-null pointer with no `readonly`/`noalias`. Both
+// shims take only the global plus by-value `JSValue`s, so the validity proof
+// lives in the type signature.
 unsafe extern "C" {
-    pub fn Bun__Process__queueNextTick1(global: *mut JSGlobalObject, f: JSValue, arg: JSValue);
-    pub fn Process__emitErrorEvent(global: *const JSGlobalObject, value: JSValue);
+    pub safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, f: JSValue, arg: JSValue);
+    pub safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
 }
 
 // TODO(port): `pub var` mutable global with !Sync fields (Strong). Only ever accessed on the
@@ -105,12 +109,7 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         let arguments_ = frame_.arguments_old::<1>();
         let arguments_ = arguments_.slice();
         let ex = arguments_[0];
-        // SAFETY: FFI call into C++; `global_` is a live JSGlobalObject* for the duration
-        // of the call. Passed as `*const` — mutation happens behind the FFI boundary, so
-        // no Rust `&mut` is ever materialized (matches ipc.rs / JSValue.rs convention).
-        unsafe {
-            Process__emitErrorEvent(global_, ex.to_error().unwrap_or(ex));
-        }
+        Process__emitErrorEvent(global_, ex.to_error().unwrap_or(ex));
         Ok(JSValue::UNDEFINED)
     }
 

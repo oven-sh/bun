@@ -159,24 +159,17 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             return;
         }
 
-        let element: *mut lol::Element = element;
-
         if self.linker.dev_server.is_some() {
             if !unique_key_for_additional_files.is_empty() {
-                // SAFETY: element is a valid *mut Element passed from lol-html callback.
-                unsafe {
-                    lol::Element::set_attribute(element, url_attribute, unique_key_for_additional_files)
-                }
-                .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
+                element
+                    .set_attribute(url_attribute, unique_key_for_additional_files)
+                    .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
             } else if import_record.path.is_disabled || loader.is_javascript_like() || loader.is_css() {
-                // SAFETY: element is a valid *mut Element passed from lol-html callback.
-                unsafe { lol::Element::remove(element) };
+                element.remove();
             } else {
-                // SAFETY: element is a valid *mut Element passed from lol-html callback.
-                unsafe {
-                    lol::Element::set_attribute(element, url_attribute, import_record.path.pretty)
-                }
-                .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
+                element
+                    .set_attribute(url_attribute, import_record.path.pretty)
+                    .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
             }
             return;
         }
@@ -191,8 +184,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
         if loader.is_javascript_like() || loader.is_css() {
             // Remove the original non-external tags
-            // SAFETY: element is a valid *mut Element passed from lol-html callback.
-            unsafe { lol::Element::remove(element) };
+            element.remove();
             return;
         }
 
@@ -201,8 +193,8 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             let url_for_css =
                 parse_graph.ast.items_url_for_css()[import_record.source_index.get() as usize];
             if !url_for_css.is_empty() {
-                // SAFETY: element is a valid *mut Element passed from lol-html callback.
-                unsafe { lol::Element::set_attribute(element, url_attribute, url_for_css) }
+                element
+                    .set_attribute(url_attribute, url_for_css)
                     .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
                 return;
             }
@@ -210,55 +202,44 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
         if !unique_key_for_additional_files.is_empty() {
             // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
-            // SAFETY: element is a valid *mut Element passed from lol-html callback.
-            unsafe {
-                lol::Element::set_attribute(element, url_attribute, unique_key_for_additional_files)
-            }
-            .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
+            element
+                .set_attribute(url_attribute, unique_key_for_additional_files)
+                .unwrap_or_else(|_| panic!("unexpected error from Element.setAttribute"));
             return;
         }
     }
 
     fn on_head_tag(&mut self, element: &mut lol::Element) -> bool {
-        // SAFETY: element is a valid *mut Element passed from lol-html callback.
-        unsafe {
-            lol::Element::on_end_tag(
-                element,
+        element
+            .on_end_tag(
                 Self::end_head_tag_handler,
                 std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             )
-        }
-        .is_err()
+            .is_err()
     }
 
     fn on_html_tag(&mut self, element: &mut lol::Element) -> bool {
-        // SAFETY: element is a valid *mut Element passed from lol-html callback.
-        unsafe {
-            lol::Element::on_end_tag(
-                element,
+        element
+            .on_end_tag(
                 Self::end_html_tag_handler,
                 std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             )
-        }
-        .is_err()
+            .is_err()
     }
 
     fn on_body_tag(&mut self, element: &mut lol::Element) -> bool {
-        // SAFETY: element is a valid *mut Element passed from lol-html callback.
-        unsafe {
-            lol::Element::on_end_tag(
-                element,
+        element
+            .on_end_tag(
                 Self::end_body_tag_handler,
                 std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             )
-        }
-        .is_err()
+            .is_err()
     }
 }
 
 impl<'a> HTMLLoader<'a> {
     /// This is called for head, body, and html; whichever ends up coming first.
-    fn add_head_tags(&mut self, end_tag: *mut lol::EndTag) -> Result<(), lol::Error> {
+    fn add_head_tags(&mut self, end_tag: &mut lol::EndTag) -> Result<(), lol::Error> {
         if self.added_head_tags {
             return Ok(());
         }
@@ -267,14 +248,13 @@ impl<'a> HTMLLoader<'a> {
         // PERF(port): was stack-fallback (std.heap.stackFallback(256))
         let slices = self.get_head_tags();
         for slice in slices.as_slice() {
-            // SAFETY: end_tag is a valid *mut EndTag passed from lol-html callback.
-            unsafe { lol::EndTag::before(end_tag, slice, true) }?;
+            end_tag.before(slice, true)?;
         }
         Ok(())
     }
 
     /// Insert inline script before </body> so DOM elements are available.
-    fn add_body_tags(&mut self, end_tag: *mut lol::EndTag) -> Result<(), lol::Error> {
+    fn add_body_tags(&mut self, end_tag: &mut lol::EndTag) -> Result<(), lol::Error> {
         if self.added_body_script {
             return Ok(());
         }
@@ -290,8 +270,7 @@ impl<'a> HTMLLoader<'a> {
                 BStr::new(js_chunk.unique_key)
             )
             .unwrap();
-            // SAFETY: end_tag is a valid *mut EndTag passed from lol-html callback.
-            unsafe { lol::EndTag::before(end_tag, &script, true) }?;
+            end_tag.before(&script, true)?;
         }
         Ok(())
     }
@@ -349,7 +328,8 @@ impl<'a> HTMLLoader<'a> {
         opaque_this: *mut c_void,
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_head_tag; end is non-null from lol-html callback.
-        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
+        let (this, end): (&mut Self, &mut lol::EndTag) =
+            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
         if this.linker.dev_server.is_none() {
             if this.add_head_tags(end).is_err() {
                 return lol::Directive::Stop;
@@ -365,7 +345,8 @@ impl<'a> HTMLLoader<'a> {
         opaque_this: *mut c_void,
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_body_tag; end is non-null from lol-html callback.
-        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
+        let (this, end): (&mut Self, &mut lol::EndTag) =
+            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
         if this.linker.dev_server.is_none() {
             if this.compile_to_standalone_html {
                 // In standalone mode, insert JS before </body> so DOM is available
@@ -388,7 +369,8 @@ impl<'a> HTMLLoader<'a> {
         opaque_this: *mut c_void,
     ) -> lol::Directive {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_html_tag; end is non-null from lol-html callback.
-        let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
+        let (this, end): (&mut Self, &mut lol::EndTag) =
+            unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
         if this.linker.dev_server.is_none() {
             if this.compile_to_standalone_html {
                 // Fallback: if no </body> was found, insert both CSS and JS before </html>

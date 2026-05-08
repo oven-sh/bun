@@ -39,6 +39,26 @@ pub struct NewSocketHandler<'a, const IS_SSL: bool> {
 pub type SocketTcp<'a> = NewSocketHandler<'a, false>;
 pub type SocketTls<'a> = NewSocketHandler<'a, true>;
 
+/// Reborrow the `*mut us_socket_t` payload of `InternalSocket::Connected` as
+/// `&mut`. `us_socket_t` is `#[repr(C)] UnsafeCell<[u8; 0]>` — zero-sized,
+/// align-1, no `noalias` — so the only validity requirement is non-null, which
+/// uSockets guarantees for every pointer it stores in `Connected`/`Connecting`.
+/// Centralizing the deref here keeps the proof local instead of repeating
+/// `unsafe { (**s) }` at ~50 match arms.
+#[inline(always)]
+fn sock<'b>(p: *mut us_socket_t) -> &'b mut us_socket_t {
+    debug_assert!(!p.is_null());
+    // SAFETY: see fn doc — opaque ZST + UnsafeCell, uSockets-guaranteed non-null.
+    unsafe { &mut *p }
+}
+/// As [`sock`] but for the `Connecting` payload.
+#[inline(always)]
+fn conn<'b>(p: *mut ConnectingSocket) -> &'b mut ConnectingSocket {
+    debug_assert!(!p.is_null());
+    // SAFETY: see [`sock`] doc — `ConnectingSocket` is the same opaque-ZST shape.
+    unsafe { &mut *p }
+}
+
 impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
     pub const DETACHED: Self = Self { socket: InternalSocket::Detached };
 
@@ -72,7 +92,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {
         match &self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).get_verify_error() },
+            InternalSocket::Connected(socket) => sock(*socket).get_verify_error(),
             InternalSocket::UpgradedDuplex(socket) => socket.ssl_error(),
             #[cfg(windows)]
             InternalSocket::Pipe(pipe) => pipe.ssl_error(),
@@ -86,7 +106,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn is_established(&self) -> bool {
         match &self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).is_established() },
+            InternalSocket::Connected(socket) => sock(*socket).is_established(),
             InternalSocket::UpgradedDuplex(socket) => socket.is_established(),
             #[cfg(windows)]
             InternalSocket::Pipe(pipe) => pipe.is_established(),
@@ -103,8 +123,8 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             InternalSocket::Pipe(pipe) => pipe.set_timeout(seconds),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
-            InternalSocket::Connected(socket) => unsafe { (**socket).set_timeout(seconds) },
-            InternalSocket::Connecting(socket) => unsafe { (**socket).timeout(seconds) },
+            InternalSocket::Connected(socket) => sock(*socket).set_timeout(seconds),
+            InternalSocket::Connecting(socket) => conn(*socket).timeout(seconds),
             InternalSocket::Detached => {}
         }
     }
@@ -113,20 +133,20 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         match &mut self.socket {
             InternalSocket::Connected(socket) => {
                 if seconds > 240 {
-                    unsafe { (**socket).set_timeout(0) };
-                    unsafe { (**socket).set_long_timeout(seconds / 60) };
+                    sock(*socket).set_timeout(0);
+                    sock(*socket).set_long_timeout(seconds / 60);
                 } else {
-                    unsafe { (**socket).set_timeout(seconds) };
-                    unsafe { (**socket).set_long_timeout(0) };
+                    sock(*socket).set_timeout(seconds);
+                    sock(*socket).set_long_timeout(0);
                 }
             }
             InternalSocket::Connecting(socket) => {
                 if seconds > 240 {
-                    unsafe { (**socket).timeout(0) };
-                    unsafe { (**socket).long_timeout(seconds / 60) };
+                    conn(*socket).timeout(0);
+                    conn(*socket).long_timeout(seconds / 60);
                 } else {
-                    unsafe { (**socket).timeout(seconds) };
-                    unsafe { (**socket).long_timeout(0) };
+                    conn(*socket).timeout(seconds);
+                    conn(*socket).long_timeout(0);
                 }
             }
             InternalSocket::Detached => {}
@@ -141,12 +161,12 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
     pub fn set_timeout_minutes(&mut self, minutes: c_uint) {
         match &mut self.socket {
             InternalSocket::Connected(socket) => {
-                unsafe { (**socket).set_timeout(0) };
-                unsafe { (**socket).set_long_timeout(minutes) };
+                sock(*socket).set_timeout(0);
+                sock(*socket).set_long_timeout(minutes);
             }
             InternalSocket::Connecting(socket) => {
-                unsafe { (**socket).timeout(0) };
-                unsafe { (**socket).long_timeout(minutes) };
+                conn(*socket).timeout(0);
+                conn(*socket).long_timeout(minutes);
             }
             InternalSocket::Detached => {}
             InternalSocket::UpgradedDuplex(socket) => socket.set_timeout(minutes * 60),
@@ -159,8 +179,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn start_tls(&self, is_client: bool) {
         if let Some(socket) = self.socket.get() {
-            // SAFETY: `socket` is a live `*mut us_socket_t` from `get()`.
-            unsafe { (*socket).open(is_client, None) };
+            sock(socket).open(is_client, None);
         }
     }
 
@@ -180,8 +199,8 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
     // and let `ssl()` cast.
     pub fn get_native_handle(&self) -> Option<*mut c_void> {
         let raw: Option<*mut c_void> = match &self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).get_native_handle() },
-            InternalSocket::Connecting(socket) => unsafe { Some((**socket).get_native_handle()) },
+            InternalSocket::Connected(socket) => sock(*socket).get_native_handle(),
+            InternalSocket::Connecting(socket) => Some(conn(*socket).get_native_handle()),
             InternalSocket::Detached => None,
             InternalSocket::UpgradedDuplex(socket) => {
                 if IS_SSL {
@@ -210,20 +229,20 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             return Fd::INVALID;
         };
         // Same fd regardless of TLS — read it directly off the poll.
-        unsafe { (*socket).get_fd() }
+        sock(socket).get_fd()
     }
 
     pub fn mark_needs_more_for_sendfile(&self) {
         // Zig: `if (comptime is_ssl) @compileError(...)`.
         const { assert!(!IS_SSL, "SSL sockets do not support sendfile yet") };
         let Some(socket) = self.socket.get() else { return };
-        unsafe { (*socket).send_file_needs_more() };
+        sock(socket).send_file_needs_more();
     }
 
     pub fn ext<ContextType>(&self) -> Option<*mut ContextType> {
         match &self.socket {
-            InternalSocket::Connected(sock) => Some(unsafe { (**sock).ext::<ContextType>() }),
-            InternalSocket::Connecting(sock) => Some(unsafe { (**sock).ext::<ContextType>() }),
+            InternalSocket::Connected(s) => Some(sock(*s).ext::<ContextType>()),
+            InternalSocket::Connecting(s) => Some(conn(*s).ext::<ContextType>()),
             InternalSocket::Detached
             | InternalSocket::UpgradedDuplex(_) => None,
             #[cfg(windows)]
@@ -236,8 +255,8 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
     /// Group this socket is linked into. None for non-uSockets transports.
     pub fn group(&self) -> Option<*mut SocketGroup> {
         match &self.socket {
-            InternalSocket::Connected(socket) => Some(unsafe { (**socket).group() }),
-            InternalSocket::Connecting(socket) => Some(unsafe { (**socket).group() }),
+            InternalSocket::Connected(socket) => Some(sock(*socket).group()),
+            InternalSocket::Connecting(socket) => Some(conn(*socket).group()),
             InternalSocket::Detached
             | InternalSocket::UpgradedDuplex(_) => None,
             #[cfg(windows)]
@@ -254,7 +273,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             InternalSocket::Pipe(pipe) => pipe.flush(),
             #[cfg(not(windows))]
             InternalSocket::Pipe => {}
-            InternalSocket::Connected(socket) => unsafe { (**socket).flush() },
+            InternalSocket::Connected(socket) => sock(*socket).flush(),
             InternalSocket::Connecting(_) | InternalSocket::Detached => {}
         }
     }
@@ -266,7 +285,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             InternalSocket::Pipe(pipe) => pipe.encode_and_write(data),
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
-            InternalSocket::Connected(socket) => unsafe { (**socket).write(data) },
+            InternalSocket::Connected(socket) => sock(*socket).write(data),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
         }
     }
@@ -283,7 +302,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             return self.write(data);
         }
         match &mut self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).write_fd(data, file_descriptor) },
+            InternalSocket::Connected(socket) => sock(*socket).write_fd(data, file_descriptor),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
             _ => unreachable!(), // handled above
         }
@@ -291,7 +310,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
         match &mut self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).raw_write(data) },
+            InternalSocket::Connected(socket) => sock(*socket).raw_write(data),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
             InternalSocket::UpgradedDuplex(socket) => socket.raw_write(data),
             #[cfg(windows)]
@@ -303,10 +322,10 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn shutdown(&mut self) {
         match &mut self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).shutdown() },
+            InternalSocket::Connected(socket) => sock(*socket).shutdown(),
             InternalSocket::Connecting(socket) => {
                 bun_core::scoped_log!(uws, "us_connecting_socket_shutdown({})", *socket as usize);
-                unsafe { (**socket).shutdown() };
+                conn(*socket).shutdown();
             }
             InternalSocket::Detached => {}
             InternalSocket::UpgradedDuplex(socket) => socket.shutdown(),
@@ -319,10 +338,10 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn shutdown_read(&mut self) {
         match &mut self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).shutdown_read() },
+            InternalSocket::Connected(socket) => sock(*socket).shutdown_read(),
             InternalSocket::Connecting(socket) => {
                 bun_core::scoped_log!(uws, "us_connecting_socket_shutdown_read({})", *socket as usize);
-                unsafe { (**socket).shutdown_read() };
+                conn(*socket).shutdown_read();
             }
             InternalSocket::UpgradedDuplex(socket) => socket.shutdown_read(),
             #[cfg(windows)]
@@ -335,10 +354,10 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn is_shutdown(&self) -> bool {
         match &self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).is_shutdown() },
+            InternalSocket::Connected(socket) => sock(*socket).is_shutdown(),
             InternalSocket::Connecting(socket) => {
                 bun_core::scoped_log!(uws, "us_connecting_socket_is_shut_down({})", *socket as usize);
-                unsafe { (**socket).is_shutdown() }
+                conn(*socket).is_shutdown()
             }
             InternalSocket::UpgradedDuplex(socket) => socket.is_shutdown(),
             #[cfg(windows)]
@@ -360,11 +379,11 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         match &self.socket {
             InternalSocket::Connected(socket) => {
                 bun_core::scoped_log!(uws, "us_socket_get_error({})", *socket as usize);
-                unsafe { (**socket).get_error() }
+                sock(*socket).get_error()
             }
             InternalSocket::Connecting(socket) => {
                 bun_core::scoped_log!(uws, "us_connecting_socket_get_error({})", *socket as usize);
-                unsafe { (**socket).get_error() }
+                conn(*socket).get_error()
             }
             InternalSocket::Detached => 0,
             InternalSocket::UpgradedDuplex(socket) => socket.ssl_error().error_no,
@@ -385,7 +404,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn local_port(&self) -> i32 {
         match &self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).local_port() },
+            InternalSocket::Connected(socket) => sock(*socket).local_port(),
             #[cfg(windows)]
             InternalSocket::Pipe(_) => 0,
             #[cfg(not(windows))]
@@ -398,7 +417,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn remote_port(&self) -> i32 {
         match &self.socket {
-            InternalSocket::Connected(socket) => unsafe { (**socket).remote_port() },
+            InternalSocket::Connected(socket) => sock(*socket).remote_port(),
             #[cfg(windows)]
             InternalSocket::Pipe(_) => 0,
             #[cfg(not(windows))]
@@ -411,7 +430,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn remote_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
         match &self.socket {
-            InternalSocket::Connected(sock) => match unsafe { (**sock).remote_address(buf) } {
+            InternalSocket::Connected(s) => match sock(*s).remote_address(buf) {
                 Ok(v) => Some(v),
                 Err(e) => bun_core::Output::panic(
                     format_args!("Failed to get socket's remote address: {}", e.name()),
@@ -429,7 +448,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn local_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
         match &self.socket {
-            InternalSocket::Connected(sock) => match unsafe { (**sock).local_address(buf) } {
+            InternalSocket::Connected(s) => match sock(*s).local_address(buf) {
                 Ok(v) => Some(v),
                 Err(e) => bun_core::Output::panic(
                     format_args!("Failed to get socket's local address: {}", e.name()),
@@ -690,9 +709,9 @@ impl<'a> InternalSocket<'a> {
             InternalSocket::Detached => true,
             InternalSocket::Connected(socket) => {
                 if pause {
-                    unsafe { (**socket).pause() };
+                    sock(*socket).pause();
                 } else {
-                    unsafe { (**socket).resume() };
+                    sock(*socket).resume();
                 }
                 true
             }
@@ -732,7 +751,7 @@ impl<'a> InternalSocket<'a> {
             | InternalSocket::Connecting(_)
             | InternalSocket::Detached => false,
             InternalSocket::Connected(socket) => {
-                unsafe { (**socket).set_nodelay(enabled) };
+                sock(*socket).set_nodelay(enabled);
                 true
             }
         }
@@ -748,7 +767,7 @@ impl<'a> InternalSocket<'a> {
             | InternalSocket::Connecting(_)
             | InternalSocket::Detached => false,
             InternalSocket::Connected(socket) => {
-                (unsafe { (**socket).set_keepalive(enabled, delay) }) == 0
+                (sock(*socket).set_keepalive(enabled, delay)) == 0
             }
         }
     }
@@ -756,8 +775,8 @@ impl<'a> InternalSocket<'a> {
     pub fn close(&mut self, code: crate::CloseCode) {
         match self {
             InternalSocket::Detached => {}
-            InternalSocket::Connected(socket) => unsafe { (**socket).close(code) },
-            InternalSocket::Connecting(socket) => unsafe { (**socket).close() },
+            InternalSocket::Connected(socket) => sock(*socket).close(code),
+            InternalSocket::Connecting(socket) => conn(*socket).close(),
             InternalSocket::UpgradedDuplex(socket) => socket.close(),
             #[cfg(windows)]
             InternalSocket::Pipe(pipe) => pipe.close(),
@@ -768,8 +787,8 @@ impl<'a> InternalSocket<'a> {
 
     pub fn is_closed(&self) -> bool {
         match self {
-            InternalSocket::Connected(socket) => unsafe { (**socket).is_closed() },
-            InternalSocket::Connecting(socket) => unsafe { (**socket).is_closed() },
+            InternalSocket::Connected(socket) => sock(*socket).is_closed(),
+            InternalSocket::Connecting(socket) => conn(*socket).is_closed(),
             InternalSocket::Detached => true,
             InternalSocket::UpgradedDuplex(socket) => socket.is_closed(),
             #[cfg(windows)]
@@ -878,7 +897,7 @@ impl<'a> AnySocket<'a> {
 
     pub fn get_native_handle(&self) -> Option<*mut c_void> {
         match self.socket() {
-            InternalSocket::Connected(sock) => unsafe { (**sock).get_native_handle() },
+            InternalSocket::Connected(s) => sock(*s).get_native_handle(),
             _ => None,
         }
     }

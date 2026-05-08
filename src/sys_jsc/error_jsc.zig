@@ -90,10 +90,10 @@ pub const TestingAPIs = struct {
     }
 
     /// Verifies `bun.sys.rusage`'s layout matches the host libc by filling
-    /// one via `getrusage(RUSAGE_SELF)`. On Android, `std.posix.rusage`
-    /// carries musl's 128B `__reserved` tail that bionic doesn't write,
-    /// leaving the struct partially uninitialized; `bun.sys.rusage` drops
-    /// that tail. On every other POSIX it's a transparent alias.
+    /// one via `getrusage(RUSAGE_SELF)`. `std.posix.rusage` is oversized on
+    /// Android (musl's 128B `__reserved` tail that bionic doesn't write)
+    /// and missing entirely on FreeBSD; `bun.sys.rusage` carries overrides
+    /// for both and aliases `std.posix.rusage` everywhere else.
     ///
     /// Returned fields let the test check that (a) libc populated the
     /// struct through our type (non-zero CPU time / sane maxrss) and
@@ -103,7 +103,7 @@ pub const TestingAPIs = struct {
         if (comptime !Environment.isPosix) return .js_undefined;
 
         // Go through libc with our type rather than `std.posix.getrusage`,
-        // whose return type is the possibly-oversized `std.posix.rusage`.
+        // whose return type is the possibly-wrong `std.posix.rusage`.
         const getrusage = @extern(
             *const fn (who: c_int, usage: *bun.sys.rusage) callconv(.c) c_int,
             .{ .name = "getrusage" },
@@ -114,6 +114,7 @@ pub const TestingAPIs = struct {
         return (try jsc.JSObject.create(.{
             .sizeof = @as(f64, @floatFromInt(@sizeOf(bun.sys.rusage))),
             .sizeofSpawnRusage = @as(f64, @floatFromInt(@sizeOf(bun.spawn.Rusage))),
+            // 0 on FreeBSD (`std.posix.rusage` is `void` there).
             .sizeofStdPosixRusage = @as(f64, @floatFromInt(@sizeOf(std.posix.rusage))),
             .hasReservedTail = @hasField(bun.sys.rusage, "__reserved"),
             .isAndroid = Environment.isAndroid,

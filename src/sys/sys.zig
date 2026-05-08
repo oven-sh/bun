@@ -2292,15 +2292,22 @@ pub fn sigaction(sig: u8, noalias act: ?*const Sigaction, noalias oact: ?*Sigact
     _ = libc_sigaction(sig, act, oact);
 }
 
-/// bionic's `struct rusage` is the bare kernel struct (144B on LP64) — it
-/// does NOT carry the `__reserved: [16]long` tail that musl (and therefore
-/// `std.os.linux.rusage`, which `std.c.rusage` aliases on Linux) appends.
-/// `wait4()` / `getrusage()` are output-only and bionic writes only the
-/// first 144B, so the oversized Zig type doesn't corrupt anything today —
-/// but it leaves 128B of uninitialized stack in the tail, which breaks any
-/// future `@memcmp` / "is this still zero" / serialization of the struct
-/// and makes `@sizeOf` lie. Until the Zig stdlib grows an `abi.isAndroid()`
-/// case for `rusage`, use this instead of `std.posix.rusage`.
+/// `std.posix.rusage` is wrong for two of Bun's targets:
+///
+/// * **Android**: bionic's `struct rusage` is the bare kernel struct (144B
+///   on LP64) — it does NOT carry the `__reserved: [16]long` tail that musl
+///   (and therefore `std.os.linux.rusage`, which `std.c.rusage` aliases on
+///   Linux) appends. `wait4()` / `getrusage()` are output-only and bionic
+///   only writes the first 144B, so the oversized Zig type doesn't corrupt
+///   anything today — but it leaves 128B of uninitialized stack in the
+///   tail, which breaks any future `@memcmp` / "is this still zero" /
+///   serialization of the struct and makes `@sizeOf` lie.
+///
+/// * **FreeBSD**: `std.c.rusage` has no `.freebsd` arm at all (falls through
+///   to `void`).
+///
+/// Until the Zig stdlib gains those cases, use this instead of
+/// `std.posix.rusage`. On every other POSIX target it's a transparent alias.
 pub const rusage = if (Environment.isAndroid) extern struct {
     // bionic libc/include/sys/resource.h -> <linux/resource.h> (kernel
     // layout, no reserved tail). Bun only targets LP64 Android.
@@ -2329,6 +2336,36 @@ pub const rusage = if (Environment.isAndroid) extern struct {
     nsignals: c_long,
     nvcsw: c_long,
     nivcsw: c_long,
+
+    pub const SELF = 0;
+    pub const CHILDREN = -1;
+    pub const THREAD = 1;
+} else if (Environment.isFreeBSD) extern struct {
+    // FreeBSD sys/sys/resource.h. `std.c.rusage` has no `.freebsd` arm
+    // (falls through to `void`), so supply one. Previously this lived in
+    // `bun.spawn.Rusage` (process.zig); centralised here so `bun.sys.rusage`
+    // is usable on every POSIX target.
+    comptime {
+        if (std.posix.rusage != void)
+            @compileError("std.posix.rusage now has a FreeBSD arm; remove the bun.sys.rusage workaround");
+    }
+
+    utime: std.c.timeval,
+    stime: std.c.timeval,
+    maxrss: isize,
+    ixrss: isize,
+    idrss: isize,
+    isrss: isize,
+    minflt: isize,
+    majflt: isize,
+    nswap: isize,
+    inblock: isize,
+    oublock: isize,
+    msgsnd: isize,
+    msgrcv: isize,
+    nsignals: isize,
+    nvcsw: isize,
+    nivcsw: isize,
 
     pub const SELF = 0;
     pub const CHILDREN = -1;

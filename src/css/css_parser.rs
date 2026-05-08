@@ -8,7 +8,8 @@ use bun_alloc::ArenaVecExt as _;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use bun_collections::{ArrayHashMap, VecExt, MapEntry, StaticBitSet};
+use bun_collections::{ArrayHashMap, VecExt, MapEntry};
+use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_logger::{self as logger, Log};
 use bun_string::strings;
 
@@ -2404,7 +2405,7 @@ impl Default for PropertyUsage {
 impl PropertyUsage {
     #[inline]
     pub fn fill(&mut self, used: &PropertyBitset, custom_properties: &[&'static [u8]]) {
-        self.bitset.set_union(*used);
+        self.bitset.set_union(used);
         // TODO(port): lifetime — Zig stored borrowed slice; box for now.
         self.custom_properties = custom_properties.to_vec().into_boxed_slice();
     }
@@ -2412,7 +2413,7 @@ impl PropertyUsage {
 
 // TODO(port): Zig: `std.bit_set.ArrayBitSet(usize, ceilPow2(EnumFields(PropertyIdTag).len))`.
 // Phase B computes the variant count via `strum::EnumCount`.
-pub type PropertyBitset = StaticBitSet<{ 1024 }>;
+pub type PropertyBitset = ArrayBitSet<1024, { num_masks_for(1024) }>;
 
 pub fn fill_property_bit_set(
     bitset: &mut PropertyBitset,

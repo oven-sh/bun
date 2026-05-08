@@ -741,6 +741,12 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS>
         BitSetIterator::init(&self.masks, Self::LAST_ITEM_MASK)
     }
 
+    /// Iterate indices of set bits in ascending order.
+    #[inline]
+    pub fn iter_set(&self) -> BitSetIterator<'_, true, true> {
+        self.iterator::<true, true>()
+    }
+
     #[inline(always)]
     fn mask_bit(index: usize) -> usize {
         1usize << ((index as u32) & (Self::MASK_LEN - 1)) // @truncate

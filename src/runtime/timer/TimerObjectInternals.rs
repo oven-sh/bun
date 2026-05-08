@@ -157,8 +157,8 @@ impl Flags {
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
-    fn Bun__JSTimeout__call(
-        global_object: *mut JSGlobalObject,
+    safe fn Bun__JSTimeout__call(
+        global_object: &JSGlobalObject,
         timer: JSValue,
         callback: JSValue,
         arguments: JSValue,
@@ -512,27 +512,25 @@ impl TimerObjectInternals {
         async_id: u64,
         vm: *mut VirtualMachine,
     ) -> bool {
+        // SAFETY: `global_this` is `vm.global`, live for the call. JSGlobalObject
+        // is an opaque `UnsafeCell` ZST so `&` carries write provenance for FFI
+        // (the older note about *mut→*mut cast UB is moot under that repr).
+        let global = unsafe { &*global_this };
         // SAFETY: `vm` is the live per-thread VM.
         if unsafe { (*vm).is_inspector_enabled() } {
-            // SAFETY: `global_this` is `vm.global`, live for the duration of the call.
-            Debugger::will_dispatch_async_call(unsafe { &*global_this }, Debugger::AsyncCallType::DOMTimer, async_id);
+            Debugger::will_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
         }
 
         // Bun__JSTimeout__call handles exceptions.
         self.flags.set_in_callback(true);
-        // SAFETY: FFI call into C++ on the JS thread; `global_this` is the live
-        // per-thread global and all JSValue args are GC-rooted by the caller.
-        let result = unsafe {
-            Bun__JSTimeout__call(global_this, timer, callback, arguments)
-        };
+        let result = Bun__JSTimeout__call(global, timer, callback, arguments);
         // defer self.flags.in_callback = false;
         self.flags.set_in_callback(false);
 
         // defer { if vm.isInspectorEnabled() ... }
         // SAFETY: `vm` is the live per-thread VM.
         if unsafe { (*vm).is_inspector_enabled() } {
-            // SAFETY: as above.
-            Debugger::did_dispatch_async_call(unsafe { &*global_this }, Debugger::AsyncCallType::DOMTimer, async_id);
+            Debugger::did_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
         }
 
         result

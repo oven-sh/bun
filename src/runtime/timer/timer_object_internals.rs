@@ -63,8 +63,8 @@ pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
 unsafe extern "C" {
-    fn Bun__JSTimeout__call(
-        global_object: *mut JSGlobalObject,
+    safe fn Bun__JSTimeout__call(
+        global_object: &JSGlobalObject,
         timer: JSValue,
         callback: JSValue,
         arguments: JSValue,
@@ -183,11 +183,13 @@ impl TimerObjectInternals {
         async_id: u64,
         vm: *mut VirtualMachine,
     ) -> bool {
+        // SAFETY: `global_this` is `vm.global`, live for the call. JSGlobalObject
+        // is an opaque `UnsafeCell` ZST so `&` carries write provenance for FFI.
+        let global = unsafe { &*global_this };
         // SAFETY: `vm` is the live per-thread VM (hook contract).
         if unsafe { (*vm).is_inspector_enabled() } {
-            // SAFETY: `global_this` is `vm.global`, live for the call.
             Debugger::will_dispatch_async_call(
-                unsafe { &*global_this },
+                global,
                 Debugger::AsyncCallType::DOMTimer,
                 async_id,
             );
@@ -195,9 +197,7 @@ impl TimerObjectInternals {
 
         // Bun__JSTimeout__call handles exceptions.
         self.flags.set_in_callback(true);
-        // SAFETY: FFI into C++ on the JS thread; all JSValue args are live GC
-        // cells (`timer.ensure_still_alive()` was called by the caller).
-        let result = unsafe { Bun__JSTimeout__call(global_this, timer, callback, arguments) };
+        let result = Bun__JSTimeout__call(global, timer, callback, arguments);
         // PORT NOTE: reshaped for borrowck — Zig `defer this.flags.in_callback = false`
         // moved to tail; no early returns between set and clear.
         self.flags.set_in_callback(false);
@@ -206,9 +206,8 @@ impl TimerObjectInternals {
         // moved to tail (no early returns above).
         // SAFETY: as above.
         if unsafe { (*vm).is_inspector_enabled() } {
-            // SAFETY: as above.
             Debugger::did_dispatch_async_call(
-                unsafe { &*global_this },
+                global,
                 Debugger::AsyncCallType::DOMTimer,
                 async_id,
             );

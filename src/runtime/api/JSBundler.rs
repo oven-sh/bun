@@ -1496,8 +1496,8 @@ pub mod js_bundler {
     pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
     unsafe extern "C" {
-        fn JSBundlerPlugin__create(
-            global: *mut JSGlobalObject,
+        safe fn JSBundlerPlugin__create(
+            global: &JSGlobalObject,
             target: jsc::BunPluginTarget,
         ) -> *mut Plugin;
         fn JSBundlerPlugin__callOnBeforeParsePlugins(
@@ -1584,11 +1584,7 @@ pub mod js_bundler {
     impl PluginJscExt for Plugin {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin {
             jsc::mark_binding();
-            // SAFETY: FFI — `global` is a live `JSGlobalObject*`. `as_ptr()` goes
-            // through the `UnsafeCell` interior so the `*mut` carries write
-            // provenance (the C++ side allocates/mutates via the global's VM);
-            // a raw `&T as *const T as *mut T` cast here would be UB.
-            let plugin = unsafe { JSBundlerPlugin__create(global.as_ptr(), target) };
+            let plugin = JSBundlerPlugin__create(global, target);
             JSValue::from_cell(plugin).protect();
             plugin
         }

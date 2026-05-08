@@ -933,7 +933,7 @@ pub mod exports {
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
     // TODO(port): callconv(jsc.conv) — actual ABI is sysv64 on Windows-x64, C elsewhere
-    fn BUN__createJSS3File(global: *const JSGlobalObject, callframe: *const CallFrame) -> JSValue;
+    safe fn BUN__createJSS3File(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue;
     fn BUN__createJSS3FileUnsafely(
         global: *const JSGlobalObject,
         blob: *mut core::ffi::c_void,
@@ -942,8 +942,7 @@ unsafe extern "C" {
 
 #[bun_jsc::host_fn]
 pub fn create_js_s3_file(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    // SAFETY: thin wrapper around the C++ FFI binding
-    unsafe { BUN__createJSS3File(global, callframe) }
+    BUN__createJSS3File(global, callframe)
 }
 
 // ported from: src/runtime/webcore/S3File.zig

@@ -298,16 +298,12 @@ impl EventLoopDelayMonitor {
             if actual_ns > expected_ns {
                 let delay_ns = i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
                 unsafe extern "C" {
-                    fn JSNodePerformanceHooksHistogram_recordDelay(
+                    safe fn JSNodePerformanceHooksHistogram_recordDelay(
                         histogram: JSValue,
                         delay_ns: i64,
                     );
                 }
-                // SAFETY: js_histogram is a live JSValue rooted by the JS
-                // closure scope (see field doc in EventLoopDelayMonitor.rs).
-                unsafe {
-                    JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
-                }
+                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
             }
         }
 

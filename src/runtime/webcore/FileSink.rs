@@ -1077,7 +1077,7 @@ impl crate::webcore::sink::SinkHandler for FileSink {
 // `JsSinkAbi` so the generic `JSSink<FileSink>` can dispatch.
 unsafe extern "C" {
     #[link_name = "FileSink__fromJS"]
-    fn FileSink__fromJS(value: JSValue) -> usize;
+    safe fn FileSink__fromJS(value: JSValue) -> usize;
     #[link_name = "FileSink__createObject"]
     fn FileSink__createObject(
         global: *mut JSGlobalObject,
@@ -1085,7 +1085,7 @@ unsafe extern "C" {
         destructor: usize,
     ) -> JSValue;
     #[link_name = "FileSink__setDestroyCallback"]
-    fn FileSink__setDestroyCallback(value: JSValue, callback: usize);
+    safe fn FileSink__setDestroyCallback(value: JSValue, callback: usize);
     #[link_name = "FileSink__assignToStream"]
     fn FileSink__assignToStream(
         global: *mut JSGlobalObject,
@@ -1094,9 +1094,9 @@ unsafe extern "C" {
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue;
     #[link_name = "FileSink__onClose"]
-    fn FileSink__onClose(ptr: JSValue, reason: JSValue);
+    safe fn FileSink__onClose(ptr: JSValue, reason: JSValue);
     #[link_name = "FileSink__onReady"]
-    fn FileSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
+    safe fn FileSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
 }
 
 // `JsSinkType` impl: routes the codegen `FileSink__*` thunks (via
@@ -1167,8 +1167,8 @@ impl crate::webcore::sink::JsSinkType for FileSink {
 }
 
 impl crate::webcore::sink::JsSinkAbi for FileSink {
-    unsafe fn from_js_extern(value: JSValue) -> usize {
-        unsafe { FileSink__fromJS(value) }
+    fn from_js_extern(value: JSValue) -> usize {
+        FileSink__fromJS(value)
     }
     unsafe fn create_object_extern(
         global: *mut JSGlobalObject,
@@ -1177,8 +1177,8 @@ impl crate::webcore::sink::JsSinkAbi for FileSink {
     ) -> JSValue {
         unsafe { FileSink__createObject(global, object, destructor) }
     }
-    unsafe fn set_destroy_callback_extern(value: JSValue, callback: usize) {
-        unsafe { FileSink__setDestroyCallback(value, callback) }
+    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
+        FileSink__setDestroyCallback(value, callback)
     }
     unsafe fn assign_to_stream_extern(
         global: *mut JSGlobalObject,
@@ -1188,11 +1188,11 @@ impl crate::webcore::sink::JsSinkAbi for FileSink {
     ) -> JSValue {
         unsafe { FileSink__assignToStream(global, stream, ptr, jsvalue_ptr) }
     }
-    unsafe fn on_close_extern(ptr: JSValue, reason: JSValue) {
-        unsafe { FileSink__onClose(ptr, reason) }
+    fn on_close_extern(ptr: JSValue, reason: JSValue) {
+        FileSink__onClose(ptr, reason)
     }
-    unsafe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
-        unsafe { FileSink__onReady(ptr, amount, offset) }
+    fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
+        FileSink__onReady(ptr, amount, offset)
     }
 }
 

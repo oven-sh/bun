@@ -42,9 +42,11 @@ impl JSGlobalObjectCryptoExt for JSGlobalObject {
         args: core::fmt::Arguments<'_>,
     ) -> JsError {
         unsafe extern "C" {
-            fn ZigString__toDOMExceptionInstance(
-                this: *const bun_str::ZigString,
-                global: *const JSGlobalObject,
+            // C++ reads `*this` by value and never writes through it, so a
+            // plain `&ZigString` (readonly) is sound here.
+            safe fn ZigString__toDOMExceptionInstance(
+                this: &bun_str::ZigString,
+                global: &JSGlobalObject,
                 code: u8,
             ) -> JSValue;
         }
@@ -53,13 +55,11 @@ impl JSGlobalObjectCryptoExt for JSGlobalObject {
         // is recovered via `Arguments::as_str`.
         let instance = if let Some(s) = args.as_str() {
             let zs = bun_str::ZigString::init_utf8(s.as_bytes());
-            // SAFETY: `zs` borrows `s` for the FFI call; `self` is a live JSGlobalObject*.
-            unsafe { ZigString__toDOMExceptionInstance(&raw const zs, self, code as u8) }
+            ZigString__toDOMExceptionInstance(&zs, self, code as u8)
         } else {
             let buf = std::fmt::format(args);
             let zs = bun_str::ZigString::init_utf8(buf.as_bytes());
-            // SAFETY: `zs` borrows `buf` for the FFI call; `self` is a live JSGlobalObject*.
-            unsafe { ZigString__toDOMExceptionInstance(&raw const zs, self, code as u8) }
+            ZigString__toDOMExceptionInstance(&zs, self, code as u8)
         };
         self.throw_value(instance)
     }

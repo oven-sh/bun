@@ -140,7 +140,7 @@ type SyncProcess = sync::SyncWindowsProcess;
 #[cfg(not(windows))]
 #[repr(C)]
 pub struct SyncProcessPosix {
-    _p: [u8; 0],
+    _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 #[cfg(not(windows))]
@@ -2720,9 +2720,9 @@ pub mod sync {
     #[cfg(unix)]
     unsafe extern "C" {
         // TODO(port): move to runtime_sys
-        fn tcgetpgrp(fd: c_int) -> libc::pid_t;
-        fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
-        fn getpgrp() -> libc::pid_t;
+        safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
+        safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
+        safe fn getpgrp() -> libc::pid_t;
     }
 
     #[cfg(unix)]
@@ -2737,8 +2737,7 @@ pub mod sync {
             if unsafe { libc::isatty(0) } == 0 {
                 return;
             }
-            // SAFETY: tcgetpgrp/getpgrp
-            let fg = unsafe { tcgetpgrp(0) };
+            let fg = tcgetpgrp(0);
             // Only take the terminal if we *are* the foreground pgroup.
             // `bun run --no-orphans dev &` from an interactive shell leaves
             // stdin as the TTY (shells rely on SIGTTIN, not redirection), so
@@ -2746,7 +2745,7 @@ pub mod sync {
             // `tcsetpgrp`'ing anyway would steal the terminal from the user.
             // Same gate as `onChildStopped`'s resume path below; real shells
             // (bash `give_terminal_to`, zsh `attachtty`) do the same.
-            if fg <= 0 || fg != unsafe { getpgrp() } {
+            if fg <= 0 || fg != getpgrp() {
                 return;
             }
             self.prev = fg;
@@ -2776,8 +2775,7 @@ pub mod sync {
             // SAFETY: libc raise
             let _ = unsafe { libc::raise(libc::SIGTSTP) };
             // — resumed by the shell's SIGCONT —
-            // SAFETY: tcgetpgrp/getpgrp
-            if unsafe { tcgetpgrp(0) } == unsafe { getpgrp() } {
+            if tcgetpgrp(0) == getpgrp() {
                 Self::ttou_blocked(self.script_pgid);
             }
             // SAFETY: libc kill

@@ -651,16 +651,11 @@ impl JSBundleCompletionTask {
                     };
                     let result = output_file.to_js(Some(&path), global_this);
                     if to_assign_on_sourcemap != JSValue::ZERO {
-                        // SAFETY: codegen FFI — `to_assign_on_sourcemap` is the
-                        // `BuildArtifact` JS wrapper produced by the previous
-                        // iteration's `to_js`; `result` is a fresh JS cell.
-                        unsafe {
-                            BuildArtifactPrototype__sourcemapSetCachedValue(
-                                to_assign_on_sourcemap,
-                                global_this.as_ptr(),
-                                result,
-                            );
-                        }
+                        crate::generated_classes::js_BuildArtifact::sourcemap_set_cached(
+                            to_assign_on_sourcemap,
+                            global_this,
+                            result,
+                        );
                         if let Some(artifact) = to_assign_on_sourcemap.as_::<BuildArtifact>() {
                             // SAFETY: `as_` returned a live `*mut BuildArtifact`
                             // owned by the JS wrapper; the borrow lasts only for
@@ -703,15 +698,12 @@ impl JSBundleCompletionTask {
                         }
                         None => JSValue::UNDEFINED,
                     };
-                    // SAFETY: FFI into C++; all args are valid encoded JSValues / live global ptr.
-                    unsafe {
-                        Bun__setupLazyMetafile(
-                            global_this.as_ptr(),
-                            build_output,
-                            metafile_js_str,
-                            metafile_md_str,
-                        );
-                    }
+                    Bun__setupLazyMetafile(
+                        global_this,
+                        build_output,
+                        metafile_js_str,
+                        metafile_md_str,
+                    );
                 }
 
                 let did_handle_callbacks = if let Some(plugin) = this.plugins {
@@ -742,37 +734,31 @@ impl JSBundleCompletionTask {
     }
 }
 
-// ─── C++ FFI (codegen) ───────────────────────────────────────────────────────
-// `jsc.conv` — sysv64 on Windows-x64, C elsewhere. These are C++ symbols
-// emitted by `generate-classes.ts` / `BundlerMetafile.cpp`, not Rust symbols,
-// so a local extern block is the correct binding (not a re-declaration of a
-// Rust fn).
+// ─── C++ FFI ─────────────────────────────────────────────────────────────────
+// `jsc.conv` — sysv64 on Windows-x64, C elsewhere. `Bun__setupLazyMetafile` is
+// a hand-written C++ symbol from `BundlerMetafile.cpp` (not codegen-emitted),
+// so a local extern block is the correct binding.
+//
+// NOTE: `BuildArtifactPrototype__sourcemapSetCachedValue` is *not* redeclared
+// here — codegen already provides it (and a safe `sourcemap_set_cached`
+// wrapper) in `crate::generated_classes::js_BuildArtifact`; redeclaring would
+// trip `clashing_extern_declarations` once the param types drift.
 #[cfg(all(windows, target_arch = "x86_64"))]
 unsafe extern "sysv64" {
-    fn Bun__setupLazyMetafile(
-        global_this: *mut JSGlobalObject,
+    safe fn Bun__setupLazyMetafile(
+        global_this: &JSGlobalObject,
         build_output: JSValue,
         metafile_json_string: JSValue,
         metafile_markdown_string: JSValue,
-    );
-    fn BuildArtifactPrototype__sourcemapSetCachedValue(
-        this_value: JSValue,
-        global: *mut JSGlobalObject,
-        value: JSValue,
     );
 }
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 unsafe extern "C" {
-    fn Bun__setupLazyMetafile(
-        global_this: *mut JSGlobalObject,
+    safe fn Bun__setupLazyMetafile(
+        global_this: &JSGlobalObject,
         build_output: JSValue,
         metafile_json_string: JSValue,
         metafile_markdown_string: JSValue,
-    );
-    fn BuildArtifactPrototype__sourcemapSetCachedValue(
-        this_value: JSValue,
-        global: *mut JSGlobalObject,
-        value: JSValue,
     );
 }
 

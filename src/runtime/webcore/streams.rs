@@ -1152,21 +1152,21 @@ mod http_sink_abi {
                 use super::*;
                 unsafe extern "C" {
                     #[link_name = concat!($abi, "__fromJS")]
-                    pub fn from_js(value: JSValue) -> usize;
+                    pub safe fn from_js(value: JSValue) -> usize;
                     #[link_name = concat!($abi, "__createObject")]
                     pub fn create_object(g: *mut JSGlobalObject, o: *mut c_void, d: usize) -> JSValue;
                     #[link_name = concat!($abi, "__setDestroyCallback")]
-                    pub fn set_destroy_callback(v: JSValue, cb: usize);
+                    pub safe fn set_destroy_callback(v: JSValue, cb: usize);
                     #[link_name = concat!($abi, "__assignToStream")]
                     pub fn assign_to_stream(
                         g: *mut JSGlobalObject, s: JSValue, p: *mut c_void, jp: *mut *mut c_void,
                     ) -> JSValue;
                     #[link_name = concat!($abi, "__onClose")]
-                    pub fn on_close(p: JSValue, r: JSValue);
+                    pub safe fn on_close(p: JSValue, r: JSValue);
                     #[link_name = concat!($abi, "__onReady")]
-                    pub fn on_ready(p: JSValue, a: JSValue, o: JSValue);
+                    pub safe fn on_ready(p: JSValue, a: JSValue, o: JSValue);
                     #[link_name = concat!($abi, "__detachPtr")]
-                    pub fn detach_ptr(p: JSValue);
+                    pub safe fn detach_ptr(p: JSValue);
                 }
             }
         )*};
@@ -1181,6 +1181,15 @@ mod http_sink_abi {
 macro_rules! http_sink_dispatch {
     ($f:ident($($arg:expr),*)) => {
         if HTTP3 {
+            http_sink_abi::h3::$f($($arg),*)
+        } else if SSL {
+            http_sink_abi::https::$f($($arg),*)
+        } else {
+            http_sink_abi::http::$f($($arg),*)
+        }
+    };
+    (unsafe $f:ident($($arg:expr),*)) => {
+        if HTTP3 {
             unsafe { http_sink_abi::h3::$f($($arg),*) }
         } else if SSL {
             unsafe { http_sink_abi::https::$f($($arg),*) }
@@ -1193,7 +1202,7 @@ macro_rules! http_sink_dispatch {
 impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     for HTTPServerWritable<SSL, HTTP3>
 {
-    unsafe fn from_js_extern(value: JSValue) -> usize {
+    fn from_js_extern(value: JSValue) -> usize {
         http_sink_dispatch!(from_js(value))
     }
     unsafe fn create_object_extern(
@@ -1201,9 +1210,9 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue {
-        http_sink_dispatch!(create_object(global, object, destructor))
+        http_sink_dispatch!(unsafe create_object(global, object, destructor))
     }
-    unsafe fn set_destroy_callback_extern(value: JSValue, callback: usize) {
+    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
         http_sink_dispatch!(set_destroy_callback(value, callback))
     }
     unsafe fn assign_to_stream_extern(
@@ -1212,15 +1221,15 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue {
-        http_sink_dispatch!(assign_to_stream(global, stream, ptr, jsvalue_ptr))
+        http_sink_dispatch!(unsafe assign_to_stream(global, stream, ptr, jsvalue_ptr))
     }
-    unsafe fn on_close_extern(ptr: JSValue, reason: JSValue) {
+    fn on_close_extern(ptr: JSValue, reason: JSValue) {
         http_sink_dispatch!(on_close(ptr, reason))
     }
-    unsafe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
+    fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
         http_sink_dispatch!(on_ready(ptr, amount, offset))
     }
-    unsafe fn detach_ptr_extern(ptr: JSValue) {
+    fn detach_ptr_extern(ptr: JSValue) {
         http_sink_dispatch!(detach_ptr(ptr))
     }
 }
@@ -2386,26 +2395,26 @@ impl SinkHandler for NetworkSink {
 // the resolved C externs are spelled out here so the generic `JSSink<NetworkSink>`
 // can dispatch (see FileSink for the same pattern).
 unsafe extern "C" {
-    fn NetworkSink__fromJS(value: JSValue) -> usize;
+    safe fn NetworkSink__fromJS(value: JSValue) -> usize;
     fn NetworkSink__createObject(
         global: *mut JSGlobalObject,
         object: *mut c_void,
         destructor: usize,
     ) -> JSValue;
-    fn NetworkSink__setDestroyCallback(value: JSValue, callback: usize);
+    safe fn NetworkSink__setDestroyCallback(value: JSValue, callback: usize);
     fn NetworkSink__assignToStream(
         global: *mut JSGlobalObject,
         stream: JSValue,
         ptr: *mut c_void,
         jsvalue_ptr: *mut *mut c_void,
     ) -> JSValue;
-    fn NetworkSink__onClose(ptr: JSValue, reason: JSValue);
-    fn NetworkSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
+    safe fn NetworkSink__onClose(ptr: JSValue, reason: JSValue);
+    safe fn NetworkSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
 }
 
 impl crate::webcore::sink::JsSinkAbi for NetworkSink {
-    unsafe fn from_js_extern(value: JSValue) -> usize {
-        unsafe { NetworkSink__fromJS(value) }
+    fn from_js_extern(value: JSValue) -> usize {
+        NetworkSink__fromJS(value)
     }
     unsafe fn create_object_extern(
         global: *mut JSGlobalObject,
@@ -2414,8 +2423,8 @@ impl crate::webcore::sink::JsSinkAbi for NetworkSink {
     ) -> JSValue {
         unsafe { NetworkSink__createObject(global, object, destructor) }
     }
-    unsafe fn set_destroy_callback_extern(value: JSValue, callback: usize) {
-        unsafe { NetworkSink__setDestroyCallback(value, callback) }
+    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
+        NetworkSink__setDestroyCallback(value, callback)
     }
     unsafe fn assign_to_stream_extern(
         global: *mut JSGlobalObject,
@@ -2425,11 +2434,11 @@ impl crate::webcore::sink::JsSinkAbi for NetworkSink {
     ) -> JSValue {
         unsafe { NetworkSink__assignToStream(global, stream, ptr, jsvalue_ptr) }
     }
-    unsafe fn on_close_extern(ptr: JSValue, reason: JSValue) {
-        unsafe { NetworkSink__onClose(ptr, reason) }
+    fn on_close_extern(ptr: JSValue, reason: JSValue) {
+        NetworkSink__onClose(ptr, reason)
     }
-    unsafe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
-        unsafe { NetworkSink__onReady(ptr, amount, offset) }
+    fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
+        NetworkSink__onReady(ptr, amount, offset)
     }
 }
 

@@ -56,8 +56,7 @@ pub struct Property {
 // TODO(port): partial defaults — Zig only defaults `flags`/`default_value`; `key`/`value` have none, so no `impl Default`.
 
 pub struct Object {
-    // TODO(port): &'bump mut [Property]
-    pub properties: *mut [Property],
+    pub properties: crate::StoreSlice<Property>,
     pub is_single_line: bool,
 }
 // Zig: `pub const Property = B.Property;` — inherent associated type alias.
@@ -65,8 +64,7 @@ pub struct Object {
 // TODO(port): partial defaults — Zig only defaults `is_single_line`; `properties` has none, so no `impl Default`.
 
 pub struct Array {
-    // TODO(port): &'bump mut [ArrayBinding]
-    pub items: *mut [ArrayBinding],
+    pub items: crate::StoreSlice<ArrayBinding>,
     pub has_spread: bool,
     pub is_single_line: bool,
 }
@@ -77,33 +75,25 @@ pub struct Array {
 #[derive(Default, Copy, Clone)]
 pub struct Missing {}
 
-// Round-G2: ergonomic slice accessors over the raw `*mut [..]` arena pointers
-// so P-helpers can `for item in arr.items()` without open-coding the unsafe
-// deref at every match arm. SAFETY contract: callers guarantee the backing
-// slice was bump-allocated for the parser's `'a` lifetime and is not
-// concurrently &mut-borrowed (single-threaded parser).
+// Ergonomic slice accessors so P-helpers can `for item in arr.items()`.
+// `&mut self` establishes uniqueness for the `slice_mut()` SAFETY contract
+// (single-threaded parser; arena slice valid for `'a`).
 impl Array {
     #[inline]
-    pub fn items(&self) -> &[ArrayBinding] {
-        // SAFETY: arena-owned slice valid for self's lifetime; see module note.
-        unsafe { &*self.items }
-    }
+    pub fn items(&self) -> &[ArrayBinding] { self.items.slice() }
     #[inline]
     pub fn items_mut(&mut self) -> &mut [ArrayBinding] {
-        // SAFETY: arena-owned slice valid for self's lifetime; exclusive via &mut self.
-        unsafe { &mut *self.items }
+        // SAFETY: exclusive via `&mut self`; arena-owned slice valid for self's lifetime.
+        unsafe { self.items.slice_mut() }
     }
 }
 impl Object {
     #[inline]
-    pub fn properties(&self) -> &[Property] {
-        // SAFETY: arena-owned slice valid for self's lifetime; see module note.
-        unsafe { &*self.properties }
-    }
+    pub fn properties(&self) -> &[Property] { self.properties.slice() }
     #[inline]
     pub fn properties_mut(&mut self) -> &mut [Property] {
-        // SAFETY: arena-owned slice valid for self's lifetime; exclusive via &mut self.
-        unsafe { &mut *self.properties }
+        // SAFETY: exclusive via `&mut self`; arena-owned slice valid for self's lifetime.
+        unsafe { self.properties.slice_mut() }
     }
 }
 
@@ -150,7 +140,7 @@ impl B {
                 let ref_ = unsafe { (**id).r#ref };
                 // SAFETY: `original_name` is an arena-owned slice valid for the
                 // parser/AST arena that `symbol_table` borrows from.
-                let original_name = unsafe { &*ref_.get_symbol(symbol_table).original_name };
+                let original_name = ref_.get_symbol(symbol_table).original_name.slice();
                 raw(hasher, (self.tag(), original_name.len()));
             }
             B::BArray(array) => {

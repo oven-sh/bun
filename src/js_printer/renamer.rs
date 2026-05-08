@@ -72,7 +72,7 @@ impl<'a> NoOpRenamer<'a> {
 
         if let Some(symbol) = self.symbols.get_const(resolved) {
             // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-            unsafe { &*symbol.original_name }
+            symbol.original_name.slice()
         } else {
             // TODO(port): include `self.source.path.text` once `bun_logger::fs::Path`
             // exposes the text accessor.
@@ -259,7 +259,7 @@ impl MinifyRenamer {
         let ns = symbol.slot_namespace();
         if ns == SlotNamespace::MustNotBeRenamed {
             // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-            return unsafe { &*symbol.original_name };
+            return symbol.original_name.slice();
         }
 
         let i = match symbol
@@ -269,7 +269,7 @@ impl MinifyRenamer {
         {
             Some(i) => i,
             // SAFETY: as above.
-            None => return unsafe { &*symbol.original_name },
+            None => return symbol.original_name.slice(),
         };
 
         // This has to be a pointer because the string might be stored inline
@@ -642,7 +642,7 @@ impl NumberRenamer {
 
         let resolved = self.symbols.follow(ref_);
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        unsafe { &*self.symbols.get_const(resolved).unwrap().original_name }
+        self.symbols.get_const(resolved).unwrap().original_name.slice()
     }
 
     pub fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
@@ -662,11 +662,11 @@ impl NumberRenamer {
         }
 
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        let original_name: &[u8] = unsafe { &*symbol.original_name };
+        let original_name: &[u8] = symbol.original_name.slice();
         // PERF(port): Zig reset stack-fallback FBA here; arena reset semantics differ
         let name: NameStr = match scope.find_unused_name(&self.arena, original_name) {
             UnusedName::Renamed(name) => name,
-            UnusedName::NoCollision => symbol.original_name,
+            UnusedName::NoCollision => symbol.original_name.as_raw(),
         };
         let new_len = inner.len().max(ref_.inner_index() as usize + 1);
         if inner.len() < new_len {
@@ -860,12 +860,7 @@ impl NumberRenamer {
         }
 
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        unsafe {
-            &*self
-                .symbols
-                .symbols_for_source[source_index as usize][inner_index as usize]
-                .original_name
-        }
+        self.symbols.symbols_for_source[source_index as usize][inner_index as usize].original_name.slice()
     }
 }
 
@@ -1162,7 +1157,7 @@ pub fn compute_reserved_names_for_scope(
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
             // SAFETY: `original_name` is an AST-arena slice.
             names
-                .put(unsafe { &*symbol.original_name }, 1)
+                .put(symbol.original_name.slice(), 1)
                 .expect("unreachable");
         }
     }
@@ -1173,7 +1168,7 @@ pub fn compute_reserved_names_for_scope(
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
             // SAFETY: `original_name` is an AST-arena slice.
             names
-                .put(unsafe { &*symbol.original_name }, 1)
+                .put(symbol.original_name.slice(), 1)
                 .expect("unreachable");
         }
     }

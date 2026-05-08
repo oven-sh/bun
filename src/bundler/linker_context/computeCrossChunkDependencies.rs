@@ -250,7 +250,7 @@ impl<'a> CrossChunkDependencies<'a> {
 
                     if cfg!(debug_assertions) {
                         // SAFETY: `original_name` is an arena slice valid for the link pass.
-                        let name = unsafe { &*symbols.get_const(ref_to_use).unwrap().original_name };
+                        let name = symbols.get_const(ref_to_use).unwrap().original_name.slice();
                         debug!(
                             "Cross-chunk import: {} {:?}",
                             bstr::BStr::new(name),
@@ -302,7 +302,7 @@ impl<'a> CrossChunkDependencies<'a> {
 
                         if cfg!(debug_assertions) {
                             // SAFETY: arena slice valid for the link pass.
-                            let name = unsafe { &*symbols.get_const(target_ref).unwrap().original_name };
+                            let name = symbols.get_const(target_ref).unwrap().original_name.slice();
                             debug!(
                                 "Cross-chunk export: {}",
                                 bstr::BStr::new(name),
@@ -365,7 +365,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 if other_chunk_index as usize != chunk_index {
                     if cfg!(debug_assertions) {
                         // SAFETY: arena slices valid for the link pass.
-                        let name = unsafe { &*symbol.original_name };
+                        let name = symbol.original_name.slice();
                         let path = {
                             &c.parse_graph()
                                 .input_files
@@ -395,7 +395,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         .get_or_put(import_ref);
                 } else {
                     // SAFETY: arena slice valid for the link pass.
-                    let name = unsafe { &*symbol.original_name };
+                    let name = symbol.original_name.slice();
                     debug!(
                         "{} imports from itself (chunk {})",
                         bstr::BStr::new(name),
@@ -492,14 +492,13 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         .zip(clause_items.slice_mut().iter_mut())
                     {
                         let ref_ = stable_ref.r#ref;
-                        // SAFETY: `original_name` is an arena slice valid for the link pass.
-                        let original_name = unsafe { &*c.graph.symbols.get_const(ref_).unwrap().original_name };
-                        let alias: *const [u8] = if c.options.minify_identifiers {
+                        let original_name = c.graph.symbols.get_const(ref_).unwrap().original_name.slice();
+                        let alias: js_ast::StoreStr = if c.options.minify_identifiers {
                             // PORT NOTE: `next_minified_name` returns an owned Vec; leak into
                             // the arena so the alias lifetime matches Zig's arena dupe.
-                            std::ptr::from_ref::<[u8]>(c.arena().alloc_slice_copy(&r.next_minified_name().expect("OOM")))
+                            js_ast::StoreStr::new(c.arena().alloc_slice_copy(&r.next_minified_name().expect("OOM")))
                         } else {
-                            std::ptr::from_ref::<[u8]>(r.next_renamed_name(original_name))
+                            js_ast::StoreStr::new(r.next_renamed_name(original_name))
                         };
 
                         *clause_item = js_ast::ClauseItem {
@@ -509,13 +508,13 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             },
                             alias,
                             alias_loc: Logger::Loc::EMPTY,
-                            original_name: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
+                            original_name: js_ast::StoreStr::new(b"" as &[u8]),
                         };
 
-                        // SAFETY: `alias` points into the link-pass arena (see PORT NOTE above),
-                        // which outlives `exports_to_other_chunks`; reborrow as &'static to match
-                        // the map's value type.
-                        let _ = repr.exports_to_other_chunks.put(ref_, unsafe { &*alias }); // OOM-only Result (Zig: catch unreachable)
+                        // `alias` points into the link-pass arena (see PORT NOTE above),
+                        // which outlives `exports_to_other_chunks`; `.slice()` re-borrows
+                        // under the StoreStr arena contract.
+                        let _ = repr.exports_to_other_chunks.put(ref_, alias.slice()); // OOM-only Result (Zig: catch unreachable)
                         // PERF(port): was putAssumeCapacity — profile in Phase B
                     }
 
@@ -523,8 +522,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let mut stmts = Vec::<js_ast::Stmt>::init_capacity(1)?;
                         // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
                         // Vec buffer (arena-lifetime) into a raw fat ptr.
-                        let items_ptr: *mut [js_ast::ClauseItem] =
-                            std::ptr::from_mut::<[js_ast::ClauseItem]>(clause_items.slice_mut());
+                        let items_ptr =
+                            js_ast::StoreSlice::new_mut(clause_items.slice_mut());
                         core::mem::forget(clause_items);
                         // Zig: `c.allocator().create(S.ExportClause)` + struct literal —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
@@ -596,9 +595,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                                     ref_: Some(item.r#ref),
                                     loc: Logger::Loc::EMPTY,
                                 },
-                                alias: std::ptr::from_ref::<[u8]>(item.export_alias.as_ref()),
+                                alias: js_ast::StoreStr::new(item.export_alias.as_ref()),
                                 alias_loc: Logger::Loc::EMPTY,
-                                original_name: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
+                                original_name: js_ast::StoreStr::new(b"" as &[u8]),
                             });
                             // PERF(port): was appendAssumeCapacity — profile in Phase B
                         }
@@ -607,8 +606,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             import_kind: bun_options_types::ImportKind::Stmt,
                             chunk_index: cross_chunk_import.chunk_index,
                         });
-                        let items_ptr: *mut [js_ast::ClauseItem] =
-                            std::ptr::from_mut::<[js_ast::ClauseItem]>(clauses.into_bump_slice_mut());
+                        let items_ptr =
+                            js_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
                         // Zig: `c.allocator().create(S.Import)` + struct literal —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
                         let import = c.arena().alloc(js_ast::S::Import {

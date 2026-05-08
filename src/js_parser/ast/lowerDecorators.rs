@@ -130,13 +130,6 @@ fn class_copy(c: &G::Class) -> G::Class {
     }
 }
 
-#[inline]
-unsafe fn slice_mut<'r, T>(ptr: *mut [T]) -> &'r mut [T] {
-    // SAFETY: caller guarantees `ptr` is a live arena slice for 'r and there is
-    // no aliasing &mut outstanding (parser holds exclusive access during visit).
-    unsafe { &mut *ptr }
-}
-
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
@@ -402,20 +395,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if let Some(t) = &mut e.tag {
                     self.rewrite_expr(t, kind);
                 }
-                // SAFETY: arena-owned `*mut [TemplatePart]`; unique access via `&mut e`.
-                let parts = unsafe { &mut *e.parts };
-                for part in parts.iter_mut() {
+                // SAFETY: arena-owned slice; unique access via `&mut e`.
+                for part in e.parts_mut().iter_mut() {
                     self.rewrite_expr(&mut part.value, kind);
                 }
             }
             js_ast::ExprData::EArrow(e) => {
-                let stmts = unsafe { slice_mut(e.body.stmts) };
+                let stmts = unsafe { e.body.stmts.slice_mut() };
                 self.rewrite_stmts(stmts, kind);
             }
             js_ast::ExprData::EFunction(e) => match kind {
                 RewriteKind::ReplaceThis { .. } => {}
                 RewriteKind::ReplaceRef { .. } => {
-                    let stmts = unsafe { slice_mut(e.func.body.stmts) };
+                    let stmts = unsafe { e.func.body.stmts.slice_mut() };
                     if !stmts.is_empty() {
                         self.rewrite_stmts(stmts, kind);
                     }
@@ -466,7 +458,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
                 js_ast::StmtData::SBlock(data) => {
-                    let stmts = unsafe { slice_mut(data.stmts) };
+                    let stmts = unsafe { data.stmts.slice_mut() };
                     self.rewrite_stmts(stmts, kind);
                 }
                 js_ast::StmtData::SFor(data) => {
@@ -519,24 +511,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut t = data.test_;
                     self.rewrite_expr(&mut t, kind);
                     data.test_ = t;
-                    let cases = unsafe { slice_mut(data.cases) };
+                    let cases = unsafe { data.cases.slice_mut() };
                     for case in cases.iter_mut() {
                         if let Some(v) = &mut case.value {
                             self.rewrite_expr(v, kind);
                         }
-                        let body = unsafe { slice_mut(case.body) };
+                        let body = unsafe { case.body.slice_mut() };
                         self.rewrite_stmts(body, kind);
                     }
                 }
                 js_ast::StmtData::STry(data) => {
-                    let body = unsafe { slice_mut(data.body) };
+                    let body = unsafe { data.body.slice_mut() };
                     self.rewrite_stmts(body, kind);
                     if let Some(c) = &mut data.catch_ {
-                        let cb = unsafe { slice_mut(c.body) };
+                        let cb = unsafe { c.body.slice_mut() };
                         self.rewrite_stmts(cb, kind);
                     }
                     if let Some(f) = &mut data.finally {
-                        let fb = unsafe { slice_mut(f.stmts) };
+                        let fb = unsafe { f.stmts.slice_mut() };
                         self.rewrite_stmts(fb, kind);
                     }
                 }
@@ -744,17 +736,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.rewrite_private_accesses_in_expr(t, map);
                 }
                 // SAFETY: see `rewrite_expr` ETemplate.
-                let parts = unsafe { &mut *e.parts };
-                for part in parts.iter_mut() {
+                for part in e.parts_mut().iter_mut() {
                     self.rewrite_private_accesses_in_expr(&mut part.value, map);
                 }
             }
             js_ast::ExprData::EFunction(e) => {
-                let stmts = unsafe { slice_mut(e.func.body.stmts) };
+                let stmts = unsafe { e.func.body.stmts.slice_mut() };
                 self.rewrite_private_accesses_in_stmts(stmts, map);
             }
             js_ast::ExprData::EArrow(e) => {
-                let stmts = unsafe { slice_mut(e.body.stmts) };
+                let stmts = unsafe { e.body.stmts.slice_mut() };
                 self.rewrite_private_accesses_in_stmts(stmts, map);
             }
             _ => {}
@@ -794,7 +785,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
                 js_ast::StmtData::SBlock(data) => {
-                    let stmts = unsafe { slice_mut(data.stmts) };
+                    let stmts = unsafe { data.stmts.slice_mut() };
                     self.rewrite_private_accesses_in_stmts(stmts, map);
                 }
                 js_ast::StmtData::SFor(data) => {
@@ -847,24 +838,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut t = data.test_;
                     self.rewrite_private_accesses_in_expr(&mut t, map);
                     data.test_ = t;
-                    let cases = unsafe { slice_mut(data.cases) };
+                    let cases = unsafe { data.cases.slice_mut() };
                     for case in cases.iter_mut() {
                         if let Some(v) = &mut case.value {
                             self.rewrite_private_accesses_in_expr(v, map);
                         }
-                        let body = unsafe { slice_mut(case.body) };
+                        let body = unsafe { case.body.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(body, map);
                     }
                 }
                 js_ast::StmtData::STry(data) => {
-                    let body = unsafe { slice_mut(data.body) };
+                    let body = unsafe { data.body.slice_mut() };
                     self.rewrite_private_accesses_in_stmts(body, map);
                     if let Some(c) = &mut data.catch_ {
-                        let cb = unsafe { slice_mut(c.body) };
+                        let cb = unsafe { c.body.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(cb, map);
                     }
                     if let Some(f) = &mut data.finally {
-                        let fb = unsafe { slice_mut(f.stmts) };
+                        let fb = unsafe { f.stmts.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(fb, map);
                     }
                 }
@@ -976,7 +967,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if !is_expr {
             // SAFETY: original_name is arena-owned for 'a.
             let cns: &'a [u8] =
-                unsafe { &*p.symbols[class_name_ref.inner_index() as usize].original_name };
+                p.symbols[class_name_ref.inner_index() as usize].original_name.slice();
             let name = p.bump_name2(b"_", cns);
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
@@ -1035,7 +1026,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut computed_key_counter: usize = 0;
 
         // SAFETY: arena-owned slice valid for 'a.
-        let props_slice: &mut [Property] = unsafe { slice_mut(class.properties) };
+        let props_slice: &mut [Property] = unsafe { class.properties.slice_mut() };
         for (prop_idx, prop) in props_slice.iter_mut().enumerate() {
             if prop.kind == PropertyKind::ClassStaticBlock {
                 continue;
@@ -1102,9 +1093,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
         if is_expr && !expr_class_is_anonymous && expr_class_ref.is_some() {
             // SAFETY: see above.
-            original_class_name_for_decorator = Some(unsafe {
-                &*p.symbols[class_name_ref.inner_index() as usize].original_name
-            });
+            original_class_name_for_decorator = Some(p.symbols[class_name_ref.inner_index() as usize].original_name.slice());
             class_name_ref = expr_class_ref.unwrap();
             class_name_loc = loc;
         }
@@ -1166,8 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         {
             let mut has_any_private = false;
             let mut has_any_decorated = false;
-            // SAFETY: same arena slice as above.
-            let cprops: &[Property] = unsafe { &*class.properties };
+            let cprops: &[Property] = class.properties.slice();
             for cprop in cprops.iter() {
                 if cprop.kind == PropertyKind::ClassStaticBlock {
                     continue;
@@ -1196,7 +1184,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // SAFETY: same arena slice.
-        let props_slice2: &mut [Property] = unsafe { slice_mut(class.properties) };
+        let props_slice2: &mut [Property] = unsafe { class.properties.slice_mut() };
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
             if prop.ts_decorators.len_u32() == 0 {
                 // ── Non-decorated property ──
@@ -1214,7 +1202,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let npriv_inner = npriv_ref.inner_index();
                     // SAFETY: arena-owned.
                     let npriv_orig: &'a [u8] =
-                        unsafe { &*p.symbols[npriv_inner as usize].original_name };
+                        p.symbols[npriv_inner as usize].original_name.slice();
 
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         // Non-decorated private method/getter/setter → WeakSet + fn extraction
@@ -1316,7 +1304,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let get_body =
                         bump.alloc_slice_copy(&[p.s(S::Return { value: Some(get_ret) }, loc)]);
                     let get_fn = G::Fn {
-                        body: G::FnBody { stmts: std::ptr::from_mut::<[Stmt]>(get_body), loc },
+                        body: G::FnBody { stmts: crate::StoreSlice::new_mut(get_body), loc },
                         ..Default::default()
                     };
 
@@ -1336,8 +1324,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         ..Default::default()
                     });
                     let set_fn = G::Fn {
-                        args: std::ptr::from_mut::<[G::Arg]>(core::slice::from_mut(setter_fn_args)),
-                        body: G::FnBody { stmts: std::ptr::from_mut::<[Stmt]>(set_body), loc },
+                        args: crate::StoreSlice::new_mut(core::slice::from_mut(setter_fn_args)),
+                        body: G::FnBody { stmts: crate::StoreSlice::new_mut(set_body), loc },
                         ..Default::default()
                     };
 
@@ -1434,7 +1422,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let priv_inner = priv_ref.inner_index();
                 // SAFETY: arena-owned.
                 let private_orig: &'a [u8] =
-                    unsafe { &*p.symbols[priv_inner as usize].original_name };
+                    p.symbols[priv_inner as usize].original_name.slice();
 
                 if (1..=3).contains(&k) {
                     let existing = private_lowered_map.get(&priv_inner).copied();
@@ -1535,10 +1523,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
                     _ => unreachable!(),
                 };
-                // SAFETY: `original_name` is arena-owned (`ArenaStr = *const [u8]`).
-                let priv_name = E::Str::new(unsafe {
-                    &*p.symbols[priv_ref.inner_index() as usize].original_name
-                });
+                // `original_name` is an arena-owned `StoreStr`.
+                let priv_name = E::Str::new(p.symbols[priv_ref.inner_index() as usize].original_name.slice());
                 p.new_expr(E::EString { data: priv_name, ..Default::default() }, loc)
             } else {
                 key_expr
@@ -1720,10 +1706,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else if is_expr && expr_class_is_anonymous {
                 name_from_context.unwrap_or(b"").into()
             } else {
-                // SAFETY: `original_name` is arena-owned (`ArenaStr = *const [u8]`).
-                E::Str::new(unsafe {
-                    &*p.symbols[class_name_ref.inner_index() as usize].original_name
-                })
+                // `original_name` is an arena-owned `StoreStr`.
+                E::Str::new(p.symbols[class_name_ref.inner_index() as usize].original_name.slice())
             };
 
             let mut cls_dec_args = BumpVec::with_capacity_in(5, bump);
@@ -1793,7 +1777,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             }
                         } else {
                             // Wrap in IIFE
-                            let stmts_ptr: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts_slice);
+                            let stmts_ptr = crate::StoreSlice::new_mut(stmts_slice);
                             let iife_body = p.new_expr(
                                 E::Arrow {
                                     body: G::FnBody { loc, stmts: stmts_ptr },
@@ -1968,8 +1952,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EFunction(f) => &mut **f,
                     _ => unreachable!(),
                 };
-                // SAFETY: arena-owned.
-                let body_slice: &[Stmt] = unsafe { &*func.func.body.stmts };
+                let body_slice: &[Stmt] = func.func.body.stmts.slice();
                 let mut body_stmts = BumpVec::<Stmt>::with_capacity_in(
                     body_slice.len() + constructor_inject_stmts.len(),
                     bump,
@@ -1992,7 +1975,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 spliced.extend_from_slice(&body_stmts[..insert_at]);
                 spliced.extend_from_slice(&constructor_inject_stmts);
                 spliced.extend_from_slice(&body_stmts[insert_at..]);
-                func.func.body.stmts = std::ptr::from_mut::<[Stmt]>(spliced.into_bump_slice_mut());
+                func.func.body.stmts = crate::StoreSlice::new_mut(spliced.into_bump_slice_mut());
                 found_constructor = true;
                 break;
             }
@@ -2018,11 +2001,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     ctor_stmts.push(p.s(S::SExpr { value: call, ..Default::default() }, loc));
                 }
                 ctor_stmts.extend_from_slice(&constructor_inject_stmts);
-                let ctor_body_ptr = std::ptr::from_mut::<[Stmt]>(ctor_stmts.into_bump_slice_mut());
+                let ctor_body_ptr = crate::StoreSlice::new_mut(ctor_stmts.into_bump_slice_mut());
                 let func = G::Fn {
                     name: None,
                     open_parens_loc: logger::Loc::EMPTY,
-                    args: crate::empty_arena_slice_mut(),
+                    args: crate::StoreSlice::EMPTY,
                     body: G::FnBody { loc, stmts: ctor_body_ptr },
                     ..Default::default()
                 };
@@ -2054,7 +2037,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             new_properties = merged;
         }
 
-        class.properties = std::ptr::from_mut::<[Property]>(new_properties.into_bump_slice_mut());
+        class.properties = crate::StoreSlice::new_mut(new_properties.into_bump_slice_mut());
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
 

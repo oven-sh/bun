@@ -40,8 +40,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         // Collect all statements
         let mut total_stmts_count: usize = 0;
         for part in parts.iter() {
-            // SAFETY: arena-owned `*mut [Stmt]` valid for 'a; read-only iteration.
-            total_stmts_count += unsafe { &*part.stmts }.len();
+            total_stmts_count += part.stmts.len();
         }
 
         if total_stmts_count == 0 {
@@ -52,8 +51,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         // PERF(port): was bun.handleOom(arena.alloc(Stmt, n)) — bump alloc + index fill
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
         for part in parts.iter() {
-            // SAFETY: arena-owned slice valid for 'a.
-            for stmt in unsafe { &*part.stmts }.iter() {
+            for stmt in part.stmts.iter() {
                 all_stmts.push(*stmt);
             }
         }
@@ -150,12 +148,11 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
                         // Add this.funcName = funcName assignment
                         let this_expr = self.new_expr(E::This {}, stmt.loc);
-                        // SAFETY: `original_name` is an arena-owned slice valid for 'a; raw-ptr
-                        // deref yields an unbounded lifetime accepted by `Dot.name: &'static [u8]`
-                        // (Phase-A `Str` placeholder — see E.rs line 28).
-                        let name_str: &'static [u8] = unsafe {
-                            &*self.symbols[name_ref.inner_index() as usize].original_name
-                        };
+                        // `original_name` is an arena-owned `StoreStr` valid for 'a; `.slice()`
+                        // detaches the borrow from `self.symbols` so the &mut self calls below
+                        // don't conflict.
+                        let name_str: &[u8] =
+                            self.symbols[name_ref.inner_index() as usize].original_name.slice();
                         let this_dot = self.new_expr(
                             E::Dot {
                                 target: this_expr,
@@ -250,8 +247,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     );
                     let await_expr = self.new_expr(E::Await { value: import_expr }, stmt.loc);
 
-                    // SAFETY: `items` is an arena-owned `*mut [ClauseItem]` valid for 'a.
-                    let import_items: &[crate::ClauseItem] = unsafe { &*import_data.items };
+                    // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
+                    let import_items: &[crate::ClauseItem] = import_data.items.slice();
 
                     if import_data.star_name_loc.is_some() {
                         // import * as X from 'mod' -> var X = await import('mod')
@@ -395,9 +392,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     }
                 }
                 StmtData::SDirective(directive) => {
-                    // In REPL mode, treat directives (string literals) as expressions
-                    // SAFETY: arena-owned `*const [u8]` valid for 'a; Phase-A `Str` is `&'static [u8]`.
-                    let value_str: &'static [u8] = unsafe { &*directive.value };
+                    // In REPL mode, treat directives (string literals) as expressions.
+                    let value_str: &'static [u8] = directive.value.slice();
                     let str_expr = self.new_expr(
                         E::String { data: value_str.into(), ..Default::default() },
                         stmt.loc,
@@ -421,7 +417,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             E::Arrow {
                 body: G::FnBody {
                     loc: logger::Loc::EMPTY,
-                    stmts: std::ptr::from_mut::<[Stmt]>(inner_slice),
+                    stmts: crate::StoreSlice::new_mut(inner_slice),
                 },
                 is_async,
                 ..Default::default()
@@ -448,7 +444,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
         // Update parts
         if !parts.is_empty() {
-            parts[0].stmts = std::ptr::from_mut::<[Stmt]>(final_slice);
+            parts[0].stmts = crate::StoreSlice::new_mut(final_slice);
             parts.truncate(1);
         }
 
@@ -510,8 +506,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 E::Identifier { ref_: import_data.namespace_ref, ..Default::default() },
                 loc,
             );
-            // SAFETY: `alias` is an arena-owned `*const [u8]` valid for 'a; Phase-A `Str`.
-            let alias_str: &'static [u8] = unsafe { &*item.alias };
+            // `alias` is an arena-owned `StoreStr` valid for 'a.
+            let alias_str: &'static [u8] = item.alias.slice();
             let prop_access = self.new_expr(
                 E::Dot {
                     target: ns_ref_expr,

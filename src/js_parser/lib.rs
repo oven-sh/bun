@@ -4,7 +4,7 @@
 //! `[]T` struct field in the Zig points into either the source text or the
 //! parser arena and is bulk-freed at end-of-parse. Per PORTING.md, Phase A
 //! does **not** add lifetime params to structs; arena-owned slices are typed
-//! as raw `*const [T]` / `*mut [T]` here. Phase B threads a crate-wide
+//! as `StoreSlice<T>` / `StoreStr` here. Phase B threads a crate-wide
 //! `'bump` and rewrites these to `&'bump [T]` / `&'bump mut [T]`.
 
 // `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
@@ -18,7 +18,7 @@
 
 use core::fmt;
 
-use bun_collections::{ArrayHashMap, VecExt, MultiArrayList, StringHashMap};
+use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
 pub use bun_collections::VecExt as _VecExtReexport;
 use bun_core::Output;
 use bun_logger as logger;
@@ -246,17 +246,16 @@ pub use crate::ast::base::{Index, Ref, RefCtx, RefFields, RefHashCtx, RefTag};
 
 use crate::ast::symbol; // for symbol::Use, symbol::SlotNamespace
 
-// ─── arena-slice helpers (Phase-A raw-pointer stand-ins for &'bump [T]) ─────
-// TODO(port): replace with &'bump [u8] / &'bump mut [T] in Phase B.
-pub(crate) type ArenaStr = *const [u8];
+// ─── arena-slice helpers ────────────────────────────────────────────────────
+// Legacy alias: AST string fields now uniformly use `StoreStr` (safe `Deref`
+// wrapper around an arena `[u8]`). Kept as a type alias so existing field
+// declarations / call sites that spell `ArenaStr` continue to compile.
+pub(crate) type ArenaStr = StoreStr;
 #[inline]
 pub(crate) const fn empty_arena_str() -> ArenaStr {
-    core::ptr::slice_from_raw_parts(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
+    StoreStr::EMPTY
 }
-#[inline]
-pub(crate) const fn empty_arena_slice_mut<T>() -> *mut [T] {
-    core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<T>::dangling().as_ptr(), 0)
-}
+// (former `empty_arena_slice_mut<T>()` removed — use `StoreSlice::<T>::EMPTY`.)
 
 // ─── StoreStr — arena-owned string slice (StoreRef's [u8] sibling) ──────────
 //
@@ -264,7 +263,7 @@ pub(crate) const fn empty_arena_slice_mut<T>() -> *mut [T] {
 // arena and are bulk-freed at `Store::reset()`. Phase A modeled them as
 // `&'static [u8]`, forcing `transmute::<&[u8], &'static [u8]>` at every
 // construction site. `StoreStr` mirrors `StoreRef<T>` (raw `NonNull<T>`) and
-// `StmtNodeList` (`*mut [Stmt]`): a thin lifetime-erased pointer with safe
+// `StmtNodeList` (`StoreSlice<Stmt>`): a thin lifetime-erased pointer with safe
 // construction and `Deref<Target=[u8]>` under the same callers-must-not-
 // outlive-the-arena contract that `StoreRef` already imposes. This collapses
 // the ~40 string-slice transmutes to zero without cascading `<'arena>` through
@@ -326,6 +325,23 @@ impl StoreStr {
     #[inline]
     pub fn as_raw(self) -> *const [u8] {
         core::ptr::slice_from_raw_parts(self.ptr.as_ptr(), self.len)
+    }
+
+    /// Reconstruct from a raw fat pointer (inverse of `as_raw`). Exists only
+    /// for the handful of callers that still hold a `*const [u8]`
+    /// (e.g. `js_printer::renamer::NameStr`) during the StoreSlice migration.
+    ///
+    /// # Safety
+    /// `p` must satisfy the `StoreStr` invariant: either null (yielding
+    /// `EMPTY`) or pointing at `p.len()` initialized bytes valid for the
+    /// owning arena's lifetime. The result auto-`Deref`s, so a garbage fat
+    /// pointer here is immediate UB at the first read.
+    #[inline]
+    pub unsafe fn from_raw(p: *const [u8]) -> Self {
+        match core::ptr::NonNull::new(p.cast_mut()) {
+            Some(nn) => StoreStr { ptr: nn.cast::<u8>(), len: p.len() },
+            None => StoreStr::EMPTY,
+        }
     }
 }
 
@@ -506,6 +522,29 @@ impl<T> StoreSlice<T> {
     pub unsafe fn slice_mut<'a>(self) -> &'a mut [T] {
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
+
+    /// Shorten the slice in place. Panics if `new_len > len` (mirrors Zig
+    /// `slice[0..new_len]` bounds check). The arena still owns the trailing
+    /// elements; they are simply no longer reachable through this view.
+    #[inline]
+    pub fn truncate(&mut self, new_len: usize) {
+        assert!(new_len <= self.len as usize);
+        self.len = new_len as u32;
+    }
+
+    /// Construct from a `BumpVec`/`ArenaVec` by leaking it into the bump arena
+    /// (Zig: `list.items` after `toOwnedSlice`). Convenience for the common
+    /// `StoreSlice::new_mut(v.into_bump_slice_mut())` pattern.
+    #[inline]
+    pub fn from_bump<'b>(v: bun_alloc::ArenaVec<'b, T>) -> Self {
+        use bun_alloc::ArenaVecExt as _;
+        StoreSlice::new_mut(v.into_bump_slice_mut())
+    }
+}
+
+impl<'a, T> From<bun_alloc::ArenaVec<'a, T>> for StoreSlice<T> {
+    #[inline]
+    fn from(v: bun_alloc::ArenaVec<'a, T>) -> Self { StoreSlice::from_bump(v) }
 }
 
 impl<T> Default for StoreSlice<T> {
@@ -589,9 +628,11 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub type ExprNodeList = Vec<Expr>;
 
-// TODO(port): &'bump mut [Stmt] / &'bump mut [Binding] once 'bump is threaded.
-pub type StmtNodeList = *mut [Stmt];
-pub type BindingNodeList = *mut [Binding];
+// Arena-owned `[Stmt]` / `[Binding]` views — see `StoreSlice<T>` doc above.
+// A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
+// one-struct change once `'arena` is threaded through `Expr`/`Stmt`/`Data`.
+pub type StmtNodeList = StoreSlice<Stmt>;
+pub type BindingNodeList = StoreSlice<Binding>;
 
 #[repr(u8)] // Zig: enum(u2)
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -830,9 +871,7 @@ pub struct EnumValue {
 
 impl EnumValue {
     pub fn name_as_e_string(&self, bump: &bun_alloc::Arena) -> E::String {
-        // SAFETY: `name` is a valid arena slice for the lifetime of the parse.
-        let name = unsafe { &*self.name };
-        E::String::init_re_encode_utf8(name, bump)
+        E::String::init_re_encode_utf8(self.name.slice(), bump)
     }
 }
 
@@ -1110,9 +1149,8 @@ impl DeclaredSymbol {
         f: impl Fn(&mut C, Ref),
     ) {
         let entries = decls.entries.slice();
-        // SAFETY: column 1 is `bool`, column 0 is `Ref` per the `MultiArrayElement` impl above.
-        let is_top_level: &[bool] = unsafe { entries.items::<"is_top_level", bool>() };
-        let refs: &[Ref] = unsafe { entries.items::<"ref_", Ref>() };
+        let is_top_level: &[bool] = entries.items::<"is_top_level", bool>();
+        let refs: &[Ref] = entries.items::<"ref_", Ref>();
 
         // TODO: SIMD
         debug_assert_eq!(is_top_level.len(), refs.len());
@@ -1159,8 +1197,8 @@ pub type BindingList = Vec<Binding>;
 /// shaking and can be assigned to separate chunks (i.e. output files) by code
 /// splitting.
 pub struct Part {
-    pub stmts: *mut [Stmt],   // TODO(port): &'bump mut [Stmt]
-    pub scopes: *mut [*mut Scope], // TODO(port): &'bump mut [&'bump mut Scope]
+    pub stmts: StoreSlice<Stmt>,
+    pub scopes: StoreSlice<*mut Scope>, // TODO(port): &'bump mut [&'bump mut Scope]
 
     /// Each is an index into the file-level import record list
     pub import_record_indices: PartImportRecordIndices,
@@ -1227,8 +1265,8 @@ pub type PartSymbolPropertyUseMap = ArrayHashMap<Ref, StringHashMap<symbol::Use>
 impl Default for Part {
     fn default() -> Self {
         Self {
-            stmts: empty_arena_slice_mut::<Stmt>(),
-            scopes: empty_arena_slice_mut::<*mut Scope>(),
+            stmts: StoreSlice::EMPTY,
+            scopes: StoreSlice::EMPTY,
             import_record_indices: PartImportRecordIndices::default(),
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
@@ -1245,8 +1283,7 @@ impl Default for Part {
 impl Part {
     // TODO(port): narrow error set
     pub fn json_stringify(&self, writer: &mut impl JsonWriter) -> core::result::Result<(), bun_core::Error> {
-        // SAFETY: `stmts` is a valid arena slice for the lifetime of the parse.
-        writer.write(unsafe { &*self.stmts })
+        writer.write(self.stmts.slice())
     }
 }
 
@@ -1391,8 +1428,7 @@ impl From<ToJSError> for bun_core::Error {
 /// So a better idea is to batch up your allocations into one larger allocation
 /// and then just make all the arrays point to different parts of the larger allocation
 pub struct Batcher<T> {
-    // TODO(port): &'bump mut [T] once arena lifetime is threaded.
-    pub head: *mut [T],
+    pub head: StoreSlice<T>,
 }
 
 impl<T> Batcher<T> {
@@ -1403,45 +1439,40 @@ impl<T> Batcher<T> {
         // TODO(port): bumpalo alloc_slice for uninit T — Zig `arena.alloc(Type, count)`.
         // PERF(port): Zig left the slice uninitialized; bumpalo requires Default fill.
         let all = bump.alloc_slice_fill_default(count);
-        Ok(Self { head: std::ptr::from_mut::<[T]>(all) })
+        Ok(Self { head: StoreSlice::new_mut(all) })
     }
 
     pub fn done(&mut self) {
-        // SAFETY: `head` is always a valid (possibly empty) arena slice.
-        debug_assert!(unsafe { (&*self.head).is_empty() }); // count to init() was too large, overallocation
+        debug_assert!(self.head.is_empty()); // count to init() was too large, overallocation
     }
 
     pub fn eat(&mut self, value: T) -> *mut T {
         // PORT NOTE: Zig source `@ptrCast(&this.head.eat1(value).ptr)` appears to
         // intend `this.eat1(value).ptr` cast to *T. Porting the apparent intent.
-        let slice = self.eat1(value);
-        // SAFETY: eat1 returns a 1-element subslice of the arena allocation.
-        unsafe { (*slice).as_mut_ptr() }
+        self.eat1(value).as_ptr().cast_mut()
     }
 
-    pub fn eat1(&mut self, value: T) -> *mut [T] {
+    pub fn eat1(&mut self, value: T) -> StoreSlice<T> {
         // SAFETY: `head` is a valid arena slice with at least 1 element remaining
-        // (caller contract — Zig would panic on bounds).
-        unsafe {
-            let head = &mut *self.head;
-            let (prev, rest) = head.split_at_mut(1);
-            prev[0] = value;
-            self.head = std::ptr::from_mut::<[T]>(rest);
-            std::ptr::from_mut::<[T]>(prev)
-        }
+        // (caller contract — Zig would panic on bounds); `Batcher` holds the
+        // unique view of the underlying arena allocation.
+        let head = unsafe { self.head.slice_mut() };
+        let (prev, rest) = head.split_at_mut(1);
+        prev[0] = value;
+        self.head = StoreSlice::new_mut(rest);
+        StoreSlice::new_mut(prev)
     }
 
-    pub fn next<const N: usize>(&mut self, values: [T; N]) -> *mut [T] {
-        // SAFETY: `head` is a valid arena slice with at least N elements remaining.
-        unsafe {
-            let head = &mut *self.head;
-            let (prev, rest) = head.split_at_mut(N);
-            for (dst, src) in prev.iter_mut().zip(values) {
-                *dst = src;
-            }
-            self.head = std::ptr::from_mut::<[T]>(rest);
-            std::ptr::from_mut::<[T]>(prev)
+    pub fn next<const N: usize>(&mut self, values: [T; N]) -> StoreSlice<T> {
+        // SAFETY: `head` is a valid arena slice with at least N elements remaining;
+        // see `eat1` for the uniqueness invariant.
+        let head = unsafe { self.head.slice_mut() };
+        let (prev, rest) = head.split_at_mut(N);
+        for (dst, src) in prev.iter_mut().zip(values) {
+            *dst = src;
         }
+        self.head = StoreSlice::new_mut(rest);
+        StoreSlice::new_mut(prev)
     }
 }
 // Zig: `pub fn NewBatcher(comptime Type: type) type` → Rust generic struct above.
@@ -1509,9 +1540,9 @@ impl Default for Indentation {
 
 // ─── from bun_bundler::v2::MangledProps (src/bundler/bundle_v2.zig) ─────────
 // Zig: `std.AutoArrayHashMapUnmanaged(Ref, []const u8)`
-// LIFETIMES.tsv: value slices point into the parser arena → raw `*const [u8]`
-// pending crate-wide `'bump`.
-pub type MangledProps = ArrayHashMap<Ref, *const [u8]>;
+// LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
+// (arena-owned, no `'bump` cascade).
+pub type MangledProps = ArrayHashMap<Ref, StoreStr>;
 
 // ─── from bun_jsc::RuntimeTranspilerCache (src/jsc/RuntimeTranspilerCache.zig) ─
 // B-3 UNIFIED: this is the single canonical struct. `bun_bundler::cache`

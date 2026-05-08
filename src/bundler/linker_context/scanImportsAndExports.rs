@@ -623,7 +623,7 @@ pub fn scan_imports_and_exports(
                     // SAFETY: `Map::get` returns a stable `*mut Symbol`; ref is valid.
                     unsafe {
                         (*this.graph.symbols.get(r#ref).unwrap()).original_name =
-                            std::ptr::from_ref::<[u8]>(original_name);
+                            js_ast::StoreStr::new(original_name);
                     }
                 }
             }
@@ -638,9 +638,9 @@ pub fn scan_imports_and_exports(
                 && output_format != Format::InternalBakeDev
             {
                 let exports_name =
-                    std::ptr::from_ref::<[u8]>(builder.fmt(format_args!("exports_{}", source.fmt_identifier())));
+                    js_ast::StoreStr::new(builder.fmt(format_args!("exports_{}", source.fmt_identifier())));
                 let module_name =
-                    std::ptr::from_ref::<[u8]>(builder.fmt(format_args!("module_{}", source.fmt_identifier())));
+                    js_ast::StoreStr::new(builder.fmt(format_args!("module_{}", source.fmt_identifier())));
 
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.
@@ -1525,7 +1525,7 @@ mod __css_validation {
 
                 // SAFETY: `Map::get` returns a stable `*mut Symbol`; ref is valid.
                 let local_original_name: &[u8] =
-                    unsafe { &*(*self.all_symbols.get(local).unwrap()).original_name };
+                    unsafe { &*self.all_symbols.get(local).unwrap() }.original_name.slice();
 
                 let _ = self.log.add_msg(Logger::Msg {
                     kind: Logger::Kind::Err,

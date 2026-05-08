@@ -94,7 +94,7 @@ impl KnownGlobal {
         // SAFETY: `original_name` is an arena-owned slice valid for the
         // lifetime of the symbol table (set at declaration time, never freed
         // before `P` teardown).
-        let original_name = unsafe { &*symbol.original_name };
+        let original_name = symbol.original_name.slice();
         let Some(constructor) = MAP.get(original_name).copied() else {
             return None;
         };

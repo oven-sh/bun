@@ -168,10 +168,10 @@ pub fn generate_new_symbol(
     // TODO: will this crash on resize due to using threadlocal mimalloc heap?
     source_symbols.push(Symbol {
         kind,
-        // PORT NOTE: `Symbol.original_name` is a raw `*const [u8]` —
+        // PORT NOTE: `Symbol.original_name` is a `StoreStr` —
         // arena-owned slice whose lifetime is erased (matches the Zig
         // `[]const u8`); caller guarantees it outlives the symbol table.
-        original_name: std::ptr::from_ref::<[u8]>(original_name),
+        original_name: js_ast::StoreStr::new(original_name),
         ..Default::default()
     });
 

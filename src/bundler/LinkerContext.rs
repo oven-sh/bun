@@ -355,8 +355,7 @@ impl<'a> LinkerContext<'a> {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
         // performance hit to include the part only to discover it's unnecessary later.
-        // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer; valid for the link step.
-        let stmts: &[Stmt] = unsafe { &*part.stmts };
+        let stmts: &[Stmt] = part.stmts.slice();
         if stmts.len() == 1 {
             if let Some(s_import) = stmts[0].data.s_import() {
                 let record = self.graph.ast.items_import_records()[source_index as usize].at(s_import.import_record_index as usize);
@@ -1318,9 +1317,9 @@ impl SourceMapData {
 
 // Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
 // other fields are POD.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MatchImport {
-    alias: *const [u8], // TODO(port): lifetime — Zig string borrowed from AST arena
+    alias: js_ast::StoreStr, // Zig string borrowed from AST arena
     kind: MatchImportKind,
     namespace_ref: Ref,
     source_index: u32,
@@ -1328,21 +1327,6 @@ pub struct MatchImport {
     other_source_index: u32,
     other_name_loc: Loc, // Optional, goes with otherSourceIndex, ignore if zero,
     r#ref: Ref,
-}
-
-impl Default for MatchImport {
-    fn default() -> Self {
-        Self {
-            alias: std::ptr::from_ref::<[u8]>(b""),
-            kind: MatchImportKind::default(),
-            namespace_ref: Ref::default(),
-            source_index: 0,
-            name_loc: Loc::default(),
-            other_source_index: 0,
-            other_name_loc: Loc::default(),
-            r#ref: Ref::default(),
-        }
-    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -1764,7 +1748,7 @@ impl<'a> LinkerContext<'a> {
         source_index: Index,
         source: &Source,
     ) -> js_printer::PrintResult {
-        let parts_to_print = &[Part { stmts: std::ptr::from_mut::<[Stmt]>(out_stmts), ..Default::default() }];
+        let parts_to_print = &[Part { stmts: js_ast::StoreSlice::new_mut(out_stmts), ..Default::default() }];
 
         // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
         // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
@@ -1974,7 +1958,7 @@ impl<'a> LinkerContext<'a> {
 
                         // SAFETY: `Symbol.original_name` is a `*const [u8]` arena
                         // pointer; valid for the link step.
-                        let original_name: &[u8] = unsafe { &*symbol.original_name };
+                        let original_name: &[u8] = symbol.original_name.slice();
                         // PERF(port): was stack-fallback alloc. The hash itself
                         // is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
@@ -2099,7 +2083,7 @@ impl<'a> LinkerContext<'a> {
                 let sym = unsafe { &*self.graph.symbols.get(export_ref).expect("infallible: ref in symbol table") };
                 debug_tree_shake!(
                     "Export name: {} (in {})",
-                    bstr::BStr::new(unsafe { &*sym.original_name }),
+                    bstr::BStr::new(sym.original_name.slice()),
                     bstr::BStr::new(
                         &self.parse_graph().input_files.items_source()
                             [export_ref.source_index() as usize].path.text
@@ -2400,9 +2384,7 @@ impl<'a> LinkerContext<'a> {
         #[cfg(debug_assertions)]
         {
             let parse_graph = self.parse_graph();
-            // SAFETY: `part.stmts` is `*mut [Stmt]` (arena slice); reborrow for the
-            // debug print only.
-            let stmts: &[Stmt] = unsafe { &*part.stmts };
+            let stmts: &[Stmt] = part.stmts.slice();
             debug_tree_shake!(
                 "markPartLiveForTreeShaking({}): {}:{} = {}, {}",
                 source_index,
@@ -2867,7 +2849,7 @@ impl<'a> LinkerContext<'a> {
             // ESM exports
             && !flags.contains(AstFlags::USES_EXPORT_KEYWORD)
             // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
-            && named_import.alias.map(|a| unsafe { &*a } != b"default").unwrap_or(true)
+            && named_import.alias.map(|a| a.slice() != b"default").unwrap_or(true)
             // CommonJS exports
             && !flags.contains(AstFlags::USES_EXPORTS_REF)
             && !flags.contains(AstFlags::USES_MODULE_REF)
@@ -2911,9 +2893,8 @@ impl<'a> LinkerContext<'a> {
         }
 
         // Match this import up with an export from the imported file
-        // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
         if let Some(matching_export) = self.graph.meta.items_resolved_exports()[other_id as usize]
-            .get(unsafe { &*named_import.alias.expect("infallible: alias present") })
+            .get(named_import.alias.expect("infallible: alias present").slice())
         {
             // Check to see if this is a re-export of another import
             return ImportTrackerIterator {
@@ -3058,7 +3039,7 @@ impl<'a> LinkerContext<'a> {
                     if status == ImportTrackerStatus::CjsWithoutExports {
                         let source = self.get_source(tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
-                        let alias = unsafe { &*named_import.alias.expect("infallible: alias present") };
+                        let alias = named_import.alias.expect("infallible: alias present").slice();
                         self.log.add_range_warning_fmt(
                             Some(source),
                             source.range_of_identifier(named_import.alias_loc.expect("infallible: alias present")),
@@ -3126,7 +3107,7 @@ impl<'a> LinkerContext<'a> {
                     let next_source = self.get_source(next_tracker.source_index.get());
                     let r = source.range_of_identifier(named_import.alias_loc.expect("infallible: alias present"));
                     // SAFETY: arena `*const [u8]` valid for the link pass.
-                    let alias = unsafe { &*named_import.alias.expect("infallible: alias present") };
+                    let alias = named_import.alias.expect("infallible: alias present").slice();
 
                     // Report mismatched imports and exports
                     if symbol.import_item_status == ImportItemStatus::Generated {
@@ -3388,7 +3369,7 @@ impl<'a> LinkerContext<'a> {
                     let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(source, named_import.alias_loc.unwrap_or(Loc::default()));
                     // SAFETY: arena `*const [u8]` valid for the link pass.
-                    let alias = unsafe { &*named_import.alias.expect("infallible: alias present") };
+                    let alias = named_import.alias.expect("infallible: alias present").slice();
                     self.log.add_range_error_fmt(
                         Some(source), r,
                         format_args!(
@@ -3415,7 +3396,7 @@ impl<'a> LinkerContext<'a> {
                     // and `self.log` is a disjoint field; none reach symbols.
                     let symbol = unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") };
                     // SAFETY: arena `*const [u8]` valid for the link pass.
-                    let alias = unsafe { &*named_import.alias.expect("infallible: alias present") };
+                    let alias = named_import.alias.expect("infallible: alias present").slice();
                     if symbol.import_item_status == ImportItemStatus::Generated {
                         symbol.import_item_status = ImportItemStatus::Missing;
                         self.log.add_range_warning_fmt(
@@ -3613,8 +3594,8 @@ impl<'a> LinkerContext<'a> {
 impl PartialEq for MatchImport {
     fn eq(&self, other: &Self) -> bool {
         // PORT NOTE: Zig `std.meta.eql` on a slice compares ptr+len, not contents —
-        // `std::ptr::eq` on `*const [u8]` matches that (address + length metadata).
-        std::ptr::eq(self.alias, other.alias)
+        // compare the raw fat pointer (address + length metadata).
+        std::ptr::eq(self.alias.as_raw(), other.alias.as_raw())
             && self.kind == other.kind
             && self.namespace_ref == other.namespace_ref
             && self.source_index == other.source_index

@@ -379,7 +379,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 cases.push(js_ast::Case {
                     value,
-                    body: body.into_bump_slice_mut(),
+                    body: crate::StoreSlice::from_bump(body),
                     loc: logger::Loc::EMPTY,
                 });
             }
@@ -388,7 +388,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 S::Switch {
                     test_,
                     body_loc,
-                    cases: cases.into_bump_slice_mut(),
+                    cases: crate::StoreSlice::from_bump(cases),
                 },
                 loc,
             ))
@@ -452,7 +452,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             catch_ = Some(js_ast::Catch {
                 loc: catch_loc,
                 binding,
-                body: stmts.into_bump_slice_mut(),
+                body: crate::StoreSlice::from_bump(stmts),
                 body_loc: catch_body_loc,
             });
             p.pop_scope();
@@ -467,7 +467,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
-                stmts: stmts.into_bump_slice_mut(),
+                stmts: crate::StoreSlice::from_bump(stmts),
             });
             p.pop_scope();
         }
@@ -475,7 +475,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(
             S::Try {
                 body_loc,
-                body: body.into_bump_slice_mut(),
+                body: crate::StoreSlice::from_bump(body),
                 catch_,
                 finally,
             },
@@ -531,8 +531,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         // Track the decl slice separately so we can reference it after `decls` is moved into
-        // an arena-backed S::Local. SAFETY: arena outlives this fn; ptr stays valid.
-        let mut decls_ptr: *const [G::Decl] = &[][..];
+        // an arena-backed S::Local. The Vec's heap buffer stays put across the move; the
+        // arena outlives this fn, so the lifetime-erased view remains valid.
+        let mut decls_ptr: crate::StoreSlice<G::Decl> = crate::StoreSlice::EMPTY;
         let init_loc = p.lexer.loc();
         let mut is_var = false;
         match p.lexer.token {
@@ -542,7 +543,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.lexer.next()?;
                 let mut stmt_opts = ParseStatementOptions::default();
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
-                decls_ptr = std::ptr::from_ref(decls.slice());
+                decls_ptr = crate::StoreSlice::new(decls.slice());
                 init_ = Some(p.s(
                     S::Local {
                         kind: js_ast::s::Kind::KVar,
@@ -557,7 +558,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.lexer.next()?;
                 let mut stmt_opts = ParseStatementOptions::default();
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
-                decls_ptr = std::ptr::from_ref(decls.slice());
+                decls_ptr = crate::StoreSlice::new(decls.slice());
                 init_ = Some(p.s(
                     S::Local {
                         kind: js_ast::s::Kind::KConst,
@@ -612,7 +613,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            p.forbid_initializers(unsafe { &*decls_ptr }, "of", false)?;
+            p.forbid_initializers(decls_ptr.slice(), "of", false)?;
             p.lexer.next()?;
             let value = p.parse_expr(Level::Comma)?;
             p.lexer.expect(T::TCloseParen)?;
@@ -631,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Detect for-in loops
         if p.lexer.token == T::TIn {
-            p.forbid_initializers(unsafe { &*decls_ptr }, "in", is_var)?;
+            p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
             p.lexer.next()?;
             let value = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
@@ -652,7 +653,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             match &init_stmt.data {
                 js_ast::StmtData::SLocal(local) => {
                     if local.kind == js_ast::s::Kind::KConst {
-                        p.require_initializers(js_ast::s::Kind::KConst, unsafe { &*decls_ptr })?;
+                        p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
                     }
                 }
                 _ => {}
@@ -781,7 +782,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
             Ok(p.s(
                 S::Block {
-                    stmts: stmts.into_bump_slice_mut(),
+                    stmts: crate::StoreSlice::from_bump(stmts),
                     close_brace_loc,
                 },
                 loc,
@@ -1145,7 +1146,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     namespace_ref = p.store_name_in_ref(name)?;
                     alias = Some(G::ExportStarAlias {
                         loc: p.lexer.loc(),
-                        original_name: std::ptr::from_ref::<[u8]>(name),
+                        original_name: crate::StoreStr::new(name),
                     });
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"from")?;
@@ -1270,7 +1271,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         S::ExportFrom {
                             // SAFETY: sole owner — fresh arena slice from parse_export_clause,
                             // moved into the AST node here; no other &mut alias exists.
-                            items: export_clause.clauses,
+                            items: export_clause.clauses.into(),
                             is_single_line: export_clause.is_single_line,
                             namespace_ref,
                             import_record_index,
@@ -1294,7 +1295,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     S::ExportClause {
                         // SAFETY: sole owner — fresh arena slice from parse_export_clause,
                         // moved into the AST node here; no other &mut alias exists.
-                        items: export_clause.clauses,
+                        items: export_clause.clauses.into(),
                         is_single_line: export_clause.is_single_line,
                     },
                     loc,
@@ -1402,7 +1403,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     import_record_index: u32::MAX,
                     // SAFETY: sole owner — fresh arena slice from parse_import_clause,
                     // moved into the AST node here; no other &mut alias exists.
-                    items: import_clause.items,
+                    items: import_clause.items.into(),
                     is_single_line: import_clause.is_single_line,
                     ..Default::default()
                 };
@@ -1513,7 +1514,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                             // SAFETY: sole owner — fresh arena slice from parse_import_clause,
                             // moved into the AST node here; no other &mut alias exists.
-                            stmt.items = import_clause.items;
+                            stmt.items = import_clause.items.into();
                             stmt.is_single_line = import_clause.is_single_line;
                         }
                         _ => {

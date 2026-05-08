@@ -1837,7 +1837,7 @@ impl<'a> Transpiler<'a> {
                             logger::Loc { start: 0 },
                         );
                         // PERF(port): was `arena.alloc(Stmt, 1) catch unreachable`.
-                        let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt]));
+                        let stmts = js_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
                         break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                     }
 
@@ -1914,7 +1914,7 @@ impl<'a> Transpiler<'a> {
                                         // SAFETY: ARENA — `arena` outlives
                                         // the returned `ParseResult.ast`.
                                         Ok(boxed) => {
-                                            std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(&boxed))
+                                            js_ast::StoreStr::new(arena.alloc_slice_copy(&boxed))
                                         }
                                         Err(_) => return None,
                                     },
@@ -1932,7 +1932,7 @@ impl<'a> Transpiler<'a> {
                                 };
                                 export_clauses[count] = js_ast::ClauseItem {
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: key_loc },
-                                    alias: std::ptr::from_ref::<[u8]>(name),
+                                    alias: js_ast::StoreStr::new(name),
                                     alias_loc: key_loc,
                                     ..Default::default()
                                 };
@@ -1953,7 +1953,7 @@ impl<'a> Transpiler<'a> {
                             );
                             let stmt1 = js_ast::Stmt::alloc(
                                 js_ast::S::ExportClause {
-                                    items: &raw mut export_clauses[..count],
+                                    items: js_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
                                     is_single_line: false,
                                 },
                                 logger::Loc { start: 0 },
@@ -1969,7 +1969,7 @@ impl<'a> Transpiler<'a> {
                                 logger::Loc { start: 0 },
                             );
 
-                            let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
+                            let stmts = js_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
                             break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                         }
                     }
@@ -1987,7 +1987,7 @@ impl<'a> Transpiler<'a> {
                         );
 
                         let stmts =
-                            std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt]));
+                            js_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
                         break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                     }
                 };
@@ -2024,7 +2024,7 @@ impl<'a> Transpiler<'a> {
                     logger::Loc { start: 0 },
                 );
                 // PERF(port): was `arena.alloc(Stmt, 1) catch unreachable`.
-                let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt]));
+                let stmts = js_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
                 let parts: Box<[js_ast::Part]> =
                     Box::new([js_ast::Part { stmts, ..Default::default() }]);
 
@@ -2070,7 +2070,7 @@ impl<'a> Transpiler<'a> {
                     },
                     logger::Loc { start: 0 },
                 );
-                let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt]));
+                let stmts = js_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
                 let parts: Box<[js_ast::Part]> =
                     Box::new([js_ast::Part { stmts, ..Default::default() }]);
 

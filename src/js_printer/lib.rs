@@ -1467,14 +1467,12 @@ use bun_options_types::import_record::Tag as ImportRecordTag;
 // lower-tier crate API surface without editing those crates.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Dereference an arena-owned `*mut [T]` into a slice. Phase A stores AST
-/// child lists as raw `*mut [T]` (PORTING.md §Allocators: ARENA → raw); the
-/// printer only ever reads them.
+/// Re-borrow an arena-owned `StoreSlice<T>` for the print pass. Kept as a
+/// free fn (vs. calling `.slice()` inline) so the ~50 call sites stay
+/// `.zig`-diffable; the printer only ever reads these.
 #[inline(always)]
-pub(crate) fn slice_of<'a, T>(p: *mut [T]) -> &'a [T] {
-    if p.is_null() { return &[]; }
-    // SAFETY: arena-owned slice; outlives the print pass; Phase B threads 'bump.
-    unsafe { &*p }
+pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
+    p.slice()
 }
 #[inline(always)]
 pub(crate) fn slice_of_const<'a, T>(p: *const [T]) -> &'a [T] {
@@ -2172,7 +2170,7 @@ where
                     let mut b_object = B::Object {
                         // SAFETY: `temp_bindings`' heap buffer is stable until the
                         // matching clear()/drop below; `print_binding` only reads it.
-                        properties: std::ptr::from_mut::<[B::Property]>(temp_bindings.as_mut_slice()),
+                        properties: js_ast::StoreSlice::new_mut(temp_bindings.as_mut_slice()),
                         is_single_line: true,
                     };
                     // PORT NOTE: `Binding::init(*B.Object, loc)` is gated upstream;
@@ -2499,7 +2497,7 @@ where
             ExprData::EIdentifier(ident) => {
                 if ident.ref_.is_source_contents_slice() { return false; }
                 let Some(symbol) = self.symbols().get_const(self.symbols().follow(ident.ref_)) else { return false; };
-                symbol.kind == js_ast::ast::symbol::Kind::Unbound && slice_of_const(symbol.original_name) == b"eval"
+                symbol.kind == js_ast::ast::symbol::Kind::Unbound && symbol.original_name.slice() == b"eval"
             }
             _ => false,
         }
@@ -2834,18 +2832,18 @@ where
 
         match as_ {
             ClauseItemAs::Import => {
-                if name == slice_of_const(item.alias) {
+                if name == item.alias.slice() {
                     self.print_identifier(name);
                 } else {
-                    self.print_clause_alias(slice_of_const(item.alias));
+                    self.print_clause_alias(item.alias.slice());
                     self.print(b" as ");
                     self.add_source_mapping(item.alias_loc);
                     self.print_identifier(name);
                 }
             }
             ClauseItemAs::Var => {
-                self.print_clause_alias(slice_of_const(item.alias));
-                if name != slice_of_const(item.alias) {
+                self.print_clause_alias(item.alias.slice());
+                if name != item.alias.slice() {
                     self.print(b":");
                     self.print_space();
                     self.print_identifier(name);
@@ -2853,10 +2851,10 @@ where
             }
             ClauseItemAs::Export => {
                 self.print_identifier(name);
-                if name != slice_of_const(item.alias) {
+                if name != item.alias.slice() {
                     self.print(b" as ");
                     self.add_source_mapping(item.alias_loc);
-                    self.print_clause_alias(slice_of_const(item.alias));
+                    self.print_clause_alias(item.alias.slice());
                 }
             }
             ClauseItemAs::ExportFrom => {
@@ -2868,14 +2866,14 @@ where
                 // whose display name may be mangled by a minifier. We must print
                 // `original_name` via `printClauseAlias` so string literals stay
                 // quoted and mangling can't corrupt the foreign-module name.
-                let original = slice_of_const(item.original_name);
+                let original = item.original_name.slice();
                 let from_name = if !original.is_empty() { original } else { name };
                 self.print_clause_alias(from_name);
 
-                if from_name != slice_of_const(item.alias) {
+                if from_name != item.alias.slice() {
                     self.print(b" as ");
                     self.add_source_mapping(item.alias_loc);
-                    self.print_clause_alias(slice_of_const(item.alias));
+                    self.print_clause_alias(item.alias.slice());
                 }
             }
         }
@@ -3693,9 +3691,9 @@ where
                         // Zig: `var copy = e.*; copy.parts = &replaced;` — build a
                         // local `Template` (not a StoreRef alias) so `fold`'s
                         // `mem::take(self.head)` doesn't clobber the AST node.
-                        // `replaced` outlives `copy`/`fold()`; store a raw `*mut`
-                        // into the local Vec to match `Template.parts: *mut [_]`.
-                        let parts_slice: *mut [E::TemplatePart] = replaced.as_mut_slice();
+                        // `replaced` outlives `copy`/`fold()`; wrap as a StoreSlice
+                        // over the local Vec to match `Template.parts`.
+                        let parts_slice = js_ast::StoreSlice::new_mut(replaced.as_mut_slice());
                         let mut copy = E::Template {
                             tag: e.tag,
                             parts: parts_slice,
@@ -3875,7 +3873,7 @@ where
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
                         self.print_symbol(namespace.namespace_ref);
-                        let alias = slice_of_const(namespace.alias);
+                        let alias = namespace.alias.slice();
                         if js_ast::lexer::is_identifier(alias) {
                             self.print(b".");
                             // TODO: addSourceMappingForName
@@ -4097,12 +4095,12 @@ where
         // that means the namespace alias is empty
         if namespace.alias.is_empty() { return; }
 
-        if js_ast::lexer::is_identifier(slice_of_const(namespace.alias)) {
+        if js_ast::lexer::is_identifier(namespace.alias.slice()) {
             self.print(b".");
-            self.print_identifier(slice_of_const(namespace.alias));
+            self.print_identifier(namespace.alias.slice());
         } else {
             self.print(b"[");
-            self.print_string_literal_utf8(slice_of_const(namespace.alias), false);
+            self.print_string_literal_utf8(namespace.alias.slice(), false);
             self.print(b"]");
         }
     }
@@ -4619,7 +4617,7 @@ where
             StmtData::SComment(s) => {
                 self.print_indent();
                 self.add_source_mapping(stmt.loc);
-                self.print_indented_comment(slice_of_const(s.text));
+                self.print_indented_comment(s.text.slice());
             }
             StmtData::SFunction(s) => {
                 self.print_indent();
@@ -4827,7 +4825,7 @@ where
                 }
 
                 if let Some(alias) = &s.alias {
-                    self.print_clause_alias(slice_of_const(alias.original_name));
+                    self.print_clause_alias(alias.original_name.slice());
                     self.print(b" ");
                     self.print_whitespacer(ws!(b"from "));
                 }
@@ -4841,7 +4839,7 @@ where
                         let irp_id = mi.str(irp);
                         mi.request_module(irp_id, analyze_transpiled_module::FetchParameters::None);
                         if let Some(alias) = &s.alias {
-                            let alias_id = mi.str(slice_of_const(alias.original_name));
+                            let alias_id = mi.str(alias.original_name.slice());
                             mi.add_export_info_namespace(alias_id, irp_id);
                         } else {
                             mi.add_export_info_star(irp_id);
@@ -4872,7 +4870,7 @@ where
                                 let symbol_ptr: *const Symbol = self.symbols().get_with_link_const(item.name.ref_.expect("infallible: ref bound")).unwrap();
                                 // SAFETY: arena-backed symbol table outlives the print pass.
                                 let symbol = unsafe { &*symbol_ptr };
-                                let name = slice_of_const(symbol.original_name);
+                                let name = symbol.original_name.slice();
                                 let mut did_print = false;
 
                                 if let Some(namespace) = &symbol.namespace_alias {
@@ -4886,8 +4884,8 @@ where
                                 }
 
                                 if !did_print {
-                                    self.print_clause_alias(slice_of_const(item.alias));
-                                    if name != slice_of_const(item.alias) {
+                                    self.print_clause_alias(item.alias.slice());
+                                    if name != item.alias.slice() {
                                         self.print(b":");
                                         self.print_space_before_identifier();
                                         self.print_identifier(name);
@@ -4932,7 +4930,7 @@ where
                     while i < array.len() {
                         let item = array[i];
 
-                        if !slice_of_const(item.original_name).is_empty() {
+                        if !item.original_name.slice().is_empty() {
                             // PORT NOTE: reshaped for borrowck — detach symbol from self.
                             let symbol_ptr: Option<*const Symbol> = self.symbols().get_const(item.name.ref_.expect("infallible: ref bound")).map(|s| std::ptr::from_ref(s));
                             // SAFETY: arena-backed; symbol table outlives the print pass.
@@ -4994,7 +4992,7 @@ where
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let alias_id = mi.str(slice_of_const(item.alias));
+                            let alias_id = mi.str(item.alias.slice());
                             let name_id = mi.str(name);
                             mi.add_export_info_local(alias_id, name_id);
                         }
@@ -5060,7 +5058,7 @@ where
                     for item in slice_of(s.items).iter() {
                         let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
                         let mi = self.module_info().expect("infallible: module_info enabled");
-                        let alias_id = mi.str(slice_of_const(item.alias));
+                        let alias_id = mi.str(item.alias.slice());
                         let name_id = mi.str(name);
                         mi.add_export_info_indirect(alias_id, name_id, irp_id);
                     }
@@ -5513,7 +5511,7 @@ where
                         let mi = self.module_info().expect("infallible: module_info enabled");
                         let local_name_id = mi.str(local_name);
                         mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
-                        let alias_id = mi.str(slice_of_const(item.alias));
+                        let alias_id = mi.str(item.alias.slice());
                         mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
                     }
 
@@ -5543,7 +5541,7 @@ where
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
-                self.print_string_literal_utf8(slice_of_const(s.value), false);
+                self.print_string_literal_utf8(s.value.slice(), false);
                 self.print_semicolon_after_statement();
             }
             StmtData::SBreak(s) => {
@@ -6258,7 +6256,7 @@ where
                         }
                         for item in slice_of(import.items).iter() {
                             self.print(b" ");
-                            self.print_string_literal_utf8(slice_of_const(item.alias), false);
+                            self.print_string_literal_utf8(item.alias.slice(), false);
                             self.print(b",");
                         }
                     }

@@ -4,7 +4,7 @@
 //! `e/s/expr/stmt/ast` modules are replaced with the real Phase-A drafts.
 //!
 //! Arena convention: Phase A keeps node types lifetime-free. Slice fields are
-//! `*mut [T]` / `*const [u8]`; pointer payloads are `StoreRef<T>` (a thin
+//! `StoreSlice<T>` / `StoreStr`; pointer payloads are `StoreRef<T>` (a thin
 //! `NonNull<T>` into the thread-local `Expr.Data.Store` / `Stmt.Data.Store`).
 //! Phase B may thread a crate-wide `'bump` and rewrite to `&'bump`.
 #![allow(non_snake_case, dead_code, unused, clippy::all)]
@@ -182,7 +182,7 @@ pub use crate::NAMESPACE_EXPORT_PART_INDEX;
 // they're at `op::Code::*`. Re-export the variants under the `Op` mod alias.
 pub use op::Code::*;
 // `ArenaStr`/helpers are `pub(crate)`; surface them for the ast/ submodules.
-pub(crate) use crate::{empty_arena_slice_mut, empty_arena_str, ArenaStr};
+pub(crate) use crate::{empty_arena_str, ArenaStr};
 
 /// `crate::runtime` is gated until round C; `Ast` only needs the `Imports`
 /// shape. Provide an opaque stand-in so the field stays present.

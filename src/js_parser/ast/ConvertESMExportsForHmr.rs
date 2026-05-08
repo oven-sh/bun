@@ -110,7 +110,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 self.export_props.push(G::Property {
                                     key: Some(Expr::init(
                                         // SAFETY: arena-owned name slice valid for the parse.
-                                        E::EString::init(unsafe { &*symbol.original_name }),
+                                        E::EString::init(symbol.original_name.slice()),
                                         binding.loc,
                                     )),
                                     value: Some(value),
@@ -150,8 +150,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             break 'fast_refresh_edge_case;
                         };
                         let name = p.symbols[symbol.ref_.expect("infallible: ref bound").inner_index() as usize].original_name;
-                        // SAFETY: arena-owned name slice valid for the parse.
-                        if ReactRefresh::is_componentish_name(unsafe { &*name }) {
+                        if ReactRefresh::is_componentish_name(name.slice()) {
                             // Lower to a function statement, and reference the function in the export list.
                             self.export_props.push(G::Property {
                                 key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
@@ -278,9 +277,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 self.export_props.push(G::Property {
                     key: Some(Expr::init(
                         // SAFETY: arena-owned name slice valid for the parse.
-                        E::EString::init(unsafe {
-                            &*p.symbols[class_name_ref.inner_index() as usize].original_name
-                        }),
+                        E::EString::init(p.symbols[class_name_ref.inner_index() as usize].original_name.slice()),
                         stmt.loc,
                     )),
                     value: Some(Expr::init_identifier(class_name_ref, stmt.loc)),
@@ -329,7 +326,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     stmt.loc,
                 )?;
                 // SAFETY: arena-owned items slice valid for the parse.
-                for item in unsafe { (*st.items).iter_mut() } {
+                for item in unsafe { st.items.slice_mut() }.iter_mut() {
                     let ref_ = item.name.ref_.expect("infallible: ref bound");
                     let symbol = &mut p.symbols[ref_.inner_index() as usize];
                     // Always set the namespace alias using the deduplicated import
@@ -368,7 +365,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     p,
                     st.import_record_index,
                     st.namespace_ref,
-                    crate::empty_arena_slice_mut(),
+                    crate::StoreSlice::EMPTY,
                     Some(stmt.loc),
                     None,
                     stmt.loc,
@@ -379,7 +376,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     self.export_props.push(G::Property {
                         // SAFETY: arena-owned name slice valid for the parse.
                         key: Some(Expr::init(
-                            E::EString::init(unsafe { &*alias.original_name }),
+                            E::EString::init(alias.original_name.slice()),
                             stmt.loc,
                         )),
                         value: Some(Expr::init_identifier(deduped.namespace_ref, stmt.loc)),
@@ -424,7 +421,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         p: &mut P<'p, TS, J, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
-        items: *mut [js_ast::ClauseItem],
+        items: js_ast::StoreSlice<js_ast::ClauseItem>,
         star_name_loc: Option<logger::Loc>,
         default_name: Option<js_ast::LocRef>,
         loc: logger::Loc,
@@ -451,36 +448,34 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .flags
                 .remove(import_record::Flags::IS_UNUSED);
 
-            // SAFETY: arena-owned ClauseItem slices valid for the parse.
-            let items_len = unsafe { (&*items).len() };
+            let items_len = items.len();
             if items_len > 0 {
-                // SAFETY: arena-owned ClauseItem slice valid for the parse.
-                if unsafe { (&*stmt.items).is_empty() } {
+                if stmt.items.is_empty() {
                     stmt.items = items;
                 } else {
                     // PORT NOTE: Zig `std.mem.concat` — allocate concatenated slice in arena.
                     // ClauseItem fields are all bitwise-copyable; copy raw to avoid Clone bound.
-                    // SAFETY: arena-owned slices valid for the parse; ClauseItem is POD-shaped.
-                    let prev_len = unsafe { (&*stmt.items).len() };
+                    let prev_len = stmt.items.len();
                     let concat = p
                         .arena
                         .alloc_slice_fill_with(prev_len + items_len, |_| {
                             js_ast::ClauseItem::default()
                         });
-                    // SAFETY: src/dst non-overlapping arena allocations of correct length.
+                    // SAFETY: src/dst non-overlapping arena allocations of correct length;
+                    // ClauseItem is POD-shaped.
                     unsafe {
                         core::ptr::copy_nonoverlapping(
-                            stmt.items as *const js_ast::ClauseItem,
+                            stmt.items.as_ptr(),
                             concat.as_mut_ptr(),
                             prev_len,
                         );
                         core::ptr::copy_nonoverlapping(
-                            items as *const js_ast::ClauseItem,
+                            items.as_ptr(),
                             concat.as_mut_ptr().add(prev_len),
                             items_len,
                         );
                     }
-                    stmt.items = std::ptr::from_mut::<[js_ast::ClauseItem]>(concat);
+                    stmt.items = crate::StoreSlice::new_mut(concat);
                 }
             }
             if namespace_ref.is_valid() {
@@ -569,7 +564,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         &mut self,
         p: &mut P<'p, TS, J, SCAN>,
         ref_: Ref,
-        export_symbol_name: Option<*const [u8]>,
+        export_symbol_name: Option<js_ast::StoreStr>,
         loc: logger::Loc,
         is_live_binding_source: bool,
     ) -> Result<(), AllocError> {
@@ -596,17 +591,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // mutate the field in the exports object. Re-exports can just be
             // encoded into the module format, propagated in `replaceModules`
             let key = Expr::init(
-                // SAFETY: arena-owned name slice valid for the parse.
-                E::EString::init(unsafe { &*export_symbol_name.unwrap_or(original_name) }),
+                E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
                 loc,
             );
 
             // This is technically incorrect in that we've marked this as a
             // top level symbol. but all we care about is preventing name
             // collisions, not necessarily the best minificaiton (dev only)
-            // SAFETY: arena-owned name slice valid for the parse; lifetime erased per Phase-A
-            // `Str`/`ArenaStr` convention (`generate_temp_ref` wants `&'p [u8]`).
-            let arg1 = generate_temp_ref(p, Some(unsafe { &*original_name }));
+            let arg1 = generate_temp_ref(p, Some(original_name.slice()));
             self.last_part
                 .declared_symbols
                 .append(js_ast::DeclaredSymbol { ref_: arg1, is_top_level: true })?;
@@ -627,7 +619,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     E::Function {
                         func: G::Fn {
                             body: G::FnBody {
-                                stmts: std::ptr::from_mut::<[Stmt]>(body_stmts),
+                                stmts: crate::StoreSlice::new_mut(body_stmts),
                                 loc,
                             },
                             ..Default::default()
@@ -642,8 +634,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // 'abc,'
             self.export_props.push(G::Property {
                 key: Some(Expr::init(
-                    // SAFETY: arena-owned name slice valid for the parse.
-                    E::EString::init(unsafe { &*export_symbol_name.unwrap_or(original_name) }),
+                    E::EString::init(export_symbol_name.unwrap_or(original_name).slice()),
                     loc,
                 )),
                 value: Some(id),
@@ -781,7 +772,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     gop.value_ptr.count_estimate += v.count_estimate;
                 }
             }
-            part.stmts = crate::empty_arena_slice_mut();
+            part.stmts = crate::StoreSlice::EMPTY;
             // PORT NOTE: `declared_symbols` already cleared via `mem::take` above
             // (Zig set `entries.len = 0` after `appendList`).
             part.tag = crate::PartTag::DeadDueToInlining;
@@ -797,9 +788,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             .append_list(core::mem::take(&mut p.declared_symbols))?;
 
         // PORT NOTE: Zig assigned the ArrayList's `items` slice directly. `Stmt` is `Copy`;
-        // copy into the parser arena so the `*mut [Stmt]` outlives this struct.
+        // copy into the parser arena so the `StoreSlice<Stmt>` outlives this struct.
         let stmts = core::mem::take(&mut self.stmts);
-        self.last_part.stmts = std::ptr::from_mut::<[Stmt]>(p.arena.alloc_slice_copy(&stmts));
+        self.last_part.stmts = crate::StoreSlice::new_mut(p.arena.alloc_slice_copy(&stmts));
         self.last_part.tag = crate::PartTag::None;
         Ok(())
     }

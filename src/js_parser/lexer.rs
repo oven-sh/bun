@@ -51,7 +51,7 @@ pub struct JSXPragma {
 }
 
 impl JSXPragma {
-    // `Span.text` is a raw `*const [u8]`; raw slice ptrs expose `.len()` without deref.
+    // `Span.text` is a `StoreStr`; `.len()` via Deref<[u8]>.
     pub fn jsx(&self) -> Option<js_ast::Span> {
         if self._jsx.text.len() > 0 { Some(self._jsx) } else { None }
     }
@@ -2473,7 +2473,7 @@ lexer_impl_header! {
             }
 
             self.comments_to_preserve_before.push(js_ast::G::Comment {
-                text,
+                text: text.into(),
                 loc: self.loc(),
             });
             // TODO(port): lifetime — `text` borrows source.contents
@@ -2546,11 +2546,10 @@ lexer_impl_header! {
                             // Use remaining() which starts *after* the consumed #/@
                             // PORT NOTE: reshaped for borrowck — `remaining()` borrows
                             // `self.source.contents`; `scan_pragma` needs `&mut self`.
-                            // Re-slice via a raw ptr (arena-owned, lives for parse).
-                            let chunk: *const [u8] = self.remaining();
-                            // SAFETY: `chunk` points into `self.source.contents`, valid for the parse.
+                            // Detach via `StoreStr` (arena-owned, lives for parse).
+                            let chunk = js_ast::StoreStr::new(self.remaining());
                             let offset =
-                                self.scan_pragma(pragma_trigger_pos, unsafe { &*chunk }, true);
+                                self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
 
                             if offset > 0 {
                                 // Pragma found (e.g., __PURE__).
@@ -4241,8 +4240,7 @@ impl PragmaArg {
                     start: i32::try_from(absolute_arg_start).expect("int cast"),
                 }, // Correct start
             },
-            text: url,
-            // TODO(port): lifetime — js_ast::Span.text borrows source/chunk
+            text: js_ast::StoreStr::new(url),
         });
 
         // Return total length consumed from the start of the chunk
@@ -4310,8 +4308,7 @@ impl PragmaArg {
                     .unwrap(),
                 },
             },
-            text: &raw const text[0..i],
-            // TODO(port): lifetime — js_ast::Span.text borrows input chunk
+            text: js_ast::StoreStr::new(&text[0..i]),
         })
     }
 }

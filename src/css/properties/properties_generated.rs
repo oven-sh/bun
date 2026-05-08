@@ -5529,11 +5529,8 @@ impl Property {
                 }
             }
             PropertyId::Composes => {
-                if let Some(c) = css::generic::parse_with_options::<css_modules::Composes>(input, options).ok() {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Composes(c));
-                    }
-                }
+                return css::generic::parse_with_options::<css_modules::Composes>(input, options)
+                    .map(Property::Composes);
             }
             PropertyId::MaskImage(pre) => {
                 if let Some(c) = css::generic::parse_with_options::<SmallList<css::css_values::image::Image, 1>>(input, options).ok() {

@@ -466,7 +466,7 @@ pub mod Jest {
     // TODO(port): move to <area>_sys
     // TODO(port): callconv(jsc.conv) — needs "sysv64" on Windows-x64, "C" elsewhere
     unsafe extern "C" {
-        pub fn Bun__Jest__testModuleObject(global: *mut JSGlobalObject) -> JSValue;
+        pub safe fn Bun__Jest__testModuleObject(global: &JSGlobalObject) -> JSValue;
         pub fn JSMock__jsMockFn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub fn JSMock__jsModuleMock(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
         pub fn JSMock__jsNow(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
@@ -501,11 +501,7 @@ pub mod Jest {
             }
         }
 
-        // SAFETY: FFI call into C++; `global_object` is live for the call. C++
-        // may mutate it (lazy init of the test module object), so derive the
-        // `*mut` via `as_ptr()` (UnsafeCell interior) instead of casting away
-        // const from `&JSGlobalObject`.
-        Ok(unsafe { Bun__Jest__testModuleObject(global_object.as_ptr()) })
+        Ok(Bun__Jest__testModuleObject(global_object))
     }
 
     #[bun_jsc::host_fn]

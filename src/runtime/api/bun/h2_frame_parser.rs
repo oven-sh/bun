@@ -146,22 +146,19 @@ pub mod JSH2FrameParser {
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "H2FrameParser__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     unsafe extern "C" {
         #[link_name = "H2FrameParser__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+        safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
     }
 
     /// Lazily fetch the JS constructor from `globalObject` (Zig:
     /// `JSH2FrameParser.getConstructor`).
     #[inline]
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is an opaque ZST FFI handle (see
-        // `JSGlobalObject::as_ptr`); the C++ side reads the cached
-        // structure/constructor from `Zig::GlobalObject`.
-        unsafe { __get_constructor(global.as_ptr()) }
+        __get_constructor(global)
     }
 }
 // ──────────────────────────────────────────────────────────────────────────

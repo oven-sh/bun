@@ -2246,9 +2246,9 @@ impl DevServer {
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
     // TODO(port): callconv(jsc.conv) — needs #[bun_jsc::host_call] ABI
-    fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: *const JSGlobalObject) -> JSValue;
-    fn Bake__getBundleNewRouteJSFunction(global: *const JSGlobalObject) -> JSValue;
-    fn Bake__getNewRouteParamsJSFunction(global: *const JSGlobalObject) -> JSValue;
+    safe fn Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global: &JSGlobalObject) -> JSValue;
+    safe fn Bake__getBundleNewRouteJSFunction(global: &JSGlobalObject) -> JSValue;
+    safe fn Bake__getNewRouteParamsJSFunction(global: &JSGlobalObject) -> JSValue;
 }
 
 struct FrameworkRequestArgs {
@@ -2426,20 +2426,17 @@ impl DevServer {
 
             // setAsyncLocalStorage
             set_async_local_storage: if first_request {
-                // SAFETY: extern "C" FFI; global is a valid &JSGlobalObject
-                unsafe { Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global) }
+                Bake__getEnsureAsyncLocalStorageInstanceJSFunction(global)
             } else {
                 JSValue::NULL
             },
             bundle_new_route: if first_request {
-                // SAFETY: extern "C" FFI; global is a valid &JSGlobalObject
-                unsafe { Bake__getBundleNewRouteJSFunction(global) }
+                Bake__getBundleNewRouteJSFunction(global)
             } else {
                 JSValue::NULL
             },
             new_route_params: if first_request {
-                // SAFETY: extern "C" FFI; global is a valid &JSGlobalObject
-                unsafe { Bake__getNewRouteParamsJSFunction(global) }
+                Bake__getNewRouteParamsJSFunction(global)
             } else {
                 JSValue::NULL
             },
@@ -5507,10 +5504,9 @@ mod c {
 
     pub fn bake_load_server_hmr_patch(global: &JSGlobalObject, code: BunString) -> JsResult<JSValue> {
         unsafe extern "C" {
-            fn BakeLoadServerHmrPatch(global: *const JSGlobalObject, code: BunString) -> JSValue;
+            safe fn BakeLoadServerHmrPatch(global: &JSGlobalObject, code: BunString) -> JSValue;
         }
-        // SAFETY: extern "C" FFI; global is a valid &JSGlobalObject
-        jsc::from_js_host_call(global, || unsafe { BakeLoadServerHmrPatch(global, code) })
+        jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code))
     }
 
     pub fn bake_load_server_hmr_patch_with_source_map(
@@ -5539,16 +5535,13 @@ mod c {
         separate_ssr_graph: bool,
     ) -> JsResult<JSValue> {
         unsafe extern "C" {
-            fn BakeLoadInitialServerCode(
-                global: *const JSGlobalObject,
+            safe fn BakeLoadInitialServerCode(
+                global: &JSGlobalObject,
                 code: BunString,
                 separate_ssr_graph: bool,
             ) -> JSValue;
         }
-        // SAFETY: extern "C" FFI; global is a valid &JSGlobalObject
-        jsc::from_js_host_call(global, || unsafe {
-            BakeLoadInitialServerCode(global, code, separate_ssr_graph)
-        })
+        jsc::from_js_host_call(global, || BakeLoadInitialServerCode(global, code, separate_ssr_graph))
     }
 }
 

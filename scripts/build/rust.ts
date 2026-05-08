@@ -253,6 +253,29 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // Set in cargo's env so it reaches every crate's `rustc` invocation
     // (not just those with a `build.rs` re-export).
     BUN_CODEGEN_DIR: cfg.codegenDir,
+
+    // ── build_options (mirrors zig.ts -Dversion=... / -Dsha=...) ──
+    // Read at compile time by `bun_core::build_options` via `option_env!`.
+    // Values come from the same `Config` fields zig.ts forwards, so
+    // `process.versions.bun` / `bun --revision` agree across both backends.
+    BUN_GIT_SHA: cfg.revision,
+    BUN_REPORTED_NODEJS_VERSION: cfg.nodejsVersion,
+    BUN_BASELINE: String(cfg.baseline),
+    BUN_IS_CANARY: String(cfg.canary),
+    BUN_CANARY_REVISION: String(cfg.canaryRevision ?? 0),
+    BUN_BASE_PATH: cfg.cwd,
+
+    // ── toolchain forwarding (cc-rs / build scripts) ──
+    // build.rs of vendored crates (lol-html, anything using `cc`) and rustc's
+    // own linker invocations must use the SAME clang/ar `tools.ts` resolved —
+    // not whatever is first in PATH. On CI the LLVM toolchain lives at a
+    // versioned path (`/opt/llvm-N/`) and the system `cc` may be absent or
+    // mismatched. cc-rs honours `CC`/`CXX`/`AR`; cargo honours
+    // `CARGO_TARGET_<TRIPLE>_LINKER` for the per-target linker.
+    CC: cfg.cc,
+    CXX: cfg.cxx,
+    AR: cfg.ar,
+    [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: cfg.cxx,
   };
   if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;

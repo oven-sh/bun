@@ -76,15 +76,34 @@ pub use bun_core_macros::pretty_fmt;
 /// `build.rs` via `env!()` in Phase C (link). Placeholder values let env.rs
 /// const-evaluate cleanly.
 pub mod build_options {
+    /// `option_env!` with a fallback literal — same shape as Zig's
+    /// `b.option(...) orelse default` in build.zig.
+    macro_rules! build_opt {
+        ($name:literal, $default:expr) => {
+            match option_env!($name) {
+                Some(v) => v,
+                None => $default,
+            }
+        };
+    }
+    macro_rules! build_opt_bool {
+        ($name:literal, $default:expr) => {
+            match option_env!($name) {
+                Some(v) => matches!(v.as_bytes(), b"true" | b"1"),
+                None => $default,
+            }
+        };
+    }
+
     pub const RELEASE_SAFE: bool = false;
     pub const OVERRIDE_NO_EXPORT_CPP_APIS: bool = false;
     pub const OUTPUT_MODE_OBJ: bool = true;
     pub const ZIG_SELF_HOSTED_BACKEND: bool = false;
-    pub const REPORTED_NODEJS_VERSION: &str = "24.0.0";
-    pub const BASELINE: bool = false;
-    pub const SHA: &str = "0000000000000000000000000000000000000000";
-    pub const IS_CANARY: bool = false;
-    pub const CANARY_REVISION: &str = "0";
+    pub const REPORTED_NODEJS_VERSION: &str = build_opt!("BUN_REPORTED_NODEJS_VERSION", "24.0.0");
+    pub const BASELINE: bool = build_opt_bool!("BUN_BASELINE", false);
+    pub const SHA: &str = build_opt!("BUN_GIT_SHA", "0000000000000000000000000000000000000000");
+    pub const IS_CANARY: bool = build_opt_bool!("BUN_IS_CANARY", false);
+    pub const CANARY_REVISION: &str = build_opt!("BUN_CANARY_REVISION", "0");
     /// Repo root. Zig's build.zig passes `b.pathFromRoot(".")`; here we derive
     /// it from this crate's manifest dir (`<repo>/src/bun_core`) so debug
     /// `runtime_embed_file!` can find on-disk sources without an extra env var.

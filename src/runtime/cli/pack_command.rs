@@ -797,7 +797,7 @@ fn iterate_bundled_deps(
         Ok(d) => d,
         Err(err) => {
             // ignore node_modules if it isn't a directory, or doesn't exist
-            if err == bun_core::err!("NotDir") || err == bun_core::err!("FileNotFound") {
+            if err == bun_core::err!("ENOTDIR") || err == bun_core::err!("ENOENT") {
                 return Ok(bundled_pack_queue);
             }
             Output::err(err, "failed to open \"node_modules\" to pack bundled dependencies", ());
@@ -3276,19 +3276,17 @@ impl IgnorePatterns {
         let ignore_file: File = match File::openat(dir.fd(), b".npmignore", bun_sys::O::RDONLY, 0) {
             Ok(f) => f,
             Err(err) => 'ignore_file: {
-                let err = bun_core::Error::from(err);
-                if err != bun_core::err!("FileNotFound") {
+                if err.get_errno() != bun_sys::E::ENOENT {
                     // Crash if the file exists and fails to open. Don't want to create a tarball
                     // with files you want to ignore.
-                    Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Open, err);
+                    Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Open, err.into());
                 }
                 ignore_kind = IgnorePatternsKind::Gitignore;
                 match File::openat(dir.fd(), b".gitignore", bun_sys::O::RDONLY, 0) {
                     Ok(f) => break 'ignore_file f,
                     Err(err2) => {
-                        let err2 = bun_core::Error::from(err2);
-                        if err2 != bun_core::err!("FileNotFound") {
-                            Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Open, err2);
+                        if err2.get_errno() != bun_sys::E::ENOENT {
+                            Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Open, err2.into());
                         }
                         return Ok(None);
                     }

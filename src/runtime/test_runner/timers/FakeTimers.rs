@@ -324,9 +324,15 @@ fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
 /// if jest.advanceTimersByTime() should be called when draining the microtask queue.
 fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
     let global_this = global.to_js_value();
-    let Ok(Some(set_timeout_fn)) = global_this.get_own_truthy(global, "setTimeout") else {
+    // `get()` (vs `get_own_truthy`) so the LUT-registered `setTimeout` is
+    // resolved even before first reification — semantically equivalent on
+    // the global since `setTimeout` is always an own property.
+    let Ok(Some(set_timeout_fn)) = global_this.get(global, "setTimeout") else {
         return;
     };
+    if !set_timeout_fn.is_cell() {
+        return;
+    }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
     if enabled {

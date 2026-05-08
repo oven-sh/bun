@@ -144,10 +144,10 @@ Return {check_ok, smoke_ok, errors:[...], smoke_output}. DO NOT edit.`,
 **Goal claimed:** ${GOAL}
 **Build status:** check_ok=${build.check_ok}, smoke_ok=${build.smoke_ok}${build.errors?.length ? `, errors: ${build.errors.slice(0, 5).join("; ")}` : ""}
 
-**Read the diff:** \`git -C ${WT} diff ${round === 1 ? "origin/claude/phase-a-port" : history[history.length - 1]?.apply?.commit || "HEAD~2"}..HEAD -- '${SCOPE}'\`
+**Read the diff (THREE-DOT — only this branch's commits, not phantom reverts of main's progress):** \`git -C ${WT} diff origin/claude/phase-a-port...HEAD -- '${SCOPE}'\` (or \`git -C ${WT} log -p --reverse origin/claude/phase-a-port..HEAD\`)
 
 **Look for (in order of severity):**
-1. **NEW non-FFI unsafe:** \`git -C ${WT} diff origin/claude/phase-a-port..HEAD | grep '^+.*unsafe {'\` — for each: is it an extern/FFI call? If NOT → REJECT (fix = take \`&mut T\`, push deref to caller).
+1. **NEW non-FFI unsafe:** \`git -C ${WT} diff origin/claude/phase-a-port...HEAD | grep '^+.*unsafe {'\` (THREE-DOT) — for each: is it an extern/FFI call? If NOT → REJECT (fix = take \`&mut T\`, push deref to caller).
 2. **Layering workaround instead of fix:** new runtime-registered hook, \`*mut c_void\` type-erase round-trip, \`transmute\` between crate types, duplicated type → REJECT (fix = move type down or \`extern "Rust"\`).
 3. **UB introduced:** new aliasing &mut, transmute lifetime extension, uninit reads, data races, ptr provenance loss
 4. **Semantics changed vs .zig spec:** read the .zig file at the same path. Does the Rust now diverge (different control flow, error handling, side effects, alloc/free pairing)?
